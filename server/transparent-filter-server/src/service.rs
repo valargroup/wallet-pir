@@ -8,9 +8,12 @@ use axum::routing::get;
 use axum::Router;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use transparent_filter::digest::filter_hash;
 use transparent_filter::envelope::MAX_BATCH_BYTES;
 use transparent_filter::envelope::{FilterBatch, FilterRecord, ENVELOPE_VERSION};
-use transparent_filter::wire::{ChainEntry, FilterServiceHealth, FilterServiceInfo};
+use transparent_filter::wire::{
+    ChainEntry, FilterDigestEntry, FilterServiceHealth, FilterServiceInfo,
+};
 use transparent_filter::{BlockHash, FilterLimits, MAX_RECORDS_PER_BATCH};
 
 /// Where ingestion has got to.
@@ -113,6 +116,7 @@ pub fn router(state: ServiceState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/filters/info", get(info))
         .route("/v1/filters/chain", get(chain))
+        .route("/v1/filters/digests", get(digests))
         .route("/v1/filters/range", get(range))
         .route("/metrics", get(metrics))
         .route("/ready", get(ready))
@@ -192,6 +196,55 @@ async fn chain(State(state): State<ServiceState>, Query(params): Query<ChainPara
     json(
         StatusCode::OK,
         serde_json::to_value(entries).expect("chain json"),
+    )
+}
+
+/// Filter digests for a bounded height range.
+///
+/// Public request data is chain range information only, exactly as for
+/// `/v1/filters/range`. A caller comparing two operators learns whether they
+/// published the same bytes; it does not learn that either built them over the
+/// whole block. That remains the trusted-indexer assumption.
+async fn digests(State(state): State<ServiceState>, Query(params): Query<ChainParams>) -> Response {
+    let inner = state.inner.read().await;
+    if params.count == 0 || params.count > MAX_RECORDS_PER_BATCH {
+        return bad_request(format!(
+            "count must be between 1 and {MAX_RECORDS_PER_BATCH}"
+        ));
+    }
+    let mut entries = Vec::new();
+    for height in params.start_height..params.start_height.saturating_add(params.count) {
+        // Coverage ends here; return the prefix rather than an error, matching
+        // /v1/filters/chain.
+        let Some(hash) = inner.store.block_hash_at(height) else {
+            break;
+        };
+        match inner.store.filter_by_hash(hash) {
+            Ok(Some(stored)) => entries.push(FilterDigestEntry {
+                height,
+                block_hash: hash.to_display_hex(),
+                filter_hash: filter_hash(&stored.bytes).to_display_hex(),
+            }),
+            // The height map named a block the filter store cannot produce.
+            // Truncating here would understate coverage as if the range simply
+            // ended, so report it.
+            Ok(None) => {
+                return json(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": format!("no stored filter at height {height}")}),
+                )
+            }
+            Err(error) => {
+                return json(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": error.to_string()}),
+                )
+            }
+        }
+    }
+    json(
+        StatusCode::OK,
+        serde_json::to_value(entries).expect("digests json"),
     )
 }
 

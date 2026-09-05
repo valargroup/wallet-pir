@@ -188,6 +188,66 @@ async fn the_chain_endpoint_returns_the_covered_prefix_only() {
     assert_eq!(entries[2].block_hash, hash_at(START + 2).to_display_hex());
 }
 
+/// A digest a wallet computes from bytes it downloaded must equal the one the
+/// service publishes, or cross-operator comparison compares nothing.
+#[tokio::test]
+async fn published_digests_match_the_served_filter_bytes() {
+    let (state, _dir, _chain) = state_with(4, START);
+
+    let (status, body) = get(
+        &state,
+        &format!("/v1/filters/digests?start_height={START}&count=4"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let entries: Vec<transparent_filter::FilterDigestEntry> =
+        serde_json::from_slice(&body).unwrap();
+    assert_eq!(entries.len(), 4);
+
+    let stop = hash_at(START + 3);
+    let (status, body) = get(
+        &state,
+        &format!(
+            "/v1/filters/range?start_height={START}&stop_block_hash={}",
+            stop.to_display_hex()
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let batch = FilterBatch::decode(&body).unwrap();
+
+    for (entry, record) in entries.iter().zip(batch.records.iter()) {
+        assert_eq!(entry.height, record.height);
+        assert_eq!(entry.block_hash, record.block_hash.to_display_hex());
+        assert_eq!(
+            entry.filter_hash,
+            transparent_filter::digest::filter_hash(&record.filter).to_display_hex()
+        );
+    }
+}
+
+/// Coverage ending mid-range returns the prefix, as `/v1/filters/chain` does.
+#[tokio::test]
+async fn a_digest_request_past_coverage_returns_the_covered_prefix() {
+    let (state, _dir, _chain) = state_with(3, START);
+    let (status, body) = get(
+        &state,
+        &format!("/v1/filters/digests?start_height={START}&count=50"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let entries: Vec<transparent_filter::FilterDigestEntry> =
+        serde_json::from_slice(&body).unwrap();
+    assert_eq!(entries.len(), 3);
+
+    let (status, _) = get(
+        &state,
+        &format!("/v1/filters/digests?start_height={START}&count=0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn readiness_and_metrics_are_available_on_the_service_port() {
     let (state, _dir, _chain) = state_with(2, START);

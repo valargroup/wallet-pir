@@ -15,6 +15,13 @@ ENHANCE_PUBLIC_HOST {
 	handle /ready {
 		respond 404
 	}
+	# Public transparent activity filters. Only the wallet-facing paths are
+	# routed: the filter service's own /metrics, /ready and /v1/health are not
+	# under this prefix and stay unreachable from the internet. Requests here
+	# carry chain range information only.
+	handle /v1/filters/* {
+		reverse_proxy 127.0.0.1:8090
+	}
 	# Unauthenticated, aggregate-only dashboard served by the pir-apm sidecar.
 	handle_path /apm* {
 		reverse_proxy 127.0.0.1:3002
