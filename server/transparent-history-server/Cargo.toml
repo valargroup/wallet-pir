@@ -20,8 +20,8 @@ clap = { version = "4", features = ["derive"] }
 # uses, and a drift there decodes to the wrong row rather than failing.
 enhance-pir-server = { path = "../enhance-pir-server" }
 hex = "0.4"
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "c08391833a9bf8f0949664da93b8d5beebdf1106" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "c08391833a9bf8f0949664da93b8d5beebdf1106" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "223626ffdd28bd1400dd0b62027a8f366665aa4f" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "223626ffdd28bd1400dd0b62027a8f366665aa4f" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
