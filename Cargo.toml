@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "pir/enhance",
     "pir/transparent-filter",
+    "pir/transparent-history",
     "pir/transparent-spend",
     "pir/load-test",
     "server/enhance-pir-server",
