@@ -20,7 +20,7 @@ matching what the key share predicts to within four bytes.
 | unused_100 | 0 | 174,466 | 174,466 | 1.00x | 0.06x |
 | sparse_1 | 4 | 400,798 | 821,684 | 2.05x | 0.28x |
 | median_10 | 12 | 1,405,558 | 1,198,584 | 0.85x | 0.42x |
-| large_1 | 56 | 7,121,490 | 4,336,494 | 0.61x | 1.50x |
+| large_1 | 56 | 7,006,798 | 4,336,494 | 0.62x | 1.50x |
 
 Ordinary retrieval for the same interval is 2,888,097 bytes. Every run was
 checked against the independent ledger oracle before its bytes were recorded:
@@ -42,7 +42,7 @@ Reuse repays only when a sync issues enough queries to amortise those sets.
 Comparing the key saving of `(n - ceil(n/4)) * 86,016` against the extra
 published bytes puts the break-even at 2 queries for the directory table and 8
 for the pages table, and the measured workloads agree: the median profile at 12
-queries is 15% cheaper, the heavy profile at 56 queries is 39% cheaper.
+queries is 15% cheaper, the heavy profile at 56 queries is 38% cheaper.
 
 Batching also rounds a sync up to a whole number of batches. The sparse profile
 issues 4 queries where the fresh configuration issued 1, and those three padding
@@ -73,6 +73,10 @@ case worse.
 
 Recorded because each produced plausible numbers rather than an error.
 
+- The fresh baseline this compares against was itself corrected: its
+  largest-history total double-charged the published parameters, one session per
+  client process. See the correction in
+  [the real-transport measurement](transparent_pir_http.md).
 - `public_params` became a list of sets, and the client charged `.len()` of that
   list: 4 rather than 458,768 bytes. Setup is exactly what reuse trades against,
   so omitting it flattered reuse. The harness now recomputes the expected charge
