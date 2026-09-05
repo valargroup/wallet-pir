@@ -72,16 +72,28 @@ pub struct HistoryTableGeneration {
     pub table_sha256: String,
 }
 
+/// Public matrix sets a table publishes.
+///
+/// Packing keys dominate a query's upload, and one set of keys can serve one
+/// query per set. Publishing several sets lets a client send its keys once for a
+/// batch of that many queries, paying more published parameters once in exchange
+/// for fewer key uploads per query. Four is what the existing reuse evidence
+/// measured.
+pub const PUBLIC_SETS: usize = 4;
+
 /// One table's session: its identity plus the published public parameters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryTableSession {
     pub generation: HistoryTableGeneration,
     pub scheme: ipir_sp::YpirSchemeParams,
-    /// Base64 published `c1`, prefixed with an eight-byte parameter epoch.
-    pub public_params: String,
+    /// Base64 published `c1`, one entry per public matrix set. A query names the
+    /// slot it used, and the response is decoded against that slot's entry.
+    pub public_params: Vec<String>,
+    /// Digest over the concatenated sets, so a client cannot be given a
+    /// consistent-looking mixture drawn from different publications.
     pub public_params_sha256: String,
-    /// First eight bytes of the parameter digest, in hex. Every response
-    /// carries it so a client cannot decode against superseded parameters.
+    /// First eight bytes of that digest, in hex. Every response carries it so a
+    /// client cannot decode against superseded parameters.
     pub public_params_epoch: String,
 }
 

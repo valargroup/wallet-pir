@@ -11,7 +11,7 @@ use axum::http::{Request, StatusCode};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use tower::ServiceExt;
-use transparent_history_pir::types::{HistorySession, Table};
+use transparent_history_pir::types::{HistorySession, Table, PUBLIC_SETS};
 use transparent_history_pir::TableClient;
 use transparent_history_server::generation::LoadedGeneration;
 use transparent_history_server::service::{router, ServiceState};
@@ -158,16 +158,18 @@ async fn retrieved_rows_equal_the_published_table() {
         ),
     ] {
         let client = TableClient::new(session, table).unwrap();
-        // First, last and an interior row: an off-by-one in the row mapping
-        // survives a single-row test.
-        for row in [0usize, 1, 1023, client.rows() - 1] {
-            let query = client.prepare(row).unwrap();
-            let (status, response) = post(&f.state, path, query.body.clone()).await;
-            assert_eq!(status, StatusCode::OK, "{table:?} row {row}");
-            let decoded = client.decode(query, &response).unwrap();
+        // First, last and interior rows in one batch: an off-by-one in the row
+        // mapping, or a slot mixed up with another, survives a single-row test.
+        let rows = [0usize, 1, 1023, client.rows() - 1];
+        let batch = client.prepare_batch(&rows).unwrap();
+        let (status, response) = post(&f.state, path, batch.body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{table:?}");
+        let decoded = client.decode_batch(batch, &response).unwrap();
+        assert_eq!(decoded.len(), rows.len());
+        for (row, got) in rows.iter().zip(decoded) {
             assert_eq!(
-                decoded,
-                raw_row(raw, row_bytes, row),
+                got,
+                raw_row(raw, row_bytes, *row),
                 "{table:?} row {row} decoded to the wrong bytes"
             );
         }
@@ -184,24 +186,28 @@ async fn queries_and_responses_have_a_fixed_size() {
 
     let mut sizes = std::collections::BTreeSet::new();
     let mut response_sizes = std::collections::BTreeSet::new();
-    for row in [0usize, 7, 1500, client.rows() - 1] {
-        let query = client.prepare(row).unwrap();
-        sizes.insert(query.body.len());
+    for rows in [
+        [0usize, 7, 1500, client.rows() - 1],
+        [3, 9, 11, 2000],
+        [1, 2, 3, 4],
+    ] {
+        let batch = client.prepare_batch(&rows).unwrap();
+        sizes.insert(batch.body.len());
         let (status, response) = post(
             &f.state,
             "/v1/transparent-history/pages/query",
-            query.body.clone(),
+            batch.body.clone(),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
         response_sizes.insert(response.len());
-        client.decode(query, &response).unwrap();
+        client.decode_batch(batch, &response).unwrap();
     }
-    assert_eq!(sizes.len(), 1, "query size varies with the selected row");
+    assert_eq!(sizes.len(), 1, "batch size varies with the selected rows");
     assert_eq!(
         response_sizes.len(),
         1,
-        "response size varies with the selected row"
+        "response size varies with the selected rows"
     );
 }
 
@@ -209,13 +215,13 @@ async fn queries_and_responses_have_a_fixed_size() {
 async fn a_query_naming_another_generation_is_refused() {
     let f = fixture().await;
     let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
-    let mut query = client.prepare(3).unwrap();
-    query.body[..8].copy_from_slice(&0xdead_beefu64.to_le_bytes());
+    let mut batch = client.prepare_batch(&[3]).unwrap();
+    batch.body[..8].copy_from_slice(&0xdead_beefu64.to_le_bytes());
 
     let (status, _) = post(
         &f.state,
         "/v1/transparent-history/directory/query",
-        query.body,
+        batch.body,
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -225,8 +231,8 @@ async fn a_query_naming_another_generation_is_refused() {
 async fn a_truncated_query_is_refused_rather_than_padded() {
     let f = fixture().await;
     let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
-    let query = client.prepare(3).unwrap();
-    let truncated = query.body[..query.body.len() - 1].to_vec();
+    let batch = client.prepare_batch(&[3]).unwrap();
+    let truncated = batch.body[..batch.body.len() - 1].to_vec();
 
     let (status, _) = post(
         &f.state,
@@ -244,4 +250,36 @@ async fn a_table_session_does_not_validate_as_the_other_table() {
     let f = fixture().await;
     assert!(TableClient::new(f.session.pages.clone(), Table::Directory).is_err());
     assert!(TableClient::new(f.session.directory.clone(), Table::Pages).is_err());
+}
+
+/// Two queries under one public set share both matrix and secret, which is the
+/// case `same_matrix_same_secret_exposes_selector_difference` in ipir-sp shows
+/// exposes the selector difference by subtraction. The client's slot allocator
+/// should never produce it; the server must not rely on that.
+#[tokio::test]
+async fn a_batch_that_reuses_a_public_set_is_refused() {
+    let f = fixture().await;
+    let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    let batch = client.prepare_batch(&[5, 9]).unwrap();
+
+    // Rewrite the second query's slot to collide with the first.
+    let mut body = batch.body.clone();
+    let key_len = u32::from_le_bytes(body[8..12].try_into().unwrap()) as usize;
+    let switched = (body.len() - (12 + key_len + 1) - 2) / 2;
+    let first_slot_at = 12 + key_len + 1;
+    let second_slot_at = first_slot_at + 1 + switched;
+    body[second_slot_at] = body[first_slot_at];
+
+    let (status, response) = post(&f.state, "/v1/transparent-history/directory/query", body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&response).contains("reuses a public set"));
+}
+
+/// A batch carries at most one query per published set.
+#[tokio::test]
+async fn a_batch_cannot_exceed_the_published_set_count() {
+    let f = fixture().await;
+    let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    let rows: Vec<usize> = (0..PUBLIC_SETS + 1).collect();
+    assert!(client.prepare_batch(&rows).is_err());
 }

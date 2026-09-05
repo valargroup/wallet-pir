@@ -14,6 +14,7 @@ use axum::Router;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use enhance_pir_server::ipir::{deserialize_first_dim_query, RowPlaintextIter};
 use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
+use ipir_sp::client::reusable::QueryPool;
 use ipir_sp::serialize::{deserialize_packing_keys, serialized_packing_keys_len};
 use ipir_sp::server::IPIRServer;
 use ipir_sp::server::{
@@ -24,12 +25,25 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use transparent_history_pir::types::{
     HistorySession, HistoryTableGeneration, HistoryTableSession, Table, NETWORK, PROTOCOL_REVISION,
-    SCHEMA_VERSION,
+    PUBLIC_SETS, SCHEMA_VERSION,
 };
 
-/// Largest query body accepted, computed from the geometry at build time.
+fn seed_bytes(seed: u64) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&seed.to_le_bytes());
+    bytes
+}
+
+/// Largest batch body accepted, computed from the geometry at build time.
 fn max_query_bytes(rlwe: &RlweParams, params: &YpirSchemeParams) -> usize {
-    8 + serialized_packing_keys_len(rlwe) + (params.db_rows * params.query_bits).div_ceil(8)
+    let switched = (params.db_rows * params.query_bits).div_ceil(8);
+    12 + serialized_packing_keys_len(rlwe) + 1 + PUBLIC_SETS * (1 + switched)
+}
+
+/// Server-side state for one published public matrix set.
+pub struct SetRuntime {
+    pub preprocessed: Vec<QueryPackPreprocessed<'static>>,
+    pub published_c1: Vec<u8>,
 }
 
 pub struct TableRuntime {
@@ -41,9 +55,9 @@ pub struct TableRuntime {
     pub rlwe: &'static RlweParams,
     pub params: YpirSchemeParams,
     pub server: IPIRServer<u16>,
-    pub preprocessed: Vec<QueryPackPreprocessed<'static>>,
+    /// One entry per published set; a query names the slot it used.
+    pub sets: Vec<SetRuntime>,
     pub top_key_images: TopKeyImages<'static>,
-    pub public_params: Vec<u8>,
     pub public_params_sha256: String,
     pub public_params_epoch: [u8; 8],
     pub row_bytes: u32,
@@ -72,20 +86,36 @@ impl TableRuntime {
         );
         let server = IPIRServer::<u16>::new_auto_kernel(params.clone(), coefficients, false, true);
 
-        // The setup is derived from a published seed, so a client reproduces it
-        // exactly. It is public: it carries no secret and no selection.
-        let mut seed = [0u8; 32];
-        seed[..8].copy_from_slice(&table.setup_seed().to_le_bytes());
-        let setup =
-            IPIRClient::new(rlwe, &params).generate_public_query_setup_simplepir_from_seed(seed);
-        let crs_blocks = server
-            .perform_offline_precomputation_simplepir(rlwe, &setup)
-            .crs_blocks;
-        let preprocessed =
-            build_pack_preprocessed_blocks(rlwe, &crs_blocks).map_err(|e| e.to_string())?;
+        // The sets are derived from a published seed, so a client reproduces
+        // them exactly. They are public: they carry no secret and no selection.
+        // Precomputing several is what lets a client share one set of packing
+        // keys across that many queries, which is where the upload saving is.
+        let pool = QueryPool::new(
+            IPIRClient::new(rlwe, &params),
+            seed_bytes(table.setup_seed()),
+            PUBLIC_SETS,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let mut sets = Vec::with_capacity(PUBLIC_SETS);
+        let mut concatenated = Vec::new();
+        for set in pool.sets().iter().take(PUBLIC_SETS) {
+            let crs_blocks = server
+                .perform_offline_precomputation_simplepir(rlwe, set)
+                .crs_blocks;
+            let preprocessed =
+                build_pack_preprocessed_blocks(rlwe, &crs_blocks).map_err(|e| e.to_string())?;
+            let published_c1 = published_c1_rows(&preprocessed, rlwe.q);
+            concatenated.extend_from_slice(&published_c1);
+            sets.push(SetRuntime {
+                preprocessed,
+                published_c1,
+            });
+        }
         let top_key_images = TopKeyImages::build(rlwe);
-        let public_params = published_c1_rows(&preprocessed, rlwe.q);
-        let digest = Sha256::digest(&public_params);
+        // One digest over every set, so a client cannot be handed a mixture
+        // assembled from different publications that each verify alone.
+        let digest = Sha256::digest(&concatenated);
         let mut epoch = [0u8; 8];
         epoch.copy_from_slice(&digest[..8]);
 
@@ -94,9 +124,8 @@ impl TableRuntime {
             rlwe,
             params,
             server,
-            preprocessed,
+            sets,
             top_key_images,
-            public_params,
             public_params_sha256: hex::encode(digest),
             public_params_epoch: epoch,
             row_bytes,
@@ -119,46 +148,100 @@ impl TableRuntime {
                 table_sha256: String::new(),
             },
             scheme: self.params.clone(),
-            public_params: BASE64_STANDARD.encode(&self.public_params),
+            public_params: self
+                .sets
+                .iter()
+                .map(|set| BASE64_STANDARD.encode(&set.published_c1))
+                .collect(),
             public_params_sha256: self.public_params_sha256.clone(),
             public_params_epoch: hex::encode(self.public_params_epoch),
         }
     }
 
-    /// Answer one query. The row selected is never known to this function.
+    /// Answer one batch. Which rows were selected is never known here.
+    ///
+    /// The batch shares one set of packing keys across its queries, each naming
+    /// the public set it was built against. Answering them together is what
+    /// makes the shared keys a saving rather than a repetition.
     fn evaluate(&self, generation: u64, body: &[u8]) -> Result<Vec<u8>, String> {
         let prefix: [u8; 8] = body
             .get(..8)
-            .ok_or_else(|| "query is truncated".to_string())?
+            .ok_or_else(|| "batch is truncated".to_string())?
             .try_into()
             .expect("eight-byte generation");
         if u64::from_le_bytes(prefix) != generation {
-            return Err("query names a different generation".to_string());
+            return Err("batch names a different generation".to_string());
         }
-        let packing_len = serialized_packing_keys_len(self.rlwe);
-        let switched_len = (self.params.db_rows * self.params.query_bits).div_ceil(8);
-        // A fixed length for every query: a body that varies with the selection
-        // would leak through its size alone.
-        if body.len() != 8 + packing_len + switched_len {
-            return Err("query has the wrong fixed length".to_string());
+        let key_len = u32::from_le_bytes(
+            body.get(8..12)
+                .ok_or_else(|| "batch is truncated".to_string())?
+                .try_into()
+                .expect("four-byte key length"),
+        ) as usize;
+        if key_len != serialized_packing_keys_len(self.rlwe) {
+            return Err("packing keys have the wrong length".to_string());
         }
-        let packing_keys = deserialize_packing_keys(self.rlwe, &body[8..8 + packing_len])
-            .map_err(|e| e.to_string())?;
-        let query = deserialize_first_dim_query(self.rlwe, &self.params, &body[8 + packing_len..])
-            .map_err(|e| e.to_string())?;
-        let intermediate = self.server.multiply_query(self.rlwe, &query);
-        let packed = pack_intermediate_blocks(
-            &intermediate,
-            &packing_keys,
-            &self.top_key_images,
-            &self.preprocessed,
+        let keys_end = 12 + key_len;
+        let packing_keys = deserialize_packing_keys(
+            self.rlwe,
+            body.get(12..keys_end)
+                .ok_or_else(|| "batch is truncated".to_string())?,
         )
         .map_err(|e| e.to_string())?;
-        let c2 =
-            ipir_sp::modulus_switch::serialize_rlwe_response_bodies(&packed, self.params.q_prime_1);
-        let mut response = Vec::with_capacity(16 + c2.len());
+
+        let count = *body
+            .get(keys_end)
+            .ok_or_else(|| "batch is truncated".to_string())? as usize;
+        if count == 0 || count > self.sets.len() {
+            return Err(format!("a batch carries 1..={} queries", self.sets.len()));
+        }
+        let switched_len = (self.params.db_rows * self.params.query_bits).div_ceil(8);
+        // Fixed length for every batch of a given count: a body that varied
+        // with the selections would leak them through its size alone.
+        if body.len() != keys_end + 1 + count * (1 + switched_len) {
+            return Err("batch has the wrong fixed length".to_string());
+        }
+
+        let mut c2 = Vec::new();
+        let mut seen = vec![false; self.sets.len()];
+        let mut offset = keys_end + 1;
+        for _ in 0..count {
+            let slot = body[offset] as usize;
+            offset += 1;
+            let Some(set) = self.sets.get(slot) else {
+                return Err("query names an unpublished set".to_string());
+            };
+            // One query per set per batch. Two queries under the same set would
+            // share both matrix and secret, which is exactly the case that
+            // exposes the selector difference by subtraction.
+            if std::mem::replace(&mut seen[slot], true) {
+                return Err("batch reuses a public set".to_string());
+            }
+            let query = deserialize_first_dim_query(
+                self.rlwe,
+                &self.params,
+                &body[offset..offset + switched_len],
+            )
+            .map_err(|e| e.to_string())?;
+            offset += switched_len;
+            let intermediate = self.server.multiply_query(self.rlwe, &query);
+            let packed = pack_intermediate_blocks(
+                &intermediate,
+                &packing_keys,
+                &self.top_key_images,
+                &set.preprocessed,
+            )
+            .map_err(|e| e.to_string())?;
+            c2.extend(ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
+                &packed,
+                self.params.q_prime_1,
+            ));
+        }
+
+        let mut response = Vec::with_capacity(17 + c2.len());
         response.extend_from_slice(&generation.to_le_bytes());
         response.extend_from_slice(&self.public_params_epoch);
+        response.push(count as u8);
         response.extend_from_slice(&c2);
         Ok(response)
     }

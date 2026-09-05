@@ -6,11 +6,13 @@
 //! both the generation and the parameter epoch.
 
 use crate::types::{
-    HistorySession, HistoryTableGeneration, HistoryTableSession, Table, NETWORK, PROTOCOL_REVISION,
-    SCHEMA_VERSION,
+    HistorySession, HistoryTableGeneration, HistoryTableSession, Table, COLUMN_BITS, NETWORK,
+    PROTOCOL_REVISION, PUBLIC_SETS, SCHEMA_VERSION,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
+use ipir_sp::bits::write_bits;
+use ipir_sp::client::reusable::QueryPool;
+use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1};
 use ipir_sp::serialize::serialize_packing_keys;
 use ipir_sp::{IPIRClient, YpirSchemeParams};
 use rand::{rngs::OsRng, Rng};
@@ -37,11 +39,6 @@ pub enum ClientError {
     Response(String),
 }
 
-pub struct PreparedQuery {
-    pub body: Vec<u8>,
-    seed: ipir_sp::IPIRSeed,
-}
-
 /// Bytes actually moved for a batch, so a measurement charges real transport
 /// rather than an estimate of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -49,14 +46,37 @@ pub struct ByteCharges {
     pub upload_bytes: u64,
     pub download_bytes: u64,
     pub queries: u64,
+    /// Batches sent. Packing keys are uploaded once per batch, so this is what
+    /// separates the reused-key cost from the fresh-key cost.
+    pub batches: u64,
+    pub key_upload_bytes: u64,
+}
+
+/// One batch of up to `PUBLIC_SETS` queries sharing a single set of packing keys.
+///
+/// Borrows the pool it was started from: the batch owns the secret those
+/// queries were made under, and decoding needs it.
+pub struct PreparedBatch<'a> {
+    /// The wire body: generation, key length, keys, then each slot and query.
+    pub body: Vec<u8>,
+    key_bytes: usize,
+    slots: Vec<usize>,
+    batch: ipir_sp::client::reusable::ReusableBatch<'a>,
+}
+
+impl PreparedBatch<'_> {
+    pub fn queries(&self) -> usize {
+        self.slots.len()
+    }
 }
 
 pub struct TableClient {
     generation: HistoryTableGeneration,
     params: YpirSchemeParams,
-    client: IPIRClient,
-    setup: Vec<Vec<u64>>,
-    published_c1: Vec<Vec<u64>>,
+    rlwe: &'static inspiring::RlweParams,
+    pool: QueryPool,
+    /// One recovered `c1` per published set, indexed by slot.
+    published_c1: Vec<Vec<Vec<u64>>>,
     epoch: [u8; 8],
 }
 
@@ -73,6 +93,12 @@ impl TableClient {
         {
             return Err(ClientError::Session("invalid table metadata".to_string()));
         }
+        if session.public_params.len() != PUBLIC_SETS {
+            return Err(ClientError::Session(format!(
+                "expected {PUBLIC_SETS} published sets, got {}",
+                session.public_params.len()
+            )));
+        }
 
         // Re-derive rather than trust: the server sends its parameters, and a
         // client that adopted them would decode against whatever geometry the
@@ -86,9 +112,19 @@ impl TableClient {
                 "published scheme parameters do not match the geometry".to_string(),
             ));
         }
+        let rlwe: &'static inspiring::RlweParams = Box::leak(Box::new(rlwe));
 
-        let public_params = BASE64_STANDARD.decode(session.public_params.as_bytes())?;
-        let digest = Sha256::digest(&public_params);
+        let mut decoded_sets = Vec::with_capacity(PUBLIC_SETS);
+        let mut concatenated = Vec::new();
+        for encoded in &session.public_params {
+            let bytes = BASE64_STANDARD.decode(encoded.as_bytes())?;
+            concatenated.extend_from_slice(&bytes);
+            decoded_sets.push(bytes);
+        }
+        // One digest over every set together. Digesting each set separately
+        // would accept a mixture assembled from different publications, each
+        // individually well formed.
+        let digest = Sha256::digest(&concatenated);
         if hex::encode(digest) != session.public_params_sha256 {
             return Err(ClientError::Session(
                 "published parameter digest mismatch".to_string(),
@@ -101,22 +137,28 @@ impl TableClient {
                 "published parameter epoch mismatch".to_string(),
             ));
         }
+
         let blocks = expected_params.db_cols / rlwe.d;
-        if public_params.len() != blocks * published_c1_len(rlwe.d, rlwe.q) {
+        let expected_len = blocks * published_c1_len(rlwe.d, rlwe.q);
+        if decoded_sets.iter().any(|set| set.len() != expected_len) {
             return Err(ClientError::Session(
                 "published parameter length mismatch".to_string(),
             ));
         }
-        let published_c1 = recover_published_c1(&public_params, rlwe.d, blocks, rlwe.q);
-        let client = IPIRClient::new(&rlwe, &expected_params);
-        let setup = client
-            .generate_public_query_setup_simplepir_from_seed(seed_bytes(generation.setup_seed));
+        let published_c1 = decoded_sets
+            .iter()
+            .map(|set| recover_published_c1(set, rlwe.d, blocks, rlwe.q))
+            .collect();
+
+        let client = IPIRClient::new(rlwe, &expected_params);
+        let pool = QueryPool::new(client, seed_bytes(generation.setup_seed), PUBLIC_SETS)
+            .map_err(|error| ClientError::Pir(error.to_string()))?;
 
         Ok(Self {
             generation,
             params: expected_params,
-            client,
-            setup,
+            rlwe,
+            pool,
             published_c1,
             epoch,
         })
@@ -130,32 +172,68 @@ impl TableClient {
         self.generation.row_bytes as usize
     }
 
-    pub fn prepare(&self, row: usize) -> Result<PreparedQuery, ClientError> {
-        if row >= self.params.db_rows {
+    /// Build one batch of up to `PUBLIC_SETS` queries.
+    ///
+    /// The packing keys are serialized once for the whole batch, which is the
+    /// entire point: they dominate a query's upload, so a batch of four costs
+    /// roughly one key upload rather than four.
+    pub fn prepare_batch(&self, rows: &[usize]) -> Result<PreparedBatch<'_>, ClientError> {
+        if rows.is_empty() || rows.len() > PUBLIC_SETS {
+            return Err(ClientError::Session(format!(
+                "a batch carries 1..={PUBLIC_SETS} queries, got {}",
+                rows.len()
+            )));
+        }
+        if rows.iter().any(|&row| row >= self.params.db_rows) {
             return Err(ClientError::Session("row outside table".to_string()));
         }
-        let (query, packing_keys, seed) =
-            self.client.generate_fresh_query_simplepir(&self.setup, row);
+        let mut batch = self.pool.start_batch();
+        let keys = serialize_packing_keys(self.rlwe, batch.keys())
+            .map_err(|error| ClientError::Pir(error.to_string()))?;
+
         let mut body = self.generation.generation.to_le_bytes().to_vec();
-        body.extend(
-            serialize_packing_keys(self.client.rlwe_params(), &packing_keys)
-                .map_err(|error| ClientError::Pir(error.to_string()))?,
-        );
-        body.extend(query.to_switched_bytes(self.client.rlwe_params().q, self.params.query_bits));
-        Ok(PreparedQuery { body, seed })
+        body.extend((keys.len() as u32).to_le_bytes());
+        body.extend(&keys);
+        body.push(rows.len() as u8);
+        let mut slots = Vec::with_capacity(rows.len());
+        for &row in rows {
+            let query = batch
+                .next_query(row)
+                .map_err(|error| ClientError::Pir(error.to_string()))?;
+            let slot = query.slot();
+            if slot >= PUBLIC_SETS {
+                return Err(ClientError::Pir("slot outside published sets".to_string()));
+            }
+            body.push(slot as u8);
+            body.extend(query.bytes());
+            slots.push(slot);
+        }
+        Ok(PreparedBatch {
+            body,
+            key_bytes: keys.len(),
+            slots,
+            batch,
+        })
     }
 
-    /// A query for a uniformly random row.
+    /// A batch of uniformly random rows, used to pad to a fixed shape.
     ///
-    /// Used to pad a batch to a fixed size. It is indistinguishable on the wire
-    /// from a real selection, which is the point: without padding the number of
-    /// queries reveals how many blocks matched, and hiding which blocks matched
-    /// while publishing how many is not a meaningful improvement.
-    pub fn prepare_pad(&self) -> Result<PreparedQuery, ClientError> {
-        self.prepare(OsRng.gen_range(0..self.params.db_rows))
+    /// Indistinguishable on the wire from a real batch, which is the point:
+    /// without padding the number of queries reveals how many blocks matched,
+    /// and hiding which blocks matched while publishing how many is not a
+    /// meaningful improvement.
+    pub fn prepare_pad_batch(&self, count: usize) -> Result<PreparedBatch<'_>, ClientError> {
+        let rows: Vec<usize> = (0..count)
+            .map(|_| OsRng.gen_range(0..self.params.db_rows))
+            .collect();
+        self.prepare_batch(&rows)
     }
 
-    pub fn decode(&self, query: PreparedQuery, response: &[u8]) -> Result<Vec<u8>, ClientError> {
+    pub fn decode_batch(
+        &self,
+        batch: PreparedBatch<'_>,
+        response: &[u8],
+    ) -> Result<Vec<Vec<u8>>, ClientError> {
         if response.get(..8) != Some(self.generation.generation.to_le_bytes().as_slice()) {
             return Err(ClientError::Response("generation mismatch".to_string()));
         }
@@ -164,20 +242,49 @@ impl TableClient {
                 "parameter epoch mismatch".to_string(),
             ));
         }
-        let expected = (self.params.db_cols / self.client.rlwe_params().d)
-            * response_body_len(self.client.rlwe_params().d, self.params.q_prime_1);
-        if response.len() != 16 + expected {
+        let count = *response
+            .get(16)
+            .ok_or_else(|| ClientError::Response("response is truncated".to_string()))?
+            as usize;
+        if count != batch.slots.len() {
             return Err(ClientError::Response(
-                "response length mismatch".to_string(),
+                "response does not answer every query in the batch".to_string(),
             ));
         }
-        let decoded =
-            self.client
-                .decode_response_simplepir(query.seed, &self.published_c1, &response[16..]);
-        decoded
-            .get(..self.row_bytes())
-            .map(<[u8]>::to_vec)
-            .ok_or_else(|| ClientError::Response("decoded row is too short".to_string()))
+        let body = &response[17..];
+        if body.len() % count != 0 {
+            return Err(ClientError::Response(
+                "response bodies are not uniform".to_string(),
+            ));
+        }
+        let each = body.len() / count;
+
+        let mut rows = Vec::with_capacity(count);
+        for (index, &slot) in batch.slots.iter().enumerate() {
+            let (values, error) = batch.batch.decode_with_margin(
+                &self.published_c1[slot],
+                &body[index * each..(index + 1) * each],
+            );
+            // A decode that only just fit is not a success. The margin check is
+            // what separates a correct row from one that happened to round the
+            // right way, and a silently wrong row here becomes a wrong balance.
+            if error >= self.rlwe.delta / 8 {
+                return Err(ClientError::Response(format!(
+                    "decoding error margin {error} is too close to the threshold"
+                )));
+            }
+            if values.len() != self.params.db_cols {
+                return Err(ClientError::Response(
+                    "decoded row has the wrong column count".to_string(),
+                ));
+            }
+            let mut bytes = vec![0u8; self.row_bytes()];
+            for (column, &value) in values.iter().enumerate() {
+                write_bits(&mut bytes, value, column * COLUMN_BITS, COLUMN_BITS);
+            }
+            rows.push(bytes);
+        }
+        Ok(rows)
     }
 }
 
@@ -247,10 +354,12 @@ impl TransparentHistoryClient {
 
     /// Fetch `rows` from one table, padded to exactly `pad_to` queries.
     ///
-    /// Returns the decoded rows in the order requested, and the bytes actually
-    /// moved including the padding. Padding queries are issued and their
-    /// responses decoded and discarded; skipping the decode would leave a
-    /// timing difference between a real query and a pad.
+    /// Queries are sent in batches of at most `PUBLIC_SETS`, sharing one set of
+    /// packing keys per batch. Real selections come first and padding follows,
+    /// but both are decoded, so a pad costs a real query's work. Padding is
+    /// rounded up to a whole batch: a short final batch would be visibly
+    /// different from a full one and would undo the padding it is there to
+    /// provide.
     pub async fn fetch_rows(
         &self,
         table: Table,
@@ -263,23 +372,36 @@ impl TransparentHistoryClient {
             ));
         }
         let client = self.table(table);
+        let total = pad_to.div_ceil(PUBLIC_SETS) * PUBLIC_SETS;
         let mut charges = ByteCharges::default();
         let mut decoded = Vec::with_capacity(rows.len());
-        for index in 0..pad_to {
-            let real = index < rows.len();
-            let query = if real {
-                client.prepare(rows[index])?
+
+        let mut sent = 0;
+        while sent < total {
+            let count = PUBLIC_SETS.min(total - sent);
+            let real = rows.len().saturating_sub(sent).min(count);
+            let batch = if real == count {
+                client.prepare_batch(&rows[sent..sent + count])?
+            } else if real == 0 {
+                client.prepare_pad_batch(count)?
             } else {
-                client.prepare_pad()?
+                // A partly real batch: the real selections, then random rows to
+                // fill it, so every batch on the wire has the same shape.
+                let mut selection = rows[sent..sent + real].to_vec();
+                selection.extend((0..count - real).map(|_| OsRng.gen_range(0..client.rows())));
+                client.prepare_batch(&selection)?
             };
-            charges.upload_bytes += query.body.len() as u64;
-            charges.queries += 1;
-            let response = self.request(table, &query.body).await?;
+            charges.upload_bytes += batch.body.len() as u64;
+            charges.key_upload_bytes += batch.key_bytes as u64;
+            charges.queries += batch.queries() as u64;
+            charges.batches += 1;
+
+            let response = self.request(table, &batch.body).await?;
             charges.download_bytes += response.len() as u64;
-            let row = client.decode(query, &response)?;
-            if real {
-                decoded.push(row);
-            }
+            let mut answered = client.decode_batch(batch, &response)?;
+            answered.truncate(real);
+            decoded.extend(answered);
+            sent += count;
         }
         Ok((decoded, charges))
     }
