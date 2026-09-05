@@ -148,6 +148,7 @@ pub async fn run(
             .await;
 
         let mut since_commit = 0u64;
+        let mut committed = false;
         while next <= tip {
             // Fetch and build outside the lock; take it only to append.
             let built = build_block_filter(&zakura, &mut cache, next).await?;
@@ -165,7 +166,22 @@ pub async fn run(
                 if since_commit >= commit_every {
                     store.commit()?;
                     since_commit = 0;
+                    committed = true;
                 }
+            }
+            // Republish progress on the same cadence as the commit, so the
+            // health endpoint tracks the backfill instead of reporting the
+            // height this pass started from for its whole duration. Doing it
+            // per block would take the state lock once more per block for a
+            // number an operator reads at human speed.
+            if committed {
+                state
+                    .set_phase(Phase::Syncing {
+                        current_height: Some(next),
+                        target_height: tip,
+                    })
+                    .await;
+                committed = false;
             }
             state
                 .metrics()

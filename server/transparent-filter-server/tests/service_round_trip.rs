@@ -11,7 +11,7 @@ use transparent_filter::{
     build_filter, check_batch, ChainMap, FilterBatch, FilterLimits, RangeRequest, ScriptBytes,
 };
 use transparent_filter::{BlockHash, FilterServiceInfo};
-use transparent_filter_server::service::{router, ServiceState};
+use transparent_filter_server::service::{router, Phase, ServiceState};
 use transparent_filter_server::store::FilterStore;
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
@@ -191,6 +191,7 @@ async fn the_chain_endpoint_returns_the_covered_prefix_only() {
 #[tokio::test]
 async fn readiness_and_metrics_are_available_on_the_service_port() {
     let (state, _dir, _chain) = state_with(2, START);
+    state.set_phase(Phase::Serving).await;
     let (status, _) = get(&state, "/ready").await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = get(&state, "/metrics").await;
@@ -198,6 +199,32 @@ async fn readiness_and_metrics_are_available_on_the_service_port() {
     let text = String::from_utf8_lossy(&body);
     assert!(text.contains("transparent_filter_covered_through_height"));
     assert!(text.contains("transparent_filter_filters_stored"));
+}
+
+/// The initial backfill answers for every height it has reached while still
+/// being far behind the tip. Coverage alone must not advertise readiness, or a
+/// caller routed here would read a short chain as the whole chain.
+#[tokio::test]
+async fn a_service_that_is_still_syncing_is_not_ready() {
+    let (state, _dir, _chain) = state_with(2, START);
+    state.set_tip(START + 40_000).await;
+    state
+        .set_phase(Phase::Syncing {
+            current_height: Some(START + 1),
+            target_height: START + 40_000,
+        })
+        .await;
+
+    let (status, body) = get(&state, "/ready").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["ready"], serde_json::json!(false));
+    assert_eq!(body["covered_through"], serde_json::json!(START + 1));
+
+    // The range it does cover still serves: readiness gates routing, not the
+    // correctness of the filters already stored.
+    let (status, _) = get(&state, "/v1/filters/info").await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
