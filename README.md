@@ -72,9 +72,9 @@ and the coordinator does not publish them; see
 
 `pir/transparent-filter` implements the `zcash-transparent-basic-v1` BIP 158
 profile, and `server/transparent-filter-server` builds one filter per accepted
-block from Zakura and serves bounded ranges. The service runs on the coordinator
-beside the archive node, bound to loopback: there is no public route and no
-wallet client is enabled.
+block from Zakura and serves bounded ranges. It runs on the coordinator beside
+the archive node, bound to loopback: there is no public route and no wallet
+client is enabled.
 
 - [Range envelope format](docs/transparent_filter_envelope.md)
 

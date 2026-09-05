@@ -1,7 +1,7 @@
 # BIP 158 transparent activity filters: implementation and measurements
 
-Date: 2026-09-05. Status: implemented, tested, and deployed as a loopback-only
-service. Not enabled for any wallet.
+Date: 2026-09-05. Status: implemented, tested and running on the coordinator,
+bound to loopback. There is no public route and no wallet client is enabled.
 
 Implements `docs/transparent_bip158_implementation_handoff.md`. Previous Bloom
 evidence is untouched and still reproducible; results here live under new
@@ -130,14 +130,22 @@ phone battery or wallet latency.
   Advancing coverage on a negative result is sound only under the trust policy
   in `docs/transparent_pir_contract.md`. No BIP 157 peer verification, no
   service signalling, and a filter header chain is not a proof of completeness.
-- **Coverage begins at Ironwood activation** (3,428,143). A wallet with an
-  earlier birthday is not served by this deployment.
-- **Loopback only.** No public route exists and no wallet client is enabled.
-- **Ingest throughput was measured over a tunnel, not on the host.** Each RPC
-  round trip cost ~0.94 s from a laptop, against ~0 ms on the coordinator. The
-  full 1,152-block range took 1,045 s under those conditions; on the host the
-  RPC is not the limiting factor. Batching previous-output lookups 16 at a time
-  cut 200 blocks from ~480 s to 120 s and leaves filter bytes unchanged.
+- **Coverage begins at Ironwood activation** (3,428,143). The service backfills
+  from there, so a wallet with an earlier birthday is not served by this
+  deployment.
+- **Loopback only.** The unit binds `127.0.0.1:8090`: no public route exists and
+  no wallet client is enabled.
+- **Ingest throughput on the host is 110 blocks/s.** Measured on the coordinator
+  during the first deployment's backfill: 13,194 blocks in 120 s, at a load
+  average of ~2.2 on 8 vCPUs. The whole 45,051-block backfill from activation to
+  tip took about seven minutes and produced ~3.2 MB of stored filters
+  (~135 B/block, including store overhead).
+
+  Earlier figures in this document's history were taken over an SSH tunnel,
+  where each RPC round trip cost ~0.94 s from a laptop against ~0 ms on the
+  coordinator, and the 1,152-block range took 1,045 s. That was the tunnel, not
+  the service. Batching previous-output lookups 16 at a time cut 200 blocks from
+  ~480 s to 120 s under those conditions and leaves filter bytes unchanged.
 - **The range request reveals the interval being synchronized, and when.** This
   profile does not hide that.
 - `bitcoin`'s `std` feature pulls in `secp256k1`, which this crate never uses.

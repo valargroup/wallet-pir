@@ -314,7 +314,21 @@ async fn ready(State(state): State<ServiceState>) -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
             serde_json::json!({"ready": false, "reason": "no coverage yet"}),
         ),
-        (_, Some(height)) => json(
+        // Having *some* coverage is not readiness. During the initial backfill
+        // the store answers for every height it has reached while still being
+        // tens of thousands of blocks behind the tip, and a caller routed to it
+        // then would read a short chain as the whole chain. Only the serving
+        // phase means coverage has caught up to a tip this service observed.
+        (Phase::Syncing { .. }, Some(height)) => json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({
+                "ready": false,
+                "reason": "still syncing",
+                "covered_through": height,
+                "tip_height": inner.tip_height,
+            }),
+        ),
+        (Phase::Serving, Some(height)) => json(
             StatusCode::OK,
             serde_json::json!({"ready": true, "covered_through": height}),
         ),
