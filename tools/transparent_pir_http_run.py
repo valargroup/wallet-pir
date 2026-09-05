@@ -117,7 +117,15 @@ def run(args):
                 "checkpoint": checkpoint,
                 "verified_events": len(state["events"]),
                 "queries": cost["queries"],
-                "padding_queries": sum(c[2] - len(c[1]) for c in transport.calls),
+                # Every query beyond the selections made: the fixed budget's
+                # padding plus the rounding a shared-key batch adds. Both are
+                # real queries with a full selector and a full response, and
+                # counting only the first understates what padding costs.
+                "padding_queries": cost["queries"]
+                - sum(len(c[1]) for c in transport.calls),
+                "batches": transport.batches,
+                "key_upload_bytes": transport.key_upload_bytes,
+                "public_sets_by_table": dict(transport.sets_charged),
                 "public_download_bytes": cost["public_download_bytes"],
                 "setup_download_bytes": cost["setup_download_bytes"],
                 "upload_bytes": cost["upload_bytes"],

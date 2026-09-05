@@ -49,7 +49,10 @@ class HttpPirTransport:
         # measurement is actually varying.
         self.batches = 0
         self.key_upload_bytes = 0
-        self.setup_charged = False
+        # Published sets already charged, per table. The reuse decision is made
+        # per table, so setup is charged per table: a sync that never queries
+        # the pages table never downloads its parameters.
+        self.sets_charged = {"directory": 0, "pages": 0}
 
     def _init(self):
         if self.session is None:
@@ -104,15 +107,22 @@ class HttpPirTransport:
         # fetched itself. The client reports what it downloaded; recomputing it
         # from an independent copy catches a units mistake, which is otherwise
         # invisible because a wrong-but-small number still looks like a number.
-        expected_setup = sum(
-            len(part)
-            for table_session in (session["directory"], session["pages"])
-            for part in table_session["public_params"]
-        )
+        set_bytes = session[table]["public_params_set_bytes"]
+        if result["public_params_set_bytes"] != set_bytes:
+            raise HttpTransportError(
+                f"client reports {result['public_params_set_bytes']}-byte sets for "
+                f"{table}, session publishes {set_bytes}"
+            )
+        if not 0 <= result["public_sets"] <= session[table]["public_sets"]:
+            raise HttpTransportError(
+                f"client used {result['public_sets']} sets of the "
+                f"{session[table]['public_sets']} {table} publishes"
+            )
+        expected_setup = result["public_sets"] * set_bytes
         if result["setup_download_bytes"] != expected_setup:
             raise HttpTransportError(
                 f"setup charge {result['setup_download_bytes']} does not match the "
-                f"{expected_setup} bytes of published parameters in the session"
+                f"{expected_setup} bytes {result['public_sets']} published sets cost"
             )
 
         decoded = {
@@ -128,22 +138,23 @@ class HttpPirTransport:
         self.calls.append((table, list(rows), pad_to))
         self.batches += result.get("batches", 0)
         self.key_upload_bytes += result.get("key_upload_bytes", 0)
-        # Charge the published parameters once per sync, not once per call.
-        # Each call runs a fresh CLI process that reconnects, but a wallet holds
-        # one session and caches public parameters across it; billing every
-        # batch for them would invent setup traffic a real client never sends.
-        if self.setup_charged:
-            setup_bytes = 0
-        else:
-            setup_bytes = result["setup_download_bytes"]
-            self.setup_charged = True
+        # Charge each table's published sets once per sync, not once per call.
+        # Each call runs a fresh CLI process that reconnects and downloads the
+        # sets its plan asks for, but a wallet holds one session and caches
+        # them; billing every call would invent setup traffic a real client
+        # never sends. A later call whose plan wants more sets than an earlier
+        # one pays for the difference, and only for the difference.
+        already = self.sets_charged[table]
+        new_sets = max(0, result["public_sets"] - already)
+        setup_bytes = new_sets * set_bytes
+        self.sets_charged[table] = already + new_sets
 
         cost = {
             "queries": result["queries"],
-            # The published parameters are fetched once per session and are
-            # public, so they are charged to the session rather than to a call.
-            # With key reuse the server publishes one set per batch slot, so
-            # this is where reuse costs what it saves on uploads.
+            # The published parameters are fetched once per table per session
+            # and are public, so they are charged to the session rather than to
+            # a call. Reuse buys one set per batch slot, so this is where it
+            # pays for what it saves on uploads.
             "setup_download_bytes": setup_bytes,
             "upload_bytes": result["upload_bytes"],
             "response_bytes": result["download_bytes"],

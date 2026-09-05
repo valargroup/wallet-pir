@@ -25,6 +25,11 @@ struct Response {
     upload_bytes: u64,
     download_bytes: u64,
     setup_download_bytes: u64,
+    /// Published sets this table's plan downloaded, and what one costs. The
+    /// harness charges a table's sets once per sync, so it needs both the
+    /// decision and its unit price rather than only the product.
+    public_sets: u64,
+    public_params_set_bytes: u64,
     /// Batches sent, and the bytes of packing keys within the upload. Keys
     /// travel once per batch, so these two separate the reuse saving from the
     /// total rather than leaving it to be inferred.
@@ -46,25 +51,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = TransparentHistoryClient::connect(&request.base_url).await?;
     let session = client.session();
-    // The published parameters are downloaded once and are public. Charging
-    // them to the session rather than to each call keeps a batch of queries
-    // from being credited with setup it did not repeat.
-    // Sum the encoded lengths of every published set, not the number of sets.
-    // These are the bytes the session actually downloaded, and with key reuse
-    // they are what the smaller per-query uploads are being traded against, so
-    // counting sets here would hide exactly the cost under measurement.
-    let setup_download_bytes: u64 = session
-        .directory
-        .public_params
-        .iter()
-        .chain(session.pages.public_params.iter())
-        .map(|set| set.len() as u64)
-        .sum();
     let generation_id = session.generation_id.clone();
+    // Re-derived from the session this process fetched, so the reported charge
+    // can be checked against it rather than trusted. The published parameters
+    // are the cost key reuse is traded against, and a count reported where
+    // bytes were meant still looks like a number.
+    let set_bytes = match table {
+        Table::Directory => session.directory.public_params_set_bytes,
+        Table::Pages => session.pages.public_params_set_bytes,
+    };
 
+    // Measurement override. Unset is the policy a wallet would run; a value
+    // forces every table onto that many sets, which is how the fresh and
+    // always-share baselines are produced under this build's accounting.
+    let forced = match std::env::var("PIR_KEY_SETS") {
+        Ok(value) => Some(value.parse::<usize>()?),
+        Err(_) => None,
+    };
     let (decoded, charges) = client
-        .fetch_rows(table, &request.rows, request.pad_to)
+        .fetch_rows_with(table, &request.rows, request.pad_to, forced)
         .await?;
+    // This process starts cold, so it downloaded every set the plan asked for.
+    // A wallet holds one session and would download a set once; the harness
+    // charges each table's sets once per sync for that reason.
+    if charges.setup_download_bytes != charges.public_sets * set_bytes {
+        return Err(format!(
+            "setup charge {} does not match {} sets of {set_bytes} bytes",
+            charges.setup_download_bytes, charges.public_sets
+        )
+        .into());
+    }
 
     use base64::Engine as _;
     let rows = request
@@ -86,7 +102,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             queries: charges.queries,
             upload_bytes: charges.upload_bytes,
             download_bytes: charges.download_bytes,
-            setup_download_bytes,
+            setup_download_bytes: charges.setup_download_bytes,
+            public_sets: charges.public_sets,
+            public_params_set_bytes: set_bytes,
             batches: charges.batches,
             key_upload_bytes: charges.key_upload_bytes,
             generation_id,

@@ -81,20 +81,60 @@ pub struct HistoryTableGeneration {
 /// measured.
 pub const PUBLIC_SETS: usize = 4;
 
-/// One table's session: its identity plus the published public parameters.
+/// Most published sets a client will accept for one table.
+///
+/// The published parameters are downloaded before any query, so a server that
+/// announced an implausible number of sets could make a client spend an
+/// unbounded download deciding not to use them.
+pub const MAX_PUBLIC_SETS: usize = 16;
+
+/// One table's session: its identity and a commitment to its published
+/// parameters, but not the parameters themselves.
+///
+/// The parameter bytes are fetched per slot from
+/// `/v1/transparent-history/{table}/params/{slot}`, because how many sets a
+/// client needs is a per-table decision it makes from its own query count. A
+/// session that inlined all of them would charge every client for sets it will
+/// not use, which is most of what this document exists to avoid.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryTableSession {
     pub generation: HistoryTableGeneration,
     pub scheme: ipir_sp::YpirSchemeParams,
-    /// Base64 published `c1`, one entry per public matrix set. A query names the
-    /// slot it used, and the response is decoded against that slot's entry.
-    pub public_params: Vec<String>,
-    /// Digest over the concatenated sets, so a client cannot be given a
-    /// consistent-looking mixture drawn from different publications.
+    /// How many public matrix sets this table publishes. A client fetches the
+    /// prefix of them it will use, so it is told the count rather than
+    /// assuming one it was built against.
+    pub public_sets: usize,
+    /// Encoded length of one set, in bytes. Every set has the same length,
+    /// which is fixed by the geometry; a client re-derives it and rejects a
+    /// mismatch rather than trusting this field.
+    pub public_params_set_bytes: u64,
+    /// SHA-256 of each published set, in slot order. A client that fetched one
+    /// slot checks that slot against its own entry.
+    pub public_params_set_sha256: Vec<String>,
+    /// SHA-256 over those per-set digests concatenated in slot order.
+    ///
+    /// This commits to the whole publication while still letting a client that
+    /// downloaded a single set verify it, which digesting the concatenated
+    /// parameter bytes would not: that form can only be checked by a client
+    /// holding every set, and so would accept a mixture drawn from different
+    /// publications from any client that did not.
     pub public_params_sha256: String,
     /// First eight bytes of that digest, in hex. Every response carries it so a
     /// client cannot decode against superseded parameters.
     pub public_params_epoch: String,
+}
+
+/// The commitment a session publishes over its parameter sets.
+///
+/// Both sides compute it here so the server cannot publish one rule and the
+/// client check another.
+pub fn public_params_commitment(set_digests: &[[u8; 32]]) -> [u8; 32] {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    for digest in set_digests {
+        hasher.update(digest);
+    }
+    hasher.finalize().into()
 }
 
 /// What `GET /v1/transparent-history/init` returns.

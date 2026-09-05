@@ -10,6 +10,15 @@ cost of the server publishing four public matrix sets per table instead of one.
 This measures that trade on the same mainnet-day generation and workloads as
 [the real-transport measurement](transparent_pir_http.md).
 
+**Superseded as a recommendation.** Sharing keys is measured here as one switch
+for the whole service, which is why it costs the sparse profile 2.05x. Deciding
+it per table, from that table's own query count, removes that cost and beats
+this configuration on every workload: see
+[the per-table key policy](transparent_pir_per_table_reuse.md). The break-evens
+below (2 directory queries, 8 page queries) are computed from key bytes against
+published bytes alone and do not charge the padding a larger batch forces; the
+later document has the corrected thresholds.
+
 ## Result
 
 Per-query upload falls from 106,504 to **41,988 bytes**, a 2.54x reduction,

@@ -1,0 +1,100 @@
+{
+  "classification": "integrated client over real HTTP against a live service; not a mobile device, not TLS, single host loopback",
+  "network": "main",
+  "start": 3470268,
+  "end": 3471419,
+  "blocks": 1152,
+  "generation": "25e663077b64511f60678d629b4a35f9544973d2c0af170cd132d4d52b58113f",
+  "service": "http://127.0.0.1:8092",
+  "machine": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "page_bytes": 17920,
+  "ordinary_retrieval_bytes_same_interval": 2888097,
+  "pad_to": null,
+  "trust": "complete indexer, accepted chain supplied by wallet",
+  "runs": [
+    {
+      "workload": "unused_100",
+      "scripts": 100,
+      "checkpoint": 3470267,
+      "verified_events": 0,
+      "queries": 0,
+      "padding_queries": 0,
+      "batches": 0,
+      "key_upload_bytes": 0,
+      "public_sets_by_table": {
+        "directory": 0,
+        "pages": 0
+      },
+      "public_download_bytes": 174466,
+      "setup_download_bytes": 0,
+      "upload_bytes": 0,
+      "response_bytes": 0,
+      "total_bytes": 174466,
+      "ratio_to_ordinary": 0.06040863585952965,
+      "wall_seconds": 0.1676227911375463
+    },
+    {
+      "workload": "sparse_1",
+      "scripts": 1,
+      "checkpoint": 3470267,
+      "verified_events": 2,
+      "queries": 1,
+      "padding_queries": 0,
+      "batches": 1,
+      "key_upload_bytes": 86016,
+      "public_sets_by_table": {
+        "directory": 1,
+        "pages": 0
+      },
+      "public_download_bytes": 174466,
+      "setup_download_bytes": 14336,
+      "upload_bytes": 106510,
+      "response_bytes": 5137,
+      "total_bytes": 300449,
+      "ratio_to_ordinary": 0.10403009317207836,
+      "wall_seconds": 0.32091458328068256
+    },
+    {
+      "workload": "median_10",
+      "scripts": 10,
+      "checkpoint": 3470267,
+      "verified_events": 20,
+      "queries": 12,
+      "padding_queries": 2,
+      "batches": 3,
+      "key_upload_bytes": 258048,
+      "public_sets_by_table": {
+        "directory": 4,
+        "pages": 0
+      },
+      "public_download_bytes": 174466,
+      "setup_download_bytes": 57344,
+      "upload_bytes": 503859,
+      "response_bytes": 61491,
+      "total_bytes": 797160,
+      "ratio_to_ordinary": 0.2760156601388388,
+      "wall_seconds": 0.09109445801004767
+    },
+    {
+      "workload": "large_1",
+      "scripts": 1,
+      "checkpoint": 3470267,
+      "verified_events": 9152,
+      "queries": 53,
+      "padding_queries": 2,
+      "batches": 14,
+      "key_upload_bytes": 1204224,
+      "public_sets_by_table": {
+        "directory": 1,
+        "pages": 4
+      },
+      "public_download_bytes": 174466,
+      "setup_download_bytes": 301056,
+      "upload_bytes": 2289899,
+      "response_bytes": 1336558,
+      "total_bytes": 4101979,
+      "ratio_to_ordinary": 1.420305135180709,
+      "wall_seconds": 0.7138041672296822
+    }
+  ]
+}

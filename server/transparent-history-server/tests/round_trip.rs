@@ -137,6 +137,31 @@ fn raw_row(table: &[u8], row_bytes: u32, row: usize) -> &[u8] {
     &table[row * row_bytes as usize..(row + 1) * row_bytes as usize]
 }
 
+/// Build a client and give it the published sets it will use.
+///
+/// The session commits to the sets but no longer carries them, because how many
+/// a client needs is its own per-table decision. Tests that query must make that
+/// decision explicitly, which is the point: a client that downloaded nothing
+/// cannot decode anything.
+async fn client_with_sets(
+    state: &ServiceState,
+    session: transparent_history_pir::types::HistoryTableSession,
+    table: Table,
+    sets: usize,
+) -> TableClient {
+    let client = TableClient::new(session, table).unwrap();
+    for slot in 0..sets {
+        let (status, body) = get(
+            state,
+            &format!("/v1/transparent-history/{}/params/{slot}", table.as_str()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        client.install_set(slot, &body).unwrap();
+    }
+    client
+}
+
 #[tokio::test]
 async fn retrieved_rows_equal_the_published_table() {
     let f = fixture().await;
@@ -157,7 +182,7 @@ async fn retrieved_rows_equal_the_published_table() {
             "/v1/transparent-history/pages/query",
         ),
     ] {
-        let client = TableClient::new(session, table).unwrap();
+        let client = client_with_sets(&f.state, session, table, PUBLIC_SETS).await;
         // First, last and interior rows in one batch: an off-by-one in the row
         // mapping, or a slot mixed up with another, survives a single-row test.
         let rows = [0usize, 1, 1023, client.rows() - 1];
@@ -182,7 +207,8 @@ async fn retrieved_rows_equal_the_published_table() {
 #[tokio::test]
 async fn queries_and_responses_have_a_fixed_size() {
     let f = fixture().await;
-    let client = TableClient::new(f.session.pages.clone(), Table::Pages).unwrap();
+    let client =
+        client_with_sets(&f.state, f.session.pages.clone(), Table::Pages, PUBLIC_SETS).await;
 
     let mut sizes = std::collections::BTreeSet::new();
     let mut response_sizes = std::collections::BTreeSet::new();
@@ -214,7 +240,13 @@ async fn queries_and_responses_have_a_fixed_size() {
 #[tokio::test]
 async fn a_query_naming_another_generation_is_refused() {
     let f = fixture().await;
-    let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    let client = client_with_sets(
+        &f.state,
+        f.session.directory.clone(),
+        Table::Directory,
+        PUBLIC_SETS,
+    )
+    .await;
     let mut batch = client.prepare_batch(&[3]).unwrap();
     batch.body[..8].copy_from_slice(&0xdead_beefu64.to_le_bytes());
 
@@ -230,7 +262,13 @@ async fn a_query_naming_another_generation_is_refused() {
 #[tokio::test]
 async fn a_truncated_query_is_refused_rather_than_padded() {
     let f = fixture().await;
-    let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    let client = client_with_sets(
+        &f.state,
+        f.session.directory.clone(),
+        Table::Directory,
+        PUBLIC_SETS,
+    )
+    .await;
     let batch = client.prepare_batch(&[3]).unwrap();
     let truncated = batch.body[..batch.body.len() - 1].to_vec();
 
@@ -259,7 +297,13 @@ async fn a_table_session_does_not_validate_as_the_other_table() {
 #[tokio::test]
 async fn a_batch_that_reuses_a_public_set_is_refused() {
     let f = fixture().await;
-    let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    let client = client_with_sets(
+        &f.state,
+        f.session.directory.clone(),
+        Table::Directory,
+        PUBLIC_SETS,
+    )
+    .await;
     let batch = client.prepare_batch(&[5, 9]).unwrap();
 
     // Rewrite the second query's slot to collide with the first.
@@ -279,7 +323,137 @@ async fn a_batch_that_reuses_a_public_set_is_refused() {
 #[tokio::test]
 async fn a_batch_cannot_exceed_the_published_set_count() {
     let f = fixture().await;
-    let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    let client = client_with_sets(
+        &f.state,
+        f.session.directory.clone(),
+        Table::Directory,
+        PUBLIC_SETS,
+    )
+    .await;
     let rows: Vec<usize> = (0..PUBLIC_SETS + 1).collect();
     assert!(client.prepare_batch(&rows).is_err());
+}
+
+/// The session commits to each set on its own, so a client that downloaded one
+/// can check it. A set served for the wrong slot, or from another publication,
+/// must not install.
+#[tokio::test]
+async fn a_published_set_is_bound_to_its_slot_and_publication() {
+    let f = fixture().await;
+    let client = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    assert_eq!(client.public_sets(), PUBLIC_SETS);
+
+    let (status, slot0) = get(&f.state, "/v1/transparent-history/directory/params/0").await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, slot1) = get(&f.state, "/v1/transparent-history/directory/params/1").await;
+    assert_ne!(slot0, slot1, "two slots published identical parameters");
+    assert_eq!(
+        slot0.len() as u64,
+        f.session.directory.public_params_set_bytes
+    );
+
+    // Right bytes, wrong slot.
+    assert!(client.install_set(1, &slot0).is_err());
+    // The other table's parameters are the same length and a different set.
+    let (_, pages0) = get(&f.state, "/v1/transparent-history/pages/params/0").await;
+    assert!(client.install_set(0, &pages0).is_err());
+    // A slot that was never published.
+    let (status, _) = get(
+        &f.state,
+        &format!("/v1/transparent-history/directory/params/{PUBLIC_SETS}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    assert!(!client.holds_set(0));
+    client.install_set(0, &slot0).unwrap();
+    assert!(client.holds_set(0));
+}
+
+/// A client that did not download a slot's parameters cannot build a query
+/// against it. Sending one would pay for a response it could not decode.
+#[tokio::test]
+async fn a_batch_needing_an_undownloaded_set_is_refused_before_it_is_sent() {
+    let f = fixture().await;
+    let client = client_with_sets(&f.state, f.session.pages.clone(), Table::Pages, 1).await;
+
+    // One query fits in slot 0, which was downloaded.
+    let batch = client.prepare_batch(&[11]).unwrap();
+    let (status, response) = post(
+        &f.state,
+        "/v1/transparent-history/pages/query",
+        batch.body.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        client.decode_batch(batch, &response).unwrap()[0],
+        raw_row(&f.pages, PAGE_ROW_BYTES, 11)
+    );
+
+    // Two would reach slot 1, which was not.
+    assert!(client.prepare_batch(&[11, 12]).is_err());
+}
+
+/// The policy is the point of the change: the same client picks a different
+/// batch size for the two tables in the same sync, from each table's own query
+/// count.
+#[tokio::test]
+async fn the_key_policy_is_decided_per_table_from_that_table_s_query_count() {
+    let f = fixture().await;
+    let directory = TableClient::new(f.session.directory.clone(), Table::Directory).unwrap();
+    let pages = TableClient::new(f.session.pages.clone(), Table::Pages).unwrap();
+
+    // One lookup never repays a second set: there is no second query to share
+    // the keys with, and the extra parameters are paid for regardless.
+    assert_eq!(directory.plan(1).sets, 1);
+    assert_eq!(pages.plan(1).sets, 1);
+    assert_eq!(directory.plan(1).queries, 1);
+
+    // Enough queries and sharing wins. Whatever the threshold is for a given
+    // geometry, the chosen plan must never cost more than issuing fresh keys.
+    for pad_to in 1..=40 {
+        for table in [&directory, &pages] {
+            let costs = table.costs();
+            let chosen = table.plan(pad_to);
+            let fresh = costs.plan_of(pad_to, 1);
+            assert!(
+                chosen.bytes <= fresh.bytes,
+                "plan of {} sets costs {} where fresh costs {} at pad_to {pad_to}",
+                chosen.sets,
+                chosen.bytes,
+                fresh.bytes
+            );
+            assert!(chosen.queries >= pad_to);
+            assert_eq!(chosen.queries, chosen.batches * chosen.sets);
+        }
+    }
+
+    // The saving is real once it is taken: the largest plan the pool allows
+    // must beat fresh keys somewhere in this range, or reuse buys nothing.
+    let costs = pages.costs();
+    assert!(
+        (1..=64).any(|n| costs.plan_of(n, PUBLIC_SETS).bytes < costs.plan_of(n, 1).bytes),
+        "sharing keys never pays for the pages table"
+    );
+}
+
+/// Sets already held are not paid for again, which is what makes the decision
+/// stable across the several calls one sync makes against a table.
+#[tokio::test]
+async fn held_sets_are_not_charged_twice() {
+    let f = fixture().await;
+    let pages = TableClient::new(f.session.pages.clone(), Table::Pages).unwrap();
+    let cold = pages.costs();
+    assert_eq!(cold.held_sets, 0);
+
+    let (_, slot0) = get(&f.state, "/v1/transparent-history/pages/params/0").await;
+    pages.install_set(0, &slot0).unwrap();
+    let warm = pages.costs();
+    assert_eq!(warm.held_sets, 1);
+    assert_eq!(
+        warm.plan_of(4, PUBLIC_SETS).bytes + cold.set_bytes,
+        cold.plan_of(4, PUBLIC_SETS).bytes,
+        "holding one set should save exactly one set's parameters"
+    );
 }

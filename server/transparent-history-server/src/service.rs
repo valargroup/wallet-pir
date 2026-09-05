@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+
 use enhance_pir_server::ipir::{deserialize_first_dim_query, RowPlaintextIter};
 use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
 use ipir_sp::client::reusable::QueryPool;
@@ -24,8 +24,8 @@ use ipir_sp::{IPIRClient, YpirSchemeParams};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use transparent_history_pir::types::{
-    HistorySession, HistoryTableGeneration, HistoryTableSession, Table, NETWORK, PROTOCOL_REVISION,
-    PUBLIC_SETS, SCHEMA_VERSION,
+    public_params_commitment, HistorySession, HistoryTableGeneration, HistoryTableSession, Table,
+    NETWORK, PROTOCOL_REVISION, PUBLIC_SETS, SCHEMA_VERSION,
 };
 
 fn seed_bytes(seed: u64) -> [u8; 32] {
@@ -57,6 +57,8 @@ pub struct TableRuntime {
     pub server: IPIRServer<u16>,
     /// One entry per published set; a query names the slot it used.
     pub sets: Vec<SetRuntime>,
+    /// SHA-256 of each set's published bytes, in slot order.
+    pub set_digests: Vec<[u8; 32]>,
     pub top_key_images: TopKeyImages<'static>,
     pub public_params_sha256: String,
     pub public_params_epoch: [u8; 8],
@@ -98,7 +100,7 @@ impl TableRuntime {
         .map_err(|error| error.to_string())?;
 
         let mut sets = Vec::with_capacity(PUBLIC_SETS);
-        let mut concatenated = Vec::new();
+        let mut set_digests = Vec::with_capacity(PUBLIC_SETS);
         for set in pool.sets().iter().take(PUBLIC_SETS) {
             let crs_blocks = server
                 .perform_offline_precomputation_simplepir(rlwe, set)
@@ -106,16 +108,26 @@ impl TableRuntime {
             let preprocessed =
                 build_pack_preprocessed_blocks(rlwe, &crs_blocks).map_err(|e| e.to_string())?;
             let published_c1 = published_c1_rows(&preprocessed, rlwe.q);
-            concatenated.extend_from_slice(&published_c1);
+            set_digests.push(<[u8; 32]>::from(Sha256::digest(&published_c1)));
             sets.push(SetRuntime {
                 preprocessed,
                 published_c1,
             });
         }
+        // Every set has the same length; a client re-derives it from the
+        // geometry, so a table whose sets disagreed would be unserveable rather
+        // than quietly wrong.
+        if sets
+            .iter()
+            .any(|set| set.published_c1.len() != sets[0].published_c1.len())
+        {
+            return Err("published sets have different lengths".to_string());
+        }
         let top_key_images = TopKeyImages::build(rlwe);
-        // One digest over every set, so a client cannot be handed a mixture
-        // assembled from different publications that each verify alone.
-        let digest = Sha256::digest(&concatenated);
+        // One digest over every set's digest, so a client cannot be handed a
+        // mixture assembled from different publications that each verify alone,
+        // and a client holding only one set can still check it.
+        let digest = public_params_commitment(&set_digests);
         let mut epoch = [0u8; 8];
         epoch.copy_from_slice(&digest[..8]);
 
@@ -125,6 +137,7 @@ impl TableRuntime {
             params,
             server,
             sets,
+            set_digests,
             top_key_images,
             public_params_sha256: hex::encode(digest),
             public_params_epoch: epoch,
@@ -148,11 +161,9 @@ impl TableRuntime {
                 table_sha256: String::new(),
             },
             scheme: self.params.clone(),
-            public_params: self
-                .sets
-                .iter()
-                .map(|set| BASE64_STANDARD.encode(&set.published_c1))
-                .collect(),
+            public_sets: self.sets.len(),
+            public_params_set_bytes: self.sets[0].published_c1.len() as u64,
+            public_params_set_sha256: self.set_digests.iter().map(hex::encode).collect(),
             public_params_sha256: self.public_params_sha256.clone(),
             public_params_epoch: hex::encode(self.public_params_epoch),
         }
@@ -315,6 +326,14 @@ pub fn router(state: ServiceState) -> Router {
             post(directory_query),
         )
         .route("/v1/transparent-history/pages/query", post(pages_query))
+        .route(
+            "/v1/transparent-history/directory/params/:slot",
+            get(directory_params),
+        )
+        .route(
+            "/v1/transparent-history/pages/params/:slot",
+            get(pages_params),
+        )
         .with_state(state)
 }
 
@@ -348,6 +367,42 @@ async fn init(State(state): State<ServiceState>) -> Response {
         StatusCode::OK,
         serde_json::to_value(session).expect("session json"),
     )
+}
+
+/// Serve one published set's parameters.
+///
+/// Public and identical for every client, and the slot requested says nothing
+/// about a selection: it says how many queries the client intends to batch,
+/// which the fixed padding already fixes. Splitting the sets across requests is
+/// what lets a client that will make one query avoid downloading four.
+fn params(state: ServiceState, table: Table, slot: usize) -> Response {
+    let runtime = state.table(table);
+    match runtime.sets.get(slot) {
+        Some(set) => (
+            StatusCode::OK,
+            [("content-type", "application/octet-stream")],
+            set.published_c1.clone(),
+        )
+            .into_response(),
+        None => json(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({ "error": "no such published set" }),
+        ),
+    }
+}
+
+async fn directory_params(
+    State(state): State<ServiceState>,
+    axum::extract::Path(slot): axum::extract::Path<usize>,
+) -> Response {
+    params(state, Table::Directory, slot)
+}
+
+async fn pages_params(
+    State(state): State<ServiceState>,
+    axum::extract::Path(slot): axum::extract::Path<usize>,
+) -> Response {
+    params(state, Table::Pages, slot)
 }
 
 async fn directory_query(State(state): State<ServiceState>, body: axum::body::Bytes) -> Response {
