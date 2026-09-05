@@ -93,7 +93,21 @@ anchors. There is no BIP 157 peer verification and no service signalling here.
 
 ## Coverage boundary
 
-Filters begin at Ironwood activation, height 3,428,143. A wallet whose birthday
-is earlier is not served by this deployment and must cover the earlier range
-another way. That fallback is itself observable to whoever serves it, which is a
-reason to state the boundary rather than let a client discover it as a gap.
+Filters begin at Ironwood activation, height 3,428,143. This is a deliberate
+boundary, not a backlog item: a wallet whose birthday is earlier is not served
+by this deployment and must cover the earlier range another way. A client must
+read `start_height` from `/v1/filters/info` and treat anything below it as
+uncovered, rather than inferring absence of activity there.
+
+Reindexing from genesis was measured before deciding this. It is affordable —
+roughly one to three days of wall clock on comparable hardware and under a
+gigabyte of filters — because throughput is bound by previous-output resolution,
+and the early chain carries far more transparent inputs per block than the
+modern one: 16.4 blocks/s at height 200,000 against 110 blocks/s after
+activation, on the same host. The boundary stands because pre-activation
+coverage is not needed by the wallets this deployment targets, not because
+building it would be expensive. Revisit it if that changes.
+
+The fallback a wallet uses below the boundary is observable to whoever serves
+it, which is the reason to state the boundary here rather than let a client
+discover it as a gap.
