@@ -40,8 +40,8 @@ fn publish(dir: &Path) -> (Vec<u8>, Vec<u8>) {
     let directory = table_bytes(DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, 0x11);
     let pages = table_bytes(PAGE_ROWS, PAGE_ROW_BYTES, 0x77);
     let manifest = serde_json::json!({
-        "schema": 1,
-        "generation_schema": 1,
+        "schema": transparent_history_server::generation::SCHEMA,
+        "generation_schema": transparent_history_server::generation::GENERATION_SCHEMA,
         "network": "main",
         "start": 3_470_268u64,
         "end": 3_471_419u64,
