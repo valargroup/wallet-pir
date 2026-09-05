@@ -1,6 +1,9 @@
 # BIP 158 transparent activity filters: implementation handoff
 
-Date: 2026-09-04. Status: implementation specification; not implemented or deployed.
+Date: 2026-09-04. Status: implemented and deployed. This specification is
+carried out by `pir/transparent-filter` and `server/transparent-filter-server`;
+the results are reported in
+[the implementation and measurements document](transparent_pir_bip158.md).
 Target: reusable Zcash wallet support, with Vizor as the first consumer.
 
 ## Decision and outcome
