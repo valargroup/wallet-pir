@@ -123,6 +123,7 @@ if [[ "$MODE" == "validate" ]]; then
   render_caddyfile "$ENHANCE_CADDYFILE" "$rendered"
   grep -q 'handle_path /apm\*' "$rendered" || { echo "Caddyfile does not route /apm to the sidecar" >&2; exit 1; }
   grep -q 'handle /metrics' "$rendered" || { echo "Caddyfile does not block /metrics" >&2; exit 1; }
+  grep -q 'handle /v1/filters/\*' "$rendered" || { echo "Caddyfile does not route /v1/filters to the filter service" >&2; exit 1; }
   rm -f "$rendered"
   echo "$SERVER_CONFIG"
   exit 0

@@ -37,6 +37,22 @@ pub struct FilterServiceHealth {
     pub filters_stored: u64,
 }
 
+/// One entry of `GET /v1/filters/digests`.
+///
+/// The digest is derivable from filter bytes the caller already holds, so this
+/// exists for the case where it does not hold them: comparing what different
+/// operators publish for the same block without downloading both sets of
+/// filters. Agreement across independent operators is evidence about
+/// construction that a single operator's own digest cannot provide, since a
+/// digest supplied alongside a false filter simply commits to the false filter.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct FilterDigestEntry {
+    pub height: u64,
+    pub block_hash: String,
+    /// Double-SHA-256 of the serialized filter bytes, in display hex.
+    pub filter_hash: String,
+}
+
 /// One entry of `GET /v1/filters/chain`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ChainEntry {
