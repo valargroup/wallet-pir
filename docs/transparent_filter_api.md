@@ -84,6 +84,15 @@ operators**. Agreement between operators that do not share an indexer is
 evidence about construction that no single operator can produce about itself.
 A wallet relying on one operator is trusting that operator's completeness.
 
+**Current position: single-operator trust is accepted.** One operator serves
+these filters today, so the comparison above is enabled by the API and is not
+performed by anyone. A wallet using this deployment trusts our indexer to have
+built every filter over the whole block. This is a deliberate decision for the
+present stage, not an oversight, and it is the assumption to revisit first if
+these filters are ever relied on for balances shown to users, or served to
+wallets outside our own. Standing up a second independent operator is what would
+change it; nothing in the client needs to change to take advantage.
+
 The crate implements the BIP 157 filter-header chain construction
 (`filter_header` in `pir/transparent-filter/src/digest.rs`), but this service
 does not publish a header chain. Its coverage starts at Ironwood activation
