@@ -25,6 +25,11 @@ struct Response {
     upload_bytes: u64,
     download_bytes: u64,
     setup_download_bytes: u64,
+    /// Batches sent, and the bytes of packing keys within the upload. Keys
+    /// travel once per batch, so these two separate the reuse saving from the
+    /// total rather than leaving it to be inferred.
+    batches: u64,
+    key_upload_bytes: u64,
     generation_id: String,
 }
 
@@ -44,8 +49,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The published parameters are downloaded once and are public. Charging
     // them to the session rather than to each call keeps a batch of queries
     // from being credited with setup it did not repeat.
-    let setup_download_bytes =
-        (session.directory.public_params.len() + session.pages.public_params.len()) as u64;
+    // Sum the encoded lengths of every published set, not the number of sets.
+    // These are the bytes the session actually downloaded, and with key reuse
+    // they are what the smaller per-query uploads are being traded against, so
+    // counting sets here would hide exactly the cost under measurement.
+    let setup_download_bytes: u64 = session
+        .directory
+        .public_params
+        .iter()
+        .chain(session.pages.public_params.iter())
+        .map(|set| set.len() as u64)
+        .sum();
     let generation_id = session.generation_id.clone();
 
     let (decoded, charges) = client
@@ -73,6 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             upload_bytes: charges.upload_bytes,
             download_bytes: charges.download_bytes,
             setup_download_bytes,
+            batches: charges.batches,
+            key_upload_bytes: charges.key_upload_bytes,
             generation_id,
         })?
     );

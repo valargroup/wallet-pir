@@ -44,6 +44,12 @@ class HttpPirTransport:
         self.timeout = timeout
         self.calls = []
         self.session = None
+        # Batches and key uploads separate the reuse saving from the totals:
+        # packing keys travel once per batch, so queries-per-batch is what the
+        # measurement is actually varying.
+        self.batches = 0
+        self.key_upload_bytes = 0
+        self.setup_charged = False
 
     def _init(self):
         if self.session is None:
@@ -94,6 +100,21 @@ class HttpPirTransport:
         result = json.loads(completed.stdout)
         wall_ms = (time.monotonic() - started) * 1000.0
 
+        # Cross-check the setup charge against the session this transport
+        # fetched itself. The client reports what it downloaded; recomputing it
+        # from an independent copy catches a units mistake, which is otherwise
+        # invisible because a wrong-but-small number still looks like a number.
+        expected_setup = sum(
+            len(part)
+            for table_session in (session["directory"], session["pages"])
+            for part in table_session["public_params"]
+        )
+        if result["setup_download_bytes"] != expected_setup:
+            raise HttpTransportError(
+                f"setup charge {result['setup_download_bytes']} does not match the "
+                f"{expected_setup} bytes of published parameters in the session"
+            )
+
         decoded = {
             int(row): base64.b64decode(value)
             for row, value in result["rows"].items()
@@ -105,11 +126,25 @@ class HttpPirTransport:
                 raise HttpTransportError(f"row {row} is {len(value)} bytes")
 
         self.calls.append((table, list(rows), pad_to))
+        self.batches += result.get("batches", 0)
+        self.key_upload_bytes += result.get("key_upload_bytes", 0)
+        # Charge the published parameters once per sync, not once per call.
+        # Each call runs a fresh CLI process that reconnects, but a wallet holds
+        # one session and caches public parameters across it; billing every
+        # batch for them would invent setup traffic a real client never sends.
+        if self.setup_charged:
+            setup_bytes = 0
+        else:
+            setup_bytes = result["setup_download_bytes"]
+            self.setup_charged = True
+
         cost = {
             "queries": result["queries"],
             # The published parameters are fetched once per session and are
             # public, so they are charged to the session rather than to a call.
-            "setup_download_bytes": result["setup_download_bytes"],
+            # With key reuse the server publishes one set per batch slot, so
+            # this is where reuse costs what it saves on uploads.
+            "setup_download_bytes": setup_bytes,
             "upload_bytes": result["upload_bytes"],
             "response_bytes": result["download_bytes"],
             "core_ms": wall_ms,

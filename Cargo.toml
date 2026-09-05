@@ -54,3 +54,4 @@ opt-level = 1
 inherits = "release"
 lto = "thin"
 codegen-units = 16
+
