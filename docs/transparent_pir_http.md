@@ -33,7 +33,7 @@ blocks): directory 4,096 × 3,584 B, pages 4,096 × 17,920 B, two inline events,
 | 100 unchanged scripts | 0 | 174,466 | 0 | 0 | 0 | 174,466 | 0.06× |
 | One script, 2 events | 1 | 174,466 | 114,692 | 106,504 | 5,136 | 400,798 | 0.14× |
 | Ten median histories | 10 | 174,466 | 114,692 | 1,065,040 | 51,360 | 1,405,558 | 0.49× |
-| Largest history, 9,152 events | 51 | 174,466 | 229,384 | 5,431,704 | 1,285,936 | 7,121,490 | 2.47× |
+| Largest history, 9,152 events | 51 | 174,466 | 114,692 | 5,431,704 | 1,285,936 | 7,006,798 | 2.43× |
 
 Every run was checked against the independent ledger oracle before its bytes
 were recorded: 0, 2, 20 and 9,152 events recovered exactly, with matching
@@ -42,9 +42,9 @@ result.
 
 ## What this changes, and what it does not
 
-**Transport is not where the cost is.** Real HTTP totals run 1–3% above the
+**Transport is not where the cost is.** Real HTTP totals run 0.4–3% above the
 in-process figures for the same workloads (174,379 → 174,466; 6,976,811 →
-7,121,490). Framing is negligible against a 106,504-byte query. The earlier
+7,006,798). Framing is negligible against a 106,504-byte query. The earlier
 evidence's byte figures were substantially right, and the shape of the
 conclusion is unchanged: sparse wallets win, heavy histories lose.
 
@@ -71,6 +71,20 @@ queries per sync exceeds the budget.
 measured about 49 KB of upload per query where this measures 106 KB. Whether the
 288-block interval holds under realistic padding depends on it, and that is now
 a measured claim rather than an assumption.
+
+## Correction
+
+The largest-history row originally reported 229,384 setup bytes and a 7,121,490
+byte total, at 2.47x ordinary retrieval. Published parameters were charged once
+per client process rather than once per sync, and that workload is driven by
+more than one process, so they were counted twice. A wallet holds one session
+and caches them across it.
+
+The corrected figures are above: 114,692 setup bytes, 7,006,798 total, 2.43x.
+The raw per-process value is kept in the evidence as
+`setup_download_bytes_as_measured`. No other row was affected, because no other
+workload used more than one process. The harness now charges the session once
+and cross-checks the charge against the session it fetched itself.
 
 ## Limitations
 
