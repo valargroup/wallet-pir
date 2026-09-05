@@ -44,8 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The published parameters are downloaded once and are public. Charging
     // them to the session rather than to each call keeps a batch of queries
     // from being credited with setup it did not repeat.
-    let setup_download_bytes = (session.directory.public_params.len()
-        + session.pages.public_params.len()) as u64;
+    let setup_download_bytes =
+        (session.directory.public_params.len() + session.pages.public_params.len()) as u64;
     let generation_id = session.generation_id.clone();
 
     let (decoded, charges) = client

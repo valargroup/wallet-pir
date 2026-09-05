@@ -113,6 +113,8 @@ class HttpPirTransport:
             "upload_bytes": result["upload_bytes"],
             "response_bytes": result["download_bytes"],
             "core_ms": wall_ms,
-            "padding_queries": pad_to - len(rows),
         }
+        # Deliberately not a cost key: sync accumulates every key it is handed
+        # into the wallet's running cost, and an unknown one aborts the sync.
+        # Padding is recorded on the transport instead, in self.calls.
         return decoded, cost

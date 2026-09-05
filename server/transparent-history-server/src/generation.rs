@@ -37,10 +37,17 @@ pub struct TableGeometry {
     pub sha256: String,
 }
 
+/// Schema identifiers the harness writes. They are opaque strings, and this
+/// server refuses any value it was not written against rather than guessing at
+/// a layout: a generation whose entry or page encoding changed would decode to
+/// plausible nonsense instead of failing.
+pub const SCHEMA: &str = "transparent-incremental-research-v1";
+pub const GENERATION_SCHEMA: &str = "transparent-incremental-generation-v1";
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Manifest {
-    pub schema: u32,
-    pub generation_schema: u32,
+    pub schema: String,
+    pub generation_schema: String,
     pub network: String,
     pub start: u64,
     pub end: u64,
@@ -118,6 +125,18 @@ impl LoadedGeneration {
         if name != generation_id {
             return Err(GenerationError::Invalid(format!(
                 "generation directory is named {name} but its manifest digests to {generation_id}"
+            )));
+        }
+        if manifest.schema != SCHEMA || manifest.generation_schema != GENERATION_SCHEMA {
+            return Err(GenerationError::Invalid(format!(
+                "generation declares schema {}/{}, this server serves {SCHEMA}/{GENERATION_SCHEMA}",
+                manifest.schema, manifest.generation_schema
+            )));
+        }
+        if manifest.network != transparent_history_pir::types::NETWORK {
+            return Err(GenerationError::Invalid(format!(
+                "generation is for network {}",
+                manifest.network
             )));
         }
         if manifest.end < manifest.start {
