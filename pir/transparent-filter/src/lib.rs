@@ -39,4 +39,4 @@ pub use profile::{MAINNET_GENESIS_DISPLAY, NETWORK, PROFILE, START_HEIGHT};
 pub use script::ScriptBytes;
 pub use transport::{ByteCharges, FileTransport, FilterTransport, RangeRequest};
 pub use validate::{validate_filter, FilterLimits, ValidatedFilter};
-pub use wire::{ChainEntry, FilterServiceHealth, FilterServiceInfo};
+pub use wire::{ChainEntry, FilterDigestEntry, FilterServiceHealth, FilterServiceInfo};

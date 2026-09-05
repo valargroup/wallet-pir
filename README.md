@@ -73,10 +73,14 @@ and the coordinator does not publish them; see
 `pir/transparent-filter` implements the `zcash-transparent-basic-v1` BIP 158
 profile, and `server/transparent-filter-server` builds one filter per accepted
 block from Zakura and serves bounded ranges. It runs on the coordinator beside
-the archive node, bound to loopback: there is no public route and no wallet
-client is enabled.
+the archive node, and its wallet-facing paths are served publicly under
+`/v1/filters/`; its operator surfaces are not.
 
+- [Public API](docs/transparent_filter_api.md)
 - [Range envelope format](docs/transparent_filter_envelope.md)
 
 Filters let a wallet test its own scripts locally. They do not prove the server
-built them completely; that remains a trusted-indexer assumption.
+built them completely; that remains a trusted-indexer assumption. Because a
+negative result advances coverage, an omitted script produces a wrong balance
+rather than a visible failure, so `/v1/filters/digests` exists to let a wallet
+compare what independent operators publish for the same blocks.
