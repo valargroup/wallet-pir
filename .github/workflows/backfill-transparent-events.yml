@@ -22,7 +22,7 @@ on:
         required: true
         default: status
         type: choice
-        options: [start, status, stop, census]
+        options: [start, status, stop, census, publish]
       ref:
         description: Full commit SHA on main to build (required for start)
         required: false
@@ -51,6 +51,7 @@ env:
   UNIT: transparent-event-ingest
   DATA_DIR: /srv/zakura/transparent-event-data
   BIN: /usr/local/bin/transparent-event-ingest
+  SHARD_DIR: /srv/zakura/transparent-shards
 
 jobs:
   backfill:
@@ -77,13 +78,13 @@ jobs:
           fi
 
       - uses: actions/checkout@v4
-        if: inputs.action == 'start' || inputs.action == 'census'
+        if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish'
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
-        if: inputs.action == 'start' || inputs.action == 'census'
+        if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish'
         with:
           toolchain: 1.91.0
 
@@ -111,6 +112,29 @@ jobs:
             echo '## Shard census'
             echo '```'
             cat census.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Build and run the shard publisher
+        if: inputs.action == 'publish'
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p transparent-filter-server --bin shard-publish
+          # Read-only against the journal; writes only its own output directory.
+          # Publication is immutable, so re-running verifies rather than
+          # rewrites and a changed byte is a hard error.
+          sudo ./target/release/shard-publish \
+            --data-dir "$DATA_DIR" \
+            --output "$SHARD_DIR" \
+            --zakura-cookie /root/.cache/zakura/.cookie 2>&1 | tee publish.txt
+          echo
+          sudo du -sh "$SHARD_DIR"
+          {
+            echo '## Shard publication'
+            echo '```'
+            tail -40 publish.txt
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
 

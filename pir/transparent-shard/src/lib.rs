@@ -12,6 +12,7 @@
 
 pub mod build;
 pub mod layout;
+pub mod manifest;
 pub mod records;
 pub mod seal;
 
@@ -19,6 +20,9 @@ pub use build::{build_shard, candidate_rows, BuildError, BuiltShard};
 pub use layout::{
     page_rows_for, DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, PAGE_ROWS,
     PAGE_ROW_BYTES,
+};
+pub use manifest::{
+    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
 };
 pub use records::{
     decode_directory_row, encode_directory_row, DirectoryEntry, Page, RecordError,
