@@ -28,13 +28,16 @@ pub struct ByteCharges {
     pub map_bytes: u64,
     /// Public activity filters. Paid by every wallet whether or not it matches.
     pub filter_bytes: u64,
-    /// Published PIR setup, once per shard opened.
+    /// Published PIR setup, once per segment opened. A shard normally has one
+    /// segment per table; one that did not fit the pinned geometry has more,
+    /// and each publishes its own `c1`.
     pub setup_bytes: u64,
     /// Private query uploads.
     pub query_upload: u64,
     /// Private query responses.
     pub query_download: u64,
     pub queries: u64,
+    /// Setups fetched: one per segment of each table a sync opened.
     pub shards_opened: u64,
     pub filters_checked: u64,
 }
@@ -81,9 +84,18 @@ pub trait ShardTransport {
     /// The service's init document, as JSON, with the bytes it cost.
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError>;
 
-    /// One shard's published setup for one table, as JSON, with its cost.
-    fn setup(&mut self, shard_id: u64, table: Table) -> Result<(Vec<u8>, u64), BoxError>;
+    /// One segment's published setup for one table, as JSON, with its cost.
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError>;
 
-    /// Answers one private query. The body is opaque and fixed length.
+    /// Answers one private query, against every segment of the shard.
+    ///
+    /// The body is opaque and fixed length, and names a row within a segment
+    /// rather than a segment: the answer carries one body per segment, in
+    /// segment order.
     fn query(&mut self, shard_id: u64, table: Table, body: &[u8]) -> Result<Vec<u8>, BoxError>;
 }

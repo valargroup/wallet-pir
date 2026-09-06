@@ -103,11 +103,16 @@ impl ShardTransport for HttpShards {
         Ok((bytes, len))
     }
 
-    fn setup(&mut self, shard_id: u64, table: Table) -> Result<(Vec<u8>, u64), BoxError> {
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/setup/{}",
+                "{}/v1/shards/{shard_id}/setup/{}/{segment}",
                 self.base,
                 table.as_str()
             ))

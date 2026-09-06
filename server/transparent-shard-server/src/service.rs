@@ -15,6 +15,13 @@
 //! does *not* follow, because it is derived from each shard's own database — so
 //! a client validates parameters once and fetches setup per shard.
 //!
+//! **A shard's segments are answered together.** A shard whose content did not
+//! fit one segment of the pinned geometry has several, and a query names the
+//! row within a segment, never the segment. One request is evaluated against
+//! every segment of the shard and the results are returned in segment order, so
+//! which segment holds the selected script — a function of the script — is not
+//! something the wallet has to disclose in order to ask.
+//!
 //! What this service does not do is serve filters. Those are public and belong
 //! to the filter service: a wallet must not learn to fetch public bytes from
 //! the same place it makes private requests.
@@ -167,12 +174,15 @@ impl TableRuntime {
     }
 }
 
+/// A runtime's address: shard, table, and segment within that table.
+type RuntimeKey = (u64, &'static str, u32);
+
 pub struct Inner {
     set: ShardSet,
     directory_params: SharedParams,
     pages_params: SharedParams,
-    /// Built on first use and kept. Keyed by shard and table.
-    runtimes: Mutex<HashMap<(u64, &'static str), Arc<TableRuntime>>>,
+    /// Built on first use and kept. Keyed by shard, table and segment.
+    runtimes: Mutex<HashMap<RuntimeKey, Arc<TableRuntime>>>,
 }
 
 #[derive(Clone)]
@@ -200,11 +210,17 @@ pub struct InitResponse {
     pub pages_setup_seed: u64,
 }
 
-/// What `GET /v1/shards/{id}/setup/{table}` returns.
+/// What `GET /v1/shards/{id}/setup/{table}/{segment}` returns.
+///
+/// Per segment, because the published `c1` is derived from each segment's own
+/// database. A shard with one segment — the ordinary case — has one of these
+/// per table.
 #[derive(Serialize)]
 pub struct SetupResponse {
     pub shard_id: u64,
     pub table: String,
+    pub segment: u32,
+    pub segments: u32,
     pub public_params: String,
     pub public_params_sha256: String,
     pub public_params_epoch: String,
@@ -229,9 +245,25 @@ impl ServiceState {
         }
     }
 
-    /// The runtime for one shard's table, building it if this is its first use.
-    fn runtime(&self, shard_id: u64, table: Table) -> Result<Arc<TableRuntime>, String> {
-        let key = (shard_id, table.as_str());
+    /// How many segments a shard's table has.
+    fn segments(&self, shard_id: u64, table: Table) -> Result<u32, String> {
+        Ok(self
+            .inner
+            .set
+            .get(shard_id)
+            .ok_or_else(|| format!("no shard {shard_id}"))?
+            .segments(table))
+    }
+
+    /// The runtime for one segment of one shard's table, building it if this is
+    /// its first use.
+    fn runtime(
+        &self,
+        shard_id: u64,
+        table: Table,
+        segment: u32,
+    ) -> Result<Arc<TableRuntime>, String> {
+        let key = (shard_id, table.as_str(), segment);
         if let Some(runtime) = self.inner.runtimes.lock().expect("runtimes").get(&key) {
             return Ok(runtime.clone());
         }
@@ -240,11 +272,13 @@ impl ServiceState {
             .set
             .get(shard_id)
             .ok_or_else(|| format!("no shard {shard_id}"))?;
-        let built = Arc::new(TableRuntime::build(
-            self.shared(table),
-            table,
-            shard.table(table),
-        )?);
+        let rows = shard.table(table, segment).ok_or_else(|| {
+            format!(
+                "shard {shard_id} has no {} segment {segment}",
+                table.as_str()
+            )
+        })?;
+        let built = Arc::new(TableRuntime::build(self.shared(table), table, rows)?);
         // A concurrent request may have built it first; either copy is
         // equivalent, since the build is a pure function of the shard's bytes.
         let mut runtimes = self.inner.runtimes.lock().expect("runtimes");
@@ -280,7 +314,7 @@ pub fn router(state: ServiceState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/shards", get(shard_map))
         .route("/v1/shards/init", get(init))
-        .route("/v1/shards/:shard_id/setup/:table", get(setup))
+        .route("/v1/shards/:shard_id/setup/:table/:segment", get(setup))
         .route("/v1/shards/:shard_id/query/:table", post(query))
         .with_state(state)
 }
@@ -347,18 +381,24 @@ async fn init(State(state): State<ServiceState>) -> Response {
 
 async fn setup(
     State(state): State<ServiceState>,
-    AxumPath((shard_id, table)): AxumPath<(u64, String)>,
+    AxumPath((shard_id, table, segment)): AxumPath<(u64, String, u32)>,
 ) -> Response {
     let Some(table) = parse_table(&table) else {
         return bad_request("unknown table");
     };
-    let runtime = match state.runtime(shard_id, table) {
+    let segments = match state.segments(shard_id, table) {
+        Ok(segments) => segments,
+        Err(error) => return bad_request(error),
+    };
+    let runtime = match state.runtime(shard_id, table, segment) {
         Ok(runtime) => runtime,
         Err(error) => return bad_request(error),
     };
     let body = SetupResponse {
         shard_id,
         table: table.as_str().to_string(),
+        segment,
+        segments,
         public_params: BASE64_STANDARD.encode(&runtime.public_params),
         public_params_sha256: runtime.public_params_sha256.clone(),
         public_params_epoch: hex::encode(runtime.public_params_epoch),
@@ -377,17 +417,29 @@ async fn query(
     let Some(table) = parse_table(&table) else {
         return bad_request("unknown table");
     };
-    let runtime = match state.runtime(shard_id, table) {
-        Ok(runtime) => runtime,
+    let segments = match state.segments(shard_id, table) {
+        Ok(segments) => segments,
         Err(error) => return bad_request(error),
     };
-    match runtime.evaluate(state.shared(table), shard_id, &body) {
-        Ok(response) => (
-            StatusCode::OK,
-            [("content-type", "application/octet-stream")],
-            response,
-        )
-            .into_response(),
-        Err(error) => bad_request(error),
+    // Every segment answers the same query, and the results come back in
+    // segment order. The client keeps the row whose contents it can identify
+    // and discards the rest; asking only the segment that holds the script
+    // would disclose the script's placement, which is a function of the script.
+    let mut answer = Vec::new();
+    for segment in 0..segments {
+        let runtime = match state.runtime(shard_id, table, segment) {
+            Ok(runtime) => runtime,
+            Err(error) => return bad_request(error),
+        };
+        match runtime.evaluate(state.shared(table), shard_id, &body) {
+            Ok(response) => answer.extend(response),
+            Err(error) => return bad_request(error),
+        }
     }
+    (
+        StatusCode::OK,
+        [("content-type", "application/octet-stream")],
+        answer,
+    )
+        .into_response()
 }

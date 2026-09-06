@@ -10,6 +10,16 @@
 //! The row widths come from the mainnet study's measured sweep: a 3,584-byte
 //! directory row with two inline events, and 17,920-byte page rows, which was
 //! the best-performing page width it tested.
+//!
+//! # Segments
+//!
+//! Row *counts* are pinned per segment, not per shard. A shard normally has one
+//! segment of each table and nothing below is visible; a shard whose content
+//! does not fit one segment gets another of the same geometry, so the parameter
+//! set stays shared. A shard's logical row space is its segments concatenated,
+//! and a row index is taken over that whole space — which is why placement
+//! stays even instead of spilling into a last segment, and why a page extent
+//! that crosses a segment is ordinary addressing.
 
 use transparent_events::EVENT_BYTES;
 
@@ -76,9 +86,52 @@ pub const fn page_rows_for(events: u32) -> u64 {
     (paged as u64).div_ceil(EVENTS_PER_PAGE as u64)
 }
 
+/// Segments needed to hold `rows` rows, at `per_segment` rows each.
+///
+/// Never zero: a shard with no events still publishes an empty segment, because
+/// a wallet must be able to establish absence by querying rather than by being
+/// told there is nothing to query.
+pub const fn segments_for(rows: u64, per_segment: u64) -> u32 {
+    let needed = rows.div_ceil(per_segment);
+    if needed == 0 {
+        1
+    } else {
+        needed as u32
+    }
+}
+
+/// Splits a row index over a shard's logical row space into its segment and the
+/// row within that segment.
+///
+/// The row within the segment is what a query names. It is the same index in
+/// every segment, because every segment is asked: naming the segment would
+/// disclose which one holds the script, and the script is what chose it.
+pub const fn split_row(row: u64, per_segment: u64) -> (u32, u64) {
+    ((row / per_segment) as u32, row % per_segment)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shard_always_has_at_least_one_segment_of_each_table() {
+        assert_eq!(segments_for(0, PAGE_ROWS as u64), 1);
+        assert_eq!(segments_for(1, PAGE_ROWS as u64), 1);
+        assert_eq!(segments_for(PAGE_ROWS as u64, PAGE_ROWS as u64), 1);
+        assert_eq!(segments_for(PAGE_ROWS as u64 + 1, PAGE_ROWS as u64), 2);
+    }
+
+    /// A page extent that runs past a segment boundary is ordinary addressing,
+    /// not a special case: the shard's page space is its segments concatenated.
+    #[test]
+    fn a_row_splits_into_its_segment_and_its_row_within_it() {
+        let per = PAGE_ROWS as u64;
+        assert_eq!(split_row(0, per), (0, 0));
+        assert_eq!(split_row(per - 1, per), (0, per - 1));
+        assert_eq!(split_row(per, per), (1, 0));
+        assert_eq!(split_row(2 * per + 7, per), (2, 7));
+    }
 
     #[test]
     fn a_page_holds_the_events_its_width_allows() {

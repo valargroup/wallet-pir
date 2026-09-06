@@ -33,9 +33,15 @@
 //! shard *before* it is added; reaching a target seals *after*. Targets should
 //! sit below capacity by at least the largest block worth accommodating.
 //!
-//! A single block that alone exceeds a capacity cannot be placed in any shard.
-//! That is reported as an error rather than silently sealed over, because the
-//! alternative is a shard whose tables do not fit their own geometry.
+//! # The block that fits nowhere
+//!
+//! Sealing cannot help a block whose own content exceeds a capacity: there is
+//! nothing to seal before it. Refusing to publish it would let one purchased
+//! block halt the service, so such a block is absorbed into a shard of its own,
+//! and the builder gives that shard as many segments of the pinned geometry as
+//! its content needs. The seal thresholds are per segment, so this changes
+//! nothing for ordinary shards — the block that overran a capacity is above
+//! every target too, so the shard closes immediately after it.
 
 use crate::layout::page_rows_for;
 use std::collections::{HashMap, HashSet};
@@ -80,15 +86,6 @@ pub struct SealPolicy {
 pub enum SealError {
     #[error("invalid seal limits: {0}")]
     Limits(String),
-    #[error(
-        "block {height} alone needs {needed} {quantity}, more than a shard's capacity of {capacity}"
-    )]
-    BlockExceedsCapacity {
-        height: u64,
-        quantity: &'static str,
-        needed: u64,
-        capacity: u64,
-    },
     #[error("block {height} does not follow {expected}")]
     OutOfOrder { height: u64, expected: u64 },
 }
@@ -122,6 +119,9 @@ pub enum SealReason {
     /// The next block would have breached a capacity, so the shard closed
     /// before it.
     WouldExceedCapacity(&'static str),
+    /// The shard holds a single block that exceeds a capacity on its own, so it
+    /// closed immediately after it. Its tables need more than one segment.
+    BlockExceedsCapacity(&'static str),
 }
 
 /// Streams blocks in height order and emits shard boundaries.
@@ -273,57 +273,48 @@ impl Sealer {
         }
     }
 
-    /// Offers one block to the sealer, returning any shard this block sealed.
+    /// Offers one block to the sealer, returning the shards it sealed.
     ///
-    /// A returned shard never contains this block: it is the shard that ended
-    /// before it, closed because adding the block would have breached a
-    /// capacity. A shard closed by reaching a target does contain the block,
-    /// and is returned by the *next* call or by [`Sealer::finish`].
+    /// Usually none or one. A shard returned *before* this block was closed
+    /// because adding the block would have breached a capacity, and does not
+    /// contain it; a shard closed by reaching a target does contain it.
+    ///
+    /// Two shards come back only for a block that breaches a capacity on its
+    /// own: the shard that ended before it, and the single-block shard holding
+    /// it. That shard needs more than one segment per table, and the builder
+    /// gives it those — no valid block is ever refused, because a service that
+    /// stops publishing on one adversarial block is not available.
     pub fn push_block(
         &mut self,
         height: u64,
         events: &[(ScriptBytes, TransparentEvent)],
-    ) -> Result<Option<SealedShard>, SealError> {
+    ) -> Result<Vec<SealedShard>, SealError> {
         let expected = self.next_expected.unwrap_or(self.first_height);
         if height != expected {
             return Err(SealError::OutOfOrder { height, expected });
         }
 
-        let mut sealed = None;
-        if let Some((quantity, needed, capacity)) = self.over_capacity(&self.projected(events)) {
-            if self.start_height.is_none() {
-                // Nothing to seal before it, so the block cannot be placed at
-                // all. Failing here is the point: a shard built anyway would
-                // not fit the geometry every other shard shares, and the shared
-                // parameter set would stop being shared.
-                return Err(SealError::BlockExceedsCapacity {
-                    height,
-                    quantity,
-                    needed,
-                    capacity,
-                });
+        let mut sealed = Vec::new();
+        let mut oversized = None;
+        if let Some((quantity, _, _)) = self.over_capacity(&self.projected(events)) {
+            if self.start_height.is_some() {
+                sealed.push(self.close(Some(SealReason::WouldExceedCapacity(quantity))));
             }
-            sealed = Some(self.close(Some(SealReason::WouldExceedCapacity(quantity))));
-            // Re-check against the now-empty shard: a block too large for any
-            // shard must be reported, not carried silently into a fresh one.
-            if let Some((quantity, needed, capacity)) = self.over_capacity(&self.projected(events))
-            {
-                return Err(SealError::BlockExceedsCapacity {
-                    height,
-                    quantity,
-                    needed,
-                    capacity,
-                });
+            // Re-check against the now-empty shard. Still over means the block
+            // exceeds a capacity by itself, so it becomes a shard of its own
+            // and is sealed as soon as it is absorbed.
+            if let Some((quantity, _, _)) = self.over_capacity(&self.projected(events)) {
+                oversized = Some(quantity);
             }
         }
 
         self.absorb(height, events);
         self.next_expected = Some(height + 1);
 
-        if sealed.is_none() {
-            if let Some(quantity) = self.reached_target() {
-                return Ok(Some(self.close(Some(SealReason::ReachedTarget(quantity)))));
-            }
+        if let Some(quantity) = oversized {
+            sealed.push(self.close(Some(SealReason::BlockExceedsCapacity(quantity))));
+        } else if let Some(quantity) = self.reached_target() {
+            sealed.push(self.close(Some(SealReason::ReachedTarget(quantity))));
         }
         Ok(sealed)
     }
@@ -331,8 +322,9 @@ impl Sealer {
     /// Closes whatever is still accumulating.
     ///
     /// The result is the tail: a shard that reached no limit and is therefore
-    /// still growing as the chain does. It must be published as unsealed, and a
-    /// consumer must not treat it as immutable.
+    /// still growing as the chain does. It is published as a provisional
+    /// revision, immutable under its own digest but expected to be superseded,
+    /// and a consumer must not treat the range it covers as settled.
     pub fn finish(&mut self) -> Option<SealedShard> {
         self.start_height?;
         Some(self.close(None))
@@ -379,6 +371,13 @@ mod tests {
         )
     }
 
+    /// The single shard a push was expected to seal.
+    fn one(sealed: Result<Vec<SealedShard>, SealError>) -> SealedShard {
+        let mut sealed = sealed.expect("no valid block is ever refused");
+        assert_eq!(sealed.len(), 1, "expected exactly one sealed shard");
+        sealed.pop().expect("one shard")
+    }
+
     /// Distinct scripts, each with one event, so only the script limit bites.
     fn block_of_new_scripts(
         height: u64,
@@ -405,7 +404,7 @@ mod tests {
         for height in 100..110 {
             assert_eq!(
                 sealer.push_block(height, &block_of_new_scripts(height, 0, 3)),
-                Ok(None)
+                Ok(Vec::new())
             );
         }
         let tail = sealer.finish().expect("a tail");
@@ -424,12 +423,9 @@ mod tests {
         let mut sealer = Sealer::new(policy((10, 1_000), (1_000, 10_000)), 100);
         assert_eq!(
             sealer.push_block(100, &block_of_new_scripts(100, 0, 4)),
-            Ok(None)
+            Ok(Vec::new())
         );
-        let sealed = sealer
-            .push_block(101, &block_of_new_scripts(101, 4, 6))
-            .unwrap()
-            .expect("target reached");
+        let sealed = one(sealer.push_block(101, &block_of_new_scripts(101, 4, 6)));
         assert_eq!(sealed.reason, Some(SealReason::ReachedTarget("scripts")));
         assert_eq!((sealed.start_height, sealed.end_height), (100, 101));
         assert_eq!(sealed.occupancy.scripts, 10);
@@ -443,14 +439,11 @@ mod tests {
         let mut sealer = Sealer::new(policy((100, 120), (10_000, 20_000)), 100);
         assert_eq!(
             sealer.push_block(100, &block_of_new_scripts(100, 0, 90)),
-            Ok(None)
+            Ok(Vec::new())
         );
         // 90 + 50 = 140, past the capacity of 120, so this block starts a new
         // shard instead of overflowing the current one.
-        let sealed = sealer
-            .push_block(101, &block_of_new_scripts(101, 1_000, 50))
-            .unwrap()
-            .expect("capacity would be breached");
+        let sealed = one(sealer.push_block(101, &block_of_new_scripts(101, 1_000, 50)));
         assert_eq!(
             sealed.reason,
             Some(SealReason::WouldExceedCapacity("scripts"))
@@ -480,9 +473,7 @@ mod tests {
             let height = 100 + offset as u64;
             let block = block_of_new_scripts(height, tag, size);
             tag += size;
-            if let Some(shard) = sealer.push_block(height, &block).unwrap() {
-                shards.push(shard);
-            }
+            shards.extend(sealer.push_block(height, &block).unwrap());
         }
         shards.extend(sealer.finish());
         assert!(
@@ -512,9 +503,7 @@ mod tests {
             let height = 100 + offset;
             let block = block_of_new_scripts(height, tag, 7);
             tag += 7;
-            if let Some(shard) = sealer.push_block(height, &block).unwrap() {
-                shards.push(shard);
-            }
+            shards.extend(sealer.push_block(height, &block).unwrap());
         }
         shards.extend(sealer.finish());
 
@@ -535,35 +524,92 @@ mod tests {
             .all(|s| s.reason.is_some()));
     }
 
-    /// A block no shard could hold is unplaceable. Sealing over it would
-    /// produce a shard that does not fit the geometry every other shard shares.
+    /// A block larger than any single segment is still published. It becomes a
+    /// shard of its own, which the builder gives the segments it needs; failing
+    /// instead would let one purchased block stop the service.
     #[test]
-    fn a_block_larger_than_any_shard_is_an_error_not_a_silent_seal() {
+    fn a_block_larger_than_a_segment_becomes_a_shard_of_its_own() {
         let mut sealer = Sealer::new(policy((10, 20), (10_000, 20_000)), 100);
+        let sealed = one(sealer.push_block(100, &block_of_new_scripts(100, 0, 50)));
         assert_eq!(
-            sealer.push_block(100, &block_of_new_scripts(100, 0, 50)),
-            Err(SealError::BlockExceedsCapacity {
-                height: 100,
-                quantity: "scripts",
-                needed: 50,
-                capacity: 20,
-            })
+            sealed.reason,
+            Some(SealReason::BlockExceedsCapacity("scripts"))
         );
+        assert_eq!((sealed.start_height, sealed.end_height), (100, 100));
+        assert_eq!(sealed.occupancy.scripts, 50);
+        assert_eq!(sealer.finish(), None, "the oversized block took the shard");
     }
 
-    /// The same failure must be reported when the oversized block arrives after
-    /// a shard has already accumulated, rather than being carried into the
-    /// fresh shard the capacity check just opened.
+    /// An oversized block arriving mid-shard closes the shard before it and
+    /// then seals as its own, so the accumulating shard is never overrun and
+    /// the block is never carried into a fresh one that could not hold it.
     #[test]
-    fn an_oversized_block_after_a_seal_is_still_an_error() {
+    fn an_oversized_block_after_a_seal_closes_two_shards() {
         let mut sealer = Sealer::new(policy((10, 20), (10_000, 20_000)), 100);
-        sealer
-            .push_block(100, &block_of_new_scripts(100, 0, 8))
-            .unwrap();
-        assert!(matches!(
-            sealer.push_block(101, &block_of_new_scripts(101, 100, 50)),
-            Err(SealError::BlockExceedsCapacity { .. })
-        ));
+        assert_eq!(
+            sealer.push_block(100, &block_of_new_scripts(100, 0, 8)),
+            Ok(Vec::new())
+        );
+        let sealed = sealer
+            .push_block(101, &block_of_new_scripts(101, 100, 50))
+            .expect("no valid block is ever refused");
+        assert_eq!(sealed.len(), 2);
+        assert_eq!(
+            sealed[0].reason,
+            Some(SealReason::WouldExceedCapacity("scripts"))
+        );
+        assert_eq!((sealed[0].start_height, sealed[0].end_height), (100, 100));
+        assert_eq!(
+            sealed[1].reason,
+            Some(SealReason::BlockExceedsCapacity("scripts"))
+        );
+        assert_eq!((sealed[1].start_height, sealed[1].end_height), (101, 101));
+        assert_eq!(sealed[1].occupancy.scripts, 50);
+    }
+
+    /// The availability property, over irregular blocks including several that
+    /// exceed a capacity on their own: every block is placed, every shard is
+    /// non-empty, and the boundaries still tile the journal.
+    #[test]
+    fn no_valid_block_is_ever_refused() {
+        let policy = policy((60, 100), (10_000, 20_000));
+        let mut sealer = Sealer::new(policy, 100);
+        let mut shards = Vec::new();
+        let mut tag = 0u32;
+        for (offset, size) in [7u32, 400, 3, 55, 1, 250, 12, 30, 0, 45]
+            .into_iter()
+            .enumerate()
+        {
+            let height = 100 + offset as u64;
+            let block = block_of_new_scripts(height, tag, size);
+            tag += size;
+            shards.extend(
+                sealer
+                    .push_block(height, &block)
+                    .expect("no valid block is ever refused"),
+            );
+        }
+        shards.extend(sealer.finish());
+
+        assert_eq!(shards[0].start_height, 100);
+        assert_eq!(shards.last().unwrap().end_height, 109);
+        for (index, shard) in shards.iter().enumerate() {
+            assert_eq!(shard.shard_id, index as u64);
+            if index > 0 {
+                assert_eq!(shard.start_height, shards[index - 1].end_height + 1);
+            }
+        }
+        // The shards that exceed capacity are exactly the single-block ones,
+        // and they are the ones the builder must give extra segments.
+        for shard in &shards {
+            if shard.occupancy.scripts > policy.scripts.capacity {
+                assert_eq!(shard.start_height, shard.end_height);
+                assert_eq!(
+                    shard.reason,
+                    Some(SealReason::BlockExceedsCapacity("scripts"))
+                );
+            }
+        }
     }
 
     /// Pages, not events, drive the pages table. A shard full of long histories
@@ -579,7 +625,8 @@ mod tests {
             let block: Vec<_> = (0..per_block)
                 .map(|nonce| event(height, 0, offset as u32 * 1_000 + nonce as u32))
                 .collect();
-            if let Some(shard) = sealer.push_block(height, &block).unwrap() {
+            let closed = sealer.push_block(height, &block).unwrap();
+            if let Some(shard) = closed.into_iter().next() {
                 sealed = Some(shard);
                 break;
             }
@@ -641,9 +688,7 @@ mod tests {
                 let height = 100 + offset;
                 let block = block_of_new_scripts(height, tag, 7);
                 tag += 7;
-                if let Some(shard) = sealer.push_block(height, &block).unwrap() {
-                    shards.push(shard);
-                }
+                shards.extend(sealer.push_block(height, &block).unwrap());
             }
             shards.extend(sealer.finish());
             shards
@@ -656,10 +701,7 @@ mod tests {
     #[test]
     fn a_journal_ending_on_a_boundary_leaves_no_tail() {
         let mut sealer = Sealer::new(policy((7, 100), (10_000, 20_000)), 100);
-        let sealed = sealer
-            .push_block(100, &block_of_new_scripts(100, 0, 7))
-            .unwrap()
-            .expect("the target is reached exactly");
+        let sealed = one(sealer.push_block(100, &block_of_new_scripts(100, 0, 7)));
         assert_eq!(sealed.occupancy.scripts, 7);
         assert_eq!(sealer.finish(), None);
     }
@@ -679,7 +721,7 @@ mod tests {
                 expected: 101
             })
         );
-        assert_eq!(sealer.push_block(101, &[]), Ok(None));
+        assert_eq!(sealer.push_block(101, &[]), Ok(Vec::new()));
     }
 
     #[test]

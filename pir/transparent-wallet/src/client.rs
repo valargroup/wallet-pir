@@ -5,9 +5,12 @@
 //! parameter re-derivation and the public query setup — is done once for the
 //! whole fleet rather than once per shard.
 //!
-//! What *is* per shard is the published `c1`, because it is derived from that
-//! shard's own database. So a shard is "opened" by fetching its setup, and the
-//! bytes for that are charged once per shard per sync.
+//! What *is* per segment is the published `c1`, because it is derived from that
+//! segment's own database. So a shard is "opened" by fetching the setup of each
+//! of its segments, and those bytes are charged once per segment per sync. A
+//! shard normally has one segment; one that did not fit the pinned geometry has
+//! more, and every one of them answers each query, so the segment holding a
+//! script is never named in a request.
 //!
 //! Everything the server sends is re-derived rather than trusted. A client that
 //! adopted the server's parameters would decode against whatever geometry the
@@ -55,8 +58,8 @@ pub struct PreparedQuery {
     seed: ipir_sp::IPIRSeed,
 }
 
-/// One shard's published setup for one table.
-struct ShardSetup {
+/// One segment's published setup for one table.
+struct SegmentSetup {
     published_c1: Vec<Vec<u64>>,
     epoch: [u8; 8],
 }
@@ -68,8 +71,9 @@ pub struct TableClient {
     client: IPIRClient,
     setup: Vec<Vec<u64>>,
     row_bytes: usize,
-    /// Per shard, because the published `c1` comes from each shard's database.
-    shards: HashMap<u64, ShardSetup>,
+    /// Per segment, because the published `c1` comes from each segment's own
+    /// database. Keyed by shard and segment index.
+    segments: HashMap<(u64, u32), SegmentSetup>,
 }
 
 impl TableClient {
@@ -100,7 +104,7 @@ impl TableClient {
             client,
             setup,
             row_bytes: row_bytes as usize,
-            shards: HashMap::new(),
+            segments: HashMap::new(),
         })
     }
 
@@ -108,10 +112,12 @@ impl TableClient {
         self.params.db_rows
     }
 
-    /// Records a shard's published setup after checking it against its digest.
-    pub fn open_shard(
+    /// Records one segment's published setup after checking it against its
+    /// digest.
+    pub fn open_segment(
         &mut self,
         shard_id: u64,
+        segment: u32,
         public_params_base64: &str,
         public_params_sha256: &str,
     ) -> Result<(), ClientError> {
@@ -134,9 +140,9 @@ impl TableClient {
         }
         let mut epoch = [0u8; 8];
         epoch.copy_from_slice(&digest[..8]);
-        self.shards.insert(
-            shard_id,
-            ShardSetup {
+        self.segments.insert(
+            (shard_id, segment),
+            SegmentSetup {
                 published_c1: recover_published_c1(
                     &public_params,
                     self.client.rlwe_params().d,
@@ -149,8 +155,8 @@ impl TableClient {
         Ok(())
     }
 
-    pub fn is_open(&self, shard_id: u64) -> bool {
-        self.shards.contains_key(&shard_id)
+    pub fn is_open(&self, shard_id: u64, segment: u32) -> bool {
+        self.segments.contains_key(&(shard_id, segment))
     }
 
     pub fn prepare(&self, shard_id: u64, row: usize) -> Result<PreparedQuery, ClientError> {
@@ -168,53 +174,71 @@ impl TableClient {
         Ok(PreparedQuery { body, seed })
     }
 
+    /// Decodes one answer: one row per segment, in segment order.
+    ///
+    /// Every segment answered the same query, so the response carries as many
+    /// bodies as the shard has segments and the caller decides which row it was
+    /// looking for — by the exact script bytes, never by position.
     pub fn decode(
         &self,
         shard_id: u64,
+        segments: u32,
         query: PreparedQuery,
         response: &[u8],
-    ) -> Result<Vec<u8>, ClientError> {
-        let setup = self
-            .shards
-            .get(&shard_id)
-            .ok_or_else(|| ClientError::Session(format!("shard {shard_id} is not open")))?;
-        // The prefix binds the response to the shard the query named, so a
-        // response from another shard fails here rather than decoding to
-        // plausible nonsense.
-        if response.get(..8) != Some(shard_id.to_le_bytes().as_slice()) {
-            return Err(ClientError::Response("shard mismatch".into()));
-        }
-        if response.get(8..16) != Some(setup.epoch.as_slice()) {
-            return Err(ClientError::Response("parameter epoch mismatch".into()));
-        }
-        let expected = (self.params.db_cols / self.client.rlwe_params().d)
+    ) -> Result<Vec<Vec<u8>>, ClientError> {
+        let body_len = (self.params.db_cols / self.client.rlwe_params().d)
             * response_body_len(self.client.rlwe_params().d, self.params.q_prime_1);
-        if response.len() != 16 + expected {
+        let each = 16 + body_len;
+        // A fixed length per segment, and a fixed segment count from the
+        // published map: a response of any other size is not this shard's.
+        if response.len() != each * segments as usize {
             return Err(ClientError::Response("response length mismatch".into()));
         }
-        let decoded =
-            self.client
-                .decode_response_simplepir(query.seed, &setup.published_c1, &response[16..]);
-        decoded
-            .get(..self.row_bytes)
-            .map(<[u8]>::to_vec)
-            .ok_or_else(|| ClientError::Response("decoded row is too short".into()))
+
+        let mut rows = Vec::with_capacity(segments as usize);
+        for segment in 0..segments {
+            let part = &response[segment as usize * each..(segment as usize + 1) * each];
+            let setup = self.segments.get(&(shard_id, segment)).ok_or_else(|| {
+                ClientError::Session(format!("shard {shard_id} segment {segment} is not open"))
+            })?;
+            // The prefix binds the response to the shard the query named, so a
+            // response from another shard fails here rather than decoding to
+            // plausible nonsense. The epoch does the same for the segment,
+            // since each segment publishes its own `c1`.
+            if part.get(..8) != Some(shard_id.to_le_bytes().as_slice()) {
+                return Err(ClientError::Response("shard mismatch".into()));
+            }
+            if part.get(8..16) != Some(setup.epoch.as_slice()) {
+                return Err(ClientError::Response("parameter epoch mismatch".into()));
+            }
+            let decoded =
+                self.client
+                    .decode_response_simplepir(query.seed, &setup.published_c1, &part[16..]);
+            rows.push(
+                decoded
+                    .get(..self.row_bytes)
+                    .map(<[u8]>::to_vec)
+                    .ok_or_else(|| ClientError::Response("decoded row is too short".into()))?,
+            );
+        }
+        Ok(rows)
     }
 
-    /// Fetches one row, charging what it cost.
+    /// Fetches one row from every segment of a shard, charging what it cost.
     pub fn fetch_row(
         &self,
         transport: &mut impl ShardTransport,
         shard_id: u64,
+        segments: u32,
         row: usize,
         charges: &mut ByteCharges,
-    ) -> Result<Vec<u8>, ClientError> {
+    ) -> Result<Vec<Vec<u8>>, ClientError> {
         let query = self.prepare(shard_id, row)?;
         let uploaded = query.body.len() as u64;
         let response = transport
             .query(shard_id, self.table, &query.body)
             .map_err(|error| ClientError::Transport(error.to_string()))?;
         charges.add_query(uploaded, response.len() as u64);
-        self.decode(shard_id, query, &response)
+        self.decode(shard_id, segments, query, &response)
     }
 }

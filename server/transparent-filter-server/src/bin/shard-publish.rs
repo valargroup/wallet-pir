@@ -10,6 +10,12 @@
 //! rewritten; a mismatch is a hard error, because it means either the journal
 //! or the builder changed under a published identity.
 //!
+//! A tail is different only in that it is expected to be republished. Running
+//! again over a longer journal publishes a *new revision* of it, beside the old
+//! one and under its own digest, recording which revision it supersedes. Bytes
+//! already served never change; a wallet holding the earlier revision sees that
+//! the range it covered was replaced rather than extended.
+//!
 //! Read-only against the journal.
 
 use clap::Parser;
@@ -106,6 +112,20 @@ async fn main() -> Result<(), BoxError> {
     let mut parent_manifest_digest = String::new();
     let mut parent_block_hash = base_parent;
 
+    // The map from a previous run, if any. It is what tells a republished tail
+    // which revision it supersedes; without it a growing tail would look like a
+    // first publication every time.
+    let previous: std::collections::BTreeMap<u64, transparent_filter::ShardMapEntry> =
+        match std::fs::read(cli.output.join("shards.json")) {
+            Ok(raw) => serde_json::from_slice::<transparent_filter::ShardMap>(&raw)?
+                .shards
+                .into_iter()
+                .map(|entry| (entry.shard_id, entry))
+                .collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(error) => return Err(error.into()),
+        };
+
     let publish = |shard: transparent_shard::SealedShard,
                    blocks: &[(
         u64,
@@ -122,6 +142,16 @@ async fn main() -> Result<(), BoxError> {
             .iter()
             .flat_map(|(_, events)| events.iter().cloned())
             .collect();
+
+        // A shard already in the previous map is being republished. That is
+        // ordinary for a tail and impossible for a sealed shard, which is
+        // immutable — so a sealed shard that disagrees is an error, not a new
+        // revision.
+        let (revision, supersedes) = match previous.get(&shard.shard_id) {
+            Some(entry) if entry.sealed => (entry.revision, entry.manifest_digest.clone()),
+            Some(entry) => (entry.revision + 1, entry.manifest_digest.clone()),
+            None => (0, String::new()),
+        };
 
         let built = build_shard(
             shard.shard_id,
@@ -145,6 +175,8 @@ async fn main() -> Result<(), BoxError> {
             terminal_block_hash: terminal.to_display_hex(),
             parent_manifest_digest: parent_manifest_digest.to_string(),
             sealed: shard.reason.is_some(),
+            revision,
+            supersedes,
             seal: ManifestSeal {
                 scripts_target: policy.scripts.target,
                 scripts_capacity: policy.scripts.capacity,
@@ -158,16 +190,24 @@ async fn main() -> Result<(), BoxError> {
                 directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
             },
             filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-            directory: TableGeometry {
-                rows: DIRECTORY_ROWS as u64,
-                row_bytes: DIRECTORY_ROW_BYTES as u32,
-                sha256: hex::encode(Sha256::digest(&built.directory)),
-            },
-            pages: TableGeometry {
-                rows: PAGE_ROWS as u64,
-                row_bytes: PAGE_ROW_BYTES as u32,
-                sha256: hex::encode(Sha256::digest(&built.pages)),
-            },
+            directory_segments: built
+                .directory
+                .iter()
+                .map(|segment| TableGeometry {
+                    rows: DIRECTORY_ROWS as u64,
+                    row_bytes: DIRECTORY_ROW_BYTES as u32,
+                    sha256: hex::encode(Sha256::digest(segment)),
+                })
+                .collect(),
+            page_segments: built
+                .pages
+                .iter()
+                .map(|segment| TableGeometry {
+                    rows: PAGE_ROWS as u64,
+                    row_bytes: PAGE_ROW_BYTES as u32,
+                    sha256: hex::encode(Sha256::digest(segment)),
+                })
+                .collect(),
             occupancy: ManifestOccupancy {
                 scripts: built.scripts,
                 page_rows: built.page_rows,
@@ -183,11 +223,17 @@ async fn main() -> Result<(), BoxError> {
         std::fs::create_dir_all(&dir)?;
         write_immutable(&dir, "manifest.json", &manifest.canonical_bytes())?;
         write_immutable(&dir, "filter.bin", built.filter.as_slice())?;
-        write_immutable(&dir, "directory.bin", &built.directory)?;
-        write_immutable(&dir, "pages.bin", &built.pages)?;
+        // One file per segment, in segment order. A shard normally has one of
+        // each; more means its content did not fit a single segment.
+        for (index, segment) in built.directory.iter().enumerate() {
+            write_immutable(&dir, &format!("directory.{index}.bin"), segment)?;
+        }
+        for (index, segment) in built.pages.iter().enumerate() {
+            write_immutable(&dir, &format!("pages.{index}.bin"), segment)?;
+        }
 
         eprintln!(
-            "shard {:>3} {}-{} ({} blocks) scripts {} pages {} events {} {}",
+            "shard {:>3} {}-{} ({} blocks) scripts {} pages {} events {} segments {}/{} {}",
             shard.shard_id,
             shard.start_height,
             shard.end_height,
@@ -195,7 +241,13 @@ async fn main() -> Result<(), BoxError> {
             built.scripts,
             built.page_rows,
             built.events,
-            if manifest.sealed { "sealed" } else { "TAIL" },
+            built.directory_segments(),
+            built.page_segments(),
+            if manifest.sealed {
+                "sealed".to_string()
+            } else {
+                format!("TAIL r{revision}")
+            },
         );
 
         let entry = transparent_filter::ShardMapEntry {
@@ -208,6 +260,10 @@ async fn main() -> Result<(), BoxError> {
             scripts: built.scripts,
             page_rows: built.page_rows,
             txids: shard.occupancy.txids,
+            directory_segments: built.directory_segments(),
+            page_segments: built.page_segments(),
+            manifest_digest: digest.clone(),
+            revision,
             sealed: manifest.sealed,
         };
         Ok((digest, terminal, entry))
@@ -219,7 +275,9 @@ async fn main() -> Result<(), BoxError> {
             .ok_or_else(|| format!("height {height} is missing from the journal"))?;
         pending.push((height, events));
         let block = pending.last().expect("just pushed");
-        if let Some(shard) = sealer.push_block(block.0, &block.1)? {
+        // One block can close two shards: the one it would have overrun, and
+        // itself, when it exceeds a capacity on its own.
+        for shard in sealer.push_block(block.0, &block.1)? {
             // A capacity seal closes before the block that triggered it, so the
             // block just pushed may belong to the *next* shard, not this one.
             let split = pending

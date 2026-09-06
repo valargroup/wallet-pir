@@ -799,6 +799,10 @@ mod tests {
                 scripts: 1,
                 page_rows: 0,
                 txids: 1,
+                directory_segments: 1,
+                page_segments: 1,
+                manifest_digest: format!("{shard_id:064x}"),
+                revision: 0,
                 sealed: true,
             });
             records.push(RangeFilterRecord {

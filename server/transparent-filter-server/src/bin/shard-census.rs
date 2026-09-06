@@ -123,6 +123,9 @@ fn report(name: &str, shards: &[SealedShard]) {
         let key = match shard.reason {
             Some(SealReason::ReachedTarget(q)) => format!("target: {q}"),
             Some(SealReason::WouldExceedCapacity(q)) => format!("capacity: {q}"),
+            // A single block past a capacity: this shard holds only that block
+            // and needs more than one segment per table.
+            Some(SealReason::BlockExceedsCapacity(q)) => format!("oversized block: {q}"),
             None => unreachable!(),
         };
         *by_reason.entry(key).or_default() += 1;
@@ -261,9 +264,7 @@ fn main() -> Result<(), BoxError> {
         let mut sealer = Sealer::new(policy, first);
         let mut shards = Vec::new();
         for (height, events) in &blocks {
-            if let Some(shard) = sealer.push_block(*height, events)? {
-                shards.push(shard);
-            }
+            shards.extend(sealer.push_block(*height, events)?);
         }
         shards.extend(sealer.finish());
         report(&name, &shards);

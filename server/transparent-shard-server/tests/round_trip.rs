@@ -99,6 +99,8 @@ fn publish(dir: &Path) -> ShardMap {
             terminal_block_hash: terminal.to_display_hex(),
             parent_manifest_digest: parent_digest.clone(),
             sealed: shard_id + 1 < SHARDS,
+            revision: 0,
+            supersedes: String::new(),
             seal: ManifestSeal {
                 scripts_target: 8_192,
                 scripts_capacity: 16_384,
@@ -112,16 +114,24 @@ fn publish(dir: &Path) -> ShardMap {
                 directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
             },
             filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-            directory: TableGeometry {
-                rows: DIRECTORY_ROWS as u64,
-                row_bytes: DIRECTORY_ROW_BYTES as u32,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&built.directory)),
-            },
-            pages: TableGeometry {
-                rows: PAGE_ROWS as u64,
-                row_bytes: PAGE_ROW_BYTES as u32,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&built.pages)),
-            },
+            directory_segments: built
+                .directory
+                .iter()
+                .map(|segment| TableGeometry {
+                    rows: DIRECTORY_ROWS as u64,
+                    row_bytes: DIRECTORY_ROW_BYTES as u32,
+                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
+                })
+                .collect(),
+            page_segments: built
+                .pages
+                .iter()
+                .map(|segment| TableGeometry {
+                    rows: PAGE_ROWS as u64,
+                    row_bytes: PAGE_ROW_BYTES as u32,
+                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
+                })
+                .collect(),
             occupancy: ManifestOccupancy {
                 scripts: built.scripts,
                 page_rows: built.page_rows,
@@ -137,8 +147,12 @@ fn publish(dir: &Path) -> ShardMap {
         std::fs::create_dir_all(&shard_dir).unwrap();
         std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
         std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-        std::fs::write(shard_dir.join("directory.bin"), &built.directory).unwrap();
-        std::fs::write(shard_dir.join("pages.bin"), &built.pages).unwrap();
+        for (index, segment) in built.directory.iter().enumerate() {
+            std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
+        }
+        for (index, segment) in built.pages.iter().enumerate() {
+            std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
+        }
 
         entries.push(ShardMapEntry {
             shard_id,
@@ -150,6 +164,10 @@ fn publish(dir: &Path) -> ShardMap {
             scripts: built.scripts,
             page_rows: built.page_rows,
             txids: 0,
+            directory_segments: built.directory_segments(),
+            page_segments: built.page_segments(),
+            manifest_digest: digest.clone(),
+            revision: 0,
             sealed: manifest.sealed,
         });
         parent_digest = digest;
@@ -238,7 +256,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
 
     let (status, raw) = get(
         &f.state,
-        &format!("/v1/shards/{shard_id}/setup/{}", table.as_str()),
+        &format!("/v1/shards/{shard_id}/setup/{}/0", table.as_str()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -280,6 +298,13 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
     .await;
     assert_eq!(status, StatusCode::OK, "query failed");
     assert_eq!(&response[..8], &shard_id.to_le_bytes());
+    // One body per segment. These fixtures are single-segment shards, so the
+    // answer is one body; the multi-segment case has its own test.
+    assert_eq!(
+        response.len(),
+        16 + ipir_sp::modulus_switch::response_body_len(rlwe.d, expected.q_prime_1) * blocks,
+        "one body per segment"
+    );
 
     let decoded = client.decode_response_simplepir(query_seed, &published, &response[16..]);
     decoded[..table.row_bytes() as usize].to_vec()
@@ -298,7 +323,11 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
             let shard = f.set.get(shard_id).unwrap();
             assert_eq!(
                 decoded,
-                raw_row(shard.table(table), table.row_bytes() as usize, row),
+                raw_row(
+                    shard.table(table, 0).unwrap(),
+                    table.row_bytes() as usize,
+                    row
+                ),
                 "shard {shard_id} {} row {row}",
                 table.as_str()
             );
@@ -337,9 +366,13 @@ async fn a_truncated_query_is_refused_rather_than_padded() {
 #[tokio::test]
 async fn unknown_shards_and_tables_are_refused() {
     let f = fixture();
-    let (status, _) = get(&f.state, "/v1/shards/99/setup/directory").await;
+    let (status, _) = get(&f.state, "/v1/shards/99/setup/directory/0").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = get(&f.state, "/v1/shards/0/setup/nonsense").await;
+    let (status, _) = get(&f.state, "/v1/shards/0/setup/nonsense/0").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // A shard has the segments its manifest declares and no more. Asking for
+    // one it does not have is a mistake, not an empty answer.
+    let (status, _) = get(&f.state, "/v1/shards/0/setup/directory/7").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -354,7 +387,11 @@ async fn every_shard_reports_the_same_scheme_but_its_own_setup() {
 
     let mut digests = Vec::new();
     for shard_id in 0..SHARDS {
-        let (_, raw) = get(&f.state, &format!("/v1/shards/{shard_id}/setup/directory")).await;
+        let (_, raw) = get(
+            &f.state,
+            &format!("/v1/shards/{shard_id}/setup/directory/0"),
+        )
+        .await;
         let setup: serde_json::Value = serde_json::from_slice(&raw).unwrap();
         digests.push(setup["public_params_sha256"].as_str().unwrap().to_string());
     }
@@ -399,9 +436,9 @@ async fn a_tampered_table_is_refused_at_load() {
         if !path.is_dir() {
             continue;
         }
-        let mut bytes = std::fs::read(path.join("directory.bin")).unwrap();
+        let mut bytes = std::fs::read(path.join("directory.0.bin")).unwrap();
         bytes[0] ^= 0xff;
-        std::fs::write(path.join("directory.bin"), bytes).unwrap();
+        std::fs::write(path.join("directory.0.bin"), bytes).unwrap();
         break;
     }
     assert!(ShardSet::open(dir.path()).is_err());

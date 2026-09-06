@@ -4,6 +4,11 @@
 //! shard's manifest, plus a `shards.json` holding the map. This reads them back
 //! and refuses anything that does not verify.
 //!
+//! A shard's tables are stored one file per segment. Ordinarily there is one of
+//! each; a shard whose content did not fit a single segment of the pinned
+//! geometry has more, and every segment has the same geometry, which is what
+//! keeps one parameter set serving the whole fleet.
+//!
 //! Verification here is deliberately paranoid about *the operator's own files*,
 //! not only about a hostile network. A shard whose table no longer matches its
 //! manifest digest would be served as if it were the published shard, and every
@@ -93,15 +98,26 @@ pub struct LoadedShard {
     pub manifest: ShardManifest,
     /// The manifest digest, which is also the directory name.
     pub digest: String,
-    pub directory: Vec<u8>,
-    pub pages: Vec<u8>,
+    /// One entry per segment, in segment order.
+    pub directory: Vec<Vec<u8>>,
+    pub pages: Vec<Vec<u8>>,
 }
 
 impl LoadedShard {
-    pub fn table(&self, table: Table) -> &[u8] {
-        match table {
+    /// One segment of a table, or `None` if this shard has no such segment.
+    pub fn table(&self, table: Table, segment: u32) -> Option<&[u8]> {
+        let segments = match table {
             Table::Directory => &self.directory,
             Table::Pages => &self.pages,
+        };
+        segments.get(segment as usize).map(Vec::as_slice)
+    }
+
+    /// How many segments this shard's table has. Ordinarily one.
+    pub fn segments(&self, table: Table) -> u32 {
+        match table {
+            Table::Directory => self.directory.len() as u32,
+            Table::Pages => self.pages.len() as u32,
         }
     }
 
@@ -135,38 +151,62 @@ impl LoadedShard {
         // Geometry is pinned and shared across every shard; that sharing is why
         // one parameter set serves the fleet. A shard with its own widths would
         // silently need its own parameters.
-        if manifest.directory.rows != Table::Directory.rows()
-            || manifest.directory.row_bytes != Table::Directory.row_bytes()
-            || manifest.pages.rows != Table::Pages.rows()
-            || manifest.pages.row_bytes != Table::Pages.row_bytes()
-        {
-            return Err(LoadError::Invalid(format!(
-                "shard {} does not use this build's pinned geometry",
-                manifest.shard_id
-            )));
-        }
-
-        let directory = read(&dir.join("directory.bin"))?;
-        let pages = read(&dir.join("pages.bin"))?;
-        for (name, bytes, geometry) in [
-            ("directory", &directory, &manifest.directory),
-            ("pages", &pages, &manifest.pages),
+        // Every segment must use the pinned geometry, not just the first: a
+        // segment with its own widths would silently need its own parameters,
+        // and the sharing is the whole point of pinning it.
+        for (table, segments) in [
+            (Table::Directory, &manifest.directory_segments),
+            (Table::Pages, &manifest.page_segments),
         ] {
-            let expected = geometry.rows as usize * geometry.row_bytes as usize;
-            if bytes.len() != expected {
+            if segments.is_empty() {
                 return Err(LoadError::Invalid(format!(
-                    "{name} of shard {} is {} bytes, the manifest says {expected}",
+                    "shard {} declares no {} segments",
                     manifest.shard_id,
-                    bytes.len()
+                    table.as_str()
                 )));
             }
-            if hex::encode(Sha256::digest(bytes)) != geometry.sha256 {
+            if segments
+                .iter()
+                .any(|s| s.rows != table.rows() || s.row_bytes != table.row_bytes())
+            {
                 return Err(LoadError::Invalid(format!(
-                    "{name} of shard {} does not match its manifest digest",
+                    "shard {} does not use this build's pinned geometry",
                     manifest.shard_id
                 )));
             }
         }
+
+        let mut tables: Vec<Vec<Vec<u8>>> = Vec::new();
+        for (table, segments) in [
+            (Table::Directory, &manifest.directory_segments),
+            (Table::Pages, &manifest.page_segments),
+        ] {
+            let mut loaded = Vec::with_capacity(segments.len());
+            for (index, geometry) in segments.iter().enumerate() {
+                let bytes = read(&dir.join(format!("{}.{index}.bin", table.as_str())))?;
+                let expected = geometry.rows as usize * geometry.row_bytes as usize;
+                if bytes.len() != expected {
+                    return Err(LoadError::Invalid(format!(
+                        "{} segment {index} of shard {} is {} bytes, the manifest says {expected}",
+                        table.as_str(),
+                        manifest.shard_id,
+                        bytes.len()
+                    )));
+                }
+                if hex::encode(Sha256::digest(&bytes)) != geometry.sha256 {
+                    return Err(LoadError::Invalid(format!(
+                        "{} segment {index} of shard {} does not match its manifest digest",
+                        table.as_str(),
+                        manifest.shard_id
+                    )));
+                }
+                loaded.push(bytes);
+            }
+            tables.push(loaded);
+        }
+        let mut tables = tables.into_iter();
+        let directory = tables.next().expect("directory segments");
+        let pages = tables.next().expect("page segments");
 
         // The filter is not served here, but its digest is part of the shard's
         // identity, so a mismatch means this directory is not the shard the
@@ -249,6 +289,14 @@ impl ShardSet {
                 || manifest.terminal_block_hash != entry.terminal_block_hash
                 || manifest.filter_hash != entry.filter_hash
                 || manifest.sealed != entry.sealed
+                || manifest.revision != entry.revision
+                || shard.digest != entry.manifest_digest
+                // A wallet reads the segment counts from the map and asks every
+                // segment. A map that understated them would leave a segment
+                // unqueried, and the wallet would advance coverage over history
+                // it never read.
+                || manifest.directory_segments.len() as u32 != entry.directory_segments
+                || manifest.page_segments.len() as u32 != entry.page_segments
             {
                 return Err(LoadError::Invalid(format!(
                     "shard {} disagrees with its map entry",

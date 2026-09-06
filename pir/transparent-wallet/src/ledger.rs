@@ -58,7 +58,7 @@ pub struct UnresolvedSpend {
 pub enum LedgerError {
     #[error("outpoint {0}:{1} was received twice with different contents")]
     ConflictingReceive(String, u32),
-    #[error("outpoint {0}:{1} was spent twice")]
+    #[error("outpoint {0}:{1} was spent twice, by different transactions")]
     DoubleSpend(String, u32),
 }
 
@@ -103,8 +103,13 @@ impl Ledger {
     /// Sorting here rather than requiring sorted input is deliberate: a spend
     /// can only be matched to its receive if the receive was applied first, and
     /// events arrive from several pages and inline slots whose concatenation is
-    /// not ordered. The order is the events' own total order, so the result
-    /// does not depend on retrieval order.
+    /// not ordered. The order is the canonical one — height, then position in
+    /// the block, then receives before spends within a transaction, then the
+    /// event's own identity — so the result does not depend on retrieval order.
+    ///
+    /// That order is also what resolves a receive and its spend within one
+    /// block: an output cannot be consumed by the transaction that creates it,
+    /// so the creating transaction always has the lower index.
     pub fn replay(
         &mut self,
         events: &mut [(Vec<u8>, TransparentEvent)],
@@ -119,10 +124,7 @@ impl Ledger {
     fn apply(&mut self, script: &[u8], event: &TransparentEvent) -> Result<(), LedgerError> {
         match event {
             TransparentEvent::Receive(receive) => self.apply_receive(script, receive),
-            TransparentEvent::Spend(spend) => {
-                self.apply_spend(script, spend);
-                Ok(())
-            }
+            TransparentEvent::Spend(spend) => self.apply_spend(script, spend),
         }
     }
 
@@ -154,15 +156,25 @@ impl Ledger {
         Ok(())
     }
 
-    fn apply_spend(&mut self, script: &[u8], event: &SpendEvent) {
+    fn apply_spend(&mut self, script: &[u8], event: &SpendEvent) -> Result<(), LedgerError> {
         let key = (event.spent_txid, event.spent_output_index);
-        // Idempotent for the same spend arriving twice.
-        if self
+        // Idempotent for the same spend arriving twice — through an inline slot
+        // and a page, say. A second spend of the same outpoint by a *different*
+        // transaction is not a repeat: one output cannot be consumed twice on
+        // one chain, so the two sources contradict each other and taking either
+        // one would produce a ledger that looks fine and is wrong.
+        if let Some(existing) = self
             .spends
             .iter()
-            .any(|spend| (spend.spent_txid, spend.spent_output_index) == key)
+            .find(|spend| (spend.spent_txid, spend.spent_output_index) == key)
         {
-            return;
+            if existing.spending_txid != event.spending_txid || existing.height != event.height {
+                return Err(LedgerError::DoubleSpend(
+                    event.spent_txid.to_display_hex(),
+                    event.spent_output_index,
+                ));
+            }
+            return Ok(());
         }
         match self.receives.get(&key) {
             Some(utxo) => {
@@ -181,12 +193,16 @@ impl Ledger {
                 // Not an error to record, but never silently dropped: a spend
                 // of an output the wallet never saw means its recovered history
                 // is incomplete, and a balance computed over it is too high.
-                self.unresolved.push(UnresolvedSpend {
+                let unresolved = UnresolvedSpend {
                     event: *event,
                     script: script.to_vec(),
-                });
+                };
+                if !self.unresolved.contains(&unresolved) {
+                    self.unresolved.push(unresolved);
+                }
             }
         }
+        Ok(())
     }
 
     /// Outputs recovered and not yet consumed.
@@ -401,6 +417,68 @@ mod tests {
     /// A transaction that both consumes and creates wallet outputs is a
     /// self-transfer or change, and its net value is what a history should
     /// show.
+    /// An output created and spent in the same block is the case the canonical
+    /// order exists to settle: an output cannot be consumed by the transaction
+    /// that creates it, so the creating transaction has the lower index and the
+    /// receive is applied first however the two events arrived.
+    #[test]
+    fn a_receive_and_its_spend_in_one_block_resolve_by_transaction_index() {
+        let receive = receive(1, 0, 500, 900);
+        let spend = spend(1, 1, 0, 2, 900);
+        // Deliberately the wrong way round on the wire.
+        let mut events = vec![spend, receive];
+        let mut ledger = Ledger::new();
+        ledger.replay(&mut events).expect("replay");
+
+        assert_eq!(ledger.confirmed_balance(), 0, "the output was consumed");
+        assert_eq!(ledger.spends().len(), 1);
+        assert!(
+            ledger.unresolved().is_empty(),
+            "the receive must be applied before its spend, not after"
+        );
+    }
+
+    /// A repeat that differs is a contradiction, not a newer version. Taking
+    /// either copy would produce a ledger that looks perfectly normal and is
+    /// wrong about where the money went.
+    #[test]
+    fn the_same_outpoint_spent_by_two_transactions_is_an_error() {
+        let mut events = vec![
+            receive(1, 0, 500, 900),
+            spend(1, 1, 0, 2, 901),
+            spend(1, 1, 0, 3, 902),
+        ];
+        let mut ledger = Ledger::new();
+        assert_eq!(
+            ledger.replay(&mut events),
+            Err(LedgerError::DoubleSpend(txid(1).to_display_hex(), 0))
+        );
+    }
+
+    /// The identical spend arriving twice — through an inline slot and a page —
+    /// is a repeat and must be absorbed silently.
+    #[test]
+    fn the_identical_spend_twice_is_idempotent() {
+        let mut events = vec![
+            receive(1, 0, 500, 900),
+            spend(1, 1, 0, 2, 901),
+            spend(1, 1, 0, 2, 901),
+        ];
+        let mut ledger = Ledger::new();
+        ledger.replay(&mut events).expect("a repeat is idempotent");
+        assert_eq!(ledger.spends().len(), 1);
+    }
+
+    /// An unresolved spend delivered twice is one piece of unresolved work, not
+    /// two. Counting it twice would overstate how incomplete the recovery is.
+    #[test]
+    fn a_repeated_unresolved_spend_is_recorded_once() {
+        let mut events = vec![spend(1, 9, 0, 2, 901), spend(1, 9, 0, 2, 901)];
+        let mut ledger = Ledger::new();
+        ledger.replay(&mut events).expect("replay");
+        assert_eq!(ledger.unresolved().len(), 1);
+    }
+
     #[test]
     fn history_reports_net_value_per_transaction() {
         let mut events = vec![receive(1, 0, 5_000, 100)];

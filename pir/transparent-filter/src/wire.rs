@@ -97,7 +97,30 @@ pub struct ShardMapEntry {
     pub scripts: u64,
     pub page_rows: u64,
     pub txids: u64,
+    /// Segments in the shard's directory table, and in its pages table.
+    ///
+    /// One apiece in the ordinary case. A shard whose content did not fit one
+    /// segment of the pinned geometry holds more, and a wallet needs the counts
+    /// before it can query: a row is addressed within the shard's whole logical
+    /// row space, and every segment is asked, so the segment a script lands in
+    /// is never named in a request.
+    pub directory_segments: u32,
+    pub page_segments: u32,
+    /// Digest of the shard's manifest: the identity of *this revision* of it.
+    ///
+    /// A growing tail is republished as a new revision with its own digest, so
+    /// this is what a wallet records alongside provisional coverage in order to
+    /// notice that the range it covered has been superseded.
+    pub manifest_digest: String,
+    /// Which published revision of this shard the entry describes.
+    ///
+    /// Zero for a shard published once. A sealed shard's revision is final.
+    pub revision: u32,
     /// False only for the tail, which is still growing toward a threshold.
+    ///
+    /// Coverage taken from an unsealed shard is provisional: it is recorded
+    /// with `manifest_digest` and re-derived when a later revision, or the
+    /// sealed shard, appears.
     pub sealed: bool,
 }
 
@@ -170,6 +193,16 @@ impl ShardMap {
             }
             if shard.end_height < shard.start_height {
                 return Err(format!("shard {index} ends before it starts"));
+            }
+            // A shard with no segment has no table to query, and a wallet that
+            // accepted one would advance coverage over a range it never read.
+            if shard.directory_segments == 0 || shard.page_segments == 0 {
+                return Err(format!("shard {index} declares no segments"));
+            }
+            if shard.manifest_digest.len() != 64 {
+                return Err(format!(
+                    "shard {index} has no manifest digest to identify its revision"
+                ));
             }
             if let Some(previous) = index.checked_sub(1).and_then(|i| self.shards.get(i)) {
                 if shard.start_height != previous.end_height + 1 {

@@ -172,6 +172,8 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
             terminal_block_hash: hash_at(end).to_display_hex(),
             parent_manifest_digest: parent_digest.clone(),
             sealed: shard_id + 1 < SHARDS,
+            revision: 0,
+            supersedes: String::new(),
             seal: ManifestSeal {
                 scripts_target: 8_192,
                 scripts_capacity: 16_384,
@@ -185,16 +187,24 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
                 directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
             },
             filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-            directory: TableGeometry {
-                rows: transparent_shard::DIRECTORY_ROWS as u64,
-                row_bytes: transparent_shard::DIRECTORY_ROW_BYTES as u32,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&built.directory)),
-            },
-            pages: TableGeometry {
-                rows: transparent_shard::PAGE_ROWS as u64,
-                row_bytes: transparent_shard::PAGE_ROW_BYTES as u32,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&built.pages)),
-            },
+            directory_segments: built
+                .directory
+                .iter()
+                .map(|segment| TableGeometry {
+                    rows: transparent_shard::DIRECTORY_ROWS as u64,
+                    row_bytes: transparent_shard::DIRECTORY_ROW_BYTES as u32,
+                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
+                })
+                .collect(),
+            page_segments: built
+                .pages
+                .iter()
+                .map(|segment| TableGeometry {
+                    rows: transparent_shard::PAGE_ROWS as u64,
+                    row_bytes: transparent_shard::PAGE_ROW_BYTES as u32,
+                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
+                })
+                .collect(),
             occupancy: ManifestOccupancy {
                 scripts: built.scripts,
                 page_rows: built.page_rows,
@@ -210,8 +220,12 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
         std::fs::create_dir_all(&shard_dir).unwrap();
         std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
         std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-        std::fs::write(shard_dir.join("directory.bin"), &built.directory).unwrap();
-        std::fs::write(shard_dir.join("pages.bin"), &built.pages).unwrap();
+        for (index, segment) in built.directory.iter().enumerate() {
+            std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
+        }
+        for (index, segment) in built.pages.iter().enumerate() {
+            std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
+        }
 
         entries.push(ShardMapEntry {
             shard_id,
@@ -223,6 +237,10 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
             scripts: built.scripts,
             page_rows: built.page_rows,
             txids: 0,
+            directory_segments: built.directory_segments(),
+            page_segments: built.page_segments(),
+            manifest_digest: digest.clone(),
+            revision: 0,
             sealed: manifest.sealed,
         });
         parent_digest = digest;
@@ -311,11 +329,16 @@ impl ShardTransport for HttpShards {
         Ok((bytes, len))
     }
 
-    fn setup(&mut self, shard_id: u64, table: Table) -> Result<(Vec<u8>, u64), BoxError> {
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/setup/{}",
+                "{}/v1/shards/{shard_id}/setup/{}/{segment}",
                 self.base,
                 table.as_str()
             ))

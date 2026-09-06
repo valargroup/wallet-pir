@@ -154,7 +154,20 @@ struct Published {
     map: ShardMap,
     map_bytes: u64,
     filters: BTreeMap<u64, Vec<u8>>,
-    tables: BTreeMap<(u64, &'static str), Vec<u8>>,
+    /// Per shard and table, one entry per segment. Ordinarily one.
+    tables: BTreeMap<(u64, &'static str), Vec<Vec<u8>>>,
+}
+
+impl Published {
+    /// One row of a shard's logical row space, which is its segments
+    /// concatenated.
+    fn row(&self, shard_id: u64, table: &'static str, row: u64, width: usize) -> &[u8] {
+        let segments = &self.tables[&(shard_id, table)];
+        let per_segment = (segments[0].len() / width) as u64;
+        let segment = &segments[(row / per_segment) as usize];
+        let at = (row % per_segment) as usize * width;
+        &segment[at..at + width]
+    }
 }
 
 fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
@@ -187,6 +200,10 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
             scripts: built.scripts,
             page_rows: built.page_rows,
             txids: 0,
+            directory_segments: built.directory_segments(),
+            page_segments: built.page_segments(),
+            manifest_digest: format!("{shard_id:064x}"),
+            revision: 0,
             sealed: shard_id + 1 < SHARDS,
         });
         filters.insert(shard_id, built.filter.as_slice().to_vec());
@@ -265,11 +282,16 @@ impl ShardTransport for DirectRows<'_> {
         Ok((Vec::new(), 0))
     }
 
-    fn setup(&mut self, shard_id: u64, table: Table) -> Result<(Vec<u8>, u64), BoxError> {
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
         // A real service publishes c1 here. The stand-in cannot, so it returns
         // an empty document and the sync's setup path is exercised in the
         // server's own round trip instead.
-        let _ = (shard_id, table);
+        let _ = (shard_id, table, segment);
         Ok((Vec::new(), 0))
     }
 
@@ -279,12 +301,18 @@ impl ShardTransport for DirectRows<'_> {
         let row = u64::from_le_bytes(body[body.len() - 8..].try_into()?) as usize;
         let name = Self::table_name(table);
         let width = self.row_bytes[name];
-        let table_bytes = self
+        let segments = self
             .published
             .tables
             .get(&(shard_id, name))
             .ok_or("no such table")?;
-        Ok(table_bytes[row * width..(row + 1) * width].to_vec())
+        // Every segment answers the same query, in segment order, as the real
+        // service does.
+        let mut answer = Vec::new();
+        for segment in segments {
+            answer.extend_from_slice(&segment[row * width..(row + 1) * width]);
+        }
+        Ok(answer)
     }
 }
 
@@ -339,18 +367,17 @@ fn the_ledger_replays_identically_from_shards_and_from_a_direct_traversal() {
 
     let mut events: Vec<(Vec<u8>, TransparentEvent)> = Vec::new();
     for entry in &published.map.shards {
-        let directory = &published.tables[&(entry.shard_id, "directory")];
-        let pages = &published.tables[&(entry.shard_id, "pages")];
         for want in &wallet {
-            for row in transparent_shard::build::candidate_rows(
-                entry.shard_id,
-                want.as_slice(),
-                transparent_shard::DIRECTORY_ROWS as u64,
-            ) {
-                let at = row as usize * transparent_shard::DIRECTORY_ROW_BYTES;
-                let decoded = transparent_shard::records::decode_directory_row(
-                    &directory[at..at + transparent_shard::DIRECTORY_ROW_BYTES],
-                )
+            let rows = transparent_shard::DIRECTORY_ROWS as u64 * entry.directory_segments as u64;
+            for row in
+                transparent_shard::build::candidate_rows(entry.shard_id, want.as_slice(), rows)
+            {
+                let decoded = transparent_shard::records::decode_directory_row(published.row(
+                    entry.shard_id,
+                    "directory",
+                    row,
+                    transparent_shard::DIRECTORY_ROW_BYTES,
+                ))
                 .unwrap();
                 for found in decoded {
                     if found.script != want.as_slice() {
@@ -360,11 +387,12 @@ fn the_ledger_replays_identically_from_shards_and_from_a_direct_traversal() {
                         events.push((found.script.clone(), *event));
                     }
                     for ordinal in 0..found.page_count {
-                        let at = (found.first_page + ordinal) as usize
-                            * transparent_shard::PAGE_ROW_BYTES;
-                        let page = transparent_shard::records::Page::decode(
-                            &pages[at..at + transparent_shard::PAGE_ROW_BYTES],
-                        )
+                        let page = transparent_shard::records::Page::decode(published.row(
+                            entry.shard_id,
+                            "pages",
+                            (found.first_page + ordinal) as u64,
+                            transparent_shard::PAGE_ROW_BYTES,
+                        ))
                         .unwrap()
                         .expect("a located page is occupied");
                         for event in page.events {

@@ -7,8 +7,18 @@
 //!
 //! The manifest binds everything a consumer needs to decide whether the bytes
 //! it received are the bytes that were published: the chain, the range, the
-//! geometry, and a digest per table. It does not, and cannot, establish that
-//! the indexer included every event — that stays a separate trust decision.
+//! geometry, and a digest per segment of each table. It does not, and cannot,
+//! establish that the indexer included every event — that stays a separate
+//! trust decision.
+//!
+//! # Revisions
+//!
+//! A shard is *open* while it is being built, which is not a published state.
+//! What is published is either a **provisional** revision of a tail — immutable
+//! under its own digest, expected to be superseded by a revision covering more
+//! blocks — or a **sealed** shard, which is final and is the only kind that
+//! enters the parent-digest chain. Superseding publishes a new digest beside
+//! the old one rather than changing bytes under one that has been served.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,7 +27,7 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v1";
+pub const SCHEMA: &str = "transparent-shard-v2";
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -92,18 +102,37 @@ pub struct ShardManifest {
     /// of independently published ranges: a consumer can walk it and see that
     /// nothing was substituted or omitted between two shards it accepts.
     pub parent_manifest_digest: String,
-    /// False for the tail, which is still growing.
+    /// False for the tail, whose published form is a provisional revision.
     ///
-    /// A consumer may use an unsealed shard for a current balance but must not
-    /// cache it as immutable, and must re-fetch rather than trust a retained
-    /// copy.
+    /// A consumer may use a provisional revision for a current balance, but the
+    /// coverage it takes from one is provisional: recorded with this manifest's
+    /// digest, never cached as immutable, and re-derived when a later revision
+    /// or the sealed shard appears.
     pub sealed: bool,
+    /// Which published revision of this shard this manifest describes.
+    ///
+    /// Zero for a shard published once. A tail's revision advances each time it
+    /// is republished with more blocks; sealing is the last such publication.
+    pub revision: u32,
+    /// Digest of the revision this one supersedes, or empty for the first.
+    ///
+    /// A wallet holding the superseded revision can see that what it covered
+    /// has been replaced rather than extended, and re-derive rather than merge.
+    pub supersedes: String,
     pub seal: ManifestSeal,
     pub layout: ManifestLayout,
     /// Double-SHA-256 of the serialized filter bytes, in display hex.
     pub filter_hash: String,
-    pub directory: TableGeometry,
-    pub pages: TableGeometry,
+    /// One entry per directory segment, in segment order.
+    ///
+    /// Ordinarily one. More means this shard's content did not fit a single
+    /// segment of the pinned geometry, and the digest binds the whole list, so
+    /// a shard cannot gain, lose or reorder a segment without becoming a
+    /// different shard.
+    pub directory_segments: Vec<TableGeometry>,
+    /// One entry per pages segment, in segment order. The segments concatenate
+    /// into the shard's page space, which a directory extent indexes.
+    pub page_segments: Vec<TableGeometry>,
     pub occupancy: ManifestOccupancy,
 }
 
@@ -139,6 +168,8 @@ mod tests {
             terminal_block_hash: "22".repeat(32),
             parent_manifest_digest: "33".repeat(32),
             sealed: true,
+            revision: 0,
+            supersedes: String::new(),
             seal: ManifestSeal {
                 scripts_target: 8_192,
                 scripts_capacity: 16_384,
@@ -152,16 +183,16 @@ mod tests {
                 directory_choices: 2,
             },
             filter_hash: "44".repeat(32),
-            directory: TableGeometry {
+            directory_segments: vec![TableGeometry {
                 rows: 2_048,
                 row_bytes: 3_584,
                 sha256: "55".repeat(32),
-            },
-            pages: TableGeometry {
+            }],
+            page_segments: vec![TableGeometry {
                 rows: 4_096,
                 row_bytes: 17_920,
                 sha256: "66".repeat(32),
-            },
+            }],
             occupancy: ManifestOccupancy {
                 scripts: 8_193,
                 page_rows: 1_879,
@@ -202,10 +233,22 @@ mod tests {
             Box::new(|m| m.terminal_block_hash = "99".repeat(32)),
             Box::new(|m| m.parent_manifest_digest = "99".repeat(32)),
             Box::new(|m| m.sealed = false),
+            Box::new(|m| m.revision += 1),
+            Box::new(|m| m.supersedes = "99".repeat(32)),
             Box::new(|m| m.filter_hash = "99".repeat(32)),
-            Box::new(|m| m.directory.sha256 = "99".repeat(32)),
-            Box::new(|m| m.pages.sha256 = "99".repeat(32)),
-            Box::new(|m| m.directory.rows += 1),
+            Box::new(|m| m.directory_segments[0].sha256 = "99".repeat(32)),
+            Box::new(|m| m.page_segments[0].sha256 = "99".repeat(32)),
+            Box::new(|m| m.directory_segments[0].rows += 1),
+            // A shard cannot gain a segment without becoming a different
+            // shard: the segment list is what a wallet asks every segment of.
+            Box::new(|m| {
+                let extra = m.directory_segments[0].clone();
+                m.directory_segments.push(extra);
+            }),
+            Box::new(|m| {
+                let extra = m.page_segments[0].clone();
+                m.page_segments.push(extra);
+            }),
             Box::new(|m| m.seal.scripts_target += 1),
             Box::new(|m| m.layout.inline_events += 1),
             Box::new(|m| m.occupancy.scripts += 1),

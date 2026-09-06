@@ -5,11 +5,34 @@
 //! 1. fetch the published shard map and binary-search it for the birthday;
 //! 2. download **every** filter from that shard forward and match locally;
 //! 3. for each matched script and shard, privately retrieve both candidate
-//!    directory rows, then the pages the decoded record locates;
+//!    directory rows, then the pages the decoded extent locates;
 //! 4. replay the events into a UTXO set.
 //!
 //! Step 2 downloads every filter in range, not only the ones that will match.
 //! Which filters a wallet asks for must not be a function of its scripts.
+//!
+//! Step 3 addresses a row over the shard's whole logical row space, which is
+//! its segments concatenated. Every segment answers, and the row is identified
+//! by its exact script bytes rather than by which segment returned it: asking
+//! only the segment that holds the script would disclose part of the script.
+//! Coverage advances for a shard only once every segment has been processed.
+//!
+//! # Settled and provisional coverage
+//!
+//! The last shard in the map may be a provisional tail revision, which will be
+//! superseded as the chain advances. Coverage taken from one is reported
+//! separately from settled coverage, with the revision's digest, so a caller
+//! can re-derive that range instead of merging a later revision into it.
+//!
+//! # What the checks here establish
+//!
+//! The first profile trusts the publisher and the retrieval service to provide
+//! correct, complete, mutually consistent data for the declared anchor. What
+//! this code checks — filter digests against the map, exact script bytes
+//! against the row, a page header against the entry that located it, the event
+//! total against what the pages yielded — detects corruption, stale data and
+//! accidentally mixed shards. None of it establishes that the index matches the
+//! chain: a service that returns a consistent lie passes every one of them.
 //!
 //! # What this leaks, stated plainly
 //!
@@ -63,8 +86,30 @@ pub struct SyncOutcome {
     /// Matches that turned out to hold no directory entry: the filter's false
     /// positives, plus any script outside the private tables' coverage.
     pub unproductive_matches: u64,
-    /// Height through which coverage is complete.
+    /// Height through which coverage is complete, including any provisional
+    /// tail revision this sync used.
     pub covered_through: u64,
+    /// Height through which coverage came from sealed shards alone.
+    ///
+    /// Equal to `covered_through` when the sync used no provisional revision.
+    /// A balance beyond this height is current but not settled.
+    pub settled_through: u64,
+    /// The provisional revisions this sync took coverage from: shard id,
+    /// revision number and the manifest digest that identifies the revision.
+    ///
+    /// A caller records these with the coverage. When a later revision or the
+    /// sealed shard appears, the range they covered is re-derived rather than
+    /// extended, because a revision replaces its predecessor.
+    pub provisional: Vec<ProvisionalCoverage>,
+}
+
+/// One provisional revision a sync took coverage from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvisionalCoverage {
+    pub shard_id: u64,
+    pub revision: u32,
+    pub manifest_digest: String,
+    pub end_height: u64,
 }
 
 /// Runs one sync from `birthday` to the end of the published map.
@@ -120,6 +165,8 @@ pub fn sync(
     let mut unproductive = 0u64;
     let mut events: Vec<(Vec<u8>, TransparentEvent)> = Vec::new();
     let mut covered_through = birthday.max(map.start_height).saturating_sub(1);
+    let mut settled_through = covered_through;
+    let mut provisional = Vec::new();
 
     for entry in map.shards.iter().skip(first_shard as usize) {
         // Every filter in range is downloaded, matched or not.
@@ -151,7 +198,7 @@ pub fn sync(
         if !matches.is_empty() {
             matched_shards.push(entry.shard_id);
             let recovered = retrieve_shard(
-                entry.shard_id,
+                entry,
                 &matches,
                 scripts,
                 &mut directory,
@@ -162,7 +209,19 @@ pub fn sync(
             unproductive += recovered.unproductive;
             events.extend(recovered.events);
         }
+        // Reached only after every segment of this shard was retrieved and
+        // validated: an error above leaves coverage where it was.
         covered_through = entry.end_height;
+        if entry.sealed {
+            settled_through = entry.end_height;
+        } else {
+            provisional.push(ProvisionalCoverage {
+                shard_id: entry.shard_id,
+                revision: entry.revision,
+                manifest_digest: entry.manifest_digest.clone(),
+                end_height: entry.end_height,
+            });
+        }
     }
 
     let mut ledger = Ledger::new();
@@ -174,6 +233,8 @@ pub fn sync(
         matched_shards,
         unproductive_matches: unproductive,
         covered_through,
+        settled_through,
+        provisional,
     })
 }
 
@@ -182,9 +243,10 @@ struct Recovered {
     unproductive: u64,
 }
 
-/// Retrieves every matched script's history from one shard.
+/// Retrieves every matched script's history from one shard, across all of its
+/// segments.
 fn retrieve_shard(
-    shard_id: u64,
+    entry: &transparent_filter::ShardMapEntry,
     matches: &[usize],
     scripts: &[ScriptBytes],
     directory: &mut TableClient,
@@ -192,7 +254,15 @@ fn retrieve_shard(
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
 ) -> Result<Recovered, SyncError> {
-    open_table(shard_id, Table::Directory, directory, transport, charges)?;
+    let shard_id = entry.shard_id;
+    open_table(
+        shard_id,
+        Table::Directory,
+        entry.directory_segments,
+        directory,
+        transport,
+        charges,
+    )?;
 
     let mut events = Vec::new();
     let mut unproductive = 0u64;
@@ -205,24 +275,34 @@ fn retrieve_shard(
 
         // Both candidate rows are queried. Querying only the first and stopping
         // on a hit would make the number of queries depend on where the script
-        // landed, which is a function of the script.
+        // landed, which is a function of the script. Candidates are taken over
+        // the shard's whole logical row space; each names one row within a
+        // segment, and every segment answers it.
         let mut found: Option<DirectoryEntry> = None;
-        for row in candidate_rows(
-            shard_id,
-            script.as_slice(),
-            transparent_shard::DIRECTORY_ROWS as u64,
-        ) {
-            let raw = directory.fetch_row(transport, shard_id, row as usize, charges)?;
-            for entry in decode_directory_row(&raw)? {
-                // The row is selected by a hash, and a hash can collide or be
-                // misplaced. The exact script bytes are what settle it.
-                if entry.script == script.as_slice() {
-                    if found.is_some() {
-                        return Err(SyncError::Invalid(format!(
-                            "shard {shard_id} holds a script twice"
-                        )));
+        let rows = transparent_shard::DIRECTORY_ROWS as u64 * entry.directory_segments as u64;
+        for row in candidate_rows(shard_id, script.as_slice(), rows) {
+            let (_, within) =
+                transparent_shard::layout::split_row(row, transparent_shard::DIRECTORY_ROWS as u64);
+            let answers = directory.fetch_row(
+                transport,
+                shard_id,
+                entry.directory_segments,
+                within as usize,
+                charges,
+            )?;
+            for raw in answers {
+                for candidate in decode_directory_row(&raw)? {
+                    // The row is selected by a hash, and a hash can collide or
+                    // be misplaced; the segment is not named at all. The exact
+                    // script bytes are what settle both.
+                    if candidate.script == script.as_slice() {
+                        if found.is_some() {
+                            return Err(SyncError::Invalid(format!(
+                                "shard {shard_id} holds a script twice"
+                            )));
+                        }
+                        found = Some(candidate);
                     }
-                    found = Some(entry);
                 }
             }
         }
@@ -244,38 +324,68 @@ fn retrieve_shard(
     }
 
     if !needs_pages.is_empty() {
-        open_table(shard_id, Table::Pages, pages, transport, charges)?;
-        for entry in needs_pages {
-            let mut recovered = entry.inline.len() as u32;
-            for ordinal in 0..entry.page_count {
-                let row = entry.first_page + ordinal;
-                let raw = pages.fetch_row(transport, shard_id, row as usize, charges)?;
-                let page = Page::decode(&raw)?.ok_or_else(|| {
+        open_table(
+            shard_id,
+            Table::Pages,
+            entry.page_segments,
+            pages,
+            transport,
+            charges,
+        )?;
+        for found in needs_pages {
+            let mut recovered = found.inline.len() as u32;
+            for ordinal in 0..found.page_count {
+                // The extent indexes the shard's page space, which is its
+                // segments concatenated, so an extent that runs past a segment
+                // boundary needs no special handling here.
+                let row = found.first_page + ordinal;
+                let (_, within) = transparent_shard::layout::split_row(
+                    row as u64,
+                    transparent_shard::PAGE_ROWS as u64,
+                );
+                let answers = pages.fetch_row(
+                    transport,
+                    shard_id,
+                    entry.page_segments,
+                    within as usize,
+                    charges,
+                )?;
+                // A directory entry could point anywhere, and every segment
+                // answered; the page's own header is what says whose history it
+                // holds, and exactly one answer may claim it.
+                let mut page = None;
+                for raw in answers {
+                    let Some(candidate) = Page::decode(&raw)? else {
+                        continue;
+                    };
+                    if candidate.script == found.script
+                        && candidate.ordinal == ordinal
+                        && candidate.page_count == found.page_count
+                    {
+                        if page.is_some() {
+                            return Err(SyncError::Invalid(format!(
+                                "shard {shard_id} holds page {row} twice"
+                            )));
+                        }
+                        page = Some(candidate);
+                    }
+                }
+                let page = page.ok_or_else(|| {
                     SyncError::Invalid(format!(
-                        "shard {shard_id} directory locates an empty page row"
+                        "shard {shard_id} page {row} does not belong to the entry that located it"
                     ))
                 })?;
-                // A directory entry could point anywhere; the page's own header
-                // is what says whose history it holds.
-                if page.script != entry.script
-                    || page.ordinal != ordinal
-                    || page.page_count != entry.page_count
-                {
-                    return Err(SyncError::Invalid(format!(
-                        "shard {shard_id} page {row} does not belong to the entry that located it"
-                    )));
-                }
                 recovered += page.events.len() as u32;
                 for event in page.events {
-                    events.push((entry.script.clone(), event));
+                    events.push((found.script.clone(), event));
                 }
             }
             // The directory promised a total; the pages must account for it, or
             // the wallet cannot tell a complete history from a truncated one.
-            if recovered != entry.total_events {
+            if recovered != found.total_events {
                 return Err(SyncError::Invalid(format!(
                     "shard {shard_id} yielded {recovered} events where the directory promised {}",
-                    entry.total_events
+                    found.total_events
                 )));
             }
         }
@@ -287,30 +397,42 @@ fn retrieve_shard(
     })
 }
 
-/// Fetches a shard's published setup for one table, once.
+/// Fetches the published setup for every segment of a shard's table, once.
+///
+/// Each segment publishes its own `c1`, so each is opened separately; a shard
+/// with one segment — the ordinary case — costs exactly one setup per table.
 fn open_table(
     shard_id: u64,
     table: Table,
+    segments: u32,
     client: &mut TableClient,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
 ) -> Result<(), SyncError> {
-    if client.is_open(shard_id) {
-        return Ok(());
+    if segments == 0 {
+        return Err(SyncError::Invalid(format!(
+            "shard {shard_id} declares no {} segments",
+            table.as_str()
+        )));
     }
-    let (raw, cost) = transport
-        .setup(shard_id, table)
-        .map_err(|error| SyncError::Transport(error.to_string()))?;
-    charges.setup_bytes += cost;
-    charges.shards_opened += 1;
-    let parsed: serde_json::Value =
-        serde_json::from_slice(&raw).map_err(|error| SyncError::Transport(error.to_string()))?;
-    let params = parsed["public_params"]
-        .as_str()
-        .ok_or_else(|| SyncError::Invalid("setup has no public_params".into()))?;
-    let digest = parsed["public_params_sha256"]
-        .as_str()
-        .ok_or_else(|| SyncError::Invalid("setup has no digest".into()))?;
-    client.open_shard(shard_id, params, digest)?;
+    for segment in 0..segments {
+        if client.is_open(shard_id, segment) {
+            continue;
+        }
+        let (raw, cost) = transport
+            .setup(shard_id, table, segment)
+            .map_err(|error| SyncError::Transport(error.to_string()))?;
+        charges.setup_bytes += cost;
+        charges.shards_opened += 1;
+        let parsed: serde_json::Value = serde_json::from_slice(&raw)
+            .map_err(|error| SyncError::Transport(error.to_string()))?;
+        let params = parsed["public_params"]
+            .as_str()
+            .ok_or_else(|| SyncError::Invalid("setup has no public_params".into()))?;
+        let digest = parsed["public_params_sha256"]
+            .as_str()
+            .ok_or_else(|| SyncError::Invalid("setup has no digest".into()))?;
+        client.open_segment(shard_id, segment, params, digest)?;
+    }
     Ok(())
 }
