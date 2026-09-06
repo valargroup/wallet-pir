@@ -13,12 +13,20 @@
 //!
 //! - the filter and the directory are sized by *distinct scripts*;
 //! - the pages table is sized by *page rows*, which is
-//!   `sum over scripts of page_rows_for(events)` — not the event count, because
+//!   `sum over scripts of fragments_for(events)` — not the event count, because
 //!   pages are per script and padded, so many three-event histories cost far
 //!   more rows than the same events in one long history.
 //!
-//! Both are monotone as blocks stream in, so one incremental pass decides every
-//! boundary. Distinct transaction ids are counted and reported but do not seal:
+//! Both are monotone as blocks stream in. That is a convenient property but not
+//! the reason one incremental pass decides every boundary: what actually makes
+//! the pass sound is that each block's per-script delta is *exact*, so the
+//! projection a capacity decision is made on is the state absorbing will
+//! produce. The distinction matters because packed row demand, carried here as
+//! [`Occupancy::packed_page_rows`] and not yet used to seal, is not monotone —
+//! see [`crate::layout::PackedDemand`] for the counterexample. Nothing may
+//! reason that content which does not fit now can never fit later.
+//!
+//! Distinct transaction ids are counted and reported but do not seal:
 //! they size the optional transaction-detail table, which this POC does not
 //! build. Over the Ironwood-to-tip journal that limit never bound in any
 //! candidate policy, so dropping it moves no boundary.
@@ -43,7 +51,8 @@
 //! nothing for ordinary shards — the block that overran a capacity is above
 //! every target too, so the shard closes immediately after it.
 
-use crate::layout::{page_rows_for, INLINE_EVENTS};
+use crate::layout::{fragments_for, PackedDemand, INLINE_EVENTS};
+use crate::records::MAX_SCRIPT_BYTES;
 use std::collections::{HashMap, HashSet};
 use transparent_events::{TransparentEvent, Txid};
 use transparent_filter::ScriptBytes;
@@ -105,6 +114,20 @@ pub struct Occupancy {
     /// which the measured distribution says is common.
     pub inline_events: u64,
     pub blocks: u64,
+    /// Page rows the same content would need with short histories packed into
+    /// shared rows.
+    ///
+    /// Carried alongside [`Occupancy::page_rows`], not in place of it: sealing
+    /// still runs on the unpacked figure, so boundaries are unchanged and this
+    /// is a projection of demand at those boundaries rather than a measurement
+    /// of a packed shard.
+    pub packed_page_rows: u64,
+    /// The class counts behind `packed_page_rows`, for reporting.
+    ///
+    /// Excludes scripts too long for a directory entry, which the builder never
+    /// pages. `page_rows` still counts them, which is why the two can disagree
+    /// by more than packing alone explains.
+    pub demand: PackedDemand,
 }
 
 impl Occupancy {
@@ -150,6 +173,12 @@ pub struct Sealer {
     scripts: HashMap<Vec<u8>, u32>,
     txids: HashSet<Txid>,
     page_rows: u64,
+    /// Maintained rather than recomputed: `occupancy()` is reached up to five
+    /// times per block, and a full scan of the script map each time is the
+    /// difference between a runnable and an unrunnable full-journal census.
+    inline_events: u64,
+    /// Packed row demand, carried as a passenger. See [`Occupancy::packed_page_rows`].
+    demand: PackedDemand,
     events: u64,
     start_height: Option<u64>,
     last_height: Option<u64>,
@@ -168,6 +197,8 @@ impl Sealer {
             scripts: HashMap::new(),
             txids: HashSet::new(),
             page_rows: 0,
+            inline_events: 0,
+            demand: PackedDemand::default(),
             events: 0,
             start_height: None,
             last_height: None,
@@ -182,15 +213,13 @@ impl Sealer {
             page_rows: self.page_rows,
             txids: self.txids.len() as u64,
             events: self.events,
-            inline_events: self
-                .scripts
-                .values()
-                .map(|count| u64::from((*count).min(INLINE_EVENTS)))
-                .sum(),
+            inline_events: self.inline_events,
             blocks: match (self.start_height, self.last_height) {
                 (Some(start), Some(last)) => last - start + 1,
                 _ => 0,
             },
+            packed_page_rows: self.demand.rows(),
+            demand: self.demand,
         }
     }
 
@@ -198,6 +227,8 @@ impl Sealer {
         self.scripts.clear();
         self.txids.clear();
         self.page_rows = 0;
+        self.inline_events = 0;
+        self.demand = PackedDemand::default();
         self.events = 0;
         self.start_height = None;
         self.last_height = None;
@@ -230,15 +261,19 @@ impl Sealer {
 
         let mut scripts = self.scripts.len() as u64;
         let mut page_rows = self.page_rows;
-        let mut inline_events = self.occupancy().inline_events;
+        let mut inline_events = self.inline_events;
+        let mut demand = self.demand;
         for (script, added) in &added_scripts {
             let existing = self.scripts.get(*script).copied().unwrap_or(0);
             if existing == 0 {
                 scripts += 1;
             }
-            page_rows += page_rows_for(existing + added) - page_rows_for(existing);
+            page_rows += fragments_for(existing + added) - fragments_for(existing);
             inline_events += u64::from((existing + added).min(INLINE_EVENTS))
                 - u64::from(existing.min(INLINE_EVENTS));
+            if script.len() <= MAX_SCRIPT_BYTES {
+                demand.shift(existing, existing + added);
+            }
         }
         let txids = added_txids
             .iter()
@@ -252,7 +287,12 @@ impl Sealer {
             txids,
             events: self.events + events.len() as u64,
             inline_events,
-            blocks: self.occupancy().blocks + 1,
+            blocks: match (self.start_height, self.last_height) {
+                (Some(start), Some(last)) => last - start + 1 + 1,
+                _ => 1,
+            },
+            packed_page_rows: demand.rows(),
+            demand,
         }
     }
 
@@ -286,13 +326,30 @@ impl Sealer {
             self.start_height = Some(height);
         }
         self.last_height = Some(height);
+
+        // Aggregate the block by script before applying it, so this runs the
+        // same per-script delta as `projected` rather than a second code path.
+        // Applying events one at a time would also walk a history through every
+        // intermediate packing class on its way to the one it lands in.
+        let mut added: HashMap<&[u8], u32> = HashMap::new();
         for (script, event) in events {
-            let counter = self.scripts.entry(script.as_slice().to_vec()).or_insert(0);
-            let before = page_rows_for(*counter);
-            *counter += 1;
-            self.page_rows += page_rows_for(*counter) - before;
+            *added.entry(script.as_slice()).or_insert(0) += 1;
             self.txids.insert(event.txid());
             self.events += 1;
+        }
+        for (script, added) in added {
+            let existing = self.scripts.get(script).copied().unwrap_or(0);
+            let updated = existing + added;
+            self.page_rows += fragments_for(updated) - fragments_for(existing);
+            self.inline_events +=
+                u64::from(updated.min(INLINE_EVENTS)) - u64::from(existing.min(INLINE_EVENTS));
+            // A script too long for a directory entry is filtered publicly but
+            // never paged, so it contributes no packed rows. `page_rows` still
+            // counts it, which is the v4 behaviour this projection rides on.
+            if script.len() <= MAX_SCRIPT_BYTES {
+                self.demand.shift(existing, updated);
+            }
+            self.scripts.insert(script.to_vec(), updated);
         }
     }
 
@@ -752,5 +809,110 @@ mod tests {
         assert!(Limit::new(0, 10).is_err());
         assert!(Limit::new(11, 10).is_err());
         assert!(Limit::new(10, 10).is_ok());
+    }
+
+    /// `inline_events` is maintained rather than recomputed, so it has to be
+    /// checked against the scan it replaced. Nothing else would notice a drift.
+    #[test]
+    fn maintained_counters_match_a_full_recount() {
+        let mut sealer = Sealer::new(generous(), 100);
+        for height in 100..160u64 {
+            // Reuse tags across blocks so histories grow, and mix in fresh ones.
+            let mut block = Vec::new();
+            for i in 0..12u32 {
+                block.push(event(height, (height as u32 * 3 + i) % 40, i));
+            }
+            sealer.push_block(height, &block).unwrap();
+
+            let occupancy = sealer.occupancy();
+            let recounted: u64 = sealer
+                .scripts
+                .values()
+                .map(|count| u64::from((*count).min(INLINE_EVENTS)))
+                .sum();
+            assert_eq!(occupancy.inline_events, recounted, "at height {height}");
+
+            let fragments: u64 = sealer.scripts.values().map(|c| fragments_for(*c)).sum();
+            assert_eq!(occupancy.page_rows, fragments, "at height {height}");
+        }
+    }
+
+    /// Packing never costs more rows than giving each history its own, and a
+    /// block never adds more rows than it touches scripts.
+    ///
+    /// The second bound is what replaces monotonicity. Packed demand is not
+    /// monotone — see `layout::tests::row_demand_can_fall_as_events_arrive` —
+    /// so "a shard that overshot its target stays overshot" is not available as
+    /// a reason for the gap between target and capacity. This bound is.
+    #[test]
+    fn a_block_adds_at_most_one_row_per_script_it_touches() {
+        let mut sealer = Sealer::new(generous(), 100);
+        for height in 100..200u64 {
+            let mut block = Vec::new();
+            // Irregular: some blocks empty, some wide, histories of every shape.
+            for i in 0..(height as u32 % 17) {
+                block.push(event(height, (height as u32 * 5 + i) % 60, i));
+            }
+            let touched: std::collections::HashSet<&[u8]> =
+                block.iter().map(|(s, _)| s.as_slice()).collect();
+
+            let before = sealer.occupancy().packed_page_rows;
+            sealer.push_block(height, &block).unwrap();
+            let after = sealer.occupancy();
+
+            assert!(
+                after.packed_page_rows <= before + touched.len() as u64,
+                "height {height}: {before} -> {} for {} scripts",
+                after.packed_page_rows,
+                touched.len()
+            );
+            assert!(
+                after.packed_page_rows <= after.page_rows,
+                "height {height}: packing cost more than not packing"
+            );
+        }
+    }
+
+    /// The projection a capacity decision is made on must equal what absorbing
+    /// actually produces, for the packed figure as much as the unpacked one.
+    /// If those drift, the builder's row count and the sealer's stop agreeing.
+    #[test]
+    fn the_projection_equals_what_absorbing_produces() {
+        let mut sealer = Sealer::new(generous(), 100);
+        for height in 100..180u64 {
+            let block: Vec<_> = (0..(height as u32 % 9))
+                .map(|i| event(height, (height as u32 * 7 + i) % 30, i))
+                .collect();
+            let projected = sealer.projected(&block);
+            sealer.push_block(height, &block).unwrap();
+            assert_eq!(sealer.occupancy(), projected, "at height {height}");
+        }
+    }
+
+    /// A script too long for a directory entry is filtered publicly and never
+    /// paged, so it must not appear in packed demand. It still counts toward
+    /// the unpacked figure, which is the v4 behaviour this projection rides on.
+    #[test]
+    fn an_unindexable_script_contributes_no_packed_rows() {
+        let mut sealer = Sealer::new(generous(), 100);
+        let long = ScriptBytes::new(vec![0x51; MAX_SCRIPT_BYTES + 1]);
+        let (_, sample) = event(100, 0, 0);
+        let block: Vec<_> = (0..10)
+            .map(|i| {
+                let (_, e) = event(100, 0, i);
+                (long.clone(), e)
+            })
+            .collect();
+        let _ = sample;
+        sealer.push_block(100, &block).unwrap();
+
+        let occupancy = sealer.occupancy();
+        assert_eq!(occupancy.scripts, 1);
+        assert!(
+            occupancy.page_rows > 0,
+            "the unpacked figure still counts it"
+        );
+        assert_eq!(occupancy.packed_page_rows, 0);
+        assert_eq!(occupancy.demand.paged_scripts(), 0);
     }
 }

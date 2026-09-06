@@ -123,14 +123,31 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin shard-census
-          # Read-only against the journal, and cheap: it streams once and holds
-          # the events in memory. Run on the runner rather than staged, since
-          # the runner is the coordinator and the journal is local to it.
-          sudo ./target/release/shard-census --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" | tee census.txt
+          # Read-only against the journal. It streams the journal once and
+          # feeds every candidate policy from that one pass, so peak memory is
+          # one block plus per-policy sealer state rather than the whole
+          # journal. Run on the runner rather than staged, since the runner is
+          # the coordinator and the journal is local to it.
+          #
+          # Timed because peak resident memory is a reported figure, and a
+          # census that has to hold the journal is the thing that would stop a
+          # full-journal run. Measure it rather than assert it.
+          # GNU time is not installed everywhere, and a missing accounting tool
+          # must not be what stops a census.
+          TIMED=()
+          if [[ -x /usr/bin/time ]]; then TIMED=(/usr/bin/time -v); fi
+          : >census-time.txt
+          sudo "${TIMED[@]}" ./target/release/shard-census \
+            --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" 2>census-time.txt | tee census.txt
+          grep -E 'Maximum resident|Elapsed' census-time.txt || echo 'no resource accounting'
           {
             echo '## Shard census'
             echo '```'
             cat census.txt
+            echo '```'
+            echo '### Resources'
+            echo '```'
+            grep -E 'Maximum resident|Elapsed \(wall' census-time.txt || echo 'no resource accounting'
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
 

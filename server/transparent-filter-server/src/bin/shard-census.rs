@@ -14,7 +14,9 @@
 use clap::Parser;
 use std::path::PathBuf;
 use transparent_filter_server::events::EventStore;
-use transparent_shard::layout::{DIRECTORY_ROW_BYTES, PAGE_ROW_BYTES};
+use transparent_shard::layout::{
+    entries_per_row, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
+};
 use transparent_shard::seal::{Limit, SealPolicy, SealReason, SealedShard, Sealer};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -199,7 +201,162 @@ fn utilisation(shards: &[SealedShard]) {
     );
 }
 
-fn report(name: &str, shards: &[SealedShard]) {
+/// What the same content would cost with short histories packed into shared rows.
+///
+/// This is arithmetic over per-script event counts, not a measurement. No v5
+/// codec, builder or published set exists at this commit: the boundaries below
+/// are the v4 boundaries above, with packed demand carried alongside them as a
+/// passenger. It says what the packing rule *would* ask for, and the only way
+/// it can be wrong is if a builder that does not yet exist disagrees.
+///
+/// Two further caveats it shares with the measured figures above: directory
+/// placement is modelled as `scripts / slots` rather than run through the real
+/// two-choice placer, so directory segment counts are a lower bound; and
+/// encoding overhead is a modelled constant rather than emitted bytes.
+fn projection(shards: &[SealedShard], policy: &SealPolicy) {
+    if shards.is_empty() {
+        return;
+    }
+    let per_row = PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES;
+    let page_rows_per_segment = transparent_shard::PAGE_ROWS as u64;
+    let dir_rows_per_segment = transparent_shard::DIRECTORY_ROWS as u64;
+    let slots = transparent_shard::DIRECTORY_SLOTS as u64;
+
+    println!();
+    println!("  === PROJECTION ONLY — arithmetic over per-script event counts. No v5");
+    println!("      codec, builder or published set exists. These are projected ROW");
+    println!("      DEMANDS derived from the packing rule, not measured bytes, and the");
+    println!("      boundaries are the v4 boundaries above with R carried alongside. ===");
+
+    // Per class: scripts across the whole set, and rows, which must be summed
+    // per shard because the ceiling is per shard.
+    println!("  proj_classes (p = paged events; a class of one script still costs a row)");
+    let mut class_scripts = [0u64; EVENTS_PER_PAGE as usize + 1];
+    let mut class_rows = [0u64; EVENTS_PER_PAGE as usize + 1];
+    for shard in shards {
+        for p in 1..=EVENTS_PER_PAGE as usize {
+            let n = shard.occupancy.demand.class(p as u32);
+            class_scripts[p] += n;
+            class_rows[p] += n.div_ceil(entries_per_row(p as u32) as u64);
+        }
+    }
+    for p in 1..=EVENTS_PER_PAGE as usize {
+        if class_scripts[p] == 0 {
+            continue;
+        }
+        let per = entries_per_row(p as u32) as u64;
+        let waste = class_rows[p] * per - class_scripts[p];
+        println!(
+            "    p {p:>2}  scripts {:>9}  rows {:>8}  {per:>2} per row  tail slack {waste:>7}",
+            class_scripts[p], class_rows[p]
+        );
+    }
+    let short_rows: u64 = class_rows.iter().sum();
+    let short_scripts: u64 = class_scripts.iter().sum();
+    let long_rows: u64 = shards.iter().map(|s| s.occupancy.demand.long_rows()).sum();
+    let long_scripts: u64 = shards
+        .iter()
+        .map(|s| s.occupancy.demand.long_scripts())
+        .sum();
+    println!(
+        "    short  scripts {short_scripts:>9}  rows {short_rows:>8}   long  scripts {long_scripts:>7}  rows {long_rows:>8}"
+    );
+
+    // Per shard, R against the unpacked figure that actually sealed it.
+    let mut proj: Vec<u64> = shards
+        .iter()
+        .map(|s| s.occupancy.packed_page_rows)
+        .collect();
+    describe("proj_rows", &mut proj);
+    let fragments: u64 = shards.iter().map(|s| s.occupancy.page_rows).sum();
+    let packed: u64 = shards.iter().map(|s| s.occupancy.packed_page_rows).sum();
+    // The unpacked figure still counts scripts too long for a directory entry,
+    // which the builder never pages and packing therefore never sees. Where
+    // that count is nonzero the ratio flatters packing slightly.
+    println!(
+        "  proj_R {packed} rows against {fragments} unpacked fragments = {:.2}x fewer rows",
+        if packed == 0 {
+            0.0
+        } else {
+            fragments as f64 / packed as f64
+        }
+    );
+
+    // The byte model under packing: one entry header per fragment, one row
+    // header per used row, and the events themselves.
+    let scripts: u64 = shards.iter().map(|s| s.occupancy.scripts).sum();
+    let paged: u64 = shards.iter().map(|s| s.occupancy.paged_events()).sum();
+    let live = scripts * transparent_shard::DIRECTORY_ENTRY_BYTES as u64
+        + fragments * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
+        + packed * PAGE_ROW_HEADER_BYTES as u64
+        + paged * transparent_events::EVENT_BYTES as u64;
+    let mut pinned = 0u64;
+    let mut page_segments = 0u64;
+    let mut dir_segments = 0u64;
+    for shard in shards {
+        let d = transparent_shard::layout::segments_for(
+            shard.occupancy.scripts.div_ceil(slots),
+            dir_rows_per_segment,
+        ) as u64;
+        let g = transparent_shard::layout::segments_for(
+            shard.occupancy.packed_page_rows,
+            page_rows_per_segment,
+        ) as u64;
+        dir_segments += d;
+        page_segments += g;
+        pinned += d * dir_rows_per_segment * DIRECTORY_ROW_BYTES as u64
+            + g * page_rows_per_segment * PAGE_ROW_BYTES as u64;
+    }
+
+    // Row fill is measured in bytes, not events. Once a row mixes classes,
+    // "events of 36" describes nothing: a row of 22 one-event entries is 98%
+    // full and holds 22 events.
+    let used_bytes: u64 = fragments * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
+        + paged * transparent_events::EVENT_BYTES as u64;
+    println!(
+        "  proj_utilisation  page rows {:>5.1}%  row bytes {:>5.1}%  ({} page segments)",
+        packed as f64 / (page_segments * page_rows_per_segment) as f64 * 100.0,
+        if packed == 0 {
+            0.0
+        } else {
+            used_bytes as f64 / (packed * per_row as u64) as f64 * 100.0
+        },
+        page_segments,
+    );
+    println!(
+        "  proj_segments  {dir_segments} directory, {page_segments} page, across {} shards",
+        shards.len()
+    );
+    println!(
+        "  proj_live bytes  {:.1} MB of {:.1} MB pinned = {:>5.2}%   (fleet ~{:.2} GB)",
+        live as f64 / 1e6,
+        pinned as f64 / 1e6,
+        live as f64 / pinned as f64 * 100.0,
+        pinned as f64 / 1e9,
+    );
+
+    // Which limit would close a shard if R replaced the unpacked figure. This
+    // is the question the projection exists to answer: if page rows stop
+    // binding, the script limit binds instead and the page table becomes the
+    // mostly-empty one.
+    let would_reach_pages = shards
+        .iter()
+        .filter(|s| s.occupancy.packed_page_rows >= policy.page_rows.target)
+        .count();
+    let would_reach_scripts = shards
+        .iter()
+        .filter(|s| s.occupancy.scripts >= policy.scripts.target)
+        .count();
+    println!(
+        "  proj_binding  {would_reach_pages} of {} shards would still reach the page-row target {}; \
+{would_reach_scripts} reach the script target {}",
+        shards.len(),
+        policy.page_rows.target,
+        policy.scripts.target,
+    );
+}
+
+fn report(name: &str, shards: &[SealedShard], policy: &SealPolicy) {
     let sealed: Vec<&SealedShard> = shards.iter().filter(|s| s.reason.is_some()).collect();
     println!("\n=== {name} ===");
     println!(
@@ -271,6 +428,7 @@ fn report(name: &str, shards: &[SealedShard]) {
     );
 
     utilisation(shards);
+    projection(shards, policy);
 
     // Plaintext table bytes, if every shard is padded to the capacity its
     // policy pins. This is what the service stores and what its PIR
@@ -312,38 +470,6 @@ fn main() -> Result<(), BoxError> {
         store.events_stored()
     );
 
-    // Load once. The journal is small enough to hold, and every candidate
-    // policy has to see exactly the same input for the comparison to mean
-    // anything.
-    let mut blocks = Vec::with_capacity(store.blocks_covered() as usize);
-    for height in first..=covered {
-        let events = store
-            .events_at(height)?
-            .ok_or_else(|| format!("height {height} is missing from the journal"))?;
-        blocks.push((height, events));
-    }
-
-    println!(
-        "\n=== density across the chain ({} blocks per bucket) ===",
-        cli.density_bucket
-    );
-    let mut bucket_start = first;
-    let mut bucket_events = 0u64;
-    let mut bucket_blocks = 0u64;
-    for (height, events) in &blocks {
-        bucket_events += events.len() as u64;
-        bucket_blocks += 1;
-        if bucket_blocks == cli.density_bucket || *height == covered {
-            println!(
-                "  {bucket_start:>8}-{height:<8} {:>7.1} events/block",
-                bucket_events as f64 / bucket_blocks as f64
-            );
-            bucket_start = height + 1;
-            bucket_events = 0;
-            bucket_blocks = 0;
-        }
-    }
-
     let policies: Vec<(String, SealPolicy)> = if cli.policies.is_empty() {
         default_policies()
     } else {
@@ -353,14 +479,62 @@ fn main() -> Result<(), BoxError> {
             .collect::<Result<_, BoxError>>()?
     };
 
-    for (name, policy) in policies {
-        let mut sealer = Sealer::new(policy, first);
-        let mut shards = Vec::new();
-        for (height, events) in &blocks {
-            shards.extend(sealer.push_block(*height, events)?);
+    // One pass, every policy fed from it. Holding the journal first and
+    // replaying it per policy is what the earlier version did, and it does not
+    // survive a genesis-to-tip journal: a hundred million events carrying a
+    // heap-allocated script each is tens of gigabytes, far worse in memory than
+    // on disk. Reading each height once and handing it to every sealer gives
+    // the same "every policy sees exactly the same input" property for the cost
+    // of one block at a time, and a second pass would buy nothing because the
+    // run is dominated by reading and decoding the journal.
+    struct Run {
+        name: String,
+        policy: SealPolicy,
+        sealer: Sealer,
+        shards: Vec<SealedShard>,
+    }
+    let mut runs: Vec<Run> = policies
+        .into_iter()
+        .map(|(name, policy)| Run {
+            name,
+            sealer: Sealer::new(policy, first),
+            policy,
+            shards: Vec::new(),
+        })
+        .collect();
+
+    println!(
+        "\n=== density across the chain ({} blocks per bucket) ===",
+        cli.density_bucket
+    );
+    let mut bucket_start = first;
+    let mut bucket_events = 0u64;
+    let mut bucket_blocks = 0u64;
+    for height in first..=covered {
+        let events = store
+            .events_at(height)?
+            .ok_or_else(|| format!("height {height} is missing from the journal"))?;
+
+        bucket_events += events.len() as u64;
+        bucket_blocks += 1;
+        if bucket_blocks == cli.density_bucket || height == covered {
+            println!(
+                "  {bucket_start:>8}-{height:<8} {:>7.1} events/block",
+                bucket_events as f64 / bucket_blocks as f64
+            );
+            bucket_start = height + 1;
+            bucket_events = 0;
+            bucket_blocks = 0;
         }
-        shards.extend(sealer.finish());
-        report(&name, &shards);
+
+        for run in &mut runs {
+            run.shards.extend(run.sealer.push_block(height, &events)?);
+        }
+    }
+
+    for run in &mut runs {
+        run.shards.extend(run.sealer.finish());
+        report(&run.name, &run.shards, &run.policy);
     }
 
     Ok(())

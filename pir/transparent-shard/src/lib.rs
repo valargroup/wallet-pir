@@ -18,8 +18,9 @@ pub mod seal;
 
 pub use build::{build_shard, candidate_rows, BuildError, BuiltShard};
 pub use layout::{
-    page_rows_for, DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, PAGE_ROWS,
-    PAGE_ROW_BYTES,
+    entries_per_row, entry_bytes, fragments_for, shape_of, PackedDemand, Shape, DIRECTORY_ROWS,
+    DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW,
+    PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
 pub use manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,

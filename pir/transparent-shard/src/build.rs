@@ -11,7 +11,7 @@
 //! processed in sorted order, events in their own total order, and bucket
 //! placement resolved by a rule rather than by iteration order.
 
-use crate::layout::{page_rows_for, segments_for, DIRECTORY_ROWS, INLINE_EVENTS, PAGE_ROWS};
+use crate::layout::{fragments_for, segments_for, DIRECTORY_ROWS, INLINE_EVENTS, PAGE_ROWS};
 use crate::records::{encode_directory_row, DirectoryEntry, Page, RecordError, MAX_SCRIPT_BYTES};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -212,7 +212,7 @@ pub fn build_shard(
         let (older, inline) = history.split_at(inline_from);
 
         let first_page = pages.len() as u32;
-        let page_count = page_rows_for(history.len() as u32) as u32;
+        let page_count = fragments_for(history.len() as u32) as u32;
         if page_count as usize
             != older
                 .len()
