@@ -22,7 +22,8 @@
 //! the pass sound is that each block's per-script delta is *exact*, so the
 //! projection a capacity decision is made on is the state absorbing will
 //! produce. The distinction matters because packed row demand, carried here as
-//! [`Occupancy::packed_page_rows`] and not yet used to seal, is not monotone —
+//! [`Occupancy::packed_page_rows`] and sealed on under [`PageBasis::Packed`],
+//! is not monotone —
 //! see [`crate::layout::PackedDemand`] for the counterexample. Nothing may
 //! reason that content which does not fit now can never fit later.
 //!
@@ -91,6 +92,24 @@ pub struct SealPolicy {
     pub page_rows: Limit,
 }
 
+/// Which page figure closes a shard.
+///
+/// Not part of [`SealPolicy`], which is schema: this selects between two ways
+/// of counting the same content, and only one of them can be right for a given
+/// builder. It exists so the packed figure can be sealed on and measured before
+/// a packed builder exists to emit it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageBasis {
+    /// A row per fragment, which is what the v4 builder emits.
+    #[default]
+    Fragments,
+    /// Short histories sharing rows, which is what the packed layout would ask
+    /// for. Sealing on this while the builder still emits a row per fragment
+    /// would undercount the table, so it is for measurement until the builder
+    /// packs.
+    Packed,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SealError {
     #[error("invalid seal limits: {0}")]
@@ -103,7 +122,10 @@ pub enum SealError {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Occupancy {
     pub scripts: u64,
+    /// The figure that closes the shard, under the sealer's [`PageBasis`].
     pub page_rows: u64,
+    /// A row per fragment, as the v4 builder emits them.
+    pub fragments: u64,
     pub txids: u64,
     pub events: u64,
     /// Events that fit in directory entries and cost no page row.
@@ -114,13 +136,12 @@ pub struct Occupancy {
     /// which the measured distribution says is common.
     pub inline_events: u64,
     pub blocks: u64,
-    /// Page rows the same content would need with short histories packed into
-    /// shared rows.
+    /// Page rows the same content needs with short histories packed into shared
+    /// rows.
     ///
-    /// Carried alongside [`Occupancy::page_rows`], not in place of it: sealing
-    /// still runs on the unpacked figure, so boundaries are unchanged and this
-    /// is a projection of demand at those boundaries rather than a measurement
-    /// of a packed shard.
+    /// Equal to `page_rows` under [`PageBasis::Packed`]. Under
+    /// [`PageBasis::Fragments`] it is a projection at boundaries chosen by the
+    /// unpacked figure, and no packed table was built to match it.
     pub packed_page_rows: u64,
     /// The class counts behind `packed_page_rows`, for reporting.
     ///
@@ -168,11 +189,12 @@ pub enum SealReason {
 /// leave a gap that no consumer could distinguish from missing coverage.
 pub struct Sealer {
     policy: SealPolicy,
+    basis: PageBasis,
     next_shard_id: u64,
     /// Per-script event counts within the shard being accumulated.
     scripts: HashMap<Vec<u8>, u32>,
     txids: HashSet<Txid>,
-    page_rows: u64,
+    fragments: u64,
     /// Maintained rather than recomputed: `occupancy()` is reached up to five
     /// times per block, and a full scan of the script map each time is the
     /// difference between a runnable and an unrunnable full-journal census.
@@ -191,12 +213,18 @@ pub struct Sealer {
 
 impl Sealer {
     pub fn new(policy: SealPolicy, first_height: u64) -> Self {
+        Self::with_basis(policy, first_height, PageBasis::default())
+    }
+
+    /// A sealer that closes on `basis` rather than on the default.
+    pub fn with_basis(policy: SealPolicy, first_height: u64, basis: PageBasis) -> Self {
         Self {
             policy,
+            basis,
             next_shard_id: 0,
             scripts: HashMap::new(),
             txids: HashSet::new(),
-            page_rows: 0,
+            fragments: 0,
             inline_events: 0,
             demand: PackedDemand::default(),
             events: 0,
@@ -207,10 +235,20 @@ impl Sealer {
         }
     }
 
+    /// The page figure a limit is compared against.
+    fn page_rows(basis: PageBasis, fragments: u64, packed: u64) -> u64 {
+        match basis {
+            PageBasis::Fragments => fragments,
+            PageBasis::Packed => packed,
+        }
+    }
+
     fn occupancy(&self) -> Occupancy {
+        let packed = self.demand.rows();
         Occupancy {
             scripts: self.scripts.len() as u64,
-            page_rows: self.page_rows,
+            page_rows: Self::page_rows(self.basis, self.fragments, packed),
+            fragments: self.fragments,
             txids: self.txids.len() as u64,
             events: self.events,
             inline_events: self.inline_events,
@@ -218,7 +256,7 @@ impl Sealer {
                 (Some(start), Some(last)) => last - start + 1,
                 _ => 0,
             },
-            packed_page_rows: self.demand.rows(),
+            packed_page_rows: packed,
             demand: self.demand,
         }
     }
@@ -226,7 +264,7 @@ impl Sealer {
     fn reset(&mut self) {
         self.scripts.clear();
         self.txids.clear();
-        self.page_rows = 0;
+        self.fragments = 0;
         self.inline_events = 0;
         self.demand = PackedDemand::default();
         self.events = 0;
@@ -260,7 +298,7 @@ impl Sealer {
         }
 
         let mut scripts = self.scripts.len() as u64;
-        let mut page_rows = self.page_rows;
+        let mut fragments = self.fragments;
         let mut inline_events = self.inline_events;
         let mut demand = self.demand;
         for (script, added) in &added_scripts {
@@ -268,7 +306,7 @@ impl Sealer {
             if existing == 0 {
                 scripts += 1;
             }
-            page_rows += fragments_for(existing + added) - fragments_for(existing);
+            fragments += fragments_for(existing + added) - fragments_for(existing);
             inline_events += u64::from((existing + added).min(INLINE_EVENTS))
                 - u64::from(existing.min(INLINE_EVENTS));
             if script.len() <= MAX_SCRIPT_BYTES {
@@ -281,9 +319,11 @@ impl Sealer {
             .count() as u64
             + self.txids.len() as u64;
 
+        let packed = demand.rows();
         Occupancy {
             scripts,
-            page_rows,
+            page_rows: Self::page_rows(self.basis, fragments, packed),
+            fragments,
             txids,
             events: self.events + events.len() as u64,
             inline_events,
@@ -291,7 +331,7 @@ impl Sealer {
                 (Some(start), Some(last)) => last - start + 1 + 1,
                 _ => 1,
             },
-            packed_page_rows: demand.rows(),
+            packed_page_rows: packed,
             demand,
         }
     }
@@ -340,7 +380,7 @@ impl Sealer {
         for (script, added) in added {
             let existing = self.scripts.get(script).copied().unwrap_or(0);
             let updated = existing + added;
-            self.page_rows += fragments_for(updated) - fragments_for(existing);
+            self.fragments += fragments_for(updated) - fragments_for(existing);
             self.inline_events +=
                 u64::from(updated.min(INLINE_EVENTS)) - u64::from(existing.min(INLINE_EVENTS));
             // A script too long for a directory entry is filtered publicly but
@@ -833,7 +873,7 @@ mod tests {
             assert_eq!(occupancy.inline_events, recounted, "at height {height}");
 
             let fragments: u64 = sealer.scripts.values().map(|c| fragments_for(*c)).sum();
-            assert_eq!(occupancy.page_rows, fragments, "at height {height}");
+            assert_eq!(occupancy.fragments, fragments, "at height {height}");
         }
     }
 
@@ -867,7 +907,7 @@ mod tests {
                 touched.len()
             );
             assert!(
-                after.packed_page_rows <= after.page_rows,
+                after.packed_page_rows <= after.fragments,
                 "height {height}: packing cost more than not packing"
             );
         }
@@ -887,6 +927,41 @@ mod tests {
             sealer.push_block(height, &block).unwrap();
             assert_eq!(sealer.occupancy(), projected, "at height {height}");
         }
+    }
+
+    /// Sealing on packed demand is what makes a smaller page table possible:
+    /// the same journal, the same page limit, and far fewer shards, because the
+    /// limit stops being reached by padding.
+    ///
+    /// The two bases must not be mixed. A sealer closing on packed rows against
+    /// a builder that still emits one row per fragment would size the table for
+    /// less than the builder writes, and the difference would come back as
+    /// extra segments — which every wallet querying that generation pays for,
+    /// because it must query all of them.
+    #[test]
+    fn the_basis_decides_where_a_shard_ends() {
+        let policy = policy((1_000_000, 2_000_000), (40, 50));
+        let mut counts = Vec::new();
+        for basis in [PageBasis::Fragments, PageBasis::Packed] {
+            let mut sealer = Sealer::with_basis(policy, 100, basis);
+            let mut shards = Vec::new();
+            for height in 100..200u64 {
+                // Three events per script puts every one of them in class 1,
+                // where 22 share a row.
+                let block: Vec<_> = (0..3u32)
+                    .flat_map(|nonce| {
+                        (0..4u32).map(move |i| event(height, height as u32 * 4 + i, nonce))
+                    })
+                    .collect();
+                shards.extend(sealer.push_block(height, &block).unwrap());
+            }
+            shards.extend(sealer.finish());
+            counts.push(shards.len());
+        }
+        assert!(
+            counts[1] < counts[0],
+            "packed sealing should need fewer shards: {counts:?}"
+        );
     }
 
     /// A script too long for a directory entry is filtered publicly and never
@@ -909,7 +984,7 @@ mod tests {
         let occupancy = sealer.occupancy();
         assert_eq!(occupancy.scripts, 1);
         assert!(
-            occupancy.page_rows > 0,
+            occupancy.fragments > 0,
             "the unpacked figure still counts it"
         );
         assert_eq!(occupancy.packed_page_rows, 0);

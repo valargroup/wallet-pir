@@ -17,7 +17,7 @@ use transparent_filter_server::events::EventStore;
 use transparent_shard::layout::{
     entries_per_row, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
-use transparent_shard::seal::{Limit, SealPolicy, SealReason, SealedShard, Sealer};
+use transparent_shard::seal::{Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -38,6 +38,23 @@ struct Cli {
     /// Blocks per bucket in the density profile.
     #[arg(long, default_value_t = 4_096)]
     density_bucket: u64,
+    /// Close shards on packed row demand rather than on a row per fragment.
+    ///
+    /// For measuring a geometry before a packed builder exists. A published set
+    /// must not be built this way until the builder packs, or the table would
+    /// be sized for less than the builder writes.
+    #[arg(long)]
+    packed: bool,
+    /// Page rows per segment to score against, when trying a table size other
+    /// than the one compiled in.
+    ///
+    /// Reporting only: it changes the segment and pinned-byte arithmetic, not
+    /// what is built. Pair it with a policy whose page-row capacity is at most
+    /// this, so ordinary accumulation seals before it would need a second
+    /// segment — segments are for the indivisible block that cannot fit, not
+    /// for routine capacity, because a wallet must query every one of them.
+    #[arg(long)]
+    page_rows_per_segment: Option<u64>,
 }
 
 fn parse_limit(text: &str) -> Result<Limit, BoxError> {
@@ -123,18 +140,17 @@ fn describe(label: &str, values: &mut [u64]) {
 /// Three separate ratios, because they fail independently and the fix differs:
 /// how many rows of a pinned table are used at all, how full each used row is,
 /// and the two together against the bytes actually stored.
-fn utilisation(shards: &[SealedShard]) {
+fn utilisation(shards: &[SealedShard], page_rows_per_segment: u64) {
     if shards.is_empty() {
         return;
     }
     let n = shards.len() as u64;
     let dir_rows_per_segment = transparent_shard::DIRECTORY_ROWS as u64;
-    let page_rows_per_segment = transparent_shard::PAGE_ROWS as u64;
     let slots = transparent_shard::DIRECTORY_SLOTS as u64;
     let per_page = transparent_shard::EVENTS_PER_PAGE as u64;
 
     let scripts: u64 = shards.iter().map(|s| s.occupancy.scripts).sum();
-    let page_rows: u64 = shards.iter().map(|s| s.occupancy.page_rows).sum();
+    let page_rows: u64 = shards.iter().map(|s| s.occupancy.fragments).sum();
     let paged: u64 = shards.iter().map(|s| s.occupancy.paged_events()).sum();
 
     // A shard takes as many segments as its content needs, so pinned bytes are
@@ -148,7 +164,7 @@ fn utilisation(shards: &[SealedShard]) {
             dir_rows_per_segment,
         ) as u64;
         let p = transparent_shard::layout::segments_for(
-            shard.occupancy.page_rows,
+            shard.occupancy.fragments,
             page_rows_per_segment,
         ) as u64;
         dir_segments += d;
@@ -213,20 +229,33 @@ fn utilisation(shards: &[SealedShard]) {
 /// placement is modelled as `scripts / slots` rather than run through the real
 /// two-choice placer, so directory segment counts are a lower bound; and
 /// encoding overhead is a modelled constant rather than emitted bytes.
-fn projection(shards: &[SealedShard], policy: &SealPolicy) {
+fn projection(
+    shards: &[SealedShard],
+    policy: &SealPolicy,
+    page_rows_per_segment: u64,
+    basis: PageBasis,
+) {
     if shards.is_empty() {
         return;
     }
     let per_row = PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES;
-    let page_rows_per_segment = transparent_shard::PAGE_ROWS as u64;
     let dir_rows_per_segment = transparent_shard::DIRECTORY_ROWS as u64;
     let slots = transparent_shard::DIRECTORY_SLOTS as u64;
 
     println!();
     println!("  === PROJECTION ONLY — arithmetic over per-script event counts. No v5");
     println!("      codec, builder or published set exists. These are projected ROW");
-    println!("      DEMANDS derived from the packing rule, not measured bytes, and the");
-    println!("      boundaries are the v4 boundaries above with R carried alongside. ===");
+    println!("      DEMANDS derived from the packing rule, not measured bytes. ===");
+    match basis {
+        PageBasis::Fragments => {
+            println!("      Boundaries are the unpacked ones above, with R carried alongside them.")
+        }
+        PageBasis::Packed => {
+            println!("      Boundaries were chosen by R. The block above says what the");
+            println!("      unpacked layout would cost for the same content, which is");
+            println!("      not what shipped.");
+        }
+    }
 
     // Per class: scripts across the whole set, and rows, which must be summed
     // per shard because the ceiling is per shard.
@@ -323,8 +352,23 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy) {
         },
         page_segments,
     );
+    // Segments are for the indivisible block that cannot fit, not for routine
+    // capacity. A wallet must query every segment of a generation, so an
+    // n-segment generation multiplies its setup, responses and server work by
+    // n for every lookup in it. A geometry that makes ordinary generations
+    // stack is not cheaper, whatever it does to pinned bytes.
+    let stacked = shards
+        .iter()
+        .filter(|s| {
+            transparent_shard::layout::segments_for(
+                s.occupancy.packed_page_rows,
+                page_rows_per_segment,
+            ) > 1
+        })
+        .count();
     println!(
-        "  proj_segments  {dir_segments} directory, {page_segments} page, across {} shards",
+        "  proj_segments  {dir_segments} directory, {page_segments} page, across {} shards; \
+{stacked} generations need more than one page segment",
         shards.len()
     );
     println!(
@@ -356,7 +400,13 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy) {
     );
 }
 
-fn report(name: &str, shards: &[SealedShard], policy: &SealPolicy) {
+fn report(
+    name: &str,
+    shards: &[SealedShard],
+    policy: &SealPolicy,
+    page_rows_per_segment: u64,
+    basis: PageBasis,
+) {
     let sealed: Vec<&SealedShard> = shards.iter().filter(|s| s.reason.is_some()).collect();
     println!("\n=== {name} ===");
     println!(
@@ -397,10 +447,10 @@ fn report(name: &str, shards: &[SealedShard], policy: &SealPolicy) {
             .collect::<Vec<_>>(),
     );
     describe(
-        "page rows",
+        "fragments",
         &mut shards
             .iter()
-            .map(|s| s.occupancy.page_rows)
+            .map(|s| s.occupancy.fragments)
             .collect::<Vec<_>>(),
     );
     describe(
@@ -427,8 +477,8 @@ fn report(name: &str, shards: &[SealedShard], policy: &SealPolicy) {
         shards.len()
     );
 
-    utilisation(shards);
-    projection(shards, policy);
+    utilisation(shards, page_rows_per_segment);
+    projection(shards, policy, page_rows_per_segment, basis);
 
     // Plaintext table bytes, if every shard is padded to the capacity its
     // policy pins. This is what the service stores and what its PIR
@@ -440,13 +490,13 @@ fn report(name: &str, shards: &[SealedShard], policy: &SealPolicy) {
         .unwrap_or(0);
     let max_pages = shards
         .iter()
-        .map(|s| s.occupancy.page_rows)
+        .map(|s| s.occupancy.fragments)
         .max()
         .unwrap_or(0);
     let max_txids = shards.iter().map(|s| s.occupancy.txids).max().unwrap_or(0);
-    println!("  observed maxima: scripts {max_scripts}, page rows {max_pages}, txids {max_txids}");
+    println!("  observed maxima: scripts {max_scripts}, fragments {max_pages}, txids {max_txids}");
     let per_shard = transparent_shard::DIRECTORY_ROWS as u64 * DIRECTORY_ROW_BYTES as u64
-        + transparent_shard::PAGE_ROWS as u64 * PAGE_ROW_BYTES as u64;
+        + page_rows_per_segment * PAGE_ROW_BYTES as u64;
     println!(
         "  pinned plaintext per shard ~{:.0} MB, fleet ~{:.1} GB",
         per_shard as f64 / 1e6,
@@ -487,6 +537,41 @@ fn main() -> Result<(), BoxError> {
     // the same "every policy sees exactly the same input" property for the cost
     // of one block at a time, and a second pass would buy nothing because the
     // run is dominated by reading and decoding the journal.
+    let page_rows_per_segment = cli
+        .page_rows_per_segment
+        .unwrap_or(transparent_shard::PAGE_ROWS as u64);
+    let basis = if cli.packed {
+        PageBasis::Packed
+    } else {
+        PageBasis::Fragments
+    };
+    if page_rows_per_segment != transparent_shard::PAGE_ROWS as u64 {
+        println!(
+            "\nscoring against {page_rows_per_segment} page rows per segment rather than the \
+compiled {}; segment and pinned-byte figures follow the override, nothing built does",
+            transparent_shard::PAGE_ROWS
+        );
+    }
+    if matches!(basis, PageBasis::Packed) {
+        println!(
+            "sealing on packed row demand; the builder at this commit still emits a row per \
+fragment, so this measures a geometry rather than describing a set that could be published"
+        );
+    }
+    // A policy that may exceed the table it is scored against would seal into a
+    // second segment as a matter of routine, which is the one thing segments
+    // must not be used for.
+    for (name, policy) in &policies {
+        if policy.page_rows.capacity > page_rows_per_segment {
+            return Err(format!(
+                "policy {name:?} allows {} page rows against a segment holding \
+{page_rows_per_segment}; ordinary generations would stack segments",
+                policy.page_rows.capacity
+            )
+            .into());
+        }
+    }
+
     struct Run {
         name: String,
         policy: SealPolicy,
@@ -497,7 +582,7 @@ fn main() -> Result<(), BoxError> {
         .into_iter()
         .map(|(name, policy)| Run {
             name,
-            sealer: Sealer::new(policy, first),
+            sealer: Sealer::with_basis(policy, first, basis),
             policy,
             shards: Vec::new(),
         })
@@ -534,7 +619,13 @@ fn main() -> Result<(), BoxError> {
 
     for run in &mut runs {
         run.shards.extend(run.sealer.finish());
-        report(&run.name, &run.shards, &run.policy);
+        report(
+            &run.name,
+            &run.shards,
+            &run.policy,
+            page_rows_per_segment,
+            basis,
+        );
     }
 
     Ok(())

@@ -46,6 +46,29 @@ on:
         required: false
         default: ""
         type: string
+      packed:
+        description: >-
+          Census only. Close shards on packed row demand rather than on a row
+          per fragment. For measuring a geometry before a packed builder
+          exists; a set must not be published this way.
+        required: false
+        default: false
+        type: boolean
+      page_rows_per_segment:
+        description: >-
+          Census only. Score segment counts and pinned bytes against this many
+          page rows per segment instead of the compiled value. Reporting only.
+        required: false
+        default: ""
+        type: string
+      policies:
+        description: >-
+          Census only. Semicolon-separated seal policies, each
+          `scripts_target:scripts_cap,pages_target:pages_cap`. Blank uses the
+          default sweep.
+        required: false
+        default: ""
+        type: string
       shard_dir:
         description: >-
           Where publish writes and measure reads; blank means the default set.
@@ -87,6 +110,8 @@ jobs:
           SHA: ${{ inputs.ref }}
           START: ${{ inputs.start_height }}
           STOP: ${{ inputs.stop_height }}
+          PAGE_ROWS: ${{ inputs.page_rows_per_segment }}
+          POLICIES: ${{ inputs.policies }}
         run: |
           set -euo pipefail
           if [[ "$ACTION" == "start" ]]; then
@@ -94,6 +119,13 @@ jobs:
             [[ "$START" =~ ^[0-9]+$ ]] || { echo "start_height must be a number"; exit 1; }
             [[ -z "$STOP" || "$STOP" =~ ^[0-9]+$ ]] || { echo "stop_height must be a number or blank"; exit 1; }
           fi
+          # These become arguments to a command run under sudo, so they are
+          # matched against exactly the shape the census accepts rather than
+          # passed through and left to the parser.
+          [[ -z "$PAGE_ROWS" || "$PAGE_ROWS" =~ ^[0-9]+$ ]] \
+            || { echo "page_rows_per_segment must be a number or blank"; exit 1; }
+          [[ -z "$POLICIES" || "$POLICIES" =~ ^[0-9]+:[0-9]+,[0-9]+:[0-9]+(\;[0-9]+:[0-9]+,[0-9]+:[0-9]+)*$ ]] \
+            || { echo "policies must be target:cap,target:cap, semicolon separated"; exit 1; }
 
       - uses: actions/checkout@v4
         if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish' || inputs.action == 'measure'
@@ -120,9 +152,19 @@ jobs:
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
+          PACKED: ${{ inputs.packed }}
+          PAGE_ROWS: ${{ inputs.page_rows_per_segment }}
+          POLICIES: ${{ inputs.policies }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin shard-census
+          ARGS=()
+          [[ "$PACKED" == "true" ]] && ARGS+=(--packed)
+          [[ -n "$PAGE_ROWS" ]] && ARGS+=(--page-rows-per-segment "$PAGE_ROWS")
+          if [[ -n "$POLICIES" ]]; then
+            IFS=';' read -ra LIST <<<"$POLICIES"
+            for one in "${LIST[@]}"; do ARGS+=(--policy "$one"); done
+          fi
           # Read-only against the journal. It streams the journal once and
           # feeds every candidate policy from that one pass, so peak memory is
           # one block plus per-policy sealer state rather than the whole
@@ -138,7 +180,7 @@ jobs:
           if [[ -x /usr/bin/time ]]; then TIMED=(/usr/bin/time -v); fi
           : >census-time.txt
           sudo "${TIMED[@]}" ./target/release/shard-census \
-            --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" 2>census-time.txt | tee census.txt
+            --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" "${ARGS[@]}" 2>census-time.txt | tee census.txt
           grep -E 'Maximum resident|Elapsed' census-time.txt || echo 'no resource accounting'
           {
             echo '## Shard census'
