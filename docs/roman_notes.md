@@ -219,6 +219,32 @@ full PIR database, we could have a light Bloom-filter like PIR table.
 
 Wallet wakes up and efficiently asks privately: "do I own any transparent at current tip?". If the answer is no, I do not need to do any further transparent PIR work.
 
+Reconstructing transparent essentially reduces to:
+1. Current balance
+2. History
+
+We do this from
+* Owned outputs
+   * Transaction id and output index
+   * Value
+   * Locking script/address
+   * Creation height and block hash
+   * Coinbase or no
+* Spends of owned outputs
+   * Which owned output was consumed
+   * Spending transaction ID.
+   * Spend height and block hash
+
+From these events:
+
+```
+current UTXOs: owned outputs - spent owned outputs
+
+balance = sum(spendable current UTXOs)
+```
+
+What is a practical shard for a filter?
+
 
 
 ### Appendix

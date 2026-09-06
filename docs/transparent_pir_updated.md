@@ -9,14 +9,16 @@ every confirmed receive and spend for its supported scripts, then derive its
 current UTXO set, balance, address-use state, and transaction history.
 
 The database should publish chain facts rather than calculated wallet balances.
-The wallet remains responsible for address derivation, accepted-chain state,
+The wallet remains responsible for address derivation, accepting a chain anchor,
 confirmation policy, coinbase maturity, key availability, and coin selection.
+Anchor acquisition is supplied through an independent interface; transparent
+recovery must not require shielded scanning or regular compact-block sync.
 
 The recommended organization is an immutable, time-sharded event ledger keyed
 by exact raw locking script:
 
 ```text
-accepted chain
+accepted chain anchor
     -> public activity filter per generation
     -> private script directory per generation
     -> private event pages per generation
@@ -117,6 +119,7 @@ Each generation manifest binds:
 - schema and profile versions;
 - start and end heights;
 - parent and terminal block hashes;
+- previous-generation commitment;
 - public-filter digest;
 - PIR table dimensions, salts and row sizes;
 - directory, page and transaction-table digests.
@@ -130,6 +133,47 @@ directory locators or pages.
 The exact historical shard width should be selected from measured wallet
 workloads and PIR geometry. One hundred thousand blocks is a candidate, not a
 protocol constant.
+
+## Chain anchors without regular-sync coupling
+
+Every reconstructed balance is relative to a precise chain state: a network,
+height and block hash. The transparent protocol therefore needs an accepted
+anchor, but it must not prescribe regular wallet synchronization as the way to
+obtain one.
+
+The client consumes a wallet-owned abstraction:
+
+```text
+ChainAnchor {
+    network
+    genesis_hash
+    height
+    block_hash
+    observed_tip_height
+}
+```
+
+Possible providers include the wallet's existing sync engine, a minimal
+header/checkpoint client, comparison across independent block-hash sources, or a
+trusted signed checkpoint service. A research POC may accept the indexer's
+declared anchor under the existing trusted-indexer assumption, but it must
+record that choice and compare the anchor with an independent source during
+evaluation.
+
+Historical generations form a committed, gapless sequence. Each manifest binds
+its range, parent and terminal block hashes, content digests, and the previous
+generation commitment. A wallet can validate that sequence against one accepted
+terminal anchor without retaining or downloading ordinary compact data for
+every covered block.
+
+This structural validation establishes network, range, ordering, freshness and
+consistent generation selection. It does not prove that the indexer included
+every event. Completeness remains the separate trust decision described below.
+
+Only the recent unsealed tail normally requires active reorg tracking.
+Historical generations may be sealed after an explicit confirmation depth. A
+deep reorg crossing a sealed boundary requires a replacement committed sequence
+and rollback to an anchor accepted through the same provider interface.
 
 ## Public activity filter
 
@@ -249,9 +293,25 @@ wallet retrieves its compact transaction privately from the same temporal
 generation. Transaction IDs and transaction-table locators must not appear in
 plaintext requests.
 
-Mixed transparent and shielded transactions still require the wallet's normal
-shielded scanning and enhancement paths. Transparent history alone does not
-replace them.
+## Transparent as Separate Ledger 
+
+Transparent funds are treated as an independent subledger from shielded. It is cleaner and removes unnecessary coupling.
+
+For each transaction:
+```
+transparent credits = owned transparent outputs created
+transparent debits  = owned transparent outputs consumed
+transparent delta   = credits - debits
+```
+
+Then,
+- Transparent → shielded is simply a transparent debit/withdrawal.
+- Shielded → transparent is a transparent credit/deposit.
+- Transparent → another user is also a transparent debit.
+- Self-transfer between transparent addresses produces matching debit and credit.
+- The transparent balance remains fully reconstructible without scanning shielded pools.
+
+The transparent ledger does not need to determine whether an outflow was shielding, payment, or another mixed-pool operation. Those are wallet-wide semantic classifications performed later, if desired.
 
 ## Wallet reconstruction
 
@@ -321,9 +381,10 @@ coverage. Imported keys absent from the wallet backup cannot be reconstructed.
 
 ## Synchronization and atomic progress
 
-For each accepted generation, the wallet:
+For each generation covered by an accepted anchor, the wallet:
 
-1. Verifies the generation range and anchor against its accepted chain.
+1. Verifies network and genesis identity, generation commitment continuity,
+   gapless ranges, and the terminal commitment against its accepted anchor.
 2. Validates and locally matches the public activity filter.
 3. Privately retrieves directory rows for candidate scripts.
 4. Validates exact script identities and directory invariants.
@@ -340,10 +401,12 @@ Coverage is tracked by script/discovery scope and chain range, separately from
 shielded synchronization. A partial result may display known events as
 incomplete, but it must not claim a synchronized balance.
 
-On a reorg, rewind events and coverage to a wallet-accepted common ancestor,
-rebuild the UTXO map from retained events, and discard affected pending work.
-Immutable historical generations are reusable only while their terminal chain
-commitments remain accepted.
+On a reorg reported by the anchor provider, rewind events and coverage to an
+accepted common ancestor, rebuild the UTXO map from retained events, and discard
+affected pending work. Immutable historical generations are reusable only while
+their terminal commitments remain in the sequence rooted at the accepted
+anchor. This mechanism depends on the chain-anchor interface, not on shielded or
+compact-block synchronization.
 
 ## Timing and shard-selection privacy
 
