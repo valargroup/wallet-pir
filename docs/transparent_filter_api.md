@@ -73,6 +73,12 @@ alongside a false filter simply commits to the false filter. Matching a filter
 against the wallet's own accepted block hash binds *where* the filter claims to
 be, not *what* it contains.
 
+This is the boundary the design's
+[trusted-service profile](transparent_pir_updated.md#trust-and-completeness)
+states for private retrieval as well: digests and structural checks are
+consistency checks against corruption and stale data, not evidence that the
+index matches the chain.
+
 This matters because of how a wallet uses a filter. A negative result advances
 coverage — it is a positive claim that the wallet had no activity in that block.
 An operator that omits one script from one filter therefore causes a silently

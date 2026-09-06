@@ -3,7 +3,8 @@
 Date: 2026-09-04. Status: proposed v1 evaluation contract, not a deployed protocol.
 
 This defines the behavior to evaluate for the
-[transparent PIR proposal](transparent_pir_design.md). The companion
+[transparent PIR recommendation](transparent_pir_updated.md), which supersedes
+the [earlier proposal](transparent_pir_design.md). The companion
 [feasibility assessment](transparent_pir_evaluation.md) records evidence,
 acceptance gates, and the next experiment. Numerical gates are proposed defaults;
 they are not measured performance promises or authorization to deploy.
@@ -41,17 +42,30 @@ because its receive was recovered.
 
 ## Completeness and trust
 
-The evaluation assumes a correct, complete chain indexer. The PIR service must
-not learn which scripts or history pages a query selects. These are separate
-assumptions: PIR query privacy does not prove that the database is complete.
+The initial profile trusts the publisher and the retrieval service to provide
+correct, complete, mutually consistent data for the declared chain anchor. The
+PIR service must not learn which scripts or history pages a query selects. These
+are separate assumptions: trusting a service to return correct data does not
+mean allowing it to learn the wallet's scripts, and query privacy does not prove
+that the database is complete.
 
-A negative activity filter can advance coverage only under the complete-indexer
-assumption. A block hash accepted by the wallet identifies an anchor; it does not
-authenticate all entries or omissions in a server-created index. Inclusion proofs
-for returned transactions do not prove absence of other matching transactions.
-Production use requires an explicit wallet-owner decision that this trust model
-is acceptable for balance and spendability, or a different completeness mechanism.
-Until that decision, evaluate the new ledger alongside the existing sync result.
+Wallet validation detects structural inconsistencies and implementation errors.
+It does not cryptographically establish event inclusion, completeness, or
+non-equivocation. Manifest digests, exact-script checks, range validation and
+revision binding are consistency checks against corruption, stale data and
+accidentally mixed generations. They are valuable as that, and they are not
+evidence that the index matches the chain. A block hash accepted by the wallet
+identifies an anchor; it does not authenticate the entries or the omissions of a
+server-created index. Inclusion proofs for returned transactions would not prove
+the absence of other matching transactions.
+
+Users who do not accept that trust may run their own infrastructure, which
+changes whom they trust, or verify a result through independent chain replay,
+which checks the indexed result. A negative activity filter advances coverage
+under this profile. Production use requires an explicit wallet-owner decision
+that the profile is acceptable for balance and spendability, or a separately
+specified completeness mechanism. Until that decision, evaluate the new ledger
+alongside the existing sync result.
 
 Call work complete only when all of the following hold:
 
@@ -59,8 +73,9 @@ Call work complete only when all of the following hold:
   explicit and consistent with wallet-accepted chain state.
 - Every script's required discovery/recovery range is covered. Newly derived or
   imported scripts are checked over their earlier required range too.
-- Required directory results and all history pages are applied, including exact
-  key checks and rejection of false filter matches and dictionary collisions.
+- Required directory results and all history pages are applied, from every
+  segment of the generation, including exact key checks and rejection of false
+  filter matches and dictionary collisions.
 - Receives and spends are deduplicated by stable outpoint and spending-transaction
   identities, with ordering and references checked. An unexplained missing receive
   is unresolved work, not a fabricated output or permission to omit a spend.
@@ -100,8 +115,11 @@ Any explicitly selected alternative sync method is a separate user policy.
 On reorg, rewind affected events and coverage to the accepted common ancestor;
 discard affected in-flight results and invalidate affected filters/pages. Cached
 historical pages are reusable only if their chain validity is established.
-Publication and tail sealing must not mix directory locators with incompatible
-pages or lose/duplicate events. Retrying a completed response is idempotent.
+Publication and tail sealing must not mix a directory from one revision with
+pages from another, or lose or duplicate events. Retrying a completed response
+is idempotent; a repeat that differs in any field is a contradiction and an error.
+Coverage taken from a provisional tail revision is recorded with that revision's
+digest and re-derived when it is superseded or sealed.
 
 ## Wallet integration boundary
 
@@ -136,7 +154,8 @@ identical anchor. Require exact equality, not merely matching final balances.
 Exercise: unused scripts and false positives; zero-balance history; offline
 receive-then-spend; self-transfers; multiple owned scripts; coinbase maturity;
 gap advancement and imported scripts; colliding keys and full buckets; inline/page
-boundaries; retries and duplicate delivery; interrupted pagination; tail sealing;
-reorgs affecting recent and cached history; unavailable/malformed data; and work
-limits. Capture network requests to check routing and locator privacy under
-success, failure, retry, and reorg paths.
+boundaries; retries and duplicate delivery; interrupted pagination; tail
+revision and sealing; a multi-segment generation; reorgs affecting recent and
+cached history; unavailable/malformed data; and work limits. Capture network
+requests to check routing and locator privacy under success, failure, retry, and
+reorg paths.

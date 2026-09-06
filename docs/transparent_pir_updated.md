@@ -6,6 +6,11 @@ Generation boundaries and the figures supporting them are measured over the
 Ironwood-to-tip event journal; see *What is measured and what is not* for the
 boundary between what has been established and what has not.
 
+The implementation calls a generation a *shard*, and the implementation plan
+follows the code. The two words name the same object; this document uses
+*generation* throughout, and *segment* always means a part of one generation,
+never a generation itself.
+
 ## Goal
 
 Construct a private transparent-history service from which a wallet can recover
@@ -99,6 +104,26 @@ receive identity = (txid, output_index)
 spend identity   = (spending_txid, input_index, spent_txid, spent_output_index)
 ```
 
+Events have one canonical order. It is protocol data rather than an
+implementation detail, because pages are stored in it and wallets replay in it:
+
+```text
+order key =
+    (height, transaction_index, receive before spend,
+     output_index or input_index)
+```
+
+A transparent output cannot be consumed by the transaction that creates it, so
+ordering by transaction index within a block already resolves a receive and its
+spend in the same block: the creating transaction has the lower index. Ordering
+receives before spends within one transaction makes the key total rather than
+merely sufficient, so two builders cannot produce different page bytes for the
+same events.
+
+Duplicate delivery is idempotent on these identities. A repeat that differs in
+any field is not a newer version of an event; it is a contradiction, and must be
+rejected rather than settled by taking the later copy.
+
 The first private profile may cover P2PKH and P2SH scripts, but unsupported
 script classes must be reported as outside coverage rather than absent. Logical
 identity is always exact script bytes, not an address string.
@@ -114,8 +139,9 @@ Generation 42
     parent block hash
     terminal block hash
     public activity filter
-    private script directory
-    private event pages
+    segments: one or more, normally one
+        private script directory
+        private event pages
     optional private transaction details
 ```
 
@@ -127,9 +153,18 @@ Each generation manifest binds:
 - start and end heights;
 - parent and terminal block hashes;
 - previous-generation commitment;
+- lifecycle state, and for a tail its revision number and the revision it
+  supersedes;
 - public-filter digest;
 - PIR table dimensions, salts and row sizes;
-- directory, page and transaction-table digests.
+- the complete segment list, with each segment's directory, page and
+  transaction-table digests.
+
+A generation's identity is the digest of its canonical manifest, and its
+published directory is named by that digest. A manifest edited after
+publication is refused rather than served under the identity of what it
+replaced. Because the digest binds the segment list, a generation cannot gain,
+lose or reorder a segment without becoming a different generation.
 
 ### Why not a fixed block width
 
@@ -182,9 +217,10 @@ publishing without that table moves no boundary.
 
 A single threshold is not enough. Blocks arrive whole, and one block can add
 thousands of scripts, so a generation just under a threshold can land past what
-its pinned geometry actually holds. Each quantity therefore carries two numbers:
+one segment's pinned geometry actually holds. Each quantity therefore carries
+two numbers:
 
-- **capacity** — what the tables hold. A hard limit.
+- **capacity** — what one segment's tables hold. A hard limit.
 - **target** — where sealing is preferred. Must leave room for one more block.
 
 A block that would breach capacity seals the generation *before* it is added;
@@ -196,10 +232,48 @@ Above roughly eight thousand scripts the scripts limit stops binding altogether
 and page rows seals every generation. Whichever limit binds is the one actually
 being chosen; the others are inert and should not be mistaken for tuning.
 
-A single block that alone exceeds a capacity cannot be placed in any generation.
-That must fail construction rather than be silently sealed over, because the
-alternative is a generation whose tables do not fit the geometry every other
-generation shares.
+### Segments, so every valid block is published
+
+Sealing before an oversized block is not always available. The block may be the
+generation's first, and a block whose own content exceeds a segment's capacity
+has nowhere to be sealed to. Refusing to publish it would let a single block —
+which anyone can pay to produce — halt the service, so that is not an option
+either. Publication must handle every valid block automatically.
+
+A generation therefore contains **one or more segments**, each carrying the
+standard directory and page geometry. The normal case is one segment, and a
+single-segment generation is exactly what the preceding paragraphs describe.
+When a generation's content does not fit the segments it has, the builder adds
+another. That is the deterministic fallback that guarantees progress: a fresh
+segment's rows are empty, so placement terminates. Two independently salted
+candidate buckets do not supply that guarantee — they reduce collisions, they
+do not bound them — which is why the fallback is segment count rather than
+more buckets.
+
+Segment count is decided when the generation is built, as the smallest count
+that admits a placement, and is published in the manifest with each segment's
+geometry and digest. Placement hashes over the generation's whole logical row
+space, `directory_rows * segment_count`, so occupancy stays even as segments are
+added instead of piling into a spillover segment.
+
+A wallet advances coverage for the generation's range only after processing
+every segment. A partial segment set is incomplete work, not a shorter answer.
+
+Segments must not become publicly selected shards. A wallet issues one request
+per generation and table; the service evaluates that request against every
+segment of the generation and returns the per-segment results, which the wallet
+decodes and matches on exact script bytes. What becomes public is the segment
+*count*, which the manifest publishes anyway. Which segment holds a script is
+not disclosed by the request. Letting a wallet ask for the segment its script
+hashes into would reveal part of the script's identity before PIR begins, which
+is the script-prefix sharding rejected under *Private script directory* below.
+
+The cost is paid in queries and bytes during exceptional periods: a generation
+with `n` segments costs `n` times the directory and page work of an ordinary
+one, on both sides. That belongs in the cost and privacy analysis rather than
+being assumed away. It is still preferable to giving oversized ranges a larger
+geometry, which would oblige every client to support a second parameter set —
+and then a third — because one unusual block arrived.
 
 ### Boundaries are published, not re-derived
 
@@ -226,22 +300,41 @@ Generation *density* becomes public — a generation covering few blocks means
 high activity in that period. That is public chain data already, but it should
 be stated rather than discovered.
 
-### The tail
+### The tail, and its revisions
 
 Recent blocks still need a shorter unsealed tail, so publication latency and
-ordinary reorgs do not require rebuilding a large sealed generation. Promotion
-atomically seals a tail and publishes its replacement without mixing
-incompatible directory locators or pages. A generation that has reached no limit
-is the tail by definition, and is published as unsealed so a consumer does not
-treat a still-growing range as immutable.
+ordinary reorgs do not require rebuilding a large sealed generation. A
+generation that has reached no limit is the tail by definition. The tail is
+published rather than withheld, so coverage reaches the accepted anchor rather
+than stopping at the last seal boundary. A wallet that stopped there would
+report a balance correct only as of an older height, with no way to express the
+difference.
 
-The tail is published rather than withheld, so coverage reaches the accepted
-anchor rather than stopping at the last seal boundary. A wallet that stopped
-there would report a balance that is correct only as of an older height, and
-would have no way to express the difference. The unsealed flag is what carries
-that distinction: a consumer may use the tail for a current balance but must not
-cache it as immutable, and must re-fetch it rather than trusting a retained
-copy.
+A tail grows, so its bytes change while the range it covers is still being
+decided. Publication resolves that by making every published tail an immutable
+**revision** rather than a mutable object. A generation is in one of three
+states:
+
+- **open** — being built. Not published, and not addressable.
+- **provisional** — published, immutable under its own manifest digest, and
+  expected to be superseded by a later revision covering more blocks. Each
+  revision records its revision number and the digest it supersedes.
+- **sealed** — final. A sealed generation is never superseded, and only sealed
+  generations enter the previous-generation commitment chain, so a provisional
+  revision can never fork that chain.
+
+Publication is append-only in digests. A revision's bytes never change under a
+digest that has been served; superseding one publishes a new digest beside it
+rather than replacing what is there. Promotion to sealed is the last such step,
+and like every other it must not mix a directory from one revision with pages
+from another.
+
+A wallet may use a provisional revision for a current balance, but the coverage
+it takes from one is **provisional coverage**: recorded together with the
+revision digest that produced it, never cached as immutable, and re-derived
+from the superseding revision or from the sealed generation when one appears. A
+balance derived from a provisional revision may be displayed as current. It must
+not be reported as settled coverage.
 
 ## Chain anchors without regular-sync coupling
 
@@ -279,7 +372,7 @@ This structural validation establishes network, range, ordering, freshness and
 consistent generation selection. It does not prove that the indexer included
 every event. Completeness remains the separate trust decision described below.
 
-Only the recent unsealed tail normally requires active reorg tracking.
+Only the recent provisional tail normally requires active reorg tracking.
 Historical generations may be sealed after an explicit confirmation depth. A
 deep reorg crossing a sealed boundary requires a replacement committed sequence
 and rollback to an anchor accepted through the same provider interface.
@@ -334,8 +427,8 @@ script -> {
     exact_script
     total_event_count
     inline_events
+    first_event_page
     event_page_count
-    event_page_locators
 }
 ```
 
@@ -343,8 +436,19 @@ Physically place records into fixed-size PIR rows:
 
 ```text
 directory_row =
-    H(generation_salt || raw_script) mod directory_row_count
+    H(generation_salt || raw_script) mod (directory_row_count * segment_count)
+
+segment = directory_row / directory_row_count
+row     = directory_row mod directory_row_count
 ```
+
+A script's pages are a contiguous extent, not a list of locators: the record
+carries the first page and the page count, and the pages follow in order. A list
+would make the record's size depend on the history's length, which a fixed-width
+row cannot express, and would force either a truncated record or a second
+geometry. A generation's page space is its segments' page tables concatenated in
+segment order, so an extent crossing a segment boundary is ordinary addressing
+rather than a special case.
 
 Every record must carry the exact script bytes. The client must reject hash
 collisions, misplaced records, duplicate records, and filter false positives.
@@ -383,12 +487,12 @@ EventPage {
 }
 ```
 
-The private directory response supplies page locators. Follow-up page selection
-must itself use PIR; locators must never appear in plaintext requests. Otherwise
-the directory is private while its page access pattern identifies the selected
-history.
+The private directory response supplies a page extent. Follow-up page selection
+must itself use PIR; a page index must never appear in a plaintext request.
+Otherwise the directory is private while its page access pattern identifies the
+selected history.
 
-Pages are ordered by event height and stable event identity. Height bounds allow
+Pages are ordered by the canonical order key. Height bounds allow
 a previously synchronized wallet to navigate to the first page newer than its
 checkpoint. Navigation must either be private or use a public layout that is
 identical for all scripts; a free plaintext index would disclose history shape.
@@ -522,16 +626,21 @@ For each generation covered by an accepted anchor, the wallet:
 1. Verifies network and genesis identity, generation commitment continuity,
    gapless ranges, and the terminal commitment against its accepted anchor.
 2. Validates and locally matches the public activity filter.
-3. Privately retrieves directory rows for candidate scripts.
+3. Privately retrieves directory rows for candidate scripts, across every
+   segment of the generation.
 4. Validates exact script identities and directory invariants.
 5. Privately retrieves every required event page and transaction-detail row.
-6. Validates event identities, ordering, range, uniqueness and references.
+6. Validates event identities, canonical order, range, uniqueness and
+   references.
 7. Applies events to pending ledger state.
-8. Atomically commits ledger state and per-script generation coverage.
+8. Atomically commits ledger state and per-script generation coverage, once
+   every segment of the generation has been processed.
 
-A crash, timeout, malformed response, stale generation, query-budget exhaustion,
-or authentication failure leaves coverage unadvanced. Completed private rows may
-be journaled for idempotent resumption.
+A crash, timeout, malformed response, stale generation, incomplete segment set,
+query-budget exhaustion, or authentication failure leaves coverage unadvanced.
+Completed private rows may be journaled for idempotent resumption. Coverage
+taken from a provisional tail revision is recorded with that revision's digest
+and re-derived when a later revision or the sealed generation appears.
 
 Coverage is tracked by script/discovery scope and chain range, separately from
 shielded synchronization. A partial result may display known events as
@@ -568,6 +677,12 @@ during quiet ones — by roughly the same factor the spans differ, which
 measurement puts at about fourteen. This is a property of the partition, not of
 the wallet's behaviour, and it applies equally to every wallet that selects that
 generation.
+
+An exceptional generation's segment count is public as well, and a wallet
+querying such a generation pays a proportionally larger amount of work. That
+discloses nothing about which script was selected, but it does make those
+generations distinguishable by traffic volume, which the analysis counts rather
+than ignores.
 
 The initial design may explicitly accept generation, timing and query-count
 leakage, but it must not describe that as hiding whether the wallet had activity.
@@ -618,12 +733,14 @@ Build on the existing integrated prototype rather than replacing its model:
 - one public activity filter per generation, under its own keying;
 - a fixed-row private script directory, identical in geometry across
   generations;
-- two candidate directory buckets, independently salted per generation;
+- two candidate directory buckets, independently salted per generation, with
+  an added segment as the fallback that guarantees placement;
 - a small number of inline events, holding a script's *newest* history so an
   active script needs no page query;
 - fixed-size, privately selected event pages;
 - exact event replay with atomic checkpoint advancement;
-- a published unsealed tail alongside the sealed historical generations.
+- immutable provisional tail revisions alongside the sealed historical
+  generations.
 
 Do not build the private compact-transaction table yet. Build it only if the
 wallet adapter confirms that its existing transaction-display path cannot
@@ -646,8 +763,13 @@ Evaluate candidate seal parameters using:
 - active, inactive, restoration and catch-up workloads;
 - large and externally spammed histories;
 - realized occupancy distributions, including overshoot past target;
+- multi-segment generations, and the query and byte multiple they cost on both
+  sides;
+- tail-revision churn: bytes re-fetched when a revision is superseded, and again
+  when its range seals;
 - client memory and latency on the minimum supported device;
-- server CPU, concurrency, and resident bytes per loaded generation;
+- server CPU, concurrency, and resident bytes per loaded generation, as a
+  function of its segment count;
 - reorg, interruption and tail-publication behavior;
 - timing and generation-selection leakage.
 
@@ -676,6 +798,11 @@ retrieval cost of a real restoration workload against these generations;
 per-generation published setup summed over the generations a wallet touches;
 resident server memory per loaded generation; and end-to-end behaviour on a
 minimum supported device.
+
+No generation in the measured journal needed more than one segment, and the
+measurement covers no tail-revision churn. Both paths are specified and built so
+that publication cannot stall, but their cost is projected from the geometry
+rather than observed.
 
 Deliberately out of the first implementation, so its cost is neither measured
 nor claimed: the private transaction-detail table, and bounded evaluation-key

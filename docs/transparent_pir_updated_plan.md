@@ -62,6 +62,10 @@ advances coverage only under the trusted-indexer assumption, unchanged here.
 - **Shard boundaries:** content-sealed, published as protocol data.
 - **In scope:** byte accounting and exact replay equality; range filters served
   by `transparent-filter-server`; the optional private transaction-detail table.
+- **Not yet served:** `GET /v1/filters/shards` and `/v1/filters/shards/range`
+  are specified below and validated by the client, but the filter server does
+  not expose them; the only `FilterSource` implementations are in tests. Shard
+  filter distribution is designed, not shipped.
 - **Out of scope:** bounded evaluation-key reuse (`ipir-sp`'s
   `experimental-key-reuse` `QueryPool`). The plan notes where it would land.
 
@@ -94,12 +98,20 @@ shard's own database, so setup download remains per-shard. But query
 construction, packing keys and parameter validation do not. This is the largest
 cost lever available, and it is the reason the next finding matters.
 
-### 3. Content-sealed shards make that lever unconditional
+### 3. Content-sealed shards, with segments, make that lever unconditional
 
-Pinned geometry only works if no shard overflows it. Nothing bounds what a
+Pinned geometry only works if no table overflows it. Nothing bounds what a
 *height* range contains, so height sharding must size its tables from expected
 occupancy and fail closed when a spam burst exceeds it. Sealing on content
-instead makes overflow structurally impossible.
+removes that for every ordinary range: a shard seals at the block boundary
+before it would overflow.
+
+Sealing cannot save the case where one block's own content exceeds a table, and
+failing closed there would let a single purchased block halt publication. A
+shard therefore holds one or more **segments** of the pinned geometry, and the
+builder adds a segment when placement needs one. Ordinary shards have exactly
+one segment and are unaffected; the geometry, and therefore the shared parameter
+set, is the same either way.
 
 One criterion is not enough, because the three tables are keyed differently:
 
@@ -118,8 +130,11 @@ seal shard when  distinct_scripts >= S
               or distinct_txids  >= T
 ```
 
-All three quantities are monotone as blocks stream in, so this is one
-incremental pass over the event journal. Snapping the seal to a block boundary
+`S`, `P` and `T` are per-segment capacities, so the predicate is unchanged for
+ordinary shards; a block that breaches them on its own is absorbed and the
+builder gives that shard a second segment. All three quantities are monotone as
+blocks stream in, so this is one incremental pass over the event journal.
+Snapping the seal to a block boundary
 preserves parent and terminal block-hash binding and leaves reorg handling
 unchanged. Shards end up as wide as they can be without overflowing any table.
 
@@ -228,17 +243,28 @@ geometry holds with margin. The realized occupancy distribution is the evidence
 for the chosen thresholds, and it replaces the estimate-based sizing a height
 scheme would need.
 
-Tables use pinned geometry, identical for every shard: a 3,584-byte directory
-row with two inline events and two independently salted candidate buckets, a
-17,920-byte page row at 186 events per page, and a transaction-detail table
-sized from the measured per-shard txid distribution. Because sealing bounds
-occupancy, overflow should be unreachable — but the fail-closed check stays, as
-a cheap assertion that the seal logic is correct. Overflow must never trigger a
-public script, address, outpoint or transaction lookup.
+Tables use pinned geometry, identical for every shard and every segment: a
+3,584-byte directory row with two inline events and two independently salted
+candidate buckets, a 17,920-byte page row at 186 events per page, and a
+transaction-detail table sized from the measured per-shard txid distribution.
+
+Placement is a loop, not a fail-closed check: build at one segment, and if any
+script cannot be placed or the pages do not fit, rebuild at one more. A fresh
+segment's rows are empty, so the loop terminates, and the smallest count that
+works is the published one. Rows are addressed over the shard's whole logical
+row space, `rows * segment_count`, so occupancy stays even instead of spilling
+into a last segment. Overflow must still never trigger a public script, address,
+outpoint or transaction lookup — adding a segment is the private fallback that
+replaces failing.
+
+A shard's pages are one contiguous space, its segments' page tables concatenated
+in order, so a directory entry stays a `(first_page, page_count)` extent whether
+or not the extent crosses a segment.
 
 Every record carries exact script bytes. A shard's manifest binds network,
 genesis, schema and profile versions, seal parameters, heights, parent and
-terminal hashes, the filter digest, and each table's geometry and digest. Shard
+terminal hashes, the filter digest, its lifecycle state and tail revision, and
+each segment's table geometry and digest. Shard
 identity is the digest of the canonical manifest, and the published directory
 must be named by that digest, so a manifest edited after publication is refused
 rather than served under the identity of what it replaced.
@@ -250,6 +276,12 @@ shards, with routes for the shard index, a shared-parameter init, and a query
 addressed by shard and table. Keep the per-table setup-seed separation and add
 the shard id to the query prefix, so a query decoded against the wrong shard
 fails the client's own check rather than returning plausible nonsense.
+
+A multi-segment shard is served by fan-out: one client request per shard and
+table, evaluated against every segment, answered with the per-segment results in
+segment order. The client must not name a segment, because the segment a script
+lands in is a function of the script. Setup is per segment, since `c1` is
+derived from each segment's own database.
 
 This phase carries the plan's main risk. The current table runtime holds an
 `IPIRServer`, its packing preprocessing and its key images resident, and leaks
@@ -266,7 +298,8 @@ that assumption: the reuse measurements record packing-cache payloads between
    most.
 3. Measure resident bytes per loaded shard as soon as one shard exists, and let
    that number decide the cache bound and whether the transaction-detail table
-   ships at all.
+   ships at all. A multi-segment shard multiplies that number by its segment
+   count, so the bound is over segments, not shards.
 
 If the first two do not bring a shard's resident cost into budget, report the
 measured number rather than shipping a service that cannot hold its fleet.
@@ -281,10 +314,17 @@ Given a birthday height, a script set and an accepted chain: fetch and validate
 the shard map and binary-search it for the birthday; download every range filter
 from that shard to the tip and validate chain binding, gaplessness and digests;
 match locally; for each matched script and shard, privately retrieve both
-candidate directory rows, validate exact script identity, and privately retrieve
-the pages the decoded record locates; privately retrieve transaction detail for
+candidate directory rows from every segment, validate exact script identity, and
+privately retrieve the pages the decoded extent locates; privately retrieve
+transaction detail for
 each discovered txid from the same shard; replay events into an outpoint-indexed
-map; and commit ledger state and per-shard coverage atomically.
+map; and commit ledger state and per-shard coverage atomically, only once every
+segment of that shard has been processed.
+
+A tail shard is published as an immutable revision. Coverage taken from one is
+provisional: it is stored with the revision digest that produced it and
+re-derived when a later revision or the sealed shard appears. A wallet must not
+merge a newer revision into an older one's results.
 
 Filters come from the filter service and private queries from the retrieval
 service. They must stay separate: a wallet must not learn to fetch public bytes
@@ -307,6 +347,13 @@ shard's published parameters once per sync rather than once per query.
 - **Seal determinism.** Rebuilding from the same journal reproduces the
   published boundaries byte for byte, and a build that disagrees with the
   published map is refused rather than published under new boundaries.
+- **Availability.** No valid block is ever rejected. A synthetic block whose own
+  content exceeds a segment's capacity produces a multi-segment shard, and a
+  wallet syncing across it recovers exactly the same ledger, at the segment
+  multiple of the bytes.
+- **Tail revisions.** A tail is published, extended and sealed; a wallet holding
+  the earlier revision re-derives that range rather than merging, and its final
+  ledger is unchanged.
 - **Cross-shard refusal.** A query built for one shard is refused by another,
   mirroring the existing cross-generation and cross-table refusal tests.
 - **Filter tests.** A range-filter golden fixture derived from the spec rather
@@ -339,7 +386,10 @@ Worth stating in advance, so the POC is capable of returning a negative result:
   matched pair; the study's measured cost is about 112 KB per query per
   candidate bucket, and two candidates double it.
 - Resident server memory per shard could make a forty-shard fleet impractical on
-  the hardware the service actually runs on.
+  the hardware the service actually runs on. A multi-segment shard costs its
+  segment count in both memory and per-query work.
+- Tail-revision churn could dominate a wallet that syncs often, because each
+  superseding revision re-charges the range it re-covers.
 
 The architecture succeeds only when public filters, per-shard setup, directory
 queries, page queries, optional transaction-detail queries, retries and cover

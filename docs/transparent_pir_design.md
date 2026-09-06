@@ -1,8 +1,11 @@
 # Transparent PIR: activity filters and paged history
 
-Status: design proposal, 2026-09-04. This document records an architecture to
-evaluate; it does not specify a wire protocol or describe an implemented
-transparent-address PIR service. It extends the
+Status: **superseded**, 2026-09-04. The current specification is
+[the updated recommendation](transparent_pir_updated.md); this document is kept
+for the reasoning it records, and where the two disagree the updated
+recommendation governs. It records an architecture to evaluate; it does not
+specify a wire protocol or describe an implemented transparent-address PIR
+service. It extends the
 [transparent analysis in the Enhance PIR document](zakura_pir_enhance.md#handling-transparent).
 
 ## Goals and boundaries
