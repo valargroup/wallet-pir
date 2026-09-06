@@ -47,9 +47,10 @@ query counts, timing, and session linkage. It does not prove completeness or
 hide the entire access pattern.
 
 The census figures below support the proposed partitioning and public-filter
-cost. They do not establish an end-to-end advantage over compact scanning.
-The final section separates those figures from the measurements and protocol
-work still needed.
+cost, and the measurements beside them record end-to-end recovery against a
+published set for synthetic wallets. Neither covers a target device, the
+exceptional segment path, or revision churn. The final section separates what
+has been measured from the work still needed.
 
 ## Recovery scope and responsibilities
 
@@ -912,6 +913,34 @@ retain the original report's units and rounding.
 | Multi-segment generations in the sample | None | No empirical exceptional-path cost established |
 | Tail-revision churn | Not measured | No revision-refetch cost established |
 
+The figures below were measured on the coordinator on 2026-09-06, over the same
+journal but against the published generations rather than a fixture. The chain
+data, the published bytes and the retrieval are real; the wallets are synthetic,
+assembled from scripts drawn from the journal. They were produced by the
+`publish` and `measure` actions of the transparent-event backfill workflow
+against `/srv/zakura/transparent-shards-v2`, and the measurement JSON is
+retained as a run artifact.
+
+| Measured against the published set | Result | What it establishes |
+|---|---|---|
+| Published set | 21 generations over 3,428,143–3,473,474; 1.6 GB of plaintext tables | The whole sample publishes at the shipped seal parameters |
+| Segments per generation | One directory and one page segment throughout | The exceptional path did not arise in this range; its cost stays unmeasured |
+| Republication over an unchanged journal | Identical digests and directory size; tail revision unchanged | Publication is idempotent: a re-run verifies rather than forking the identity it already published under |
+| Public floor | 439,230 B: 428,149 B of filters and 11,081 B of map | What a wallet pays before any private query |
+| Unused wallet, 20 and 100 scripts | Exact; no private query; 439,230 B | A wallet with no match retrieves nothing |
+| 10 small histories | Exact; 20 queries, 8 published setups; 2,621,835 B | Directory-only recovery for short histories |
+| 10 median histories | Exact; 20 queries, 9 published setups; 2,641,162 B | Recovery where inline events do not suffice |
+| Restoration, 5 active and 95 unused scripts | Exact; 10 queries, 5 published setups; 1,549,858 B | Birthday-to-tip restoration over the 21-generation range, about 1.4% of the extrapolated scanning baseline |
+| Largest single history | Exact; 562 queries, 42 published setups; 75,817,678 B | About 67% of that baseline for one script: the spammed-history case remains the weakest |
+
+Equality is exact in every case — event multiset, UTXO set and per-transaction
+history against an independent traversal of the journal, not merely equal
+balances. The two comparisons use the 108 MB scanning figure, which is
+extrapolated from 2,888,097 bytes measured over 1,152 blocks rather than
+measured over this range. Totals include each opened generation's published
+setup, charged once per sync. A setup is fetched per table of each generation
+opened, so the largest history's 42 are both tables of all 21 generations.
+
 For implementation context, see the [boundary selector](../pir/transparent-shard/src/seal.rs),
 [table builder](../pir/transparent-shard/src/build.rs), and
 [census command](../server/transparent-filter-server/src/bin/shard-census.rs).
@@ -920,11 +949,13 @@ The [mainnet study](transparent_pir_mainnet_study.md) and
 prototype evidence; their results must not be treated as measurements of this
 complete revised protocol.
 
-The decisive measurements still missing are private retrieval for a real
-restoration workload against these generations; setup summed over every touched
-generation and revision; server resident memory per loaded generation; and
+Private retrieval for a restoration workload against these generations is now
+measured above, so the apparent advantage no longer rests on filter bytes alone.
+The decisive measurements still missing are setup summed across generations once
+tail revisions accumulate; server resident memory per loaded generation; and
 end-to-end latency and memory on the minimum supported device. Any of these
-could eliminate the apparent advantage suggested by filter bytes alone.
+could still eliminate the advantage, and the largest-history figure already
+exceeds the scanning baseline's per-script share by a wide margin.
 
 The implementation already has multi-segment construction and tail manifests,
 but its directory builder rehashes with a retry cap. It does not establish the
