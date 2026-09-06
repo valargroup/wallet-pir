@@ -387,15 +387,20 @@ fn the_ledger_replays_identically_from_shards_and_from_a_direct_traversal() {
                         events.push((found.script.clone(), *event));
                     }
                     for ordinal in 0..found.page_count {
-                        let page = transparent_shard::records::Page::decode(published.row(
+                        // A packed row carries several scripts; take the one
+                        // fragment that claims this script and ordinal.
+                        let row = transparent_shard::decode_page_row(published.row(
                             entry.shard_id,
                             "pages",
                             (found.first_page + ordinal) as u64,
                             transparent_shard::PAGE_ROW_BYTES,
                         ))
-                        .unwrap()
-                        .expect("a located page is occupied");
-                        for event in page.events {
+                        .unwrap();
+                        let fragment = row
+                            .into_iter()
+                            .find(|e| e.script == found.script && e.ordinal == ordinal)
+                            .expect("a located row holds the fragment that named it");
+                        for event in fragment.events {
                             events.push((found.script.clone(), event));
                         }
                     }

@@ -46,11 +46,11 @@ on:
         required: false
         default: ""
         type: string
-      packed:
+      unpacked:
         description: >-
-          Census only. Close shards on packed row demand rather than on a row
-          per fragment. For measuring a geometry before a packed builder
-          exists; a set must not be published this way.
+          Census only. Close shards on a row per fragment, as the layout did
+          before short histories shared rows. Reports what the journal would
+          have cost unpacked; a set must not be published this way.
         required: false
         default: false
         type: boolean
@@ -152,14 +152,14 @@ jobs:
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
-          PACKED: ${{ inputs.packed }}
+          UNPACKED: ${{ inputs.unpacked }}
           PAGE_ROWS: ${{ inputs.page_rows_per_segment }}
           POLICIES: ${{ inputs.policies }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin shard-census
           ARGS=()
-          [[ "$PACKED" == "true" ]] && ARGS+=(--packed)
+          [[ "$UNPACKED" == "true" ]] && ARGS+=(--unpacked)
           [[ -n "$PAGE_ROWS" ]] && ARGS+=(--page-rows-per-segment "$PAGE_ROWS")
           if [[ -n "$POLICIES" ]]; then
             IFS=';' read -ra LIST <<<"$POLICIES"

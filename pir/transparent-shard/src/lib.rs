@@ -13,6 +13,7 @@
 pub mod build;
 pub mod layout;
 pub mod manifest;
+pub mod page_row;
 pub mod records;
 pub mod seal;
 
@@ -25,8 +26,9 @@ pub use layout::{
 pub use manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
 };
+pub use page_row::{decode_page_row, encode_page_row, PageEntry};
 pub use records::{
-    decode_directory_row, encode_directory_row, DirectoryEntry, Page, RecordError,
-    DIRECTORY_ENTRY_BYTES, DIRECTORY_SLOTS, MAX_SCRIPT_BYTES,
+    decode_directory_row, encode_directory_row, DirectoryEntry, RecordError, DIRECTORY_ENTRY_BYTES,
+    DIRECTORY_SLOTS, MAX_SCRIPT_BYTES,
 };
 pub use seal::{Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer};

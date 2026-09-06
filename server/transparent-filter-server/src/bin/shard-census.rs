@@ -38,13 +38,15 @@ struct Cli {
     /// Blocks per bucket in the density profile.
     #[arg(long, default_value_t = 4_096)]
     density_bucket: u64,
-    /// Close shards on packed row demand rather than on a row per fragment.
+    /// Close shards on a row per fragment, as the layout did before short
+    /// histories shared rows.
     ///
-    /// For measuring a geometry before a packed builder exists. A published set
-    /// must not be built this way until the builder packs, or the table would
-    /// be sized for less than the builder writes.
+    /// The default is what the builder emits. This reports what the same
+    /// journal would have cost unpacked, so the two can be compared over one
+    /// input; a set must not be built this way, because the table would then be
+    /// sized for more than the builder writes.
     #[arg(long)]
-    packed: bool,
+    unpacked: bool,
     /// Page rows per segment to score against, when trying a table size other
     /// than the one compiled in.
     ///
@@ -177,7 +179,7 @@ fn utilisation(shards: &[SealedShard], page_rows_per_segment: u64) {
     // stripped. Directory entries carry their inline events, so those are not
     // counted again as page content.
     let live = scripts * transparent_shard::DIRECTORY_ENTRY_BYTES as u64
-        + page_rows * transparent_shard::layout::PAGE_HEADER_BYTES as u64
+        + page_rows * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
         + paged * transparent_events::EVENT_BYTES as u64;
 
     let dir_row_use = scripts.div_ceil(slots) as f64 / (dir_segments * dir_rows_per_segment) as f64;
@@ -243,17 +245,17 @@ fn projection(
     let slots = transparent_shard::DIRECTORY_SLOTS as u64;
 
     println!();
-    println!("  === PROJECTION ONLY — arithmetic over per-script event counts. No v5");
-    println!("      codec, builder or published set exists. These are projected ROW");
-    println!("      DEMANDS derived from the packing rule, not measured bytes. ===");
     match basis {
-        PageBasis::Fragments => {
-            println!("      Boundaries are the unpacked ones above, with R carried alongside them.")
-        }
         PageBasis::Packed => {
-            println!("      Boundaries were chosen by R. The block above says what the");
-            println!("      unpacked layout would cost for the same content, which is");
-            println!("      not what shipped.");
+            println!("  === Packed rows: what the builder lays out. The block above says what");
+            println!("      the same content would cost with a row per fragment, which is what");
+            println!("      the layout did before this. Row demand here comes from the packing");
+            println!("      rule, and the builder asserts it emits exactly this many. ===");
+        }
+        PageBasis::Fragments => {
+            println!("  === Packed rows, carried alongside boundaries chosen by the unpacked");
+            println!("      figure. Not a set that could be published: the builder packs, so");
+            println!("      these are not boundaries it would produce. ===");
         }
     }
 
@@ -540,10 +542,10 @@ fn main() -> Result<(), BoxError> {
     let page_rows_per_segment = cli
         .page_rows_per_segment
         .unwrap_or(transparent_shard::PAGE_ROWS as u64);
-    let basis = if cli.packed {
-        PageBasis::Packed
-    } else {
+    let basis = if cli.unpacked {
         PageBasis::Fragments
+    } else {
+        PageBasis::Packed
     };
     if page_rows_per_segment != transparent_shard::PAGE_ROWS as u64 {
         println!(
@@ -552,10 +554,11 @@ compiled {}; segment and pinned-byte figures follow the override, nothing built 
             transparent_shard::PAGE_ROWS
         );
     }
-    if matches!(basis, PageBasis::Packed) {
+    if matches!(basis, PageBasis::Fragments) {
         println!(
-            "sealing on packed row demand; the builder at this commit still emits a row per \
-fragment, so this measures a geometry rather than describing a set that could be published"
+            "sealing on a row per fragment, which is not what the builder emits; this reports \
+what the journal would have cost before short histories shared rows, and must not be used to \
+choose parameters for a set that will be published"
         );
     }
     // A policy that may exceed the table it is scored against would seal into a

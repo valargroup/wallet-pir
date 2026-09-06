@@ -11,10 +11,14 @@
 //! processed in sorted order, events in their own total order, and bucket
 //! placement resolved by a rule rather than by iteration order.
 
-use crate::layout::{fragments_for, segments_for, DIRECTORY_ROWS, INLINE_EVENTS, PAGE_ROWS};
-use crate::records::{encode_directory_row, DirectoryEntry, Page, RecordError, MAX_SCRIPT_BYTES};
+use crate::layout::{
+    entries_per_row, fragments_for, segments_for, shape_of, PackedDemand, Shape, DIRECTORY_ROWS,
+    INLINE_EVENTS, PAGE_ROWS,
+};
+use crate::page_row::{encode_page_row, PageEntry};
+use crate::records::{encode_directory_row, DirectoryEntry, RecordError, MAX_SCRIPT_BYTES};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use transparent_events::TransparentEvent;
 use transparent_filter::{
     build_range_filter, BlockHash, FilterBytes, FilterError, ScriptBytes, ShardKey,
@@ -71,7 +75,13 @@ pub struct BuiltShard {
     pub pages: Vec<Vec<u8>>,
     /// Scripts placed in the directory.
     pub scripts: u64,
+    /// Page rows emitted, after packing. Compared against what the sealer
+    /// sized this shard for; a disagreement is a failed publish.
     pub page_rows: u64,
+    /// Fragments across every indexed history, which is what a wallet's page
+    /// queries count and what the live-byte accounting charges an entry header
+    /// for. Not the row count: short histories share rows.
+    pub fragments: u64,
     pub events: u64,
     /// Scripts in the filter but not the directory, because they exceed
     /// [`MAX_SCRIPT_BYTES`].
@@ -190,11 +200,27 @@ pub fn build_shard(
     );
     let filter = build_range_filter(key, &filter_elements)?;
 
-    // Lay out pages first: a directory entry has to name where its pages are.
-    let mut pages: Vec<Page> = Vec::new();
-    let mut entries: Vec<DirectoryEntry> = Vec::new();
+    // Lay out page rows first: a directory entry has to name where its
+    // fragments are. Three passes, because placement is no longer a running
+    // counter — a short history's row depends on which other short histories of
+    // the same length exist, so nothing can be assigned until they are all
+    // known.
     let mut excluded_scripts = 0u64;
     let mut total_events = 0u64;
+
+    // 1. Classify. Each supported script's history splits into the newest
+    //    events, which live inline and cost no fragment, and the older
+    //    remainder, which is paged in ascending order — the order a replay
+    //    wants them in.
+    struct Classified<'a> {
+        script: &'a [u8],
+        inline: Vec<TransparentEvent>,
+        older: Vec<TransparentEvent>,
+        total: u32,
+    }
+    let mut short: BTreeMap<u32, Vec<Classified>> = BTreeMap::new();
+    let mut long: Vec<Classified> = Vec::new();
+    let mut demand = PackedDemand::default();
 
     for (script, history) in &by_script {
         total_events += history.len() as u64;
@@ -204,56 +230,135 @@ pub fn build_shard(
         }
         let mut history = history.clone();
         history.sort_by_key(|event| event.sort_key());
-
-        // The newest events go inline, so an active script's recent history
-        // needs no page query at all. The older remainder is paged in
-        // ascending order, which is the order a replay wants them in.
+        let total = history.len() as u32;
         let inline_from = history.len().saturating_sub(INLINE_EVENTS as usize);
         let (older, inline) = history.split_at(inline_from);
-
-        let first_page = pages.len() as u32;
-        let page_count = fragments_for(history.len() as u32) as u32;
-        if page_count as usize
-            != older
-                .len()
-                .div_ceil(crate::layout::EVENTS_PER_PAGE as usize)
-        {
-            return Err(BuildError::Invalid(format!(
-                "page accounting disagrees for a {}-event history",
-                history.len()
-            )));
+        let classified = Classified {
+            script,
+            inline: inline.to_vec(),
+            older: older.to_vec(),
+            total,
+        };
+        demand.shift(0, total);
+        match shape_of(total) {
+            Shape::None => {}
+            Shape::Short(p) => short.entry(p).or_default().push(classified),
+            Shape::Long(_) => long.push(classified),
         }
-        for (ordinal, chunk) in older
+    }
+
+    // 2. Allocate. Short classes in increasing length, each class filling rows
+    //    with whole entries; then long histories, each taking a contiguous run
+    //    of its own. A `BTreeMap` keyed by length and a `by_script` iterated in
+    //    script order make the result a function of the content, not of the
+    //    order the events arrived in.
+    let mut rows: Vec<Vec<PageEntry>> = Vec::new();
+    let mut first_page: HashMap<&[u8], u32> = HashMap::new();
+
+    for (p, class) in &short {
+        let per_row = entries_per_row(*p) as usize;
+        for chunk in class.chunks(per_row) {
+            let row = rows.len() as u32;
+            let mut entries = Vec::with_capacity(chunk.len());
+            for item in chunk {
+                first_page.insert(item.script, row);
+                entries.push(PageEntry::new(
+                    item.script.to_vec(),
+                    0,
+                    1,
+                    item.older.clone(),
+                )?);
+            }
+            rows.push(entries);
+        }
+    }
+    for item in &long {
+        first_page.insert(item.script, rows.len() as u32);
+        let fragments = fragments_for(item.total) as u32;
+        for (ordinal, fragment) in item
+            .older
             .chunks(crate::layout::EVENTS_PER_PAGE as usize)
             .enumerate()
         {
-            pages.push(Page::new(
-                script.clone(),
+            // A long history's final fragment keeps a row to itself rather than
+            // sharing one. Sharing it would make a history's placement depend
+            // on unrelated content, for a row saved per long history.
+            rows.push(vec![PageEntry::new(
+                item.script.to_vec(),
                 ordinal as u32,
-                page_count,
-                chunk.to_vec(),
-            )?);
+                fragments,
+                fragment.to_vec(),
+            )?]);
         }
+    }
 
+    // The sealer sized this shard's table from the same rule, and the publisher
+    // compares the two. Checking it here as well is what makes a disagreement a
+    // failed build rather than a table sized for less than it holds — which
+    // would come back as extra segments, and every wallet querying this shard
+    // pays for those.
+    if rows.len() as u64 != demand.rows() {
+        return Err(BuildError::Invalid(format!(
+            "emitted {} page rows where the packing rule demands {}",
+            rows.len(),
+            demand.rows()
+        )));
+    }
+
+    // 3. Encode, and build the directory entries that name what was assigned.
+    let mut entries: Vec<DirectoryEntry> = Vec::new();
+    for class in short.values() {
+        for item in class {
+            entries.push(DirectoryEntry {
+                script: item.script.to_vec(),
+                total_events: item.total,
+                inline: item.inline.clone(),
+                first_page: first_page[item.script],
+                page_count: fragments_for(item.total) as u32,
+            });
+        }
+    }
+    for item in &long {
+        entries.push(DirectoryEntry {
+            script: item.script.to_vec(),
+            total_events: item.total,
+            inline: item.inline.clone(),
+            first_page: first_page[item.script],
+            page_count: fragments_for(item.total) as u32,
+        });
+    }
+    // Histories inside the inline allowance hold no fragment and name no row.
+    for (script, history) in &by_script {
+        if script.len() > MAX_SCRIPT_BYTES || shape_of(history.len() as u32) != Shape::None {
+            continue;
+        }
+        let mut history = history.clone();
+        history.sort_by_key(|event| event.sort_key());
         entries.push(DirectoryEntry {
             script: script.clone(),
             total_events: history.len() as u32,
-            inline: inline.to_vec(),
-            first_page,
-            page_count,
+            inline: history,
+            first_page: 0,
+            page_count: 0,
         });
     }
 
-    // A shard takes as many page segments as its pages need. Failing instead
+    let fragments: u64 = by_script
+        .iter()
+        .filter(|(script, _)| script.len() <= MAX_SCRIPT_BYTES)
+        .map(|(_, history)| fragments_for(history.len() as u32))
+        .sum();
+
+    // A shard takes as many page segments as its rows need. Failing instead
     // would mean one oversized block could stop publication.
-    let page_segments = segments_for(pages.len() as u64, PAGE_ROWS as u64);
-    let page_rows = pages.len() as u64;
+    let page_segments = segments_for(rows.len() as u64, PAGE_ROWS as u64);
+    let page_rows = rows.len() as u64;
     let mut page_table =
         Vec::with_capacity(page_segments as usize * PAGE_ROWS * crate::layout::PAGE_ROW_BYTES);
-    for page in &pages {
-        page_table.extend_from_slice(&page.encode()?);
+    for row in &rows {
+        page_table.extend_from_slice(&encode_page_row(row)?);
     }
-    // Unused page rows are zero and decode as absent. They are indistinguishable
+    // Unused page rows are zero and decode as empty. They are indistinguishable
     // in a response from occupied ones, which is the point.
     page_table.resize(
         page_segments as usize * PAGE_ROWS * crate::layout::PAGE_ROW_BYTES,
@@ -275,6 +380,7 @@ pub fn build_shard(
         pages: page_table,
         scripts,
         page_rows,
+        fragments,
         events: total_events,
         excluded_scripts,
     })
@@ -344,7 +450,21 @@ fn place_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::page_row::{decode_page_row, PageEntry};
     use crate::records::decode_directory_row;
+
+    /// The one entry in `row` belonging to `script`, which is what a wallet
+    /// does with a packed row: several scripts share it, and the rest are
+    /// discarded.
+    fn fragment_of(row: &[u8], script: &[u8], ordinal: u32) -> PageEntry {
+        let mut found: Vec<PageEntry> = decode_page_row(row)
+            .expect("a located row decodes")
+            .into_iter()
+            .filter(|entry| entry.script == script && entry.ordinal == ordinal)
+            .collect();
+        assert_eq!(found.len(), 1, "exactly one entry may claim a fragment");
+        found.pop().expect("one")
+    }
     use transparent_events::{ReceiveEvent, Txid};
     use transparent_filter::{validate_filter, FilterLimits, RANGE_PROFILE};
 
@@ -412,6 +532,122 @@ mod tests {
         }
     }
 
+    /// Short histories of the same length share rows, and every class from one
+    /// paged event to a full fragment does it at its own capacity. This is the
+    /// whole point of the format, so it is checked per class rather than
+    /// sampled.
+    #[test]
+    fn short_histories_of_a_length_share_rows() {
+        for p in 1..=crate::layout::EVENTS_PER_PAGE {
+            let per_row = entries_per_row(p) as usize;
+            let scripts = per_row as u32 * 2 + 1;
+            let built = build(&fixture(scripts, p + INLINE_EVENTS));
+
+            // Three rows: two full and one holding the remainder.
+            assert_eq!(
+                built.page_rows,
+                (scripts as usize).div_ceil(per_row) as u64,
+                "class {p} did not pack {scripts} scripts at {per_row} per row"
+            );
+            assert_eq!(built.fragments, scripts as u64, "class {p} fragments");
+
+            // Every script is still retrievable, and only from the row its
+            // directory entry names.
+            let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
+            for tag in 0..scripts {
+                let wanted = script(tag);
+                let entry = candidate_rows(0, wanted.as_slice(), rows)
+                    .iter()
+                    .find_map(|row| {
+                        decode_directory_row(built.directory_row(*row))
+                            .unwrap()
+                            .into_iter()
+                            .find(|e| e.script == wanted.as_slice())
+                    })
+                    .expect("entry");
+                assert_eq!(entry.page_count, 1, "class {p} should be one fragment");
+                let fragment = fragment_of(
+                    built.page_row(entry.first_page as u64),
+                    wanted.as_slice(),
+                    0,
+                );
+                assert_eq!(fragment.events.len(), p as usize);
+            }
+        }
+    }
+
+    /// Two scripts sharing a row are both there, at the same locator, each
+    /// finding only its own events. A reader has to select within the row.
+    #[test]
+    fn two_scripts_can_name_the_same_row() {
+        let built = build(&fixture(2, 1 + INLINE_EVENTS));
+        assert_eq!(built.page_rows, 1, "two one-event histories share a row");
+
+        let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
+        let mut located = Vec::new();
+        for tag in 0..2u32 {
+            let wanted = script(tag);
+            let entry = candidate_rows(0, wanted.as_slice(), rows)
+                .iter()
+                .find_map(|row| {
+                    decode_directory_row(built.directory_row(*row))
+                        .unwrap()
+                        .into_iter()
+                        .find(|e| e.script == wanted.as_slice())
+                })
+                .expect("entry");
+            located.push(entry.first_page);
+            let fragment = fragment_of(
+                built.page_row(entry.first_page as u64),
+                wanted.as_slice(),
+                0,
+            );
+            assert_eq!(fragment.events.len(), 1);
+        }
+        assert_eq!(located[0], located[1], "both should name the same row");
+        assert_eq!(
+            decode_page_row(built.page_row(located[0] as u64))
+                .unwrap()
+                .len(),
+            2,
+            "the shared row should hold both"
+        );
+    }
+
+    /// A history past one fragment takes a contiguous run to itself and shares
+    /// with nothing, including its short final fragment. Sharing that would
+    /// make a long history's placement depend on unrelated content.
+    #[test]
+    fn a_long_history_keeps_its_run_to_itself() {
+        let per = crate::layout::EVENTS_PER_PAGE * 2 + 5 + INLINE_EVENTS;
+        // One long history and enough one-event ones to fill a row beside it.
+        let mut events = fixture(1, per);
+        events.extend(
+            fixture(entries_per_row(1), 1 + INLINE_EVENTS)
+                .into_iter()
+                .map(|(s, e)| (ScriptBytes::new([b"short-", s.as_slice()].concat()), e)),
+        );
+        let built = build(&events);
+
+        let wanted = script(0);
+        let rows = DIRECTORY_ROWS as u64 * built.directory_segments() as u64;
+        let entry = candidate_rows(0, wanted.as_slice(), rows)
+            .iter()
+            .find_map(|row| {
+                decode_directory_row(built.directory_row(*row))
+                    .unwrap()
+                    .into_iter()
+                    .find(|e| e.script == wanted.as_slice())
+            })
+            .expect("entry");
+        assert_eq!(entry.page_count, 3, "two full fragments and a short one");
+        for ordinal in 0..entry.page_count {
+            let row = decode_page_row(built.page_row((entry.first_page + ordinal) as u64)).unwrap();
+            assert_eq!(row.len(), 1, "fragment {ordinal} shared its row");
+            assert_eq!(row[0].script, wanted.as_slice());
+        }
+    }
+
     /// The availability property at the builder: content that cannot fit one
     /// segment gets another, of the same pinned geometry, rather than failing.
     /// A shard that failed to build would stop publication altogether.
@@ -424,7 +660,12 @@ mod tests {
         let built = build(&fixture(scripts, per));
 
         assert!(built.page_segments() >= 2, "the pages did not fit one");
+        // A full fragment is one entry per row even packed, so this shard
+        // needs a row per script exactly as the unpacked layout did. That is
+        // the boundary case: one event more and the history is long, one less
+        // and it starts sharing.
         assert_eq!(built.page_rows, scripts as u64);
+        assert_eq!(built.fragments, scripts as u64);
         for segment in &built.pages {
             assert_eq!(segment.len(), PAGE_ROWS * crate::layout::PAGE_ROW_BYTES);
         }
@@ -454,10 +695,12 @@ mod tests {
             if entry.first_page as usize >= PAGE_ROWS {
                 crossed = true;
             }
-            let page = Page::decode(built.page_row(entry.first_page as u64))
-                .unwrap()
-                .expect("a located page is occupied");
-            assert_eq!(page.script, wanted.as_slice());
+            let fragment = fragment_of(
+                built.page_row(entry.first_page as u64),
+                wanted.as_slice(),
+                0,
+            );
+            assert_eq!(fragment.script, wanted.as_slice());
         }
         assert!(crossed, "some extent should land past the first segment");
     }
@@ -505,13 +748,13 @@ mod tests {
             assert_eq!(entry.total_events, per);
             let mut recovered = entry.inline.clone();
             for ordinal in 0..entry.page_count {
-                let page = Page::decode(built.page_row((entry.first_page + ordinal) as u64))
-                    .unwrap()
-                    .expect("a located page is occupied");
-                assert_eq!(page.script, wanted.as_slice());
-                assert_eq!(page.ordinal, ordinal);
-                assert_eq!(page.page_count, entry.page_count);
-                recovered.extend(page.events);
+                let fragment = fragment_of(
+                    built.page_row((entry.first_page + ordinal) as u64),
+                    wanted.as_slice(),
+                    ordinal,
+                );
+                assert_eq!(fragment.fragment_count, entry.page_count);
+                recovered.extend(fragment.events);
             }
 
             recovered.sort_by_key(|event| event.sort_key());
@@ -549,10 +792,12 @@ mod tests {
             .map(|event| event.sort_key())
             .min()
             .unwrap();
-        let page = Page::decode(built.page_row(entry.first_page as u64))
-            .unwrap()
-            .unwrap();
-        let latest_paged = page
+        let fragment = fragment_of(
+            built.page_row(entry.first_page as u64),
+            wanted.as_slice(),
+            0,
+        );
+        let latest_paged = fragment
             .events
             .iter()
             .map(|event| event.sort_key())

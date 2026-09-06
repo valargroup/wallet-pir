@@ -184,6 +184,8 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
                 max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
                 inline_events: transparent_shard::INLINE_EVENTS,
                 events_per_page: transparent_shard::EVENTS_PER_PAGE,
+                page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
+                page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
                 directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
             },
             filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
@@ -208,6 +210,7 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
             occupancy: ManifestOccupancy {
                 scripts: built.scripts,
                 page_rows: built.page_rows,
+                fragments: built.fragments,
                 events: built.events,
                 blocks: SPAN,
                 txids: 0,
@@ -439,6 +442,7 @@ async fn run_sync(
             .unwrap();
         let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
         let geometry = ServiceGeometry {
+            schema: init["schema"].as_str().unwrap().to_string(),
             directory_scheme: serde_json::from_value(init["directory_scheme"].clone()).unwrap(),
             directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap(),
             pages_scheme: serde_json::from_value(init["pages_scheme"].clone()).unwrap(),
@@ -458,6 +462,122 @@ async fn run_sync(
     })
     .await
     .unwrap()
+}
+
+/// Two of a wallet's own scripts sharing a page row still cost two fetches.
+///
+/// A packed row hands the wallet other scripts' histories, including sometimes
+/// its own. Satisfying the second script from the first response would be free
+/// and is forbidden: it would make the number of requests depend on which
+/// scripts happen to share a row, which is a fact about strangers' history and
+/// about the builder's placement. A server watching request counts could learn
+/// from it. The wallet must therefore fetch a row it already holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn scripts_sharing_a_row_still_cost_a_fetch_each() {
+    let dir = tempfile::tempdir().unwrap();
+    // Three events each: two inline, one paged, so all three are class 1 and
+    // pack into one row together.
+    let mut events = Vec::new();
+    for tag in 0..3u32 {
+        for i in 0..3u32 {
+            events.push((
+                script(tag),
+                TransparentEvent::Receive(ReceiveEvent {
+                    height: (FIRST + u64::from(i)) as u32,
+                    txid: txid(u64::from(tag) * 10 + u64::from(i)),
+                    transaction_index: i as u16,
+                    output_index: 0,
+                    value: 500 + u64::from(i),
+                    coinbase: false,
+                }),
+            ));
+        }
+    }
+    let per_shard = vec![events];
+    let map = publish(dir.path(), &per_shard);
+    assert_eq!(
+        map.shards[0].page_segments, 1,
+        "three short histories share one row in one segment"
+    );
+    let base = serve(dir.path()).await;
+
+    for scripts in 1..=3usize {
+        let wallet: Vec<ScriptBytes> = (0..scripts as u32).map(script).collect();
+        let outcome = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
+        let expected = traverse(&per_shard, &wallet, 0);
+        compare(&outcome.ledger, &expected);
+
+        // Two directory candidates per script, and one page fetch per script
+        // even though one row answers all of them.
+        assert_eq!(
+            outcome.charges.queries,
+            (scripts * 3) as u64,
+            "{scripts} scripts should cost {} queries",
+            scripts * 3
+        );
+    }
+}
+
+/// A wallet must refuse a service serving a layout it does not read.
+///
+/// The rows carry no version of their own — a fixed-width row has nowhere to
+/// put one without spending space on every row — so nothing about a v4 page row
+/// makes it self-evidently not a v5 one. Fed to the packed decoder, its first
+/// four bytes are a script length and two script bytes, which read as an entry
+/// count in the billions and are rejected by luck rather than by design; the
+/// reverse direction is not reliably rejected at all. So the schema is checked
+/// before any row is decoded, and this is that check.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_service_serving_another_schema_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+    let wallet = vec![script(1)];
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let filters = PublishedFilters::load(dir.path(), &map);
+
+    let error = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = HttpShards {
+            base: base.clone(),
+            client: client.clone(),
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap();
+        let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(init["schema"].as_str().unwrap(), transparent_shard::SCHEMA);
+        let geometry = ServiceGeometry {
+            schema: "transparent-shard-v4".to_string(),
+            directory_scheme: serde_json::from_value(init["directory_scheme"].clone()).unwrap(),
+            directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap(),
+            pages_scheme: serde_json::from_value(init["pages_scheme"].clone()).unwrap(),
+            pages_setup_seed: init["pages_setup_seed"].as_u64().unwrap(),
+        };
+        let mut filters = filters;
+        sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .err()
+        .expect("a foreign schema must be refused")
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(error, transparent_wallet::SyncError::Schema { .. }),
+        "expected a schema refusal, got {error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -523,24 +643,30 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
 
 /// A shard whose content does not fit one segment of the pinned geometry.
 ///
-/// One page row per script and one more script than the page table holds, which
-/// is what a single oversized block looks like once it is built. The design
-/// requires this to be published rather than refused, so it has to survive a
-/// real sync end to end and not merely build.
+/// Packing makes this harder to provoke than it was, and that is the point: a
+/// short history no longer costs a row of its own, so thousands of them no
+/// longer overrun anything. What still does is history that cannot share — one
+/// full fragment plus one event is two rows belonging to one script, because a
+/// long history keeps its run to itself. Half the page table's rows' worth of
+/// those, plus one, and the table overruns by exactly one row.
+///
+/// The design requires such a shard to be published rather than refused, so it
+/// has to survive a real sync end to end and not merely build.
 fn oversized_chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
-    let scripts = transparent_shard::PAGE_ROWS as u32 + 1;
+    // Two inline, then a full fragment and one more, so the history is long and
+    // takes two rows that nothing else may share.
+    let per_script = transparent_shard::INLINE_EVENTS + transparent_shard::EVENTS_PER_PAGE + 1;
+    let scripts = transparent_shard::PAGE_ROWS as u32 / 2 + 1;
     let mut events = Vec::new();
     for tag in 0..scripts {
-        // Three events: two inline, one paged. Every script therefore costs
-        // exactly one page row, so the page table overruns by exactly one.
-        for i in 0..3u32 {
-            let height = FIRST + u64::from(i);
+        for i in 0..per_script {
+            let height = FIRST + u64::from(i) % SPAN;
             events.push((
                 script(tag),
                 TransparentEvent::Receive(ReceiveEvent {
                     height: height as u32,
-                    txid: txid(u64::from(tag) * 10 + u64::from(i)),
-                    transaction_index: i as u16,
+                    txid: txid(u64::from(tag) * 1_000 + u64::from(i)),
+                    transaction_index: (i % 1_000) as u16,
                     output_index: 0,
                     value: 100 + u64::from(i),
                     coinbase: false,
@@ -554,7 +680,7 @@ fn oversized_chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 /// The wallet for the oversized fixture: scripts spread across the page space,
 /// so at least one of them is located past the first segment's boundary.
 fn oversized_wallet() -> Vec<ScriptBytes> {
-    let last = transparent_shard::PAGE_ROWS as u32;
+    let last = transparent_shard::PAGE_ROWS as u32 / 2;
     vec![script(0), script(last / 2), script(last)]
 }
 
@@ -579,10 +705,12 @@ async fn a_shard_whose_pages_need_two_segments_syncs_exactly() {
     let expected = traverse(&per_shard, &wallet, 0);
     compare(&outcome.ledger, &expected);
     assert!(outcome.ledger.unresolved().is_empty());
+    let per_script =
+        (transparent_shard::INLINE_EVENTS + transparent_shard::EVENTS_PER_PAGE + 1) as usize;
     assert_eq!(
         expected.utxos().count(),
-        wallet.len() * 3,
-        "three events per wallet script"
+        wallet.len() * per_script,
+        "a full fragment and one more, per wallet script"
     );
 
     // One setup per segment: the directory's one, and the pages' two. That is
@@ -614,6 +742,7 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
             .unwrap();
         let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
         let geometry = ServiceGeometry {
+            schema: init["schema"].as_str().unwrap().to_string(),
             directory_scheme: serde_json::from_value(init["directory_scheme"].clone()).unwrap(),
             directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap(),
             pages_scheme: serde_json::from_value(init["pages_scheme"].clone()).unwrap(),
