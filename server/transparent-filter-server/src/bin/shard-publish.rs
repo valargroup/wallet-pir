@@ -27,7 +27,8 @@ use transparent_filter_server::zakura::ZakuraClient;
 use transparent_shard::build::build_shard;
 use transparent_shard::layout::{DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, PAGE_ROWS, PAGE_ROW_BYTES};
 use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
+    ManifestLayout, ManifestOccupancy, ManifestSeal, PublishedRevision, ShardManifest,
+    TableGeometry, SCHEMA,
 };
 use transparent_shard::seal::{Limit, SealPolicy, Sealer};
 
@@ -143,16 +144,6 @@ async fn main() -> Result<(), BoxError> {
             .flat_map(|(_, events)| events.iter().cloned())
             .collect();
 
-        // A shard already in the previous map is being republished. That is
-        // ordinary for a tail and impossible for a sealed shard, which is
-        // immutable — so a sealed shard that disagrees is an error, not a new
-        // revision.
-        let (revision, supersedes) = match previous.get(&shard.shard_id) {
-            Some(entry) if entry.sealed => (entry.revision, entry.manifest_digest.clone()),
-            Some(entry) => (entry.revision + 1, entry.manifest_digest.clone()),
-            None => (0, String::new()),
-        };
-
         let built = build_shard(
             shard.shard_id,
             shard.start_height,
@@ -163,7 +154,12 @@ async fn main() -> Result<(), BoxError> {
             &events,
         )?;
 
-        let manifest = ShardManifest {
+        // A shard already in the previous map is being republished. Building it
+        // under the published numbering first says which kind of republication
+        // this is: one that reproduces the published digest is the same shard
+        // again and keeps its identity, while one that does not is a tail that
+        // has grown and takes the next revision.
+        let make = |revision: u32, supersedes: String| ShardManifest {
             schema: SCHEMA.to_string(),
             profile: transparent_filter::RANGE_PROFILE.to_string(),
             network: transparent_filter::NETWORK.to_string(),
@@ -217,6 +213,30 @@ async fn main() -> Result<(), BoxError> {
                 excluded_scripts: built.excluded_scripts,
             },
         };
+
+        let published = match previous.get(&shard.shard_id) {
+            None => None,
+            Some(entry) => {
+                let raw = std::fs::read(
+                    cli.output
+                        .join(&entry.manifest_digest)
+                        .join("manifest.json"),
+                )?;
+                let published: ShardManifest = serde_json::from_slice(&raw)?;
+                Some(PublishedRevision {
+                    digest: entry.manifest_digest.clone(),
+                    revision: published.revision,
+                    supersedes: published.supersedes,
+                    sealed: published.sealed,
+                })
+            }
+        };
+        let reproduced = published.as_ref().is_some_and(|previous| {
+            make(previous.revision, previous.supersedes.clone()).digest() == previous.digest
+        });
+        let (revision, supersedes) =
+            PublishedRevision::next(shard.shard_id, published.as_ref(), reproduced)?;
+        let manifest = make(revision, supersedes);
 
         let digest = manifest.digest();
         let dir = cli.output.join(&digest);

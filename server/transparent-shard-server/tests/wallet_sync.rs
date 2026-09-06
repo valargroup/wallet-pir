@@ -465,6 +465,7 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
+    let tail = map.shards.last().expect("a tail").clone();
     let base = serve(dir.path()).await;
 
     // Script 999 is derived but never used: a wallet always carries scripts it
@@ -485,6 +486,16 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
     );
 
     assert_eq!(outcome.covered_through, FIRST + SHARDS * SPAN - 1);
+    // The last shard is a provisional tail revision. Coverage through it is
+    // current but not settled, and it is recorded with the revision digest that
+    // produced it, so a later revision replaces that range rather than
+    // extending it.
+    assert!(!tail.sealed, "the fixture's last shard must be the tail");
+    assert_eq!(outcome.settled_through, FIRST + (SHARDS - 1) * SPAN - 1);
+    assert_eq!(outcome.provisional.len(), 1);
+    assert_eq!(outcome.provisional[0].shard_id, tail.shard_id);
+    assert_eq!(outcome.provisional[0].revision, tail.revision);
+    assert_eq!(outcome.provisional[0].manifest_digest, tail.manifest_digest);
     assert_eq!(
         outcome.charges.filters_checked, SHARDS,
         "every filter in range is downloaded, matched or not"
@@ -503,6 +514,161 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
         outcome.charges.query_download,
         outcome.charges.total()
     );
+}
+
+/// A shard whose content does not fit one segment of the pinned geometry.
+///
+/// One page row per script and one more script than the page table holds, which
+/// is what a single oversized block looks like once it is built. The design
+/// requires this to be published rather than refused, so it has to survive a
+/// real sync end to end and not merely build.
+fn oversized_chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
+    let scripts = transparent_shard::PAGE_ROWS as u32 + 1;
+    let mut events = Vec::new();
+    for tag in 0..scripts {
+        // Three events: two inline, one paged. Every script therefore costs
+        // exactly one page row, so the page table overruns by exactly one.
+        for i in 0..3u32 {
+            let height = FIRST + u64::from(i);
+            events.push((
+                script(tag),
+                TransparentEvent::Receive(ReceiveEvent {
+                    height: height as u32,
+                    txid: txid(u64::from(tag) * 10 + u64::from(i)),
+                    transaction_index: i as u16,
+                    output_index: 0,
+                    value: 100 + u64::from(i),
+                    coinbase: false,
+                }),
+            ));
+        }
+    }
+    vec![events]
+}
+
+/// The wallet for the oversized fixture: scripts spread across the page space,
+/// so at least one of them is located past the first segment's boundary.
+fn oversized_wallet() -> Vec<ScriptBytes> {
+    let last = transparent_shard::PAGE_ROWS as u32;
+    vec![script(0), script(last / 2), script(last)]
+}
+
+/// The availability case, end to end. A shard with two page segments must
+/// reconstruct exactly the same ledger as a traversal of the same events, and
+/// must cost one published setup per segment rather than one per shard.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shard_whose_pages_need_two_segments_syncs_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = oversized_chain();
+    let map = publish(dir.path(), &per_shard);
+    assert_eq!(
+        map.shards[0].page_segments, 2,
+        "the fixture must actually overrun one segment"
+    );
+    assert_eq!(map.shards[0].directory_segments, 1);
+    let base = serve(dir.path()).await;
+
+    let wallet = oversized_wallet();
+    let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
+
+    let expected = traverse(&per_shard, &wallet, 0);
+    compare(&outcome.ledger, &expected);
+    assert!(outcome.ledger.unresolved().is_empty());
+    assert_eq!(
+        expected.utxos().count(),
+        wallet.len() * 3,
+        "three events per wallet script"
+    );
+
+    // One setup per segment: the directory's one, and the pages' two. That is
+    // the cost the segment path adds, and it is what the analysis must carry.
+    assert_eq!(outcome.charges.shards_opened, 3);
+    assert_eq!(outcome.covered_through, FIRST + SPAN - 1);
+}
+
+/// Every segment must be accounted for before coverage moves. A wallet that
+/// accepted a short answer would advance over history it never retrieved and
+/// report a balance missing whatever the dropped segment held.
+#[tokio::test(flavor = "multi_thread")]
+async fn coverage_does_not_advance_when_a_segment_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = oversized_chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+
+    let filters = PublishedFilters::load(dir.path(), &map);
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let wallet = oversized_wallet();
+    let error = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap();
+        let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let geometry = ServiceGeometry {
+            directory_scheme: serde_json::from_value(init["directory_scheme"].clone()).unwrap(),
+            directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap(),
+            pages_scheme: serde_json::from_value(init["pages_scheme"].clone()).unwrap(),
+            pages_setup_seed: init["pages_setup_seed"].as_u64().unwrap(),
+        };
+        let mut transport = DropsTheLastSegment {
+            inner: HttpShards {
+                base: base.clone(),
+                client,
+            },
+        };
+        let mut filters = filters;
+        sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .err()
+        .expect("a short answer must not be accepted")
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        error.to_string().contains("length"),
+        "expected a length refusal, got: {error}"
+    );
+}
+
+/// Returns only the first segment's body, as a service that quietly stopped
+/// serving a segment would.
+struct DropsTheLastSegment {
+    inner: HttpShards,
+}
+
+impl ShardTransport for DropsTheLastSegment {
+    fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.init()
+    }
+
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.setup(shard_id, table, segment)
+    }
+
+    fn query(&mut self, shard_id: u64, table: Table, body: &[u8]) -> Result<Vec<u8>, BoxError> {
+        let mut answer = self.inner.query(shard_id, table, body)?;
+        if table == Table::Pages {
+            answer.truncate(answer.len() / 2);
+        }
+        Ok(answer)
+    }
 }
 
 /// A birthday inside the set skips earlier shards entirely, and the result must

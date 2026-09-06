@@ -136,6 +136,48 @@ pub struct ShardManifest {
     pub occupancy: ManifestOccupancy,
 }
 
+/// What a shard id already has published, as the publisher reads it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishedRevision {
+    pub digest: String,
+    pub revision: u32,
+    pub supersedes: String,
+    pub sealed: bool,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RevisionError {
+    #[error("shard {0} is sealed; a sealed shard's content cannot change")]
+    SealedChanged(u64),
+}
+
+impl PublishedRevision {
+    /// The revision numbering a publication of this shard takes.
+    ///
+    /// `reproduced` says whether rebuilding under the published numbering
+    /// produced the published digest — whether this is the same shard being
+    /// published again, or a tail that has grown since.
+    ///
+    /// Republishing something identical must reproduce the identity it already
+    /// has, or an idempotent re-run over the same journal would publish the
+    /// same content under a second digest and the map would name the new one.
+    /// A tail that has grown takes the next revision and records what it
+    /// supersedes. A *sealed* shard whose content changed is neither: sealed
+    /// shards are immutable, so that is an error rather than a revision.
+    pub fn next(
+        shard_id: u64,
+        previous: Option<&PublishedRevision>,
+        reproduced: bool,
+    ) -> Result<(u32, String), RevisionError> {
+        match previous {
+            None => Ok((0, String::new())),
+            Some(previous) if reproduced => Ok((previous.revision, previous.supersedes.clone())),
+            Some(previous) if previous.sealed => Err(RevisionError::SealedChanged(shard_id)),
+            Some(previous) => Ok((previous.revision + 1, previous.digest.clone())),
+        }
+    }
+}
+
 impl ShardManifest {
     /// The canonical bytes this manifest digests to.
     ///
@@ -202,6 +244,62 @@ mod tests {
                 excluded_scripts: 0,
             },
         }
+    }
+
+    fn published(revision: u32, sealed: bool) -> PublishedRevision {
+        PublishedRevision {
+            digest: "aa".repeat(32),
+            revision,
+            supersedes: if revision == 0 {
+                String::new()
+            } else {
+                "bb".repeat(32)
+            },
+            sealed,
+        }
+    }
+
+    /// A first publication supersedes nothing.
+    #[test]
+    fn a_shard_published_for_the_first_time_is_revision_zero() {
+        assert_eq!(
+            PublishedRevision::next(3, None, false).unwrap(),
+            (0, String::new())
+        );
+    }
+
+    /// Re-running over the same journal must reproduce the identity already
+    /// published, not publish the same content again under a new digest.
+    #[test]
+    fn republishing_the_same_shard_keeps_its_revision() {
+        let previous = published(2, false);
+        assert_eq!(
+            PublishedRevision::next(3, Some(&previous), true).unwrap(),
+            (2, previous.supersedes.clone())
+        );
+    }
+
+    /// A tail that has grown is a new revision beside the old one, recording
+    /// what it replaces so a wallet can tell replacement from extension.
+    #[test]
+    fn a_grown_tail_takes_the_next_revision_and_names_its_predecessor() {
+        let previous = published(2, false);
+        assert_eq!(
+            PublishedRevision::next(3, Some(&previous), false).unwrap(),
+            (3, previous.digest.clone())
+        );
+    }
+
+    /// Sealed shards are immutable. Content that disagrees with a sealed shard
+    /// is a build or journal fault, and publishing it as a revision would hide
+    /// that behind a version number.
+    #[test]
+    fn a_sealed_shard_whose_content_changed_is_refused() {
+        let previous = published(1, true);
+        assert_eq!(
+            PublishedRevision::next(3, Some(&previous), false),
+            Err(RevisionError::SealedChanged(3))
+        );
     }
 
     #[test]
