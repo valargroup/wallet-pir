@@ -15,6 +15,7 @@ drawn from the journal, not user traces.
 | `census-baseline.txt` | Census at the geometry in use before this work: 17,920-byte page rows, `PAGE_ROWS` 4,096 |
 | `census-v4.txt` | Census at the geometry after it: 3,584-byte page rows, `PAGE_ROWS` 8,192 |
 | `measurement-v4.json` | Six workloads synced against the published v4 set over real HTTP with real PIR |
+| `packed-row-projection.txt` | The v4 census again, with the row demand packed short histories would need carried alongside it. See [the notes](packed-row-projection-notes.md) |
 
 ## What changed between the two censuses
 
