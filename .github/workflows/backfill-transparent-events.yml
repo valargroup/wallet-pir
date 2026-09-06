@@ -159,7 +159,11 @@ jobs:
             -o ConnectTimeout=10)
           "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "$DATA_DIR" "$START" "$STOP" <<'REMOTE'
           set -euo pipefail
-          unit="$1"; bin="$2"; data_dir="$3"; start="$4"; stop="$5"
+          # `stop` is optional, and ssh re-splits the remote command, so an
+          # empty trailing argument does not survive as an empty positional —
+          # it simply is not there. Defaulting rather than indexing is what
+          # keeps `set -u` from killing the script before anything runs.
+          unit="$1"; bin="$2"; data_dir="$3"; start="$4"; stop="${5:-}"
 
           args=(--data-dir "$data_dir"
                 --zakura-rpc-url http://127.0.0.1:8232
