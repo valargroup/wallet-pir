@@ -23,20 +23,23 @@ its configured confirmation depth. These are separate transitions.
 
 ```mermaid
 flowchart TD
-    A[Wallet accepts a chain anchor] --> M[Pin a public height-to-generation map]
-    M --> F[Download public generation filters]
-    W[Derive wallet scripts] --> L[Test scripts locally]
+    A["Accept chain anchor"] --> M["Pin generation map"]
+    M --> F["Download public filters"]
+    W["Derive wallet scripts"] --> L["Test scripts locally"]
     F --> L
-    L -->|Candidate match| D[PIR: both directory rows across every segment]
-    D --> P[PIR: required event pages across every segment]
-    D --> E[Validate and merge inline events and page events]
+    L -->|Match| D["PIR: both directory rows<br/>across every segment"]
+    D --> P["PIR: event pages<br/>across every segment"]
+    D --> E["Validate and merge<br/>inline and page events"]
     P --> E
-    E -. Optional private transaction details .-> T[Transaction presentation]
-    E --> R[Replay events and commit coverage atomically]
-    R --> U[UTXOs, balance, address use, and history]
-    L -->|No match, under complete-indexer assumption| C[Record no activity for this script and range]
+    E -. Optional details .-> T["Private transaction<br/>retrieval and display"]
+    E --> R["Replay events<br/>Commit coverage atomically"]
+    R --> U["UTXOs and balance<br/>Address use and history"]
+    L -->|No match| C["No activity<br/>for this script and range"]
     C --> R
 ```
+
+The no-match path assumes a complete index. Directory and page retrieval always
+cover every segment; transaction-detail retrieval is optional.
 
 The initial profile trusts the publisher and retrieval service for correct,
 complete data. PIR hides row selection, subject to visible generation choices,
@@ -321,15 +324,15 @@ database-dependent setup, and server work scale with segment count. The design
 accepts this exceptional cost to keep client table geometry fixed.
 
 ```mermaid
-flowchart LR
-    Q[One private within-segment row query] --> S[Server fans out to every segment]
-    S --> A[Segment 0 evaluation]
-    S --> B[Segment 1 evaluation]
-    S --> C[Segment n-1 evaluation]
-    A --> R[Ordered per-segment responses]
+flowchart TD
+    Q["One private row query"] --> S["Fan out to all segments"]
+    S --> A["Evaluate<br/>segment 0"]
+    S --> B["Evaluate<br/>segment 1"]
+    S --> C["Evaluate<br/>segment n-1"]
+    A --> R["Ordered responses<br/>from every segment"]
     B --> R
     C --> R
-    R --> W[Wallet decodes and validates the required record or page]
+    R --> W["Wallet decodes<br/>and validates result"]
 ```
 
 Both directory candidates use this pattern. Page lookups do too: the wallet
@@ -370,10 +373,13 @@ Unpublished builder state is not addressable.
 
 ```mermaid
 stateDiagram-v2
+    state "Open, provisional" as OpenProvisional
+    state "Closed, provisional" as ClosedProvisional
+    state "Closed, sealed" as ClosedSealed
     [*] --> OpenProvisional: Publish tail
-    OpenProvisional --> OpenProvisional: Add blocks; publish new revision
-    OpenProvisional --> ClosedProvisional: Close on content; publish new revision
-    ClosedProvisional --> ClosedSealed: Confirmation depth met; publish new revision
+    OpenProvisional --> OpenProvisional: Add blocks
+    OpenProvisional --> ClosedProvisional: Content limit reached
+    ClosedProvisional --> ClosedSealed: Confirmation depth met
     OpenProvisional --> Replaced: Reorg
     ClosedProvisional --> Replaced: Reorg
     ClosedSealed --> Replaced: Deep reorg
