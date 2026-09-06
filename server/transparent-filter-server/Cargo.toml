@@ -8,6 +8,10 @@ name = "transparent_filter_server"
 path = "src/lib.rs"
 
 [[bin]]
+name = "shard-census"
+path = "src/bin/shard-census.rs"
+
+[[bin]]
 name = "transparent-event-ingest"
 path = "src/bin/event-ingest.rs"
 
@@ -30,6 +34,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-events = { path = "../../pir/transparent-events" }
 transparent-filter = { path = "../../pir/transparent-filter" }
+transparent-shard = { path = "../../pir/transparent-shard" }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
 
 [dev-dependencies]

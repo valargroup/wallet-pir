@@ -22,7 +22,7 @@ on:
         required: true
         default: status
         type: choice
-        options: [start, status, stop]
+        options: [start, status, stop, census]
       ref:
         description: Full commit SHA on main to build (required for start)
         required: false
@@ -77,13 +77,13 @@ jobs:
           fi
 
       - uses: actions/checkout@v4
-        if: inputs.action == 'start'
+        if: inputs.action == 'start' || inputs.action == 'census'
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
-        if: inputs.action == 'start'
+        if: inputs.action == 'start' || inputs.action == 'census'
         with:
           toolchain: 1.91.0
 
@@ -95,6 +95,24 @@ jobs:
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin transparent-event-ingest
           sha256sum target/release/transparent-event-ingest
+
+      - name: Build and run the shard census
+        if: inputs.action == 'census'
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p transparent-filter-server --bin shard-census
+          # Read-only against the journal, and cheap: it streams once and holds
+          # the events in memory. Run on the runner rather than staged, since
+          # the runner is the coordinator and the journal is local to it.
+          sudo ./target/release/shard-census --data-dir "$DATA_DIR" | tee census.txt
+          {
+            echo '## Shard census'
+            echo '```'
+            cat census.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Prepare ephemeral SSH material
         env:

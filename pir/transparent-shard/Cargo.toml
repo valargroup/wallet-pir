@@ -1,0 +1,14 @@
+[package]
+name = "transparent-shard"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "transparent_shard"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+transparent-events = { path = "../transparent-events" }
+transparent-filter = { path = "../transparent-filter" }

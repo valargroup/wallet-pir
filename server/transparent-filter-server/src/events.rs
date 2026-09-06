@@ -181,6 +181,78 @@ impl EventStore {
         })
     }
 
+    /// Opens an existing store without altering anything on disk.
+    ///
+    /// [`EventStore::open`] sets an incompatible directory aside and begins a
+    /// fresh one, which is right for an ingest that can re-derive everything
+    /// and must not need an operator on the host. It is badly wrong for a
+    /// reader: a tool that guessed the start height would *move the journal*
+    /// rather than report that it guessed wrong. This reads the recorded
+    /// metadata and fails instead.
+    ///
+    /// It also does not truncate to the checkpoint, so it must not be used
+    /// while an ingest is appending — anything past the checkpoint is
+    /// uncommitted and is ignored here exactly as it would be after a restart.
+    pub fn open_existing(dir: impl AsRef<Path>) -> Result<Self, EventStoreError> {
+        let dir = dir.as_ref().to_path_buf();
+        let meta_path = dir.join("meta.json");
+        if !meta_path.exists() {
+            return Err(EventStoreError::Invariant(format!(
+                "{} holds no event journal",
+                dir.display()
+            )));
+        }
+        let meta: Meta = serde_json::from_slice(&std::fs::read(&meta_path)?)?;
+        if meta.version != STORE_VERSION {
+            return Err(EventStoreError::Invariant(format!(
+                "journal is version {}, this build reads {STORE_VERSION}",
+                meta.version
+            )));
+        }
+
+        let checkpoint = dir.join("checkpoint.bin");
+        let (events_len, blocks_len) = if checkpoint.exists() {
+            let bytes = std::fs::read(&checkpoint)?;
+            if bytes.len() != 16 {
+                return Err(EventStoreError::Invariant(
+                    "checkpoint is not 16 bytes".into(),
+                ));
+            }
+            (read_u64(&bytes[0..8]), read_u64(&bytes[8..16]))
+        } else {
+            (0, 0)
+        };
+
+        let raw = std::fs::read(dir.join("blocks.bin"))?;
+        // Only the committed prefix is real; the rest is an append that never
+        // committed. Reading it would show blocks the journal does not claim.
+        let raw = raw.get(..blocks_len as usize).ok_or_else(|| {
+            EventStoreError::Invariant("blocks.bin is shorter than its checkpoint".into())
+        })?;
+        if raw.len() % BLOCK_RECORD_BYTES != 0 {
+            return Err(EventStoreError::Invariant(
+                "blocks.bin is not a whole number of records".into(),
+            ));
+        }
+        let mut blocks = Vec::with_capacity(raw.len() / BLOCK_RECORD_BYTES);
+        for record in raw.chunks_exact(BLOCK_RECORD_BYTES) {
+            blocks.push(BlockEntry {
+                block_hash: BlockHash::from_internal_bytes(
+                    record[..32].try_into().expect("32 bytes"),
+                ),
+                offset: read_u64(&record[32..40]),
+                event_count: read_u64(&record[40..48]),
+            });
+        }
+
+        Ok(Self {
+            dir,
+            meta,
+            blocks,
+            events_len,
+        })
+    }
+
     pub fn genesis_hash(&self) -> &str {
         &self.meta.genesis_hash
     }
@@ -524,5 +596,51 @@ mod tests {
         let fresh = EventStore::open(dir.path(), GENESIS, START + 5).unwrap();
         assert_eq!(fresh.covered_through(), None);
         assert!(dir.path().join("superseded-v1").join("events.bin").exists());
+    }
+
+    /// A reader must never disturb the journal it is reading. `open` sets an
+    /// incompatible directory aside by design; `open_existing` must not, or a
+    /// census tool run with the wrong argument would destroy the data it was
+    /// asked to measure.
+    #[test]
+    fn opening_existing_never_moves_anything_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut store = store(dir.path());
+            store
+                .append_block(START, hash(START), &[receive(100, 1)])
+                .unwrap();
+            store.commit().unwrap();
+        }
+        let reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.start_height(), START);
+        assert_eq!(reader.covered_through(), Some(START));
+        assert_eq!(reader.events_stored(), 1);
+        assert!(!dir.path().join("superseded-v1").exists());
+    }
+
+    #[test]
+    fn opening_a_directory_with_no_journal_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(EventStore::open_existing(dir.path()).is_err());
+    }
+
+    /// A reader sees the committed prefix only, exactly as a restart would.
+    #[test]
+    fn opening_existing_ignores_an_uncommitted_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut store = store(dir.path());
+            store
+                .append_block(START, hash(START), &[receive(100, 1)])
+                .unwrap();
+            store.commit().unwrap();
+            store
+                .append_block(START + 1, hash(START + 1), &[receive(101, 2)])
+                .unwrap();
+        }
+        let reader = EventStore::open_existing(dir.path()).unwrap();
+        assert_eq!(reader.covered_through(), Some(START));
+        assert_eq!(reader.events_at(START + 1).unwrap(), None);
     }
 }

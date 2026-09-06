@@ -3632,6 +3632,7 @@ dependencies = [
  "tracing-subscriber",
  "transparent-events",
  "transparent-filter",
+ "transparent-shard",
  "zakura-chain",
 ]
 
@@ -3673,6 +3674,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-history-pir",
+]
+
+[[package]]
+name = "transparent-shard"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "transparent-events",
+ "transparent-filter",
 ]
 
 [[package]]

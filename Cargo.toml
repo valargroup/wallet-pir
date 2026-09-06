@@ -4,6 +4,7 @@ members = [
     "pir/enhance",
     "pir/transparent-events",
     "pir/transparent-filter",
+    "pir/transparent-shard",
     "pir/transparent-history",
     "pir/transparent-spend",
     "pir/load-test",

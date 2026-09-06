@@ -1,0 +1,20 @@
+//! Building the immutable shards a wallet privately retrieves history from.
+//!
+//! A shard is a chain range with four published objects: a public activity
+//! filter, a private script directory, private event pages, and an optional
+//! private transaction-detail table. Its boundaries are decided by what it
+//! contains rather than by a fixed block width — see [`seal`] for why — and
+//! every shard shares one pinned table geometry, which is what lets one set of
+//! PIR parameters serve all of them.
+//!
+//! This crate decides boundaries and lays out tables. It does not fetch chain
+//! data and it does not serve queries.
+
+pub mod layout;
+pub mod seal;
+
+pub use layout::{
+    page_rows_for, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, PAGE_ROW_BYTES,
+    TXDETAIL_ROW_BYTES,
+};
+pub use seal::{Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer};
