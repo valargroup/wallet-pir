@@ -1,0 +1,239 @@
+name: Backfill transparent events
+
+# Builds `transparent-event-ingest` and runs it on the coordinator, beside the
+# Zakura archive node whose RPC it needs. The node's RPC is loopback-only, so
+# there is nowhere else this can run.
+#
+# What this does not touch: the filter service's data directory, the Enhance
+# coordinator's journal, and any systemd unit either of them owns. The backfill
+# writes one directory of its own and reads Zakura read-only. It is deliberately
+# not part of the deploy workflow — it installs no service, changes no unit, and
+# has no rollback path to preserve, because there is nothing to roll back.
+#
+# It runs as a transient systemd unit so it survives the SSH session that starts
+# it, and at a reduced CPU weight so the live PIR coordinator keeps priority on
+# a host they share.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        required: true
+        default: status
+        type: choice
+        options: [start, status, stop]
+      ref:
+        description: Full commit SHA on main to build (required for start)
+        required: false
+        type: string
+      start_height:
+        description: First height to index
+        required: false
+        default: "3428143"
+        type: string
+      stop_height:
+        description: Last height to index; blank means the node's tip
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# Serialized against itself but not against a deploy: this holds no lock a
+# deploy wants, and a deploy restarting the filter service does not disturb it.
+concurrency:
+  group: transparent-event-backfill
+  cancel-in-progress: false
+
+env:
+  UNIT: transparent-event-ingest
+  DATA_DIR: /srv/zakura/transparent-event-data
+  BIN: /usr/local/bin/transparent-event-ingest
+
+jobs:
+  backfill:
+    name: ${{ inputs.action }} transparent event backfill
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 120
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          ACTION: ${{ inputs.action }}
+          SHA: ${{ inputs.ref }}
+          START: ${{ inputs.start_height }}
+          STOP: ${{ inputs.stop_height }}
+        run: |
+          set -euo pipefail
+          if [[ "$ACTION" == "start" ]]; then
+            [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "start needs a full commit SHA"; exit 1; }
+            [[ "$START" =~ ^[0-9]+$ ]] || { echo "start_height must be a number"; exit 1; }
+            [[ -z "$STOP" || "$STOP" =~ ^[0-9]+$ ]] || { echo "stop_height must be a number or blank"; exit 1; }
+          fi
+
+      - uses: actions/checkout@v4
+        if: inputs.action == 'start'
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.action == 'start'
+        with:
+          toolchain: 1.91.0
+
+      - name: Build the ingest binary
+        if: inputs.action == 'start'
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p transparent-filter-server --bin transparent-event-ingest
+          sha256sum target/release/transparent-event-ingest
+
+      - name: Prepare ephemeral SSH material
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.ENHANCE_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_SSH_KEY:?production deployment SSH key is empty}"
+          install -m 0700 -d "$RUNNER_TEMP/backfill-ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$RUNNER_TEMP/backfill-ssh/key"
+          printf '%s\n' "$KNOWN_HOSTS" >"$RUNNER_TEMP/backfill-ssh/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/backfill-ssh/key" "$RUNNER_TEMP/backfill-ssh/known_hosts"
+
+      - name: Stage the binary
+        if: inputs.action == 'start'
+        env:
+          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          SHA: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
+            -o ConnectTimeout=10)
+          SCP=(scp -q -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
+            -o ConnectTimeout=10)
+
+          # Refuse to replace the binary underneath a run that is still going.
+          # Overwriting it would not stop the running process, but it would make
+          # the journal's provenance a lie.
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" <<'REMOTE'
+          set -euo pipefail
+          unit="$1"
+          if systemctl is-active --quiet "$unit"; then
+            echo "$unit is already running; stop it before starting a new one" >&2
+            exit 1
+          fi
+          REMOTE
+
+          "${SCP[@]}" target/release/transparent-event-ingest "$USER_NAME@$HOST:/tmp/transparent-event-ingest.$SHA"
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "/tmp/transparent-event-ingest.$SHA" "$BIN" "$DATA_DIR" <<'REMOTE'
+          set -euo pipefail
+          staged="$1"; target="$2"; data_dir="$3"
+          sudo install -m 0755 "$staged" "$target"
+          rm -f "$staged"
+          sudo mkdir -p "$data_dir"
+          df -h "$(dirname "$data_dir")"
+          REMOTE
+
+      - name: Start the backfill
+        if: inputs.action == 'start'
+        env:
+          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          START: ${{ inputs.start_height }}
+          STOP: ${{ inputs.stop_height }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
+            -o ConnectTimeout=10)
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "$DATA_DIR" "$START" "$STOP" <<'REMOTE'
+          set -euo pipefail
+          unit="$1"; bin="$2"; data_dir="$3"; start="$4"; stop="$5"
+
+          args=(--data-dir "$data_dir"
+                --zakura-rpc-url http://127.0.0.1:8232
+                --zakura-cookie /root/.cache/zakura/.cookie
+                --start-height "$start")
+          if [[ -n "$stop" ]]; then args+=(--stop-height "$stop"); fi
+
+          # A transient unit rather than nohup: it survives this SSH session,
+          # logs to the journal, and can be inspected and stopped by name.
+          #
+          # CPUWeight is the point of running it this way. The coordinator also
+          # answers live PIR queries, and a backfill that saturated the box
+          # would show up as query latency. A reduced weight only matters when
+          # the CPU is contended, so the backfill still runs at full speed on an
+          # idle host.
+          sudo systemd-run \
+            --unit="$unit" \
+            --description="Transparent event journal backfill" \
+            --property=CPUWeight=20 \
+            --property=IOWeight=20 \
+            --property=MemoryMax=8G \
+            --property=Nice=10 \
+            --setenv=RUST_LOG=info \
+            "$bin" "${args[@]}"
+
+          sleep 5
+          systemctl status "$unit" --no-pager --lines=20 || true
+          REMOTE
+
+      - name: Report status
+        if: inputs.action == 'status' || inputs.action == 'start'
+        env:
+          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
+            -o ConnectTimeout=10)
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$DATA_DIR" <<'REMOTE' | tee status.txt
+          set -euo pipefail
+          unit="$1"; data_dir="$2"
+          echo "### unit"
+          systemctl is-active "$unit" || true
+          echo
+          echo "### last progress lines"
+          sudo journalctl -u "$unit" --no-pager --lines=15 -o cat || true
+          echo
+          echo "### journal on disk"
+          sudo du -sh "$data_dir" 2>/dev/null || echo "no data directory yet"
+          REMOTE
+          {
+            echo '## Transparent event backfill'
+            echo '```'
+            cat status.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Stop the backfill
+        if: inputs.action == 'stop'
+        env:
+          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
+            -o ConnectTimeout=10)
+          # Stopping is safe at any point. Coverage advances only at a commit,
+          # so this loses at most the blocks since the last checkpoint, and
+          # starting again resumes from there.
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" <<'REMOTE'
+          set -euo pipefail
+          unit="$1"
+          sudo systemctl stop "$unit" || true
+          systemctl is-active "$unit" || echo "stopped"
+          REMOTE
