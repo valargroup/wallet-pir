@@ -23,6 +23,162 @@ pub const MAX_RECORDS_PER_BATCH: u64 = 1_000;
 /// Ceiling on a batch's serialized size, applied before allocation.
 pub const MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 
+/// Four-byte magic: "ZTRB", Zcash transparent range batch.
+///
+/// A distinct magic rather than a version bump of [`MAGIC`]. The per-block
+/// envelope is deployed and pinned by a golden fixture, and a range batch is
+/// not a newer encoding of the same thing — it carries different fields for a
+/// different profile. Separate magics mean a decoder never gets far enough to
+/// misread one as the other.
+pub const RANGE_MAGIC: [u8; 4] = *b"ZTRB";
+
+/// Range envelope format version, independent of [`ENVELOPE_VERSION`].
+pub const RANGE_ENVELOPE_VERSION: u16 = 1;
+
+/// Maximum shard records in one batch.
+///
+/// Lower than [`MAX_RECORDS_PER_BATCH`] because a shard filter is far larger
+/// than a block filter — thousands of deduplicated scripts rather than a
+/// block's worth. An application limit, not a format limit.
+pub const MAX_RANGE_RECORDS_PER_BATCH: u64 = 256;
+
+/// One shard's filter, as delivered.
+///
+/// The heights and the two block hashes are what let a wallet check that the
+/// shard is the one the published map describes and that it sits on the wallet's
+/// own accepted chain. They are not merely descriptive: with content-sealed
+/// shards a wallet cannot recompute a shard's bounds arithmetically, so these
+/// fields plus the map are the only things tying a filter to a chain range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RangeFilterRecord {
+    pub shard_id: u64,
+    pub start_height: u64,
+    pub end_height: u64,
+    /// The block before `start_height`; chains this shard to its predecessor.
+    pub parent_block_hash: BlockHash,
+    /// The block at `end_height`; the shard's anchor.
+    pub terminal_block_hash: BlockHash,
+    pub filter: Vec<u8>,
+}
+
+/// An ordered run of shard filters covering a requested span of shards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RangeFilterBatch {
+    pub version: u16,
+    /// Chain identity: the genesis block hash, in internal byte order.
+    pub genesis: BlockHash,
+    pub profile: String,
+    pub start_shard: u64,
+    pub records: Vec<RangeFilterRecord>,
+}
+
+impl RangeFilterBatch {
+    /// Serializes the batch. Filter bytes are copied verbatim.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&RANGE_MAGIC);
+        out.extend_from_slice(&self.version.to_le_bytes());
+        out.extend_from_slice(self.genesis.internal_bytes());
+        write_compact_size(&mut out, self.profile.len() as u64);
+        out.extend_from_slice(self.profile.as_bytes());
+        out.extend_from_slice(&self.start_shard.to_le_bytes());
+        write_compact_size(&mut out, self.records.len() as u64);
+        for record in &self.records {
+            out.extend_from_slice(&record.shard_id.to_le_bytes());
+            out.extend_from_slice(&record.start_height.to_le_bytes());
+            out.extend_from_slice(&record.end_height.to_le_bytes());
+            out.extend_from_slice(record.parent_block_hash.internal_bytes());
+            out.extend_from_slice(record.terminal_block_hash.internal_bytes());
+            write_compact_size(&mut out, record.filter.len() as u64);
+            out.extend_from_slice(&record.filter);
+        }
+        out
+    }
+
+    /// Parses a batch, applying size and count limits before allocation.
+    ///
+    /// As with [`FilterBatch::decode`], this checks only that the bytes are a
+    /// well formed batch. Whether the shards are the ones the published map
+    /// describes, sit on the caller's accepted chain, and chain to one another
+    /// without a gap is checked by the client, which has the wallet state this
+    /// function does not.
+    pub fn decode(bytes: &[u8]) -> Result<Self, FilterError> {
+        if bytes.len() > MAX_BATCH_BYTES {
+            return Err(FilterError::Envelope(format!(
+                "batch is {} bytes, limit is {MAX_BATCH_BYTES}",
+                bytes.len()
+            )));
+        }
+        let mut reader = Reader::new(bytes);
+        if reader.take(4)? != RANGE_MAGIC {
+            return Err(FilterError::Envelope("bad magic".into()));
+        }
+        let version = reader.u16()?;
+        if version != RANGE_ENVELOPE_VERSION {
+            return Err(FilterError::Envelope(format!(
+                "unsupported range envelope version {version}"
+            )));
+        }
+        let genesis = reader.hash()?;
+        let profile_len = reader.compact_size()?;
+        if profile_len > 64 {
+            return Err(FilterError::Envelope("profile name is too long".into()));
+        }
+        let profile = std::str::from_utf8(reader.take(profile_len as usize)?)
+            .map_err(|_| FilterError::Envelope("profile name is not UTF-8".into()))?
+            .to_string();
+        let start_shard = reader.u64()?;
+        let count = reader.compact_size()?;
+        if count > MAX_RANGE_RECORDS_PER_BATCH {
+            return Err(FilterError::Envelope(format!(
+                "batch claims {count} records, limit is {MAX_RANGE_RECORDS_PER_BATCH}"
+            )));
+        }
+        // Every record costs at least 8 + 8 + 8 + 32 + 32 + 1 bytes, so a count
+        // that cannot fit in what remains is refused before the vector is
+        // reserved.
+        if count.saturating_mul(89) > reader.remaining() as u64 {
+            return Err(FilterError::Envelope(format!(
+                "batch claims {count} records but has {} bytes left",
+                reader.remaining()
+            )));
+        }
+        let mut records = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let shard_id = reader.u64()?;
+            let start_height = reader.u64()?;
+            let end_height = reader.u64()?;
+            let parent_block_hash = reader.hash()?;
+            let terminal_block_hash = reader.hash()?;
+            let length = reader.compact_size()?;
+            if length > reader.remaining() as u64 {
+                return Err(FilterError::Envelope("record length exceeds batch".into()));
+            }
+            records.push(RangeFilterRecord {
+                shard_id,
+                start_height,
+                end_height,
+                parent_block_hash,
+                terminal_block_hash,
+                filter: reader.take(length as usize)?.to_vec(),
+            });
+        }
+        if reader.remaining() != 0 {
+            return Err(FilterError::Envelope(format!(
+                "{} trailing bytes after the batch",
+                reader.remaining()
+            )));
+        }
+        Ok(Self {
+            version,
+            genesis,
+            profile,
+            start_shard,
+            records,
+        })
+    }
+}
+
 /// One block's filter, as delivered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FilterRecord {
@@ -238,7 +394,7 @@ impl FilterBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{MAINNET_GENESIS_DISPLAY, PROFILE};
+    use crate::profile::{MAINNET_GENESIS_DISPLAY, PROFILE, RANGE_PROFILE};
 
     fn batch(records: Vec<FilterRecord>) -> FilterBatch {
         FilterBatch {
@@ -257,6 +413,92 @@ mod tests {
             block_hash: BlockHash::from_internal_bytes([height as u8; 32]),
             filter,
         }
+    }
+
+    fn range_batch(records: Vec<RangeFilterRecord>) -> RangeFilterBatch {
+        RangeFilterBatch {
+            version: RANGE_ENVELOPE_VERSION,
+            genesis: BlockHash::from_display_hex(MAINNET_GENESIS_DISPLAY).unwrap(),
+            profile: RANGE_PROFILE.to_string(),
+            start_shard: 0,
+            records,
+        }
+    }
+
+    fn range_record(shard_id: u64, filter: Vec<u8>) -> RangeFilterRecord {
+        let start_height = 3_428_143 + shard_id * 1_024;
+        RangeFilterRecord {
+            shard_id,
+            start_height,
+            end_height: start_height + 1_023,
+            parent_block_hash: BlockHash::from_internal_bytes([shard_id as u8; 32]),
+            terminal_block_hash: BlockHash::from_internal_bytes([shard_id as u8 + 1; 32]),
+            filter,
+        }
+    }
+
+    #[test]
+    fn range_batches_round_trip_including_the_empty_batch_and_empty_filters() {
+        for records in [
+            vec![],
+            vec![range_record(0, vec![0x00])],
+            vec![
+                range_record(0, vec![0x00]),
+                range_record(1, vec![0x02, 0xaa]),
+            ],
+        ] {
+            let original = range_batch(records);
+            let decoded = RangeFilterBatch::decode(&original.encode()).expect("decode");
+            assert_eq!(original, decoded);
+        }
+    }
+
+    #[test]
+    fn range_truncation_at_every_offset_is_rejected() {
+        let bytes = range_batch(vec![
+            range_record(0, vec![0x00]),
+            range_record(1, vec![0x01, 0xff]),
+        ])
+        .encode();
+        for cut in 0..bytes.len() {
+            assert!(
+                RangeFilterBatch::decode(&bytes[..cut]).is_err(),
+                "prefix of {cut} bytes decoded"
+            );
+        }
+        assert!(RangeFilterBatch::decode(&bytes).is_ok());
+    }
+
+    #[test]
+    fn range_trailing_bytes_are_rejected() {
+        let mut bytes = range_batch(vec![range_record(0, vec![0x00])]).encode();
+        bytes.push(0);
+        assert!(matches!(
+            RangeFilterBatch::decode(&bytes),
+            Err(FilterError::Envelope(_))
+        ));
+    }
+
+    #[test]
+    fn an_oversized_range_record_count_is_refused_before_allocation() {
+        let mut bytes = range_batch(vec![]).encode();
+        // Replace the trailing zero record count with a claim of 1000 records.
+        bytes.pop();
+        bytes.push(0xfd);
+        bytes.extend_from_slice(&1000u16.to_le_bytes());
+        assert!(RangeFilterBatch::decode(&bytes).is_err());
+    }
+
+    /// The two envelopes must not be interchangeable in either direction. A
+    /// decoder that read one as the other would produce a batch whose fields
+    /// were reinterpreted rather than an error, and a wallet has no way to
+    /// notice that a shard's heights were really some block's filter bytes.
+    #[test]
+    fn neither_envelope_decodes_as_the_other() {
+        let block_bytes = batch(vec![record(1, vec![0x00])]).encode();
+        let shard_bytes = range_batch(vec![range_record(0, vec![0x00])]).encode();
+        assert!(RangeFilterBatch::decode(&block_bytes).is_err());
+        assert!(FilterBatch::decode(&shard_bytes).is_err());
     }
 
     #[test]

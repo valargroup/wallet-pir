@@ -16,6 +16,7 @@
 //! wallet that does have activity.
 
 use std::sync::Arc;
+use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::ScriptBytes;
 use zakura_chain::transaction::Transaction;
 use zakura_chain::transparent::{Input, OutPoint};
@@ -24,6 +25,8 @@ use zakura_chain::transparent::{Input, OutPoint};
 pub enum ExtractError {
     #[error("previous output {0} is unavailable; refusing to build a partial filter")]
     MissingPreviousOutput(String),
+    #[error("block has {0} transactions, more than the event encoding can index")]
+    BlockTooLarge(usize),
     #[error("previous output lookup failed for {outpoint}: {source}")]
     Lookup {
         outpoint: String,
@@ -53,19 +56,35 @@ pub trait PreviousOutputs {
     ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
-/// The element set for one block.
+/// One event, paired with the exact raw script it is indexed under.
+///
+/// The pairing is the whole point: a spend is indexed under the script of the
+/// output it *consumes*, which is nowhere in the spending input and has to be
+/// resolved. Keeping the two together means no later stage can re-derive the
+/// key and get it wrong.
+pub type IndexedEvent = (ScriptBytes, TransparentEvent);
+
+/// Every indexed event in one block.
+///
+/// This is the primary extraction; [`extract_elements`] is a projection of it.
+/// They were once separate, and separate is how a filter comes to disagree with
+/// the events it gates: a script present in the events but missing from the
+/// filter is a permanent, silent coverage hole, because the wallet would be
+/// told it had no activity and would never look.
 ///
 /// Same-block spends resolve from this block's own outputs before the resolver
 /// is consulted, so a transaction spending an output created earlier in the
 /// same block needs no lookup.
 ///
 /// Takes the transaction list rather than the whole block: the block hash is
-/// not an element and is applied separately when the filter is encoded, so
-/// passing the header here would suggest a dependency that does not exist.
-pub fn extract_elements(
+/// not part of an event. A wallet resolves height to hash against its own
+/// accepted chain, which is the only source that can safely answer whether an
+/// event sits on a branch it accepts.
+pub fn extract_events(
     transactions: &[Arc<Transaction>],
     previous: &mut impl PreviousOutputs,
-) -> Result<Vec<ScriptBytes>, ExtractError> {
+    height: u32,
+) -> Result<Vec<IndexedEvent>, ExtractError> {
     // Every output this block creates, keyed by outpoint, for same-block spends.
     let mut created: std::collections::HashMap<OutPoint, Vec<u8>> =
         std::collections::HashMap::new();
@@ -82,18 +101,41 @@ pub fn extract_elements(
         }
     }
 
-    let mut elements: Vec<ScriptBytes> = Vec::new();
+    let mut events: Vec<IndexedEvent> = Vec::new();
 
-    for transaction in transactions {
+    for (transaction_index, transaction) in transactions.iter().enumerate() {
+        let txid = Txid(transaction.hash().0);
+        // A transaction index beyond u16 would silently alias another
+        // transaction's events under this one's ordering. No Zcash block comes
+        // close, which is exactly why it must be checked rather than assumed.
+        let transaction_index = u16::try_from(transaction_index)
+            .map_err(|_| ExtractError::BlockTooLarge(transactions.len()))?;
+        let coinbase = transaction
+            .inputs()
+            .iter()
+            .any(|input| matches!(input, Input::Coinbase { .. }));
+
         // Outputs. Coinbase outputs are included; a leading OP_RETURN is not.
-        for output in transaction.outputs() {
+        for (output_index, output) in transaction.outputs().iter().enumerate() {
             let script = ScriptBytes::new(output.lock_script.as_raw_bytes().to_vec());
-            if script.is_filter_element() {
-                elements.push(script);
+            if !script.is_filter_element() {
+                continue;
             }
+            events.push((
+                script,
+                TransparentEvent::Receive(ReceiveEvent {
+                    height,
+                    txid,
+                    transaction_index,
+                    output_index: output_index as u32,
+                    value: u64::from(output.value),
+                    coinbase,
+                }),
+            ));
         }
+
         // Inputs. The coinbase input spends nothing and is skipped explicitly.
-        for input in transaction.inputs() {
+        for (input_index, input) in transaction.inputs().iter().enumerate() {
             let outpoint = match input {
                 Input::Coinbase { .. } => continue,
                 Input::PrevOut { outpoint, .. } => outpoint,
@@ -113,14 +155,44 @@ pub fn extract_elements(
             // such an output is unspendable, but the same rule is applied
             // rather than assuming well-formed history.
             let script = ScriptBytes::new(bytes);
-            if script.is_filter_element() {
-                elements.push(script);
+            if !script.is_filter_element() {
+                continue;
             }
+            events.push((
+                script,
+                TransparentEvent::Spend(SpendEvent {
+                    height,
+                    spending_txid: txid,
+                    transaction_index,
+                    input_index: input_index as u32,
+                    spent_txid: Txid(outpoint.hash.0),
+                    spent_output_index: outpoint.index,
+                }),
+            ));
         }
     }
 
-    // Deduplicate by raw bytes, preserving nothing about order: the encoder
-    // sorts by mapped value anyway.
+    Ok(events)
+}
+
+/// The element set for one block.
+///
+/// The scripts of [`extract_events`], deduplicated. Deriving it here rather
+/// than walking the block a second time is what guarantees the filter covers
+/// exactly the scripts the events are keyed by.
+///
+/// Deduplication is on the raw bytes only: two distinct scripts whose hashes
+/// collide are two elements, and collapsing them would drop coverage.
+pub fn extract_elements(
+    transactions: &[Arc<Transaction>],
+    previous: &mut impl PreviousOutputs,
+) -> Result<Vec<ScriptBytes>, ExtractError> {
+    // The height does not affect which scripts appear, and this projection
+    // discards the events anyway, so any value serves.
+    let mut elements: Vec<ScriptBytes> = extract_events(transactions, previous, 0)?
+        .into_iter()
+        .map(|(script, _)| script)
+        .collect();
     elements.sort();
     elements.dedup();
     Ok(elements)
@@ -131,7 +203,7 @@ pub(crate) mod testing {
     use super::*;
 
     /// A resolver backed by a fixed map, for tests.
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     pub struct MapPreviousOutputs {
         pub scripts: std::collections::HashMap<OutPoint, Vec<u8>>,
         pub lookups: usize,
@@ -384,5 +456,150 @@ mod tests {
         let forward = elements_of(&[a.clone(), b.clone()], &mut previous);
         let backward = elements_of(&[b, a], &mut previous);
         assert_eq!(forward, backward);
+    }
+
+    // --- Events -----------------------------------------------------------
+
+    fn events_of(
+        transactions: &[Arc<Transaction>],
+        previous: &mut MapPreviousOutputs,
+    ) -> Vec<IndexedEvent> {
+        extract_events(transactions, previous, 4_242).expect("events")
+    }
+
+    /// The invariant the whole arrangement exists to guarantee. If the filter
+    /// ever covered a different set of scripts than the events are keyed by, a
+    /// wallet would be told it had no activity in a shard that holds its money,
+    /// and it would never look again.
+    #[test]
+    fn the_element_set_is_exactly_the_scripts_the_events_are_keyed_by() {
+        let spent = OutPoint {
+            hash: zakura_chain::transaction::Hash([9; 32]),
+            index: 3,
+        };
+        let transactions = vec![
+            transaction(vec![coinbase_input()], vec![output(p2pkh(1))]),
+            transaction(
+                vec![prevout_input(spent)],
+                vec![output(p2pkh(2)), output(vec![0x6a, 0xff]), output(vec![])],
+            ),
+        ];
+        let mut previous = MapPreviousOutputs::default();
+        previous.scripts.insert(spent, p2pkh(7));
+
+        let events = events_of(&transactions, &mut previous.clone());
+        let mut from_events: Vec<Vec<u8>> = events
+            .iter()
+            .map(|(script, _)| script.as_slice().to_vec())
+            .collect();
+        from_events.sort();
+        from_events.dedup();
+
+        let mut elements = elements_of(&transactions, &mut previous);
+        elements.sort();
+
+        assert_eq!(from_events, elements);
+        // And the excluded scripts really were present in the block, so the
+        // test would notice if the exclusion rule silently stopped applying.
+        assert!(!contains(&elements, &[0x6a, 0xff]));
+    }
+
+    /// A spend must be filed under the script of the output it consumes. Filing
+    /// it under the spending transaction's own outputs would leave the paying
+    /// wallet unable to discover that its money had moved.
+    #[test]
+    fn a_spend_is_indexed_under_the_consumed_outputs_script() {
+        let spent = OutPoint {
+            hash: zakura_chain::transaction::Hash([9; 32]),
+            index: 3,
+        };
+        let transactions = vec![transaction(
+            vec![prevout_input(spent)],
+            vec![output(p2pkh(50))],
+        )];
+        let mut previous = MapPreviousOutputs::default();
+        previous.scripts.insert(spent, p2pkh(7));
+
+        let events = events_of(&transactions, &mut previous);
+        let spends: Vec<&IndexedEvent> = events
+            .iter()
+            .filter(|(_, event)| matches!(event, TransparentEvent::Spend(_)))
+            .collect();
+        assert_eq!(spends.len(), 1);
+        let (script, event) = spends[0];
+        assert_eq!(script.as_slice(), p2pkh(7).as_slice());
+        match event {
+            TransparentEvent::Spend(spend) => {
+                assert_eq!(spend.spent_txid, Txid([9; 32]));
+                assert_eq!(spend.spent_output_index, 3);
+                assert_eq!(spend.height, 4_242);
+                assert_eq!(spend.input_index, 0);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_receive_carries_its_value_outpoint_and_coinbase_status() {
+        let transactions = vec![
+            transaction(vec![coinbase_input()], vec![output(p2pkh(1))]),
+            transaction(vec![], vec![output(p2pkh(2))]),
+        ];
+        let mut previous = MapPreviousOutputs::default();
+        let events = events_of(&transactions, &mut previous);
+
+        let coinbase = match events[0].1 {
+            TransparentEvent::Receive(event) => event,
+            _ => unreachable!("first event is the coinbase output"),
+        };
+        assert!(coinbase.coinbase);
+        assert_eq!(coinbase.transaction_index, 0);
+        assert_eq!(coinbase.output_index, 0);
+        // The fixture mints every output at 1000 zatoshi.
+        assert_eq!(coinbase.value, 1000);
+        assert_eq!(coinbase.height, 4_242);
+
+        let ordinary = match events[1].1 {
+            TransparentEvent::Receive(event) => event,
+            _ => unreachable!("second event is the ordinary output"),
+        };
+        assert!(
+            !ordinary.coinbase,
+            "only a coinbase transaction is coinbase"
+        );
+        assert_eq!(ordinary.transaction_index, 1);
+    }
+
+    /// Every event a wallet decodes must survive the wire encoding unchanged;
+    /// otherwise the indexer and the wallet disagree about what was indexed.
+    #[test]
+    fn extracted_events_round_trip_through_their_encoding() {
+        let spent = OutPoint {
+            hash: zakura_chain::transaction::Hash([9; 32]),
+            index: 3,
+        };
+        let transactions = vec![
+            transaction(vec![coinbase_input()], vec![output(p2pkh(1))]),
+            transaction(vec![prevout_input(spent)], vec![output(p2pkh(2))]),
+        ];
+        let mut previous = MapPreviousOutputs::default();
+        previous.scripts.insert(spent, p2pkh(7));
+        for (_, event) in events_of(&transactions, &mut previous) {
+            assert_eq!(TransparentEvent::from_bytes(&event.to_bytes()), Ok(event));
+        }
+    }
+
+    #[test]
+    fn an_unresolvable_previous_output_blocks_event_extraction_too() {
+        let spent = OutPoint {
+            hash: zakura_chain::transaction::Hash([9; 32]),
+            index: 0,
+        };
+        let transactions = vec![transaction(vec![prevout_input(spent)], vec![])];
+        let mut previous = MapPreviousOutputs::default();
+        assert!(matches!(
+            extract_events(&transactions, &mut previous, 1),
+            Err(ExtractError::MissingPreviousOutput(_))
+        ));
     }
 }

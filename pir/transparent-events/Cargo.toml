@@ -1,0 +1,12 @@
+[package]
+name = "transparent-events"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "transparent_events"
+path = "src/lib.rs"
+
+[dependencies]
+hex = "0.4"
+thiserror = "2"

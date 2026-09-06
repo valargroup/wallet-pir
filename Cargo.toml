@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "pir/enhance",
+    "pir/transparent-events",
     "pir/transparent-filter",
     "pir/transparent-history",
     "pir/transparent-spend",

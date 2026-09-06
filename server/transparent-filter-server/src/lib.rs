@@ -1,6 +1,7 @@
 //! Transparent activity filter service: Zakura ingest, immutable per-block
 //! filter storage, and range delivery.
 
+pub mod events;
 pub mod extract;
 pub mod ingest;
 pub mod metrics;

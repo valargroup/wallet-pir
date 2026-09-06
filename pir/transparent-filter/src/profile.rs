@@ -8,6 +8,22 @@
 /// Profile identifier carried in application metadata and cache keys.
 pub const PROFILE: &str = "zcash-transparent-basic-v1";
 
+/// Profile identifier for filters covering a shard rather than a single block.
+///
+/// A separate profile, not a version bump of [`PROFILE`]: the two use different
+/// keyings, cover different things, and a wallet must never accept one where it
+/// asked for the other. The string is part of the SipHash key derivation (see
+/// `ShardKey`), so the separation is enforced by the bytes and not only by
+/// metadata a server could misreport.
+///
+/// `P` and `M` are unchanged. In BIP 158 an element is mapped into `[0, N*M)`,
+/// so the per-tested-element false-positive rate is `1/M` regardless of how
+/// many elements the filter holds: a shard filter over twelve thousand scripts
+/// is exactly as precise per query as a block filter over twelve. What grows
+/// with the element count is the filter's *size*, which is what deduplicating
+/// scripts across a shard's blocks is meant to pay for.
+pub const RANGE_PROFILE: &str = "zcash-transparent-range-v1";
+
 /// Golomb-Rice parameter. Fixed by the profile; not configurable.
 pub const P: u8 = 19;
 

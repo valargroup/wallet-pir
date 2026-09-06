@@ -3591,6 +3591,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "transparent-events"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "transparent-filter"
 version = "0.1.0"
 dependencies = [
@@ -3622,6 +3630,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "transparent-events",
  "transparent-filter",
  "zakura-chain",
 ]

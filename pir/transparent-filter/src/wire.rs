@@ -60,3 +60,144 @@ pub struct ChainEntry {
     /// Display hex, as a human-facing JSON field.
     pub block_hash: String,
 }
+
+/// The seal thresholds a shard set was built under.
+///
+/// Part of the published map because they are schema, not tuning: a wallet that
+/// cached shards built under different thresholds would be holding two
+/// incompatible partitions of the same chain. Changing any of them re-shards.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SealParameters {
+    /// Distinct scripts, which size the filter and the directory.
+    pub max_scripts: u64,
+    /// Page rows, which size the pages table. Not derivable from the event
+    /// count: pages are per-script and padded, so many short histories cost far
+    /// more rows than the same number of events in a few long ones.
+    pub max_page_rows: u64,
+    /// Distinct transaction ids, which size the transaction-detail table.
+    pub max_txids: u64,
+}
+
+/// One entry of the published height-to-shard map.
+///
+/// Occupancy counts are published so a wallet — or an independent operator —
+/// can check that a shard was sealed where the thresholds say it should have
+/// been, rather than taking the boundary on trust.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ShardMapEntry {
+    pub shard_id: u64,
+    pub start_height: u64,
+    pub end_height: u64,
+    /// The block before `start_height`, in display hex.
+    pub parent_block_hash: String,
+    /// The block at `end_height`, in display hex.
+    pub terminal_block_hash: String,
+    /// Double-SHA-256 of the shard's serialized filter bytes, in display hex.
+    pub filter_hash: String,
+    pub scripts: u64,
+    pub page_rows: u64,
+    pub txids: u64,
+    /// False only for the tail, which is still growing toward a threshold.
+    pub sealed: bool,
+}
+
+/// Response shape of `GET /v1/filters/shards`.
+///
+/// This is protocol data, not a convenience index. Shard boundaries are derived
+/// from chain content, so a wallet cannot recompute them arithmetically and an
+/// operator must reproduce these boundaries rather than derive its own — which
+/// is what keeps a disagreement about one event localized to one shard's
+/// digests instead of shifting every later boundary.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ShardMap {
+    /// Genesis block hash in display hex; the chain's identity.
+    pub genesis_hash: String,
+    pub network: String,
+    /// The range profile, distinct from the per-block profile.
+    pub profile: String,
+    pub range_envelope_version: u16,
+    /// First height shard zero covers.
+    pub start_height: u64,
+    pub seal: SealParameters,
+    /// Ascending by `shard_id`, gapless, starting at zero.
+    pub shards: Vec<ShardMapEntry>,
+}
+
+impl ShardMap {
+    /// The shard covering `height`, if the map covers it.
+    ///
+    /// Binary search rather than arithmetic: with content-sealed boundaries
+    /// there is no width to divide by. This is how a wallet turns its birthday
+    /// into the first shard it must sync.
+    pub fn shard_for_height(&self, height: u64) -> Option<&ShardMapEntry> {
+        let index = self
+            .shards
+            .binary_search_by(|shard| {
+                if shard.end_height < height {
+                    std::cmp::Ordering::Less
+                } else if shard.start_height > height {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .ok()?;
+        self.shards.get(index)
+    }
+
+    /// Checks the map is internally well formed before anything is fetched.
+    ///
+    /// A wallet that skipped this could sync a map with a hole in it and treat
+    /// the result as complete coverage. Height continuity is checked here;
+    /// binding the hashes to the wallet's accepted chain needs wallet state and
+    /// belongs to `check_range_batch`.
+    pub fn check_shape(&self) -> Result<(), String> {
+        if self.shards.is_empty() {
+            return Err("shard map is empty".into());
+        }
+        if self.shards[0].start_height != self.start_height {
+            return Err(format!(
+                "shard 0 starts at {} but the map starts at {}",
+                self.shards[0].start_height, self.start_height
+            ));
+        }
+        for (index, shard) in self.shards.iter().enumerate() {
+            if shard.shard_id != index as u64 {
+                return Err(format!(
+                    "shard at position {index} claims id {}",
+                    shard.shard_id
+                ));
+            }
+            if shard.end_height < shard.start_height {
+                return Err(format!("shard {index} ends before it starts"));
+            }
+            if let Some(previous) = index.checked_sub(1).and_then(|i| self.shards.get(i)) {
+                if shard.start_height != previous.end_height + 1 {
+                    return Err(format!(
+                        "shard {index} starts at {} but shard {} ends at {}",
+                        shard.start_height, previous.shard_id, previous.end_height
+                    ));
+                }
+                // The hash chain is what makes a gap detectable at all. Heights
+                // alone would accept a map whose shards were built over two
+                // different branches, since both would still be contiguous.
+                if shard.parent_block_hash != previous.terminal_block_hash {
+                    return Err(format!(
+                        "shard {} does not chain to shard {}",
+                        shard.shard_id, previous.shard_id
+                    ));
+                }
+                // A sealed shard after an unsealed one would mean the tail was
+                // published out of order, and the wallet would have no way to
+                // tell which of the two is current.
+                if !previous.sealed {
+                    return Err(format!(
+                        "shard {} follows unsealed shard {}",
+                        shard.shard_id, previous.shard_id
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}

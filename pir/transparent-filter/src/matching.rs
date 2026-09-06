@@ -5,7 +5,7 @@
 //! information.
 
 use crate::error::FilterError;
-use crate::hash::BlockHash;
+use crate::hash::{BlockHash, FilterKeys, ShardKey};
 use crate::script::ScriptBytes;
 use crate::validate::ValidatedFilter;
 use bitcoin::hashes::siphash24;
@@ -32,12 +32,34 @@ fn map_to_range(hash: u64, nm: u64) -> u64 {
 /// silently passing as "nothing matched".
 pub fn match_scripts(
     filter: &ValidatedFilter,
-    _block_hash: BlockHash,
+    block_hash: BlockHash,
+    wallet_scripts: &[ScriptBytes],
+) -> Result<Vec<usize>, FilterError> {
+    match_keyed(filter, block_hash.filter_keys(), wallet_scripts)
+}
+
+/// [`match_scripts`] for a shard filter, under the range profile's keying.
+pub fn match_range_scripts(
+    filter: &ValidatedFilter,
+    shard_key: ShardKey,
+    wallet_scripts: &[ScriptBytes],
+) -> Result<Vec<usize>, FilterError> {
+    match_keyed(filter, shard_key.filter_keys(), wallet_scripts)
+}
+
+/// Matching under keys the caller has already derived.
+///
+/// The keying is the only thing that differs between profiles, so both public
+/// entry points land here. Taking [`FilterKeys`] rather than a hash keeps it
+/// impossible to match a filter under keys that no profile produces.
+pub fn match_keyed(
+    filter: &ValidatedFilter,
+    keys: FilterKeys,
     wallet_scripts: &[ScriptBytes],
 ) -> Result<Vec<usize>, FilterError> {
     match_mapped(
         filter,
-        &map_wallet_scripts(filter, _block_hash, wallet_scripts),
+        &map_wallet_scripts_keyed(filter, keys, wallet_scripts),
     )
 }
 
@@ -51,7 +73,20 @@ pub fn map_wallet_scripts(
     block_hash: BlockHash,
     wallet_scripts: &[ScriptBytes],
 ) -> Vec<(u64, usize)> {
-    let (k0, k1) = block_hash.filter_keys();
+    map_wallet_scripts_keyed(filter, block_hash.filter_keys(), wallet_scripts)
+}
+
+/// [`map_wallet_scripts`] under keys the caller has already derived.
+///
+/// A wallet syncing many shards hashes its script set once per shard, which is
+/// where the saving is: the per-shard cost is one pass over the wallet's
+/// scripts, not one pass per block in the shard's range.
+pub fn map_wallet_scripts_keyed(
+    filter: &ValidatedFilter,
+    keys: FilterKeys,
+    wallet_scripts: &[ScriptBytes],
+) -> Vec<(u64, usize)> {
+    let FilterKeys { k0, k1 } = keys;
     let range = filter.range();
     let mut mapped: Vec<(u64, usize)> = wallet_scripts
         .iter()

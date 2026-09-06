@@ -6,7 +6,7 @@
 //! synchronizing and when; this profile does not hide that timing and coverage
 //! information, and says so rather than implying otherwise.
 
-use crate::envelope::FilterBatch;
+use crate::envelope::{FilterBatch, RangeFilterBatch};
 use crate::error::FilterError;
 use crate::hash::BlockHash;
 
@@ -60,6 +60,42 @@ pub trait FilterTransport {
         &mut self,
         request: &RangeRequest,
     ) -> Result<(FilterBatch, ByteCharges), FilterError>;
+}
+
+/// A public request for a contiguous run of shard filters.
+///
+/// Like [`RangeRequest`], it carries chain identity, profile and a position —
+/// here a shard index rather than a height. It cannot express a script, a
+/// match, or any choice derived from one. What it does reveal is which span of
+/// shards the wallet is synchronizing and when, and a wallet that asked only
+/// for the shards it cared about would reveal considerably more than that.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShardRangeRequest {
+    /// Chain identity: genesis block hash.
+    pub genesis: BlockHash,
+    /// The range profile, not the per-block one.
+    pub profile: String,
+    /// First shard wanted, inclusive.
+    pub start_shard: u64,
+    /// How many shards to return, capped by the transport's batch limit.
+    pub count: u64,
+}
+
+/// Source of shard filter ranges.
+///
+/// Separate from [`FilterTransport`] rather than an added method on it: the two
+/// serve different profiles over different envelopes, and a transport that can
+/// deliver one need not be able to deliver the other.
+pub trait ShardFilterTransport {
+    /// Fetches one bounded batch beginning at `request.start_shard`.
+    ///
+    /// Returns the decoded batch and the bytes actually charged for it. As with
+    /// [`FilterTransport`], an implementation must charge for what it
+    /// transferred even when it then returns an error.
+    fn fetch_shards(
+        &mut self,
+        request: &ShardRangeRequest,
+    ) -> Result<(RangeFilterBatch, ByteCharges), FilterError>;
 }
 
 /// Reads batches from a directory of pre-serialized envelopes.
