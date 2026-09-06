@@ -11,10 +11,15 @@
 //! data and it does not serve queries.
 
 pub mod layout;
+pub mod records;
 pub mod seal;
 
 pub use layout::{
     page_rows_for, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, PAGE_ROW_BYTES,
     TXDETAIL_ROW_BYTES,
+};
+pub use records::{
+    decode_directory_row, encode_directory_row, DirectoryEntry, Page, RecordError,
+    DIRECTORY_ENTRY_BYTES, DIRECTORY_SLOTS, MAX_SCRIPT_BYTES,
 };
 pub use seal::{Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer};
