@@ -14,7 +14,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use transparent_filter_server::events::EventStore;
-use transparent_shard::layout::{DIRECTORY_ROW_BYTES, PAGE_ROW_BYTES, TXDETAIL_ROW_BYTES};
+use transparent_shard::layout::{DIRECTORY_ROW_BYTES, PAGE_ROW_BYTES};
 use transparent_shard::seal::{Limit, SealPolicy, SealReason, SealedShard, Sealer};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -27,7 +27,7 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 struct Cli {
     #[arg(long, default_value = "./transparent-event-data")]
     data_dir: PathBuf,
-    /// Candidate policies, as `scripts_target:scripts_cap,pages_target:pages_cap,txids_target:txids_cap`.
+    /// Candidate policies, as `scripts_target:scripts_cap,pages_target:pages_cap`.
     ///
     /// Repeatable. With none given, a default sweep around the geometry the
     /// mainnet study measured is used.
@@ -47,13 +47,12 @@ fn parse_limit(text: &str) -> Result<Limit, BoxError> {
 
 fn parse_policy(text: &str) -> Result<SealPolicy, BoxError> {
     let parts: Vec<&str> = text.split(',').collect();
-    if parts.len() != 3 {
-        return Err(format!("policy {text:?} needs three comma-separated limits").into());
+    if parts.len() != 2 {
+        return Err(format!("policy {text:?} needs two comma-separated limits").into());
     }
     Ok(SealPolicy {
         scripts: parse_limit(parts[0])?,
         page_rows: parse_limit(parts[1])?,
-        txids: parse_limit(parts[2])?,
     })
 }
 
@@ -78,7 +77,6 @@ fn default_policies() -> Vec<(String, SealPolicy)> {
             SealPolicy {
                 scripts: Limit::new(scripts, scripts * 2).expect("valid"),
                 page_rows: Limit::new(2_048, 4_096).expect("valid"),
-                txids: Limit::new(16_384, 32_768).expect("valid"),
             },
         )
     })
@@ -193,11 +191,10 @@ fn report(name: &str, shards: &[SealedShard]) {
         .unwrap_or(0);
     let max_txids = shards.iter().map(|s| s.occupancy.txids).max().unwrap_or(0);
     println!("  observed maxima: scripts {max_scripts}, page rows {max_pages}, txids {max_txids}");
-    let per_shard = max_scripts * DIRECTORY_ROW_BYTES as u64 / 6
-        + max_pages * PAGE_ROW_BYTES as u64
-        + max_txids * TXDETAIL_ROW_BYTES as u64 / 8;
+    let per_shard = transparent_shard::DIRECTORY_ROWS as u64 * DIRECTORY_ROW_BYTES as u64
+        + transparent_shard::PAGE_ROWS as u64 * PAGE_ROW_BYTES as u64;
     println!(
-        "  rough plaintext per shard ~{:.0} MB, fleet ~{:.1} GB",
+        "  pinned plaintext per shard ~{:.0} MB, fleet ~{:.1} GB",
         per_shard as f64 / 1e6,
         (per_shard * shards.len() as u64) as f64 / 1e9
     );

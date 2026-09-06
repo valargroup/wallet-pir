@@ -19,26 +19,23 @@ pub const DIRECTORY_ROW_BYTES: usize = 3_584;
 /// Bytes in one page row.
 pub const PAGE_ROW_BYTES: usize = 17_920;
 
-/// Bytes in one transaction-detail row.
-pub const TXDETAIL_ROW_BYTES: usize = 3_584;
-
 /// Rows in every shard's directory table.
 ///
-/// Pinned, and the same for every shard: `params_for_simplepir` derives the PIR
-/// parameters from the row count, so a shard with its own row count would need
-/// its own parameter set. It pads rows to a multiple of 2,048, so smaller
-/// counts buy nothing.
+/// Pinned, and identical for every shard: `params_for_simplepir` derives the
+/// PIR parameters from the row count, so a shard with its own row count would
+/// need its own parameter set. It pads rows to a multiple of 2,048, so a
+/// smaller count buys nothing.
 ///
-/// At 14 slots per row this holds 28,672 scripts, against a seal target around
-/// 8,000 — comfortable slack, which is what makes two-choice placement succeed
-/// without needing to relocate anything.
+/// At 14 slots per row this holds 28,672 scripts against a seal target around
+/// 8,000 — slack that is what makes two-choice placement succeed without ever
+/// needing to relocate an entry.
 pub const DIRECTORY_ROWS: usize = 2_048;
 
 /// Rows in every shard's page table.
 ///
 /// The census over the Ironwood-to-tip journal put page rows at a maximum of
-/// 2,117 for a shard sealed at roughly 8,000 scripts, so 2,048 would overflow
-/// and the next multiple is the smallest that fits.
+/// 2,117 for a shard sealed near 8,000 scripts, so 2,048 would overflow and the
+/// next multiple of the padding granularity is the smallest that fits.
 pub const PAGE_ROWS: usize = 4_096;
 
 /// Events stored directly in a script's directory entry.

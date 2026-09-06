@@ -153,24 +153,30 @@ rather than once per generation. Sealing on content converts chain-density
 variation into differing block spans, which cost nothing, instead of differing
 table fullness, which costs the shared parameter set.
 
-### Sealing on three limits
+### Sealing on the limits that bind
 
-The three tables are keyed differently, so no single quantity bounds them:
+The tables are keyed differently, so no single quantity bounds them:
 
-| Table | Sized by |
-|---|---|
-| activity filter | distinct scripts |
-| script directory | distinct scripts |
-| event pages | page rows |
-| transaction detail | distinct transaction ids |
+| Table | Sized by | Seals? |
+|---|---|---|
+| activity filter | distinct scripts | yes |
+| script directory | distinct scripts | yes |
+| event pages | page rows | yes |
+| transaction detail | distinct transaction ids | only if built |
 
 Page rows are *not* a function of the event count. Pages are per script and
 padded, so many short histories cost far more rows than the same number of
 events concentrated in a few long ones. Sealing on events alone would leave the
 page table unbounded in the direction that actually hurts.
 
-All three quantities are monotone as blocks stream in, so one incremental pass
+Each sealing quantity is monotone as blocks stream in, so one incremental pass
 decides every boundary. Seal at the first block boundary where any limit binds.
+
+Distinct transaction ids size only the optional transaction-detail table. Where
+that table is not published, they are counted and reported but do not seal. Over
+the Ironwood-to-tip journal the transaction-id limit never bound under any
+candidate policy — every generation sealed on scripts or page rows — so
+publishing without that table moves no boundary.
 
 ### Capacity and target are separate numbers
 
@@ -185,6 +191,10 @@ A block that would breach capacity seals the generation *before* it is added;
 reaching a target seals *after*. Measured overshoot past target is real but
 modest: at a 4,096-script target, generations landed at up to 4,506 scripts, so
 capacity needs roughly 15% headroom rather than a doubling.
+
+Above roughly eight thousand scripts the scripts limit stops binding altogether
+and page rows seals every generation. Whichever limit binds is the one actually
+being chosen; the others are inert and should not be mistaken for tuning.
 
 A single block that alone exceeds a capacity cannot be placed in any generation.
 That must fail construction rather than be silently sealed over, because the
@@ -222,8 +232,16 @@ Recent blocks still need a shorter unsealed tail, so publication latency and
 ordinary reorgs do not require rebuilding a large sealed generation. Promotion
 atomically seals a tail and publishes its replacement without mixing
 incompatible directory locators or pages. A generation that has reached no limit
-is the tail by definition, and must be published as unsealed so a consumer does
-not treat a still-growing range as immutable.
+is the tail by definition, and is published as unsealed so a consumer does not
+treat a still-growing range as immutable.
+
+The tail is published rather than withheld, so coverage reaches the accepted
+anchor rather than stopping at the last seal boundary. A wallet that stopped
+there would report a balance that is correct only as of an older height, and
+would have no way to express the difference. The unsealed flag is what carries
+that distinction: a consumer may use the tail for a current balance but must not
+cache it as immutable, and must re-fetch it rather than trusting a retained
+copy.
 
 ## Chain anchors without regular-sync coupling
 
@@ -380,6 +398,15 @@ resumable and incomplete rather than truncating history or silently advancing
 coverage.
 
 ## Optional private transaction-detail table
+
+**Not built in the first implementation.** The script event ledger is sufficient
+for current balance and net history, which is what the first measurement has to
+establish. Publishing this table as well would add a third table per generation,
+a third published parameter set, and a third seal limit, and would make the
+headline byte comparison harder to read rather than stronger. It stays specified
+here, and the seal logic still counts transaction ids, so adding it later is a
+build change rather than a re-partition.
+
 
 The script event ledger is sufficient for current balance and basic net history.
 It is not always sufficient for full transaction presentation. A restored
@@ -582,15 +609,16 @@ Build on the existing integrated prototype rather than replacing its model:
 - one public activity filter per generation, under its own keying;
 - a fixed-row private script directory, identical in geometry across
   generations;
-- two or a small fixed number of candidate directory buckets;
-- a small number of inline events;
+- two candidate directory buckets, independently salted per generation;
+- a small number of inline events, holding a script's *newest* history so an
+  active script needs no page query;
 - fixed-size, privately selected event pages;
 - exact event replay with atomic checkpoint advancement;
-- a short unsealed tail and larger sealed historical generations.
+- a published unsealed tail alongside the sealed historical generations.
 
-Add the private compact-transaction table only if the wallet adapter confirms
-that its existing transaction-display path cannot reconstruct required details
-from script events and locally retained data.
+Do not build the private compact-transaction table yet. Build it only if the
+wallet adapter confirms that its existing transaction-display path cannot
+reconstruct required details from script events and locally retained data.
 
 Choose the seal parameters from a census over the real event journal rather than
 from an estimate, since they are schema and re-partition the chain when changed.
@@ -637,9 +665,13 @@ binds at each candidate parameter set.
 Not yet measured, and each capable of overturning the result: the private
 retrieval cost of a real restoration workload against these generations;
 per-generation published setup summed over the generations a wallet touches;
-resident server memory per loaded generation, which at roughly a gigabyte of
-plaintext across the fleet is the constraint most likely to bite; and end-to-end
-behaviour on a minimum supported device.
+resident server memory per loaded generation; and end-to-end behaviour on a
+minimum supported device.
+
+Deliberately out of the first implementation, so its cost is neither measured
+nor claimed: the private transaction-detail table, and bounded evaluation-key
+reuse across generations. Both are specified; neither is built. A result that
+depends on either must say so.
 
 This design can reconstruct confirmed balance and history while hiding exact
 script and page selections. It does not, without additional measures, hide the

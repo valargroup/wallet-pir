@@ -15,11 +15,13 @@
 //! - the pages table is sized by *page rows*, which is
 //!   `sum over scripts of page_rows_for(events)` — not the event count, because
 //!   pages are per script and padded, so many three-event histories cost far
-//!   more rows than the same events in one long history;
-//! - the transaction-detail table is sized by *distinct transaction ids*.
+//!   more rows than the same events in one long history.
 //!
-//! All three are monotone as blocks stream in, so one incremental pass decides
-//! every boundary.
+//! Both are monotone as blocks stream in, so one incremental pass decides every
+//! boundary. Distinct transaction ids are counted and reported but do not seal:
+//! they size the optional transaction-detail table, which this POC does not
+//! build. Over the Ironwood-to-tip journal that limit never bound in any
+//! candidate policy, so dropping it moves no boundary.
 //!
 //! # Why capacity and target are separate numbers
 //!
@@ -72,8 +74,6 @@ pub struct SealPolicy {
     pub scripts: Limit,
     /// Page rows, which size the pages table.
     pub page_rows: Limit,
-    /// Distinct transaction ids, which size the transaction-detail table.
-    pub txids: Limit,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -237,7 +237,6 @@ impl Sealer {
         for (name, value, limit) in [
             ("scripts", projected.scripts, self.policy.scripts),
             ("page rows", projected.page_rows, self.policy.page_rows),
-            ("transaction ids", projected.txids, self.policy.txids),
         ] {
             if value > limit.capacity {
                 return Some((name, value, limit.capacity));
@@ -251,7 +250,6 @@ impl Sealer {
         for (name, value, limit) in [
             ("scripts", occupancy.scripts, self.policy.scripts),
             ("page rows", occupancy.page_rows, self.policy.page_rows),
-            ("transaction ids", occupancy.txids, self.policy.txids),
         ] {
             if value >= limit.target {
                 return Some(name);
@@ -347,20 +345,15 @@ mod tests {
     use crate::layout::{EVENTS_PER_PAGE, INLINE_EVENTS};
     use transparent_events::ReceiveEvent;
 
-    fn policy(scripts: (u64, u64), page_rows: (u64, u64), txids: (u64, u64)) -> SealPolicy {
+    fn policy(scripts: (u64, u64), page_rows: (u64, u64)) -> SealPolicy {
         SealPolicy {
             scripts: Limit::new(scripts.0, scripts.1).unwrap(),
             page_rows: Limit::new(page_rows.0, page_rows.1).unwrap(),
-            txids: Limit::new(txids.0, txids.1).unwrap(),
         }
     }
 
     fn generous() -> SealPolicy {
-        policy(
-            (1_000_000, 2_000_000),
-            (1_000_000, 2_000_000),
-            (1_000_000, 2_000_000),
-        )
+        policy((1_000_000, 2_000_000), (1_000_000, 2_000_000))
     }
 
     fn script(tag: u32) -> ScriptBytes {
@@ -428,7 +421,7 @@ mod tests {
 
     #[test]
     fn reaching_the_script_target_seals_the_block_that_reached_it() {
-        let mut sealer = Sealer::new(policy((10, 1_000), (1_000, 10_000), (1_000, 10_000)), 100);
+        let mut sealer = Sealer::new(policy((10, 1_000), (1_000, 10_000)), 100);
         assert_eq!(
             sealer.push_block(100, &block_of_new_scripts(100, 0, 4)),
             Ok(None)
@@ -447,7 +440,7 @@ mod tests {
     /// block, not after.
     #[test]
     fn a_block_that_would_breach_capacity_seals_the_shard_before_it() {
-        let mut sealer = Sealer::new(policy((100, 120), (10_000, 20_000), (10_000, 20_000)), 100);
+        let mut sealer = Sealer::new(policy((100, 120), (10_000, 20_000)), 100);
         assert_eq!(
             sealer.push_block(100, &block_of_new_scripts(100, 0, 90)),
             Ok(None)
@@ -474,7 +467,7 @@ mod tests {
     /// property the shared parameter set depends on.
     #[test]
     fn no_sealed_shard_ever_exceeds_capacity() {
-        let policy = policy((60, 100), (10_000, 20_000), (10_000, 20_000));
+        let policy = policy((60, 100), (10_000, 20_000));
         let mut sealer = Sealer::new(policy, 100);
         let mut shards = Vec::new();
         let mut tag = 0u32;
@@ -512,7 +505,7 @@ mod tests {
     /// operator chose not to publish.
     #[test]
     fn shards_tile_the_journal_without_gaps_or_overlaps() {
-        let mut sealer = Sealer::new(policy((25, 60), (10_000, 20_000), (10_000, 20_000)), 100);
+        let mut sealer = Sealer::new(policy((25, 60), (10_000, 20_000)), 100);
         let mut shards = Vec::new();
         let mut tag = 0u32;
         for offset in 0..20u64 {
@@ -546,7 +539,7 @@ mod tests {
     /// produce a shard that does not fit the geometry every other shard shares.
     #[test]
     fn a_block_larger_than_any_shard_is_an_error_not_a_silent_seal() {
-        let mut sealer = Sealer::new(policy((10, 20), (10_000, 20_000), (10_000, 20_000)), 100);
+        let mut sealer = Sealer::new(policy((10, 20), (10_000, 20_000)), 100);
         assert_eq!(
             sealer.push_block(100, &block_of_new_scripts(100, 0, 50)),
             Err(SealError::BlockExceedsCapacity {
@@ -563,7 +556,7 @@ mod tests {
     /// fresh shard the capacity check just opened.
     #[test]
     fn an_oversized_block_after_a_seal_is_still_an_error() {
-        let mut sealer = Sealer::new(policy((10, 20), (10_000, 20_000), (10_000, 20_000)), 100);
+        let mut sealer = Sealer::new(policy((10, 20), (10_000, 20_000)), 100);
         sealer
             .push_block(100, &block_of_new_scripts(100, 0, 8))
             .unwrap();
@@ -577,7 +570,7 @@ mod tests {
     /// should seal on page rows even though its script count stays small.
     #[test]
     fn a_shard_can_seal_on_page_rows_with_few_scripts() {
-        let mut sealer = Sealer::new(policy((10_000, 20_000), (4, 10), (10_000, 20_000)), 100);
+        let mut sealer = Sealer::new(policy((10_000, 20_000), (4, 10)), 100);
         // One script accumulating a long history: each full page is one row.
         let per_block = (INLINE_EVENTS + EVENTS_PER_PAGE) as usize;
         let mut sealed = None;
@@ -595,19 +588,6 @@ mod tests {
         assert_eq!(sealed.reason, Some(SealReason::ReachedTarget("page rows")));
         assert_eq!(sealed.occupancy.scripts, 1, "only one script was involved");
         assert!(sealed.occupancy.page_rows >= 4);
-    }
-
-    #[test]
-    fn a_shard_can_seal_on_transaction_ids() {
-        let mut sealer = Sealer::new(policy((10_000, 20_000), (10_000, 20_000), (5, 50)), 100);
-        // One script, many transactions: neither scripts nor pages bite first.
-        let block: Vec<_> = (0..5).map(|nonce| event(100, 0, nonce)).collect();
-        let sealed = sealer.push_block(100, &block).unwrap().expect("txids seal");
-        assert_eq!(
-            sealed.reason,
-            Some(SealReason::ReachedTarget("transaction ids"))
-        );
-        assert_eq!(sealed.occupancy.txids, 5);
     }
 
     #[test]
@@ -652,7 +632,7 @@ mod tests {
     /// reproduce the same boundaries and their digests stay comparable.
     #[test]
     fn the_same_journal_seals_identically_every_time() {
-        let policy = policy((25, 60), (10_000, 20_000), (10_000, 20_000));
+        let policy = policy((25, 60), (10_000, 20_000));
         let run = || {
             let mut sealer = Sealer::new(policy, 100);
             let mut shards = Vec::new();
@@ -675,7 +655,7 @@ mod tests {
     /// Emitting an empty one would publish a shard covering no blocks.
     #[test]
     fn a_journal_ending_on_a_boundary_leaves_no_tail() {
-        let mut sealer = Sealer::new(policy((7, 100), (10_000, 20_000), (10_000, 20_000)), 100);
+        let mut sealer = Sealer::new(policy((7, 100), (10_000, 20_000)), 100);
         let sealed = sealer
             .push_block(100, &block_of_new_scripts(100, 0, 7))
             .unwrap()
@@ -688,7 +668,7 @@ mod tests {
     /// journal, not about the shard currently accumulating.
     #[test]
     fn ordering_is_enforced_across_a_seal() {
-        let mut sealer = Sealer::new(policy((7, 100), (10_000, 20_000), (10_000, 20_000)), 100);
+        let mut sealer = Sealer::new(policy((7, 100), (10_000, 20_000)), 100);
         sealer
             .push_block(100, &block_of_new_scripts(100, 0, 7))
             .unwrap();
