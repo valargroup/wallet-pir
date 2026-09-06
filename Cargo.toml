@@ -5,6 +5,7 @@ members = [
     "pir/transparent-events",
     "pir/transparent-filter",
     "pir/transparent-shard",
+    "pir/transparent-wallet",
     "pir/transparent-history",
     "pir/transparent-spend",
     "pir/load-test",

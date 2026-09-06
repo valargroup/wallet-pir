@@ -586,6 +586,15 @@ hide that bit only by paying some of the work the filter was intended to avoid.
 
 ## Trust and completeness
 
+The initial profile trusts both the publisher and the PIR retrieval service to
+provide correct, complete, mutually consistent data for the declared chain
+anchor. Wallet validation checks structural consistency; it does not
+cryptographically prove event inclusion, completeness, or non-equivocation.
+Users who do not accept that trust can run their own infrastructure or verify
+the result through independent chain replay. Query privacy remains a separate
+requirement, subject to the generation, timing and query-count leakage described
+above.
+
 PIR provides query privacy; it does not prove database completeness. A filter
 negative is safe only if the indexer included every covered receive and resolved
 spend. Block hashes and table digests bind returned data but do not prove the
@@ -596,7 +605,7 @@ Production use for balance or spendability therefore requires either:
 1. an explicit trusted-indexer policy accepted by the wallet owner; or
 2. a separately specified completeness mechanism.
 
-Until that decision is made, evaluate the reconstructed ledger in shadow mode
+Under this initial trust policy, evaluate the reconstructed ledger in shadow mode
 against an independent archive-derived result at the same anchor. Require exact
 event and UTXO equality, not only equal final balances.
 

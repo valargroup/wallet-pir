@@ -3701,6 +3701,7 @@ dependencies = [
  "hex",
  "inspiring",
  "ipir-sp",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3714,6 +3715,7 @@ dependencies = [
  "transparent-events",
  "transparent-filter",
  "transparent-shard",
+ "transparent-wallet",
 ]
 
 [[package]]
@@ -3730,6 +3732,22 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "transparent-wallet"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "ipir-sp",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "transparent-events",
+ "transparent-filter",
+ "transparent-shard",
 ]
 
 [[package]]
