@@ -65,10 +65,18 @@ pub const DIRECTORY_ROWS: usize = 2_048;
 /// than by event volume — the published set needed 1.08 rows per paged script —
 /// so narrowing the row raises demand only for histories longer than one row.
 ///
-/// Held at 4,096 rather than lowered with the width. A second segment multiplies
-/// *query* cost for every user of the shard, not just its storage, so the
-/// headroom is worth more than the bytes it costs.
-pub const PAGE_ROWS: usize = 4_096;
+/// Sized so the two tables fill together. Page rows are what close a shard, so
+/// this figure decides how many scripts a shard accumulates before it seals,
+/// and therefore how full the directory gets. At 4,096 the published set sealed
+/// at 11,176 scripts against a directory that holds 28,672 — 39% — and the
+/// directory's padding was pure waste. At 8,192 a shard reaches roughly 24,600
+/// scripts, which is 86% of the directory, while page rows still land near 96%
+/// of their own table.
+///
+/// Larger still would overshoot: the directory would bind first and the page
+/// table would carry the slack instead, which is the same waste in the more
+/// expensive table.
+pub const PAGE_ROWS: usize = 8_192;
 
 /// Events stored directly in a script's directory entry.
 ///

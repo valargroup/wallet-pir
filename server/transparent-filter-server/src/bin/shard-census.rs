@@ -79,7 +79,7 @@ fn default_policies() -> Vec<(String, SealPolicy)> {
             name.to_string(),
             SealPolicy {
                 scripts: Limit::new(scripts, scripts * 2).expect("valid"),
-                page_rows: Limit::new(3_600, 4_096).expect("valid"),
+                page_rows: Limit::new(7_900, 8_192).expect("valid"),
             },
         )
     })

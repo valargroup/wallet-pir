@@ -43,9 +43,11 @@ struct Cli {
     output: PathBuf,
     /// Scripts at which a shard prefers to seal.
     ///
-    /// A directory segment holds 28,672, so the previous 8,192 left the table
-    /// three quarters empty. Page rows are what actually bind.
-    #[arg(long, default_value_t = 16_384)]
+    /// A directory segment holds 28,672. Page rows are what actually close a
+    /// shard, so this sits above where they land — it is a ceiling that should
+    /// not bind, not a target to reach. Setting it lower seals shards early and
+    /// leaves the directory empty, which is the waste this is sized to avoid.
+    #[arg(long, default_value_t = 25_000)]
     scripts_target: u64,
     /// Scripts a shard's directory can hold. Must exceed the target by more
     /// than the largest single block's contribution.
@@ -55,9 +57,9 @@ struct Cli {
     ///
     /// Held under `PAGE_ROWS` with headroom, so a shard stays single-segment: a
     /// second segment multiplies query cost for every user of the shard.
-    #[arg(long, default_value_t = 3_600)]
+    #[arg(long, default_value_t = 7_900)]
     page_rows_target: u64,
-    #[arg(long, default_value_t = 4_096)]
+    #[arg(long, default_value_t = 8_192)]
     page_rows_capacity: u64,
     /// Needed for exactly one thing: the block hash before the journal's first
     /// height, which is shard zero's parent and is by definition not in the
