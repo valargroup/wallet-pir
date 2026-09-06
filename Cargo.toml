@@ -12,6 +12,7 @@ members = [
     "server/pir-apm",
     "server/transparent-filter-server",
     "server/transparent-history-server",
+    "server/transparent-shard-server",
 ]
 exclude = ["demos/legacy-spendability"]
 
