@@ -86,7 +86,15 @@ fn parse_policy(text: &str) -> Result<SealPolicy, BoxError> {
 /// Page rows are held at the publisher's default so the sweep measures the
 /// geometry actually in use. Setting them lower makes page rows bind first and
 /// the script limit inert, which reads as a script-limit result and is not one.
+///
+/// The page capacity tracks [`transparent_shard::PAGE_ROWS`] rather than a
+/// literal, so a table resized without revisiting this would not quietly sweep
+/// policies that overrun it — the check in `main` refuses those, and a default
+/// sweep that tripped its own check would be a poor way to find out.
 fn default_policies() -> Vec<(String, SealPolicy)> {
+    let capacity = transparent_shard::PAGE_ROWS as u64;
+    // A little under capacity, so an ordinary block seals before it overruns.
+    let target = capacity - capacity / 32;
     [
         ("scripts 4k", 4_096u64),
         ("scripts 8k", 8_192),
@@ -100,7 +108,7 @@ fn default_policies() -> Vec<(String, SealPolicy)> {
             name.to_string(),
             SealPolicy {
                 scripts: Limit::new(scripts, scripts * 2).expect("valid"),
-                page_rows: Limit::new(7_900, 8_192).expect("valid"),
+                page_rows: Limit::new(target, capacity).expect("valid"),
             },
         )
     })
