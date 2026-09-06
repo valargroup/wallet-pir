@@ -480,9 +480,14 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
     // The fixture must actually exercise what it claims to.
     assert!(expected.confirmed_balance() > 0);
     assert_eq!(expected.spends().len(), 1);
+    // Expressed against the geometry rather than a fixed number: the fixture's
+    // long history is sized to exceed one page, and what matters is that it
+    // still does, whatever the page width is.
+    let one_page = (transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS) as usize;
     assert!(
-        expected.utxos().count() > 100,
-        "the long history is present"
+        expected.utxos().count() > one_page,
+        "the long history should span more than one page ({} of {one_page})",
+        expected.utxos().count()
     );
 
     assert_eq!(outcome.covered_through, FIRST + SHARDS * SPAN - 1);

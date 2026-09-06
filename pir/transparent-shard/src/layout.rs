@@ -7,9 +7,10 @@
 //! shard. That saving is only available if *every* shard fits the same
 //! geometry, which is what the seal logic exists to guarantee.
 //!
-//! The row widths come from the mainnet study's measured sweep: a 3,584-byte
-//! directory row with two inline events, and 17,920-byte page rows, which was
-//! the best-performing page width it tested.
+//! Both tables use the scheme's smallest instance width, 3,584 bytes. The
+//! directory carries two inline events per entry; the page row is sized for
+//! storage rather than for the query count of the longest history, which is
+//! what [`PAGE_ROW_BYTES`] explains.
 //!
 //! # Segments
 //!
@@ -27,7 +28,24 @@ use transparent_events::EVENT_BYTES;
 pub const DIRECTORY_ROW_BYTES: usize = 3_584;
 
 /// Bytes in one page row.
-pub const PAGE_ROW_BYTES: usize = 17_920;
+///
+/// The scheme's smallest instance, and chosen for storage rather than for query
+/// count. A page belongs to one script, so a row is only ever as full as that
+/// script's history: the measured distribution is p50 2 events, p90 5, p95 8,
+/// which means a script that touches a page at all typically fills a few per
+/// cent of it. At 17,920 bytes the published set stored 16.1 events per used
+/// page row of 185 slots — 8.7% — and 6.04% of the fleet's pinned bytes were
+/// real data.
+///
+/// The mainnet study's sweep picked 17,920 on a different criterion: it cut one
+/// 9,152-event outlier from 255 page queries to 50. That study also recorded
+/// that the sweep "does not select one global row width for both tables", which
+/// is what this width acts on.
+///
+/// The trade is real and falls on the heaviest histories, which need
+/// proportionally more rows. The design's answer for those is query budgets and
+/// resumable work, not a wider row for everyone.
+pub const PAGE_ROW_BYTES: usize = 3_584;
 
 /// Rows in every shard's directory table.
 ///
@@ -41,11 +59,15 @@ pub const PAGE_ROW_BYTES: usize = 17_920;
 /// needing to relocate an entry.
 pub const DIRECTORY_ROWS: usize = 2_048;
 
-/// Rows in every shard's page table.
+/// Rows in every shard's page table, per segment.
 ///
-/// The census over the Ironwood-to-tip journal put page rows at a maximum of
-/// 2,117 for a shard sealed near 8,000 scripts, so 2,048 would overflow and the
-/// next multiple of the padding granularity is the smallest that fits.
+/// Row demand is driven by how many scripts exceed the inline allowance rather
+/// than by event volume — the published set needed 1.08 rows per paged script —
+/// so narrowing the row raises demand only for histories longer than one row.
+///
+/// Held at 4,096 rather than lowered with the width. A second segment multiplies
+/// *query* cost for every user of the shard, not just its storage, so the
+/// headroom is worth more than the bytes it costs.
 pub const PAGE_ROWS: usize = 4_096;
 
 /// Events stored directly in a script's directory entry.
@@ -135,7 +157,7 @@ mod tests {
 
     #[test]
     fn a_page_holds_the_events_its_width_allows() {
-        assert_eq!(EVENTS_PER_PAGE, 185);
+        assert_eq!(EVENTS_PER_PAGE, 36);
         assert!(
             PAGE_HEADER_BYTES + EVENTS_PER_PAGE as usize * EVENT_BYTES <= PAGE_ROW_BYTES,
             "a full page must fit its row"
@@ -165,13 +187,18 @@ mod tests {
     /// event count: many short histories cost far more rows than the same
     /// events concentrated in a few long ones. This is why a shard cannot be
     /// sealed on its event count alone.
+    ///
+    /// The gap narrows as the row narrows, and that narrowing *is* the
+    /// utilisation gain — a wide row spends most of itself on padding for the
+    /// short histories that dominate the distribution. At 185 events per row
+    /// the ratio here was over 50x; at 36 it is about 12x.
     #[test]
     fn many_short_histories_cost_more_pages_than_one_long_one() {
         let events = 3_000u32;
         let concentrated = page_rows_for(events);
         let spread: u64 = (0..events / 3).map(|_| page_rows_for(3)).sum();
         assert!(
-            spread > concentrated * 50,
+            spread > concentrated * 10,
             "spread {spread} should dwarf concentrated {concentrated}"
         );
     }

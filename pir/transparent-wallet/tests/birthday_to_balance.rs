@@ -413,7 +413,8 @@ fn the_ledger_replays_identically_from_shards_and_from_a_direct_traversal() {
     assert!(expected.confirmed_balance() > 0);
     assert_eq!(expected.spends().len(), 1, "one spend in the fixture");
     assert!(
-        expected.utxos().count() > 100,
+        expected.utxos().count()
+            > (transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS) as usize,
         "the long history should dominate the UTXO set"
     );
     assert!(recovered.unresolved().is_empty());

@@ -42,13 +42,20 @@ struct Cli {
     #[arg(long, default_value = "./transparent-shards")]
     output: PathBuf,
     /// Scripts at which a shard prefers to seal.
-    #[arg(long, default_value_t = 8_192)]
+    ///
+    /// A directory segment holds 28,672, so the previous 8,192 left the table
+    /// three quarters empty. Page rows are what actually bind.
+    #[arg(long, default_value_t = 16_384)]
     scripts_target: u64,
     /// Scripts a shard's directory can hold. Must exceed the target by more
     /// than the largest single block's contribution.
-    #[arg(long, default_value_t = 16_384)]
+    #[arg(long, default_value_t = 28_672)]
     scripts_capacity: u64,
-    #[arg(long, default_value_t = 2_048)]
+    /// Page rows at which a shard prefers to seal.
+    ///
+    /// Held under `PAGE_ROWS` with headroom, so a shard stays single-segment: a
+    /// second segment multiplies query cost for every user of the shard.
+    #[arg(long, default_value_t = 3_600)]
     page_rows_target: u64,
     #[arg(long, default_value_t = 4_096)]
     page_rows_capacity: u64,
