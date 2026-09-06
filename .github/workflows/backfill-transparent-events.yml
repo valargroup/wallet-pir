@@ -87,7 +87,6 @@ jobs:
           SHA: ${{ inputs.ref }}
           START: ${{ inputs.start_height }}
           STOP: ${{ inputs.stop_height }}
-          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           if [[ "$ACTION" == "start" ]]; then
@@ -251,6 +250,7 @@ jobs:
           USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
           START: ${{ inputs.start_height }}
           STOP: ${{ inputs.stop_height }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
