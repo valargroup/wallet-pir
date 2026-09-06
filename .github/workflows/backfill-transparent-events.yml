@@ -167,6 +167,12 @@ jobs:
                 --start-height "$start")
           if [[ -n "$stop" ]]; then args+=(--stop-height "$stop"); fi
 
+          # A transient unit that failed stays loaded in the failed state and
+          # would make systemd-run refuse the name. The earlier is-active check
+          # already refused to disturb a *running* backfill, so anything left
+          # here is finished and only its bookkeeping remains.
+          sudo systemctl reset-failed "$unit" 2>/dev/null || true
+
           # A transient unit rather than nohup: it survives this SSH session,
           # logs to the journal, and can be inspected and stopped by name.
           #
