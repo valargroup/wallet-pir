@@ -22,7 +22,7 @@ on:
         required: true
         default: status
         type: choice
-        options: [start, status, stop, census, publish]
+        options: [start, status, stop, census, publish, measure]
       ref:
         description: Full commit SHA on main to build (required for start)
         required: false
@@ -78,13 +78,13 @@ jobs:
           fi
 
       - uses: actions/checkout@v4
-        if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish'
+        if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish' || inputs.action == 'measure'
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
-        if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish'
+        if: inputs.action == 'start' || inputs.action == 'census' || inputs.action == 'publish' || inputs.action == 'measure'
         with:
           toolchain: 1.91.0
 
@@ -137,6 +137,34 @@ jobs:
             tail -40 publish.txt
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Build and run the measurement
+        if: inputs.action == 'measure'
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p transparent-measure
+          # Read-only against both the journal and the published shards. It
+          # serves the set in-process on a loopback port, so it disturbs no
+          # running service.
+          sudo ./target/release/transparent-measure \
+            --data-dir "$DATA_DIR" \
+            --shard-dir "$SHARD_DIR" \
+            --json-out measurement.json 2>&1 | tee measure.txt
+          {
+            echo '## Transparent recovery measurement'
+            echo '```'
+            cat measure.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.action == 'measure'
+        with:
+          name: transparent-measurement
+          path: measurement.json
+          if-no-files-found: warn
 
       - name: Prepare ephemeral SSH material
         env:

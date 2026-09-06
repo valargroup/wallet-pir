@@ -3678,6 +3678,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "transparent-measure"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "transparent-events",
+ "transparent-filter",
+ "transparent-filter-server",
+ "transparent-shard",
+ "transparent-shard-server",
+ "transparent-wallet",
+]
+
+[[package]]
 name = "transparent-shard"
 version = "0.1.0"
 dependencies = [
