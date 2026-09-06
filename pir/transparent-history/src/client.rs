@@ -737,6 +737,31 @@ mod tests {
         assert_eq!(directory.selector_bytes, pages.selector_bytes);
         assert_eq!(directory.set_bytes * 5, pages.set_bytes);
 
+        // Pinned absolutely, not only relatively: `tools/transparent_pir_break_even.py`
+        // restates these to compute where retrieval stops beating ordinary
+        // download, and a silent geometry change would leave that analysis
+        // describing a table this build no longer serves.
+        assert_eq!(
+            directory,
+            TableCosts {
+                set_bytes: 14_336,
+                key_bytes: 86_016,
+                selector_bytes: 20_480,
+                response_bytes: 5_120,
+                held_sets: 0,
+            }
+        );
+        assert_eq!(
+            pages,
+            TableCosts {
+                set_bytes: 71_680,
+                key_bytes: 86_016,
+                selector_bytes: 20_480,
+                response_bytes: 25_600,
+                held_sets: 0,
+            }
+        );
+
         // Four sets is what the earlier all-or-nothing measurement offered, and
         // it is where the two tables diverge sharply: the directory repays four
         // sets almost at once, the pages table only once there are enough

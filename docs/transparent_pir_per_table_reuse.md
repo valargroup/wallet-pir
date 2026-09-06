@@ -103,6 +103,48 @@ The batch-size policy's own contribution is visible in the fresh column against
 the policy column: nothing on sparse, 508,112 bytes on median_10, and 2,876,500
 on large_1.
 
+## Where this stops working
+
+The measured workloads bracket the limits rather than state them. This section
+extends them with a cost model built from the same per-unit constants the client
+charges; it reproduces both single-address runs to the byte before it reports
+anything, and `tools/transparent_pir_break_even.py --check` fails if it drifts.
+Everything below is a calculation from measured constants, not a run.
+
+**By history size: about 5,950 events.** One address over the measured day wins
+up to 5,954 events (32 page lookups, 0.95x ordinary retrieval) and loses from
+5,955 (33 lookups, 1.03x). The two measured endpoints are 2 events at 0.10x and
+9,152 at 1.42x.
+
+**By sync frequency: about 91 blocks, and this is the binding limit.** Ordinary
+retrieval gets cheaper the more often a wallet syncs. Private retrieval does not,
+because its floor is per sync: filters, then the reference data for the tables it
+touches, then a whole first lookup. So the two cross on frequency, not only on
+size.
+
+| Interval | Retrieval budget | What it buys |
+|---|---:|---|
+| 12 blocks (0.2 h) | 8,415 | nothing — one lookup is 125,983, fifteen times over |
+| 288 blocks (6 h) | 417,487 | 6 index lookups, or 1 index and 1 page |
+| 1,152 blocks (24 h) | 2,749,381 | 56 index lookups, or 1 index and 32 pages |
+
+The shortest interval affording one index lookup is roughly 91 blocks, about two
+hours; roughly 229 blocks, about five hours, if that lookup finds history needing
+a page. Before this change those were about 159 blocks and about 260. The
+improvement is real and does not change the shape: a wallet that syncs every few
+minutes is nowhere near affordable, and no amount of key sharing takes it there.
+
+Those two figures interpolate between measured intervals that are far apart, and
+retrieval is not linear in blocks. They are "about two hours" and "about five",
+not thresholds.
+
+**By how much sharing can still save: saturated by about 16 lookups.** The
+marginal cost of a page lookup falls from 203,807 bytes at one lookup to 85,512
+at sixteen and 76,031 at fifty. Groups of four are the largest published; eight
+would double the reference data and is untested. Below three or four lookups
+sharing does not pay at all, which is what the policy is for. So sharing helps
+within a band and is close to irrelevant outside it.
+
 ## What did not change, deliberately
 
 - **Padding.** A batch is rounded up to its full size and every padding query is
@@ -162,6 +204,8 @@ done
 
 cargo test --workspace --release
 python3 -m unittest discover -s tools -p 'test_transparent_pir_*.py'
+python3 tools/transparent_pir_break_even.py --check
+python3 tools/transparent_pir_break_even.py   # the limits above
 ```
 
 `PIR_KEY_SETS` is a measurement override only; unset is the policy a wallet
