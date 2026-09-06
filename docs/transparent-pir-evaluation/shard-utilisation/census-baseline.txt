@@ -1,0 +1,97 @@
+journal: heights 3428143-3473474 (45332 blocks), 869283 events
+
+=== density across the chain (4096 blocks per bucket) ===
+   3428143-3432238     12.8 events/block
+   3432239-3436334     21.1 events/block
+   3436335-3440430     14.1 events/block
+   3440431-3444526     12.0 events/block
+   3444527-3448622     12.2 events/block
+   3448623-3452718     14.3 events/block
+   3452719-3456814     24.6 events/block
+   3456815-3460910     22.8 events/block
+   3460911-3465006     18.2 events/block
+   3465007-3469102     19.9 events/block
+   3469103-3473198     38.5 events/block
+   3473199-3473474     25.0 events/block
+
+=== scripts 4k ===
+  shards 50 (49 sealed, 1 tail)
+  sealed by target: scripts          49
+  blocks         min      124  p50      810  p95     1594  max     1746  mean      906
+  scripts        min     1568  p50     4100  p95     4382  max     4506  mean     4078
+  page rows      min      112  p50      556  p95      999  max     1107  mean      612
+  txids          min      761  p50     4285  p95     5045  max     5096  mean     4099
+  events         min     4165  p50    16505  p95    25275  max    48924  mean    17385
+  all filters ~0.51 MB across 50 shards
+  utilisation
+    directory   rows  14.2%  slots  14.2%  (2.0 of 14 per row, 50 segments)
+    pages       rows  15.0%  slots   9.7%  (18.0 of 185 per row, 50 segments)
+    live bytes  107.5 MB of 4037.0 MB pinned =  2.66%   (80.7 MB per shard)
+  observed maxima: scripts 4506, page rows 1107, txids 5096
+  pinned plaintext per shard ~81 MB, fleet ~4.0 GB
+
+=== scripts 8k ===
+  shards 21 (20 sealed, 1 tail)
+  sealed by target: page rows        7
+  sealed by target: scripts          13
+  blocks         min      507  p50     2183  p95     3470  max     3713  mean     2158
+  scripts        min     6683  p50     8193  p95     8203  max     8203  mean     7746
+  page rows      min     1192  p50     1879  p95     2061  max     2117  mean     1764
+  txids          min     7191  p50    10355  p95    11241  max    11329  mean     9760
+  events         min    28668  p50    39088  p95    50306  max    70480  mean    41394
+  all filters ~0.41 MB across 21 shards
+  utilisation
+    directory   rows  27.0%  slots  27.0%  (3.8 of 14 per row, 21 segments)
+    pages       rows  43.1%  slots   8.7%  (16.1 of 185 per row, 21 segments)
+    live bytes  102.4 MB of 1695.5 MB pinned =  6.04%   (80.7 MB per shard)
+  observed maxima: scripts 8203, page rows 2117, txids 11329
+  pinned plaintext per shard ~81 MB, fleet ~1.7 GB
+
+=== scripts 12k ===
+  shards 19 (18 sealed, 1 tail)
+  sealed by target: page rows        17
+  sealed by target: scripts          1
+  blocks         min      444  p50     2336  p95     4024  max     4024  mean     2385
+  scripts        min     3076  p50     8639  p95    12290  max    12290  mean     8405
+  page rows      min      312  p50     2049  p95     2180  max     2180  mean     1966
+  txids          min     2510  p50    11164  p95    13043  max    13043  mean    10788
+  events         min    10645  p50    46963  p95    61826  max    61826  mean    45751
+  all filters ~0.40 MB across 19 shards
+  utilisation
+    directory   rows  29.3%  slots  29.3%  (4.1 of 14 per row, 19 segments)
+    pages       rows  48.0%  slots   8.7%  (16.1 of 185 per row, 19 segments)
+    live bytes  102.1 MB of 1534.1 MB pinned =  6.66%   (80.7 MB per shard)
+  observed maxima: scripts 12290, page rows 2180, txids 13043
+  pinned plaintext per shard ~81 MB, fleet ~1.5 GB
+
+=== scripts 16k ===
+  shards 19 (18 sealed, 1 tail)
+  sealed by target: page rows        18
+  blocks         min      302  p50     2336  p95     4024  max     4024  mean     2385
+  scripts        min     2337  p50     8639  p95    12931  max    12931  mean     8400
+  page rows      min      200  p50     2051  p95     2180  max     2180  mean     1967
+  txids          min     1609  p50    11164  p95    13132  max    13132  mean    10788
+  events         min     7359  p50    46963  p95    61826  max    61826  mean    45751
+  all filters ~0.40 MB across 19 shards
+  utilisation
+    directory   rows  29.3%  slots  29.3%  (4.1 of 14 per row, 19 segments)
+    pages       rows  48.0%  slots   8.7%  (16.1 of 185 per row, 19 segments)
+    live bytes  102.1 MB of 1534.1 MB pinned =  6.66%   (80.7 MB per shard)
+  observed maxima: scripts 12931, page rows 2180, txids 13132
+  pinned plaintext per shard ~81 MB, fleet ~1.5 GB
+
+=== scripts 24k ===
+  shards 19 (18 sealed, 1 tail)
+  sealed by target: page rows        18
+  blocks         min      302  p50     2336  p95     4024  max     4024  mean     2385
+  scripts        min     2337  p50     8639  p95    12931  max    12931  mean     8400
+  page rows      min      200  p50     2051  p95     2180  max     2180  mean     1967
+  txids          min     1609  p50    11164  p95    13132  max    13132  mean    10788
+  events         min     7359  p50    46963  p95    61826  max    61826  mean    45751
+  all filters ~0.40 MB across 19 shards
+  utilisation
+    directory   rows  29.3%  slots  29.3%  (4.1 of 14 per row, 19 segments)
+    pages       rows  48.0%  slots   8.7%  (16.1 of 185 per row, 19 segments)
+    live bytes  102.1 MB of 1534.1 MB pinned =  6.66%   (80.7 MB per shard)
+  observed maxima: scripts 12931, page rows 2180, txids 13132
+  pinned plaintext per shard ~81 MB, fleet ~1.5 GB

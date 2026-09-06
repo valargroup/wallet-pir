@@ -895,11 +895,12 @@ public map, manifests, and filters
 ### Evidence and remaining work
 
 The figures below were recorded in the preceding version of this document for
-the Ironwood-to-height-3,473,474 census. They are retained as reported
-measurements, not new benchmark results. The raw output and exact candidate
-configurations for this content-boundary census are not linked here; archive
-them before using these figures as a reproducible performance claim. MB values
-retain the original report's units and rounding.
+the Ironwood-to-height-3,473,474 census, at a page geometry since replaced. They
+are retained as reported measurements, not new benchmark results, and the
+generation counts in particular no longer describe what the shipped parameters
+produce. MB values retain the original report's units and rounding. Raw census
+output at both the old and current geometry is archived under
+[shard-utilisation](transparent-pir-evaluation/shard-utilisation/).
 
 | Reported measure | Result | What it establishes |
 |---|---|---|
@@ -918,20 +919,62 @@ journal but against the published generations rather than a fixture. The chain
 data, the published bytes and the retrieval are real; the wallets are synthetic,
 assembled from scripts drawn from the journal. They were produced by the
 `publish` and `measure` actions of the transparent-event backfill workflow
-against `/srv/zakura/transparent-shards-v2`, and the measurement JSON is
-retained as a run artifact.
+against `/srv/zakura/transparent-shards-v4`. The raw census and measurement
+output is archived under
+[shard-utilisation](transparent-pir-evaluation/shard-utilisation/).
 
 | Measured against the published set | Result | What it establishes |
 |---|---|---|
-| Published set | 21 generations over 3,428,143–3,473,474; 1.6 GB of plaintext tables | The whole sample publishes at the shipped seal parameters |
+| Published set | 6 generations over 3,428,143-3,473,474; 220.2 MB of plaintext tables | The whole sample publishes at the shipped seal parameters |
 | Segments per generation | One directory and one page segment throughout | The exceptional path did not arise in this range; its cost stays unmeasured |
 | Republication over an unchanged journal | Identical digests and directory size; tail revision unchanged | Publication is idempotent: a re-run verifies rather than forking the identity it already published under |
-| Public floor | 439,230 B: 428,149 B of filters and 11,081 B of map | What a wallet pays before any private query |
-| Unused wallet, 20 and 100 scripts | Exact; no private query; 439,230 B | A wallet with no match retrieves nothing |
-| 10 small histories | Exact; 20 queries, 8 published setups; 2,621,835 B | Directory-only recovery for short histories |
-| 10 median histories | Exact; 20 queries, 9 published setups; 2,641,162 B | Recovery where inline events do not suffice |
-| Restoration, 5 active and 95 unused scripts | Exact; 10 queries, 5 published setups; 1,549,858 B | Birthday-to-tip restoration over the 21-generation range, about 1.4% of the extrapolated scanning baseline |
-| Largest single history | Exact; 562 queries, 42 published setups; 75,817,678 B | About 67% of that baseline for one script: the spammed-history case remains the weakest |
+| Public floor | 318,816 B of filters and map | What a wallet pays before any private query |
+| Unused wallet, 20 and 100 scripts | Exact; no private query; 318,816 B | A wallet with no match retrieves nothing, and carrying five times the scripts costs nothing more |
+| 10 small histories | Exact; 20 queries, 7 published setups; 2,512,907 B | Directory-only recovery for short histories |
+| 10 median histories | Exact; 20 queries, 7 published setups; 2,533,451 B | Recovery where inline events do not suffice |
+| Restoration, 5 active and 95 unused scripts | Exact; 10 queries, 4 published setups; 1,430,660 B | Birthday-to-tip restoration over the range, about 1.3% of the extrapolated scanning baseline |
+| Largest single history | Exact; 2,635 queries, 14 published setups; 351,063,398 B | About 3.1 times that baseline for one script: the spammed-history case is where this design loses |
+
+### Table utilisation
+
+Padding is the mechanism that stops a response leaking its contents, so a table
+is deliberately the same size whatever it holds. That makes the cost of the
+padding invisible unless it is measured, and every other check in the pipeline
+asserts the opposite property. The census therefore reports three ratios, which
+fail independently and have different fixes: how many rows of a pinned table are
+used at all, how full each used row is, and the two together against bytes
+actually stored.
+
+| Utilisation | Before | After |
+|---|---:|---:|
+| Directory rows used | 27.0% | 69.8% |
+| Page rows used | 43.1% | 82.6% |
+| Page slots filled | 8.7% | 45.2% |
+| Live bytes of pinned bytes | 6.04% | 44.70% |
+| Plaintext tables over the range | 1,695.5 MB | 220.2 MB |
+
+Two separable changes produced this. Narrowing the page row raised page fill: a
+page belongs to one script, and the median script that needs one has a handful
+of events, so a wide row is mostly padding for the common case. Raising the page
+rows per segment raised *directory* fill, because page rows are what close a
+generation, so that figure decides how many scripts a generation accumulates
+before sealing — at the smaller value, generations sealed at 11,176 scripts
+against a directory holding 28,672.
+
+The remaining slack is structural rather than a tuning error. Page rows stay
+under half full because a page is per script; raising that further requires
+sharing a row between scripts, which is not done here. Beneath both sits a
+floor: parameter selection pads rows to a fixed multiple and the row width has a
+minimum, so a table costs at least its minimum whatever it holds, and a small
+generation cannot be efficient at any fill.
+
+The cost fell on the heaviest history, which is the case that was already
+weakest. It gets proportionally more rows from a narrower page and a slightly
+larger query from a wider page table, and moved from below the scanning baseline
+to about three times it. The design's stated answer for spammed histories is
+query budgets and resumable work rather than a wider row for every wallet;
+bounded evaluation-key reuse, which is specified but not built, targets the
+packing keys that dominate each query and is the change that would recover it.
 
 Equality is exact in every case — event multiset, UTXO set and per-transaction
 history against an independent traversal of the journal, not merely equal
@@ -939,7 +982,8 @@ balances. The two comparisons use the 108 MB scanning figure, which is
 extrapolated from 2,888,097 bytes measured over 1,152 blocks rather than
 measured over this range. Totals include each opened generation's published
 setup, charged once per sync. A setup is fetched per table of each generation
-opened, so the largest history's 42 are both tables of all 21 generations.
+opened, so the largest history's 14 are both tables of all seven generations it
+matched.
 
 For implementation context, see the [boundary selector](../pir/transparent-shard/src/seal.rs),
 [table builder](../pir/transparent-shard/src/build.rs), and
