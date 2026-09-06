@@ -3,7 +3,7 @@
 Date: 2026-09-04. Status: proposed v1 evaluation contract, not a deployed protocol.
 
 This defines the behavior to evaluate for the
-[transparent PIR recommendation](transparent_pir_updated.md), which supersedes
+[transparent PIR recommendation](transparent_pir_architecture.md), which supersedes
 the [earlier proposal](transparent_pir_design.md). The companion
 [feasibility assessment](transparent_pir_evaluation.md) records evidence,
 acceptance gates, and the next experiment. Numerical gates are proposed defaults;

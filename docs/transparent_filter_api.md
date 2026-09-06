@@ -74,7 +74,7 @@ against the wallet's own accepted block hash binds *where* the filter claims to
 be, not *what* it contains.
 
 This is the boundary the design's
-[trusted-service profile](transparent_pir_updated.md#trust-and-completeness)
+[trusted-service profile](transparent_pir_architecture.md#trust-and-completeness)
 states for private retrieval as well: digests and structural checks are
 consistency checks against corruption and stale data, not evidence that the
 index matches the chain.

@@ -1,7 +1,7 @@
 # Transparent PIR: activity filters and paged history
 
 Status: **superseded**, 2026-09-04. The current specification is
-[the updated recommendation](transparent_pir_updated.md); this document is kept
+[the updated recommendation](transparent_pir_architecture.md); this document is kept
 for the reasoning it records, and where the two disagree the updated
 recommendation governs. It records an architecture to evaluate; it does not
 specify a wire protocol or describe an implemented transparent-address PIR
