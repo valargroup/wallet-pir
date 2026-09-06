@@ -37,6 +37,15 @@ on:
         required: false
         default: ""
         type: string
+      shard_dir:
+        description: >-
+          Where publish writes and measure reads; blank means the default set.
+          A shard set is published under one manifest schema, so a build that
+          changes the schema must publish into a directory of its own rather
+          than beside a set the loader will refuse to mix with.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -119,18 +128,23 @@ jobs:
         if: inputs.action == 'publish'
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
+          SHARD_DIR_INPUT: ${{ inputs.shard_dir }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin shard-publish
+          OUT="${SHARD_DIR_INPUT:-$SHARD_DIR}"
+          # A shard set is a few gigabytes, and a second one beside it is a
+          # second few. Say what is free before writing rather than after.
+          df -h "$(dirname "$OUT")"
           # Read-only against the journal; writes only its own output directory.
           # Publication is immutable, so re-running verifies rather than
           # rewrites and a changed byte is a hard error.
           sudo ./target/release/shard-publish \
             --data-dir "$DATA_DIR" \
-            --output "$SHARD_DIR" \
+            --output "$OUT" \
             --zakura-cookie /root/.cache/zakura/.cookie 2>&1 | tee publish.txt
           echo
-          sudo du -sh "$SHARD_DIR"
+          sudo du -sh "$OUT"
           {
             echo '## Shard publication'
             echo '```'
@@ -142,6 +156,7 @@ jobs:
         if: inputs.action == 'measure'
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
+          SHARD_DIR_INPUT: ${{ inputs.shard_dir }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-measure
@@ -150,7 +165,7 @@ jobs:
           # running service.
           sudo ./target/release/transparent-measure \
             --data-dir "$DATA_DIR" \
-            --shard-dir "$SHARD_DIR" \
+            --shard-dir "${SHARD_DIR_INPUT:-$SHARD_DIR}" \
             --json-out measurement.json 2>&1 | tee measure.txt
           {
             echo '## Transparent recovery measurement'

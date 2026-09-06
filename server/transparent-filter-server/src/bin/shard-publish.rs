@@ -118,7 +118,18 @@ async fn main() -> Result<(), BoxError> {
     // first publication every time.
     let previous: std::collections::BTreeMap<u64, transparent_filter::ShardMapEntry> =
         match std::fs::read(cli.output.join("shards.json")) {
-            Ok(raw) => serde_json::from_slice::<transparent_filter::ShardMap>(&raw)?
+            Ok(raw) => serde_json::from_slice::<transparent_filter::ShardMap>(&raw)
+                // A map this build cannot read is a set published under another
+                // schema. Publishing beside it would leave two incompatible
+                // sets in one directory, which the loader refuses to serve, so
+                // say what to do instead of reporting a parse error.
+                .map_err(|error| {
+                    format!(
+                        "{} was published under a schema this build cannot read \
+                         ({error}); publish into a directory of its own",
+                        cli.output.join("shards.json").display()
+                    )
+                })?
                 .shards
                 .into_iter()
                 .map(|entry| (entry.shard_id, entry))
