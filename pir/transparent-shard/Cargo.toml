@@ -8,7 +8,9 @@ name = "transparent_shard"
 path = "src/lib.rs"
 
 [dependencies]
+hex = "0.4"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
 thiserror = "2"
 transparent-events = { path = "../transparent-events" }
 transparent-filter = { path = "../transparent-filter" }
