@@ -43,7 +43,7 @@
 //! nothing for ordinary shards — the block that overran a capacity is above
 //! every target too, so the shard closes immediately after it.
 
-use crate::layout::page_rows_for;
+use crate::layout::{page_rows_for, INLINE_EVENTS};
 use std::collections::{HashMap, HashSet};
 use transparent_events::{TransparentEvent, Txid};
 use transparent_filter::ScriptBytes;
@@ -97,7 +97,21 @@ pub struct Occupancy {
     pub page_rows: u64,
     pub txids: u64,
     pub events: u64,
+    /// Events that fit in directory entries and cost no page row.
+    ///
+    /// Tracked so `events - inline_events` gives the paged events exactly, and
+    /// a caller can report how full the page rows actually are. Deriving it as
+    /// `2 * scripts` would be wrong for every script holding a single event,
+    /// which the measured distribution says is common.
+    pub inline_events: u64,
     pub blocks: u64,
+}
+
+impl Occupancy {
+    /// Events that had to go into page rows.
+    pub fn paged_events(&self) -> u64 {
+        self.events.saturating_sub(self.inline_events)
+    }
 }
 
 /// A sealed shard's extent and contents.
@@ -168,6 +182,11 @@ impl Sealer {
             page_rows: self.page_rows,
             txids: self.txids.len() as u64,
             events: self.events,
+            inline_events: self
+                .scripts
+                .values()
+                .map(|count| u64::from((*count).min(INLINE_EVENTS)))
+                .sum(),
             blocks: match (self.start_height, self.last_height) {
                 (Some(start), Some(last)) => last - start + 1,
                 _ => 0,
@@ -211,12 +230,15 @@ impl Sealer {
 
         let mut scripts = self.scripts.len() as u64;
         let mut page_rows = self.page_rows;
+        let mut inline_events = self.occupancy().inline_events;
         for (script, added) in &added_scripts {
             let existing = self.scripts.get(*script).copied().unwrap_or(0);
             if existing == 0 {
                 scripts += 1;
             }
             page_rows += page_rows_for(existing + added) - page_rows_for(existing);
+            inline_events += u64::from((existing + added).min(INLINE_EVENTS))
+                - u64::from(existing.min(INLINE_EVENTS));
         }
         let txids = added_txids
             .iter()
@@ -229,6 +251,7 @@ impl Sealer {
             page_rows,
             txids,
             events: self.events + events.len() as u64,
+            inline_events,
             blocks: self.occupancy().blocks + 1,
         }
     }
@@ -334,7 +357,7 @@ impl Sealer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{EVENTS_PER_PAGE, INLINE_EVENTS};
+    use crate::layout::EVENTS_PER_PAGE;
     use transparent_events::ReceiveEvent;
 
     fn policy(scripts: (u64, u64), page_rows: (u64, u64)) -> SealPolicy {

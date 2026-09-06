@@ -58,10 +58,9 @@ fn parse_policy(text: &str) -> Result<SealPolicy, BoxError> {
 
 /// Candidate policies around the study's measured geometry.
 ///
-/// The directory holds 13 slots per row over two candidate buckets, so a
-/// 4,096-row directory accommodates roughly this many scripts with slack; the
-/// page and txid limits are set well clear so the sweep isolates one variable
-/// at a time.
+/// A directory segment holds 14 slots across 2,048 rows — 28,672 scripts — so
+/// every target below sits inside one segment with slack, and the sweep varies
+/// the script limit alone. Page rows are held fixed for the same reason.
 fn default_policies() -> Vec<(String, SealPolicy)> {
     [
         ("scripts 4k", 4_096u64),
@@ -105,6 +104,94 @@ fn describe(label: &str, values: &mut [u64]) {
         } else {
             sum / values.len() as u64
         }
+    );
+}
+
+/// How much of what a shard stores is real data.
+///
+/// Nothing else in the pipeline reports this. Every other check asserts the
+/// opposite property — that a table is the same size whatever it holds, which
+/// is what keeps a response from leaking its contents — so the cost of that
+/// padding is invisible unless it is measured here.
+///
+/// Three separate ratios, because they fail independently and the fix differs:
+/// how many rows of a pinned table are used at all, how full each used row is,
+/// and the two together against the bytes actually stored.
+fn utilisation(shards: &[SealedShard]) {
+    if shards.is_empty() {
+        return;
+    }
+    let n = shards.len() as u64;
+    let dir_rows_per_segment = transparent_shard::DIRECTORY_ROWS as u64;
+    let page_rows_per_segment = transparent_shard::PAGE_ROWS as u64;
+    let slots = transparent_shard::DIRECTORY_SLOTS as u64;
+    let per_page = transparent_shard::EVENTS_PER_PAGE as u64;
+
+    let scripts: u64 = shards.iter().map(|s| s.occupancy.scripts).sum();
+    let page_rows: u64 = shards.iter().map(|s| s.occupancy.page_rows).sum();
+    let paged: u64 = shards.iter().map(|s| s.occupancy.paged_events()).sum();
+
+    // A shard takes as many segments as its content needs, so pinned bytes are
+    // per shard rather than a constant.
+    let mut pinned = 0u64;
+    let mut dir_segments = 0u64;
+    let mut page_segments = 0u64;
+    for shard in shards {
+        let d = transparent_shard::layout::segments_for(
+            shard.occupancy.scripts.div_ceil(slots),
+            dir_rows_per_segment,
+        ) as u64;
+        let p = transparent_shard::layout::segments_for(
+            shard.occupancy.page_rows,
+            page_rows_per_segment,
+        ) as u64;
+        dir_segments += d;
+        page_segments += p;
+        pinned += d * dir_rows_per_segment * DIRECTORY_ROW_BYTES as u64
+            + p * page_rows_per_segment * PAGE_ROW_BYTES as u64;
+    }
+
+    // Live bytes: what a reader would actually get back if the padding were
+    // stripped. Directory entries carry their inline events, so those are not
+    // counted again as page content.
+    let live = scripts * transparent_shard::DIRECTORY_ENTRY_BYTES as u64
+        + page_rows * transparent_shard::layout::PAGE_HEADER_BYTES as u64
+        + paged * transparent_events::EVENT_BYTES as u64;
+
+    let dir_row_use = scripts.div_ceil(slots) as f64 / (dir_segments * dir_rows_per_segment) as f64;
+    let dir_fill = scripts as f64 / (dir_segments * dir_rows_per_segment * slots) as f64;
+    let page_row_use = page_rows as f64 / (page_segments * page_rows_per_segment) as f64;
+    let page_fill = if page_rows == 0 {
+        0.0
+    } else {
+        paged as f64 / (page_rows * per_page) as f64
+    };
+
+    println!("  utilisation");
+    println!(
+        "    directory   rows {:>5.1}%  slots {:>5.1}%  ({:.1} of {slots} per row, {} segments)",
+        dir_row_use * 100.0,
+        dir_fill * 100.0,
+        scripts as f64 / (dir_segments * dir_rows_per_segment) as f64,
+        dir_segments,
+    );
+    println!(
+        "    pages       rows {:>5.1}%  slots {:>5.1}%  ({:.1} of {per_page} per row, {} segments)",
+        page_row_use * 100.0,
+        page_fill * 100.0,
+        if page_rows == 0 {
+            0.0
+        } else {
+            paged as f64 / page_rows as f64
+        },
+        page_segments,
+    );
+    println!(
+        "    live bytes  {:.1} MB of {:.1} MB pinned = {:>5.2}%   ({:.1} MB per shard)",
+        live as f64 / 1e6,
+        pinned as f64 / 1e6,
+        live as f64 / pinned as f64 * 100.0,
+        pinned as f64 / n as f64 / 1e6,
     );
 }
 
@@ -178,6 +265,8 @@ fn report(name: &str, shards: &[SealedShard]) {
         filter_bytes as f64 / 1e6,
         shards.len()
     );
+
+    utilisation(shards);
 
     // Plaintext table bytes, if every shard is padded to the capacity its
     // policy pins. This is what the service stores and what its PIR
