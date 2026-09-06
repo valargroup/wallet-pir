@@ -52,7 +52,8 @@
 //! nothing for ordinary shards — the block that overran a capacity is above
 //! every target too, so the shard closes immediately after it.
 
-use crate::layout::{fragments_for, PackedDemand, INLINE_EVENTS};
+use crate::build::Placement;
+use crate::layout::{Geometry, PackedDemand};
 use crate::records::MAX_SCRIPT_BYTES;
 use std::collections::{HashMap, HashSet};
 use transparent_events::{TransparentEvent, Txid};
@@ -168,6 +169,23 @@ pub struct SealedShard {
     /// Which limit caused the seal. `None` for a shard closed by the end of the
     /// journal rather than by reaching a limit — that is the unsealed tail.
     pub reason: Option<SealReason>,
+    /// What two-choice placement actually costs this shard's script set.
+    ///
+    /// `None` unless the sealer was asked for it, because it is the one figure
+    /// here that is not free: it runs the placement rule over every script the
+    /// shard holds. It is computed at close and only the result is kept, so a
+    /// census gets the real segment count without holding a chain's worth of
+    /// scripts — which is the reason it is produced here rather than by a
+    /// caller that would have to retain them.
+    pub placement: Option<Placement>,
+    /// The indexable scripts this shard holds, in placement order.
+    ///
+    /// `None` unless the sealer was asked for them. A caller that asks **must
+    /// drain this as each shard is sealed**: it is one shard's scripts, which is
+    /// bounded, but a caller that keeps every sealed shard and never takes them
+    /// is holding the journal's whole script set, which over a genesis-to-tip
+    /// journal is not bounded by anything useful.
+    pub scripts: Option<Vec<Vec<u8>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,6 +208,18 @@ pub enum SealReason {
 pub struct Sealer {
     policy: SealPolicy,
     basis: PageBasis,
+    /// The geometry occupancy is counted against.
+    ///
+    /// Only the inline allowance is read here — it is what decides whether a
+    /// script's history reaches the page table, and therefore where a boundary
+    /// falls. The rest of the geometry is reporting, and belongs to the caller.
+    /// Defaults to the compiled constants, so a sealer that is not told
+    /// otherwise seals exactly as the publisher does.
+    geometry: Geometry,
+    /// Whether each closed shard reports its real directory placement.
+    measure_placement: bool,
+    /// Whether each closed shard carries its script set out with it.
+    retain_scripts: bool,
     next_shard_id: u64,
     /// Per-script event counts within the shard being accumulated.
     scripts: HashMap<Vec<u8>, u32>,
@@ -218,9 +248,27 @@ impl Sealer {
 
     /// A sealer that closes on `basis` rather than on the default.
     pub fn with_basis(policy: SealPolicy, first_height: u64, basis: PageBasis) -> Self {
+        Self::with_geometry(policy, first_height, basis, Geometry::default())
+    }
+
+    /// A sealer that counts occupancy against a geometry other than the
+    /// compiled one.
+    ///
+    /// For scoring a candidate. A published set must not be sealed this way
+    /// unless the builder was compiled to match, or the tables would be sized
+    /// for content they do not hold.
+    pub fn with_geometry(
+        policy: SealPolicy,
+        first_height: u64,
+        basis: PageBasis,
+        geometry: Geometry,
+    ) -> Self {
         Self {
             policy,
             basis,
+            geometry,
+            measure_placement: false,
+            retain_scripts: false,
             next_shard_id: 0,
             scripts: HashMap::new(),
             txids: HashSet::new(),
@@ -233,6 +281,25 @@ impl Sealer {
             next_expected: None,
             first_height,
         }
+    }
+
+    /// Asks each closed shard to report its real directory placement.
+    ///
+    /// Off by default. It costs a sort and a placement pass over the shard's
+    /// scripts, which is worth paying to answer how much headroom a seal target
+    /// really has and not worth paying to publish, where the builder places
+    /// them anyway.
+    pub fn measure_placement(&mut self, on: bool) {
+        self.measure_placement = on;
+    }
+
+    /// Asks each closed shard to carry its indexable script set out with it.
+    ///
+    /// For a caller counting how many shards each script appears in, which
+    /// cannot be derived from occupancy counts. See [`SealedShard::scripts`] for
+    /// the draining obligation this creates.
+    pub fn retain_scripts(&mut self, on: bool) {
+        self.retain_scripts = on;
     }
 
     /// The page figure a limit is compared against.
@@ -272,8 +339,46 @@ impl Sealer {
         self.last_height = None;
     }
 
+    /// Runs the builder's placement rule over the scripts this shard holds.
+    ///
+    /// Only the scripts a directory entry can hold, in lexicographic raw-byte
+    /// order — the two things the builder does, and both of them matter. A
+    /// script too long to index is filtered publicly but never placed, and
+    /// placement in any other order is a different placement.
+    fn placeable(&self) -> Vec<&[u8]> {
+        let mut placeable: Vec<&[u8]> = self
+            .scripts
+            .keys()
+            .map(|script| script.as_slice())
+            .filter(|script| script.len() <= MAX_SCRIPT_BYTES)
+            .collect();
+        placeable.sort_unstable();
+        placeable
+    }
+
+    fn placement(&self) -> Placement {
+        let placeable = self.placeable();
+        crate::build::place_scripts(
+            self.next_shard_id,
+            &placeable,
+            self.geometry.directory_rows,
+            self.geometry.directory_slots(),
+        )
+        // The rule adds a segment until everything fits and the cap is a
+        // bug-catcher far above any reachable load, so a census reaching it is
+        // a defect in the rule rather than a property of the journal.
+        .unwrap_or_else(|script| panic!("placement gave up on script {script}"))
+    }
+
     fn close(&mut self, reason: Option<SealReason>) -> SealedShard {
         let shard = SealedShard {
+            placement: self.measure_placement.then(|| self.placement()),
+            scripts: self.retain_scripts.then(|| {
+                self.placeable()
+                    .into_iter()
+                    .map(|script| script.to_vec())
+                    .collect()
+            }),
             shard_id: self.next_shard_id,
             start_height: self.start_height.expect("a shard being closed has a start"),
             end_height: self.last_height.expect("a shard being closed has an end"),
@@ -306,11 +411,13 @@ impl Sealer {
             if existing == 0 {
                 scripts += 1;
             }
-            fragments += fragments_for(existing + added) - fragments_for(existing);
-            inline_events += u64::from((existing + added).min(INLINE_EVENTS))
-                - u64::from(existing.min(INLINE_EVENTS));
+            let inline = self.geometry.inline_events;
+            fragments += self.geometry.fragments_for(existing + added)
+                - self.geometry.fragments_for(existing);
+            inline_events +=
+                u64::from((existing + added).min(inline)) - u64::from(existing.min(inline));
             if script.len() <= MAX_SCRIPT_BYTES {
-                demand.shift(existing, existing + added);
+                demand.shift_inline(existing, existing + added, inline);
             }
         }
         let txids = added_txids
@@ -380,14 +487,15 @@ impl Sealer {
         for (script, added) in added {
             let existing = self.scripts.get(script).copied().unwrap_or(0);
             let updated = existing + added;
-            self.fragments += fragments_for(updated) - fragments_for(existing);
-            self.inline_events +=
-                u64::from(updated.min(INLINE_EVENTS)) - u64::from(existing.min(INLINE_EVENTS));
+            let inline = self.geometry.inline_events;
+            self.fragments +=
+                self.geometry.fragments_for(updated) - self.geometry.fragments_for(existing);
+            self.inline_events += u64::from(updated.min(inline)) - u64::from(existing.min(inline));
             // A script too long for a directory entry is filtered publicly but
             // never paged, so it contributes no packed rows. `page_rows` still
             // counts it, which is the v4 behaviour this projection rides on.
             if script.len() <= MAX_SCRIPT_BYTES {
-                self.demand.shift(existing, updated);
+                self.demand.shift_inline(existing, updated, inline);
             }
             self.scripts.insert(script.to_vec(), updated);
         }
@@ -454,7 +562,7 @@ impl Sealer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::EVENTS_PER_PAGE;
+    use crate::layout::{fragments_for, EVENTS_PER_PAGE, INLINE_EVENTS};
     use transparent_events::ReceiveEvent;
 
     fn policy(scripts: (u64, u64), page_rows: (u64, u64)) -> SealPolicy {
@@ -489,6 +597,125 @@ mod tests {
                 coinbase: false,
             }),
         )
+    }
+
+    /// A sealer told a different inline allowance counts a different table.
+    ///
+    /// This is the whole point of a scoring geometry: the allowance decides
+    /// whether a history reaches the page table at all, so two sealers fed the
+    /// identical journal disagree about page demand — and, once a limit binds,
+    /// about where the boundary falls. A sealer that ignored its geometry would
+    /// pass every other test in this file.
+    #[test]
+    fn the_inline_allowance_changes_what_a_shard_is_counted_to_hold() {
+        // Three events per script: one page row each at the compiled allowance
+        // of two, none at three, and three paged events each at zero.
+        let block: Vec<_> = (0..10u32)
+            .flat_map(|tag| (0..3u32).map(move |nonce| event(1, tag, nonce)))
+            .collect();
+
+        let mut counted = Vec::new();
+        for inline in [0u32, 2, 3] {
+            let geometry = Geometry {
+                inline_events: inline,
+                ..Default::default()
+            };
+            let mut sealer = Sealer::with_geometry(generous(), 1, PageBasis::Packed, geometry);
+            sealer.push_block(1, &block).expect("valid block");
+            let occupancy = sealer.finish().expect("a tail").occupancy;
+            assert_eq!(occupancy.scripts, 10, "the script set does not move");
+            assert_eq!(occupancy.events, 30);
+            counted.push((
+                occupancy.inline_events,
+                occupancy.fragments,
+                occupancy.packed_page_rows,
+            ));
+        }
+
+        // Zero inline: every event is paged, ten class-3 histories, ten of
+        // which share a row at 10 per row.
+        assert_eq!(counted[0], (0, 10, 1));
+        // Two inline: twenty events stay inline, ten class-1 histories, all of
+        // which fit one row at 22 per row.
+        assert_eq!(counted[1], (20, 10, 1));
+        // Three inline: nothing is paged at all, which is the case the
+        // allowance exists to buy.
+        assert_eq!(counted[2], (30, 0, 0));
+    }
+
+    /// Real placement is worse than `scripts / slots`, and that gap is the
+    /// point of measuring it.
+    ///
+    /// The modelled figure assumes every row fills evenly. Two choices per
+    /// script make the load far more even than one would, but not even: the
+    /// fullest row still runs well ahead of the mean, and it is the fullest row,
+    /// not the mean, that decides when a second segment appears and doubles what
+    /// every wallet pays for that shard.
+    #[test]
+    fn placement_costs_more_than_dividing_scripts_by_slots() {
+        let geometry = Geometry::default();
+        let slots = geometry.directory_slots();
+        // A tenth of a segment's capacity, which the model would place in a
+        // tenth of its rows at exactly `slots` each.
+        let scripts = geometry.directory_capacity() / 10;
+
+        let mut sealer = Sealer::with_geometry(generous(), 1, PageBasis::default(), geometry);
+        sealer.measure_placement(true);
+        let block: Vec<_> = (0..scripts as u32).map(|tag| event(1, tag, 0)).collect();
+        sealer.push_block(1, &block).expect("valid block");
+        let sealed = sealer.finish().expect("a tail");
+
+        let placement = sealed.placement.expect("placement was asked for");
+        assert_eq!(sealed.occupancy.scripts, scripts);
+        assert_eq!(placement.segments, 1, "a tenth of a segment fits in one");
+        let mean = scripts as f64 / geometry.directory_rows as f64;
+        assert!(
+            placement.max_row_load as f64 > mean,
+            "fullest row {} should exceed the mean {mean:.2}",
+            placement.max_row_load
+        );
+        assert!(
+            placement.max_row_load <= slots,
+            "a placement that fit cannot have overrun a row"
+        );
+    }
+
+    /// More scripts than a directory segment holds takes another, and the
+    /// sealer's count is the builder's count.
+    #[test]
+    fn a_script_set_past_one_segment_places_into_two() {
+        // A geometry small enough to overrun cheaply: one inline event gives 23
+        // slots a row, and 2,048 rows of them is 47,104 scripts.
+        let geometry = Geometry {
+            inline_events: 1,
+            ..Default::default()
+        };
+        let scripts = geometry.directory_capacity() + 1;
+
+        let mut sealer = Sealer::with_geometry(generous(), 1, PageBasis::default(), geometry);
+        sealer.measure_placement(true);
+        let block: Vec<_> = (0..scripts as u32).map(|tag| event(1, tag, 0)).collect();
+        sealer.push_block(1, &block).expect("valid block");
+        let placement = sealer
+            .finish()
+            .expect("a tail")
+            .placement
+            .expect("placement was asked for");
+        assert!(
+            placement.segments >= 2,
+            "{scripts} scripts cannot fit {} slots",
+            geometry.directory_capacity()
+        );
+    }
+
+    /// Placement is off unless asked for, so publishing pays nothing for it.
+    #[test]
+    fn placement_is_not_measured_unless_it_is_asked_for() {
+        let mut sealer = Sealer::new(generous(), 1);
+        sealer
+            .push_block(1, &[event(1, 0, 0)])
+            .expect("valid block");
+        assert_eq!(sealer.finish().expect("a tail").placement, None);
     }
 
     /// The single shard a push was expected to seal.

@@ -223,6 +223,32 @@ fn compare(recovered: &Ledger, expected: &Ledger) -> Result<(), String> {
     Ok(())
 }
 
+/// One table's share of a workload's private cost.
+///
+/// Reported alongside the aggregates rather than instead of them, so a new run
+/// stays comparable with the archived measurements while also showing where a
+/// geometry change moved the cost.
+#[derive(serde::Serialize)]
+struct TableShare {
+    segments_opened: u64,
+    queries: u64,
+    setup_bytes: u64,
+    query_upload: u64,
+    query_download: u64,
+}
+
+impl From<transparent_wallet::TableCharges> for TableShare {
+    fn from(charges: transparent_wallet::TableCharges) -> Self {
+        Self {
+            segments_opened: charges.segments_opened,
+            queries: charges.queries,
+            setup_bytes: charges.setup_bytes,
+            query_upload: charges.query_upload,
+            query_download: charges.query_download,
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 struct Measurement {
     workload: String,
@@ -242,6 +268,8 @@ struct Measurement {
     setup_bytes: u64,
     query_upload: u64,
     query_download: u64,
+    directory: TableShare,
+    pages: TableShare,
     total_bytes: u64,
     public_floor_bytes: u64,
     elapsed_seconds: f64,
@@ -370,13 +398,15 @@ async fn main() -> Result<(), BoxError> {
             matched_shards: outcome.matched_shards.len(),
             unproductive_matches: outcome.unproductive_matches,
             filters_checked: charges.filters_checked,
-            shards_opened: charges.shards_opened,
-            queries: charges.queries,
+            shards_opened: charges.shards_opened(),
+            queries: charges.queries(),
             map_bytes: charges.map_bytes,
             filter_bytes: charges.filter_bytes,
-            setup_bytes: charges.setup_bytes,
-            query_upload: charges.query_upload,
-            query_download: charges.query_download,
+            setup_bytes: charges.setup_bytes(),
+            query_upload: charges.query_upload(),
+            query_download: charges.query_download(),
+            directory: charges.directory.into(),
+            pages: charges.pages.into(),
             total_bytes: charges.total(),
             public_floor_bytes: charges.public_floor(),
             elapsed_seconds: elapsed,

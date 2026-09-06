@@ -466,8 +466,13 @@ fn byte_accounting_separates_the_unconditional_floor_from_the_gated_work() {
     assert_eq!(charges.filters_checked, SHARDS);
     assert_eq!(charges.public_floor(), charges.total());
 
-    charges.add_query(100_000, 5_000);
-    assert_eq!(charges.queries, 1);
+    charges.add_query(transparent_wallet::client::Table::Directory, 100_000, 5_000);
+    assert_eq!(charges.queries(), 1);
+    assert_eq!(charges.directory.queries, 1);
+    assert_eq!(
+        charges.pages.queries, 0,
+        "a directory query is not a page query"
+    );
     assert!(charges.total() > charges.public_floor());
     assert_eq!(
         charges.total() - charges.public_floor(),

@@ -422,8 +422,7 @@ fn open_table(
         let (raw, cost) = transport
             .setup(shard_id, table, segment)
             .map_err(|error| SyncError::Transport(error.to_string()))?;
-        charges.setup_bytes += cost;
-        charges.shards_opened += 1;
+        charges.add_setup(table, cost);
         let parsed: serde_json::Value = serde_json::from_slice(&raw)
             .map_err(|error| SyncError::Transport(error.to_string()))?;
         let params = parsed["public_params"]

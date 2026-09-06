@@ -36,9 +36,18 @@ use transparent_events::{EventError, TransparentEvent, EVENT_BYTES};
 /// excluded, so the gap is visible and measured instead of silent.
 pub const MAX_SCRIPT_BYTES: usize = 40;
 
+/// Bytes of an entry before its inline events.
+///
+/// Split out from [`DIRECTORY_ENTRY_BYTES`] because the inline allowance is the
+/// only part of an entry a geometry sweep can move, and the rest is what it
+/// cannot: the script it is keyed by, its length, and the locators. At two
+/// inline events the header is 56 bytes of a 248-byte entry, so 77% of the
+/// directory's width is the events it carries to save a page query.
+pub const DIRECTORY_ENTRY_HEADER_BYTES: usize = 2 + MAX_SCRIPT_BYTES + 4 + 1 + 1 + 4 + 4;
+
 /// Bytes in one directory entry.
 pub const DIRECTORY_ENTRY_BYTES: usize =
-    2 + MAX_SCRIPT_BYTES + 4 + 1 + 1 + 4 + 4 + INLINE_EVENTS as usize * EVENT_BYTES;
+    DIRECTORY_ENTRY_HEADER_BYTES + INLINE_EVENTS as usize * EVENT_BYTES;
 
 /// Bytes at the head of a directory row, before its entries.
 pub const DIRECTORY_ROW_HEADER_BYTES: usize = 4;

@@ -9,13 +9,16 @@
 //! worth its complexity at all. Then, for each candidate policy, the shard
 //! boundaries it yields and how full those shards get.
 //!
-//! Read-only. It opens the journal, streams it, and writes nothing.
+//! Read-only by default: it opens the journal, streams it, and writes nothing.
+//! The one exception is `--shard-matches`, which spills sorted runs to a
+//! directory the caller names and removes them when it has merged them.
 
 use clap::Parser;
 use std::path::PathBuf;
 use transparent_filter_server::events::EventStore;
+use transparent_filter_server::shard_matches::MatchCounter;
 use transparent_shard::layout::{
-    entries_per_row, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
+    entries_per_row, Geometry, EVENTS_PER_PAGE, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
 use transparent_shard::seal::{Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer};
 
@@ -55,6 +58,54 @@ struct Cli {
     /// for routine capacity, because a wallet must query every one of them.
     #[arg(long)]
     page_rows_per_segment: Option<u64>,
+    /// Directory rows per segment to score against.
+    ///
+    /// Reporting only, on the same terms as `--page-rows-per-segment`. The
+    /// scheme pads a row count up to a multiple of 2,048 and refuses fewer, so
+    /// the compiled 2,048 is its floor and this can only go up. What it buys is
+    /// scripts per shard, and therefore fewer shards for a wallet to open;
+    /// what it costs is the row-count term of every directory query upload,
+    /// which at 2,048 rows is 10,240 bytes of 96,264.
+    #[arg(long)]
+    directory_rows_per_segment: Option<u64>,
+    /// Directory row bytes to score against.
+    ///
+    /// Quantised: the scheme charges in whole instances of 3,584 bytes, so the
+    /// only step up is 7,168, and it doubles both the query response and the
+    /// published setup. Slots per row are derived from this and the inline
+    /// allowance, never set directly.
+    #[arg(long)]
+    directory_row_bytes: Option<usize>,
+    /// Events carried inline in a directory entry, to score against.
+    ///
+    /// Unlike the two above this changes *boundaries*, not just arithmetic: the
+    /// allowance decides whether a history reaches the page table, so it moves
+    /// page demand and the shard limit that binds. It is also what buys
+    /// directory slots — one inline event gives 23 per row against 14, two
+    /// gives 14, three gives 10.
+    #[arg(long)]
+    inline_events: Option<u32>,
+    /// Run the real two-choice placer over each shard's scripts.
+    ///
+    /// Off by default because it costs a sort and a placement pass per shard,
+    /// and because leaving it off is what keeps a default run comparable with
+    /// the archived censuses. On, it replaces the one modelled figure in this
+    /// report — `scripts / slots` — with what the builder would actually do,
+    /// and reports how much headroom the fullest row has left.
+    #[arg(long)]
+    placement: bool,
+    /// Count how many shards each exact script appears in, spilling sorted runs
+    /// under this directory.
+    ///
+    /// The one thing this tool writes, which is why it takes a path rather than
+    /// choosing one. A script active in `g` shards costs `2 * g` directory
+    /// queries to restore, so this is what turns a boundary policy into a
+    /// wallet's bill — and it cannot be derived from the occupancy counts,
+    /// which say what a shard holds rather than how many shards hold a script.
+    /// Disk is proportional to script-shard occurrences; the runs are removed
+    /// when the merge completes.
+    #[arg(long, value_name = "DIR")]
+    shard_matches: Option<PathBuf>,
 }
 
 fn parse_limit(text: &str) -> Result<Limit, BoxError> {
@@ -140,13 +191,14 @@ fn describe(label: &str, values: &mut [u64]) {
 /// Three separate ratios, because they fail independently and the fix differs:
 /// how many rows of a pinned table are used at all, how full each used row is,
 /// and the two together against the bytes actually stored.
-fn utilisation(shards: &[SealedShard], page_rows_per_segment: u64) {
+fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
     if shards.is_empty() {
         return;
     }
     let n = shards.len() as u64;
-    let dir_rows_per_segment = transparent_shard::DIRECTORY_ROWS as u64;
-    let slots = transparent_shard::DIRECTORY_SLOTS as u64;
+    let page_rows_per_segment = geometry.page_rows;
+    let dir_rows_per_segment = geometry.directory_rows;
+    let slots = geometry.directory_slots();
     let per_page = transparent_shard::EVENTS_PER_PAGE as u64;
 
     let scripts: u64 = shards.iter().map(|s| s.occupancy.scripts).sum();
@@ -155,7 +207,8 @@ fn utilisation(shards: &[SealedShard], page_rows_per_segment: u64) {
 
     // A shard takes as many segments as its content needs, so pinned bytes are
     // per shard rather than a constant.
-    let mut pinned = 0u64;
+    let mut dir_pinned = 0u64;
+    let mut page_pinned = 0u64;
     let mut dir_segments = 0u64;
     let mut page_segments = 0u64;
     for shard in shards {
@@ -169,14 +222,15 @@ fn utilisation(shards: &[SealedShard], page_rows_per_segment: u64) {
         ) as u64;
         dir_segments += d;
         page_segments += p;
-        pinned += d * dir_rows_per_segment * DIRECTORY_ROW_BYTES as u64
-            + p * page_rows_per_segment * PAGE_ROW_BYTES as u64;
+        dir_pinned += d * geometry.directory_bytes_per_segment();
+        page_pinned += p * geometry.page_bytes_per_segment();
     }
+    let pinned = dir_pinned + page_pinned;
 
     // Live bytes: what a reader would actually get back if the padding were
     // stripped. Directory entries carry their inline events, so those are not
     // counted again as page content.
-    let live = scripts * transparent_shard::DIRECTORY_ENTRY_BYTES as u64
+    let live = scripts * geometry.directory_entry_bytes() as u64
         + page_rows * transparent_shard::layout::PAGE_HEADER_BYTES as u64
         + paged * transparent_events::EVENT_BYTES as u64;
 
@@ -215,6 +269,89 @@ fn utilisation(shards: &[SealedShard], page_rows_per_segment: u64) {
         live as f64 / pinned as f64 * 100.0,
         pinned as f64 / n as f64 / 1e6,
     );
+    // Split, because the two tables answer to different limits and a geometry
+    // change moves bytes between them. At the compiled geometry the directory
+    // is a fifth of the total, which is why a page-row decision has dominated
+    // the pinned-byte argument and a directory-row decision will not.
+    println!(
+        "    pinned split  directory {:.1} MB ({:>4.1}%), pages {:.1} MB ({:>4.1}%)",
+        dir_pinned as f64 / 1e6,
+        dir_pinned as f64 / pinned as f64 * 100.0,
+        page_pinned as f64 / 1e6,
+        page_pinned as f64 / pinned as f64 * 100.0,
+    );
+    placement(shards, geometry, dir_segments);
+}
+
+/// What the real two-choice placer does with the same script sets.
+///
+/// Everything above models the directory as `scripts / slots`, which is what
+/// placement would cost if rows filled evenly. They do not, and the difference
+/// is the entire question of how close to a segment's capacity a script target
+/// may sit: the fullest row is what adds a segment, and a segment doubles the
+/// directory query and setup cost of every wallet that touches the shard.
+///
+/// Silent when no shard was asked for its placement, so the default run is
+/// unchanged and remains comparable with the archived censuses.
+fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64) {
+    let placed: Vec<(&SealedShard, transparent_shard::build::Placement)> = shards
+        .iter()
+        .filter_map(|shard| shard.placement.map(|p| (shard, p)))
+        .collect();
+    if placed.is_empty() {
+        return;
+    }
+    let slots = geometry.directory_slots();
+    let real_segments: u64 = placed.iter().map(|(_, p)| p.segments as u64).sum();
+    let stacked = placed.iter().filter(|(_, p)| p.segments > 1).count();
+
+    // Row loads are what placement *settled* at, so a shard that overflowed and
+    // took another segment reports its load over the larger row space — a low
+    // number there means it stacked, not that it had room. Headroom is
+    // therefore read only off the shards that fit one segment, and the stacked
+    // count is what says whether that population is the whole set.
+    let mut loads: Vec<u64> = placed
+        .iter()
+        .filter(|(_, p)| p.segments == 1)
+        .map(|(_, p)| p.max_row_load)
+        .collect();
+    loads.sort_unstable();
+    let (worst, worst_shard) = placed
+        .iter()
+        .filter(|(_, p)| p.segments == 1)
+        .map(|(shard, p)| (p.max_row_load, shard.shard_id))
+        .max()
+        .unwrap_or((0, 0));
+
+    println!("  placement (the real two-choice placer, not scripts / slots)");
+    println!(
+        "    segments     {real_segments} placed against {modelled_segments} modelled; \
+{stacked} of {} shards need more than one",
+        placed.len()
+    );
+    if loads.is_empty() {
+        println!("    fullest row  no shard placed in one segment");
+    } else {
+        println!(
+            "    fullest row  {worst} of {slots} in shard {worst_shard}, p50 {}, p95 {} \
+(over the {} shards that fit one segment)",
+            percentile(&loads, 50.0),
+            percentile(&loads, 95.0),
+            loads.len(),
+        );
+    }
+    if stacked > 0 {
+        println!(
+            "    this script target has no placement headroom: {stacked} shards overflowed a \
+directory segment, and each added segment doubles the directory query and setup cost of every \
+wallet that touches that shard"
+        );
+    } else if worst + 1 >= slots {
+        println!(
+            "    the fullest row is one entry short of its slot count: this target is at the \
+edge of needing a second segment"
+        );
+    }
 }
 
 /// What the same content would cost with short histories packed into shared rows.
@@ -229,18 +366,14 @@ fn utilisation(shards: &[SealedShard], page_rows_per_segment: u64) {
 /// placement is modelled as `scripts / slots` rather than run through the real
 /// two-choice placer, so directory segment counts are a lower bound; and
 /// encoding overhead is a modelled constant rather than emitted bytes.
-fn projection(
-    shards: &[SealedShard],
-    policy: &SealPolicy,
-    page_rows_per_segment: u64,
-    basis: PageBasis,
-) {
+fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, basis: PageBasis) {
     if shards.is_empty() {
         return;
     }
     let per_row = PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES;
-    let dir_rows_per_segment = transparent_shard::DIRECTORY_ROWS as u64;
-    let slots = transparent_shard::DIRECTORY_SLOTS as u64;
+    let page_rows_per_segment = geometry.page_rows;
+    let dir_rows_per_segment = geometry.directory_rows;
+    let slots = geometry.directory_slots();
 
     println!();
     println!("  === PROJECTION ONLY — arithmetic over per-script event counts. No v5");
@@ -315,7 +448,7 @@ fn projection(
     // header per used row, and the events themselves.
     let scripts: u64 = shards.iter().map(|s| s.occupancy.scripts).sum();
     let paged: u64 = shards.iter().map(|s| s.occupancy.paged_events()).sum();
-    let live = scripts * transparent_shard::DIRECTORY_ENTRY_BYTES as u64
+    let live = scripts * geometry.directory_entry_bytes() as u64
         + fragments * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
         + packed * PAGE_ROW_HEADER_BYTES as u64
         + paged * transparent_events::EVENT_BYTES as u64;
@@ -333,8 +466,8 @@ fn projection(
         ) as u64;
         dir_segments += d;
         page_segments += g;
-        pinned += d * dir_rows_per_segment * DIRECTORY_ROW_BYTES as u64
-            + g * page_rows_per_segment * PAGE_ROW_BYTES as u64;
+        pinned +=
+            d * geometry.directory_bytes_per_segment() + g * geometry.page_bytes_per_segment();
     }
 
     // Row fill is measured in bytes, not events. Once a row mixes classes,
@@ -404,7 +537,7 @@ fn report(
     name: &str,
     shards: &[SealedShard],
     policy: &SealPolicy,
-    page_rows_per_segment: u64,
+    geometry: &Geometry,
     basis: PageBasis,
 ) {
     let sealed: Vec<&SealedShard> = shards.iter().filter(|s| s.reason.is_some()).collect();
@@ -477,8 +610,8 @@ fn report(
         shards.len()
     );
 
-    utilisation(shards, page_rows_per_segment);
-    projection(shards, policy, page_rows_per_segment, basis);
+    utilisation(shards, geometry);
+    projection(shards, policy, geometry, basis);
 
     // Plaintext table bytes, if every shard is padded to the capacity its
     // policy pins. This is what the service stores and what its PIR
@@ -495,8 +628,7 @@ fn report(
         .unwrap_or(0);
     let max_txids = shards.iter().map(|s| s.occupancy.txids).max().unwrap_or(0);
     println!("  observed maxima: scripts {max_scripts}, fragments {max_pages}, txids {max_txids}");
-    let per_shard = transparent_shard::DIRECTORY_ROWS as u64 * DIRECTORY_ROW_BYTES as u64
-        + page_rows_per_segment * PAGE_ROW_BYTES as u64;
+    let per_shard = geometry.directory_bytes_per_segment() + geometry.page_bytes_per_segment();
     println!(
         "  pinned plaintext per shard ~{:.0} MB, fleet ~{:.1} GB",
         per_shard as f64 / 1e6,
@@ -537,19 +669,74 @@ fn main() -> Result<(), BoxError> {
     // the same "every policy sees exactly the same input" property for the cost
     // of one block at a time, and a second pass would buy nothing because the
     // run is dominated by reading and decoding the journal.
-    let page_rows_per_segment = cli
-        .page_rows_per_segment
-        .unwrap_or(transparent_shard::PAGE_ROWS as u64);
+    let compiled = Geometry::default();
+    let geometry = Geometry {
+        directory_rows: cli
+            .directory_rows_per_segment
+            .unwrap_or(compiled.directory_rows),
+        directory_row_bytes: cli
+            .directory_row_bytes
+            .unwrap_or(compiled.directory_row_bytes),
+        page_rows: cli.page_rows_per_segment.unwrap_or(compiled.page_rows),
+        inline_events: cli.inline_events.unwrap_or(compiled.inline_events),
+    };
+    // A candidate the scheme would round up is a candidate whose reported cost
+    // is not its cost, so it is refused rather than scored.
+    geometry.validate()?;
+    let page_rows_per_segment = geometry.page_rows;
     let basis = if cli.packed {
         PageBasis::Packed
     } else {
         PageBasis::Fragments
     };
-    if page_rows_per_segment != transparent_shard::PAGE_ROWS as u64 {
+    if geometry != compiled {
         println!(
-            "\nscoring against {page_rows_per_segment} page rows per segment rather than the \
-compiled {}; segment and pinned-byte figures follow the override, nothing built does",
-            transparent_shard::PAGE_ROWS
+            "\nscoring against {} directory rows x {} slots ({} scripts, {} B rows, {} inline \
+events) and {} page rows, rather than the compiled {} x {} ({} scripts) and {}",
+            geometry.directory_rows,
+            geometry.directory_slots(),
+            geometry.directory_capacity(),
+            geometry.directory_row_bytes,
+            geometry.inline_events,
+            geometry.page_rows,
+            compiled.directory_rows,
+            compiled.directory_slots(),
+            compiled.directory_capacity(),
+            compiled.page_rows,
+        );
+        // The inline allowance is the one override that is not merely
+        // arithmetic: it decides whether a history is paged, so it moves the
+        // boundaries themselves. Saying so is the difference between a figure
+        // that can be compared with the compiled run and one that cannot.
+        if geometry.inline_events != compiled.inline_events {
+            println!(
+                "  the inline allowance moves the boundaries, not just the arithmetic: these \
+shards are not the compiled run's shards rescored"
+            );
+        } else {
+            println!("  segment and pinned-byte figures follow the override, nothing built does");
+        }
+    }
+    // A policy whose script capacity exceeds a directory segment can seal into
+    // a second one as a matter of routine, which is the one thing segments must
+    // not be used for. This warns rather than refusing, unlike the page check
+    // below, because the default sweep sets capacity to twice its target
+    // deliberately — an inert ceiling, so that only the target bites — and
+    // refusing it would make the tool unable to reproduce its own archived
+    // runs. Whether the ceiling was reached is reported per policy either way,
+    // in the directory segment count.
+    let over: Vec<&str> = policies
+        .iter()
+        .filter(|(_, policy)| policy.scripts.capacity > geometry.directory_capacity())
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if !over.is_empty() {
+        println!(
+            "\nnote: {} allow more scripts than the {} a directory segment holds; \
+a shard that reached that ceiling would need a second directory segment. Check the \
+directory segment counts below before reading any of them as a single-segment result.",
+            over.join(", "),
+            geometry.directory_capacity(),
         );
     }
     if matches!(basis, PageBasis::Packed) {
@@ -572,17 +759,36 @@ fragment, so this measures a geometry rather than describing a set that could be
         }
     }
 
+    // Where the shard-match counter spills its sorted runs. A directory the
+    // operator names, because this is the one thing the census writes and it
+    // should not invent a location for it.
+    let spill = cli.shard_matches.as_deref();
+    if let Some(dir) = spill {
+        std::fs::create_dir_all(dir)?;
+        println!(
+            "\ncounting shard matches per script, spilling sorted runs under {}",
+            dir.display()
+        );
+    }
+
     struct Run {
         name: String,
         policy: SealPolicy,
         sealer: Sealer,
         shards: Vec<SealedShard>,
+        matches: Option<MatchCounter>,
     }
     let mut runs: Vec<Run> = policies
         .into_iter()
         .map(|(name, policy)| Run {
+            sealer: {
+                let mut sealer = Sealer::with_geometry(policy, first, basis, geometry);
+                sealer.measure_placement(cli.placement);
+                sealer.retain_scripts(spill.is_some());
+                sealer
+            },
+            matches: spill.map(|dir| MatchCounter::new(dir, &name)),
             name,
-            sealer: Sealer::with_basis(policy, first, basis),
             policy,
             shards: Vec::new(),
         })
@@ -613,20 +819,41 @@ fragment, so this measures a geometry rather than describing a set that could be
         }
 
         for run in &mut runs {
-            run.shards.extend(run.sealer.push_block(height, &events)?);
+            let sealed = run.sealer.push_block(height, &events)?;
+            drain_scripts(&mut run.matches, sealed, &mut run.shards)?;
         }
     }
 
     for run in &mut runs {
-        run.shards.extend(run.sealer.finish());
-        report(
-            &run.name,
-            &run.shards,
-            &run.policy,
-            page_rows_per_segment,
-            basis,
-        );
+        let sealed: Vec<SealedShard> = run.sealer.finish().into_iter().collect();
+        drain_scripts(&mut run.matches, sealed, &mut run.shards)?;
+        report(&run.name, &run.shards, &run.policy, &geometry, basis);
+        if let Some(counter) = run.matches.take() {
+            counter.finish()?.report();
+        }
     }
 
+    Ok(())
+}
+
+/// Feeds each sealed shard's scripts to the counter and drops them.
+///
+/// The dropping is the point. [`SealedShard::scripts`] is one shard's set,
+/// which is bounded; keeping every shard's would hold the journal's whole
+/// script set, and this census exists partly because an earlier version could
+/// not survive a genesis-to-tip journal in memory.
+fn drain_scripts(
+    matches: &mut Option<MatchCounter>,
+    sealed: Vec<SealedShard>,
+    into: &mut Vec<SealedShard>,
+) -> Result<(), BoxError> {
+    for mut shard in sealed {
+        if let (Some(scripts), Some(counter)) = (shard.scripts.take(), matches.as_mut()) {
+            for script in scripts {
+                counter.record(&script)?;
+            }
+        }
+        into.push(shard);
+    }
     Ok(())
 }

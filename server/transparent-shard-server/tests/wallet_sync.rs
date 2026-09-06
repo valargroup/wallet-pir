@@ -505,18 +505,18 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
         outcome.charges.filters_checked, SHARDS,
         "every filter in range is downloaded, matched or not"
     );
-    assert!(outcome.charges.queries > 0);
+    assert!(outcome.charges.queries() > 0);
     assert!(outcome.charges.filter_bytes > 0);
-    assert!(outcome.charges.setup_bytes > 0);
+    assert!(outcome.charges.setup_bytes() > 0);
 
     eprintln!(
         "sync: shards {:?} filters {} B, setup {} B, queries {} ({} up, {} down), total {} B",
         outcome.matched_shards,
         outcome.charges.filter_bytes,
-        outcome.charges.setup_bytes,
-        outcome.charges.queries,
-        outcome.charges.query_upload,
-        outcome.charges.query_download,
+        outcome.charges.setup_bytes(),
+        outcome.charges.queries(),
+        outcome.charges.query_upload(),
+        outcome.charges.query_download(),
         outcome.charges.total()
     );
 }
@@ -587,7 +587,11 @@ async fn a_shard_whose_pages_need_two_segments_syncs_exactly() {
 
     // One setup per segment: the directory's one, and the pages' two. That is
     // the cost the segment path adds, and it is what the analysis must carry.
-    assert_eq!(outcome.charges.shards_opened, 3);
+    // Stated per table, because "three setups" alone would also be satisfied by
+    // a wallet that split them the other way round.
+    assert_eq!(outcome.charges.directory.segments_opened, 1);
+    assert_eq!(outcome.charges.pages.segments_opened, 2);
+    assert_eq!(outcome.charges.shards_opened(), 3);
     assert_eq!(outcome.covered_through, FIRST + SPAN - 1);
 }
 
@@ -721,10 +725,11 @@ async fn an_unused_wallet_pays_only_the_public_floor() {
     assert!(outcome.ledger.utxos().next().is_none());
     assert!(outcome.matched_shards.is_empty());
     assert_eq!(
-        outcome.charges.queries, 0,
+        outcome.charges.queries(),
+        0,
         "no private work without a match"
     );
-    assert_eq!(outcome.charges.setup_bytes, 0, "no shard is even opened");
+    assert_eq!(outcome.charges.setup_bytes(), 0, "no shard is even opened");
     assert_eq!(outcome.charges.filters_checked, SHARDS);
     assert_eq!(
         outcome.charges.total(),

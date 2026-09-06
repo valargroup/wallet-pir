@@ -280,6 +280,73 @@ pub fn build_shard(
     })
 }
 
+/// What two-choice placement costs a script set.
+///
+/// The census reports this instead of `scripts / slots`, which is the segment
+/// count placement would need if every row filled evenly. It never does: two
+/// choices per script still leave the fullest row well above the mean, and the
+/// difference is not a rounding error but the whole question of how close to a
+/// segment's slot count a seal target may safely sit. A modelled count is a
+/// lower bound; this is the count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placement {
+    /// Segments the placement rule needed.
+    pub segments: u32,
+    /// Entries in the fullest row.
+    ///
+    /// The headroom that matters. A shard whose fullest row sits at the slot
+    /// count placed only because some script happened to have a usable second
+    /// choice, and the next script to arrive is what adds a segment — which
+    /// every wallet querying that shard then pays for.
+    pub max_row_load: u64,
+}
+
+/// Runs the placement rule over a script set without building anything.
+///
+/// The same rule, in the same order, as [`place_directory`] — which calls it,
+/// so there is one implementation and a census cannot report a placement the
+/// builder would not produce. Returns the offending script, hex encoded, if the
+/// retry cap is reached.
+pub fn place_scripts(
+    shard_id: u64,
+    scripts: &[&[u8]],
+    rows_per_segment: u64,
+    slots: u64,
+) -> Result<Placement, String> {
+    let mut segments = 1u32;
+    loop {
+        let rows = rows_per_segment * segments as u64;
+        let mut load = vec![0u64; rows as usize];
+        let mut overflowed: Option<&[u8]> = None;
+        for script in scripts {
+            let candidates = candidate_rows(shard_id, script, rows);
+            let chosen = candidates
+                .iter()
+                .map(|row| *row as usize)
+                .min_by_key(|row| load[*row])
+                .expect("two candidates");
+            if load[chosen] >= slots {
+                overflowed = Some(script);
+                break;
+            }
+            load[chosen] += 1;
+        }
+
+        if let Some(script) = overflowed {
+            segments += 1;
+            if segments > MAX_DIRECTORY_SEGMENTS {
+                return Err(hex::encode(script));
+            }
+            continue;
+        }
+
+        return Ok(Placement {
+            segments,
+            max_row_load: load.into_iter().max().unwrap_or(0),
+        });
+    }
+}
+
 /// Places every entry, adding a segment whenever placement does not fit.
 ///
 /// Rows are addressed over the shard's whole logical row space, so adding a
@@ -291,54 +358,51 @@ fn place_directory(
     shard_id: u64,
     entries: Vec<DirectoryEntry>,
 ) -> Result<(Vec<Vec<u8>>, u64), BuildError> {
-    let mut segments = 1u32;
-    loop {
-        let rows = DIRECTORY_ROWS as u64 * segments as u64;
-        // Place each script into the less loaded of its two candidate rows.
-        // Ties go to the first candidate, so placement is a function of the
-        // script set and not of the order rows happened to fill.
-        let mut buckets: Vec<Vec<&DirectoryEntry>> = vec![Vec::new(); rows as usize];
-        let mut overflowed: Option<&DirectoryEntry> = None;
-        for entry in &entries {
-            let candidates = candidate_rows(shard_id, &entry.script, rows);
-            let chosen = candidates
-                .iter()
-                .map(|row| *row as usize)
-                .min_by_key(|row| buckets[*row].len())
-                .expect("two candidates");
-            if buckets[chosen].len() >= crate::records::DIRECTORY_SLOTS {
-                overflowed = Some(entry);
-                break;
-            }
-            buckets[chosen].push(entry);
-        }
-
-        if let Some(entry) = overflowed {
-            segments += 1;
-            if segments > MAX_DIRECTORY_SEGMENTS {
-                return Err(BuildError::DirectoryFull {
-                    script: hex::encode(&entry.script),
-                });
-            }
-            continue;
-        }
-
-        let mut scripts = 0u64;
-        let mut tables = Vec::with_capacity(segments as usize);
-        for segment in buckets.chunks_mut(DIRECTORY_ROWS) {
-            let mut table = Vec::with_capacity(DIRECTORY_ROWS * crate::layout::DIRECTORY_ROW_BYTES);
-            for bucket in segment.iter_mut() {
-                // Within a row, entries are ordered by script, so the row's
-                // bytes do not depend on placement order.
-                bucket.sort_by(|a, b| a.script.cmp(&b.script));
-                scripts += bucket.len() as u64;
-                let owned: Vec<DirectoryEntry> = bucket.iter().map(|e| (*e).clone()).collect();
-                table.extend_from_slice(&encode_directory_row(&owned)?);
-            }
-            tables.push(table);
-        }
-        return Ok((tables, scripts));
+    let scripts_only: Vec<&[u8]> = entries
+        .iter()
+        .map(|entry| entry.script.as_slice())
+        .collect();
+    let placed = place_scripts(
+        shard_id,
+        &scripts_only,
+        DIRECTORY_ROWS as u64,
+        crate::records::DIRECTORY_SLOTS as u64,
+    )
+    .map_err(|script| BuildError::DirectoryFull { script })?;
+    let segments = placed.segments;
+    let rows = DIRECTORY_ROWS as u64 * segments as u64;
+    // Place each script into the less loaded of its two candidate rows.
+    // Ties go to the first candidate, so placement is a function of the
+    // script set and not of the order rows happened to fill.
+    let mut buckets: Vec<Vec<&DirectoryEntry>> = vec![Vec::new(); rows as usize];
+    for entry in &entries {
+        let candidates = candidate_rows(shard_id, &entry.script, rows);
+        let chosen = candidates
+            .iter()
+            .map(|row| *row as usize)
+            .min_by_key(|row| buckets[*row].len())
+            .expect("two candidates");
+        // `place_scripts` settled the segment count over the identical
+        // script order under the identical rule, so no row can overflow.
+        debug_assert!(buckets[chosen].len() < crate::records::DIRECTORY_SLOTS);
+        buckets[chosen].push(entry);
     }
+
+    let mut scripts = 0u64;
+    let mut tables = Vec::with_capacity(segments as usize);
+    for segment in buckets.chunks_mut(DIRECTORY_ROWS) {
+        let mut table = Vec::with_capacity(DIRECTORY_ROWS * crate::layout::DIRECTORY_ROW_BYTES);
+        for bucket in segment.iter_mut() {
+            // Within a row, entries are ordered by script, so the row's
+            // bytes do not depend on placement order.
+            bucket.sort_by(|a, b| a.script.cmp(&b.script));
+            scripts += bucket.len() as u64;
+            let owned: Vec<DirectoryEntry> = bucket.iter().map(|e| (*e).clone()).collect();
+            table.extend_from_slice(&encode_directory_row(&owned)?);
+        }
+        tables.push(table);
+    }
+    Ok((tables, scripts))
 }
 
 #[cfg(test)]

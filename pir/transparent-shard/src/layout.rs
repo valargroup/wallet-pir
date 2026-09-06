@@ -110,10 +110,19 @@ pub const EVENTS_PER_PAGE: u32 = ((PAGE_ROW_BYTES - PAGE_HEADER_BYTES) / EVENT_B
 /// threshold therefore occupies none at all — the common case, and the reason
 /// inline events exist.
 pub const fn fragments_for(events: u32) -> u64 {
-    if events <= INLINE_EVENTS {
+    fragments_for_inline(events, INLINE_EVENTS)
+}
+
+/// [`fragments_for`] against an inline allowance other than the compiled one.
+///
+/// For scoring a candidate geometry. The allowance is what decides whether a
+/// history touches the page table at all, so a sweep that held it fixed would
+/// be sweeping the cheaper half of the question.
+pub const fn fragments_for_inline(events: u32, inline: u32) -> u64 {
+    if events <= inline {
         return 0;
     }
-    let paged = events - INLINE_EVENTS;
+    let paged = events - inline;
     // Integer ceiling division; `const fn` cannot call `div_ceil`.
     (paged as u64).div_ceil(EVENTS_PER_PAGE as u64)
 }
@@ -180,10 +189,15 @@ pub enum Shape {
 
 /// The shape a history of `events` total events takes.
 pub const fn shape_of(events: u32) -> Shape {
-    if events <= INLINE_EVENTS {
+    shape_of_inline(events, INLINE_EVENTS)
+}
+
+/// [`shape_of`] against an inline allowance other than the compiled one.
+pub const fn shape_of_inline(events: u32, inline: u32) -> Shape {
+    if events <= inline {
         return Shape::None;
     }
-    let paged = events - INLINE_EVENTS;
+    let paged = events - inline;
     if paged <= EVENTS_PER_PAGE {
         Shape::Short(paged)
     } else {
@@ -247,11 +261,17 @@ impl PackedDemand {
     /// growing out of the short classes entirely, without any of them being a
     /// case in the code.
     pub fn shift(&mut self, old: u32, new: u32) {
+        self.shift_inline(old, new, INLINE_EVENTS);
+    }
+
+    /// [`PackedDemand::shift`] against an inline allowance other than the
+    /// compiled one.
+    pub fn shift_inline(&mut self, old: u32, new: u32, inline: u32) {
         debug_assert!(
             new >= old,
             "a script's history never shrinks within a shard"
         );
-        match shape_of(old) {
+        match shape_of_inline(old, inline) {
             Shape::None => {}
             Shape::Short(p) => self.n[p as usize] -= 1,
             Shape::Long(rows) => {
@@ -259,7 +279,7 @@ impl PackedDemand {
                 self.long_scripts -= 1;
             }
         }
-        match shape_of(new) {
+        match shape_of_inline(new, inline) {
             Shape::None => {}
             Shape::Short(p) => self.n[p as usize] += 1,
             Shape::Long(rows) => {
@@ -302,6 +322,143 @@ impl PackedDemand {
     }
 }
 
+/// A table geometry to score a candidate against.
+///
+/// The constants above are the geometry that is *built*. This is how a census
+/// asks what a different one would have cost, without a rebuild and without any
+/// builder being able to reach it: [`Default`] is the compiled set, so a run
+/// that overrides nothing measures exactly what ships.
+///
+/// # What the scheme allows
+///
+/// Neither dimension is free. `params_for_simplepir` pads the row count up to a
+/// multiple of `POLY_LEN` = 2,048 and refuses fewer, and it quantises the row
+/// width into instances of 2,048 x 14 bits = 3,584 bytes. So the smallest legal
+/// table is 2,048 rows of 3,584 bytes, which is what the directory already is —
+/// the current capacity of 28,672 scripts is the scheme's floor rather than a
+/// number anyone chose. [`Geometry::validate`] is where that is enforced, so a
+/// sweep cannot quietly score a shape the scheme would never serve.
+///
+/// The two dimensions do not cost the same. Row count is charged on the query
+/// upload alone, and mildly: 2,048 rows cost 96,264 bytes a query and 4,096
+/// cost 106,504, +10.6%. Row width is charged on the response *and* the
+/// published setup, and in whole instances, so the next legal width doubles
+/// both. Widening to buy directory slots is therefore the expensive way to buy
+/// them and doubling the row count is the cheap one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Geometry {
+    pub directory_rows: u64,
+    pub directory_row_bytes: usize,
+    pub page_rows: u64,
+    /// Events carried in a directory entry, which decides both how wide an
+    /// entry is and whether a history touches the page table at all.
+    pub inline_events: u32,
+}
+
+impl Default for Geometry {
+    fn default() -> Self {
+        Self {
+            directory_rows: DIRECTORY_ROWS as u64,
+            directory_row_bytes: DIRECTORY_ROW_BYTES,
+            page_rows: PAGE_ROWS as u64,
+            inline_events: INLINE_EVENTS,
+        }
+    }
+}
+
+impl Geometry {
+    /// Bytes one directory entry occupies at this inline allowance.
+    pub const fn directory_entry_bytes(&self) -> usize {
+        crate::records::DIRECTORY_ENTRY_HEADER_BYTES + self.inline_events as usize * EVENT_BYTES
+    }
+
+    /// Entries one directory row holds.
+    ///
+    /// Derived, never given. A slot count set independently of the entry width
+    /// would describe no table that could be built.
+    pub const fn directory_slots(&self) -> u64 {
+        ((self.directory_row_bytes - crate::records::DIRECTORY_ROW_HEADER_BYTES)
+            / self.directory_entry_bytes()) as u64
+    }
+
+    /// Scripts one directory segment holds.
+    pub const fn directory_capacity(&self) -> u64 {
+        self.directory_rows * self.directory_slots()
+    }
+
+    /// Bytes of a row a directory's slots cannot reach.
+    ///
+    /// A row holds whole entries, so whatever is left under one is dead. At the
+    /// compiled geometry that is 108 bytes of every 3,584 — 3.0%, and 140 short
+    /// of a fifteenth slot.
+    pub const fn directory_row_slack(&self) -> usize {
+        self.directory_row_bytes
+            - crate::records::DIRECTORY_ROW_HEADER_BYTES
+            - self.directory_slots() as usize * self.directory_entry_bytes()
+    }
+
+    pub const fn directory_bytes_per_segment(&self) -> u64 {
+        self.directory_rows * self.directory_row_bytes as u64
+    }
+
+    pub const fn page_bytes_per_segment(&self) -> u64 {
+        self.page_rows * PAGE_ROW_BYTES as u64
+    }
+
+    pub const fn fragments_for(&self, events: u32) -> u64 {
+        fragments_for_inline(events, self.inline_events)
+    }
+
+    pub const fn shape_of(&self, events: u32) -> Shape {
+        shape_of_inline(events, self.inline_events)
+    }
+
+    /// Rejects a shape the PIR scheme would not serve.
+    ///
+    /// Checked rather than assumed because the whole point of a scoring
+    /// geometry is that it is reachable from a command line, and a candidate
+    /// the scheme rounds up is a candidate whose reported cost is not its cost.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.directory_rows < POLY_LEN || !self.directory_rows.is_multiple_of(POLY_LEN) {
+            return Err(format!(
+                "{} directory rows: the scheme pads to a multiple of {POLY_LEN} and refuses fewer",
+                self.directory_rows
+            ));
+        }
+        if self.page_rows < POLY_LEN || !self.page_rows.is_multiple_of(POLY_LEN) {
+            return Err(format!(
+                "{} page rows: the scheme pads to a multiple of {POLY_LEN} and refuses fewer",
+                self.page_rows
+            ));
+        }
+        if self.directory_row_bytes < INSTANCE_BYTES
+            || !self.directory_row_bytes.is_multiple_of(INSTANCE_BYTES)
+        {
+            return Err(format!(
+                "{} directory row bytes: the scheme charges in whole instances of {INSTANCE_BYTES}",
+                self.directory_row_bytes
+            ));
+        }
+        if self.directory_slots() == 0 {
+            return Err(format!(
+                "a {}-byte entry does not fit a {}-byte row",
+                self.directory_entry_bytes(),
+                self.directory_row_bytes
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The scheme's RLWE degree, which is also its minimum and quantum of rows.
+const POLY_LEN: u64 = 2_048;
+
+/// Bytes of one scheme instance, which is the quantum of row width.
+const INSTANCE_BYTES: usize = 3_584;
+
+const _: () = assert!(DIRECTORY_ROW_BYTES.is_multiple_of(INSTANCE_BYTES));
+const _: () = assert!(PAGE_ROW_BYTES.is_multiple_of(INSTANCE_BYTES));
+
 /// Segments needed to hold `rows` rows, at `per_segment` rows each.
 ///
 /// Never zero: a shard with no events still publishes an empty segment, because
@@ -329,6 +486,116 @@ pub const fn split_row(row: u64, per_segment: u64) -> (u32, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The compiled geometry is what `Default` reports. Everything a sweep says
+    /// about a candidate is relative to this, so a drift here would silently
+    /// rebase every comparison.
+    #[test]
+    fn the_default_geometry_is_the_one_that_ships() {
+        let g = Geometry::default();
+        assert_eq!(g.directory_entry_bytes(), 248);
+        assert_eq!(g.directory_slots(), 14);
+        assert_eq!(g.directory_capacity(), 28_672);
+        assert_eq!(g.directory_row_slack(), 108);
+        assert_eq!(g.directory_bytes_per_segment(), 7_340_032);
+        assert_eq!(g.page_bytes_per_segment(), 29_360_128);
+        g.validate().expect("what ships must be servable");
+    }
+
+    /// Directory capacity is bought by the inline allowance, in both
+    /// directions. Dropping to one event gives 64% more scripts per segment and
+    /// pushes every one-paged-event history into a page query; raising it to
+    /// three costs 29% of them.
+    #[test]
+    fn the_inline_allowance_is_what_buys_directory_slots() {
+        for (inline, slots, capacity) in [
+            (0u32, 63u64, 129_024u64),
+            (1, 23, 47_104),
+            (2, 14, 28_672),
+            (3, 10, 20_480),
+        ] {
+            let g = Geometry {
+                inline_events: inline,
+                ..Default::default()
+            };
+            assert_eq!(g.directory_slots(), slots, "inline {inline}");
+            assert_eq!(g.directory_capacity(), capacity, "inline {inline}");
+        }
+    }
+
+    /// Doubling the row count is the other way to the same capacity, and the
+    /// one that leaves the inline allowance alone.
+    #[test]
+    fn doubling_the_rows_doubles_the_capacity() {
+        let g = Geometry {
+            directory_rows: 4_096,
+            ..Default::default()
+        };
+        assert_eq!(g.directory_capacity(), 57_344);
+        assert_eq!(g.directory_bytes_per_segment(), 14_680_064);
+        g.validate()
+            .expect("a multiple of the poly length is servable");
+    }
+
+    /// A shape the scheme would round up is a shape whose reported cost is not
+    /// its cost, so scoring it is worse than refusing it.
+    #[test]
+    fn a_geometry_the_scheme_would_not_serve_is_refused() {
+        for bad in [
+            Geometry {
+                directory_rows: 1_024,
+                ..Default::default()
+            },
+            Geometry {
+                directory_rows: 3_000,
+                ..Default::default()
+            },
+            Geometry {
+                page_rows: 5_000,
+                ..Default::default()
+            },
+            Geometry {
+                directory_row_bytes: 4_096,
+                ..Default::default()
+            },
+            // 37 inline events is 3,608 bytes of entry: wider than the row.
+            Geometry {
+                inline_events: 37,
+                ..Default::default()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?} should be refused");
+        }
+        // The next legal width up is servable, and it buys 29 slots for a
+        // doubled response and setup.
+        let wide = Geometry {
+            directory_row_bytes: 7_168,
+            ..Default::default()
+        };
+        wide.validate().expect("two instances is a legal width");
+        assert_eq!(wide.directory_slots(), 28);
+    }
+
+    /// The inline allowance decides whether a history is paged at all, so the
+    /// scoring functions must move with it and the compiled wrappers must not.
+    #[test]
+    fn scoring_functions_follow_the_inline_allowance() {
+        assert_eq!(fragments_for(3), 1);
+        assert_eq!(fragments_for_inline(3, 3), 0);
+        assert_eq!(shape_of_inline(3, 3), Shape::None);
+        assert_eq!(shape_of_inline(3, 1), Shape::Short(2));
+
+        let mut wide = PackedDemand::default();
+        let mut narrow = PackedDemand::default();
+        wide.shift_inline(0, 3, 3);
+        narrow.shift_inline(0, 3, 1);
+        assert_eq!(
+            wide.rows(),
+            0,
+            "a history inside the allowance costs no row"
+        );
+        assert_eq!(narrow.rows(), 1);
+    }
 
     #[test]
     fn a_shard_always_has_at_least_one_segment_of_each_table() {

@@ -238,7 +238,7 @@ impl TableClient {
         let response = transport
             .query(shard_id, self.table, &query.body)
             .map_err(|error| ClientError::Transport(error.to_string()))?;
-        charges.add_query(uploaded, response.len() as u64);
+        charges.add_query(self.table, uploaded, response.len() as u64);
         self.decode(shard_id, segments, query, &response)
     }
 }

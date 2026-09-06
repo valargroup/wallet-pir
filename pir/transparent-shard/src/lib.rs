@@ -16,10 +16,10 @@ pub mod manifest;
 pub mod records;
 pub mod seal;
 
-pub use build::{build_shard, candidate_rows, BuildError, BuiltShard};
+pub use build::{build_shard, candidate_rows, place_scripts, BuildError, BuiltShard, Placement};
 pub use layout::{
-    entries_per_row, entry_bytes, fragments_for, shape_of, PackedDemand, Shape, DIRECTORY_ROWS,
-    DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW,
+    entries_per_row, entry_bytes, fragments_for, shape_of, Geometry, PackedDemand, Shape,
+    DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW,
     PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
 pub use manifest::{
@@ -27,6 +27,7 @@ pub use manifest::{
 };
 pub use records::{
     decode_directory_row, encode_directory_row, DirectoryEntry, Page, RecordError,
-    DIRECTORY_ENTRY_BYTES, DIRECTORY_SLOTS, MAX_SCRIPT_BYTES,
+    DIRECTORY_ENTRY_BYTES, DIRECTORY_ENTRY_HEADER_BYTES, DIRECTORY_ROW_HEADER_BYTES,
+    DIRECTORY_SLOTS, MAX_SCRIPT_BYTES,
 };
 pub use seal::{Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer};
