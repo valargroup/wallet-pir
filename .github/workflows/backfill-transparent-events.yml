@@ -37,6 +37,15 @@ on:
         required: false
         default: ""
         type: string
+      data_dir:
+        description: >-
+          The event journal to read or write; blank means the default. A
+          journal is pinned to the height it started at, so a run covering a
+          different range must use a directory of its own rather than set the
+          existing journal aside.
+        required: false
+        default: ""
+        type: string
       shard_dir:
         description: >-
           Where publish writes and measure reads; blank means the default set.
@@ -78,6 +87,7 @@ jobs:
           SHA: ${{ inputs.ref }}
           START: ${{ inputs.start_height }}
           STOP: ${{ inputs.stop_height }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           if [[ "$ACTION" == "start" ]]; then
@@ -110,13 +120,14 @@ jobs:
         if: inputs.action == 'census'
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin shard-census
           # Read-only against the journal, and cheap: it streams once and holds
           # the events in memory. Run on the runner rather than staged, since
           # the runner is the coordinator and the journal is local to it.
-          sudo ./target/release/shard-census --data-dir "$DATA_DIR" | tee census.txt
+          sudo ./target/release/shard-census --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" | tee census.txt
           {
             echo '## Shard census'
             echo '```'
@@ -129,6 +140,7 @@ jobs:
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
           SHARD_DIR_INPUT: ${{ inputs.shard_dir }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin shard-publish
@@ -140,7 +152,7 @@ jobs:
           # Publication is immutable, so re-running verifies rather than
           # rewrites and a changed byte is a hard error.
           sudo ./target/release/shard-publish \
-            --data-dir "$DATA_DIR" \
+            --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" \
             --output "$OUT" \
             --zakura-cookie /root/.cache/zakura/.cookie 2>&1 | tee publish.txt
           echo
@@ -157,6 +169,7 @@ jobs:
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
           SHARD_DIR_INPUT: ${{ inputs.shard_dir }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-measure
@@ -164,7 +177,7 @@ jobs:
           # serves the set in-process on a loopback port, so it disturbs no
           # running service.
           sudo ./target/release/transparent-measure \
-            --data-dir "$DATA_DIR" \
+            --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" \
             --shard-dir "${SHARD_DIR_INPUT:-$SHARD_DIR}" \
             --json-out measurement.json 2>&1 | tee measure.txt
           {
@@ -199,6 +212,7 @@ jobs:
           HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
           USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
           SHA: ${{ inputs.ref }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
@@ -221,7 +235,7 @@ jobs:
           REMOTE
 
           "${SCP[@]}" target/release/transparent-event-ingest "$USER_NAME@$HOST:/tmp/transparent-event-ingest.$SHA"
-          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "/tmp/transparent-event-ingest.$SHA" "$BIN" "$DATA_DIR" <<'REMOTE'
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "/tmp/transparent-event-ingest.$SHA" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" <<'REMOTE'
           set -euo pipefail
           staged="$1"; target="$2"; data_dir="$3"
           sudo install -m 0755 "$staged" "$target"
@@ -242,7 +256,7 @@ jobs:
           SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
             -o ConnectTimeout=10)
-          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "$DATA_DIR" "$START" "$STOP" <<'REMOTE'
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" "$START" "$STOP" <<'REMOTE'
           set -euo pipefail
           # `stop` is optional, and ssh re-splits the remote command, so an
           # empty trailing argument does not survive as an empty positional —
@@ -289,12 +303,13 @@ jobs:
         env:
           HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
           USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
             -o ConnectTimeout=10)
-          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$DATA_DIR" <<'REMOTE' | tee status.txt
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "${DATA_DIR_INPUT:-$DATA_DIR}" <<'REMOTE' | tee status.txt
           set -euo pipefail
           unit="$1"; data_dir="$2"
           echo "### unit"
