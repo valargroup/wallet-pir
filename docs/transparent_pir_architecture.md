@@ -1,6 +1,6 @@
 # Updated transparent PIR recommendation
 
-Date: 2026-09-05. Status: design recommendation, not a deployed protocol.
+Date: 2026-09-06. Status: design recommendation, not a deployed protocol.
 
 Generation boundaries and the figures supporting them are measured over the
 Ironwood-to-tip event journal; see *What is measured and what is not* for the
@@ -152,9 +152,8 @@ Each generation manifest binds:
 - seal parameters;
 - start and end heights;
 - parent and terminal block hashes;
-- previous-generation commitment;
-- lifecycle state, and for a tail its revision number and the revision it
-  supersedes;
+- range closure and confirmation status;
+- revision number and the revision it supersedes, if any;
 - public-filter digest;
 - PIR table dimensions, salts and row sizes;
 - the complete segment list, with each segment's directory, page and
@@ -183,10 +182,22 @@ are.
 That variation is not affordable, because uniform table geometry is what makes
 the scheme cheap. PIR parameters are a function of `(rows, item_size_bits)`
 alone, so generations sharing a geometry share one parameter set: a wallet
-validates parameters and derives its query setup **once for all generations**,
-rather than once per generation. Sealing on content converts chain-density
-variation into differing block spans, which cost nothing, instead of differing
-table fullness, which costs the shared parameter set.
+validates the shared scheme parameters once per geometry and implementation
+version. Database-dependent setup remains separate for each table, segment and
+manifest revision; identical geometry does not make those bytes reusable.
+Content-based boundaries allow a standard segment geometry despite changes in
+chain density. Different spans and exceptional segment counts still change
+query frequency, setup costs and privacy leakage; those costs must be measured.
+
+Shared scheme parameters are cached by scheme/version and geometry. Public
+setup is cached by manifest digest, table, segment and setup profile (or reused
+by verified content digest when byte-identical). Changed tail databases normally
+require new setup. Equal geometry authorizes neither reuse of secret query
+randomness nor evaluation keys across independent queries; bounded key reuse
+remains outside the initial profile. One logical fan-out query selects the same
+within-segment row against all segments; its scheme compatibility must be
+validated as a single multi-database operation. Benchmarks charge per-segment
+setup and responses, including revision churn.
 
 ### Sealing on the limits that bind
 
@@ -221,12 +232,13 @@ one segment's pinned geometry actually holds. Each quantity therefore carries
 two numbers:
 
 - **capacity** — what one segment's tables hold. A hard limit.
-- **target** — where sealing is preferred. Must leave room for one more block.
+- **target** — where closing is preferred. Measured headroom reduces ordinary
+  overshoot; it need not accommodate every valid block, which may use segments.
 
 A block that would breach capacity seals the generation *before* it is added;
 reaching a target seals *after*. Measured overshoot past target is real but
 modest: at a 4,096-script target, generations landed at up to 4,506 scripts, so
-capacity needs roughly 15% headroom rather than a doubling.
+roughly 15% headroom covers this sample. This is not a worst-case block bound.
 
 Above roughly eight thousand scripts the scripts limit stops binding altogether
 and page rows seals every generation. Whichever limit binds is the one actually
@@ -243,24 +255,44 @@ either. Publication must handle every valid block automatically.
 A generation therefore contains **one or more segments**, each carrying the
 standard directory and page geometry. The normal case is one segment, and a
 single-segment generation is exactly what the preceding paragraphs describe.
-When a generation's content does not fit the segments it has, the builder adds
-another. That is the deterministic fallback that guarantees progress: a fresh
-segment's rows are empty, so placement terminates. Two independently salted
-candidate buckets do not supply that guarantee — they reduce collisions, they
-do not bound them — which is why the fallback is segment count rather than
-more buckets.
 
-Segment count is decided when the generation is built, as the smallest count
-that admits a placement, and is published in the manifest with each segment's
-geometry and digest. Placement hashes over the generation's whole logical row
-space, `directory_rows * segment_count`, so occupancy stays even as segments are
-added instead of piling into a spillover segment.
+Directory placement uses two candidate **within-segment** rows per script,
+derived with independent salts modulo the fixed directory row count. These
+candidates do not change when another segment is added. Process scripts in
+lexicographic raw-byte order. For each script, choose the lowest-numbered
+segment with space in either candidate row, then the less occupied candidate
+(ties choose the first candidate). If neither candidate has space in any
+existing segment, append an empty segment and insert there. Sort each completed
+row by exact script bytes before encoding it.
+
+This is a terminating placement rule even if every script has the same two
+candidates. If a directory row has `K >= 1` slots and there are `N` supported
+distinct scripts, opening another segment means at least `K` records already
+occupy every earlier segment. Thus at most `max(1, ceil(N / K))` directory
+segments are needed. No reseeding success or retry limit is part of the rule.
+Pages are packed into contiguous extents in the same script order. If they need
+`P` rows and a page segment holds `R` rows, they need `max(1, ceil(P / R))`
+segments. Publish the maximum of these two counts, padding the other table's
+extra segments with empty rows. The manifest commits to that complete count
+and ordered segment list.
+
+An oversized block is closed as a generation of its own. Ordinary generations
+close before adding a block that breaches their configured single-segment
+capacity, or after reaching a target. Supported scripts have bounded record
+sizes; unsupported classes remain explicitly outside coverage. Every finite
+valid block therefore has a finite representation without changing geometry.
+The revised layout uses versioned, checked unsigned 64-bit count and extent
+fields, with row packing recalculated within the pinned row widths; the profile
+must verify that the active consensus block limits and configured ordinary
+range capacities fit those fields. Exhausted memory or disk is resumable
+operational backpressure, not a reason to reject the block or advance coverage.
+Builders may stream segments to disk; serving need not load them all at once.
 
 A wallet advances coverage for the generation's range only after processing
 every segment. A partial segment set is incomplete work, not a shorter answer.
 
 Segments must not become publicly selected shards. A wallet issues one request
-per generation and table; the service evaluates that request against every
+per candidate-row lookup and table; the service evaluates that request against every
 segment of the generation and returns the per-segment results, which the wallet
 decodes and matches on exact script bytes. What becomes public is the segment
 *count*, which the manifest publishes anyway. Which segment holds a script is
@@ -269,8 +301,10 @@ hashes into would reveal part of the script's identity before PIR begins, which
 is the script-prefix sharding rejected under *Private script directory* below.
 
 The cost is paid in queries and bytes during exceptional periods: a generation
-with `n` segments costs `n` times the directory and page work of an ordinary
-one, on both sides. That belongs in the cost and privacy analysis rather than
+with `n` segments requires `n` server evaluations and responses per row lookup.
+Request upload can be shared by fan-out; response bytes, database-dependent
+setup and server work scale with segment count. That belongs in the cost and
+privacy analysis rather than
 being assumed away. It is still preferable to giving oversized ranges a larger
 geometry, which would oblige every client to support a second parameter set —
 and then a third — because one unusual block arrived.
@@ -310,31 +344,62 @@ than stopping at the last seal boundary. A wallet that stopped there would
 report a balance correct only as of an older height, with no way to express the
 difference.
 
-A tail grows, so its bytes change while the range it covers is still being
-decided. Publication resolves that by making every published tail an immutable
-**revision** rather than a mutable object. A generation is in one of three
-states:
+A range has two independent properties: whether it is **open or closed** to
+additional blocks, and whether its chain position is **provisional or sealed**
+under the configured confirmation depth. Closing a range on capacity does not
+seal it. Only a closed range can become sealed. Several closed provisional
+ranges may precede the one growing tail.
+Unpublished builder state is not addressable.
 
-- **open** — being built. Not published, and not addressable.
-- **provisional** — published, immutable under its own manifest digest, and
-  expected to be superseded by a later revision covering more blocks. Each
-  revision records its revision number and the digest it supersedes.
-- **sealed** — final. A sealed generation is never superseded, and only sealed
-  generations enter the previous-generation commitment chain, so a provisional
-  revision can never fork that chain.
+Every published range version is an immutable revision identified by its
+canonical manifest digest. An open range gets a new revision when it grows;
+closing it or changing its confirmation status also creates a new manifest.
+Each revision names its predecessor revision, if any. Sealing means eligible
+for long-term reuse on the selected chain, not immunity to a deep reorg.
 
-Publication is append-only in digests. A revision's bytes never change under a
-digest that has been served; superseding one publishes a new digest beside it
-rather than replacing what is there. Promotion to sealed is the last such step,
-and like every other it must not mix a directory from one revision with pages
-from another.
+An immutable **map revision** commits to the network, accepted publication
+anchor, confirmation policy, preceding map digest and the complete ordered list
+of range manifest digests, including closed provisional ranges and the tail.
+Adjacent ranges must have consecutive heights and matching terminal/parent
+block hashes. Ordering is committed by the map, not a chain restricted to sealed
+manifests. Publish all referenced objects durably before atomically advancing
+the current-map pointer. A client pins one map revision for each sync attempt.
+Under the initial trusted-service policy this establishes consistency with the
+publisher's declared anchor, not an independent proof of chain membership.
 
-A wallet may use a provisional revision for a current balance, but the coverage
-it takes from one is **provisional coverage**: recorded together with the
-revision digest that produced it, never cached as immutable, and re-derived
-from the superseding revision or from the sealed generation when one appears. A
-balance derived from a provisional revision may be displayed as current. It must
-not be reported as settled coverage.
+The revised layout and map protocol use new schema/profile versions; clients
+must reject unknown versions rather than interpret them as the current layout.
+All setup, queries, responses, caches and pending work bind the full range
+manifest digest, table and profile; ordered fan-out responses also bind each
+segment ordinal. A numeric generation id alone is not a revision identifier.
+Published objects never change under their digest. An acquired map has a public
+retention lease lasting at least one hour, renewable while its objects remain
+available; all its manifests, filters, setup and rows remain retrievable until
+the lease expires. Garbage collection cannot remove objects under an active
+lease. An expired revision returns an explicit revision-expired result, never
+silently serves a newer one. The client then acquires a new map and restarts
+affected pending work without advancing coverage. Lease requests refer only to
+public map revisions, not scripts or selected rows.
+
+Coverage records the map, manifest and chain anchor that produced it. On a
+superseding revision, roll back that range and affected later state to the last
+retained valid checkpoint and replay the replacement; do not merge two revisions
+as if their events were disjoint. Sealed coverage may be reused while selected
+by the accepted chain. A deep reorg publishes a replacement map sequence and
+invalidates affected coverage even if it was previously sealed. Old objects
+remain immutable and are retained according to their leases.
+
+A wallet whose accepted anchor lies inside a published range may retrieve that
+range's filter and complete script histories, validate their structure, then
+replay only events at or below its anchor height. Before taking coverage, the
+anchor provider must confirm that the range's declared chain contains the
+wallet's accepted hash at that height. Under the initial trust policy the
+publisher may supply that ancestry assertion; a wallet requiring independent
+confirmation uses its anchor provider. If ancestry cannot be established,
+coverage remains pending. Downloading later events never advances the wallet's
+anchor or confirmation policy. A provider behind the requested anchor reports
+its actual coverage height; the wallet may show that explicitly stale result
+but cannot label it current through the requested anchor.
 
 ## Chain anchors without regular-sync coupling
 
@@ -363,16 +428,19 @@ record that choice and compare the anchor with an independent source during
 evaluation.
 
 Historical generations form a committed, gapless sequence. Each manifest binds
-its range, parent and terminal block hashes, content digests, and the previous
-generation commitment. A wallet can validate that sequence against one accepted
+its range, parent and terminal block hashes and content digests; the map
+revision commits to their complete order. A wallet can validate that sequence
+against one accepted
 terminal anchor without retaining or downloading ordinary compact data for
 every covered block.
 
-This structural validation establishes network, range, ordering, freshness and
-consistent generation selection. It does not prove that the indexer included
+Under the trusted-service policy, structural validation establishes consistent
+network, ranges and generation selection. Freshness additionally requires an
+accepted anchor and a publication map covering it. It does not prove that the indexer included
 every event. Completeness remains the separate trust decision described below.
 
-Only the recent provisional tail normally requires active reorg tracking.
+The provisional suffix, including closed ranges and the growing tail, normally
+requires active reorg tracking.
 Historical generations may be sealed after an explicit confirmation depth. A
 deep reorg crossing a sealed boundary requires a replacement committed sequence
 and rollback to an anchor accepted through the same provider interface.
@@ -435,11 +503,10 @@ script -> {
 Physically place records into fixed-size PIR rows:
 
 ```text
-directory_row =
-    H(generation_salt || raw_script) mod (directory_row_count * segment_count)
+candidate_row[j] =
+    H(bucket_salt[j] || length(raw_script) || raw_script) mod directory_row_count
 
-segment = directory_row / directory_row_count
-row     = directory_row mod directory_row_count
+query both candidate rows in every segment
 ```
 
 A script's pages are a contiguous extent, not a list of locators: the record
@@ -455,8 +522,8 @@ collisions, misplaced records, duplicate records, and filter false positives.
 Rows contain a fixed number of uniformly padded slots; empty and occupied slots
 must have identical response geometry.
 
-Bucket overflow must have a bounded private resolution strategy, such as a fixed
-number of independently salted candidate rows. It must never trigger a public
+Bucket overflow uses the deterministic additional-segment placement rule above.
+It must never trigger a public
 script, address, outpoint, or transaction lookup.
 
 If the physical database is further sharded, temporal sharding is preferable to
@@ -464,9 +531,9 @@ script-prefix sharding. Selecting a script-hash shard reveals part of the
 script's identity before PIR begins. Selecting a temporal generation reveals a
 chain range but preserves the full script anonymity set within that generation.
 
-Note that a generation's *row count* is pinned and identical everywhere, so the
-directory's physical geometry carries no information about how busy its range
-was. Only the generation's block span does, and that is published anyway.
+Row count is pinned per segment. A generation's total row count varies with
+its public segment count; both segment count and block span reveal aggregate
+chain activity, already present in the public chain.
 
 ## Private event pages
 
@@ -555,11 +622,18 @@ The transparent ledger does not need to determine whether an outflow was shieldi
 
 ## Wallet reconstruction
 
-The wallet replays validated events into an outpoint-indexed map:
+Before replay, merge inline events and every required page across segments
+into canonical order. Maintain an applied-event identity journal alongside the
+ledger: an identical already-applied event is a no-op even if its output has
+since been spent, and any field mismatch is a conflict. Duplicate checking and
+event application commit atomically. Reorg rollback removes the reverted
+journal entries before applying replacement-chain events.
+
+The following handlers run only for previously unapplied event identities:
 
 ```text
 on ReceiveEvent:
-    reject duplicate or conflicting outpoint
+    reject an outpoint already created by a different applied event
     utxos[(txid, output_index)] = {
         value,
         script,
@@ -623,8 +697,8 @@ coverage. Imported keys absent from the wallet backup cannot be reconstructed.
 
 For each generation covered by an accepted anchor, the wallet:
 
-1. Verifies network and genesis identity, generation commitment continuity,
-   gapless ranges, and the terminal commitment against its accepted anchor.
+1. Pins a map revision and retention lease; verifies network and genesis
+   identity, ordered manifest membership, gapless ranges and anchor compatibility.
 2. Validates and locally matches the public activity filter.
 3. Privately retrieves directory rows for candidate scripts, across every
    segment of the generation.
@@ -639,7 +713,7 @@ For each generation covered by an accepted anchor, the wallet:
 A crash, timeout, malformed response, stale generation, incomplete segment set,
 query-budget exhaustion, or authentication failure leaves coverage unadvanced.
 Completed private rows may be journaled for idempotent resumption. Coverage
-taken from a provisional tail revision is recorded with that revision's digest
+taken from any provisional range revision is recorded with that revision's digest
 and re-derived when a later revision or the sealed generation appears.
 
 Coverage is tracked by script/discovery scope and chain range, separately from
@@ -654,6 +728,13 @@ anchor. This mechanism depends on the chain-anchor interface, not on shielded or
 compact-block synchronization.
 
 ## Timing and shard-selection privacy
+
+The initial privacy model is a service that follows the protocol but observes
+its requests. Row-selection privacy is conditional on the disclosed access
+pattern; it is not a claim that a wallet's scripts cannot be inferred. A linked
+combination of generation selections and page counts may uniquely match a
+public script's history. Evaluation must report how many public scripts remain
+consistent with observed workload patterns, including repeated sessions.
 
 PIR hides the selected row within the selected database. It does not inherently
 hide:
@@ -679,10 +760,9 @@ the wallet's behaviour, and it applies equally to every wallet that selects that
 generation.
 
 An exceptional generation's segment count is public as well, and a wallet
-querying such a generation pays a proportionally larger amount of work. That
-discloses nothing about which script was selected, but it does make those
-generations distinguishable by traffic volume, which the analysis counts rather
-than ignores.
+querying such a generation pays a proportionally larger amount of work. Uniform
+fan-out hides the selected segment directly, but the resulting traffic
+still participates in the access-pattern inference described above.
 
 The initial design may explicitly accept generation, timing and query-count
 leakage, but it must not describe that as hiding whether the wallet had activity.
@@ -734,7 +814,7 @@ Build on the existing integrated prototype rather than replacing its model:
 - a fixed-row private script directory, identical in geometry across
   generations;
 - two candidate directory buckets, independently salted per generation, with
-  an added segment as the fallback that guarantees placement;
+  fixed within-segment candidates and deterministic overflow into added segments;
 - a small number of inline events, holding a script's *newest* history so an
   active script needs no page query;
 - fixed-size, privately selected event pages;
@@ -800,16 +880,20 @@ resident server memory per loaded generation; and end-to-end behaviour on a
 minimum supported device.
 
 No generation in the measured journal needed more than one segment, and the
-measurement covers no tail-revision churn. Both paths are specified and built so
-that publication cannot stall, but their cost is projected from the geometry
-rather than observed.
+measurement covers no tail-revision churn. The existing implementation has
+multi-segment construction and tail manifests,
+but it still rehashes directories with a retry cap and does not establish the
+revised placement and publication guarantees specified here. Those guarantees
+require implementation and adversarial/state-transition tests before being
+claimed as delivered; exceptional-path costs remain unmeasured.
 
 Deliberately out of the first implementation, so its cost is neither measured
 nor claimed: the private transaction-detail table, and bounded evaluation-key
 reuse across generations. Both are specified; neither is built. A result that
 depends on either must say so.
 
-This design can reconstruct confirmed balance and history while hiding exact
-script and page selections. It does not, without additional measures, hide the
+Under its stated trust policy, this design can reconstruct confirmed balance
+and history with PIR row privacy conditional on the disclosed access pattern.
+It does not, without additional measures, hide the
 queried time range, the occurrence of activity-triggered contact, wallet network
 identity, or omissions by the indexer.
