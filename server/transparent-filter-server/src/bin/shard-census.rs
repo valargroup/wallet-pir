@@ -60,7 +60,11 @@ fn parse_policy(text: &str) -> Result<SealPolicy, BoxError> {
 ///
 /// A directory segment holds 14 slots across 2,048 rows — 28,672 scripts — so
 /// every target below sits inside one segment with slack, and the sweep varies
-/// the script limit alone. Page rows are held fixed for the same reason.
+/// the script limit alone.
+///
+/// Page rows are held at the publisher's default so the sweep measures the
+/// geometry actually in use. Setting them lower makes page rows bind first and
+/// the script limit inert, which reads as a script-limit result and is not one.
 fn default_policies() -> Vec<(String, SealPolicy)> {
     [
         ("scripts 4k", 4_096u64),
@@ -75,7 +79,7 @@ fn default_policies() -> Vec<(String, SealPolicy)> {
             name.to_string(),
             SealPolicy {
                 scripts: Limit::new(scripts, scripts * 2).expect("valid"),
-                page_rows: Limit::new(2_048, 4_096).expect("valid"),
+                page_rows: Limit::new(3_600, 4_096).expect("valid"),
             },
         )
     })
