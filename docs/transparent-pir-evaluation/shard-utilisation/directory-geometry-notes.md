@@ -37,10 +37,14 @@ paid 1,925,280 bytes over 20 queries, which is 96,264 each.
 
 | Directory rows | Upload per query | Response | Published setup |
 |---|---:|---:|---:|
-| 2,048 (compiled) | 96,264 B | 5,136 B | 14,336 B |
-| 4,096 | 106,504 B (+10.6%) | 5,136 B | 14,336 B |
+| 2,048 (compiled directory) | 96,264 B | 5,136 B | 14,336 B |
+| 4,096 (compiled pages) | 106,504 B (+10.6%) | 5,136 B | 14,336 B |
 | 8,192 | 128,008 B (+33.0%) | 5,136 B | 14,336 B |
 | 16,384 | 169,992 B (+76.6%) | 5,136 B | 14,336 B |
+
+These are now pinned as a test rather than a note —
+`server/transparent-shard-server/tests/geometry_costs.rs` derived the identical
+figures independently, which is the reason to trust either.
 
 Only the upload moves, because only the upload carries a term in `db_rows`.
 Response and published setup are functions of `db_cols`, which is the row width.
@@ -63,7 +67,8 @@ limit), or the inline events, which are 77% of the entry:
 | 3 | 10 | 20,480 |
 
 Two inline events are what keep 79% of active scripts from ever issuing a page
-query, and a page query is ~128 KB. Buying directory slots by giving them up
+query, and a page query is ~107 KB against the 4,096-row table packing left
+behind. Buying directory slots by giving them up
 trades a cheap term for an expensive one. The census can now score all four rows
 of that table, so the trade is measurable rather than argued.
 
@@ -115,8 +120,9 @@ room. The census reports the two figures apart for that reason.
 - `--shard-matches DIR` counts how many shards each exact script appears in, by
   external sort, and reports the `2g` directory queries that implies. This is
   the term a wider shard buys down and it could not be derived from occupancy.
-- Per-table pinned bytes: at the compiled geometry the split is 20.0% directory,
-  80.0% pages.
+- Per-table pinned bytes: at the compiled geometry the split is 33.3%
+  directory, 66.7% pages, the page table having been halved to 4,096 rows when
+  packing landed.
 - `ByteCharges` in the wallet is now split by table, so a measurement can show
   the transfer that a wider shard causes: two inline events are granted per
   script *per shard*, so merging shards keeps fewer histories inline and moves
