@@ -2,6 +2,10 @@
 
 Date: 2026-09-05. Status: design recommendation, not a deployed protocol.
 
+Generation boundaries and the figures supporting them are measured over the
+Ironwood-to-tip event journal; see *What is measured and what is not* for the
+boundary between what has been established and what has not.
+
 ## Goal
 
 Construct a private transparent-history service from which a wallet can recover
@@ -15,10 +19,12 @@ Anchor acquisition is supplied through an independent interface; transparent
 recovery must not require shielded scanning or regular compact-block sync.
 
 The recommended organization is an immutable, time-sharded event ledger keyed
-by exact raw locking script:
+by exact raw locking script, partitioned into generations whose boundaries are
+decided by content rather than by a fixed block width:
 
 ```text
 accepted chain anchor
+    -> published height-to-generation map
     -> public activity filter per generation
     -> private script directory per generation
     -> private event pages per generation
@@ -97,14 +103,14 @@ The first private profile may cover P2PKH and P2SH scripts, but unsupported
 script classes must be reported as outside coverage rather than absent. Logical
 identity is always exact script bytes, not an address string.
 
-## Time-sharded generations
+## Content-sealed generations
 
-Partition the chain into immutable generations. A historical generation could
-cover 100,000 blocks:
+Partition the chain into immutable generations. A generation's boundaries are
+decided by what it *contains*, not by a fixed block width:
 
 ```text
 Generation 42
-    heights: 4,200,000-4,299,999
+    heights: decided by content, published in the generation map
     parent block hash
     terminal block hash
     public activity filter
@@ -117,6 +123,7 @@ Each generation manifest binds:
 
 - network and genesis hash;
 - schema and profile versions;
+- seal parameters;
 - start and end heights;
 - parent and terminal block hashes;
 - previous-generation commitment;
@@ -124,15 +131,99 @@ Each generation manifest binds:
 - PIR table dimensions, salts and row sizes;
 - directory, page and transaction-table digests.
 
-A 100,000-block generation is suitable only after it is sealed. Recent blocks
-need a shorter tail generation so publication latency and ordinary reorgs do not
-require rebuilding a large historical shard. Promotion should atomically seal a
-tail and publish its replacement generation without mixing incompatible
-directory locators or pages.
+### Why not a fixed block width
 
-The exact historical shard width should be selected from measured wallet
-workloads and PIR geometry. One hundred thousand blocks is a candidate, not a
-protocol constant.
+Nothing bounds what a height range contains. A fixed-width generation must
+therefore size its tables from expected occupancy, and fail closed when a busy
+range exceeds them.
+
+Measurement over Ironwood activation to height 3,473,474 — 45,332 blocks,
+869,283 events — shows the variation is not marginal. Density ranges from 12.0
+to 38.5 events per block across 4,096-block buckets. Expressed the way that
+matters, holding occupancy fixed instead of width: a generation sized to hold
+about 4,100 distinct scripts spans anywhere from **124 to 1,746 blocks**. A
+fixed-width generation would vary by that same factor in how full its tables
+are.
+
+That variation is not affordable, because uniform table geometry is what makes
+the scheme cheap. PIR parameters are a function of `(rows, item_size_bits)`
+alone, so generations sharing a geometry share one parameter set: a wallet
+validates parameters and derives its query setup **once for all generations**,
+rather than once per generation. Sealing on content converts chain-density
+variation into differing block spans, which cost nothing, instead of differing
+table fullness, which costs the shared parameter set.
+
+### Sealing on three limits
+
+The three tables are keyed differently, so no single quantity bounds them:
+
+| Table | Sized by |
+|---|---|
+| activity filter | distinct scripts |
+| script directory | distinct scripts |
+| event pages | page rows |
+| transaction detail | distinct transaction ids |
+
+Page rows are *not* a function of the event count. Pages are per script and
+padded, so many short histories cost far more rows than the same number of
+events concentrated in a few long ones. Sealing on events alone would leave the
+page table unbounded in the direction that actually hurts.
+
+All three quantities are monotone as blocks stream in, so one incremental pass
+decides every boundary. Seal at the first block boundary where any limit binds.
+
+### Capacity and target are separate numbers
+
+A single threshold is not enough. Blocks arrive whole, and one block can add
+thousands of scripts, so a generation just under a threshold can land past what
+its pinned geometry actually holds. Each quantity therefore carries two numbers:
+
+- **capacity** — what the tables hold. A hard limit.
+- **target** — where sealing is preferred. Must leave room for one more block.
+
+A block that would breach capacity seals the generation *before* it is added;
+reaching a target seals *after*. Measured overshoot past target is real but
+modest: at a 4,096-script target, generations landed at up to 4,506 scripts, so
+capacity needs roughly 15% headroom rather than a doubling.
+
+A single block that alone exceeds a capacity cannot be placed in any generation.
+That must fail construction rather than be silently sealed over, because the
+alternative is a generation whose tables do not fit the geometry every other
+generation shares.
+
+### Boundaries are published, not re-derived
+
+Content-derived boundaries depend on the indexer's event set. Two operators
+disagreeing about a single event would produce different boundaries, and the
+disagreement would cascade into every later generation — destroying the
+cross-operator digest comparison that publishing digests exists to support,
+because no two generations would be comparable at all.
+
+The height-to-generation map is therefore published as committed protocol data.
+An operator must reproduce the published boundaries rather than derive its own,
+so a disagreement stays localized to one generation's digests, exactly as it
+would under fixed widths. The same map is what a wallet binary-searches to turn
+its birthday height into a first generation; with content sealing there is no
+width to divide by, so the map is not a convenience index but a requirement.
+
+Seal parameters are schema, not tuning. Two generation sets built under
+different parameters are different partitions of the same chain, and a wallet
+holding both would hold incompatible coverage. Changing them re-partitions;
+since sealed generations are immutable, new parameters can in practice apply
+only to new ranges.
+
+Generation *density* becomes public — a generation covering few blocks means
+high activity in that period. That is public chain data already, but it should
+be stated rather than discovered.
+
+### The tail
+
+Recent blocks still need a shorter unsealed tail, so publication latency and
+ordinary reorgs do not require rebuilding a large sealed generation. Promotion
+atomically seals a tail and publishes its replacement without mixing
+incompatible directory locators or pages. A generation that has reached no limit
+is the tail by definition, and must be published as unsealed so a consumer does
+not treat a still-growing range as immutable.
 
 ## Chain anchors without regular-sync coupling
 
@@ -191,11 +282,25 @@ application profile rather than a canonical per-block Bitcoin basic filter. It
 needs deterministic generation-key derivation and explicit chain-range
 metadata.
 
-Large generations trade precision for deduplication. They can remove repeated
+Larger generations trade precision for deduplication. They remove repeated
 scripts across many blocks and reduce filter overhead, but a match locates only
 an epoch. This is acceptable when the fallback retrieves a script's exact
 history from the generation; it is poor when the fallback scans every block in
 the generation.
+
+The Golomb-Rice parameters do not need retuning for a wider generation. An
+element is mapped into `[0, N*M)`, so the per-tested-element false-positive rate
+is `1/M` regardless of how many elements the filter holds: a generation filter
+over twelve thousand scripts is exactly as precise per query as a block filter
+over twelve. What grows with the element count is the filter's *size*, which is
+what cross-block deduplication pays for.
+
+Measured over Ironwood activation to height 3,473,474, the complete set of
+generation filters — every byte a restoring wallet downloads unconditionally
+— is **0.40 to 0.51 MB**, against roughly 108 MB for coverage-matched compact
+scanning of the same range. Wider generations deduplicate better: 19 generations
+cost 0.40 MB where 50 cost 0.51 MB. This is the public half of the cost only;
+whether the private retrieval it gates is also cheaper is the open question.
 
 Filter bytes must be globally identical, immutable, cacheable, and committed by
 public digests. A service must not personalize filters. Otherwise a malicious
@@ -236,6 +341,10 @@ If the physical database is further sharded, temporal sharding is preferable to
 script-prefix sharding. Selecting a script-hash shard reveals part of the
 script's identity before PIR begins. Selecting a temporal generation reveals a
 chain range but preserves the full script anonymity set within that generation.
+
+Note that a generation's *row count* is pinned and identical everywhere, so the
+directory's physical geometry carries no information about how busy its range
+was. Only the generation's block span does, and that is published anyway.
 
 ## Private event pages
 
@@ -424,6 +533,15 @@ If the wallet queries a generation only after a filter hit, the PIR server can
 infer probable activity in that generation. Repeated selections reveal a coarse
 activity timeline that may correlate with public transparent transactions.
 
+Content sealing sharpens this slightly. Generation spans vary with chain
+activity, and the map that publishes them is public, so a busy period is covered
+by a narrower generation than a quiet one. Selecting a generation therefore
+localizes the wallet's activity in time more precisely during busy periods than
+during quiet ones — by roughly the same factor the spans differ, which
+measurement puts at about fourteen. This is a property of the partition, not of
+the wallet's behaviour, and it applies equally to every wallet that selects that
+generation.
+
 The initial design may explicitly accept generation, timing and query-count
 leakage, but it must not describe that as hiding whether the wallet had activity.
 Possible stronger modes include:
@@ -459,28 +577,40 @@ event and UTXO equality, not only equal final balances.
 
 Build on the existing integrated prototype rather than replacing its model:
 
-- immutable temporal generations;
-- one public activity filter per generation;
-- a fixed-row private script directory;
+- immutable content-sealed generations, with a published height-to-generation
+  map;
+- one public activity filter per generation, under its own keying;
+- a fixed-row private script directory, identical in geometry across
+  generations;
 - two or a small fixed number of candidate directory buckets;
 - a small number of inline events;
 - fixed-size, privately selected event pages;
 - exact event replay with atomic checkpoint advancement;
-- a short recent tail and larger sealed historical generations.
+- a short unsealed tail and larger sealed historical generations.
 
 Add the private compact-transaction table only if the wallet adapter confirms
 that its existing transaction-display path cannot reconstruct required details
 from script events and locally retained data.
 
-Evaluate candidate generation widths, including 100,000 blocks, using:
+Choose the seal parameters from a census over the real event journal rather than
+from an estimate, since they are schema and re-partition the chain when changed.
+The first such census over Ironwood activation to height 3,473,474 found that
+the scripts limit stops binding above roughly eight thousand: past that, page
+rows seal every generation and the scripts limit is inert. Whichever limit binds
+is the one that is actually being chosen.
+
+Evaluate candidate seal parameters using:
 
 - filter bytes after cross-block script deduplication;
 - directory and page PIR upload and response bytes;
+- per-generation published setup, multiplied across the generations a restoring
+  wallet touches;
 - false-positive private queries;
 - active, inactive, restoration and catch-up workloads;
 - large and externally spammed histories;
+- realized occupancy distributions, including overshoot past target;
 - client memory and latency on the minimum supported device;
-- server CPU and concurrency;
+- server CPU, concurrency, and resident bytes per loaded generation;
 - reorg, interruption and tail-publication behavior;
 - timing and generation-selection leakage.
 
@@ -496,6 +626,20 @@ public filters
 + retries and cover traffic
 < coverage-matched compact scanning
 ```
+
+### What is measured and what is not
+
+Measured: the event journal from Ironwood activation to height 3,473,474;
+chain-density variation and the generation spans it produces; the complete
+public filter cost; realized occupancy distributions and overshoot; which limit
+binds at each candidate parameter set.
+
+Not yet measured, and each capable of overturning the result: the private
+retrieval cost of a real restoration workload against these generations;
+per-generation published setup summed over the generations a wallet touches;
+resident server memory per loaded generation, which at roughly a gigabyte of
+plaintext across the fleet is the constraint most likely to bite; and end-to-end
+behaviour on a minimum supported device.
 
 This design can reconstruct confirmed balance and history while hiding exact
 script and page selections. It does not, without additional measures, hide the
