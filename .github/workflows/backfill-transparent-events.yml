@@ -61,6 +61,41 @@ on:
         required: false
         default: ""
         type: string
+      directory_rows_per_segment:
+        description: >-
+          Census only. Score against this many directory rows per segment
+          instead of the compiled value. Reporting only. The scheme pads a row
+          count up to a multiple of 2,048 and refuses fewer, so the compiled
+          2,048 is its floor and this can only go up.
+        required: false
+        default: ""
+        type: string
+      inline_events:
+        description: >-
+          Census only. Score against this many events carried inline in a
+          directory entry. Unlike the other overrides this moves the
+          boundaries themselves, because the allowance decides whether a
+          history reaches the page table at all.
+        required: false
+        default: ""
+        type: string
+      placement:
+        description: >-
+          Census only. Run the builder's real two-choice placer over each
+          shard's scripts instead of modelling placement as scripts / slots,
+          and report how much headroom the fullest row has left.
+        required: false
+        default: false
+        type: boolean
+      shard_matches:
+        description: >-
+          Census only. Count how many shards each exact script appears in, by
+          external sort, and report the 2g directory queries that implies. The
+          runs are spilled under the runner's work directory and removed once
+          merged.
+        required: false
+        default: false
+        type: boolean
       policies:
         description: >-
           Census only. Semicolon-separated seal policies, each
@@ -154,6 +189,10 @@ jobs:
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
           PACKED: ${{ inputs.packed }}
           PAGE_ROWS: ${{ inputs.page_rows_per_segment }}
+          DIR_ROWS: ${{ inputs.directory_rows_per_segment }}
+          INLINE_EVENTS: ${{ inputs.inline_events }}
+          PLACEMENT: ${{ inputs.placement }}
+          SHARD_MATCHES: ${{ inputs.shard_matches }}
           POLICIES: ${{ inputs.policies }}
         run: |
           set -euo pipefail
@@ -161,6 +200,15 @@ jobs:
           ARGS=()
           [[ "$PACKED" == "true" ]] && ARGS+=(--packed)
           [[ -n "$PAGE_ROWS" ]] && ARGS+=(--page-rows-per-segment "$PAGE_ROWS")
+          [[ -n "$DIR_ROWS" ]] && ARGS+=(--directory-rows-per-segment "$DIR_ROWS")
+          [[ -n "$INLINE_EVENTS" ]] && ARGS+=(--inline-events "$INLINE_EVENTS")
+          [[ "$PLACEMENT" == "true" ]] && ARGS+=(--placement)
+          # Spilled under the workspace so the runner reclaims it with the job,
+          # and beside the journal rather than in it: the census must not write
+          # into the thing it was asked to measure.
+          if [[ "$SHARD_MATCHES" == "true" ]]; then
+            ARGS+=(--shard-matches "$RUNNER_TEMP/shard-matches")
+          fi
           if [[ -n "$POLICIES" ]]; then
             IFS=';' read -ra LIST <<<"$POLICIES"
             for one in "${LIST[@]}"; do ARGS+=(--policy "$one"); done
