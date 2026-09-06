@@ -628,5 +628,90 @@ fragment, so this measures a geometry rather than describing a set that could be
         );
     }
 
+    // A restoring wallet makes two directory queries for every generation
+    // containing one of its scripts. Occupancy counts script-generation pairs
+    // but not how often the same exact script recurs across boundaries. Replay
+    // the bounded study journal once against the selected boundaries to report
+    // that distribution exactly.
+    //
+    // This keeps one exact-script map per policy. A genesis-scale sweep with
+    // many policies should spill fixed-width keys to disk and externally
+    // aggregate them instead of assuming every historical script fits in RAM.
+    struct MatchRun<'a> {
+        name: &'a str,
+        shards: &'a [SealedShard],
+        shard_index: usize,
+        current: std::collections::HashSet<Vec<u8>>,
+        matches: std::collections::HashMap<Vec<u8>, u32>,
+    }
+
+    let mut match_runs: Vec<MatchRun<'_>> = runs
+        .iter()
+        .map(|run| MatchRun {
+            name: &run.name,
+            shards: &run.shards,
+            shard_index: 0,
+            current: Default::default(),
+            matches: Default::default(),
+        })
+        .collect();
+
+    for height in first..=covered {
+        let events = store
+            .events_at(height)?
+            .ok_or_else(|| format!("height {height} is missing from the journal"))?;
+        for run in &mut match_runs {
+            for (script, _) in &events {
+                if script.as_slice().len() <= transparent_shard::records::MAX_SCRIPT_BYTES {
+                    run.current.insert(script.as_slice().to_vec());
+                }
+            }
+            if height == run.shards[run.shard_index].end_height {
+                for script in run.current.drain() {
+                    *run.matches.entry(script).or_insert(0) += 1;
+                }
+                run.shard_index += 1;
+            }
+        }
+    }
+
+    println!("\n=== exact generation matches per supported script ===");
+    for run in &match_runs {
+        let mut counts: Vec<u64> = run
+            .matches
+            .values()
+            .map(|count| u64::from(*count))
+            .collect();
+        let occurrences: u64 = counts.iter().sum();
+        counts.sort_unstable();
+        let distinct = counts.len() as u64;
+        let mean = if distinct == 0 {
+            0.0
+        } else {
+            occurrences as f64 / distinct as f64
+        };
+        println!("  {}", run.name);
+        println!(
+            "    distinct {distinct}  script-generation entries {occurrences}  mean {mean:.3}"
+        );
+        println!(
+            "    matches      p50 {}  p90 {}  p95 {}  p99 {}  max {}",
+            percentile(&counts, 50.0),
+            percentile(&counts, 90.0),
+            percentile(&counts, 95.0),
+            percentile(&counts, 99.0),
+            counts.last().copied().unwrap_or(0),
+        );
+        println!(
+            "    directory queries per active script: mean {:.3}  p50 {}  p90 {}  p95 {}  p99 {}  max {}",
+            2.0 * mean,
+            2 * percentile(&counts, 50.0),
+            2 * percentile(&counts, 90.0),
+            2 * percentile(&counts, 95.0),
+            2 * percentile(&counts, 99.0),
+            2 * counts.last().copied().unwrap_or(0),
+        );
+    }
+
     Ok(())
 }
