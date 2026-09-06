@@ -155,11 +155,11 @@ pub async fn build_block_filter(
 pub async fn run(
     zakura: ZakuraClient,
     state: ServiceState,
-    cache_transactions: usize,
+    cache_outputs: usize,
     poll_seconds: u64,
     commit_every: u64,
 ) -> Result<(), BoxError> {
-    let mut cache = OutputCache::new(cache_transactions);
+    let mut cache = OutputCache::new(cache_outputs);
     loop {
         let tip = zakura.tip_height().await?;
         state.set_tip(tip).await;

@@ -47,13 +47,17 @@ struct Cli {
     /// would never report itself finished, and this tool is meant to terminate.
     #[arg(long)]
     stop_height: Option<u64>,
-    /// Transactions retained in the previous-output cache.
+    /// Outputs retained in the previous-output cache.
     ///
     /// The dominant cost of a backfill is resolving previous outputs, and most
     /// of them were created within a few thousand blocks. A larger cache trades
     /// resident memory for RPC round trips.
-    #[arg(long, default_value_t = transparent_filter_server::prevout::DEFAULT_CACHE_TRANSACTIONS)]
-    cache_transactions: usize,
+    ///
+    /// Counted in outputs, not transactions: an early-chain mining-pool
+    /// coinbase carries thousands of outputs, so a transaction count does not
+    /// bound what the cache holds.
+    #[arg(long, default_value_t = transparent_filter_server::prevout::DEFAULT_CACHE_OUTPUTS)]
+    cache_outputs: usize,
     /// Blocks between durable checkpoints.
     #[arg(long, default_value_t = 1_000)]
     commit_every: u64,
@@ -137,7 +141,7 @@ async fn main() -> Result<(), BoxError> {
 
     reconcile(&zakura, &mut store, stop).await?;
 
-    let mut cache = OutputCache::new(cli.cache_transactions);
+    let mut cache = OutputCache::new(cli.cache_outputs);
     let started = Instant::now();
     let first = store.next_height();
     let mut rpc_lookups = 0u64;

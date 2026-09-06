@@ -19,18 +19,30 @@ use zakura_chain::transparent::{Input, OutPoint};
 /// Matches the batch size the Python collector uses against this node.
 pub const PREVOUT_BATCH: usize = 16;
 
-/// Number of recently seen transactions whose outputs are retained.
+/// Number of recently seen *outputs* whose scripts are retained.
 ///
-/// Sized so that ordinary spends of recent outputs hit the cache during
-/// backfill. It bounds memory rather than guaranteeing a hit rate: a miss is
-/// correct, just slower.
-pub const DEFAULT_CACHE_TRANSACTIONS: usize = 200_000;
+/// Bounded by outputs rather than by transactions, because transactions are a
+/// poor proxy for memory: an early-chain mining-pool coinbase can carry
+/// thousands of outputs, so a transaction-bounded cache grew without limit over
+/// that range and was killed by the OOM killer partway through a genesis
+/// backfill. Outputs are what the map actually stores.
+///
+/// At roughly a hundred bytes per entry this is a few hundred megabytes. It
+/// bounds memory rather than guaranteeing a hit rate: a miss is correct, just
+/// slower.
+pub const DEFAULT_CACHE_OUTPUTS: usize = 2_000_000;
 
 /// Outputs of transactions seen recently, with insertion-order eviction.
+///
+/// Eviction is still whole transactions — a partially evicted transaction would
+/// leave outputs that can never be found again — but the budget it enforces is
+/// the output count.
 pub struct OutputCache {
     scripts: HashMap<OutPoint, Vec<u8>>,
     /// Transaction ids in insertion order, for eviction.
     order: VecDeque<(zakura_chain::transaction::Hash, u32)>,
+    /// Outputs currently held, kept alongside so eviction needs no walk.
+    outputs: usize,
     capacity: usize,
 }
 
@@ -39,6 +51,7 @@ impl OutputCache {
         Self {
             scripts: HashMap::new(),
             order: VecDeque::new(),
+            outputs: 0,
             capacity: capacity.max(1),
         }
     }
@@ -58,7 +71,12 @@ impl OutputCache {
         }
         if !outputs.is_empty() {
             self.order.push_back((txid, outputs.len() as u32));
-            while self.order.len() > self.capacity {
+            self.outputs += outputs.len();
+            // Evict whole transactions until the output budget holds. A single
+            // transaction larger than the budget is kept rather than evicted
+            // immediately, since evicting it would leave the block being
+            // extracted unable to resolve its own outputs.
+            while self.outputs > self.capacity && self.order.len() > 1 {
                 if let Some((evicted, count)) = self.order.pop_front() {
                     for index in 0..count {
                         self.scripts.remove(&OutPoint {
@@ -66,6 +84,7 @@ impl OutputCache {
                             index,
                         });
                     }
+                    self.outputs = self.outputs.saturating_sub(count as usize);
                 }
             }
         }
@@ -204,6 +223,75 @@ mod tests {
             hash: zakura_chain::transaction::Hash([seed; 32]),
             index,
         }
+    }
+
+    /// A transaction with `outputs` outputs, standing in for the early-chain
+    /// mining-pool coinbases that made a transaction-bounded cache unbounded.
+    fn wide_transaction(tag: u8, outputs: usize) -> std::sync::Arc<Transaction> {
+        std::sync::Arc::new(Transaction::V1 {
+            inputs: Vec::new(),
+            outputs: (0..outputs)
+                .map(|index| zakura_chain::transparent::Output {
+                    value: zakura_chain::amount::Amount::try_from(1).unwrap(),
+                    lock_script: zakura_chain::transparent::Script::new(&[
+                        0x76,
+                        0xa9,
+                        0x14,
+                        tag,
+                        index as u8,
+                    ]),
+                })
+                .collect(),
+            lock_time: zakura_chain::transaction::LockTime::unlocked(),
+        })
+    }
+
+    fn outpoint_of(transaction: &Transaction, index: u32) -> OutPoint {
+        OutPoint {
+            hash: transaction.hash(),
+            index,
+        }
+    }
+
+    /// The budget is outputs, not transactions. A transaction-bounded cache
+    /// grew without limit over early-chain blocks, whose mining-pool coinbases
+    /// carry thousands of outputs each, and a genesis backfill was killed by
+    /// the OOM killer partway through because of it.
+    #[test]
+    fn one_huge_transaction_counts_for_all_its_outputs() {
+        let mut cache = OutputCache::new(100);
+        let wide = wide_transaction(0, 250);
+        cache.insert_transaction(&wide);
+        // A transaction larger than the whole budget is kept: evicting it would
+        // leave the block being extracted unable to resolve its own outputs.
+        assert!(cache.get(&outpoint_of(&wide, 0)).is_some());
+
+        // The next insert evicts it, because the budget is now exceeded by a
+        // transaction that is not the only one held.
+        let next = wide_transaction(1, 10);
+        cache.insert_transaction(&next);
+        assert!(
+            cache.get(&outpoint_of(&wide, 0)).is_none(),
+            "the oversized transaction should be evicted once another arrives"
+        );
+        assert!(cache.get(&outpoint_of(&next, 0)).is_some());
+    }
+
+    /// Many small transactions evict by output count rather than by count of
+    /// transactions, so a fixed budget holds a predictable amount of memory
+    /// whatever the shape of the blocks.
+    #[test]
+    fn eviction_is_by_output_count_not_transaction_count() {
+        let mut cache = OutputCache::new(20);
+        let first = wide_transaction(0, 8);
+        cache.insert_transaction(&first);
+        for tag in 1..4u8 {
+            cache.insert_transaction(&wide_transaction(tag, 8));
+        }
+        // Four transactions of eight outputs is 32, past a 20-output budget, so
+        // the earliest are gone even though only four transactions were seen.
+        assert!(cache.get(&outpoint_of(&first, 0)).is_none());
+        assert!(cache.len() <= 24, "held {} outputs", cache.len());
     }
 
     #[test]

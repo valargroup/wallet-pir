@@ -33,8 +33,8 @@ struct Cli {
     #[arg(long, default_value_t = transparent_filter::START_HEIGHT)]
     start_height: u64,
     /// Transactions retained in the previous-output cache.
-    #[arg(long, default_value_t = transparent_filter_server::prevout::DEFAULT_CACHE_TRANSACTIONS)]
-    cache_transactions: usize,
+    #[arg(long, default_value_t = transparent_filter_server::prevout::DEFAULT_CACHE_OUTPUTS)]
+    cache_outputs: usize,
     #[arg(long, default_value_t = 10)]
     poll_seconds: u64,
     /// Blocks between durable checkpoints during backfill.
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if let Err(error) = ingest::run(
                 zakura.clone(),
                 ingest_state.clone(),
-                ingest_cli.cache_transactions,
+                ingest_cli.cache_outputs,
                 ingest_cli.poll_seconds,
                 ingest_cli.commit_every,
             )
