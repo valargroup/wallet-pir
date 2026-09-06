@@ -1,0 +1,94 @@
+Transparent PIR packed-geometry sweep
+Date: 2026-09-06
+
+Journal
+  heights 3428143-3473474
+  blocks 45332
+  events 869283
+  source /srv/zakura/transparent-event-data/superseded-v1
+
+Method
+  Read-only production census.
+  Boundaries seal on projected packed row demand.
+  Page-table bytes and segment counts use the stated reporting geometry.
+  No packed codec, builder, or v5 set was published.
+  Page target is floor(rows * 7900 / 8192); page capacity is rows.
+  Script target is 27000; script capacity is 28672.
+
+Geometry results
+  rows   generations   page segments   stacked generations   pinned MB
+  8192       5               5                  0               183.5
+  7168       5               5                  0               165.2
+  6144       5               5                  0               146.8
+  5120       5               5                  0               128.5
+  4096       6               6                  0               132.1
+  3072       7               7                  0               128.5
+  2048      11              11                  0               161.5
+
+Corrected finalist results
+
+  5120 rows; policy 27000:28672,4937:5120
+    shards 5 (4 sealed, 1 tail)
+    packed rows 21011
+    unpacked fragments 40109
+    reduction 1.91x
+    projected page-row utilisation 82.1%
+    page segments 5
+    generations needing more than one page segment 0
+    projected live bytes 95.5 MB
+    projected pinned bytes 128.5 MB
+    projected live utilisation 74.35%
+    distinct supported scripts 93281
+    script-generation entries 116993
+    generation matches mean 1.254, p50 1, p90 2, p95 3, p99 5, max 5
+    directory queries mean 2.508, p50 2, p90 4, p95 6, p99 10, max 10
+    workflow https://github.com/valargroup/enhance-pir/actions/runs/34063310106
+
+  3072 rows; policy 27000:28672,2962:3072
+    shards 7 (6 sealed, 1 tail)
+    packed rows 20492
+    unpacked fragments 43095
+    reduction 2.10x
+    projected page-row utilisation 95.3%
+    page segments 7
+    generations needing more than one page segment 0
+    projected live bytes 96.6 MB
+    projected pinned bytes 128.5 MB
+    projected live utilisation 75.22%
+    distinct supported scripts 93281
+    script-generation entries 126085
+    generation matches mean 1.352, p50 1, p90 2, p95 3, p99 7, max 7
+    directory queries mean 2.703, p50 2, p90 4, p95 6, p99 14, max 14
+    workflow https://github.com/valargroup/enhance-pir/actions/runs/34063391219
+
+  8192 rows; policy 27000:28672,7900:8192
+    shards 5 (4 sealed, 1 tail)
+    packed rows 20908
+    unpacked fragments 39146
+    reduction 1.87x
+    projected page-row utilisation 51.0%
+    page segments 5
+    generations needing more than one page segment 0
+    projected live bytes 95.4 MB
+    projected pinned bytes 183.5 MB
+    projected live utilisation 51.98%
+    distinct supported scripts 93281
+    script-generation entries 115761
+    generation matches mean 1.241, p50 1, p90 2, p95 3, p99 5, max 5
+    directory queries mean 2.482, p50 2, p90 4, p95 6, p99 10, max 10
+    workflow https://github.com/valargroup/enhance-pir/actions/runs/34063459633
+
+Conclusion
+  5120 rows is the bounded-sample winner on pinned bytes and generation count.
+  It ties 3072 rows on pinned bytes while avoiding two generations and their
+  additional filter, setup, and directory-query costs.
+
+  Relative to packed sealing at 8192 rows, 5120 rows saves 55.0 MB (30.0%) and
+  raises mean directory queries per active script from 2.482 to 2.508 (1.0%).
+  Relative to the published-v4 220.2 MB baseline, it saves 91.7 MB (41.6%).
+
+Limits
+  This is a bounded Ironwood-era journal, not genesis through tip.
+  Packed row counts and bytes are projections, not emitted v5 tables.
+  Actual directory placement, PIR setup/query/response bytes, latency, and
+  full-journal chain-era behavior remain unmeasured.

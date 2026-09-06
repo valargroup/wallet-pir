@@ -19,7 +19,7 @@
 //!   client that ignores them, and so two implementations cannot disagree about
 //!   a record while both calling it valid.
 
-use crate::layout::{DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, PAGE_HEADER_BYTES};
+use crate::layout::{DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS};
 use transparent_events::{EventError, TransparentEvent, EVENT_BYTES};
 
 /// Longest script a private table can hold.
@@ -73,18 +73,6 @@ const _: () = assert!(
     DIRECTORY_ROW_HEADER_BYTES + DIRECTORY_SLOTS * DIRECTORY_ENTRY_BYTES <= DIRECTORY_ROW_BYTES
 );
 
-// Page header field offsets.
-const PH_SCRIPT_LEN: usize = 0;
-const PH_SCRIPT: usize = 2;
-const PH_ORDINAL: usize = PH_SCRIPT + MAX_SCRIPT_BYTES;
-const PH_PAGE_COUNT: usize = PH_ORDINAL + 4;
-const PH_EVENT_COUNT: usize = PH_PAGE_COUNT + 4;
-const PH_MIN_HEIGHT: usize = PH_EVENT_COUNT + 4;
-const PH_MAX_HEIGHT: usize = PH_MIN_HEIGHT + 4;
-const PH_END: usize = PH_MAX_HEIGHT + 4;
-
-const _: () = assert!(PH_END <= PAGE_HEADER_BYTES);
-
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RecordError {
     #[error("record is {got} bytes, expected {want}")]
@@ -99,7 +87,7 @@ pub enum RecordError {
     Event(#[from] EventError),
     #[error("a row holds at most {DIRECTORY_SLOTS} entries, was given {0}")]
     TooManyEntries(usize),
-    #[error("a page holds at most {EVENTS_PER_PAGE} events, was given {0}")]
+    #[error("a fragment holds at most {EVENTS_PER_PAGE} events, was given {0}")]
     TooManyEvents(usize),
 }
 
@@ -299,168 +287,6 @@ pub fn decode_directory_row(row: &[u8]) -> Result<Vec<DirectoryEntry>, RecordErr
     Ok(entries)
 }
 
-/// One page of a script's history.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Page {
-    pub script: Vec<u8>,
-    pub ordinal: u32,
-    pub page_count: u32,
-    pub events: Vec<TransparentEvent>,
-    /// Bounds over this page's own events, so a client can navigate to the
-    /// first page newer than its checkpoint without a plaintext index.
-    pub min_height: u32,
-    pub max_height: u32,
-}
-
-impl Page {
-    /// Builds a page from events, deriving its height bounds from them.
-    pub fn new(
-        script: Vec<u8>,
-        ordinal: u32,
-        page_count: u32,
-        events: Vec<TransparentEvent>,
-    ) -> Result<Self, RecordError> {
-        if events.is_empty() {
-            return Err(RecordError::Malformed("a page holds no events".into()));
-        }
-        if events.len() > EVENTS_PER_PAGE as usize {
-            return Err(RecordError::TooManyEvents(events.len()));
-        }
-        let min_height = events
-            .iter()
-            .map(|event| event.height())
-            .min()
-            .expect("nonempty");
-        let max_height = events
-            .iter()
-            .map(|event| event.height())
-            .max()
-            .expect("nonempty");
-        Ok(Self {
-            script,
-            ordinal,
-            page_count,
-            events,
-            min_height,
-            max_height,
-        })
-    }
-
-    pub fn encode(&self) -> Result<Vec<u8>, RecordError> {
-        if self.script.len() > MAX_SCRIPT_BYTES {
-            return Err(RecordError::ScriptTooLong(self.script.len()));
-        }
-        if self.events.len() > EVENTS_PER_PAGE as usize {
-            return Err(RecordError::TooManyEvents(self.events.len()));
-        }
-        let mut row = vec![0u8; crate::layout::PAGE_ROW_BYTES];
-        row[PH_SCRIPT_LEN..PH_SCRIPT].copy_from_slice(&(self.script.len() as u16).to_le_bytes());
-        row[PH_SCRIPT..PH_SCRIPT + self.script.len()].copy_from_slice(&self.script);
-        row[PH_ORDINAL..PH_PAGE_COUNT].copy_from_slice(&self.ordinal.to_le_bytes());
-        row[PH_PAGE_COUNT..PH_EVENT_COUNT].copy_from_slice(&self.page_count.to_le_bytes());
-        row[PH_EVENT_COUNT..PH_MIN_HEIGHT]
-            .copy_from_slice(&(self.events.len() as u32).to_le_bytes());
-        row[PH_MIN_HEIGHT..PH_MAX_HEIGHT].copy_from_slice(&self.min_height.to_le_bytes());
-        row[PH_MAX_HEIGHT..PH_END].copy_from_slice(&self.max_height.to_le_bytes());
-        for (index, event) in self.events.iter().enumerate() {
-            let at = PAGE_HEADER_BYTES + index * EVENT_BYTES;
-            row[at..at + EVENT_BYTES].copy_from_slice(&event.to_bytes());
-        }
-        Ok(row)
-    }
-
-    pub fn decode(row: &[u8]) -> Result<Option<Self>, RecordError> {
-        if row.len() != crate::layout::PAGE_ROW_BYTES {
-            return Err(RecordError::Length {
-                got: row.len(),
-                want: crate::layout::PAGE_ROW_BYTES,
-            });
-        }
-        let script_len =
-            u16::from_le_bytes(row[PH_SCRIPT_LEN..PH_SCRIPT].try_into().expect("2 bytes")) as usize;
-        if script_len == 0 {
-            if row.iter().any(|byte| *byte != 0) {
-                return Err(RecordError::Malformed(
-                    "an unused page row is not all zero".into(),
-                ));
-            }
-            return Ok(None);
-        }
-        if script_len > MAX_SCRIPT_BYTES {
-            return Err(RecordError::ScriptTooLong(script_len));
-        }
-        if row[PH_SCRIPT + script_len..PH_ORDINAL]
-            .iter()
-            .any(|byte| *byte != 0)
-        {
-            return Err(RecordError::Malformed("script padding is not zero".into()));
-        }
-        if row[PH_END..PAGE_HEADER_BYTES].iter().any(|byte| *byte != 0) {
-            return Err(RecordError::Reserved);
-        }
-
-        let ordinal = u32::from_le_bytes(row[PH_ORDINAL..PH_PAGE_COUNT].try_into().expect("4"));
-        let page_count =
-            u32::from_le_bytes(row[PH_PAGE_COUNT..PH_EVENT_COUNT].try_into().expect("4"));
-        let event_count =
-            u32::from_le_bytes(row[PH_EVENT_COUNT..PH_MIN_HEIGHT].try_into().expect("4")) as usize;
-        let min_height =
-            u32::from_le_bytes(row[PH_MIN_HEIGHT..PH_MAX_HEIGHT].try_into().expect("4"));
-        let max_height = u32::from_le_bytes(row[PH_MAX_HEIGHT..PH_END].try_into().expect("4"));
-
-        if event_count == 0 || event_count > EVENTS_PER_PAGE as usize {
-            return Err(RecordError::Malformed(format!(
-                "page claims {event_count} events"
-            )));
-        }
-        if ordinal >= page_count {
-            return Err(RecordError::Malformed(format!(
-                "page {ordinal} of {page_count}"
-            )));
-        }
-
-        let mut events = Vec::with_capacity(event_count);
-        for index in 0..event_count {
-            let at = PAGE_HEADER_BYTES + index * EVENT_BYTES;
-            events.push(TransparentEvent::from_bytes(&row[at..at + EVENT_BYTES])?);
-        }
-        let used = PAGE_HEADER_BYTES + event_count * EVENT_BYTES;
-        if row[used..].iter().any(|byte| *byte != 0) {
-            return Err(RecordError::Malformed(
-                "a page has content past its event count".into(),
-            ));
-        }
-
-        // The header's bounds are a claim about the events in the row, and a
-        // client navigates by them. A page whose bounds disagreed with its own
-        // events could steer a client past history it needed.
-        let actual_min = events
-            .iter()
-            .map(|event| event.height())
-            .min()
-            .expect("nonempty");
-        let actual_max = events
-            .iter()
-            .map(|event| event.height())
-            .max()
-            .expect("nonempty");
-        if actual_min != min_height || actual_max != max_height {
-            return Err(RecordError::Malformed(format!(
-                "page claims heights {min_height}-{max_height} but holds {actual_min}-{actual_max}"
-            )));
-        }
-
-        Ok(Some(Self {
-            script: row[PH_SCRIPT..PH_SCRIPT + script_len].to_vec(),
-            ordinal,
-            page_count,
-            events,
-            min_height,
-            max_height,
-        }))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,60 +410,6 @@ mod tests {
         bad.total_events = 1;
         let encoded = bad.encode().unwrap();
         assert!(DirectoryEntry::decode(&encoded).is_err());
-    }
-
-    #[test]
-    fn a_page_round_trips_and_derives_its_bounds() {
-        let events: Vec<TransparentEvent> = (0..5).map(|i| event(200 + i * 3, i as u8)).collect();
-        let page = Page::new(script(9), 0, 2, events).unwrap();
-        assert_eq!(page.min_height, 200);
-        assert_eq!(page.max_height, 212);
-        let encoded = page.encode().unwrap();
-        assert_eq!(Page::decode(&encoded).unwrap(), Some(page));
-    }
-
-    #[test]
-    fn an_unused_page_row_decodes_as_absent() {
-        let empty = vec![0u8; crate::layout::PAGE_ROW_BYTES];
-        assert_eq!(Page::decode(&empty).unwrap(), None);
-    }
-
-    /// A client navigates by the header's bounds. A page whose bounds lied
-    /// about its own events could steer a client past history it needed, and
-    /// the client would report a balance short by whatever it skipped.
-    #[test]
-    fn a_page_whose_bounds_disagree_with_its_events_is_refused() {
-        let events: Vec<TransparentEvent> = (0..4).map(|i| event(300 + i, i as u8)).collect();
-        let page = Page::new(script(9), 0, 1, events).unwrap();
-        let mut encoded = page.encode().unwrap();
-        encoded[PH_MAX_HEIGHT..PH_END].copy_from_slice(&9_999u32.to_le_bytes());
-        assert!(Page::decode(&encoded).is_err());
-    }
-
-    #[test]
-    fn a_page_outside_its_own_count_is_refused() {
-        let events = vec![event(100, 0)];
-        let page = Page::new(script(1), 0, 1, events).unwrap();
-        let mut encoded = page.encode().unwrap();
-        // Ordinal 3 of 1 page.
-        encoded[PH_ORDINAL..PH_PAGE_COUNT].copy_from_slice(&3u32.to_le_bytes());
-        assert!(Page::decode(&encoded).is_err());
-    }
-
-    #[test]
-    fn a_full_page_fits_and_an_overfull_one_is_refused() {
-        let full: Vec<TransparentEvent> = (0..EVENTS_PER_PAGE)
-            .map(|i| event(400 + i, (i % 251) as u8))
-            .collect();
-        let page = Page::new(script(1), 0, 1, full.clone()).unwrap();
-        assert_eq!(page.encode().unwrap().len(), crate::layout::PAGE_ROW_BYTES);
-
-        let mut overfull = full;
-        overfull.push(event(9_999, 0));
-        assert_eq!(
-            Page::new(script(1), 0, 1, overfull),
-            Err(RecordError::TooManyEvents(EVENTS_PER_PAGE as usize + 1))
-        );
     }
 
     #[test]

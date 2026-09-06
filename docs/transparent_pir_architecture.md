@@ -1,6 +1,6 @@
 # Transparent PIR architecture
 
-Date: 2026-09-06. Status: in-prototype
+Date: 2026-09-06. Status: in-prototype. Layout schema: transparent-shard-v5
 
 The proposed service lets a wallet privately recover every confirmed receive
 and spend for its supported transparent scripts, then reconstruct its UTXOs,
@@ -228,13 +228,32 @@ The tables are keyed differently, so no single quantity bounds them:
 | event pages | page rows | yes |
 | transaction detail | distinct transaction ids | only if built |
 
-Total event count alone does not determine page demand. Pages are allocated
-and padded per script, so many short histories that exceed inline capacity can
-use more rows than the same events concentrated in a few long histories. Range
-closure must therefore track page rows directly.
+Total event count alone does not determine page demand. Short histories share
+rows by paged-event count and long ones take runs of their own, so row demand is
 
-Each occupancy measure is monotone as blocks stream in, so one incremental
-pass can decide the boundaries. Process every block, including blocks with no
+```text
+R = sum over p of ceil(N[p] / entries_per_row(p)) + L
+```
+
+where `N[p]` counts histories with `p` paged events, `entries_per_row(p)` is how
+many of those fit a row, and `L` is the rows long histories have reserved. Range
+closure tracks that directly.
+
+Distinct scripts and event count are monotone as blocks stream in. **`R` is
+not.** Twenty-three one-event histories need two rows, because twenty-two share
+one; give a single one of them a second event and the total *falls* to two,
+because the class it leaves gives up a row that the class it joins does not
+need. Sealing is unaffected — capacity is checked against a projection of the
+exact state absorbing will produce, and a generation closes the moment a target
+is crossed, so `R` never gets the chance to dip back under a threshold it has
+passed. What makes one incremental pass sufficient is that each block's
+per-script delta is exact, not that the totals only rise.
+
+Nothing may therefore reason that content which does not fit now can never fit
+later, and no monotone-progress assertion may be made across tail revisions: a
+republished tail covering more blocks can need fewer rows than its predecessor.
+Where the gap between target and capacity needs a bound, the bound is that one
+block raises `R` by at most the number of distinct scripts it touches. Process every block, including blocks with no
 supported activity, to preserve gapless height coverage. Close at a block
 boundary according to the capacity and target rules below.
 
@@ -289,9 +308,11 @@ candidates. If a directory row has `K >= 1` slots and there are `N` supported
 distinct scripts, opening another segment means at least `K` records already
 occupy every earlier segment. Thus at most `max(1, ceil(N / K))` directory
 segments are needed. No reseeding success or retry limit is part of the rule.
-Pages are packed into contiguous extents in the same script order. If they need
-`P` rows and a page segment holds `R` rows, they need `max(1, ceil(P / R))`
-segments. Publish the maximum of these two counts, padding the other table's
+Page rows are laid out by packing class: short histories in increasing
+paged-event count, sorted by exact script bytes within a class and filling rows
+with whole entries, then long histories in script order, each keeping a
+contiguous run. If they need `P` rows and a page segment holds `R` rows, they
+need `max(1, ceil(P / R))` segments. Publish the maximum of these two counts, padding the other table's
 extra segments with empty rows. The manifest commits to that complete count
 and ordered segment list.
 
@@ -572,21 +593,51 @@ chain activity, already present in the public chain.
 ## Private event pages
 
 Histories that do not fit inline in the directory record are stored in
-fixed-size pages:
+fixed-size page rows. A row holds an entry count and then that many
+variable-length entries, so several short histories share one row:
 
 ```text
-EventPage {
-    generation_id
-    exact_script
-    page_ordinal
-    page_count
-    event_count
-    minimum_height
-    maximum_height
-    events[]
+PageRow {
+    entry_count
+    entries[] {
+        exact_script
+        fragment_ordinal
+        fragment_count
+        event_count
+        minimum_height
+        maximum_height
+        events[]
+    }
     padding
 }
 ```
+
+A row belonged to one script until it was measured. The distribution is p50 two
+events, p90 five, p95 eight, and the newest two are inline, so the common script
+that needs a row at all needs a few event slots out of thirty-six and the rest
+was padding nobody chose. Twenty-two one-event histories now share a row,
+thirteen two-event ones, ten three-event ones. Past seventeen paged events an
+entry is more than half a row and sharing stops paying, so a longer history
+takes a contiguous run of rows to itself and shares with nothing — including its
+short final fragment, because sharing that would make one history's placement
+depend on unrelated content.
+
+An entry's identity is the accepted generation revision, the exact script, and
+the ordinal. The generation comes from the bound manifest rather than being
+repeated in every entry. A reader selects the one entry matching its script and
+ordinal, and no row may name a script twice — that rule is what makes selection
+well defined rather than a choice, so the codec enforces it rather than leaving
+it to the client.
+
+A row also hands the reader other scripts' histories. Those must be discarded
+and must not be *used*: two of a wallet's own scripts sharing a row still cost
+two retrievals. Satisfying the second from the first response would be free, and
+would make the request count depend on which scripts happen to share a row,
+which is a fact about other people's history and about the builder's placement.
+
+A directory entry still names a first row and a count, and a history still costs
+`ceil(paged_events / 36)` retrievals. Packing changed where a fragment sits, not
+how many a history has.
 
 The private directory response supplies a page extent. Follow-up page selection
 must itself use PIR; a page index must never appear in a plaintext request.
@@ -652,8 +703,12 @@ can add those classifications later using the additional information it needs.
 
 ## Wallet reconstruction
 
-Before replay, merge inline events and every required page across segments
-into canonical order. Maintain an applied-event identity journal alongside the
+Before replay, merge inline events and every required fragment across segments
+into canonical order. A page row carries several scripts, so each retrieval
+yields the one entry matching the requested script and ordinal; a row that named
+a script twice, or that answered with none, is a failed retrieval rather than a
+partial answer. Entries belonging to other scripts are discarded and never used
+to satisfy another retrieval. Maintain an applied-event identity journal alongside the
 ledger: an identical already-applied event is a no-op even if its output has
 since been spent, and any field mismatch is a conflict. Duplicate checking and
 event application commit atomically. Reorg rollback removes the reverted
@@ -765,6 +820,24 @@ pattern; it is not a claim that a wallet's scripts cannot be inferred. A linked
 combination of generation selections and page counts may uniquely match a
 public script's history. Evaluation must report how many public scripts remain
 consistent with observed workload patterns, including repeated sessions.
+
+Packing several histories into one row does not change what is disclosed. For a
+fixed generation revision and request count, the tables a wallet addresses and
+the sizes of its requests and responses do not depend on which script it
+selected or on where that script's history was packed. Size classes are a
+builder's concern: every class lives in one logical page table with one
+geometry, and a row index stays private. This is why a wallet must not skip a
+retrieval because an earlier packed response happened to carry the history it
+wanted — that optimisation would make the request count depend on the builder's
+placement and on other people's histories, which is exactly the dependence the
+invariant excludes.
+
+Independent page lanes — routing a retrieval to a container chosen after the
+directory lookup — remain deferred for the same reason. Choosing a container
+after a private lookup would disclose a partition of the scripts in that
+generation, and hiding the choice needs a separately costed mechanism. Coarser
+public ranges, padded query counts, dummy retrievals and scheduled retrieval are
+likewise separate proposals; none is implied by anything above.
 
 PIR hides the selected row within the selected database. It does not inherently
 hide:
@@ -919,75 +992,113 @@ journal but against the published generations rather than a fixture. The chain
 data, the published bytes and the retrieval are real; the wallets are synthetic,
 assembled from scripts drawn from the journal. They were produced by the
 `publish` and `measure` actions of the transparent-event backfill workflow
-against `/srv/zakura/transparent-shards-v4`. The raw census and measurement
+against `/srv/zakura/transparent-shards-v5`, the packed layout. The raw census and measurement
 output is archived under
 [shard-utilisation](transparent-pir-evaluation/shard-utilisation/).
 
 | Measured against the published set | Result | What it establishes |
 |---|---|---|
-| Published set | 6 generations over 3,428,143-3,473,474; 220.2 MB of plaintext tables | The whole sample publishes at the shipped seal parameters |
+| Published set | 6 generations over 3,428,143-3,473,474; 132.1 MB of plaintext tables | The whole sample publishes at the shipped seal parameters |
 | Segments per generation | One directory and one page segment throughout | The exceptional path did not arise in this range; its cost stays unmeasured |
 | Republication over an unchanged journal | Identical digests and directory size; tail revision unchanged | Publication is idempotent: a re-run verifies rather than forking the identity it already published under |
-| Public floor | 318,816 B of filters and map | What a wallet pays before any private query |
-| Unused wallet, 20 and 100 scripts | Exact; no private query; 318,816 B | A wallet with no match retrieves nothing, and carrying five times the scripts costs nothing more |
-| 10 small histories | Exact; 20 queries, 7 published setups; 2,512,907 B | Directory-only recovery for short histories |
-| 10 median histories | Exact; 20 queries, 7 published setups; 2,533,451 B | Recovery where inline events do not suffice |
-| Restoration, 5 active and 95 unused scripts | Exact; 10 queries, 4 published setups; 1,430,660 B | Birthday-to-tip restoration over the range, about 1.3% of the extrapolated scanning baseline |
-| Largest single history | Exact; 2,635 queries, 14 published setups; 351,063,398 B | About 3.1 times that baseline for one script: the spammed-history case is where this design loses |
+| Public floor | 324,689 B of filters and map | What a wallet pays before any private query |
+| Unused wallet, 20 and 100 scripts | Exact; no private query; 324,689 B | A wallet with no match retrieves nothing, and carrying five times the scripts costs nothing more |
+| 10 small histories | Exact; 20 queries, 5 published setups; 2,449,314 B | Directory-only recovery for short histories |
+| 10 median histories | Exact; 20 queries, 5 published setups; 2,449,314 B | Recovery where inline events do not suffice |
+| Restoration, 5 active and 95 unused scripts | Exact; 10 queries, 4 published setups; 1,415,989 B | Birthday-to-tip restoration over the range, about 1.3% of the extrapolated scanning baseline |
+| Largest single history | Exact; 2,635 queries, 12 published setups; 294,605,085 B | About 2.7 times that baseline for one script: the spammed-history case is still where this design loses |
 
 ### Table utilisation
 
 Padding is the mechanism that stops a response leaking its contents, so a table
 is deliberately the same size whatever it holds. That makes the cost of the
 padding invisible unless it is measured, and every other check in the pipeline
-asserts the opposite property. The census therefore reports three ratios, which
-fail independently and have different fixes: how many rows of a pinned table are
-used at all, how full each used row is, and the two together against bytes
-actually stored.
+asserts the opposite property. The census therefore reports how many rows of a
+pinned table are used at all, how full each used row is, and the two together
+against bytes actually stored — three ratios that fail independently and have
+different fixes.
 
-| Utilisation | Before | After |
-|---|---:|---:|
-| Directory rows used | 27.0% | 69.8% |
-| Page rows used | 43.1% | 82.6% |
-| Page slots filled | 8.7% | 45.2% |
-| Live bytes of pinned bytes | 6.04% | 44.70% |
-| Plaintext tables over the range | 1,695.5 MB | 220.2 MB |
+| Utilisation | Original | Narrowed rows | Packed rows |
+|---|---:|---:|---:|
+| Directory rows used | 27.0% | 69.8% | 71.0% |
+| Page rows used | 43.1% | 82.6% | 85.0% |
+| Used-row fill | 8.7% of slots | 45.2% of slots | 88.0% of bytes |
+| Live bytes of pinned bytes | 6.04% | 44.70% | 72.75% |
+| Plaintext tables over the range | 1,695.5 MB | 220.2 MB | 132.1 MB |
 
-Two separable changes produced this. Narrowing the page row raised page fill: a
-page belongs to one script, and the median script that needs one has a handful
-of events, so a wide row is mostly padding for the common case. Raising the page
-rows per segment raised *directory* fill, because page rows are what close a
-generation, so that figure decides how many scripts a generation accumulates
-before sealing — at the smaller value, generations sealed at 11,176 scripts
-against a directory holding 28,672.
+Three separable changes produced this. Narrowing the page row raised page fill,
+because a row belonged to one script and the median script needing one has a
+handful of events. Raising the page rows per segment raised *directory* fill,
+because page rows are what close a generation, so that figure decides how many
+scripts a generation accumulates before sealing. Packing short histories into
+shared rows then raised fill again — and on its own saved nothing at all.
 
-The remaining slack is structural rather than a tuning error. Page rows stay
-under half full because a page is per script; raising that further requires
-sharing a row between scripts, which is not done here. Beneath both sits a
-floor: parameter selection pads rows to a fixed multiple and the row width has a
-minimum, so a table costs at least its minimum whatever it holds, and a small
-generation cannot be efficient at any fill.
+That last point is worth stating plainly, because it was measured and it was not
+expected. Packing halved row demand, from 40,003 rows to 20,897, and moved the
+stored figure by zero: a table padded to its row count costs the same whether
+6,763 rows are used or 3,489, so every row packing recovered was already
+padding. What packing bought was the room to halve the table, and halving the
+table is the saving — 132.1 MB against 220.2 over the same six generations, so a
+restoring wallet opens no more generations and fetches no more published setup
+than before. The two had to be measured together; neither could be chosen from
+the other's evidence.
 
-The cost fell on the heaviest history, which is the case that was already
-weakest. It gets proportionally more rows from a narrower page and a slightly
-larger query from a wider page table, and moved from below the scanning baseline
-to about three times it. The design's stated answer for spammed histories is
-query budgets and resumable work rather than a wider row for every wallet;
-bounded evaluation-key reuse, which is specified but not built, targets the
-packing keys that dominate each query and is the change that would recover it.
+Used-row fill is now reported in bytes rather than event slots. Once a row mixes
+histories of different lengths, "sixteen of thirty-six slots" describes nothing:
+a row of twenty-two one-event entries holds twenty-two events and is 98% full.
+
+Halving the page table again would lose on both counts, which is why it is 4,096
+rows and not 2,048. At 2,048 the page limit closes nearly every generation, the
+range splits into eleven, and stored bytes rise to 161.5 MB — the directory is
+charged per generation, and eleven directories cost more than the page rows
+saved. It would also roughly double the published setup a restoring wallet
+fetches, which is the cost a smaller table was meant to reduce.
+
+The remaining slack is structural rather than a tuning error. Long histories are
+now the whole of it: 1,701 scripts need 14,693 of the 20,897 rows, and packing
+cannot touch them, because past seventeen paged events an entry is more than
+half a row. Beneath that sits a floor — parameter selection pads rows to a fixed
+multiple and the row width has a minimum, so a table costs at least its minimum
+whatever it holds, and a small generation cannot be efficient at any fill.
+
+Narrowing the row had cost the heaviest history, which was already the weakest
+case: it took proportionally more rows and moved from below the scanning
+baseline to about three times it. Packing gave most of that back. The largest
+single history fell 16.1%, 56.4 MB, almost entirely query upload, to about 2.7
+times the baseline — because query size follows the row count, and halving the
+page table took 21,504 bytes off every page retrieval. Query counts did not
+move: a history costs the fragments it has, wherever they sit.
+
+That is as far as geometry reaches. 86,016 bytes of every query are packing
+keys, which is 89% of a directory query and 81% of a page query, and no row
+count touches them. The design's stated answer for spammed histories remains
+query budgets and resumable work rather than a wider row for every wallet, and
+bounded evaluation-key reuse — specified, not built — is the change that would
+matter more here than any further tuning.
+
+One cost moved the other way. The public floor grew by 5,873 bytes, which every
+wallet pays whether it queries or not: filters are per generation and sized by
+the distinct scripts in one, so a script active either side of a boundary is an
+element in both, and the packed boundaries catch slightly more of that
+repetition. It is 1.8% on a wallet that retrieves nothing, against 2.5% to 16.1%
+saved by every wallet that retrieves anything.
 
 Equality is exact in every case — event multiset, UTXO set and per-transaction
 history against an independent traversal of the journal, not merely equal
-balances. The two comparisons use the 108 MB scanning figure, which is
-extrapolated from 2,888,097 bytes measured over 1,152 blocks rather than
-measured over this range. Totals include each opened generation's published
-setup, charged once per sync. A setup is fetched per table of each generation
-opened, so the largest history's 14 are both tables of all seven generations it
-matched.
+balances. The comparisons use the 108 MB scanning figure, which is extrapolated
+from 2,888,097 bytes measured over 1,152 blocks rather than measured over this
+range. Totals include each opened generation's published setup, charged once per
+sync. A setup is fetched per table of each generation opened, so the largest
+history's 12 are both tables of all six generations it matched.
 
 For implementation context, see the [boundary selector](../pir/transparent-shard/src/seal.rs),
-[table builder](../pir/transparent-shard/src/build.rs), and
+[table builder](../pir/transparent-shard/src/build.rs),
+[page row codec](../pir/transparent-shard/src/page_row.rs), and
 [census command](../server/transparent-filter-server/src/bin/shard-census.rs).
+The wire cost of a candidate geometry is a pure function of its row count and
+width, and is pinned in
+[geometry_costs](../server/transparent-shard-server/tests/geometry_costs.rs), so
+a parameter change has to restate what it costs a wallet.
 The [mainnet study](transparent_pir_mainnet_study.md) and
 [incremental evaluation](transparent_pir_incremental.md) provide related
 prototype evidence; their results must not be treated as measurements of this
@@ -1003,7 +1114,9 @@ exceeds the scanning baseline's per-script share by a wide margin.
 
 The implementation already has multi-segment construction and tail manifests,
 but its directory builder rehashes with a retry cap. It does not establish the
-deterministic placement and publication guarantees specified here. Those need
+deterministic placement and publication guarantees specified here. The census
+also models directory placement as scripts over slots rather than running that
+builder, so the directory segment counts it reports are a lower bound. Those need
 implementation plus adversarial placement and state-transition tests, including
 revision retention, interruption, reorgs, and atomic coverage advancement.
 Exceptional-path and revision-churn costs also remain unmeasured.

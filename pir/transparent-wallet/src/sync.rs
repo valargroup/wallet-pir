@@ -51,7 +51,8 @@ use transparent_filter::{
     validate_filter, BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap,
 };
 use transparent_shard::build::candidate_rows;
-use transparent_shard::records::{decode_directory_row, DirectoryEntry, Page};
+use transparent_shard::page_row::decode_page_row;
+use transparent_shard::records::{decode_directory_row, DirectoryEntry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -67,10 +68,23 @@ pub enum SyncError {
     Transport(String),
     #[error("{0}")]
     Invalid(String),
+    #[error("service serves schema {served}, this build reads {expected}")]
+    Schema {
+        served: String,
+        expected: &'static str,
+    },
 }
 
 /// The geometry a service declares, checked against this build's constants.
 pub struct ServiceGeometry {
+    /// The schema the service serves, from its init response.
+    ///
+    /// A row's meaning is entirely a function of its schema, and the bytes
+    /// carry no version of their own — a fixed-width row has nowhere to put
+    /// one without spending space on every row. So a wallet that decoded
+    /// whatever it was handed would read a newer layout as the one it knows
+    /// and reconstruct a plausible, wrong history. This is where that stops.
+    pub schema: String,
     pub directory_scheme: ipir_sp::YpirSchemeParams,
     pub directory_setup_seed: u64,
     pub pages_scheme: ipir_sp::YpirSchemeParams,
@@ -125,6 +139,12 @@ pub fn sync(
     scripts: &[ScriptBytes],
     birthday: u64,
 ) -> Result<SyncOutcome, SyncError> {
+    if geometry.schema != transparent_shard::SCHEMA {
+        return Err(SyncError::Schema {
+            served: geometry.schema.clone(),
+            expected: transparent_shard::SCHEMA,
+        });
+    }
     map.check_shape()
         .map_err(|error| SyncError::Invalid(format!("shard map is malformed: {error}")))?;
     let genesis = BlockHash::from_display_hex(&map.genesis_hash)?;
@@ -337,8 +357,19 @@ fn retrieve_shard(
             for ordinal in 0..found.page_count {
                 // The extent indexes the shard's page space, which is its
                 // segments concatenated, so an extent that runs past a segment
-                // boundary needs no special handling here.
-                let row = found.first_page + ordinal;
+                // boundary needs no special handling here. It must still land
+                // inside that space: a directory entry is a claim like any
+                // other, and one pointing past the table would otherwise be
+                // answered by whatever the arithmetic wrapped onto.
+                let row = found.first_page.checked_add(ordinal).ok_or_else(|| {
+                    SyncError::Invalid(format!("shard {shard_id} page extent overflows"))
+                })?;
+                let space = transparent_shard::PAGE_ROWS as u64 * u64::from(entry.page_segments);
+                if u64::from(row) >= space {
+                    return Err(SyncError::Invalid(format!(
+                        "shard {shard_id} page {row} is outside its {space}-row table"
+                    )));
+                }
                 let (_, within) = transparent_shard::layout::split_row(
                     row as u64,
                     transparent_shard::PAGE_ROWS as u64,
@@ -351,32 +382,38 @@ fn retrieve_shard(
                     charges,
                 )?;
                 // A directory entry could point anywhere, and every segment
-                // answered; the page's own header is what says whose history it
-                // holds, and exactly one answer may claim it.
-                let mut page = None;
+                // answered; an entry's own header is what says whose history it
+                // holds, and exactly one may claim this fragment.
+                //
+                // A packed row also carries other scripts' histories. Those are
+                // discarded, and deliberately not used: two of a wallet's own
+                // scripts sharing a row still cost two fetches. Satisfying the
+                // second from the first response would make the request
+                // transcript depend on which scripts share a row, which is a
+                // fact about other people's history and not this wallet's.
+                let mut fragment = None;
                 for raw in answers {
-                    let Some(candidate) = Page::decode(&raw)? else {
-                        continue;
-                    };
-                    if candidate.script == found.script
-                        && candidate.ordinal == ordinal
-                        && candidate.page_count == found.page_count
-                    {
-                        if page.is_some() {
-                            return Err(SyncError::Invalid(format!(
-                                "shard {shard_id} holds page {row} twice"
-                            )));
+                    for candidate in decode_page_row(&raw)? {
+                        if candidate.script == found.script
+                            && candidate.ordinal == ordinal
+                            && candidate.fragment_count == found.page_count
+                        {
+                            if fragment.is_some() {
+                                return Err(SyncError::Invalid(format!(
+                                    "shard {shard_id} holds page {row} twice"
+                                )));
+                            }
+                            fragment = Some(candidate);
                         }
-                        page = Some(candidate);
                     }
                 }
-                let page = page.ok_or_else(|| {
+                let fragment = fragment.ok_or_else(|| {
                     SyncError::Invalid(format!(
                         "shard {shard_id} page {row} does not belong to the entry that located it"
                     ))
                 })?;
-                recovered += page.events.len() as u32;
-                for event in page.events {
+                recovered += fragment.events.len() as u32;
+                for event in fragment.events {
                     events.push((found.script.clone(), event));
                 }
             }

@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v4";
+pub const SCHEMA: &str = "transparent-shard-v5";
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -43,7 +43,11 @@ pub struct TableGeometry {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ManifestOccupancy {
     pub scripts: u64,
+    /// Page rows the shard's tables hold, after packing.
     pub page_rows: u64,
+    /// Fragments across every indexed history, which is what a wallet's page
+    /// queries count. Larger than `page_rows`, because short histories share.
+    pub fragments: u64,
     pub events: u64,
     pub blocks: u64,
     /// Distinct transaction ids. Reported only; the transaction-detail table
@@ -67,7 +71,15 @@ pub struct ManifestOccupancy {
 pub struct ManifestLayout {
     pub max_script_bytes: u32,
     pub inline_events: u32,
+    /// Events in one fragment, which is the most a single history contributes
+    /// to one row.
     pub events_per_page: u32,
+    /// Bytes at the head of a page row, before its first entry.
+    pub page_row_header_bytes: u32,
+    /// Bytes of header on each entry within a page row. With `events_per_page`
+    /// this is the whole packing geometry: a reader can derive how many
+    /// histories of a given length share a row without being told.
+    pub page_entry_header_bytes: u32,
     pub directory_choices: u32,
 }
 
@@ -221,7 +233,9 @@ mod tests {
             layout: ManifestLayout {
                 max_script_bytes: 40,
                 inline_events: 2,
-                events_per_page: 185,
+                events_per_page: 36,
+                page_row_header_bytes: 4,
+                page_entry_header_bytes: 64,
                 directory_choices: 2,
             },
             filter_hash: "44".repeat(32),
@@ -232,12 +246,13 @@ mod tests {
             }],
             page_segments: vec![TableGeometry {
                 rows: 4_096,
-                row_bytes: 17_920,
+                row_bytes: 3_584,
                 sha256: "66".repeat(32),
             }],
             occupancy: ManifestOccupancy {
                 scripts: 8_193,
                 page_rows: 1_879,
+                fragments: 3_204,
                 events: 39_088,
                 blocks: 1_858,
                 txids: 10_355,
@@ -350,6 +365,9 @@ mod tests {
             Box::new(|m| m.seal.scripts_target += 1),
             Box::new(|m| m.layout.inline_events += 1),
             Box::new(|m| m.occupancy.scripts += 1),
+            Box::new(|m| m.occupancy.fragments += 1),
+            Box::new(|m| m.layout.page_entry_header_bytes += 1),
+            Box::new(|m| m.layout.page_row_header_bytes += 1),
             Box::new(|m| m.occupancy.excluded_scripts += 1),
             Box::new(|m| m.genesis_hash = "99".repeat(32)),
             Box::new(|m| m.profile = "other".to_string()),

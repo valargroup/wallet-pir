@@ -47,7 +47,7 @@ struct Cli {
     /// shard, so this sits above where they land — it is a ceiling that should
     /// not bind, not a target to reach. Setting it lower seals shards early and
     /// leaves the directory empty, which is the waste this is sized to avoid.
-    #[arg(long, default_value_t = 25_000)]
+    #[arg(long, default_value_t = 24_576)]
     scripts_target: u64,
     /// Scripts a shard's directory can hold. Must exceed the target by more
     /// than the largest single block's contribution.
@@ -57,9 +57,9 @@ struct Cli {
     ///
     /// Held under `PAGE_ROWS` with headroom, so a shard stays single-segment: a
     /// second segment multiplies query cost for every user of the shard.
-    #[arg(long, default_value_t = 7_900)]
+    #[arg(long, default_value_t = 3_900)]
     page_rows_target: u64,
-    #[arg(long, default_value_t = 8_192)]
+    #[arg(long, default_value_t = 4_096)]
     page_rows_capacity: u64,
     /// Needed for exactly one thing: the block hash before the journal's first
     /// height, which is shard zero's parent and is by definition not in the
@@ -174,6 +174,29 @@ async fn main() -> Result<(), BoxError> {
             &events,
         )?;
 
+        // The sealer sized this shard's tables from the packing rule; the
+        // builder laid them out under the same rule. Nothing compared the two
+        // before, so a divergence would have published a table sized for
+        // something other than what it holds — and the surplus comes back as
+        // extra segments, which every wallet querying this shard pays for,
+        // because it must query all of them.
+        if built.page_rows != shard.occupancy.page_rows
+            || built.fragments != shard.occupancy.fragments
+        {
+            return Err(format!(
+                "shard {} over {}-{} emitted {} page rows and {} fragments, \
+                 but was sealed for {} and {}",
+                shard.shard_id,
+                shard.start_height,
+                shard.end_height,
+                built.page_rows,
+                built.fragments,
+                shard.occupancy.page_rows,
+                shard.occupancy.fragments,
+            )
+            .into());
+        }
+
         // A shard already in the previous map is being republished. Building it
         // under the published numbering first says which kind of republication
         // this is: one that reproduces the published digest is the same shard
@@ -203,6 +226,8 @@ async fn main() -> Result<(), BoxError> {
                 max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
                 inline_events: transparent_shard::INLINE_EVENTS,
                 events_per_page: transparent_shard::EVENTS_PER_PAGE,
+                page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
+                page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
                 directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
             },
             filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
@@ -227,6 +252,7 @@ async fn main() -> Result<(), BoxError> {
             occupancy: ManifestOccupancy {
                 scripts: built.scripts,
                 page_rows: built.page_rows,
+                fragments: built.fragments,
                 events: built.events,
                 blocks: shard.occupancy.blocks,
                 txids: shard.occupancy.txids,

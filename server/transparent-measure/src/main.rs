@@ -346,6 +346,7 @@ async fn main() -> Result<(), BoxError> {
             let init: serde_json::Value =
                 serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
             let geometry = ServiceGeometry {
+                schema: init["schema"].as_str().unwrap_or_default().to_string(),
                 directory_scheme: serde_json::from_value(init["directory_scheme"].clone())
                     .map_err(|e| e.to_string())?,
                 directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap_or_default(),

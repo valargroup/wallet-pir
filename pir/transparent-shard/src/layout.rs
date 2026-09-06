@@ -61,22 +61,27 @@ pub const DIRECTORY_ROWS: usize = 2_048;
 
 /// Rows in every shard's page table, per segment.
 ///
-/// Row demand is driven by how many scripts exceed the inline allowance rather
-/// than by event volume — the published set needed 1.08 rows per paged script —
-/// so narrowing the row raises demand only for histories longer than one row.
+/// Sized so the two tables fill together, and measured rather than reasoned:
+/// see the geometry sweep archived under
+/// `docs/transparent-pir-evaluation/shard-utilisation/`.
 ///
-/// Sized so the two tables fill together. Page rows are what close a shard, so
-/// this figure decides how many scripts a shard accumulates before it seals,
-/// and therefore how full the directory gets. At 4,096 the published set sealed
-/// at 11,176 scripts against a directory that holds 28,672 — 39% — and the
-/// directory's padding was pure waste. At 8,192 a shard reaches roughly 24,600
-/// scripts, which is 86% of the directory, while page rows still land near 96%
-/// of their own table.
+/// Packing short histories into shared rows cut row demand roughly in half, and
+/// at 8,192 that saving was invisible — a table padded to 8,192 costs the same
+/// whether 6,763 rows are used or 3,489, so every row packing recovered was
+/// already padding. At 4,096 the same journal stores 132.1 MB where the v4
+/// layout stored 220.2 MB, over the same six generations, with no generation
+/// needing a second segment.
 ///
-/// Larger still would overshoot: the directory would bind first and the page
-/// table would carry the slack instead, which is the same waste in the more
-/// expensive table.
-pub const PAGE_ROWS: usize = 8_192;
+/// Halving again loses. At 2,048 the page limit closes nearly every generation,
+/// the range splits into eleven, and pinned bytes rise to 161.5 MB: the
+/// directory is charged per generation, and eleven directories cost more than
+/// the page rows saved. It also doubles the published setup a restoring wallet
+/// fetches, which is the cost a smaller table was supposed to reduce.
+///
+/// The row count also sets query size — `params_for_simplepir` derives the
+/// scheme from it — so this is 21,504 bytes off every page query as well. See
+/// `transparent-shard-server/tests/geometry_costs.rs`, which pins that.
+pub const PAGE_ROWS: usize = 4_096;
 
 /// Events stored directly in a script's directory entry.
 ///
@@ -87,16 +92,18 @@ pub const PAGE_ROWS: usize = 8_192;
 /// themselves.
 pub const INLINE_EVENTS: u32 = 2;
 
-/// Bytes of header at the start of a page, before its events.
+/// Events that fit in one fragment.
 ///
-/// Carries the exact script bytes, the page's ordinal and count, its event
-/// count, and its minimum and maximum event heights. The script is here rather
-/// than in each event because it is the key the page is stored under, and a
-/// client must check it to reject a misplaced or collided row.
-pub const PAGE_HEADER_BYTES: usize = 128;
+/// Derived from what a row leaves after its own header and one entry header,
+/// which is the largest a single history's fragment can be. It came to 36 under
+/// the v4 layout's 128-byte per-row header as well, and the assertion below
+/// pins that: the manifest publishes this number and every fixture is written
+/// against it, so a re-derivation that quietly moved it would be a schema
+/// change wearing the clothes of a refactor.
+pub const EVENTS_PER_PAGE: u32 =
+    ((PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES - PAGE_ENTRY_HEADER_BYTES) / EVENT_BYTES) as u32;
 
-/// Events that fit in one page.
-pub const EVENTS_PER_PAGE: u32 = ((PAGE_ROW_BYTES - PAGE_HEADER_BYTES) / EVENT_BYTES) as u32;
+const _: () = assert!(EVENTS_PER_PAGE == 36);
 
 /// Fragments a script's history occupies, which is also its page-query count.
 ///
@@ -498,7 +505,8 @@ mod tests {
         assert_eq!(g.directory_capacity(), 28_672);
         assert_eq!(g.directory_row_slack(), 108);
         assert_eq!(g.directory_bytes_per_segment(), 7_340_032);
-        assert_eq!(g.page_bytes_per_segment(), 29_360_128);
+        // 4,096 rows since packing halved the page table.
+        assert_eq!(g.page_bytes_per_segment(), 14_680_064);
         g.validate().expect("what ships must be servable");
     }
 
@@ -617,11 +625,14 @@ mod tests {
     }
 
     #[test]
-    fn a_page_holds_the_events_its_width_allows() {
+    fn a_fragment_holds_the_events_its_width_allows() {
         assert_eq!(EVENTS_PER_PAGE, 36);
         assert!(
-            PAGE_HEADER_BYTES + EVENTS_PER_PAGE as usize * EVENT_BYTES <= PAGE_ROW_BYTES,
-            "a full page must fit its row"
+            PAGE_ROW_HEADER_BYTES
+                + PAGE_ENTRY_HEADER_BYTES
+                + EVENTS_PER_PAGE as usize * EVENT_BYTES
+                <= PAGE_ROW_BYTES,
+            "a full fragment must fit its row"
         );
     }
 

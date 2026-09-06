@@ -101,14 +101,14 @@ pub struct SealPolicy {
 /// a packed builder exists to emit it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PageBasis {
-    /// A row per fragment, which is what the v4 builder emits.
+    /// Short histories sharing rows, which is what the builder emits.
     #[default]
-    Fragments,
-    /// Short histories sharing rows, which is what the packed layout would ask
-    /// for. Sealing on this while the builder still emits a row per fragment
-    /// would undercount the table, so it is for measurement until the builder
-    /// packs.
     Packed,
+    /// A row per fragment, as the layout stored them before packing. Kept so a
+    /// census can report what the same content would have cost, and so the two
+    /// can be compared over one journal; a set must not be built this way,
+    /// because the table would be sized for more than the builder writes.
+    Fragments,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

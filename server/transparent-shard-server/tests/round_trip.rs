@@ -111,6 +111,8 @@ fn publish(dir: &Path) -> ShardMap {
                 max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
                 inline_events: transparent_shard::INLINE_EVENTS,
                 events_per_page: transparent_shard::EVENTS_PER_PAGE,
+                page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
+                page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
                 directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
             },
             filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
@@ -135,6 +137,7 @@ fn publish(dir: &Path) -> ShardMap {
             occupancy: ManifestOccupancy {
                 scripts: built.scripts,
                 page_rows: built.page_rows,
+                fragments: built.fragments,
                 events: built.events,
                 blocks: SPAN,
                 txids: 0,
