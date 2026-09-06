@@ -297,7 +297,7 @@ fn projection(
         .map(|s| s.occupancy.packed_page_rows)
         .collect();
     describe("proj_rows", &mut proj);
-    let fragments: u64 = shards.iter().map(|s| s.occupancy.page_rows).sum();
+    let fragments: u64 = shards.iter().map(|s| s.occupancy.fragments).sum();
     let packed: u64 = shards.iter().map(|s| s.occupancy.packed_page_rows).sum();
     // The unpacked figure still counts scripts too long for a directory entry,
     // which the builder never pages and packing therefore never sees. Where
