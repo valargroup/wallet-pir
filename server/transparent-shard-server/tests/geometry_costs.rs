@@ -89,16 +89,25 @@ fn evaluation_keys_dominate_every_query_whatever_the_geometry() {
 
 /// The geometry actually pinned, so a parameter change has to restate its cost.
 ///
-/// The page table was 8,192 rows and cost 128,008 bytes a query. Narrowing it
-/// to 4,096, which packing made possible, took 21,504 bytes off every page
-/// query as well as 40% off what the service stores.
+/// Both tables are 8,192 rows and a query costs 128,008 bytes. The directory
+/// paid 96,264 at 2,048 rows and the pages 106,504 at 4,096, so this is about
+/// 21,504 bytes more per query than the narrowest either has been.
+///
+/// It is more per query and fewer queries. Widening a table makes a shard hold
+/// more, so a journal seals into fewer shards, and a script costs two directory
+/// queries in each shard it appears in. Over the genesis journal that trade is
+/// 2,797 shards against 511, and a restoration's mean falls from 5.71 MB to
+/// 3.75 despite every query being larger. The measurement is archived under
+/// `docs/transparent-pir-evaluation/shard-utilisation/genesis-geometry-notes.md`.
 #[test]
 fn the_pinned_geometry_costs_what_it_did() {
     let directory = cost(DIRECTORY_ROWS as u64, PAGE_ROW_BYTES as u64);
     let pages = cost(PAGE_ROWS as u64, PAGE_ROW_BYTES as u64);
-    assert_eq!(directory.query, 96_264, "directory query");
-    assert_eq!(pages.query, 106_504, "page query");
+    assert_eq!(directory.query, 128_008, "directory query");
+    assert_eq!(pages.query, 128_008, "page query");
     assert_eq!(directory.setup, 14_336);
     assert_eq!(pages.setup, 14_336);
-    assert_eq!(128_008 - pages.query, 21_504, "saved per page query");
+    // Setup follows the row width, which neither table changed, so widening
+    // the row *count* left the per-shard setup exactly where it was.
+    assert_eq!(directory.response, pages.response);
 }

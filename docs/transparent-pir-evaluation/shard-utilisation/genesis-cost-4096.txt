@@ -1,0 +1,173 @@
+journal: heights 0-343000 (343001 blocks), 163380356 events
+
+scoring against 4096 directory rows x 14 slots (57344 scripts, 3584 B rows, 2 inline events) and 4096 page rows, rather than the compiled 2048 x 14 (28672 scripts) and 4096
+  segment and pinned-byte figures follow the override, nothing built does
+
+counting shard matches per script, spilling sorted runs under /opt/actions-runner/_work/_temp/shard-matches
+
+=== density across the chain (4096 blocks per bucket) ===
+         0-4095        69.0 events/block
+      4096-8191       174.3 events/block
+      8192-12287      311.3 events/block
+     12288-16383      393.2 events/block
+     16384-20479      305.5 events/block
+     20480-24575      327.0 events/block
+     24576-28671      250.6 events/block
+     28672-32767      230.9 events/block
+     32768-36863      245.9 events/block
+     36864-40959      220.0 events/block
+     40960-45055      206.7 events/block
+     45056-49151      220.5 events/block
+     49152-53247      209.2 events/block
+     53248-57343      200.3 events/block
+     57344-61439      252.7 events/block
+     61440-65535      197.7 events/block
+     65536-69631      196.5 events/block
+     69632-73727      232.8 events/block
+     73728-77823      235.4 events/block
+     77824-81919      243.8 events/block
+     81920-86015      234.7 events/block
+     86016-90111      225.2 events/block
+     90112-94207      228.1 events/block
+     94208-98303      232.9 events/block
+     98304-102399     257.0 events/block
+    102400-106495     571.9 events/block
+    106496-110591    2171.1 events/block
+    110592-114687     257.2 events/block
+    114688-118783     248.0 events/block
+    118784-122879     283.7 events/block
+    122880-126975     303.3 events/block
+    126976-131071     362.8 events/block
+    131072-135167     367.5 events/block
+    135168-139263     365.9 events/block
+    139264-143359     361.9 events/block
+    143360-147455     383.6 events/block
+    147456-151551     345.7 events/block
+    151552-155647     366.0 events/block
+    155648-159743     375.0 events/block
+    159744-163839     398.4 events/block
+    163840-167935     474.6 events/block
+    167936-172031     531.3 events/block
+    172032-176127     435.1 events/block
+    176128-180223     402.2 events/block
+    180224-184319     436.4 events/block
+    184320-188415     471.8 events/block
+    188416-192511     576.3 events/block
+    192512-196607     566.0 events/block
+    196608-200703     478.8 events/block
+    200704-204799     524.8 events/block
+    204800-208895     524.4 events/block
+    208896-212991     604.7 events/block
+    212992-217087     423.0 events/block
+    217088-221183     525.7 events/block
+    221184-225279     506.2 events/block
+    225280-229375     619.9 events/block
+    229376-233471     550.7 events/block
+    233472-237567     716.3 events/block
+    237568-241663     719.8 events/block
+    241664-245759     859.4 events/block
+    245760-249855     633.3 events/block
+    249856-253951     680.5 events/block
+    253952-258047     650.9 events/block
+    258048-262143     617.7 events/block
+    262144-266239     627.5 events/block
+    266240-270335     673.1 events/block
+    270336-274431     616.0 events/block
+    274432-278527     553.9 events/block
+    278528-282623     669.0 events/block
+    282624-286719     544.4 events/block
+    286720-290815     453.6 events/block
+    290816-294911     553.3 events/block
+    294912-299007     647.3 events/block
+    299008-303103     517.1 events/block
+    303104-307199     499.3 events/block
+    307200-311295     503.5 events/block
+    311296-315391     507.3 events/block
+    315392-319487     736.5 events/block
+    319488-323583     811.3 events/block
+    323584-327679    1022.1 events/block
+    327680-331775     958.2 events/block
+    331776-335871     849.0 events/block
+    335872-339967     914.4 events/block
+    339968-343000     861.7 events/block
+
+=== 49152:57344,3900:4096 ===
+  shards 1191 (1190 sealed, 1 tail)
+  sealed by capacity: page rows      59
+  sealed by target: page rows        426
+  sealed by target: scripts          705
+  blocks         min       11  p50      224  p95      621  max     3168  mean      287
+  scripts        min     5143  p50    49185  p95    50199  max    53277  mean    40204
+  fragments      min     4678  p50     9332  p95    15513  max    17707  mean    10139
+  txids          min      519  p50     2768  p95     4317  max    29010  mean     2831
+  events         min    88397  p50   134708  p95   179527  max   192870  mean   137179
+  all filters ~119.71 MB across 1191 shards
+  utilisation
+    directory   rows  70.1%  slots  70.1%  (9.8 of 14 per row, 1191 segments)
+    pages       rows  82.7%  slots  21.5%  (7.7 of 36 per row, 3567 segments)
+    live bytes  21618.1 MB of 69847.7 MB pinned = 30.95%   (58.6 MB per shard)
+    pinned split  directory 17484.0 MB (25.0%), pages 52363.8 MB (75.0%)
+  placement (the real two-choice placer, not scripts / slots)
+    segments     1191 placed against 1191 modelled; 0 of 1191 shards need more than one
+    fullest row  14 of 14 in shard 1188, p50 14, p95 14 (over the 1191 shards that fit one segment)
+    the fullest row is one entry short of its slot count: this target is at the edge of needing a second segment
+
+  === Packed rows: what the builder lays out. The block above says what
+      the same content would cost with a row per fragment, which is what
+      the layout did before this. Row demand here comes from the packing
+      rule, and the builder asserts it emits exactly this many. ===
+  proj_classes (p = paged events; a class of one script still costs a row)
+    p  1  scripts   3173479  rows   144805  22 per row  tail slack   12231
+    p  2  scripts   2009037  rows   155109  13 per row  tail slack    7380
+    p  3  scripts   1156481  rows   116189  10 per row  tail slack    5409
+    p  4  scripts    844979  rows   121221   7 per row  tail slack    3568
+    p  5  scripts    589342  rows    98723   6 per row  tail slack    2996
+    p  6  scripts    463819  rows    93260   5 per row  tail slack    2481
+    p  7  scripts    356329  rows    89545   4 per row  tail slack    1851
+    p  8  scripts    296398  rows    74552   4 per row  tail slack    1810
+    p  9  scripts    236883  rows    79351   3 per row  tail slack    1170
+    p 10  scripts    202891  rows    68030   3 per row  tail slack    1199
+    p 11  scripts    167132  rows    56116   3 per row  tail slack    1216
+    p 12  scripts    145455  rows    73041   2 per row  tail slack     627
+    p 13  scripts    123330  rows    61951   2 per row  tail slack     572
+    p 14  scripts    107879  rows    54244   2 per row  tail slack     609
+    p 15  scripts     93792  rows    47189   2 per row  tail slack     586
+    p 16  scripts     84242  rows    42414   2 per row  tail slack     586
+    p 17  scripts     74719  rows    37664   2 per row  tail slack     609
+    p 18  scripts     69796  rows    69796   1 per row  tail slack       0
+    p 19  scripts     61840  rows    61840   1 per row  tail slack       0
+    p 20  scripts     56132  rows    56132   1 per row  tail slack       0
+    p 21  scripts     50643  rows    50643   1 per row  tail slack       0
+    p 22  scripts     46000  rows    46000   1 per row  tail slack       0
+    p 23  scripts     41946  rows    41946   1 per row  tail slack       0
+    p 24  scripts     38077  rows    38077   1 per row  tail slack       0
+    p 25  scripts     34373  rows    34373   1 per row  tail slack       0
+    p 26  scripts     31755  rows    31755   1 per row  tail slack       0
+    p 27  scripts     29032  rows    29032   1 per row  tail slack       0
+    p 28  scripts     27935  rows    27935   1 per row  tail slack       0
+    p 29  scripts     25342  rows    25342   1 per row  tail slack       0
+    p 30  scripts     23978  rows    23978   1 per row  tail slack       0
+    p 31  scripts     21897  rows    21897   1 per row  tail slack       0
+    p 32  scripts     20778  rows    20778   1 per row  tail slack       0
+    p 33  scripts     19361  rows    19361   1 per row  tail slack       0
+    p 34  scripts     17861  rows    17861   1 per row  tail slack       0
+    p 35  scripts     17057  rows    17057   1 per row  tail slack       0
+    p 36  scripts     15867  rows    15867   1 per row  tail slack       0
+    short  scripts  10775857  rows  2063074   long  scripts  413789  rows  1300771
+  proj_rows      min      829  p50     3123  p95     3985  max     4093  mean     2824
+  proj_R 3363845 rows against 12076628 unpacked fragments = 3.59x fewer rows
+  proj_utilisation  page rows  69.0%  row bytes  80.9%  (1191 page segments)
+  proj_segments  1191 directory, 1191 page, across 1191 shards; 0 generations need more than one page segment
+  proj_live bytes  21631.6 MB of 34967.9 MB pinned = 61.86%   (fleet ~34.97 GB)
+  proj_binding  430 of 1191 shards would still reach the page-row target 3900; 705 reach the script target 49152
+  observed maxima: scripts 53277, fragments 17707, txids 29010
+  pinned plaintext per shard ~29 MB, fleet ~35.0 GB
+  shard matches per script (over 2464370 distinct indexable scripts)
+    g            mean   19.43  p50     2  p90    34  p95   114  p99   376  max   1190
+    2g queries   mean   38.86  p50     4  p90    68  p95   228  p99   752  max   2380
+    occurrences  47883544 script-shard pairs across the journal
+  restoration cost per active script (queries only, 106504 B directory, 106504 B page)
+    MB           mean    4.66  p50    0.43  p90    7.67  p95   26.20  p99    91.91  max   1482.22
+    fragments    12076628 across all scripts, against 47883544 script-shard pairs
+
+

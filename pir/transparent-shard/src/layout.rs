@@ -51,13 +51,29 @@ pub const PAGE_ROW_BYTES: usize = 3_584;
 ///
 /// Pinned, and identical for every shard: `params_for_simplepir` derives the
 /// PIR parameters from the row count, so a shard with its own row count would
-/// need its own parameter set. It pads rows to a multiple of 2,048, so a
-/// smaller count buys nothing.
+/// need its own parameter set. It pads rows to a multiple of 2,048, and 2,048
+/// is its floor, so this is four times the smallest table the scheme serves.
 ///
-/// At 14 slots per row this holds 28,672 scripts against a seal target around
-/// 8,000 — slack that is what makes two-choice placement succeed without ever
-/// needing to relocate an entry.
-pub const DIRECTORY_ROWS: usize = 2_048;
+/// At 14 slots a row it holds 114,688 scripts. The reason it is not the floor
+/// is what a wallet pays rather than what the fleet stores. A script costs two
+/// directory queries in every shard it appears in, and over the genesis journal
+/// a script appears in 27 shards on average and 2,794 at the worst. Widening
+/// the table makes shards hold more and so makes there be fewer of them: at
+/// 2,048 rows that journal seals into 2,797 shards, at 8,192 into 511. The
+/// query grows 96,264 bytes to 128,008 and is asked five times less often, and
+/// the product is what a restoration pays — mean 5.71 MB against 3.75, p99
+/// 118.33 against 65.67.
+///
+/// The wider table also halves the fleet, 56.27 GB to 30.01 GB, because a shard
+/// pins its tables whole and there are fewer shards to pin. Storage and query
+/// cost point the same way here; they did not have to.
+///
+/// Measured in `docs/transparent-pir-evaluation/shard-utilisation/genesis-geometry-notes.md`,
+/// which also records what this costs: the heaviest single history in the
+/// journal pays 1,561.95 MB against 1,482.22 at half the width, because its
+/// fragment count is fixed by its event count and only the query premium
+/// reaches it. That case is answered by query budgets, not by geometry.
+pub const DIRECTORY_ROWS: usize = 8_192;
 
 /// Rows in every shard's page table, per segment.
 ///
@@ -81,7 +97,26 @@ pub const DIRECTORY_ROWS: usize = 2_048;
 /// The row count also sets query size — `params_for_simplepir` derives the
 /// scheme from it — so this is 21,504 bytes off every page query as well. See
 /// `transparent-shard-server/tests/geometry_costs.rs`, which pins that.
-pub const PAGE_ROWS: usize = 4_096;
+///
+/// # Why it went back up
+///
+/// The paragraphs above chose 4,096 over 8,192 on pinned bytes, holding the
+/// shard boundaries fixed. They do not stay fixed: the page table is what
+/// closes a shard, so halving it doubles the shards a journal seals into, and
+/// the argument above only saw that at 2,048, where it called the result a
+/// loss. The same effect runs the other way from 4,096.
+///
+/// What it costs is a fragment count that is *per script per shard*. Fewer
+/// shards means fewer per-shard histories, so page queries fall with shard
+/// count rather than staying flat, which is the step the earlier reasoning
+/// missed. Fragments do rise — 9.94M to 12.12M over the genesis journal,
+/// because the two inline events are granted per shard and there are fewer
+/// shards to grant them — and that 22% loses to a five-fold fall in directory
+/// queries.
+///
+/// Sized with [`DIRECTORY_ROWS`], not independently: the two tables have to
+/// close a shard at about the same occupancy or one of them is padding.
+pub const PAGE_ROWS: usize = 8_192;
 
 /// Events stored directly in a script's directory entry.
 ///
@@ -502,11 +537,12 @@ mod tests {
         let g = Geometry::default();
         assert_eq!(g.directory_entry_bytes(), 248);
         assert_eq!(g.directory_slots(), 14);
-        assert_eq!(g.directory_capacity(), 28_672);
+        assert_eq!(g.directory_capacity(), 114_688);
         assert_eq!(g.directory_row_slack(), 108);
-        assert_eq!(g.directory_bytes_per_segment(), 7_340_032);
-        // 4,096 rows since packing halved the page table.
-        assert_eq!(g.page_bytes_per_segment(), 14_680_064);
+        // Both tables are 8,192 rows: they have to close a shard at about the
+        // same occupancy, or the one that does not is padding.
+        assert_eq!(g.directory_bytes_per_segment(), 29_360_128);
+        assert_eq!(g.page_bytes_per_segment(), 29_360_128);
         g.validate().expect("what ships must be servable");
     }
 
@@ -517,10 +553,10 @@ mod tests {
     #[test]
     fn the_inline_allowance_is_what_buys_directory_slots() {
         for (inline, slots, capacity) in [
-            (0u32, 63u64, 129_024u64),
-            (1, 23, 47_104),
-            (2, 14, 28_672),
-            (3, 10, 20_480),
+            (0u32, 63u64, 516_096u64),
+            (1, 23, 188_416),
+            (2, 14, 114_688),
+            (3, 10, 81_920),
         ] {
             let g = Geometry {
                 inline_events: inline,

@@ -15,6 +15,9 @@ else here covers Ironwood activation through 3,473,474, from
 | [genesis-targets-greedy.txt](genesis-targets-greedy.txt) | `5b545ef` | 4,096 / 4,096 | script targets 28,672–49,152, greedy placer |
 | [genesis-targets-relocating.txt](genesis-targets-relocating.txt) | `11dd67b` | 4,096 / 4,096 | the same targets, relocating placer |
 | [genesis-targets-8192.txt](genesis-targets-8192.txt) | `11dd67b` | 8,192 / 8,192 | targets 57,344–98,304 |
+| [genesis-cost-2048.txt](genesis-cost-2048.txt) | `5ba272b` | 2,048 / 4,096 @ 24,576 | restoration cost per script |
+| [genesis-cost-4096.txt](genesis-cost-4096.txt) | `5ba272b` | 4,096 / 4,096 @ 49,152 | the same, at the wider directory |
+| [genesis-cost-8192.txt](genesis-cost-8192.txt) | `5ba272b` | 8,192 / 8,192 @ 98,304 | the same, wider again |
 
 **The journal grew under the runs**, from 328,001 to 332,001 blocks, because the
 backfill is still going at roughly 40 blocks a minute. Shard counts therefore
@@ -87,7 +90,7 @@ Fleet pinned plaintext, packed, over the same journal:
 |---|---:|---:|---:|---:|
 | 2,048 / 4,096 (shipped) | 24,576 | 2,551 | 56.27 GB | 40.0% |
 | 4,096 / 4,096 | 40,960 | 1,374 | 40.34 GB | 51.7% |
-| **4,096 / 4,096** | **49,152** | **1,119** | **32.85 GB** | **61.4%** |
+| 4,096 / 4,096 | 49,152 | 1,119 | 32.85 GB | 61.4% |
 | 8,192 / 8,192 | 81,920 | 517 | 30.36 GB | 60.2% |
 | 8,192 / 8,192 | 98,304 | 484 | 28.42 GB | 63.6% |
 
@@ -95,13 +98,74 @@ At 49,152 the directory runs at 86% of capacity and the page table at 69%, with
 414 of 1,113 shards closing on page rows — the first geometry in this series
 where both pinned tables are working rather than one idling.
 
-Going wider still is diminishing and mispriced. 8,192 rows buys 32.85 → 30.36 GB,
-8%, and costs +20% on **every** query of both kinds, because query upload is the
-one term that follows row count. Page queries are where that lands worst: a
-history's fragment count barely falls as shards widen, so those queries stay as
-numerous and each costs more, on the workload already sitting at 2.7x the
-scanning baseline. By 98,304 only 6 of 484 shards seal on scripts at all — the
-directory capacity is bought and never used.
+This section originally concluded that going wider was mispriced, on the
+argument that a history's fragment count barely falls as shards widen. That is
+wrong: fragments are per script *per shard*, so they fall with shard count too.
+The cost measurements below replace this reasoning and reverse its conclusion.
+
+## What a wallet pays, which is what the earlier sections got wrong
+
+Everything above chooses a geometry on storage and placement. Both are real
+costs and neither is the one that matters most, and choosing on them produced
+the wrong answer.
+
+The missing input was `g`, the shards a script appears in, which decides the
+directory queries a restoration makes. It was never measured before these runs.
+Over the genesis journal at the shipped target it is **mean 27.4, p50 2, p95
+140, p99 563, maximum 2,794** — not the ~1 a synthetic journal suggested. This
+is a chain of heavy address reuse: 2.46M distinct scripts carrying 163M events,
+65 apiece.
+
+With `g` in hand the census prices a restoration directly — two directory
+queries per shard a script appears in, one page query per fragment, at each
+candidate's own query size:
+
+| | 2,048/4,096 @24,576 | 4,096/4,096 @49,152 | 8,192/8,192 @98,304 |
+|---|---:|---:|---:|
+| shards | 2,797 | 1,191 | **511** |
+| fleet pinned | 56.27 GB | 34.97 GB | **30.01 GB** |
+| query bytes | 96,264 / 106,504 | 106,504 | 128,008 |
+| `g` mean / p99 | 27.4 / 563 | 19.4 / 376 | **12.2 / 202** |
+| fragments | **9.94M** | 12.08M | 12.12M |
+| cost p50 | 0.39 MB | 0.43 MB | **0.26 MB** |
+| cost p90 | 7.89 MB | 7.67 MB | **7.30 MB** |
+| cost p95 | 28.36 MB | 26.20 MB | **23.04 MB** |
+| cost p99 | 118.33 MB | 91.91 MB | **65.67 MB** |
+| cost max | 1,760.76 MB | **1,482.22 MB** | 1,561.95 MB |
+| cost mean | 5.71 MB | 4.66 MB | **3.75 MB** |
+
+**The widest candidate wins every percentile but the maximum**, p99 by 44%, and
+takes storage with it. Three things this settles that argument could not:
+
+*The 20% query premium is not the deciding term.* A wider table costs more per
+query and is asked 5.5 times fewer of them. Only the product decides, and it
+favours width.
+
+*The inline transfer is real and loses anyway.* Fragments rise 9.94M to 12.12M,
+22%, because the two inline events are granted per script per shard and wider
+shards grant fewer of them. It does not come close to paying for the directory
+queries saved.
+
+*The benefit is not linear in width.* At 4,096 the median script gets **worse**
+than the shipped geometry — 0.43 MB against 0.39 — because the query grew 10%
+while `g` at p50 stayed at 2. The gain arrives at 8,192, where `g` p50 falls to
+1 and the median script restores in two queries.
+
+The crossover sits between p99 and the maximum. The worst script is present in
+every shard with a history too long to shrink, so its fragment count is fixed by
+its event count and the query premium bites with nothing to offset it. That case
+is the one the design already answers with query budgets and resumable work.
+
+### The recommendation this supersedes
+
+An earlier draft of these notes recommended 4,096 / 4,096 at 49,152, chosen
+before `g` was measured. It is superseded. The evidence above says 8,192 / 8,192
+near 98,304, and says so on the axis that matters rather than on storage.
+
+**Server cost remains unmeasured and moves the other way.** Each shard pins
+about 59 MB at this geometry against 29, and PIR preprocessing scales with the
+table. There are fewer shards to hold and each is larger, and which way that
+nets is the one axis that could still overturn this.
 
 ## The density burst, as a proxy for a spam era
 

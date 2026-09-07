@@ -30,7 +30,11 @@ use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, PublishedRevision, ShardManifest,
     TableGeometry, SCHEMA,
 };
+use transparent_shard::records::DIRECTORY_SLOTS;
 use transparent_shard::seal::{Limit, SealPolicy, Sealer};
+
+/// Scripts one directory segment holds, which is the geometry and not a guess.
+const DIRECTORY_CAPACITY: u64 = DIRECTORY_ROWS as u64 * DIRECTORY_SLOTS as u64;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -43,23 +47,27 @@ struct Cli {
     output: PathBuf,
     /// Scripts at which a shard prefers to seal.
     ///
-    /// A directory segment holds 28,672. Page rows are what actually close a
-    /// shard, so this sits above where they land — it is a ceiling that should
-    /// not bind, not a target to reach. Setting it lower seals shards early and
-    /// leaves the directory empty, which is the waste this is sized to avoid.
-    #[arg(long, default_value_t = 24_576)]
+    /// Six sevenths of what a directory segment holds. The remaining seventh is
+    /// what one more block may add before the seal takes effect, and what
+    /// two-choice placement needs to keep every shard in one segment: relocation
+    /// holds this load, and the measured run placed 511 of 511 shards without a
+    /// second segment.
+    #[arg(long, default_value_t = DIRECTORY_CAPACITY - DIRECTORY_CAPACITY / 7)]
     scripts_target: u64,
-    /// Scripts a shard's directory can hold. Must exceed the target by more
-    /// than the largest single block's contribution.
-    #[arg(long, default_value_t = 28_672)]
+    /// Scripts a shard's directory can hold.
+    ///
+    /// Derived, never restated. This was a literal 28,672 that happened to
+    /// equal the geometry, which is a number that stops being true the moment
+    /// the geometry moves and says nothing when it does.
+    #[arg(long, default_value_t = DIRECTORY_CAPACITY)]
     scripts_capacity: u64,
     /// Page rows at which a shard prefers to seal.
     ///
     /// Held under `PAGE_ROWS` with headroom, so a shard stays single-segment: a
     /// second segment multiplies query cost for every user of the shard.
-    #[arg(long, default_value_t = 3_900)]
+    #[arg(long, default_value_t = PAGE_ROWS as u64 - PAGE_ROWS as u64 / 32)]
     page_rows_target: u64,
-    #[arg(long, default_value_t = 4_096)]
+    #[arg(long, default_value_t = PAGE_ROWS as u64)]
     page_rows_capacity: u64,
     /// Needed for exactly one thing: the block hash before the journal's first
     /// height, which is shard zero's parent and is by definition not in the
