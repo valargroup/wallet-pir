@@ -121,10 +121,9 @@ succeed.
 
 ## Where the time goes now
 
-Unmeasured, and at five hours it no longer dominates anything. If it ever does:
-the work per block is a database read per spent output plus the parse, and the
-rate will fall as block density rises toward the tip, so the estimate above is
-optimistic for the later chain. `--workers` is the knob, held at 6 rather than
+Unprofiled, and at this scale it no longer dominates anything. If it ever does:
+the work per block is a database read per spent output plus the parse, which is
+why throughput follows density. `--workers` is the knob, held at 6 rather than
 the host's 8 cores because the coordinator also answers live PIR queries.
 
 One property to keep in mind near the tip: a secondary instance sees only what
