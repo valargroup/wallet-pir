@@ -35,7 +35,7 @@ use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_wallet::client::Table;
 use transparent_wallet::ledger::Ledger;
 use transparent_wallet::sync::{sync, GeometryParams, ServiceGeometry};
-use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
+use transparent_wallet::transport::{refusal, BoxError, FilterSource, ShardTransport};
 use workload::{ScriptCensus, Workload};
 
 /// Incremental transparent bytes a shielded-scanning wallet downloads, measured
@@ -71,11 +71,18 @@ struct Cli {
 /// fetch public bytes from the same place it makes private requests.
 struct PublishedFilters {
     filters: BTreeMap<u64, Vec<u8>>,
+    map: Vec<u8>,
 }
 
 impl FilterSource for PublishedFilters {
+    /// The map this run was started from.
+    ///
+    /// Returned rather than refused even though the set here is static and
+    /// cannot republish under a run: refusing would report a withdrawn
+    /// revision as "the map is supplied directly", which reads like a harness
+    /// limitation rather than the service refusal it actually is.
     fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
-        Err("the map is supplied directly".into())
+        Ok((self.map.clone(), self.map.len() as u64))
     }
 
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
@@ -110,17 +117,15 @@ impl ShardTransport for HttpShards {
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
-        let bytes = self
+        let response = self
             .client
             .get(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
                 table.as_str()
             ))
-            .send()?
-            .error_for_status()?
-            .bytes()?
-            .to_vec();
+            .send()?;
+        let bytes = checked(response, shard_id, revision)?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
     }
@@ -132,7 +137,7 @@ impl ShardTransport for HttpShards {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError> {
-        Ok(self
+        let response = self
             .client
             .post(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
@@ -140,11 +145,46 @@ impl ShardTransport for HttpShards {
                 table.as_str()
             ))
             .body(body.to_vec())
-            .send()?
-            .error_for_status()?
-            .bytes()?
-            .to_vec())
+            .send()?;
+        checked(response, shard_id, revision)
     }
+}
+
+/// Reads a reply, turning a refusal the wallet can act on into one.
+///
+/// The body and the `retry-after` header must be read here, before the status
+/// is thrown away: `error_for_status` keeps only the code, and the map digest a
+/// stale refusal carries lives in the body. Skipping this is what turns a
+/// routine republication into an opaque sync failure.
+fn checked(
+    response: reqwest::blocking::Response,
+    shard_id: u64,
+    revision: &str,
+) -> Result<Vec<u8>, BoxError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response.bytes()?.to_vec());
+    }
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let body = response.bytes()?.to_vec();
+    if let Some(refused) = refusal(
+        status.as_u16(),
+        retry_after.as_deref(),
+        &body,
+        shard_id,
+        revision,
+    ) {
+        return Err(refused);
+    }
+    Err(format!(
+        "shard {shard_id} revision {revision}: HTTP {status}: {}",
+        String::from_utf8_lossy(&body)
+    )
+    .into())
 }
 
 /// Streams the journal once, feeding a census and every workload's traversal.
@@ -341,6 +381,7 @@ async fn main() -> Result<(), BoxError> {
         let base_url = base.clone();
         let shard_filters = PublishedFilters {
             filters: filters.clone(),
+            map: serde_json::to_vec(&map).map_err(|error| error.to_string())?,
         };
 
         let outcome = tokio::task::spawn_blocking(move || -> Result<_, String> {

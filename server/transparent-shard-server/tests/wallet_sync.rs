@@ -24,7 +24,7 @@ use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_wallet::client::Table;
 use transparent_wallet::ledger::Ledger;
 use transparent_wallet::sync::{sync, GeometryParams, ServiceGeometry};
-use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
+use transparent_wallet::transport::{refusal, BoxError, FilterSource, ShardTransport};
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
@@ -144,7 +144,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 
 /// Writes a publishable shard set to `dir`, as the publisher would.
 fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> ShardMap {
-    publish_with(dir, per_shard, |_| &RECENT_8K)
+    publish_with(dir, per_shard, |_| &RECENT_8K, 0, "")
 }
 
 /// Writes a publishable shard set whose shards may name different geometries.
@@ -153,10 +153,16 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
 /// below the recent cutoff, recent geometry from it. Nothing else about the
 /// publication changes, which is the property worth testing — a wallet must
 /// cross the boundary without being told it is there.
+///
+/// `tail_revision` and `tail_supersedes` apply to the unsealed last shard
+/// alone, because it is the only one that can be republished: sealed content is
+/// immutable, so a sealed shard that changed would be a different set.
 fn publish_with(
     dir: &Path,
     per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
     geometry_for: impl Fn(u64) -> &'static Geometry,
+    tail_revision: u32,
+    tail_supersedes: &str,
 ) -> ShardMap {
     let mut entries = Vec::new();
     let mut parent_digest = String::new();
@@ -190,8 +196,16 @@ fn publish_with(
             terminal_block_hash: hash_at(end).to_display_hex(),
             parent_manifest_digest: parent_digest.clone(),
             sealed: shard_id + 1 < SHARDS,
-            revision: 0,
-            supersedes: String::new(),
+            revision: if shard_id + 1 == SHARDS {
+                tail_revision
+            } else {
+                0
+            },
+            supersedes: if shard_id + 1 == SHARDS {
+                tail_supersedes.to_string()
+            } else {
+                String::new()
+            },
             seal: ManifestSeal {
                 scripts_target: 8_192,
                 scripts_capacity: 16_384,
@@ -262,7 +276,7 @@ fn publish_with(
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
             manifest_digest: digest.clone(),
-            revision: 0,
+            revision: manifest.revision,
             sealed: manifest.sealed,
         });
         parent_digest = digest;
@@ -366,17 +380,15 @@ impl ShardTransport for HttpShards {
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
-        let bytes = self
+        let response = self
             .client
             .get(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
                 table.as_str()
             ))
-            .send()?
-            .error_for_status()?
-            .bytes()?
-            .to_vec();
+            .send()?;
+        let bytes = checked(response, shard_id, revision)?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
     }
@@ -388,7 +400,7 @@ impl ShardTransport for HttpShards {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError> {
-        Ok(self
+        let response = self
             .client
             .post(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
@@ -396,11 +408,45 @@ impl ShardTransport for HttpShards {
                 table.as_str()
             ))
             .body(body.to_vec())
-            .send()?
-            .error_for_status()?
-            .bytes()?
-            .to_vec())
+            .send()?;
+        checked(response, shard_id, revision)
     }
+}
+
+/// Reads a reply, turning a refusal the wallet can act on into one.
+///
+/// The body and the `retry-after` header are read before the status is thrown
+/// away: `error_for_status` keeps only the code, and the map digest a stale
+/// refusal carries lives in the body.
+fn checked(
+    response: reqwest::blocking::Response,
+    shard_id: u64,
+    revision: &str,
+) -> Result<Vec<u8>, BoxError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response.bytes()?.to_vec());
+    }
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let body = response.bytes()?.to_vec();
+    if let Some(refused) = refusal(
+        status.as_u16(),
+        retry_after.as_deref(),
+        &body,
+        shard_id,
+        revision,
+    ) {
+        return Err(refused);
+    }
+    Err(format!(
+        "shard {shard_id} revision {revision}: HTTP {status}: {}",
+        String::from_utf8_lossy(&body)
+    )
+    .into())
 }
 
 /// Parses the service's init document into what the wallet checks it against.
@@ -945,13 +991,19 @@ async fn a_wallet_syncs_across_a_geometry_boundary_exactly() {
     // The first half is the archive tier, the second the recent one. The
     // boundary falls inside the wallet's history on purpose: script 2 is active
     // in two shards, so it is recovered from both tiers in one sync.
-    let map = publish_with(dir.path(), &per_shard, |shard_id| {
-        if shard_id < SHARDS / 2 {
-            &RECENT_4K
-        } else {
-            &RECENT_8K
-        }
-    });
+    let map = publish_with(
+        dir.path(),
+        &per_shard,
+        |shard_id| {
+            if shard_id < SHARDS / 2 {
+                &RECENT_4K
+            } else {
+                &RECENT_8K
+            }
+        },
+        0,
+        "",
+    );
     assert_eq!(map.shards[0].geometry, RECENT_4K.name);
     assert_eq!(
         map.shards[(SHARDS - 1) as usize].geometry,
@@ -980,13 +1032,19 @@ async fn a_wallet_syncs_across_a_geometry_boundary_exactly() {
 async fn init_declares_one_parameter_set_per_geometry() {
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
-    publish_with(dir.path(), &per_shard, |shard_id| {
-        if shard_id < SHARDS / 2 {
-            &RECENT_4K
-        } else {
-            &RECENT_8K
-        }
-    });
+    publish_with(
+        dir.path(),
+        &per_shard,
+        |shard_id| {
+            if shard_id < SHARDS / 2 {
+                &RECENT_4K
+            } else {
+                &RECENT_8K
+            }
+        },
+        0,
+        "",
+    );
     let base = serve(dir.path()).await;
 
     let raw = tokio::task::spawn_blocking(move || {
@@ -1090,4 +1148,473 @@ async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
         matches!(error, transparent_wallet::SyncError::UnknownGeometry(ref name) if name == "recent-2k"),
         "expected an unknown-geometry refusal, got {error}"
     );
+}
+
+/// Serves set A's public bytes until the map is refetched, then set B's.
+///
+/// Not fault injection: this is a wallet holding a cached map whose publisher
+/// has moved on, which is the ordinary condition a tail republication creates.
+/// The refusal that drives the recovery comes from the real service, against a
+/// real published set.
+struct TwoSetFilters {
+    before: PublishedFilters,
+    after: PublishedFilters,
+    refreshed: bool,
+}
+
+impl FilterSource for TwoSetFilters {
+    fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        self.refreshed = true;
+        self.after.shard_map()
+    }
+
+    fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
+        if self.refreshed {
+            self.after.filter(shard_id)
+        } else {
+            self.before.filter(shard_id)
+        }
+    }
+}
+
+/// A wallet whose cached map names a tail revision the service has replaced
+/// refreshes the map and re-derives that shard, rather than failing the sync.
+///
+/// The two published sets differ only in the unsealed tail: set B holds a later
+/// revision of it, carrying one more event for a script the wallet owns, and
+/// does not hold set A's revision at all. So the wallet's first tail request is
+/// refused with a real 409 from real service code.
+///
+/// What makes the assertions worth making is the shape of the chain: script 1
+/// is received in shard 0 and spent in shard 2, and script 2 gains an event in
+/// the replaced tail. A recovery that dropped what it had already read would
+/// leave that spend unresolved, and one that kept the abandoned attempt's
+/// results would miss the new event. Only re-deriving the tail over retained
+/// earlier history reproduces the traversal exactly.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_map() {
+    let before_dir = tempfile::tempdir().unwrap();
+    let after_dir = tempfile::tempdir().unwrap();
+
+    let mut before_chain = chain();
+    let map_before = publish(before_dir.path(), &before_chain);
+
+    // The replacement: the same range, one more event, published as revision 1
+    // superseding the revision the wallet cached.
+    let tail = (SHARDS - 1) as usize;
+    let height = FIRST + (SHARDS - 1) * SPAN + 42;
+    before_chain[tail].push((
+        script(2),
+        TransparentEvent::Receive(ReceiveEvent {
+            height: height as u32,
+            txid: txid(9_999),
+            transaction_index: 4,
+            output_index: 0,
+            value: 4_242,
+            coinbase: false,
+        }),
+    ));
+    let after_chain = before_chain;
+    let stale_digest = map_before.shards[tail].manifest_digest.clone();
+    let map_after = publish_with(
+        after_dir.path(),
+        &after_chain,
+        |_| &RECENT_8K,
+        1,
+        &stale_digest,
+    );
+    assert_ne!(
+        map_after.shards[tail].manifest_digest, stale_digest,
+        "the replacement must be a different revision, or there is nothing to recover from"
+    );
+
+    // Only the newer set is served, so the cached revision is genuinely gone
+    // rather than merely superseded and still answerable.
+    let base = serve(after_dir.path()).await;
+
+    let wallet = vec![script(1), script(2), script(3)];
+    let filters = TwoSetFilters {
+        before: PublishedFilters::load(before_dir.path(), &map_before),
+        after: PublishedFilters::load(after_dir.path(), &map_after),
+        refreshed: false,
+    };
+    let map_bytes = serde_json::to_vec(&map_before).unwrap().len() as u64;
+    let outcome = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = HttpShards {
+            base: base.clone(),
+            client: client.clone(),
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec();
+        let geometry = parse_init(&raw);
+        let mut filters = filters;
+        sync(
+            &map_before,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .expect("the sync must recover, not fail")
+    })
+    .await
+    .unwrap();
+
+    let expected = traverse(&after_chain, &[script(1), script(2), script(3)], 0);
+    compare(&outcome.ledger, &expected);
+
+    assert_eq!(
+        outcome.map_refreshes, 1,
+        "exactly one refresh should resolve a single replaced revision"
+    );
+    assert!(
+        outcome.ledger.unresolved().is_empty(),
+        "history read before the refusal must survive the recovery"
+    );
+    assert_eq!(
+        outcome.ledger.spends().len(),
+        1,
+        "the spend in shard 2 of an output received in shard 0 must still resolve"
+    );
+    assert_eq!(
+        outcome.covered_through, map_after.shards[tail].end_height,
+        "coverage must reach the end of the revision that replaced the refused one"
+    );
+    assert_eq!(
+        outcome.provisional.len(),
+        1,
+        "only the unsealed tail is provisional"
+    );
+    assert_eq!(
+        outcome.provisional[0].manifest_digest, map_after.shards[tail].manifest_digest,
+        "the provisional record must name the revision actually read, never the refused one"
+    );
+    assert_eq!(outcome.provisional[0].revision, 1);
+    // The tail's filter is downloaded twice: once for the attempt that was
+    // refused, and again after the refresh, because a republished shard
+    // publishes a new filter with its new content.
+    assert_eq!(
+        outcome.charges.filters_checked,
+        SHARDS + 1,
+        "the abandoned attempt's filter is still paid for"
+    );
+    assert!(
+        outcome.charges.map_bytes > map_bytes,
+        "the refreshed map is charged too"
+    );
+}
+
+/// Refuses a fixed number of queries as an overloaded service would, then
+/// forwards.
+struct OverloadedFor {
+    inner: HttpShards,
+    remaining: u32,
+    retry_after: Option<String>,
+}
+
+impl ShardTransport for OverloadedFor {
+    fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.init()
+    }
+
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.setup(shard_id, revision, table, segment)
+    }
+
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            // Classified the way the HTTP transport classifies it, from the
+            // status and the `retry-after` the service would have sent — so a
+            // 503 that names no delay falls through to an ordinary failure
+            // here exactly as it would against the real service.
+            let body = br#"{"error":"no cache capacity is free","retry":"retry shortly"}"#;
+            return Err(
+                refusal(503, self.retry_after.as_deref(), body, shard_id, revision)
+                    .unwrap_or_else(|| "HTTP 503".into()),
+            );
+        }
+        self.inner.query(shard_id, revision, table, body)
+    }
+}
+
+/// A service that is briefly out of cache capacity is waited for, not given up
+/// on — and the wallet still reconstructs exactly.
+///
+/// The refusal says nothing about the map, so this must be recovered without
+/// refetching one: an overload that spent a map refresh would burn the budget
+/// that exists for a different problem.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_overloaded_service_is_retried_and_the_sync_still_reconstructs_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+
+    let wallet = vec![script(1), script(2)];
+    let expected_wallet = wallet.clone();
+    let filters = PublishedFilters::load(dir.path(), &map);
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let outcome = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = OverloadedFor {
+            inner: HttpShards {
+                base: base.clone(),
+                client: client.clone(),
+            },
+            remaining: 2,
+            retry_after: Some("0".into()),
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec();
+        let geometry = parse_init(&raw);
+        let mut filters = filters;
+        sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .expect("an overload is a wait, not a failure")
+    })
+    .await
+    .unwrap();
+
+    compare(&outcome.ledger, &traverse(&per_shard, &expected_wallet, 0));
+    assert_eq!(
+        outcome.map_refreshes, 0,
+        "an overload says nothing about the map and must not spend a refresh"
+    );
+}
+
+/// A service that stays at its limit is reported as such, and coverage stops
+/// where it was rather than skipping the range it could not read.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unrelenting_overload_stops_the_sync_without_advancing_coverage() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+
+    let wallet = vec![script(1), script(2)];
+    let filters = PublishedFilters::load(dir.path(), &map);
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let error = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = OverloadedFor {
+            inner: HttpShards {
+                base: base.clone(),
+                client: client.clone(),
+            },
+            remaining: u32::MAX,
+            retry_after: Some("0".into()),
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec();
+        let geometry = parse_init(&raw);
+        let mut filters = filters;
+        sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .err()
+        .expect("an unrelenting overload must not be reported as a completed sync")
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(error, transparent_wallet::SyncError::Overloaded { .. }),
+        "expected a named overload, got: {error}"
+    );
+}
+
+/// A 503 that names no delay is not the capacity refusal.
+///
+/// The service answers `/v1/ready` and an empty set with 503 too, and neither
+/// is fixed by waiting. Retrying those would spin against a condition that no
+/// backoff resolves, so only the flavour carrying `retry-after` is retryable.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_503_that_names_no_delay_is_not_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+
+    let wallet = vec![script(1), script(2)];
+    let filters = PublishedFilters::load(dir.path(), &map);
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let error = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = OverloadedFor {
+            inner: HttpShards {
+                base: base.clone(),
+                client: client.clone(),
+            },
+            remaining: 1,
+            retry_after: None,
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec();
+        let geometry = parse_init(&raw);
+        let mut filters = filters;
+        sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .err()
+        .expect("an unrecognised 503 must not be silently retried into success")
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        !matches!(error, transparent_wallet::SyncError::Overloaded { .. }),
+        "a 503 without a delay must not be treated as the capacity refusal"
+    );
+}
+
+/// When a refresh cannot produce a live revision, the sync stops and says so.
+///
+/// Here the public map source is itself stale, so refetching returns the same
+/// map that named the revision the service refused. The two disagree with each
+/// other, and asking again would loop, so this must be reported at once rather
+/// than spending the refresh budget discovering the same thing four times.
+///
+/// The outcome is a named refusal, not a completed sync: a wallet that reported
+/// coverage over the range it could not read would be claiming a balance it had
+/// not earned.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refresh_that_cannot_help_stops_the_sync_rather_than_looping() {
+    let before_dir = tempfile::tempdir().unwrap();
+    let after_dir = tempfile::tempdir().unwrap();
+
+    let mut before_chain = chain();
+    let map_before = publish(before_dir.path(), &before_chain);
+
+    let tail = (SHARDS - 1) as usize;
+    let height = FIRST + (SHARDS - 1) * SPAN + 42;
+    before_chain[tail].push((
+        script(2),
+        TransparentEvent::Receive(ReceiveEvent {
+            height: height as u32,
+            txid: txid(9_998),
+            transaction_index: 4,
+            output_index: 0,
+            value: 11,
+            coinbase: false,
+        }),
+    ));
+    let stale_digest = map_before.shards[tail].manifest_digest.clone();
+    publish_with(
+        after_dir.path(),
+        &before_chain,
+        |_| &RECENT_8K,
+        1,
+        &stale_digest,
+    );
+
+    // The newer set is served, but the filter source still publishes the older
+    // map — a publisher the wallet reads that has not caught up.
+    let base = serve(after_dir.path()).await;
+
+    let wallet = vec![script(1), script(2)];
+    let filters = PublishedFilters::load(before_dir.path(), &map_before);
+    let map_bytes = serde_json::to_vec(&map_before).unwrap().len() as u64;
+    let error = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = HttpShards {
+            base: base.clone(),
+            client: client.clone(),
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec();
+        let geometry = parse_init(&raw);
+        let mut filters = filters;
+        sync(
+            &map_before,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .err()
+        .expect("a withdrawn revision no refresh can replace must not read as success")
+    })
+    .await
+    .unwrap();
+
+    match error {
+        transparent_wallet::SyncError::StaleRevision {
+            shard_id,
+            refreshes,
+            ..
+        } => {
+            assert_eq!(
+                shard_id,
+                SHARDS - 1,
+                "the tail is the shard that was refused"
+            );
+            assert_eq!(
+                refreshes, 1,
+                "one refresh is enough to learn the map cannot help; the budget must not spin"
+            );
+        }
+        other => panic!("expected a named stale revision, got: {other}"),
+    }
 }

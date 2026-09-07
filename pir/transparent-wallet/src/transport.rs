@@ -26,8 +26,158 @@
 //! show that transfer, and a geometry cannot be chosen without seeing it.
 
 use crate::client::Table;
+use std::time::Duration;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// A request named a shard revision the service no longer serves.
+///
+/// Concrete, and boxed into [`BoxError`], rather than a variant of the
+/// transport traits' error type. Those traits have implementors that cannot
+/// observe an HTTP status at all — one reading a published set straight off
+/// disk, for instance — and a typed error enum would make every one of them
+/// enumerate a condition it can never reach.
+///
+/// The cost of that choice is that recognition is the implementor's job, so
+/// [`StaleRevision::from_http`] exists to make it one line rather than a JSON
+/// parse each one could get subtly wrong. See [`ShardTransport`] for what an
+/// implementor that skips it gives up.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("shard {shard_id} revision {revision} is no longer served")]
+pub struct StaleRevision {
+    pub shard_id: u64,
+    /// The manifest digest the refused request named.
+    pub revision: String,
+    /// The map digest the *service* says is current, when its body carried one.
+    ///
+    /// Diagnostic, and a short-circuit against a map this sync itself fetched —
+    /// never a trust input. It arrives from the private query origin, and
+    /// letting it decide which map bytes a wallet accepts would give that
+    /// origin a say in the wallet's view of the set, which is the reason public
+    /// filters and private queries are separate traits to begin with.
+    pub map_sha256: Option<String>,
+}
+
+/// The service could not free the cache capacity a request needed.
+///
+/// Retryable as it stands: unlike [`StaleRevision`] the map is not stale, and
+/// refetching it would be pure cost.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("the service has no free cache capacity")]
+pub struct Overloaded {
+    /// How long the service asked the caller to wait, when it said.
+    pub retry_after: Option<Duration>,
+}
+
+impl StaleRevision {
+    /// Recognises the refusal in an HTTP reply, or `None` if it is not one.
+    ///
+    /// `body` is the response body, which is why an implementor has to read it
+    /// *before* discarding the reply: the map digest lives there, and helpers
+    /// like `reqwest`'s `error_for_status` keep only the status code.
+    pub fn from_http(status: u16, body: &[u8], shard_id: u64, revision: &str) -> Option<Self> {
+        if status != 409 {
+            return None;
+        }
+        // A refusal whose body will not parse is still a refusal. The digest is
+        // an optimisation; the status is the fact.
+        let map_sha256 = serde_json::from_slice::<serde_json::Value>(body)
+            .ok()
+            .and_then(|body| {
+                body.get("map_sha256")
+                    .and_then(|digest| digest.as_str())
+                    .map(str::to_owned)
+            });
+        Some(Self {
+            shard_id,
+            revision: revision.to_string(),
+            map_sha256,
+        })
+    }
+
+    /// Finds this refusal inside a boxed transport error.
+    ///
+    /// Walks the `source` chain rather than inspecting the outermost box alone,
+    /// so an implementor that wrapped the refusal in an error of its own is not
+    /// silently missed — which would look exactly like a service that never
+    /// refused anything.
+    pub fn found_in(error: &BoxError) -> Option<&Self> {
+        found_in(error)
+    }
+
+    pub fn boxed(self) -> BoxError {
+        Box::new(self)
+    }
+}
+
+impl Overloaded {
+    /// Recognises an overload refusal, or `None` if it is not one.
+    ///
+    /// Keyed on `retry-after` and not on the status alone, because 503 is also
+    /// how the service reports that it is not ready and that it holds no
+    /// shards. Those are not retryable in the same breath — a wallet that
+    /// backed off and re-asked would be waiting for a condition no wait fixes —
+    /// and only the capacity refusal names a delay.
+    ///
+    /// Only delta-seconds are read. The HTTP-date form is legal and this
+    /// service never sends it; a value that will not parse is treated as no
+    /// delay rather than as no refusal.
+    pub fn from_http(status: u16, retry_after: Option<&str>) -> Option<Self> {
+        if status != 503 {
+            return None;
+        }
+        let retry_after = retry_after?;
+        Some(Self {
+            retry_after: retry_after.trim().parse().ok().map(Duration::from_secs),
+        })
+    }
+
+    pub fn found_in(error: &BoxError) -> Option<&Self> {
+        found_in(error)
+    }
+
+    pub fn boxed(self) -> BoxError {
+        Box::new(self)
+    }
+}
+
+/// Classifies a non-success reply into a refusal a wallet can act on.
+///
+/// Takes the parts rather than a response type, so the wallet crate stays free
+/// of any particular HTTP client — and so the argument list itself says what an
+/// implementor has to read *before* discarding the reply. The body carries the
+/// map digest and the header carries the delay; a helper like `reqwest`'s
+/// `error_for_status` keeps neither.
+///
+/// `None` means this reply is not a refusal either kind of retry can help with,
+/// and the caller should report it as it would any other failure.
+pub fn refusal(
+    status: u16,
+    retry_after: Option<&str>,
+    body: &[u8],
+    shard_id: u64,
+    revision: &str,
+) -> Option<BoxError> {
+    if let Some(stale) = StaleRevision::from_http(status, body, shard_id, revision) {
+        return Some(stale.boxed());
+    }
+    Overloaded::from_http(status, retry_after).map(Overloaded::boxed)
+}
+
+/// The shared `source`-chain walk behind both `found_in` methods.
+fn found_in<E: std::error::Error + 'static>(error: &BoxError) -> Option<&E> {
+    if let Some(found) = error.downcast_ref::<E>() {
+        return Some(found);
+    }
+    let mut source = error.source();
+    while let Some(current) = source {
+        if let Some(found) = current.downcast_ref::<E>() {
+            return Some(found);
+        }
+        source = current.source();
+    }
+    None
+}
 
 /// Bytes charged for one private table.
 ///
@@ -60,6 +210,9 @@ impl TableCharges {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ByteCharges {
     /// The shard map. Small, but a wallet cannot start without it.
+    ///
+    /// Counted once per fetch, so a sync that refreshed the map to recover a
+    /// superseded revision shows more than one map here.
     pub map_bytes: u64,
     /// Public activity filters. Paid by every wallet whether or not it matches.
     pub filter_bytes: u64,
@@ -67,6 +220,11 @@ pub struct ByteCharges {
     pub directory: TableCharges,
     /// Reading the history the directory located.
     pub pages: TableCharges,
+    /// Filters downloaded and matched.
+    ///
+    /// A shard re-derived under a later revision is counted again: its filter
+    /// is republished with its content, so re-reading the shard means
+    /// re-matching it, not just re-querying it.
     pub filters_checked: u64,
 }
 
@@ -138,10 +296,29 @@ pub trait FilterSource {
     fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError>;
 
     /// One shard's filter bytes, with what they cost.
+    ///
+    /// Keyed by shard id, but **not** stable under it: a growing tail is
+    /// republished as a new revision over a longer range, with a new filter, at
+    /// the same id. An implementation that memoises by id alone will hand back
+    /// the superseded filter after a republication, which the sync catches as a
+    /// digest mismatch against the map rather than acting on.
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError>;
 }
 
 /// Source of private shard retrieval.
+///
+/// # Refusals an implementor should recognise
+///
+/// The service distinguishes two refusals a wallet can act on from failures it
+/// can only report, and an implementor that can see a status code is expected
+/// to surface them: [`StaleRevision`] for `409` and [`Overloaded`] for a `503`
+/// carrying `retry-after`. Both have a `from_http` that does the recognition,
+/// so this is one `if let` per method.
+///
+/// Skipping it is not a correctness hole — the refusal degrades into an
+/// ordinary transport error and the sync fails where it would otherwise have
+/// recovered. But it *is* a silent loss of revision recovery, so an implementor
+/// that reads statuses and declines to map them should say why.
 pub trait ShardTransport {
     /// The service's init document, as JSON, with the bytes it cost.
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError>;
@@ -172,4 +349,97 @@ pub trait ShardTransport {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DIGEST: &str = "aa";
+
+    #[test]
+    fn a_stale_refusal_carries_the_map_digest_the_service_reported() {
+        let body = br#"{"error":"gone","retry":"refresh","map_sha256":"beef"}"#;
+        let stale = StaleRevision::from_http(409, body, 7, DIGEST).expect("a 409 is a refusal");
+        assert_eq!(stale.shard_id, 7);
+        assert_eq!(stale.revision, DIGEST);
+        assert_eq!(stale.map_sha256.as_deref(), Some("beef"));
+    }
+
+    /// The status is the fact and the digest is an optimisation, so a body that
+    /// will not parse must not turn a refusal into an unrecognised failure.
+    #[test]
+    fn a_stale_refusal_survives_a_body_it_cannot_parse() {
+        let stale = StaleRevision::from_http(409, b"not json", 7, DIGEST).expect("still a refusal");
+        assert_eq!(stale.map_sha256, None);
+    }
+
+    #[test]
+    fn only_a_conflict_is_a_stale_refusal() {
+        for status in [200u16, 400, 404, 500, 503] {
+            assert!(StaleRevision::from_http(status, b"{}", 7, DIGEST).is_none());
+        }
+    }
+
+    /// 503 is also how the service reports that it is not ready and that it
+    /// holds no shards. Neither is fixed by waiting, and only the capacity
+    /// refusal names a delay — so the header, not the status, is the signal.
+    #[test]
+    fn an_overload_is_recognised_by_its_delay_not_its_status() {
+        let overloaded = Overloaded::from_http(503, Some("1")).expect("a delay means capacity");
+        assert_eq!(overloaded.retry_after, Some(Duration::from_secs(1)));
+        assert!(
+            Overloaded::from_http(503, None).is_none(),
+            "a 503 without a delay is not retryable"
+        );
+        assert!(Overloaded::from_http(429, Some("1")).is_none());
+    }
+
+    /// A delay in the HTTP-date form is legal and this service never sends it.
+    /// Reading it as "no delay" keeps the refusal; reading it as "no refusal"
+    /// would lose the retry entirely.
+    #[test]
+    fn an_unparsable_delay_is_still_an_overload() {
+        let overloaded =
+            Overloaded::from_http(503, Some("Wed, 21 Oct 2015 07:28:00 GMT")).expect("a refusal");
+        assert_eq!(overloaded.retry_after, None);
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("wrapped")]
+    struct Wrapper(#[source] BoxError);
+
+    /// An implementor that wraps the refusal in an error of its own must not be
+    /// silently missed: that looks exactly like a service that never refused.
+    #[test]
+    fn a_refusal_is_found_through_a_wrapping_error() {
+        let inner = StaleRevision {
+            shard_id: 3,
+            revision: DIGEST.into(),
+            map_sha256: None,
+        }
+        .boxed();
+        let wrapped: BoxError = Box::new(Wrapper(inner));
+        assert_eq!(
+            StaleRevision::found_in(&wrapped).map(|stale| stale.shard_id),
+            Some(3)
+        );
+        assert!(Overloaded::found_in(&wrapped).is_none());
+    }
+
+    #[test]
+    fn an_ordinary_failure_is_neither_refusal() {
+        let error: BoxError = "connection reset".into();
+        assert!(StaleRevision::found_in(&error).is_none());
+        assert!(Overloaded::found_in(&error).is_none());
+    }
+
+    #[test]
+    fn refusal_dispatches_on_what_the_reply_says() {
+        let stale = refusal(409, None, br#"{"map_sha256":"beef"}"#, 1, DIGEST).expect("stale");
+        assert!(StaleRevision::found_in(&stale).is_some());
+        let overloaded = refusal(503, Some("2"), b"{}", 1, DIGEST).expect("overloaded");
+        assert!(Overloaded::found_in(&overloaded).is_some());
+        assert!(refusal(500, None, b"{}", 1, DIGEST).is_none());
+    }
 }

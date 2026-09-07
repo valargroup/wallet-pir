@@ -21,4 +21,6 @@ pub mod transport;
 
 pub use ledger::{ConfirmedSpend, Ledger, LedgerError, TransactionSummary, UnresolvedSpend, Utxo};
 pub use sync::{sync, GeometryParams, ServiceGeometry, SyncError, SyncOutcome};
-pub use transport::{ByteCharges, FilterSource, ShardTransport, TableCharges};
+pub use transport::{
+    refusal, ByteCharges, FilterSource, Overloaded, ShardTransport, StaleRevision, TableCharges,
+};

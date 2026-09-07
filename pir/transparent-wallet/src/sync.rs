@@ -43,10 +43,12 @@
 //! periods than quiet ones. This code does not hide it and must not be
 //! described as if it did.
 
-use crate::client::{ClientError, Table, TableClient};
+use crate::client::{classify_transport, ClientError, Table, TableClient};
 use crate::ledger::{Ledger, LedgerError};
-use crate::transport::{ByteCharges, FilterSource, ShardTransport};
+use crate::transport::{ByteCharges, FilterSource, ShardTransport, StaleRevision};
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::time::Duration;
 use transparent_events::TransparentEvent;
 use transparent_filter::{
     validate_filter, BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap,
@@ -84,7 +86,55 @@ pub enum SyncError {
          range"
     )]
     UnknownGeometry(String),
+    /// A revision this sync needed was withdrawn, and refreshing the map did
+    /// not offer one that is served.
+    ///
+    /// Terminal, and coverage stopped where it was. Distinct from a transport
+    /// failure so a caller can re-validate a map against its accepted chain and
+    /// come back, rather than treating a routine republication as a broken set.
+    #[error(
+        "shard {shard_id}: {stale}; the map was refreshed {refreshes} time(s) without offering a \
+         live revision"
+    )]
+    StaleRevision {
+        shard_id: u64,
+        stale: StaleRevision,
+        refreshes: u32,
+    },
+    /// The service stayed at its capacity limit for the whole retry budget.
+    #[error("shard {shard_id}: the service had no free cache capacity after {attempts} attempts")]
+    Overloaded { shard_id: u64, attempts: u32 },
+    /// A refreshed map is not the same shard set, continued.
+    ///
+    /// The caller validated the map this sync started from against the wallet's
+    /// accepted chain. A map fetched mid-sync inherits that validation only over
+    /// the range the two agree on, so a disagreement about already-covered
+    /// history is a different set rather than a longer one, and the caller has
+    /// to re-validate before retrying.
+    #[error(
+        "the refreshed shard map is not a continuation of the one this sync started from: {0}"
+    )]
+    MapDiverged(String),
 }
+
+/// Map refreshes one sync will spend recovering a withdrawn revision.
+///
+/// A tail is republished on a block cadence, so a wallet lapped this many times
+/// while reading is not converging on the tip, and saying so beats re-reading a
+/// moving target indefinitely. Every refresh must also *change* the refused
+/// revision, so this bounds genuine republication rather than a loop.
+const MAX_MAP_REFRESHES: u32 = 4;
+
+/// Attempts one shard gets against a service that is out of cache capacity.
+const MAX_OVERLOAD_ATTEMPTS: u32 = 4;
+
+/// Wait before a second attempt when the service names no delay, doubled per
+/// attempt after that.
+const OVERLOAD_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Ceiling on any single wait, so a service asking for an implausible delay
+/// cannot park a sync inside it.
+const OVERLOAD_BACKOFF_CAP: Duration = Duration::from_secs(2);
 
 /// One geometry's parameters, as a service declares them.
 ///
@@ -215,6 +265,13 @@ pub struct SyncOutcome {
     /// sealed shard appears, the range they covered is re-derived rather than
     /// extended, because a revision replaces its predecessor.
     pub provisional: Vec<ProvisionalCoverage>,
+    /// Times this sync refetched the map to recover a withdrawn revision.
+    ///
+    /// Non-zero means part of the range was re-derived under a later revision.
+    /// The abandoned attempt's bytes are still counted in `charges`, so a
+    /// recovered sync legitimately reports more filter and setup bytes than a
+    /// clean one over the same range.
+    pub map_refreshes: u32,
 }
 
 /// One provisional revision a sync took coverage from.
@@ -277,65 +334,115 @@ pub fn sync(
     let mut settled_through = covered_through;
     let mut provisional = Vec::new();
 
-    for entry in map.shards.iter().skip(first_shard as usize) {
-        // Every filter in range is downloaded, matched or not.
-        let (bytes, cost) = filters
-            .filter(entry.shard_id)
-            .map_err(|error| SyncError::Transport(error.to_string()))?;
-        charges.filter_bytes += cost;
-        charges.filters_checked += 1;
+    let mut active: Cow<'_, ShardMap> = Cow::Borrowed(map);
+    let mut index = first_shard as usize;
+    let mut refreshes = 0u32;
+    // Only a map this sync fetched itself can be compared with the digest the
+    // service reports. The caller passed a parsed map and a byte count, not the
+    // bytes, so there is nothing to hash until a refresh produces some.
+    let mut held_map_digest: Option<String> = None;
 
-        // Bind the bytes to the map before believing anything they say.
-        if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
-            return Err(SyncError::Invalid(format!(
-                "shard {} filter does not match its published digest",
-                entry.shard_id
-            )));
-        }
-        let validated = validate_filter(&bytes, FilterLimits::default())?;
-        let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
-        let key = ShardKey::derive(
-            &map.profile,
+    while index < active.shards.len() {
+        // Cloned so the borrow of `active` ends before a refresh may replace
+        // it. An entry is a handful of short strings; the filter download it
+        // gates dwarfs the copy.
+        let entry = active.shards[index].clone();
+        let read = read_shard(
+            &entry,
+            &active.profile,
             genesis,
-            entry.shard_id,
-            entry.start_height,
-            entry.end_height,
-            terminal,
+            scripts,
+            geometry,
+            &mut clients,
+            filters,
+            transport,
+            &mut charges,
         );
-        let matches = transparent_filter::match_range_scripts(&validated, key, scripts)?;
-
-        // The geometry is resolved only for a shard this wallet must actually
-        // read. A shard whose filter matched nothing holds no history for these
-        // scripts whatever its row counts — the filter is built over the shard's
-        // scripts and is independent of the table shape — so passing over it
-        // advances coverage across a range that was genuinely empty, not one
-        // that went unretrieved.
-        //
-        // That distinction is what makes an old wallet able to sync the recent
-        // window across an archive tier it cannot decode. It stops the moment
-        // there is something to fetch: an unknown geometry on a *matched* shard
-        // is fatal for the whole sync, because the alternative is reporting a
-        // synchronised balance over history that was never read.
-        if !matches.is_empty() {
-            matched_shards.push(entry.shard_id);
-            let prepared = clients.prepare(&entry.geometry, &geometry.geometries)?;
-            let recovered =
-                retrieve_shard(entry, &matches, scripts, prepared, transport, &mut charges)?;
-            unproductive += recovered.unproductive;
-            events.extend(recovered.events);
-        }
-        // Reached only after every segment of this shard was retrieved and
-        // validated: an error above leaves coverage where it was.
-        covered_through = entry.end_height;
-        if entry.sealed {
-            settled_through = entry.end_height;
-        } else {
-            provisional.push(ProvisionalCoverage {
-                shard_id: entry.shard_id,
-                revision: entry.revision,
-                manifest_digest: entry.manifest_digest.clone(),
-                end_height: entry.end_height,
-            });
+        match read {
+            Ok(recovered) => {
+                if let Some(recovered) = recovered {
+                    // Pushed after the retrieval, not before it: a shard that
+                    // was re-derived under a later revision would otherwise
+                    // appear twice, and "matched" can only observably mean
+                    // matched and read.
+                    matched_shards.push(entry.shard_id);
+                    unproductive += recovered.unproductive;
+                    events.extend(recovered.events);
+                }
+                // Reached only after every segment of this shard was retrieved
+                // and validated: an error above leaves coverage where it was.
+                covered_through = entry.end_height;
+                if entry.sealed {
+                    settled_through = entry.end_height;
+                } else {
+                    provisional.push(ProvisionalCoverage {
+                        shard_id: entry.shard_id,
+                        revision: entry.revision,
+                        manifest_digest: entry.manifest_digest.clone(),
+                        end_height: entry.end_height,
+                    });
+                }
+                index += 1;
+            }
+            Err(SyncError::StaleRevision { stale, .. }) => {
+                // The service withdrew this revision while the sync was reading
+                // it. Refresh the map, check it is the same set continued, and
+                // re-derive this range from whatever replaced it. Everything
+                // read from earlier shards stands; everything this attempt read
+                // is discarded, and the bytes it cost are still charged.
+                if refreshes >= MAX_MAP_REFRESHES
+                    || (stale.map_sha256.is_some()
+                        && stale.map_sha256.as_deref() == held_map_digest.as_deref())
+                {
+                    // Either the budget is gone, or the service says the map
+                    // this sync already holds is the current one — so refetching
+                    // it again cannot produce a live revision.
+                    return Err(SyncError::StaleRevision {
+                        shard_id: entry.shard_id,
+                        stale,
+                        refreshes,
+                    });
+                }
+                let (fresh, digest) = refresh_map(&active, covered_through, filters, &mut charges)?;
+                refreshes += 1;
+                held_map_digest = Some(digest);
+                let Some(resume) = fresh.shard_for_height(covered_through + 1).map(|shard| {
+                    fresh
+                        .shards
+                        .iter()
+                        .position(|candidate| candidate.shard_id == shard.shard_id)
+                        .expect("shard_for_height returns an entry of this map")
+                }) else {
+                    // The refreshed map no longer advertises anything past what
+                    // this sync already covered. `check_continuation` has
+                    // established that it does not end *below* that, so nothing
+                    // was skipped: coverage is exactly what it would have been
+                    // had the withdrawn tail never been advertised at all.
+                    break;
+                };
+                if fresh.shards[resume].manifest_digest == stale.revision {
+                    // The map still names the revision the service refused.
+                    // They disagree with each other, and asking again loops.
+                    return Err(SyncError::StaleRevision {
+                        shard_id: entry.shard_id,
+                        stale,
+                        refreshes,
+                    });
+                }
+                // `check_continuation` has established that the refreshed map
+                // agrees about every range already covered, so the shard
+                // resumed at begins exactly where coverage left off. Retracting
+                // provisional records past that point is therefore a no-op, but
+                // it is the rule `ProvisionalCoverage` documents — a re-derived
+                // range replaces rather than extends — and it belongs written
+                // where the re-derivation happens.
+                let resume_start = fresh.shards[resume].start_height;
+                provisional.retain(|covered| covered.end_height < resume_start);
+                covered_through = resume_start.saturating_sub(1);
+                active = Cow::Owned(fresh);
+                index = resume;
+            }
+            Err(other) => return Err(other),
         }
     }
 
@@ -350,7 +457,214 @@ pub fn sync(
         covered_through,
         settled_through,
         provisional,
+        map_refreshes: refreshes,
     })
+}
+
+/// Reads one shard: its filter always, its history only if a script matched.
+///
+/// `Ok(None)` means the filter matched nothing, which is a genuinely empty
+/// range rather than one that went unretrieved — the filter is built over the
+/// shard's own scripts and is independent of the table shape, so passing over
+/// it is safe even for a geometry this build cannot decode. That is what lets
+/// an old wallet sync the recent window across an archive tier it does not
+/// know. It stops the moment there is something to fetch: an unknown geometry
+/// on a *matched* shard is fatal, because the alternative is reporting a
+/// synchronised balance over history that was never read.
+///
+/// The filter is fetched here rather than by the caller because a republished
+/// shard publishes a new filter with its new content. Re-deriving a shard
+/// therefore means re-matching it, not merely re-querying it.
+#[allow(clippy::too_many_arguments)]
+fn read_shard(
+    entry: &transparent_filter::ShardMapEntry,
+    profile: &str,
+    genesis: BlockHash,
+    scripts: &[ScriptBytes],
+    geometry: &ServiceGeometry,
+    clients: &mut Clients,
+    filters: &mut impl FilterSource,
+    transport: &mut impl ShardTransport,
+    charges: &mut ByteCharges,
+) -> Result<Option<Recovered>, SyncError> {
+    // Every filter in range is downloaded, matched or not.
+    let (bytes, cost) = filters
+        .filter(entry.shard_id)
+        .map_err(|error| SyncError::Transport(error.to_string()))?;
+    charges.filter_bytes += cost;
+    charges.filters_checked += 1;
+
+    // Bind the bytes to the map before believing anything they say.
+    if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
+        return Err(SyncError::Invalid(format!(
+            "shard {} filter does not match its published digest",
+            entry.shard_id
+        )));
+    }
+    let validated = validate_filter(&bytes, FilterLimits::default())?;
+    let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
+    let key = ShardKey::derive(
+        profile,
+        genesis,
+        entry.shard_id,
+        entry.start_height,
+        entry.end_height,
+        terminal,
+    );
+    let matches = transparent_filter::match_range_scripts(&validated, key, scripts)?;
+    if matches.is_empty() {
+        return Ok(None);
+    }
+
+    // Retried here, one level inside the map-refresh loop, because an overload
+    // says nothing about the map: refetching it would be pure cost, and the
+    // same revision is still the right one to ask for.
+    let mut attempt = 1u32;
+    loop {
+        let prepared = clients.prepare(&entry.geometry, &geometry.geometries)?;
+        match retrieve_shard(entry, &matches, scripts, prepared, transport, charges) {
+            Ok(recovered) => return Ok(Some(recovered)),
+            // Both refusals reach here wrapped as client errors, because setup
+            // and query both report through `ClientError`. Lifting them to
+            // their own `SyncError` variants at this one boundary is what lets
+            // the caller's loop match on a withdrawn revision without knowing
+            // which of the two requests met it.
+            Err(SyncError::Client(ClientError::Stale(stale))) => {
+                return Err(SyncError::StaleRevision {
+                    shard_id: entry.shard_id,
+                    stale,
+                    refreshes: 0,
+                })
+            }
+            Err(SyncError::Client(ClientError::Overloaded(overloaded))) => {
+                if attempt >= MAX_OVERLOAD_ATTEMPTS {
+                    return Err(SyncError::Overloaded {
+                        shard_id: entry.shard_id,
+                        attempts: attempt,
+                    });
+                }
+                // Nothing partial is kept: `retrieve_shard` returns its events
+                // by value, so a refused attempt leaves no state to unwind.
+                std::thread::sleep(overload_backoff(attempt, overloaded.retry_after));
+                attempt += 1;
+            }
+            Err(other) => return Err(other),
+        }
+    }
+}
+
+/// How long to wait before re-asking an overloaded service.
+///
+/// The service's own figure is preferred, because it knows why it refused, but
+/// it is capped: a delay a wallet cannot sanity-check is a delay a
+/// misconfigured or hostile service could use to park a sync inside one call.
+fn overload_backoff(attempt: u32, asked: Option<Duration>) -> Duration {
+    let wait = asked.unwrap_or_else(|| OVERLOAD_BACKOFF * 2u32.saturating_pow(attempt - 1));
+    wait.min(OVERLOAD_BACKOFF_CAP)
+}
+
+/// Refetches the map after a withdrawn revision, and checks it continues the
+/// one in hand.
+///
+/// Returns the map and the digest of the bytes it came from, so a later refusal
+/// naming that same digest can be recognised as unresolvable rather than
+/// spending another refresh on it.
+fn refresh_map(
+    started_from: &ShardMap,
+    covered_through: u64,
+    filters: &mut impl FilterSource,
+    charges: &mut ByteCharges,
+) -> Result<(ShardMap, String), SyncError> {
+    let (bytes, cost) = filters
+        .shard_map()
+        .map_err(|error| SyncError::Transport(error.to_string()))?;
+    charges.map_bytes += cost;
+    let fresh: ShardMap = serde_json::from_slice(&bytes).map_err(|error| {
+        SyncError::Invalid(format!("refreshed shard map is malformed: {error}"))
+    })?;
+    fresh.check_shape().map_err(|error| {
+        SyncError::Invalid(format!("refreshed shard map is malformed: {error}"))
+    })?;
+    check_continuation(started_from, &fresh, covered_through).map_err(SyncError::MapDiverged)?;
+    let digest = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
+    Ok((fresh, digest))
+}
+
+/// Checks a refreshed map is the same shard set, continued.
+///
+/// A map fetched mid-sync is not independently trusted. The caller validated
+/// the map this sync started from against the wallet's accepted chain, and a
+/// refresh inherits that validation only over the range the two agree on. So
+/// the set's identity must be unchanged, and every shard whose range is already
+/// covered must be the *same entry* — sealed content is immutable, so a
+/// disagreement there means a different set rather than a longer one.
+///
+/// Everything this function rules out is what makes the recovery sound: once it
+/// passes, the shard the sync resumes at begins exactly where coverage stopped,
+/// so no range can be skipped and none can need retracting.
+fn check_continuation(
+    started_from: &ShardMap,
+    fresh: &ShardMap,
+    covered_through: u64,
+) -> Result<(), String> {
+    if fresh.genesis_hash != started_from.genesis_hash {
+        return Err("it names a different genesis block".into());
+    }
+    if fresh.network != started_from.network {
+        return Err("it names a different network".into());
+    }
+    if fresh.profile != started_from.profile {
+        return Err("it names a different filter profile".into());
+    }
+    if fresh.range_envelope_version != started_from.range_envelope_version {
+        return Err("it names a different range envelope version".into());
+    }
+    if fresh.start_height != started_from.start_height {
+        return Err("its coverage begins at a different height".into());
+    }
+    // New geometries may appear as a set grows into another tier; the seal
+    // parameters of a geometry already in use may not change, because they are
+    // what the boundaries were derived from.
+    for (name, seal) in &started_from.seal {
+        if let Some(refreshed) = fresh.seal.get(name) {
+            if refreshed != seal {
+                return Err(format!("it reseals geometry {name}"));
+            }
+        }
+    }
+    for (index, before) in started_from.shards.iter().enumerate() {
+        if before.end_height > covered_through {
+            break;
+        }
+        match fresh.shards.get(index) {
+            Some(after) if after == before => {}
+            Some(_) => {
+                return Err(format!(
+                    "shard {} covers height {} but is not the shard this sync read",
+                    before.shard_id, before.end_height
+                ))
+            }
+            None => {
+                return Err(format!(
+                    "it withdraws shard {}, whose range this sync already covered",
+                    before.shard_id
+                ))
+            }
+        }
+    }
+    // A map that ends below what is already covered withdraws history the
+    // wallet has read, which is the same disagreement as a re-cut shard.
+    if let Some(last) = fresh.shards.last() {
+        if last.end_height < covered_through {
+            return Err(format!(
+                "its coverage ends at {}, below the {covered_through} this sync already read",
+                last.end_height
+            ));
+        }
+    } else if covered_through >= started_from.start_height {
+        return Err("it publishes no shards at all".into());
+    }
+    Ok(())
 }
 
 struct Recovered {
@@ -561,7 +875,7 @@ fn open_table(
         }
         let (raw, cost) = transport
             .setup(shard_id, revision, table, segment)
-            .map_err(|error| SyncError::Transport(error.to_string()))?;
+            .map_err(|error| SyncError::from(classify_transport(error)))?;
         charges.add_setup(table, cost);
         let parsed: serde_json::Value = serde_json::from_slice(&raw)
             .map_err(|error| SyncError::Transport(error.to_string()))?;
@@ -574,4 +888,168 @@ fn open_table(
         client.open_segment(revision, segment, params, digest)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use transparent_filter::{SealParameters, ShardMapEntry};
+
+    fn entry(shard_id: u64, start: u64, end: u64, sealed: bool) -> ShardMapEntry {
+        ShardMapEntry {
+            shard_id,
+            geometry: "recent-8k".into(),
+            start_height: start,
+            end_height: end,
+            parent_block_hash: format!("{:064x}", shard_id),
+            terminal_block_hash: format!("{:064x}", shard_id + 100),
+            filter_hash: format!("{:064x}", shard_id + 200),
+            scripts: 1,
+            page_rows: 1,
+            txids: 1,
+            directory_segments: 1,
+            page_segments: 1,
+            manifest_digest: format!("{:064x}", shard_id + 300),
+            revision: 0,
+            sealed,
+        }
+    }
+
+    fn map(shards: Vec<ShardMapEntry>) -> ShardMap {
+        let mut seal = std::collections::BTreeMap::new();
+        seal.insert(
+            "recent-8k".to_string(),
+            SealParameters {
+                max_scripts: 98_304,
+                max_page_rows: 7_936,
+                max_txids: 0,
+            },
+        );
+        ShardMap {
+            genesis_hash: format!("{:064x}", 1),
+            network: "main".into(),
+            profile: "zcash-transparent-range-v1".into(),
+            range_envelope_version: 1,
+            start_height: 100,
+            seal,
+            shards,
+        }
+    }
+
+    /// The ordinary case the recovery exists for: the sealed prefix agrees and
+    /// the unsealed tail has been replaced by a longer revision.
+    #[test]
+    fn a_replaced_tail_over_an_agreeing_prefix_continues_the_set() {
+        let before = map(vec![entry(0, 100, 199, true), entry(1, 200, 249, false)]);
+        let mut after = before.clone();
+        after.shards[1].end_height = 299;
+        after.shards[1].revision = 1;
+        after.shards[1].manifest_digest = "ff".repeat(32);
+        assert_eq!(check_continuation(&before, &after, 199), Ok(()));
+    }
+
+    /// Shards appended past the tail is the same case, and is what a wallet
+    /// several revisions behind meets.
+    #[test]
+    fn appended_shards_continue_the_set() {
+        let before = map(vec![entry(0, 100, 199, true), entry(1, 200, 249, false)]);
+        let mut after = before.clone();
+        after.shards[1].sealed = true;
+        after.shards.push(entry(2, 250, 299, false));
+        assert!(check_continuation(&before, &after, 199).is_ok());
+    }
+
+    #[test]
+    fn a_different_set_identity_is_not_a_continuation() {
+        let before = map(vec![entry(0, 100, 199, true)]);
+        for mutate in [
+            (|m: &mut ShardMap| m.genesis_hash = "ff".repeat(32)) as fn(&mut ShardMap),
+            |m: &mut ShardMap| m.network = "test".into(),
+            |m: &mut ShardMap| m.profile = "other".into(),
+            |m: &mut ShardMap| m.range_envelope_version = 2,
+            |m: &mut ShardMap| m.start_height = 1,
+        ] {
+            let mut after = before.clone();
+            mutate(&mut after);
+            assert!(
+                check_continuation(&before, &after, 199).is_err(),
+                "a changed set identity must be refused"
+            );
+        }
+    }
+
+    /// Sealed content is immutable, so a shard whose covered range now reads
+    /// differently means a different set — not a longer one. This is the check
+    /// that makes the resume point provably equal to where coverage stopped.
+    #[test]
+    fn a_re_cut_covered_shard_is_not_a_continuation() {
+        let before = map(vec![entry(0, 100, 199, true), entry(1, 200, 249, false)]);
+        let mut after = before.clone();
+        after.shards[0].end_height = 149;
+        assert!(check_continuation(&before, &after, 199).is_err());
+    }
+
+    #[test]
+    fn withdrawing_a_covered_shard_is_not_a_continuation() {
+        let before = map(vec![entry(0, 100, 199, true), entry(1, 200, 249, false)]);
+        let after = map(vec![]);
+        assert!(check_continuation(&before, &after, 199).is_err());
+    }
+
+    #[test]
+    fn coverage_ending_below_what_was_read_is_not_a_continuation() {
+        let before = map(vec![entry(0, 100, 199, true), entry(1, 200, 249, false)]);
+        let after = map(vec![entry(0, 100, 199, true)]);
+        assert!(
+            check_continuation(&before, &after, 249).is_err(),
+            "a map ending below covered history withdraws what the wallet read"
+        );
+        assert!(
+            check_continuation(&before, &after, 199).is_ok(),
+            "the same map is fine when only the uncovered tail is gone"
+        );
+    }
+
+    /// Seal parameters are what the boundaries were derived from, so a geometry
+    /// already in use may not be resealed — but a set growing into another tier
+    /// may declare a geometry the wallet had not seen.
+    #[test]
+    fn reseal_is_refused_but_a_new_geometry_is_not() {
+        let before = map(vec![entry(0, 100, 199, true)]);
+        let mut resealed = before.clone();
+        resealed.seal.get_mut("recent-8k").unwrap().max_page_rows = 1;
+        assert!(check_continuation(&before, &resealed, 199).is_err());
+
+        let mut widened = before.clone();
+        widened.seal.insert(
+            "archive-wide".to_string(),
+            SealParameters {
+                max_scripts: 393_216,
+                max_page_rows: 63_488,
+                max_txids: 0,
+            },
+        );
+        assert!(check_continuation(&before, &widened, 199).is_ok());
+    }
+
+    #[test]
+    fn backoff_prefers_the_services_figure_and_caps_it() {
+        assert_eq!(overload_backoff(1, None), OVERLOAD_BACKOFF);
+        assert_eq!(overload_backoff(2, None), OVERLOAD_BACKOFF * 2);
+        assert_eq!(
+            overload_backoff(1, Some(Duration::from_millis(10))),
+            Duration::from_millis(10),
+            "the service knows why it refused"
+        );
+        assert_eq!(
+            overload_backoff(1, Some(Duration::from_secs(3600))),
+            OVERLOAD_BACKOFF_CAP,
+            "a delay a wallet cannot sanity-check must not park a sync"
+        );
+        assert_eq!(
+            overload_backoff(20, None),
+            OVERLOAD_BACKOFF_CAP,
+            "doubling is capped too"
+        );
+    }
 }

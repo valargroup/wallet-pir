@@ -23,7 +23,7 @@
 //! adopted the server's parameters would decode against whatever geometry the
 //! server chose, including one that leaks the selection.
 
-use crate::transport::{ByteCharges, ShardTransport};
+use crate::transport::{ByteCharges, Overloaded, ShardTransport, StaleRevision};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
 use ipir_sp::serialize::serialize_packing_keys;
@@ -41,6 +41,18 @@ pub enum ClientError {
     Transport(String),
     #[error("pir: {0}")]
     Pir(String),
+    /// The service no longer serves the revision this query named.
+    ///
+    /// Kept as a type rather than folded into `Transport`: it is recoverable by
+    /// refreshing the map and re-deriving the shard, and a string cannot be
+    /// matched on. Every query goes through here, so collapsing it here would
+    /// lose the refusal for all of them.
+    #[error(transparent)]
+    Stale(#[from] StaleRevision),
+    /// The service had no cache capacity for this query. Retryable as it
+    /// stands, without refreshing anything.
+    #[error(transparent)]
+    Overloaded(#[from] Overloaded),
 }
 
 /// Which table a query addresses.
@@ -261,8 +273,23 @@ impl TableClient {
         let uploaded = query.body.len() as u64;
         let response = transport
             .query(shard_id, revision, self.table, &query.body)
-            .map_err(|error| ClientError::Transport(error.to_string()))?;
+            .map_err(classify_transport)?;
         charges.add_query(self.table, uploaded, response.len() as u64);
         self.decode(revision, segments, query, &response)
     }
+}
+
+/// Sorts a boxed transport error into the refusals a caller can act on.
+///
+/// The refusals are recovered before the fallback, because both are boxed into
+/// the same `BoxError` as an ordinary failure and stringifying first would
+/// throw away the only thing that distinguishes them.
+pub(crate) fn classify_transport(error: crate::transport::BoxError) -> ClientError {
+    if let Some(stale) = StaleRevision::found_in(&error) {
+        return ClientError::Stale(stale.clone());
+    }
+    if let Some(overloaded) = Overloaded::found_in(&error) {
+        return ClientError::Overloaded(overloaded.clone());
+    }
+    ClientError::Transport(error.to_string())
 }
