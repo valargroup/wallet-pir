@@ -47,6 +47,13 @@ validate_inputs() {
   # remote shell's home happens to be.
   [[ "$TRANSPARENT_SHARD_DIR" = /* ]] \
     || fail "TRANSPARENT_SHARD_DIR must be absolute"
+  # rsync's -e takes one string, so the ssh invocation is flattened into it and
+  # a path containing a space would split into two arguments and fail somewhere
+  # far from the cause. The runner never produces such a path; say so here
+  # rather than debug it there.
+  case "${TRANSPARENT_SSH_KEY_PATH:-}${TRANSPARENT_KNOWN_HOSTS_PATH:-}" in
+    *[[:space:]]*) fail "SSH key and known_hosts paths must not contain spaces" ;;
+  esac
 }
 
 # The published set has to be a set before it is shipped: a directory of shard
