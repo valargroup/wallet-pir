@@ -306,7 +306,7 @@ verify() {
     || fail "worker serves geometries [$served_geometries], the published map names [$expected_geometries]"
 
   echo "$init" \
-    | jq -r '"covered_through \(.covered_through), \(.shards) shards, schema \(.schema), geometries \([.geometries[].name] | join(\" \"))"'
+    | jq -r '"covered_through \(.covered_through), \(.shards) shards, schema \(.schema), geometries \([.geometries[].name] | join(" "))"'
 
   verify_public
 }
