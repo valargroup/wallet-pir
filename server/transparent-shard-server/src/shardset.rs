@@ -15,10 +15,18 @@
 //! client would reject its rows as a PIR fault rather than as a corrupt shard.
 //! Failing at load turns a silent, confusing failure into a loud one.
 //!
-//! `filter.bin` is loaded but never served from here. Filters are public and
-//! belong to the filter service; a wallet must not learn to fetch them from the
-//! same place it makes private requests, or the two become correlated by
-//! construction. It is read only so its digest can be checked against the map.
+//! `filter.bin` is loaded, verified against the map, and — since the transparent
+//! host was asked to serve a complete API — also served from here.
+//!
+//! That is a deliberate relaxation of an earlier rule, which kept public bytes
+//! and private requests on separate origins so the two could not be correlated
+//! by construction. What the rule actually bought was narrower than it looked:
+//! the shard id of a private query is public in its own URL, and one operator
+//! runs both services, so the correlation was available from logs regardless.
+//! What it did preserve was a wallet's ability to reach the two over different
+//! network paths, and that option is kept — the filter service still serves the
+//! same bytes at the same paths on its own host, so a wallet that wants two
+//! origins still has them.
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -98,6 +106,12 @@ pub struct LoadedShard {
     pub manifest: ShardManifest,
     /// The manifest digest, which is also the directory name.
     pub digest: String,
+    /// The shard's public range filter, as published.
+    ///
+    /// Retained rather than dropped after verification because this service now
+    /// serves it. A filter is around a hundred kilobytes, so a worker's whole
+    /// assignment costs a few megabytes -- negligible beside the runtimes.
+    pub filter: Vec<u8>,
     /// One entry per segment, in segment order.
     pub directory: Vec<Vec<u8>>,
     pub pages: Vec<Vec<u8>>,
@@ -222,6 +236,7 @@ impl LoadedShard {
         Ok(Self {
             manifest,
             digest,
+            filter,
             directory,
             pages,
         })
