@@ -8,7 +8,12 @@ Requires=zakurad.service
 Type=simple
 # Loopback only. This service has no public route: the wallet-facing API is not
 # designed yet, and nothing should be reachable from the internet until it is.
-ExecStart=/usr/local/bin/transparent-filter-server --listen 127.0.0.1:8090 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-filter-data --start-height 3428143
+# --shard-dir adds the public half of the published shard set: the map and
+# each shard's range filter. A wallet needs those before it can decide which
+# shards are worth a private query, and the private retrieval service holds
+# the same filters and refuses to serve them, so that public bytes and
+# private requests never share an origin.
+ExecStart=/usr/local/bin/transparent-filter-server --listen 127.0.0.1:8090 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-filter-data --start-height 3428143 --shard-dir /srv/zakura/transparent-shards-v6
 Restart=on-failure
 RestartSec=10
 User=root

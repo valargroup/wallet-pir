@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 use transparent_filter_server::ingest;
 use transparent_filter_server::service::{router, Phase, ServiceState};
+use transparent_filter_server::shard_filters::ShardFilters;
 use transparent_filter_server::store::FilterStore;
 use transparent_filter_server::zakura::ZakuraClient;
 
@@ -40,6 +41,17 @@ struct Cli {
     /// Blocks between durable checkpoints during backfill.
     #[arg(long, default_value_t = 1_000)]
     commit_every: u64,
+    /// A published shard set whose map and range filters to serve.
+    ///
+    /// Optional: per-block filters and shard filters are independent products,
+    /// and this service ingests and serves the former with or without a set.
+    /// Given one, it also answers `/v1/filters/shards` and each shard's range
+    /// filter -- the public half a wallet needs before it can decide which
+    /// shards are worth a private query. The private retrieval service holds
+    /// the same filters and refuses to serve them, so that a wallet never
+    /// fetches public bytes from the origin it makes private requests to.
+    #[arg(long)]
+    shard_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -73,7 +85,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "opened filter store"
     );
 
-    let state = ServiceState::new(store);
+    let mut state = ServiceState::new(store);
+    if let Some(dir) = &cli.shard_dir {
+        // Verified against the map at load. A filter that does not match its
+        // published digest would make every wallet under-match -- skipping
+        // history it should have retrieved, which is a wrong answer rather
+        // than an error -- so this refuses to start instead.
+        let filters = ShardFilters::open(dir)?;
+        tracing::info!(
+            shards = filters.shard_count(),
+            covered_through = ?filters.covered_through(),
+            map_sha256 = %filters.map_digest(),
+            dir = %dir.display(),
+            "serving published shard filters"
+        );
+        state = state.with_shard_filters(filters);
+    }
     let ingest_state = state.clone();
     let ingest_cli = cli.clone();
     tokio::spawn(async move {

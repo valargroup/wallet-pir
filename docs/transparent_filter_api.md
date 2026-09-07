@@ -60,6 +60,46 @@ A wallet that just downloaded the filters can compute these itself. The endpoint
 exists for the case where it has not: comparing what independent operators
 publish for the same blocks without downloading both sets of filters.
 
+### `GET /v1/filters/shards`
+
+The published height-to-shard map: the ordered, gapless list of shards, each
+with its height range, terminal block hash, filter digest, occupancy counts,
+segment counts, manifest digest, revision and sealed flag. The response carries
+`x-shard-map-sha256`, the digest of the map as served, so a wallet can pin the
+revision it synced against without hashing the body itself.
+
+This is protocol data, not a convenience index. Shard boundaries are derived
+from chain content, so a wallet cannot recompute them arithmetically and an
+independent operator must reproduce these boundaries rather than derive its own
+— which is what keeps a disagreement about one event localised to one shard's
+digests instead of shifting every later boundary.
+
+Returns 404 when the service was not given a published set. Per-block filters
+and shard filters are independent products, and this service serves the former
+with or without the latter.
+
+### `GET /v1/filters/shards/{shard_id}/filter`
+
+One shard's range filter, as published. Globally identical bytes for every
+wallet, immutable once published, and served with a one-year `immutable`
+cache-control for that reason.
+
+This is the byte string that makes private retrieval affordable. A wallet tests
+its own scripts against it locally and issues a private query only for the
+shards that matched; without it a wallet would have to query every shard to find
+the ones holding its history, which is the cost the design exists to avoid.
+
+Asking for a shard is not a disclosure: which shards exist is public, and a
+wallet downloads the filters of every shard across the range it is syncing, not
+only the ones it will go on to query.
+
+**These live on a different origin from private retrieval.** Filters are served
+here, on the Enhance PIR host; private directory and page queries are served by
+`transparent-shard-server` at `transparent-pir.valargroup.dev`. That service
+loads every `filter.bin` to verify it and deliberately refuses to serve it, so
+that a wallet never fetches public bytes from the origin it makes private
+requests to, which would correlate the two by construction.
+
 ## What is not served publicly
 
 `/metrics`, `/ready` and the service's `/v1/health` are operator surfaces. They
