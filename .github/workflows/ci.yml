@@ -52,7 +52,9 @@ jobs:
         env:
           TRANSPARENT_WORKER_HOST: transparent-worker-01.example.net
           TRANSPARENT_DEPLOY_USER: deploy
-          TRANSPARENT_RELEASE_SHA: 0000000000000000000000000000000000000000
+          # Quoted, and hex containing letters: an unquoted run of digits is
+          # read as the integer 0 and the validator rightly rejects it.
+          TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
           TRANSPARENT_ARTIFACT_DIR: artifact
           TRANSPARENT_SHARD_DIR: /srv/transparent-pir/shards
         run: |
