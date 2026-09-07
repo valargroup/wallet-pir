@@ -991,6 +991,51 @@ mod tests {
         assert_eq!(assignment.len(), refs.len(), "every script is placed once");
     }
 
+    /// What the sealer predicts a shard's placement costs must be what the
+    /// builder then produces.
+    ///
+    /// The census reports the sealer's figure and a geometry is chosen from it,
+    /// so a divergence would mean choosing against a number no published set
+    /// ever realises. Relocation makes this sharp: a script's row now depends on
+    /// every script placed before it, so the two must agree not merely on how
+    /// many segments but on the script set and the order it is placed in — the
+    /// sealer sorts its own map, the builder walks a `BTreeMap`, and nothing but
+    /// this test says those are the same sequence.
+    #[test]
+    fn the_sealer_predicts_the_placement_the_builder_produces() {
+        use crate::seal::{Limit, PageBasis, SealPolicy, Sealer};
+
+        let events = fixture(4_000, 3);
+        let policy = SealPolicy {
+            scripts: Limit::new(1_000_000, 2_000_000).expect("valid"),
+            page_rows: Limit::new(1_000_000, 2_000_000).expect("valid"),
+        };
+        let mut sealer = Sealer::with_basis(policy, 100, PageBasis::default());
+        sealer.measure_placement(true);
+        // The sealer takes blocks in height order; the builder takes the range
+        // whole. Same events either way, which is the point.
+        for height in 100..=200u64 {
+            let block: Vec<_> = events
+                .iter()
+                .filter(|(_, event)| u64::from(event.height()) == height)
+                .cloned()
+                .collect();
+            sealer.push_block(height, &block).expect("valid block");
+        }
+        let predicted = sealer
+            .finish()
+            .expect("a tail")
+            .placement
+            .expect("placement was asked for");
+
+        let built = build(&events);
+        assert_eq!(
+            predicted.segments,
+            built.directory_segments(),
+            "the sealer and the builder disagree about segments"
+        );
+    }
+
     /// A script's whole history must be reconstructible: the inline events plus
     /// its pages, with nothing lost and nothing duplicated.
     #[test]
