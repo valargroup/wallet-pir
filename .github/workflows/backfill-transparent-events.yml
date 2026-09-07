@@ -42,6 +42,26 @@ on:
         required: false
         default: ""
         type: string
+      state_dir:
+        description: >-
+          Start only. The node's `[state] cache_dir`, which makes the run read
+          the chain from Zakura's own RocksDB instead of its RPC. This is the
+          fast path: a previous-output resolution becomes a local lookup rather
+          than a `getrawtransaction`, so `cache_outputs` stops meaning anything.
+          Blank uses the RPC path. On this coordinator the value is
+          `/root/.cache/zakura`.
+        required: false
+        default: ""
+        type: string
+      workers:
+        description: >-
+          Start only, and only with `state_dir`. Blocks extracted at once.
+          Nothing carries between heights on the state path, so this is safe to
+          raise; it is held low by default because the coordinator serves live
+          PIR queries on the same cores.
+        required: false
+        default: ""
+        type: string
       stop_height:
         description: Last height to index; blank means the node's tip
         required: false
@@ -368,19 +388,22 @@ jobs:
           START: ${{ inputs.start_height }}
           STOP: ${{ inputs.stop_height }}
           CACHE: ${{ inputs.cache_outputs }}
+          STATE_DIR: ${{ inputs.state_dir }}
+          WORKERS: ${{ inputs.workers }}
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
             -o ConnectTimeout=10)
-          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" "$START" "$STOP" "$CACHE" <<'REMOTE'
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" "$START" "$STOP" "$CACHE" "$STATE_DIR" "$WORKERS" <<'REMOTE'
           set -euo pipefail
           # `stop` is optional, and ssh re-splits the remote command, so an
           # empty trailing argument does not survive as an empty positional —
           # it simply is not there. Defaulting rather than indexing is what
           # keeps `set -u` from killing the script before anything runs.
           unit="$1"; bin="$2"; data_dir="$3"; start="$4"; stop="${5:-}"; cache="${6:-}"
+          state_dir="${7:-}"; workers="${8:-}"
 
           # A journal is pinned to the height it started at, and opening it
           # under a different one sets the whole thing aside and begins again.
@@ -397,12 +420,21 @@ jobs:
             fi
           fi
 
-          args=(--data-dir "$data_dir"
-                --zakura-rpc-url http://127.0.0.1:8232
-                --zakura-cookie /root/.cache/zakura/.cookie
-                --start-height "$start")
+          args=(--data-dir "$data_dir" --start-height "$start")
+          if [[ -n "$state_dir" ]]; then
+            # The state path needs no RPC at all: it reads the chain, and its
+            # own chain identity, from the database.
+            args+=(--state-dir "$state_dir")
+            if [[ -n "$workers" ]]; then args+=(--workers "$workers"); fi
+            if [[ -n "$cache" ]]; then
+              echo "cache_outputs is ignored with state_dir; there is no output cache on that path" >&2
+            fi
+          else
+            args+=(--zakura-rpc-url http://127.0.0.1:8232
+                   --zakura-cookie /root/.cache/zakura/.cookie)
+            if [[ -n "$cache" ]]; then args+=(--cache-outputs "$cache"); fi
+          fi
           if [[ -n "$stop" ]]; then args+=(--stop-height "$stop"); fi
-          if [[ -n "$cache" ]]; then args+=(--cache-outputs "$cache"); fi
 
           # A transient unit that failed stays loaded in the failed state and
           # would make systemd-run refuse the name. The earlier is-active check
@@ -423,7 +455,7 @@ jobs:
             --description="Transparent event journal backfill" \
             --property=CPUWeight=20 \
             --property=IOWeight=20 \
-            --property=MemoryMax=8G \
+            --property=MemoryMax=12G \
             --property=Nice=10 \
             --setenv=RUST_LOG=info \
             "$bin" "${args[@]}"
