@@ -34,6 +34,9 @@ struct Cli {
     /// Thread counts to measure, ascending.
     #[arg(long, value_delimiter = ',', default_value = "1,2,4,8,12,16")]
     threads: Vec<usize>,
+    /// Report the memory shape of candidate row counts and exit.
+    #[arg(long, default_value_t = false)]
+    geometry_sweep: bool,
     /// Seconds of evaluation per thread count.
     #[arg(long, default_value_t = 3.0)]
     seconds: f64,
@@ -41,6 +44,31 @@ struct Cli {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    if cli.geometry_sweep {
+        // Resident cost is db_rows*db_cols*2 for the encoded database plus the
+        // pack matrices, which are poly_len^2 and so do not follow the row
+        // count. If db_cols is constant across candidate row counts, a wider
+        // table is nearly free in memory while halving the shard count -- which
+        // is the opposite of how the geometry notes weigh storage.
+        println!(
+            "{:>7} {:>8} {:>8} {:>10} {:>10} {:>10}",
+            "rows", "db_rows", "db_cols", "db MiB", "pack MiB", "total MiB"
+        );
+        for rows in [2_048u64, 4_096, 8_192, 16_384, 32_768] {
+            let (rlwe, sc) =
+                ipir_sp::params_for_simplepir(rows, u64::from(Table::Directory.row_bytes()) * 8)?;
+            let db = (sc.db_rows * sc.db_cols * 2) as f64 / 1048576.0;
+            let blocks = sc.db_cols / rlwe.d;
+            let pack = (blocks * 3 * rlwe.d * rlwe.d * 8) as f64 / 1048576.0;
+            println!(
+                "{rows:>7} {:>8} {:>8} {db:>10.1} {pack:>10.1} {:>10.1}",
+                sc.db_rows,
+                sc.db_cols,
+                db + pack
+            );
+        }
+        return Ok(());
+    }
     let table = Table::Directory;
     let (rlwe, scheme) =
         ipir_sp::params_for_simplepir(table.rows(), u64::from(table.row_bytes()) * 8)?;
