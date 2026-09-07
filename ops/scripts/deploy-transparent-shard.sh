@@ -316,7 +316,22 @@ verify_public() {
   [[ "$health_status" == "404" ]] \
     || fail "/v1/health is reachable publicly (HTTP $health_status); the route is too wide"
 
-  echo "public edge serving $public_shards shards; /v1/health correctly 404"
+  # The public range filters. The service can serve these while the edge does
+  # not route them, which is a silent half-deployment: the feature looks present
+  # in the binary and is unreachable by any wallet. Compare the bytes against
+  # the published filter rather than only checking the status, because a route
+  # that reached the wrong backend would still answer 200.
+  local filter_bytes published_bytes
+  filter_bytes="$(curl --fail --silent --max-time 20 \
+    --output /dev/null --write-out '%{size_download}' \
+    "$TRANSPARENT_PUBLIC_URL/v1/filters/shards/0/filter")" \
+    || fail "the public edge does not serve shard filters"
+  published_bytes="$(wc -c <"$TRANSPARENT_SHARD_SOURCE/$(jq -er '.shards[0].manifest_digest' \
+    "$TRANSPARENT_SHARD_SOURCE/shards.json")/filter.bin" | tr -d ' ')"
+  [[ "$filter_bytes" -eq "$published_bytes" ]] \
+    || fail "shard 0 filter is $filter_bytes bytes at the edge, $published_bytes as published"
+
+  echo "public edge serving $public_shards shards; shard 0 filter $filter_bytes B; /v1/health correctly 404"
 }
 
 # ----------------------------------------------------------------------- main

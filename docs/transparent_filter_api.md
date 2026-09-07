@@ -93,12 +93,20 @@ Asking for a shard is not a disclosure: which shards exist is public, and a
 wallet downloads the filters of every shard across the range it is syncing, not
 only the ones it will go on to query.
 
-**These live on a different origin from private retrieval.** Filters are served
-here, on the Enhance PIR host; private directory and page queries are served by
-`transparent-shard-server` at `transparent-pir.valargroup.dev`. That service
-loads every `filter.bin` to verify it and deliberately refuses to serve it, so
-that a wallet never fetches public bytes from the origin it makes private
-requests to, which would correlate the two by construction.
+**Served on both hosts, at the same paths.** These endpoints answer here, on the
+Enhance PIR host, and also on `transparent-pir.valargroup.dev`, which serves
+private directory and page queries. A wallet points at either origin by changing
+only the base URL.
+
+An earlier revision kept public bytes off the retrieval origin entirely, so that
+a filter download and a private query could not be correlated. That rule bought
+less than it appeared to: the shard id of a private query is public in its own
+URL, and one operator runs both services, so the correlation was available from
+logs regardless. What it did preserve is a wallet's ability to fetch the two
+over *different network paths* — separate circuits, or a third-party filter
+mirror — and that option is deliberately kept by continuing to serve them here.
+A wallet that wants two origins still has them; one that wants a single endpoint
+now has that too.
 
 ## What is not served publicly
 

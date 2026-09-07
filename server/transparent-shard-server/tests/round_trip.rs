@@ -446,3 +446,46 @@ async fn a_tampered_table_is_refused_at_load() {
     }
     assert!(ShardSet::open(dir.path()).is_err());
 }
+
+/// The public range filters, which this service also serves.
+///
+/// The bytes must be the published ones, not merely well-formed: a wallet tests
+/// its own scripts against them and skips the shards that do not match, so a
+/// filter that differs from what was published makes the wallet miss history
+/// and then advance coverage over the gap. That is a wrong answer rather than
+/// an error, which is why this compares against the set on disk.
+#[tokio::test]
+async fn each_shards_published_filter_is_served_verbatim() {
+    let f = fixture();
+    for shard_id in 0..SHARDS {
+        let (status, body) = get(&f.state, &format!("/v1/filters/shards/{shard_id}/filter")).await;
+        assert_eq!(status, StatusCode::OK, "shard {shard_id}");
+        let published = &f.set.get(shard_id).expect("shard is in the set").filter;
+        assert_eq!(&body, published, "shard {shard_id} filter differs");
+        assert!(!body.is_empty(), "shard {shard_id} filter is empty");
+    }
+}
+
+#[tokio::test]
+async fn a_filter_for_a_shard_outside_the_set_is_refused() {
+    let f = fixture();
+    let (status, _) = get(&f.state, &format!("/v1/filters/shards/{SHARDS}/filter")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The map is reachable under both names, and is the same map.
+///
+/// `/v1/filters/shards` exists so a wallet can point at this host or at the
+/// filter service by changing only the base URL. If the two paths ever answered
+/// differently, that substitution would silently stop being safe.
+#[tokio::test]
+async fn the_map_is_identical_under_both_paths() {
+    let f = fixture();
+    let (private_status, private_body) = get(&f.state, "/v1/shards").await;
+    let (public_status, public_body) = get(&f.state, "/v1/filters/shards").await;
+    assert_eq!(private_status, StatusCode::OK);
+    assert_eq!(public_status, StatusCode::OK);
+    assert_eq!(private_body, public_body);
+    let map: ShardMap = serde_json::from_slice(&public_body).expect("map json");
+    assert_eq!(map.shards.len() as u64, SHARDS);
+}

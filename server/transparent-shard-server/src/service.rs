@@ -22,9 +22,11 @@
 //! which segment holds the selected script — a function of the script — is not
 //! something the wallet has to disclose in order to ask.
 //!
-//! What this service does not do is serve filters. Those are public and belong
-//! to the filter service: a wallet must not learn to fetch public bytes from
-//! the same place it makes private requests.
+//! **It also serves the public range filters**, which an earlier revision
+//! deliberately refused to do. See `shardset` for why that rule was relaxed and
+//! what is kept: the filter service still serves the same bytes at the same
+//! paths on its own host, so two origins remain available to a wallet that
+//! wants them.
 
 use crate::shardset::{ShardSet, Table};
 use axum::extract::{Path as AxumPath, State};
@@ -313,6 +315,10 @@ pub fn router(state: ServiceState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/shards", get(shard_map))
+        // The same paths the filter service serves on its own host, so a wallet
+        // can point at either origin without changing anything but the base URL.
+        .route("/v1/filters/shards", get(shard_map))
+        .route("/v1/filters/shards/:shard_id/filter", get(shard_filter))
         .route("/v1/shards/init", get(init))
         .route("/v1/shards/:shard_id/setup/:table/:segment", get(setup))
         .route("/v1/shards/:shard_id/query/:table", post(query))
@@ -350,6 +356,41 @@ async fn shard_map(State(state): State<ServiceState>) -> Response {
         StatusCode::OK,
         serde_json::to_value(&state.inner.set.map).expect("map json"),
     )
+}
+
+/// One shard's public range filter.
+///
+/// Served here as well as by the filter service. The earlier rule kept public
+/// bytes off this origin entirely, so that a filter download and a private query
+/// could not be correlated. In practice the shard id of a query is already
+/// public in its own URL and one operator runs both services, so that
+/// correlation was available anyway. Serving them here gives the transparent
+/// host a complete API, and the filter service still offers the same bytes on a
+/// separate origin for a wallet that wants to fetch the two over different
+/// network paths.
+///
+/// Immutable once published, hence the long cache. Asking for a shard discloses
+/// nothing: which shards exist is public, and a syncing wallet fetches the
+/// filters of every shard in its range, not only the ones it will query.
+async fn shard_filter(
+    State(state): State<ServiceState>,
+    AxumPath(shard_id): AxumPath<u64>,
+) -> Response {
+    let Some(shard) = state.inner.set.get(shard_id) else {
+        return json(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({ "error": format!("no shard {shard_id}") }),
+        );
+    };
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/octet-stream"),
+            ("cache-control", "public, max-age=31536000, immutable"),
+        ],
+        shard.filter.clone(),
+    )
+        .into_response()
 }
 
 async fn init(State(state): State<ServiceState>) -> Response {

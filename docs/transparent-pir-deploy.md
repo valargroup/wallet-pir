@@ -37,8 +37,15 @@ shard to find its own history, which is the cost the design exists to avoid.
 
 | surface | host | paths |
 |---|---|---|
-| Public filters | `enhance-pir.valargroup.dev` | `/v1/filters/*`, including `/v1/filters/shards` and `/v1/filters/shards/{id}/filter` |
+| Public filters | **both hosts** | `/v1/filters/shards`, `/v1/filters/shards/{id}/filter` |
+| Per-block filters | `enhance-pir.valargroup.dev` | the rest of `/v1/filters/*` |
 | Private retrieval | `transparent-pir.valargroup.dev` | `/v1/shards*` |
+
+The shard map and range filters answer at the same paths on both hosts, so a
+wallet points at either origin by changing only the base URL. The transparent
+host serves them from `transparent-shard-server`, which already loads and
+digest-verifies every `filter.bin`; retaining the bytes costs about a hundred
+kilobytes per shard, negligible beside a 257 MiB runtime.
 
 `/v1/health` is **not** routed publicly on either host. It reports shard counts
 and how many runtimes are built, which is operator information; the deploy
@@ -46,12 +53,17 @@ verifies it over the VPC and asserts it returns 404 through the edge, because
 the way that goes wrong is a route wider than intended and the failure is
 otherwise silent.
 
-The separation was originally a rule that public bytes must never come from the
-origin that answers private requests. What that rule buys is narrower than it
-looks — the shard id of a private query is public in its own URL, and one
-operator runs both services, so the correlation is available from logs anyway.
-What it does preserve is a wallet's ability to reach the two over *different
-network paths*. Keep that in mind before collapsing them onto one name.
+An earlier revision kept public bytes off the retrieval origin entirely, so a
+filter download and a private query could not be correlated. That rule bought
+less than it appeared to: the shard id of a private query is public in its own
+URL, and one operator runs both services, so the correlation was available from
+logs regardless. What it did preserve is a wallet's ability to reach the two over
+*different network paths* — separate circuits, or a third-party filter mirror.
+
+That option is deliberately kept. The filter service still serves the same bytes
+at the same paths on its own host, so a wallet that wants two origins has them
+and one that wants a single endpoint has that too. Do not remove either copy
+without deciding which of those two wallets you are dropping.
 
 ## Deploying
 
