@@ -108,6 +108,20 @@ struct Cli {
     /// when the merge completes.
     #[arg(long, value_name = "DIR")]
     shard_matches: Option<PathBuf>,
+
+    /// Emit one TSV row per sealed shard, for the first policy only.
+    ///
+    /// The summary below says how many shards each limit closed, but not where
+    /// they are. Whether pages or scripts bind is not uniform along the chain —
+    /// the early chain is dense and heavily reused, so a shard fills with page
+    /// rows long before it runs out of directory slots, and that ratio moves as
+    /// reuse falls. A geometry chosen on the aggregate is chosen on a mixture.
+    ///
+    /// Columns: shard_id, start_height, end_height, blocks, scripts, page_rows,
+    /// fragments, events, reason. Written to stdout, so the run's log carries
+    /// it and no path has to be agreed.
+    #[arg(long, default_value_t = false)]
+    per_shard: bool,
 }
 
 /// Bytes one private row query uploads at this table shape.
@@ -563,6 +577,7 @@ fn report(
     policy: &SealPolicy,
     geometry: &Geometry,
     basis: PageBasis,
+    per_shard: bool,
 ) {
     let sealed: Vec<&SealedShard> = shards.iter().filter(|s| s.reason.is_some()).collect();
     println!("\n=== {name} ===");
@@ -587,6 +602,33 @@ fn report(
     }
     for (reason, count) in &by_reason {
         println!("  sealed by {reason:<24} {count}");
+    }
+
+    if per_shard {
+        // Tab separated and prefixed, so the rows can be lifted out of a run's
+        // log with a grep and fed to anything, without the surrounding report
+        // needing a machine-readable format of its own.
+        println!("  per_shard\tshard_id\tstart\tend\tblocks\tscripts\tpage_rows\tfragments\tevents\treason");
+        for shard in &sealed {
+            let reason = match shard.reason {
+                Some(SealReason::ReachedTarget(q)) => format!("target:{q}"),
+                Some(SealReason::WouldExceedCapacity(q)) => format!("capacity:{q}"),
+                Some(SealReason::BlockExceedsCapacity(q)) => format!("oversized:{q}"),
+                None => unreachable!("sealed shards all carry a reason"),
+            };
+            println!(
+                "  per_shard\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                shard.shard_id,
+                shard.start_height,
+                shard.end_height,
+                shard.occupancy.blocks,
+                shard.occupancy.scripts,
+                shard.occupancy.page_rows,
+                shard.occupancy.fragments,
+                shard.occupancy.events,
+                reason.replace(' ', "_"),
+            );
+        }
     }
 
     describe(
@@ -849,10 +891,19 @@ choose parameters for a set that will be published"
         }
     }
 
-    for run in &mut runs {
+    for (index, run) in runs.iter_mut().enumerate() {
         let sealed: Vec<SealedShard> = run.sealer.finish().into_iter().collect();
         drain_scripts(&mut run.matches, sealed, &mut run.shards)?;
-        report(&run.name, &run.shards, &run.policy, &geometry, basis);
+        // Only the first policy: the rows are per shard, and a full sweep
+        // would bury the report under thousands of them.
+        report(
+            &run.name,
+            &run.shards,
+            &run.policy,
+            &geometry,
+            basis,
+            cli.per_shard && index == 0,
+        );
         if let Some(counter) = run.matches.take() {
             let distribution = counter.finish()?;
             distribution.report();
