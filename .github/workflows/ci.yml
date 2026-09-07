@@ -57,6 +57,7 @@ jobs:
           TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
           TRANSPARENT_ARTIFACT_DIR: artifact
           TRANSPARENT_SHARD_DIR: /srv/transparent-pir/shards
+          TRANSPARENT_PUBLIC_URL: https://transparent-pir.example.net
         run: |
           set -euo pipefail
           shard_set="$RUNNER_TEMP/shard-set"

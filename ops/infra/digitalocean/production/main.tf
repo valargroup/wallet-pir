@@ -1,6 +1,13 @@
 locals {
   coordinator_name = "enhance-pir-coordinator-01"
   public_hostname  = "enhance-pir.valargroup.dev"
+  # The transparent fleet terminates TLS on the worker rather than behind the
+  # Enhance coordinator's Caddy. That Caddyfile is rendered and installed by
+  # deploy-enhance-pir.sh, and a token it does not substitute would fail
+  # `caddy validate` on the next Enhance deploy -- a live service broken by a
+  # change with nothing to do with it. When the coordinator daemon lands and
+  # there is more than one worker, fronting moves there and this record follows.
+  transparent_public_hostname = "transparent-pir.valargroup.dev"
   # Group order is stable shard placement. Replica membership may change
   # without moving shards; append groups before the next six-shard boundary.
   worker_groups = [
@@ -104,7 +111,7 @@ resource "digitalocean_droplet" "transparent_worker" {
   ipv6       = true
 
   user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
-    packages          = jsonencode(local.common_packages)
+    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
     deploy_public_key = var.transparent_worker_deploy_public_key
   })
 }
@@ -239,13 +246,26 @@ resource "digitalocean_firewall" "transparent_worker" {
     }
   }
 
-  # The shard retrieval service. Private queries reach it only by way of the
-  # coordinator, which is what keeps physical sharding behind the logical PIR
-  # interface.
+  # The shard retrieval port itself stays private. The only things that reach
+  # 8093 are the coordinator, for deploy verification, and Caddy on this host
+  # over loopback, which a firewall does not govern.
   inbound_rule {
     protocol    = "tcp"
     port_range  = "8093"
     source_tags = [digitalocean_tag.coordinator.name]
+  }
+
+  # Public TLS for transparent-pir.valargroup.dev. Port 80 is needed for the
+  # ACME HTTP challenge and the redirect to 443; Caddy serves nothing else on it.
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "80"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
+    source_addresses = ["0.0.0.0/0", "::/0"]
   }
 
   outbound_rule {
@@ -281,6 +301,21 @@ resource "cloudflare_dns_record" "enhance" {
   ttl     = 300
   proxied = false
   comment = "Enhance PIR production coordinator; managed by Terraform"
+}
+
+# Taken from the droplet attribute rather than a hand-maintained variable, so a
+# rebuilt worker cannot leave the record pointing at an address nothing answers
+# on. The Enhance record predates this and still carries a hardcoded IP.
+resource "cloudflare_dns_record" "transparent" {
+  count   = var.transparent_worker_count > 0 ? 1 : 0
+  zone_id = var.cloudflare_zone_id
+  name    = local.transparent_public_hostname
+  type    = "A"
+  content = digitalocean_droplet.transparent_worker[0].ipv4_address
+  ttl     = 300
+  # Unproxied, so Caddy can answer the ACME challenge directly.
+  proxied = false
+  comment = "Transparent PIR shard worker; managed by Terraform"
 }
 
 # Keep the existing production resources while renaming Terraform addresses.

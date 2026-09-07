@@ -96,6 +96,7 @@ jobs:
           mkdir artifact
           install -m 0755 target/release/transparent-shard-server artifact/
           cp ops/infra/digitalocean/production/deploy/transparent-shard-server.service artifact/
+          cp ops/infra/digitalocean/production/deploy/transparent-Caddyfile artifact/
           printf '%s\n' '${{ inputs.ref }}' >artifact/revision
           (cd artifact && sha256sum ./* >SHA256SUMS)
           cat artifact/SHA256SUMS
@@ -128,6 +129,7 @@ jobs:
           TRANSPARENT_ARTIFACT_DIR: ${{ github.workspace }}/artifact
           TRANSPARENT_SHARD_SOURCE: ${{ inputs.shard_dir }}
           TRANSPARENT_SHARD_DIR: /srv/transparent-pir/shards
+          TRANSPARENT_PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
           TRANSPARENT_SSH_KEY_PATH: ${{ runner.temp }}/transparent-ssh/key
           TRANSPARENT_KNOWN_HOSTS_PATH: ${{ runner.temp }}/transparent-ssh/known_hosts
         run: ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
