@@ -10,10 +10,24 @@ Type=simple
 # designed yet, and nothing should be reachable from the internet until it is.
 # --shard-dir adds the public half of the published shard set: the map and
 # each shard's range filter. A wallet needs those before it can decide which
-# shards are worth a private query, and the private retrieval service holds
-# the same filters and refuses to serve them, so that public bytes and
-# private requests never share an origin.
-ExecStart=/usr/local/bin/transparent-filter-server --listen 127.0.0.1:8090 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-filter-data --start-height 3428143 --shard-dir /srv/zakura/transparent-shards-v6
+# shards are worth a private query.
+#
+# The private retrieval service serves the same bytes at the same paths on its
+# own host. That is a relaxation of the earlier rule that kept public bytes off
+# the retrieval origin entirely; what it preserves is a wallet's ability to
+# fetch the two over *different network paths*, which is why this copy stays.
+#
+# **This directory and the retrieval worker's must hold the same set.** Both
+# hosts publish the map at /v1/filters/shards, so a wallet that took the map
+# from here and queried there would be naming shard revisions the worker does
+# not hold. The two move together or not at all.
+#
+# It is also schema-pinned: this binary deserializes shards.json into the
+# ShardMap it was compiled against, and a set published under another schema
+# is a startup failure -- inside the Enhance coordinated rollout, which will
+# roll the whole thing back. Repoint this in the same change that ships a
+# binary of the new schema, never after it.
+ExecStart=/usr/local/bin/transparent-filter-server --listen 127.0.0.1:8090 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-filter-data --start-height 3428143 --shard-dir /srv/zakura/transparent-shards-v7
 Restart=on-failure
 RestartSec=10
 User=root

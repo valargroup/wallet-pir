@@ -145,8 +145,8 @@ start otherwise and would roll the whole Enhance deploy back.
 two.** `ShardFilters::open` deserializes `shards.json` into the same `ShardMap`
 the wallet uses, so a v7 build cannot read the v6 map: no `geometry` on an
 entry, and `seal` is now keyed by geometry name rather than a single record.
-The unit pins `--shard-dir` to `/srv/zakura/transparent-shards-v6`, and the
-service refuses to start on a set it cannot read — inside the Enhance
+The unit's `--shard-dir` now points at `/srv/zakura/transparent-shards-v7` for
+exactly this reason, and the service refuses to start on a set it cannot read — inside the Enhance
 coordinated rollout, whose blast radius is the live Enhance service.
 
 So the filter service's `--shard-dir` must be repointed to the v7 set **in the

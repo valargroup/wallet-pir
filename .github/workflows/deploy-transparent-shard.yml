@@ -25,7 +25,7 @@ on:
           schema this build serves; a set published under another schema is
           refused at load, after the service has already been stopped.
         required: true
-        default: /srv/zakura/transparent-shards-v6
+        default: /srv/zakura/transparent-shards-v7
         type: string
       mode:
         description: preflight stages and verifies the host without activating
