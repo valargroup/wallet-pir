@@ -49,6 +49,13 @@ pub struct Inner {
 pub struct ServiceState {
     inner: Arc<RwLock<Inner>>,
     metrics: Arc<crate::metrics::Metrics>,
+    /// The published shard set's public half, if the service was given one.
+    ///
+    /// Optional because per-block filters and shard filters are independent
+    /// products: the service ingests and serves the former with or without a
+    /// published set, and a set may not exist yet for a network it is following.
+    /// Immutable once loaded, so no lock -- a republish is a restart.
+    shard_filters: Option<Arc<crate::shard_filters::ShardFilters>>,
 }
 
 impl ServiceState {
@@ -63,7 +70,18 @@ impl ServiceState {
                 tip_height: None,
             })),
             metrics: Arc::new(crate::metrics::Metrics::new()),
+            shard_filters: None,
         }
+    }
+
+    /// Attaches a published shard set's map and range filters.
+    pub fn with_shard_filters(mut self, filters: crate::shard_filters::ShardFilters) -> Self {
+        self.shard_filters = Some(Arc::new(filters));
+        self
+    }
+
+    pub fn shard_filters(&self) -> Option<&Arc<crate::shard_filters::ShardFilters>> {
+        self.shard_filters.as_ref()
     }
 
     pub fn inner(&self) -> &Arc<RwLock<Inner>> {
@@ -118,6 +136,8 @@ pub fn router(state: ServiceState) -> Router {
         .route("/v1/filters/chain", get(chain))
         .route("/v1/filters/digests", get(digests))
         .route("/v1/filters/range", get(range))
+        .route("/v1/filters/shards", get(shard_map))
+        .route("/v1/filters/shards/:shard_id/filter", get(shard_filter))
         .route("/metrics", get(metrics))
         .route("/ready", get(ready))
         .with_state(state)
@@ -169,6 +189,69 @@ async fn info(State(state): State<ServiceState>) -> Response {
         StatusCode::OK,
         serde_json::to_value(body).expect("info json"),
     )
+}
+
+/// The published height-to-shard map.
+///
+/// This is protocol data, not a convenience index. Shard boundaries come from
+/// chain content, so a wallet cannot recompute them and an operator must
+/// reproduce these boundaries rather than derive its own. Served here because
+/// it is public: taking it from the retrieval service would mean a wallet
+/// fetching public bytes from the origin it makes private requests to.
+async fn shard_map(State(state): State<ServiceState>) -> Response {
+    let Some(filters) = state.shard_filters() else {
+        return json(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error": "this service was not given a published shard set"}),
+        );
+    };
+    // Pre-serialized and immutable, so this is a copy rather than a
+    // re-encoding, and the digest a wallet pins is stable across requests.
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("x-shard-map-sha256", filters.map_digest().as_str()),
+        ],
+        filters.map_json().to_vec(),
+    )
+        .into_response()
+}
+
+/// One shard's range filter.
+///
+/// Globally identical bytes: the same filter is served to every wallet, which
+/// is what keeps the public half of a sync from personalising. A wallet tests
+/// its own scripts against this locally and only queries privately where it
+/// matches, so these bytes are what make the private queries rare.
+async fn shard_filter(
+    State(state): State<ServiceState>,
+    axum::extract::Path(shard_id): axum::extract::Path<u64>,
+) -> Response {
+    let Some(filters) = state.shard_filters() else {
+        return json(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error": "this service was not given a published shard set"}),
+        );
+    };
+    let Some(bytes) = filters.filter(shard_id) else {
+        return json(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error": format!("no shard {shard_id} in the published set")}),
+        );
+    };
+    // Immutable once published, so it may be cached indefinitely. The shard id
+    // does not identify a wallet: which shards exist is public, and a wallet
+    // downloads the filters of every shard in the range it is syncing.
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/octet-stream"),
+            ("cache-control", "public, max-age=31536000, immutable"),
+        ],
+        bytes.to_vec(),
+    )
+        .into_response()
 }
 
 /// Height-to-hash for a range.
