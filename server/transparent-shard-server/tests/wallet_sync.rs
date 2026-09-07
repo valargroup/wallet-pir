@@ -519,8 +519,7 @@ async fn scripts_sharing_a_row_still_cost_a_fetch_each() {
             scripts * 2
         );
         assert_eq!(
-            outcome.charges.pages.queries,
-            scripts as u64,
+            outcome.charges.pages.queries, scripts as u64,
             "a shared row must still be fetched once per script that needs it"
         );
         assert_eq!(outcome.charges.queries(), (scripts * 3) as u64);
