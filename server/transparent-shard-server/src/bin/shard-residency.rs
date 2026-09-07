@@ -108,13 +108,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut after_first = before_runtimes;
     let mut previous = before_runtimes;
     for index in 0..cli.runtimes {
+        // Build time decides whether a retained revision has to stay resident
+        // or can be rebuilt when something actually asks for it, which is the
+        // difference between the tail needing a host of its own and sharing one.
+        let started = std::time::Instant::now();
         held.push(TableRuntime::build(&shared, table, &rows)?);
+        let elapsed = started.elapsed();
         let now = rss();
         println!(
-            "  runtime {:>2}: +{:>7.2} MiB   (RSS {:>8.2} MiB)",
+            "  runtime {:>2}: +{:>7.2} MiB   (RSS {:>8.2} MiB)   built in {:>6.2} s",
             index + 1,
             mib(now.saturating_sub(previous)),
             mib(now),
+            elapsed.as_secs_f64(),
         );
         if index == 0 {
             after_first = now;
