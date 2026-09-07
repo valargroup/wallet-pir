@@ -15,14 +15,15 @@ use transparent_filter::{
     filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
 use transparent_shard::build::build_shard;
+use transparent_shard::layout::{Geometry, RECENT_4K, RECENT_8K};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
 };
-use transparent_shard_server::service::{router, ServiceState};
-use transparent_shard_server::shardset::ShardSet;
+use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
+use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_wallet::client::Table;
 use transparent_wallet::ledger::Ledger;
-use transparent_wallet::sync::{sync, ServiceGeometry};
+use transparent_wallet::sync::{sync, GeometryParams, ServiceGeometry};
 use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
@@ -143,10 +144,25 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 
 /// Writes a publishable shard set to `dir`, as the publisher would.
 fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> ShardMap {
+    publish_with(dir, per_shard, |_| &RECENT_8K)
+}
+
+/// Writes a publishable shard set whose shards may name different geometries.
+///
+/// The two-tier set the deployment plan describes is this: archive geometry
+/// below the recent cutoff, recent geometry from it. Nothing else about the
+/// publication changes, which is the property worth testing — a wallet must
+/// cross the boundary without being told it is there.
+fn publish_with(
+    dir: &Path,
+    per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
+    geometry_for: impl Fn(u64) -> &'static Geometry,
+) -> ShardMap {
     let mut entries = Vec::new();
     let mut parent_digest = String::new();
     for (shard_id, events) in per_shard.iter().enumerate() {
         let shard_id = shard_id as u64;
+        let geometry = geometry_for(shard_id);
         let start = FIRST + shard_id * SPAN;
         let end = start + SPAN - 1;
         let built = build_shard(
@@ -156,6 +172,7 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
             genesis(),
             hash_at(end),
             transparent_filter::RANGE_PROFILE,
+            geometry,
             events,
         )
         .expect("build");
@@ -163,6 +180,7 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
         let manifest = ShardManifest {
             schema: SCHEMA.to_string(),
             profile: transparent_filter::RANGE_PROFILE.to_string(),
+            geometry: geometry.name.to_string(),
             network: transparent_filter::NETWORK.to_string(),
             genesis_hash: GENESIS.to_string(),
             shard_id,
@@ -193,8 +211,8 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
                 .directory
                 .iter()
                 .map(|segment| TableGeometry {
-                    rows: transparent_shard::DIRECTORY_ROWS as u64,
-                    row_bytes: transparent_shard::DIRECTORY_ROW_BYTES as u32,
+                    rows: geometry.directory_rows,
+                    row_bytes: geometry.directory_row_bytes as u32,
                     sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
                 })
                 .collect(),
@@ -202,8 +220,8 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
                 .pages
                 .iter()
                 .map(|segment| TableGeometry {
-                    rows: transparent_shard::PAGE_ROWS as u64,
-                    row_bytes: transparent_shard::PAGE_ROW_BYTES as u32,
+                    rows: geometry.page_rows,
+                    row_bytes: geometry.page_row_bytes as u32,
                     sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
                 })
                 .collect(),
@@ -232,6 +250,7 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
 
         entries.push(ShardMapEntry {
             shard_id,
+            geometry: geometry.name.to_string(),
             start_height: start,
             end_height: end,
             parent_block_hash: manifest.parent_block_hash.clone(),
@@ -255,11 +274,19 @@ fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Sh
         profile: transparent_filter::RANGE_PROFILE.to_string(),
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
-        seal: SealParameters {
-            max_scripts: 8_192,
-            max_page_rows: 2_048,
-            max_txids: 0,
-        },
+        seal: entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.geometry.clone(),
+                    SealParameters {
+                        max_scripts: 8_192,
+                        max_page_rows: 2_048,
+                        max_txids: 0,
+                    },
+                )
+            })
+            .collect(),
         shards: entries,
     };
     std::fs::write(
@@ -335,13 +362,14 @@ impl ShardTransport for HttpShards {
     fn setup(
         &mut self,
         shard_id: u64,
+        revision: &str,
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/setup/{}/{segment}",
+                "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
                 table.as_str()
             ))
@@ -353,11 +381,17 @@ impl ShardTransport for HttpShards {
         Ok((bytes, len))
     }
 
-    fn query(&mut self, shard_id: u64, table: Table, body: &[u8]) -> Result<Vec<u8>, BoxError> {
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
         Ok(self
             .client
             .post(format!(
-                "{}/v1/shards/{shard_id}/query/{}",
+                "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
                 self.base,
                 table.as_str()
             ))
@@ -366,6 +400,35 @@ impl ShardTransport for HttpShards {
             .error_for_status()?
             .bytes()?
             .to_vec())
+    }
+}
+
+/// Parses the service's init document into what the wallet checks it against.
+///
+/// The service publishes one entry per geometry it holds, so a two-tier set
+/// yields two and a single-tier set one. The wallet re-derives each scheme from
+/// the dimensions published beside it and refuses any that does not reproduce.
+fn parse_init(raw: &[u8]) -> ServiceGeometry {
+    let init: serde_json::Value = serde_json::from_slice(raw).unwrap();
+    ServiceGeometry {
+        schema: init["schema"].as_str().unwrap().to_string(),
+        geometries: init["geometries"]
+            .as_array()
+            .expect("init publishes geometries")
+            .iter()
+            .map(|entry| GeometryParams {
+                name: entry["name"].as_str().unwrap().to_string(),
+                directory_rows: entry["directory_rows"].as_u64().unwrap(),
+                directory_row_bytes: entry["directory_row_bytes"].as_u64().unwrap() as u32,
+                directory_scheme: serde_json::from_value(entry["directory_scheme"].clone())
+                    .unwrap(),
+                directory_setup_seed: entry["directory_setup_seed"].as_u64().unwrap(),
+                page_rows: entry["page_rows"].as_u64().unwrap(),
+                page_row_bytes: entry["page_row_bytes"].as_u64().unwrap() as u32,
+                pages_scheme: serde_json::from_value(entry["pages_scheme"].clone()).unwrap(),
+                pages_setup_seed: entry["pages_setup_seed"].as_u64().unwrap(),
+            })
+            .collect(),
     }
 }
 
@@ -407,8 +470,8 @@ fn compare(recovered: &Ledger, expected: &Ledger) {
 
 /// Starts the service on an ephemeral port and returns its base URL.
 async fn serve(dir: &Path) -> String {
-    let set = ShardSet::open(dir).expect("load");
-    let state = ServiceState::build(set).expect("state");
+    let set = ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).expect("load");
+    let state = ServiceState::build(set, ServiceConfig::default()).expect("state");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -440,14 +503,7 @@ async fn run_sync(
             .unwrap()
             .bytes()
             .unwrap();
-        let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
-        let geometry = ServiceGeometry {
-            schema: init["schema"].as_str().unwrap().to_string(),
-            directory_scheme: serde_json::from_value(init["directory_scheme"].clone()).unwrap(),
-            directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap(),
-            pages_scheme: serde_json::from_value(init["pages_scheme"].clone()).unwrap(),
-            pages_setup_seed: init["pages_setup_seed"].as_u64().unwrap(),
-        };
+        let geometry = parse_init(&raw);
         let mut filters = filters;
         sync(
             &map,
@@ -557,15 +613,9 @@ async fn a_service_serving_another_schema_is_refused() {
             .unwrap()
             .bytes()
             .unwrap();
-        let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
-        assert_eq!(init["schema"].as_str().unwrap(), transparent_shard::SCHEMA);
-        let geometry = ServiceGeometry {
-            schema: "transparent-shard-v4".to_string(),
-            directory_scheme: serde_json::from_value(init["directory_scheme"].clone()).unwrap(),
-            directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap(),
-            pages_scheme: serde_json::from_value(init["pages_scheme"].clone()).unwrap(),
-            pages_setup_seed: init["pages_setup_seed"].as_u64().unwrap(),
-        };
+        let mut geometry = parse_init(&raw);
+        assert_eq!(geometry.schema, transparent_shard::SCHEMA);
+        geometry.schema = "transparent-shard-v4".to_string();
         let mut filters = filters;
         sync(
             &map,
@@ -752,14 +802,7 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
             .unwrap()
             .bytes()
             .unwrap();
-        let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
-        let geometry = ServiceGeometry {
-            schema: init["schema"].as_str().unwrap().to_string(),
-            directory_scheme: serde_json::from_value(init["directory_scheme"].clone()).unwrap(),
-            directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap(),
-            pages_scheme: serde_json::from_value(init["pages_scheme"].clone()).unwrap(),
-            pages_setup_seed: init["pages_setup_seed"].as_u64().unwrap(),
-        };
+        let geometry = parse_init(&raw);
         let mut transport = DropsTheLastSegment {
             inner: HttpShards {
                 base: base.clone(),
@@ -802,14 +845,21 @@ impl ShardTransport for DropsTheLastSegment {
     fn setup(
         &mut self,
         shard_id: u64,
+        revision: &str,
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
-        self.inner.setup(shard_id, table, segment)
+        self.inner.setup(shard_id, revision, table, segment)
     }
 
-    fn query(&mut self, shard_id: u64, table: Table, body: &[u8]) -> Result<Vec<u8>, BoxError> {
-        let mut answer = self.inner.query(shard_id, table, body)?;
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
+        let mut answer = self.inner.query(shard_id, revision, table, body)?;
         if table == Table::Pages {
             answer.truncate(answer.len() / 2);
         }
@@ -872,5 +922,172 @@ async fn an_unused_wallet_pays_only_the_public_floor() {
         outcome.charges.total(),
         outcome.charges.public_floor(),
         "an unused wallet pays the floor and nothing else"
+    );
+}
+
+/// A set whose shards do not share a geometry syncs exactly, and the wallet is
+/// never told where the boundary is.
+///
+/// This is the deployment plan's two-tier shape: archive geometry for old, dense
+/// history and a narrower geometry for the recent window. The pair used here is
+/// `recent-4k` and `recent-8k` rather than a true archive geometry, because the
+/// mechanism under test is *two row counts in one set* and a 32,768-row table
+/// costs 117 MB per segment to build for no additional coverage.
+///
+/// Equality is exact, against the same independent traversal every other sync
+/// test uses. A wallet that read one tier at the other's row count would not
+/// error: `split_row` would land it on a real row of a real table, and it would
+/// recover a plausible, wrong history. That is the failure this is looking for.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wallet_syncs_across_a_geometry_boundary_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    // The first half is the archive tier, the second the recent one. The
+    // boundary falls inside the wallet's history on purpose: script 2 is active
+    // in two shards, so it is recovered from both tiers in one sync.
+    let map = publish_with(dir.path(), &per_shard, |shard_id| {
+        if shard_id < SHARDS / 2 {
+            &RECENT_4K
+        } else {
+            &RECENT_8K
+        }
+    });
+    assert_eq!(map.shards[0].geometry, RECENT_4K.name);
+    assert_eq!(
+        map.shards[(SHARDS - 1) as usize].geometry,
+        RECENT_8K.name,
+        "the set must actually span two geometries"
+    );
+    assert_eq!(
+        map.seal.len(),
+        2,
+        "each tier publishes the thresholds it was sealed under"
+    );
+
+    let base = serve(dir.path()).await;
+    let wallet = vec![script(1), script(2), script(3)];
+    let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
+
+    let expected = traverse(&per_shard, &wallet, 0);
+    compare(&outcome.ledger, &expected);
+    assert_eq!(outcome.covered_through, FIRST + SHARDS * SPAN - 1);
+}
+
+/// The service declares one parameter set per geometry it holds, not one per
+/// shard. That sharing is the entire reason geometries are named from a closed
+/// registry, so it is asserted rather than assumed.
+#[tokio::test(flavor = "multi_thread")]
+async fn init_declares_one_parameter_set_per_geometry() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    publish_with(dir.path(), &per_shard, |shard_id| {
+        if shard_id < SHARDS / 2 {
+            &RECENT_4K
+        } else {
+            &RECENT_8K
+        }
+    });
+    let base = serve(dir.path()).await;
+
+    let raw = tokio::task::spawn_blocking(move || {
+        reqwest::blocking::get(format!("{base}/v1/shards/init"))
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec()
+    })
+    .await
+    .unwrap();
+    let geometry = parse_init(&raw);
+
+    assert_eq!(geometry.geometries.len(), 2, "four shards, two geometries");
+    let names: Vec<&str> = geometry
+        .geometries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect();
+    assert_eq!(names, vec![RECENT_4K.name, RECENT_8K.name]);
+
+    // The dimensions travel with the scheme so the client can check the pair.
+    // A service that published one geometry's name over another's row counts
+    // would be choosing the geometry for the wallet.
+    for entry in &geometry.geometries {
+        let registered = transparent_shard::layout::by_name(&entry.name).unwrap();
+        assert_eq!(entry.directory_rows, registered.directory_rows);
+        assert_eq!(entry.page_rows, registered.page_rows);
+    }
+    // Different geometries must not share a setup seed, or a client that mixed
+    // them up would reproduce the wrong setup without noticing.
+    assert_ne!(
+        geometry.geometries[0].directory_setup_seed,
+        geometry.geometries[1].directory_setup_seed
+    );
+    assert_ne!(
+        geometry.geometries[0].directory_setup_seed,
+        geometry.geometries[0].pages_setup_seed
+    );
+}
+
+/// A shard naming a geometry this build does not know must fail the sync, not
+/// be skipped.
+///
+/// Skipping is the tempting behaviour and the dangerous one: the shard's range
+/// would pass out of `covered_through` unread, and the wallet would report a
+/// synchronised balance over history it never retrieved. There is no safe way
+/// to continue past a range that cannot be decoded.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let mut map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+    let filters = PublishedFilters::load(dir.path(), &map);
+
+    // A geometry from a future build. The map still has to be well formed, so
+    // it carries seal parameters for the name as a real publisher would.
+    map.shards[1].geometry = "recent-2k".to_string();
+    map.seal.insert(
+        "recent-2k".to_string(),
+        SealParameters {
+            max_scripts: 8_192,
+            max_page_rows: 2_048,
+            max_txids: 0,
+        },
+    );
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let wallet = vec![script(1), script(2), script(3)];
+
+    let error = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = HttpShards {
+            base: base.clone(),
+            client: client.clone(),
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap();
+        let geometry = parse_init(&raw);
+        let mut filters = filters;
+        sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .err()
+        .expect("an unknown geometry must stop the sync")
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(error, transparent_wallet::SyncError::UnknownGeometry(ref name) if name == "recent-2k"),
+        "expected an unknown-geometry refusal, got {error}"
     );
 }

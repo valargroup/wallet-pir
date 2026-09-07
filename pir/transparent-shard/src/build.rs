@@ -12,8 +12,8 @@
 //! placement resolved by a rule rather than by iteration order.
 
 use crate::layout::{
-    entries_per_row, fragments_for, segments_for, shape_of, PackedDemand, Shape, DIRECTORY_ROWS,
-    INLINE_EVENTS, PAGE_ROWS,
+    entries_per_row, fragments_for, segments_for, shape_of, Geometry, PackedDemand, Shape,
+    INLINE_EVENTS,
 };
 use crate::page_row::{encode_page_row, PageEntry};
 use crate::records::{encode_directory_row, DirectoryEntry, RecordError, MAX_SCRIPT_BYTES};
@@ -58,6 +58,13 @@ pub enum BuildError {
 /// One shard's published objects.
 pub struct BuiltShard {
     pub shard_id: u64,
+    /// The geometry this shard was built at.
+    ///
+    /// Carried rather than assumed, because a set may mix geometries: archive
+    /// shards before the recent cutoff and recent shards after it. Every offset
+    /// below is taken against this, so a shard cannot be read at the wrong row
+    /// count by a caller that happens to hold a different default.
+    pub geometry: &'static Geometry,
     pub start_height: u64,
     pub end_height: u64,
     /// The public filter. Contains every element the range yields, including
@@ -106,17 +113,19 @@ impl BuiltShard {
     /// One row of the shard's logical directory space, which is its segments
     /// concatenated. Panics outside the space, which is a programming error.
     pub fn directory_row(&self, row: u64) -> &[u8] {
-        let (segment, within) = crate::layout::split_row(row, DIRECTORY_ROWS as u64);
-        let at = within as usize * crate::layout::DIRECTORY_ROW_BYTES;
-        &self.directory[segment as usize][at..at + crate::layout::DIRECTORY_ROW_BYTES]
+        let (segment, within) = crate::layout::split_row(row, self.geometry.directory_rows);
+        let width = self.geometry.directory_row_bytes;
+        let at = within as usize * width;
+        &self.directory[segment as usize][at..at + width]
     }
 
     /// One row of the shard's logical page space, which a directory extent
     /// indexes across segment boundaries as if it were one table.
     pub fn page_row(&self, page: u64) -> &[u8] {
-        let (segment, within) = crate::layout::split_row(page, PAGE_ROWS as u64);
-        let at = within as usize * crate::layout::PAGE_ROW_BYTES;
-        &self.pages[segment as usize][at..at + crate::layout::PAGE_ROW_BYTES]
+        let (segment, within) = crate::layout::split_row(page, self.geometry.page_rows);
+        let width = self.geometry.page_row_bytes;
+        let at = within as usize * width;
+        &self.pages[segment as usize][at..at + width]
     }
 }
 
@@ -164,8 +173,14 @@ pub fn build_shard(
     genesis: BlockHash,
     terminal_block_hash: BlockHash,
     profile: &str,
+    geometry: &'static Geometry,
     events: &[(ScriptBytes, TransparentEvent)],
 ) -> Result<BuiltShard, BuildError> {
+    // A geometry this build cannot encode would produce tables no wallet could
+    // read, so it is refused before any bytes are written rather than after.
+    geometry
+        .validate_publishable()
+        .map_err(BuildError::Invalid)?;
     // Group by script, in a sorted map so the walk order is the scripts' own
     // order rather than a hash map's.
     let mut by_script: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
@@ -351,28 +366,26 @@ pub fn build_shard(
 
     // A shard takes as many page segments as its rows need. Failing instead
     // would mean one oversized block could stop publication.
-    let page_segments = segments_for(rows.len() as u64, PAGE_ROWS as u64);
+    let page_segments = segments_for(rows.len() as u64, geometry.page_rows);
     let page_rows = rows.len() as u64;
-    let mut page_table =
-        Vec::with_capacity(page_segments as usize * PAGE_ROWS * crate::layout::PAGE_ROW_BYTES);
+    let segment_bytes = geometry.page_rows as usize * geometry.page_row_bytes;
+    let mut page_table = Vec::with_capacity(page_segments as usize * segment_bytes);
     for row in &rows {
         page_table.extend_from_slice(&encode_page_row(row)?);
     }
     // Unused page rows are zero and decode as empty. They are indistinguishable
     // in a response from occupied ones, which is the point.
-    page_table.resize(
-        page_segments as usize * PAGE_ROWS * crate::layout::PAGE_ROW_BYTES,
-        0,
-    );
+    page_table.resize(page_segments as usize * segment_bytes, 0);
     let page_table = page_table
-        .chunks(PAGE_ROWS * crate::layout::PAGE_ROW_BYTES)
+        .chunks(segment_bytes)
         .map(<[u8]>::to_vec)
         .collect();
 
-    let (directory, scripts) = place_directory(shard_id, entries)?;
+    let (directory, scripts) = place_directory(shard_id, entries, geometry)?;
 
     Ok(BuiltShard {
         shard_id,
+        geometry,
         start_height,
         end_height,
         filter,
@@ -585,6 +598,7 @@ fn relocate(
 fn place_directory(
     shard_id: u64,
     entries: Vec<DirectoryEntry>,
+    geometry: &Geometry,
 ) -> Result<(Vec<Vec<u8>>, u64), BuildError> {
     let scripts_only: Vec<&[u8]> = entries
         .iter()
@@ -593,12 +607,12 @@ fn place_directory(
     let (placed, assignment) = place_scripts(
         shard_id,
         &scripts_only,
-        DIRECTORY_ROWS as u64,
-        crate::records::DIRECTORY_SLOTS as u64,
+        geometry.directory_rows,
+        geometry.directory_slots(),
     )
     .map_err(|script| BuildError::DirectoryFull { script })?;
     let segments = placed.segments;
-    let rows = DIRECTORY_ROWS as u64 * segments as u64;
+    let rows = geometry.directory_rows * segments as u64;
     // The placer's own assignment, not a second rule applied to the same
     // input. Relocation means a script's row is a function of every script
     // placed before it, so a greedy replay here would put entries in rows the
@@ -611,8 +625,9 @@ fn place_directory(
 
     let mut scripts = 0u64;
     let mut tables = Vec::with_capacity(segments as usize);
-    for segment in buckets.chunks_mut(DIRECTORY_ROWS) {
-        let mut table = Vec::with_capacity(DIRECTORY_ROWS * crate::layout::DIRECTORY_ROW_BYTES);
+    for segment in buckets.chunks_mut(geometry.directory_rows as usize) {
+        let mut table =
+            Vec::with_capacity(geometry.directory_rows as usize * geometry.directory_row_bytes);
         for bucket in segment.iter_mut() {
             // Within a row, entries are ordered by script, so the row's
             // bytes do not depend on placement order.
@@ -629,6 +644,7 @@ fn place_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::{DIRECTORY_ROWS, PAGE_ROWS, RECENT_8K};
     use crate::page_row::{decode_page_row, PageEntry};
     use crate::records::decode_directory_row;
 
@@ -690,7 +706,17 @@ mod tests {
     }
 
     fn build(events: &[(ScriptBytes, TransparentEvent)]) -> BuiltShard {
-        build_shard(0, 100, 200, genesis(), terminal(), RANGE_PROFILE, events).expect("build")
+        build_shard(
+            0,
+            100,
+            200,
+            genesis(),
+            terminal(),
+            RANGE_PROFILE,
+            &RECENT_8K,
+            events,
+        )
+        .expect("build")
     }
 
     #[test]
@@ -1190,7 +1216,16 @@ mod tests {
     fn events_outside_the_declared_range_are_refused() {
         let events = vec![(script(0), event(500, 0))];
         assert!(matches!(
-            build_shard(0, 100, 200, genesis(), terminal(), RANGE_PROFILE, &events),
+            build_shard(
+                0,
+                100,
+                200,
+                genesis(),
+                terminal(),
+                RANGE_PROFILE,
+                &RECENT_8K,
+                &events
+            ),
             Err(BuildError::Invalid(_))
         ));
     }

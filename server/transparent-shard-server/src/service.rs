@@ -1,26 +1,33 @@
-//! Serving N shards from one process.
+//! Serving N shard revisions from one process.
 //!
-//! The predecessor of this service held exactly one generation and said so.
-//! This holds a whole set, which changes two things.
+//! **Parameters are shared per geometry, published data is not.** Every shard
+//! naming one geometry shares one `YpirSchemeParams` per table, because
+//! `params_for_simplepir` is a function of geometry alone. A set mixing archive
+//! and recent shards therefore leaks two parameter sets per geometry rather
+//! than two per shard, and a client validates each once. The published `c1`
+//! does *not* follow, because it is derived from each segment's own database —
+//! so a client validates parameters once and fetches setup per segment.
 //!
-//! **Runtimes are built lazily.** A shard's PIR preprocessing is far larger
-//! than its plaintext, and a fleet-sized set built eagerly would spend minutes
-//! at startup constructing state for shards no wallet may query. Runtimes are
-//! therefore built on first use and kept, so the cost is paid by the first
-//! query against a shard rather than by every restart.
+//! **Runtimes are built on demand and bounded.** See [`crate::runtime`]: the
+//! cache reserves before it builds, evicts what nothing is holding, and refuses
+//! work it cannot make room for rather than exceeding its budget.
 //!
-//! **Parameters are shared, published data is not.** Every shard uses the same
-//! pinned geometry, and `params_for_simplepir` is a function of geometry alone,
-//! so all shards share one `YpirSchemeParams` per table. The published `c1`
-//! does *not* follow, because it is derived from each shard's own database — so
-//! a client validates parameters once and fetches setup per shard.
+//! **Requests name a revision.** A growing tail is republished as a new
+//! manifest digest beside the old one, and both may be held. A query carries
+//! the digest it was prepared against, in its path and in its body's fixed
+//! prefix, so a wallet that fetched setup from one revision cannot be answered
+//! from another's bytes. A revision this worker no longer holds is refused with
+//! `409` and the current map digest, which tells the wallet to refresh the map
+//! and re-derive that range — the behaviour its provisional-coverage contract
+//! already expects — rather than silently accepting rows for a range it did not
+//! ask about.
 //!
 //! **A shard's segments are answered together.** A shard whose content did not
-//! fit one segment of the pinned geometry has several, and a query names the
-//! row within a segment, never the segment. One request is evaluated against
-//! every segment of the shard and the results are returned in segment order, so
-//! which segment holds the selected script — a function of the script — is not
-//! something the wallet has to disclose in order to ask.
+//! fit one segment of its geometry has several, and a query names the row
+//! within a segment, never the segment. One request is evaluated against every
+//! segment and the results are returned in segment order, so which segment
+//! holds the selected script — a function of the script — is not something the
+//! wallet has to disclose in order to ask.
 //!
 //! **It also serves the public range filters**, which an earlier revision
 //! deliberately refused to do. See `shardset` for why that rule was relaxed and
@@ -28,163 +35,69 @@
 //! paths on its own host, so two origins remain available to a wallet that
 //! wants them.
 
-use crate::shardset::{ShardSet, Table};
+use crate::metrics::Metrics;
+use crate::runtime::{CacheError, RuntimeCache, RuntimeHandle, SharedParams};
+use crate::shardset::{LoadedShard, ShardSet, Table};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use enhance_pir_server::ipir::{deserialize_first_dim_query, RowPlaintextIter};
-use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
-use ipir_sp::serialize::{deserialize_packing_keys, serialized_packing_keys_len};
-use ipir_sp::server::IPIRServer;
-use ipir_sp::server::{
-    build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows,
-};
-use ipir_sp::{IPIRClient, YpirSchemeParams};
+use ipir_sp::YpirSchemeParams;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use transparent_shard::manifest::query_binding;
 
-/// The geometry both tables share with every shard.
-///
-/// Leaked once for the process. Unlike the one-generation predecessor, which
-/// leaked a parameter set per table it loaded, this leaks exactly two for the
-/// whole fleet however many shards it serves — which is the concrete saving
-/// that pinning the geometry buys.
-pub struct SharedParams {
-    pub rlwe: &'static RlweParams,
-    pub scheme: YpirSchemeParams,
-    pub top_key_images: TopKeyImages<'static>,
+/// How the worker is sized. Everything here is per process, not per shard.
+#[derive(Clone, Copy, Debug)]
+pub struct ServiceConfig {
+    /// Bytes of prepared runtime the cache may reserve.
+    ///
+    /// Set below the host's real headroom: the reservation counts the database
+    /// and pack matrices and nothing else, so allocator overhead, the transient
+    /// plaintext a build reads, and in-flight requests all come out of the
+    /// remainder.
+    pub cache_bytes: u64,
+    /// Runtime builds that may run at once.
+    ///
+    /// One by default. A build is a second of CPU and a few hundred megabytes
+    /// of transient allocation; running several concurrently is how a worker
+    /// inside its steady-state budget still dies during a burst of cold
+    /// requests.
+    pub build_slots: usize,
+    /// Query evaluations that may run at once.
+    ///
+    /// Two by default, because evaluation is memory-bandwidth-bound and
+    /// `shard-scaling` measured it saturating at two threads: one core takes 66
+    /// of the ~87 GiB/s the kernel reaches and sixteen return 1.39x one core.
+    /// Admitting more would add queueing without adding throughput, and would
+    /// hold more runtimes pinned against eviction while it did.
+    pub query_slots: usize,
 }
 
-impl SharedParams {
-    pub fn build(table: Table) -> Result<Self, String> {
-        let (rlwe, scheme) =
-            ipir_sp::params_for_simplepir(table.rows(), (table.row_bytes() as u64) * 8)
-                .map_err(|error| error.to_string())?;
-        let rlwe: &'static RlweParams = Box::leak(Box::new(rlwe));
-        let top_key_images = TopKeyImages::build(rlwe);
-        Ok(Self {
-            rlwe,
-            scheme,
-            top_key_images,
-        })
-    }
-
-    fn max_query_bytes(&self) -> usize {
-        16 + serialized_packing_keys_len(self.rlwe)
-            + (self.scheme.db_rows * self.scheme.query_bits).div_ceil(8)
-    }
-}
-
-/// One shard's table, prepared to answer queries.
-pub struct TableRuntime {
-    preprocessed: Vec<QueryPackPreprocessed<'static>>,
-    server: IPIRServer<u16>,
-    public_params: Vec<u8>,
-    public_params_sha256: String,
-    public_params_epoch: [u8; 8],
-}
-
-impl TableRuntime {
-    pub fn build(shared: &SharedParams, table: Table, rows: &[u8]) -> Result<Self, String> {
-        let coefficients = RowPlaintextIter::new(
-            rows,
-            table.row_bytes() as usize,
-            shared.scheme.db_rows,
-            shared.scheme.db_cols,
-            shared.scheme.p.trailing_zeros() as usize,
-        );
-        let server =
-            IPIRServer::<u16>::new_auto_kernel(shared.scheme.clone(), coefficients, false, true);
-
-        // The setup is derived from a published seed, so a client reproduces it
-        // exactly. It is public: it carries no secret and no selection.
-        let mut seed = [0u8; 32];
-        seed[..8].copy_from_slice(&table.setup_seed().to_le_bytes());
-        let setup = IPIRClient::new(shared.rlwe, &shared.scheme)
-            .generate_public_query_setup_simplepir_from_seed(seed);
-        let crs_blocks = server
-            .perform_offline_precomputation_simplepir(shared.rlwe, &setup)
-            .crs_blocks;
-        let preprocessed =
-            build_pack_preprocessed_blocks(shared.rlwe, &crs_blocks).map_err(|e| e.to_string())?;
-        let public_params = published_c1_rows(&preprocessed, shared.rlwe.q);
-        let digest = Sha256::digest(&public_params);
-        let mut epoch = [0u8; 8];
-        epoch.copy_from_slice(&digest[..8]);
-
-        Ok(Self {
-            preprocessed,
-            server,
-            public_params,
-            public_params_sha256: hex::encode(digest),
-            public_params_epoch: epoch,
-        })
-    }
-
-    /// Answers one query. The row selected is never known to this function.
-    fn evaluate(
-        &self,
-        shared: &SharedParams,
-        shard_id: u64,
-        body: &[u8],
-    ) -> Result<Vec<u8>, String> {
-        // The shard id is in the prefix, so a query decoded against the wrong
-        // shard fails the client's own check rather than returning a row that
-        // decodes to plausible nonsense.
-        let prefix: [u8; 8] = body
-            .get(..8)
-            .ok_or_else(|| "query is truncated".to_string())?
-            .try_into()
-            .expect("eight bytes");
-        if u64::from_le_bytes(prefix) != shard_id {
-            return Err("query names a different shard".to_string());
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        Self {
+            cache_bytes: 4 << 30,
+            build_slots: 1,
+            query_slots: 2,
         }
-        let packing_len = serialized_packing_keys_len(shared.rlwe);
-        let switched_len = (shared.scheme.db_rows * shared.scheme.query_bits).div_ceil(8);
-        // A fixed length for every query: a body that varied with the selection
-        // would leak through its size alone.
-        if body.len() != 8 + packing_len + switched_len {
-            return Err("query has the wrong fixed length".to_string());
-        }
-        let packing_keys = deserialize_packing_keys(shared.rlwe, &body[8..8 + packing_len])
-            .map_err(|e| e.to_string())?;
-        let query =
-            deserialize_first_dim_query(shared.rlwe, &shared.scheme, &body[8 + packing_len..])
-                .map_err(|e| e.to_string())?;
-        let intermediate = self.server.multiply_query(shared.rlwe, &query);
-        let packed = pack_intermediate_blocks(
-            &intermediate,
-            &packing_keys,
-            &shared.top_key_images,
-            &self.preprocessed,
-        )
-        .map_err(|e| e.to_string())?;
-        let c2 = ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
-            &packed,
-            shared.scheme.q_prime_1,
-        );
-        let mut response = Vec::with_capacity(16 + c2.len());
-        response.extend_from_slice(&shard_id.to_le_bytes());
-        response.extend_from_slice(&self.public_params_epoch);
-        response.extend_from_slice(&c2);
-        Ok(response)
     }
 }
 
-/// A runtime's address: shard, table, and segment within that table.
-type RuntimeKey = (u64, &'static str, u32);
+/// A runtime's address before the digest is resolved.
+type ParamsKey = (&'static str, Table);
 
 pub struct Inner {
     set: ShardSet,
-    directory_params: SharedParams,
-    pages_params: SharedParams,
-    /// Built on first use and kept. Keyed by shard, table and segment.
-    runtimes: Mutex<HashMap<RuntimeKey, Arc<TableRuntime>>>,
+    /// One parameter set per geometry the loaded set actually uses, per table.
+    params: HashMap<ParamsKey, Arc<SharedParams>>,
+    cache: RuntimeCache,
+    query_slots: tokio::sync::Semaphore,
+    metrics: Arc<Metrics>,
+    max_query_bytes: usize,
 }
 
 #[derive(Clone)]
@@ -192,34 +105,52 @@ pub struct ServiceState {
     inner: Arc<Inner>,
 }
 
-/// What `GET /v1/shards/init` returns.
+/// One geometry's public parameters, as `GET /v1/shards/init` publishes them.
 ///
-/// One scheme per table for the whole fleet, not one per shard. A client
-/// validates these once and reuses them everywhere, which is what pinning the
-/// geometry is for.
+/// The dimensions are published beside the derived scheme, not instead of it.
+/// A client re-derives the scheme from `rows` and `row_bytes` and refuses to
+/// proceed unless it reproduces what the service sent, so the service cannot
+/// choose parameters for it — including parameters that would leak the
+/// selection.
+#[derive(Serialize)]
+pub struct GeometryInit {
+    pub name: String,
+    pub directory_rows: u64,
+    pub directory_row_bytes: u32,
+    pub directory_scheme: YpirSchemeParams,
+    pub directory_setup_seed: u64,
+    pub page_rows: u64,
+    pub page_row_bytes: u32,
+    pub pages_scheme: YpirSchemeParams,
+    pub pages_setup_seed: u64,
+}
+
+/// What `GET /v1/shards/init` returns.
 #[derive(Serialize)]
 pub struct InitResponse {
     pub schema: String,
+    /// The range filter profile, not the table geometry.
     pub profile: String,
     pub network: String,
     pub genesis_hash: String,
     pub shards: usize,
     pub start_height: u64,
     pub covered_through: u64,
-    pub directory_scheme: YpirSchemeParams,
-    pub directory_setup_seed: u64,
-    pub pages_scheme: YpirSchemeParams,
-    pub pages_setup_seed: u64,
+    /// Digest of the map bytes these geometries describe.
+    ///
+    /// A wallet that took the map from the filter service and its parameters
+    /// from here can check the two are the same publication.
+    pub map_sha256: String,
+    /// One entry per geometry this worker holds, not per registered geometry.
+    pub geometries: Vec<GeometryInit>,
 }
 
-/// What `GET /v1/shards/{id}/setup/{table}/{segment}` returns.
-///
-/// Per segment, because the published `c1` is derived from each segment's own
-/// database. A shard with one segment — the ordinary case — has one of these
-/// per table.
+/// What the setup route returns, per segment.
 #[derive(Serialize)]
 pub struct SetupResponse {
     pub shard_id: u64,
+    pub manifest_digest: String,
+    pub geometry: String,
     pub table: String,
     pub segment: u32,
     pub segments: u32,
@@ -229,69 +160,148 @@ pub struct SetupResponse {
 }
 
 impl ServiceState {
-    pub fn build(set: ShardSet) -> Result<Self, String> {
+    pub fn build(set: ShardSet, config: ServiceConfig) -> Result<Self, String> {
+        let metrics = Arc::new(Metrics::default());
+        // Only the geometries this worker actually holds. Preparing every
+        // registered one would publish parameters for shapes no shard here uses,
+        // which a client would reasonably read as an offer to serve them.
+        let mut params: HashMap<ParamsKey, Arc<SharedParams>> = HashMap::new();
+        let mut max_query_bytes = 0usize;
+        for geometry in set.geometries() {
+            for table in [Table::Directory, Table::Pages] {
+                let shared = Arc::new(SharedParams::build(geometry, table)?);
+                max_query_bytes = max_query_bytes.max(shared.query_bytes());
+                params.insert((geometry.name, table), shared);
+            }
+        }
+        if params.is_empty() {
+            return Err("the shard set names no geometry to serve".into());
+        }
         Ok(Self {
             inner: Arc::new(Inner {
                 set,
-                directory_params: SharedParams::build(Table::Directory)?,
-                pages_params: SharedParams::build(Table::Pages)?,
-                runtimes: Mutex::new(HashMap::new()),
+                params,
+                cache: RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone()),
+                query_slots: tokio::sync::Semaphore::new(config.query_slots.max(1)),
+                metrics,
+                max_query_bytes,
             }),
         })
     }
 
-    fn shared(&self, table: Table) -> &SharedParams {
-        match table {
-            Table::Directory => &self.inner.directory_params,
-            Table::Pages => &self.inner.pages_params,
+    /// The largest body any geometry this worker serves can legitimately send.
+    ///
+    /// The request body limit. A mixed set is bounded by its widest geometry,
+    /// so a narrower one is not rejected for being under it.
+    pub fn max_query_bytes(&self) -> usize {
+        self.inner.max_query_bytes
+    }
+
+    pub fn metrics(&self) -> &Arc<Metrics> {
+        &self.inner.metrics
+    }
+
+    fn shared(&self, shard: &LoadedShard, table: Table) -> Arc<SharedParams> {
+        self.inner
+            .params
+            .get(&(shard.geometry.name, table))
+            .expect("every held geometry has parameters")
+            .clone()
+    }
+
+    /// Resolves a revision the request named.
+    ///
+    /// A digest this worker does not hold is not a malformed request: it is a
+    /// wallet holding a revision that has since been superseded and pruned.
+    /// Distinguishing the two is what lets the client refresh its map and
+    /// re-derive, instead of treating a routine tail republication as a bug.
+    fn revision(&self, shard_id: u64, digest: &str) -> Result<&LoadedShard, RequestError> {
+        match self.inner.set.revision(digest) {
+            Some(shard) if shard.manifest.shard_id == shard_id => Ok(shard),
+            // A digest that exists but belongs to another shard is a routing
+            // error, not a stale client.
+            Some(_) => Err(RequestError::Bad(format!(
+                "revision {digest} is not a revision of shard {shard_id}"
+            ))),
+            None => {
+                Metrics::incr(&self.inner.metrics.stale_revisions);
+                Err(RequestError::Stale {
+                    shard_id,
+                    digest: digest.to_string(),
+                })
+            }
         }
     }
 
-    /// How many segments a shard's table has.
-    fn segments(&self, shard_id: u64, table: Table) -> Result<u32, String> {
-        Ok(self
-            .inner
-            .set
-            .get(shard_id)
-            .ok_or_else(|| format!("no shard {shard_id}"))?
-            .segments(table))
-    }
-
-    /// The runtime for one segment of one shard's table, building it if this is
-    /// its first use.
-    fn runtime(
+    async fn runtime(
         &self,
-        shard_id: u64,
+        shard: &LoadedShard,
         table: Table,
         segment: u32,
-    ) -> Result<Arc<TableRuntime>, String> {
-        let key = (shard_id, table.as_str(), segment);
-        if let Some(runtime) = self.inner.runtimes.lock().expect("runtimes").get(&key) {
-            return Ok(runtime.clone());
-        }
-        let shard = self
-            .inner
-            .set
-            .get(shard_id)
-            .ok_or_else(|| format!("no shard {shard_id}"))?;
-        let rows = shard.table(table, segment).ok_or_else(|| {
-            format!(
-                "shard {shard_id} has no {} segment {segment}",
+    ) -> Result<RuntimeHandle, RequestError> {
+        let source = shard.segment(table, segment).cloned().ok_or_else(|| {
+            RequestError::Bad(format!(
+                "shard {} has no {} segment {segment}",
+                shard.manifest.shard_id,
                 table.as_str()
-            )
+            ))
         })?;
-        let built = Arc::new(TableRuntime::build(self.shared(table), table, rows)?);
-        // A concurrent request may have built it first; either copy is
-        // equivalent, since the build is a pure function of the shard's bytes.
-        let mut runtimes = self.inner.runtimes.lock().expect("runtimes");
-        Ok(runtimes.entry(key).or_insert(built).clone())
-    }
-
-    pub fn max_query_bytes(&self) -> usize {
+        let key = (shard.digest.clone(), table, segment);
         self.inner
-            .directory_params
-            .max_query_bytes()
-            .max(self.inner.pages_params.max_query_bytes())
+            .cache
+            .get(key, self.shared(shard, table), source)
+            .await
+            .map_err(|error| match error {
+                CacheError::Overloaded => RequestError::Overloaded,
+                CacheError::Failed(message) => RequestError::Bad(message),
+            })
+    }
+}
+
+/// Why a request could not be answered.
+enum RequestError {
+    Bad(String),
+    /// The revision named is not held. Retryable after a map refresh.
+    Stale {
+        shard_id: u64,
+        digest: String,
+    },
+    /// No cache capacity could be freed. Retryable as-is.
+    Overloaded,
+}
+
+impl RequestError {
+    fn into_response(self, map_digest: &str) -> Response {
+        match self {
+            RequestError::Bad(message) => json(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "error": message }),
+            ),
+            // 409 rather than 404: the shard exists and the wallet's request is
+            // well formed, but it is addressed to a publication that has been
+            // replaced. The current map digest is included so the client can
+            // tell whether refreshing will actually help.
+            RequestError::Stale { shard_id, digest } => json(
+                StatusCode::CONFLICT,
+                serde_json::json!({
+                    "error": format!(
+                        "revision {digest} of shard {shard_id} is no longer served"
+                    ),
+                    "retry": "refresh the shard map and re-derive coverage for this shard",
+                    "map_sha256": map_digest,
+                }),
+            ),
+            RequestError::Overloaded => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("content-type", "application/json"), ("retry-after", "1")],
+                serde_json::json!({
+                    "error": "no cache capacity is free",
+                    "retry": "retry shortly",
+                })
+                .to_string(),
+            )
+                .into_response(),
+        }
     }
 }
 
@@ -304,33 +314,26 @@ fn json(status: StatusCode, body: serde_json::Value) -> Response {
         .into_response()
 }
 
-fn bad_request(message: impl std::fmt::Display) -> Response {
-    json(
-        StatusCode::BAD_REQUEST,
-        serde_json::json!({ "error": message.to_string() }),
-    )
-}
-
 pub fn router(state: ServiceState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/ready", get(ready))
+        .route("/metrics", get(metrics))
         .route("/v1/shards", get(shard_map))
         // The same paths the filter service serves on its own host, so a wallet
         // can point at either origin without changing anything but the base URL.
         .route("/v1/filters/shards", get(shard_map))
         .route("/v1/filters/shards/:shard_id/filter", get(shard_filter))
         .route("/v1/shards/init", get(init))
-        .route("/v1/shards/:shard_id/setup/:table/:segment", get(setup))
-        .route("/v1/shards/:shard_id/query/:table", post(query))
+        .route(
+            "/v1/shards/:shard_id/revisions/:digest/setup/:table/:segment",
+            get(setup),
+        )
+        .route(
+            "/v1/shards/:shard_id/revisions/:digest/query/:table",
+            post(query),
+        )
         .with_state(state)
-}
-
-fn parse_table(text: &str) -> Option<Table> {
-    match text {
-        "directory" => Some(Table::Directory),
-        "pages" => Some(Table::Pages),
-        _ => None,
-    }
 }
 
 async fn health(State(state): State<ServiceState>) -> Response {
@@ -339,35 +342,66 @@ async fn health(State(state): State<ServiceState>) -> Response {
         StatusCode::OK,
         serde_json::json!({
             "phase": "serving",
-            "shards": inner.set.shards.len(),
-            "runtimes_built": inner.runtimes.lock().expect("runtimes").len(),
+            "shards": inner.set.len(),
+            "revisions_held": inner.set.revisions().len(),
+            "geometries": inner.set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
+            "map_sha256": inner.set.map_digest,
+            "cache_budget_bytes": inner.cache.budget(),
+            "cache_resident_bytes": inner.cache.resident_bytes(),
+            "runtimes_built": inner.cache.entries(),
         }),
     )
 }
 
+/// Ready once a set is loaded, which is the only precondition this service has.
+///
+/// Deliberately not "ready once runtimes are warm". Runtimes are built on
+/// demand, so a worker with a cold cache is serving correctly and slowly, and
+/// reporting it unready would take it out of rotation exactly when the first
+/// wallet needs it.
+async fn ready(State(state): State<ServiceState>) -> Response {
+    if state.inner.set.is_empty() {
+        return json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({ "ready": false, "reason": "no shards loaded" }),
+        );
+    }
+    json(StatusCode::OK, serde_json::json!({ "ready": true }))
+}
+
+async fn metrics(State(state): State<ServiceState>) -> Response {
+    let inner = &state.inner;
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4")],
+        inner.metrics.render(
+            inner.set.len(),
+            inner.set.revisions().len(),
+            inner.cache.budget(),
+        ),
+    )
+        .into_response()
+}
+
 /// The published height-to-shard map.
 ///
-/// Served here as a convenience for a client that already trusts this service
-/// for private queries. It is the same bytes the filter service publishes, and
-/// a wallet that wants the two to be independent should take the map from
-/// there and compare.
+/// Served from the bytes the set was loaded with, and digested, so this origin
+/// and the filter service publish the *same* bytes for the same set. Serializing
+/// per request would let field ordering or whitespace differ between the two,
+/// and a wallet comparing them would read that as disagreement.
 async fn shard_map(State(state): State<ServiceState>) -> Response {
-    json(
+    (
         StatusCode::OK,
-        serde_json::to_value(&state.inner.set.map).expect("map json"),
+        [
+            ("content-type", "application/json"),
+            ("x-shard-map-sha256", state.inner.set.map_digest.as_str()),
+        ],
+        state.inner.set.map_json.clone(),
     )
+        .into_response()
 }
 
 /// One shard's public range filter.
-///
-/// Served here as well as by the filter service. The earlier rule kept public
-/// bytes off this origin entirely, so that a filter download and a private query
-/// could not be correlated. In practice the shard id of a query is already
-/// public in its own URL and one operator runs both services, so that
-/// correlation was available anyway. Serving them here gives the transparent
-/// host a complete API, and the filter service still offers the same bytes on a
-/// separate origin for a wallet that wants to fetch the two over different
-/// network paths.
 ///
 /// Immutable once published, hence the long cache. Asking for a shard discloses
 /// nothing: which shards exist is public, and a syncing wallet fetches the
@@ -401,18 +435,36 @@ async fn init(State(state): State<ServiceState>) -> Response {
             serde_json::json!({"error": "no shards"}),
         );
     };
+    let geometries = inner
+        .set
+        .geometries()
+        .into_iter()
+        .map(|geometry| {
+            let directory = &inner.params[&(geometry.name, Table::Directory)];
+            let pages = &inner.params[&(geometry.name, Table::Pages)];
+            GeometryInit {
+                name: geometry.name.to_string(),
+                directory_rows: geometry.directory_rows,
+                directory_row_bytes: geometry.directory_row_bytes as u32,
+                directory_scheme: directory.scheme.clone(),
+                directory_setup_seed: directory.setup_seed,
+                page_rows: geometry.page_rows,
+                page_row_bytes: geometry.page_row_bytes as u32,
+                pages_scheme: pages.scheme.clone(),
+                pages_setup_seed: pages.setup_seed,
+            }
+        })
+        .collect();
     let body = InitResponse {
         schema: transparent_shard::manifest::SCHEMA.to_string(),
         profile: inner.set.map.profile.clone(),
         network: inner.set.map.network.clone(),
         genesis_hash: inner.set.map.genesis_hash.clone(),
-        shards: inner.set.shards.len(),
+        shards: inner.set.len(),
         start_height: inner.set.map.start_height,
         covered_through: last.end_height,
-        directory_scheme: inner.directory_params.scheme.clone(),
-        directory_setup_seed: Table::Directory.setup_seed(),
-        pages_scheme: inner.pages_params.scheme.clone(),
-        pages_setup_seed: Table::Pages.setup_seed(),
+        map_sha256: inner.set.map_digest.clone(),
+        geometries,
     };
     json(
         StatusCode::OK,
@@ -422,21 +474,29 @@ async fn init(State(state): State<ServiceState>) -> Response {
 
 async fn setup(
     State(state): State<ServiceState>,
-    AxumPath((shard_id, table, segment)): AxumPath<(u64, String, u32)>,
+    AxumPath((shard_id, digest, table, segment)): AxumPath<(u64, String, String, u32)>,
 ) -> Response {
-    let Some(table) = parse_table(&table) else {
-        return bad_request("unknown table");
+    let map_digest = state.inner.set.map_digest.clone();
+    let Some(table) = Table::parse(&table) else {
+        return RequestError::Bad("unknown table".into()).into_response(&map_digest);
     };
-    let segments = match state.segments(shard_id, table) {
-        Ok(segments) => segments,
-        Err(error) => return bad_request(error),
+    let (segments, geometry, handle) = {
+        let shard = match state.revision(shard_id, &digest) {
+            Ok(shard) => shard,
+            Err(error) => return error.into_response(&map_digest),
+        };
+        let segments = shard.segments(table);
+        let geometry = shard.geometry.name.to_string();
+        match state.runtime(shard, table, segment).await {
+            Ok(handle) => (segments, geometry, handle),
+            Err(error) => return error.into_response(&map_digest),
+        }
     };
-    let runtime = match state.runtime(shard_id, table, segment) {
-        Ok(runtime) => runtime,
-        Err(error) => return bad_request(error),
-    };
+    let runtime = handle.get();
     let body = SetupResponse {
         shard_id,
+        manifest_digest: digest,
+        geometry,
         table: table.as_str().to_string(),
         segment,
         segments,
@@ -444,6 +504,7 @@ async fn setup(
         public_params_sha256: runtime.public_params_sha256.clone(),
         public_params_epoch: hex::encode(runtime.public_params_epoch),
     };
+    Metrics::incr(&state.inner.metrics.setups);
     json(
         StatusCode::OK,
         serde_json::to_value(body).expect("setup json"),
@@ -452,31 +513,76 @@ async fn setup(
 
 async fn query(
     State(state): State<ServiceState>,
-    AxumPath((shard_id, table)): AxumPath<(u64, String)>,
+    AxumPath((shard_id, digest, table)): AxumPath<(u64, String, String)>,
     body: axum::body::Bytes,
 ) -> Response {
-    let Some(table) = parse_table(&table) else {
-        return bad_request("unknown table");
+    let map_digest = state.inner.set.map_digest.clone();
+    let Some(table) = Table::parse(&table) else {
+        Metrics::incr(&state.inner.metrics.query_errors);
+        return RequestError::Bad("unknown table".into()).into_response(&map_digest);
     };
-    let segments = match state.segments(shard_id, table) {
-        Ok(segments) => segments,
-        Err(error) => return bad_request(error),
+    let (segments, shared) = {
+        let shard = match state.revision(shard_id, &digest) {
+            Ok(shard) => shard,
+            Err(error) => return error.into_response(&map_digest),
+        };
+        (shard.segments(table), state.shared(shard, table))
     };
+
+    // The prefix names the revision and table, and the same bytes come back in
+    // the response, so a query answered by the wrong runtime fails a check at
+    // both ends rather than decoding into rows from a range nobody asked for.
+    let binding = query_binding(&digest, table.as_str());
+
+    // Admission before work: bounded evaluation is what keeps a burst from
+    // pinning every runtime in the cache against eviction at once.
+    let waited = std::time::Instant::now();
+    let Ok(_permit) = state.inner.query_slots.acquire().await else {
+        return RequestError::Bad("server is shutting down".into()).into_response(&map_digest);
+    };
+    Metrics::add(
+        &state.inner.metrics.query_queue_micros,
+        waited.elapsed().as_micros() as u64,
+    );
+
     // Every segment answers the same query, and the results come back in
     // segment order. The client keeps the row whose contents it can identify
     // and discards the rest; asking only the segment that holds the script
     // would disclose the script's placement, which is a function of the script.
-    let mut answer = Vec::new();
+    //
+    // Every segment's runtime is acquired *before* any of them is evaluated,
+    // and all the handles are held until the last one is done. Acquiring them
+    // one at a time would let a tight budget evict segment 0 while segment 1
+    // builds, and the next query would rebuild what this one just discarded —
+    // a multi-segment shard would thrash rather than be answered. Holding them
+    // together also means a shard whose segments do not fit the budget is
+    // refused once, retryably, instead of making progress it cannot keep.
+    let mut handles = Vec::with_capacity(segments as usize);
     for segment in 0..segments {
-        let runtime = match state.runtime(shard_id, table, segment) {
-            Ok(runtime) => runtime,
-            Err(error) => return bad_request(error),
+        let shard = match state.revision(shard_id, &digest) {
+            Ok(shard) => shard,
+            Err(error) => return error.into_response(&map_digest),
         };
-        match runtime.evaluate(state.shared(table), shard_id, &body) {
-            Ok(response) => answer.extend(response),
-            Err(error) => return bad_request(error),
+        match state.runtime(shard, table, segment).await {
+            Ok(handle) => handles.push(handle),
+            Err(error) => {
+                Metrics::incr(&state.inner.metrics.query_errors);
+                return error.into_response(&map_digest);
+            }
         }
     }
+
+    let mut answer = Vec::new();
+    for handle in &handles {
+        match handle.get().evaluate(&shared, binding, &body) {
+            Ok(response) => answer.extend(response),
+            Err(error) => {
+                Metrics::incr(&state.inner.metrics.query_errors);
+                return RequestError::Bad(error).into_response(&map_digest);
+            }
+        }
+    }
+    Metrics::incr(&state.inner.metrics.queries);
     (
         StatusCode::OK,
         [("content-type", "application/octet-stream")],

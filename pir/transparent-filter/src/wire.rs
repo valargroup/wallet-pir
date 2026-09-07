@@ -8,6 +8,7 @@
 //! surfaces. Binary serialization uses internal order; see `envelope.rs`.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Response shape of `GET /v1/filters/info`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -86,6 +87,13 @@ pub struct SealParameters {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ShardMapEntry {
     pub shard_id: u64,
+    /// The table geometry this shard was built at, by registry name.
+    ///
+    /// In the map rather than only in the manifest because a wallet needs it
+    /// *before* it fetches anything: the geometry decides which prepared
+    /// parameter set to query with and the row count to split an index over, so
+    /// a wallet that waited for the manifest would already have had to guess.
+    pub geometry: String,
     pub start_height: u64,
     pub end_height: u64,
     /// The block before `start_height`, in display hex.
@@ -141,7 +149,15 @@ pub struct ShardMap {
     pub range_envelope_version: u16,
     /// First height shard zero covers.
     pub start_height: u64,
-    pub seal: SealParameters,
+    /// The seal thresholds each geometry in this set was built under, by
+    /// geometry name.
+    ///
+    /// One entry per geometry the map uses, not one for the map: thresholds are
+    /// derived from the row counts, so a set mixing archive and recent shards
+    /// was sealed under two policies and publishing a single one would describe
+    /// neither. A wallet checking that a shard sealed where it should have uses
+    /// the entry its geometry names.
+    pub seal: BTreeMap<String, SealParameters>,
     /// Ascending by `shard_id`, gapless, starting at zero.
     pub shards: Vec<ShardMapEntry>,
 }
@@ -198,6 +214,18 @@ impl ShardMap {
             // accepted one would advance coverage over a range it never read.
             if shard.directory_segments == 0 || shard.page_segments == 0 {
                 return Err(format!("shard {index} declares no segments"));
+            }
+            // A geometry with no published thresholds is a shard whose
+            // boundary cannot be checked, and one with no name is a shard whose
+            // rows a wallet would have to guess at.
+            if shard.geometry.is_empty() {
+                return Err(format!("shard {index} names no geometry"));
+            }
+            if !self.seal.contains_key(&shard.geometry) {
+                return Err(format!(
+                    "shard {index} is {} but the map publishes no seal parameters for it",
+                    shard.geometry
+                ));
             }
             if shard.manifest_digest.len() != 64 {
                 return Err(format!(

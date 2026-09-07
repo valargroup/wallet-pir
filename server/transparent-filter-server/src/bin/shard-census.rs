@@ -18,7 +18,8 @@ use std::path::PathBuf;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::shard_matches::MatchCounter;
 use transparent_shard::layout::{
-    entries_per_row, Geometry, EVENTS_PER_PAGE, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
+    by_name as geometry_by_name, entries_per_row, Geometry, EVENTS_PER_PAGE, PAGE_ROW_BYTES,
+    PAGE_ROW_HEADER_BYTES,
 };
 use transparent_shard::seal::{Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer};
 
@@ -122,6 +123,28 @@ struct Cli {
     /// it and no path has to be agreed.
     #[arg(long, default_value_t = false)]
     per_shard: bool,
+    /// Registry geometry to score against, before any override below.
+    ///
+    /// The baseline every reported figure is relative to. The individual
+    /// overrides still apply on top, so a sweep can hold a registry shape and
+    /// vary one dimension of it.
+    #[arg(long, default_value = "recent-8k")]
+    geometry: String,
+    /// First height to census, inclusive. Defaults to the journal's first.
+    ///
+    /// Bounded runs are how a two-tier candidate is scored: the archive tier
+    /// over the early chain and the recent tier over the last six months are
+    /// different questions, and censusing the whole journal at one geometry
+    /// answers neither.
+    #[arg(long)]
+    start_height: Option<u64>,
+    /// Last height to census, inclusive. Defaults to the journal's last.
+    ///
+    /// Inclusive at both ends, matching the journal's own `covered_through`.
+    /// An off-by-one here is a boundary that moves, and a boundary that moves
+    /// re-shards the chain.
+    #[arg(long)]
+    end_height: Option<u64>,
 }
 
 /// Bytes one private row query uploads at this table shape.
@@ -596,6 +619,9 @@ fn report(
             // A single block past a capacity: this shard holds only that block
             // and needs more than one segment per table.
             Some(SealReason::BlockExceedsCapacity(q)) => format!("oversized block: {q}"),
+            // A census sweeps one geometry at a time, so nothing here forces a
+            // boundary; only the publisher's two-tier mode does.
+            Some(SealReason::GeometryChanged) => "geometry change".to_string(),
             None => unreachable!(),
         };
         *by_reason.entry(key).or_default() += 1;
@@ -614,6 +640,7 @@ fn report(
                 Some(SealReason::ReachedTarget(q)) => format!("target:{q}"),
                 Some(SealReason::WouldExceedCapacity(q)) => format!("capacity:{q}"),
                 Some(SealReason::BlockExceedsCapacity(q)) => format!("oversized:{q}"),
+                Some(SealReason::GeometryChanged) => "geometry-change".to_string(),
                 None => unreachable!("sealed shards all carry a reason"),
             };
             println!(
@@ -711,11 +738,39 @@ fn main() -> Result<(), BoxError> {
     let Some(covered) = store.covered_through() else {
         return Err("the journal is empty".into());
     };
-    let first = store.start_height();
+    let journal_first = store.start_height();
+    let first = cli.start_height.unwrap_or(journal_first);
+    let covered = cli.end_height.unwrap_or(covered);
+    if first < journal_first || covered > store.covered_through().expect("non-empty") {
+        return Err(format!(
+            "requested {first}-{covered} is outside the journal's {journal_first}-{}",
+            store.covered_through().expect("non-empty")
+        )
+        .into());
+    }
+    if first > covered {
+        return Err(format!("requested range {first}-{covered} is empty").into());
+    }
+
+    // Provenance, printed before anything derived from it. An archived census
+    // whose coverage is not on its face gets read as whatever the reader
+    // assumes: the genesis-range runs under `docs/transparent-pir-evaluation`
+    // cover 9.4% of chain height and were taken for full-chain results in later
+    // work. The anchor hash is what makes a run identifiable at all, since two
+    // journals can cover the same heights on different branches.
+    let anchor = store
+        .block_at(covered)
+        .ok_or_else(|| format!("height {covered} is missing from the journal"))?;
     println!(
-        "journal: heights {first}-{covered} ({} blocks), {} events",
+        "journal: heights {journal_first}-{}, {} blocks, {} events",
+        store.covered_through().expect("non-empty"),
         store.blocks_covered(),
         store.events_stored()
+    );
+    println!("genesis: {}", store.genesis_hash());
+    println!(
+        "census:  heights {first}-{covered} inclusive, anchor {}",
+        anchor.block_hash.to_display_hex()
     );
 
     let policies: Vec<(String, SealPolicy)> = if cli.policies.is_empty() {
@@ -735,7 +790,8 @@ fn main() -> Result<(), BoxError> {
     // the same "every policy sees exactly the same input" property for the cost
     // of one block at a time, and a second pass would buy nothing because the
     // run is dominated by reading and decoding the journal.
-    let compiled = Geometry::default();
+    let compiled = *geometry_by_name(&cli.geometry)
+        .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
     let geometry = Geometry {
         directory_rows: cli
             .directory_rows_per_segment
@@ -745,6 +801,7 @@ fn main() -> Result<(), BoxError> {
             .unwrap_or(compiled.directory_row_bytes),
         page_rows: cli.page_rows_per_segment.unwrap_or(compiled.page_rows),
         inline_events: cli.inline_events.unwrap_or(compiled.inline_events),
+        ..compiled
     };
     // A candidate the scheme would round up is a candidate whose reported cost
     // is not its cost, so it is refused rather than scored.

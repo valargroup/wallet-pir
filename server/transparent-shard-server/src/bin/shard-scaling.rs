@@ -23,6 +23,7 @@ use clap::Parser;
 use enhance_pir_server::ipir::RowPlaintextIter;
 use ipir_sp::server::IPIRServer;
 use std::time::{Duration, Instant};
+use transparent_shard::layout::{by_name as geometry_by_name, RECENT_8K};
 use transparent_shard_server::shardset::Table;
 
 #[derive(Parser)]
@@ -40,6 +41,11 @@ struct Cli {
     /// Seconds of evaluation per thread count.
     #[arg(long, default_value_t = 3.0)]
     seconds: f64,
+
+    /// Which registry geometry to scan. Ignored by `--geometry-sweep`, which
+    /// sweeps row counts directly.
+    #[arg(long, default_value = "recent-8k")]
+    geometry: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,8 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for rows in [
             2_048u64, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144,
         ] {
-            let (rlwe, sc) =
-                ipir_sp::params_for_simplepir(rows, u64::from(Table::Directory.row_bytes()) * 8)?;
+            let (rlwe, sc) = ipir_sp::params_for_simplepir(
+                rows,
+                u64::from(Table::Directory.row_bytes(&RECENT_8K)) * 8,
+            )?;
             let db = (sc.db_rows * sc.db_cols * 2) as f64 / 1048576.0;
             let blocks = sc.db_cols / rlwe.d;
             let pack = (blocks * 3 * rlwe.d * rlwe.d * 8) as f64 / 1048576.0;
@@ -76,12 +84,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    let geometry = geometry_by_name(&cli.geometry)
+        .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
     let table = Table::Directory;
-    let (rlwe, scheme) =
-        ipir_sp::params_for_simplepir(table.rows(), u64::from(table.row_bytes()) * 8)?;
+    let (rlwe, scheme) = ipir_sp::params_for_simplepir(
+        table.rows(geometry),
+        u64::from(table.row_bytes(geometry)) * 8,
+    )?;
 
-    let row_bytes = table.row_bytes() as usize;
-    let mut rows = vec![0u8; table.rows() as usize * row_bytes];
+    let row_bytes = table.row_bytes(geometry) as usize;
+    let mut rows = vec![0u8; table.rows(geometry) as usize * row_bytes];
     for (index, byte) in rows.iter_mut().enumerate() {
         *byte = (index % 251) as u8;
     }

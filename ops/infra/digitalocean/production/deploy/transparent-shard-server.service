@@ -10,7 +10,12 @@ Type=simple
 # reach this is the coordinator. It is deliberately not published: the
 # wallet-facing API is not designed yet, and the upstream default is loopback
 # for exactly that reason.
-ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir /srv/transparent-pir/shards
+ExecStart=/usr/local/bin/transparent-shard-server \
+  --listen 0.0.0.0:8093 \
+  --shard-dir /srv/transparent-pir/shards \
+  --cache-bytes 8589934592 \
+  --build-slots 1 \
+  --query-slots 2
 Restart=on-failure
 RestartSec=10
 User=root
@@ -19,10 +24,18 @@ Environment=RUST_LOG=info
 
 # Sized from measurement rather than copied from the Enhance worker's 2 GiB,
 # which is a different table. A shard costs about 257 MiB resident (128.5 MiB
-# per table segment: a 32 MiB u16 database plus three 32 MiB pack matrices), so
-# the 21-shard pilot set is ~5.3 GiB. This leaves room for the set to roughly
-# double before the cap binds, and swap is off so a leak fails loudly here
-# rather than degrading into thrash.
+# per table segment: a 32 MiB u16 database plus three 32 MiB pack matrices).
+#
+# This is now a backstop rather than the only limit. The service holds a
+# byte-bounded runtime cache -- 8 GiB above -- and refuses work it cannot make
+# room for, so reaching this cap means the reservation is wrong rather than
+# that the set grew. The 4 GiB between the two covers what the reservation
+# deliberately does not count: allocator fragmentation, the transient plaintext
+# each build reads, the shared parameters, and in-flight requests.
+#
+# Re-measure with `shard-residency` before raising --cache-bytes. Swap is off so
+# a reservation that drifted low fails loudly here rather than degrading into
+# thrash.
 MemoryMax=12G
 MemorySwapMax=0
 

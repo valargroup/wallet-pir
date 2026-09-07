@@ -186,12 +186,14 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
             genesis(),
             hash_at(end),
             transparent_filter::RANGE_PROFILE,
+            &transparent_shard::layout::RECENT_8K,
             events,
         )
         .expect("build");
 
         entries.push(ShardMapEntry {
             shard_id,
+            geometry: transparent_shard::layout::RECENT_8K.name.to_string(),
             start_height: start,
             end_height: end,
             parent_block_hash: hash_at(start - 1).to_display_hex(),
@@ -217,11 +219,14 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
         profile: transparent_filter::RANGE_PROFILE.to_string(),
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
-        seal: SealParameters {
-            max_scripts: 8_192,
-            max_page_rows: 2_048,
-            max_txids: 0,
-        },
+        seal: BTreeMap::from([(
+            transparent_shard::layout::RECENT_8K.name.to_string(),
+            SealParameters {
+                max_scripts: 8_192,
+                max_page_rows: 2_048,
+                max_txids: 0,
+            },
+        )]),
         shards: entries,
     };
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
@@ -285,17 +290,25 @@ impl ShardTransport for DirectRows<'_> {
     fn setup(
         &mut self,
         shard_id: u64,
+        revision: &str,
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
         // A real service publishes c1 here. The stand-in cannot, so it returns
         // an empty document and the sync's setup path is exercised in the
         // server's own round trip instead.
-        let _ = (shard_id, table, segment);
+        let _ = (shard_id, revision, table, segment);
         Ok((Vec::new(), 0))
     }
 
-    fn query(&mut self, shard_id: u64, table: Table, body: &[u8]) -> Result<Vec<u8>, BoxError> {
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
+        let _ = revision;
         // The row index is the last thing the caller encoded; recover it from
         // the trailing marker this stand-in agrees on.
         let row = u64::from_le_bytes(body[body.len() - 8..].try_into()?) as usize;

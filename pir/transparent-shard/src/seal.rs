@@ -93,6 +93,45 @@ pub struct SealPolicy {
     pub page_rows: Limit,
 }
 
+impl SealPolicy {
+    /// The policy a geometry implies.
+    ///
+    /// Capacity is what the tables hold; the targets are the headroom each one
+    /// needs, and both fractions are load-bearing rather than round numbers.
+    ///
+    /// The directory keeps a **seventh** in reserve. That covers two things at
+    /// once: whatever one more block adds between crossing the target and the
+    /// seal taking effect, and the slack two-choice placement needs to fit
+    /// every script into one segment. Placement is not a perfect packing, so a
+    /// directory filled to capacity would overflow into a second segment — and
+    /// a second segment costs every wallet an extra query against this shard,
+    /// forever.
+    ///
+    /// The page table keeps a **thirty-second**, far less, because its demand
+    /// is checked against the exact post-absorb state rather than projected:
+    /// the reserve only has to absorb one block, not a placement failure.
+    ///
+    /// Deriving both here rather than at each call site is what keeps a
+    /// geometry from acquiring a second, disagreeing policy. Before this, the
+    /// publisher and the census each spelled the fractions out, against the
+    /// compiled constants, and a new row count would have had to be applied to
+    /// both.
+    pub fn for_geometry(geometry: &Geometry) -> Self {
+        let scripts_capacity = geometry.directory_capacity();
+        let page_rows_capacity = geometry.page_rows;
+        Self {
+            scripts: Limit {
+                target: scripts_capacity - scripts_capacity / 7,
+                capacity: scripts_capacity,
+            },
+            page_rows: Limit {
+                target: page_rows_capacity - page_rows_capacity / 32,
+                capacity: page_rows_capacity,
+            },
+        }
+    }
+}
+
 /// Which page figure closes a shard.
 ///
 /// Not part of [`SealPolicy`], which is schema: this selects between two ways
@@ -205,6 +244,15 @@ pub enum SealReason {
     /// The shard holds a single block that exceeds a capacity on its own, so it
     /// closed immediately after it. Its tables need more than one segment.
     BlockExceedsCapacity(&'static str),
+    /// The geometry changed at the next height, so the shard closed before it.
+    ///
+    /// The one reason that is not about how full the shard got. A shard's rows
+    /// are addressed at one row count, so a shard cannot span a geometry
+    /// change: the boundary is forced, and the shard on the near side is sealed
+    /// wherever it happened to be. Published as a reason of its own so a census
+    /// does not read a half-empty shard at the cutoff as evidence about the
+    /// seal thresholds.
+    GeometryChanged,
 }
 
 /// Streams blocks in height order and emits shard boundaries.
@@ -256,6 +304,23 @@ impl Sealer {
     /// A sealer that closes on `basis` rather than on the default.
     pub fn with_basis(policy: SealPolicy, first_height: u64, basis: PageBasis) -> Self {
         Self::with_geometry(policy, first_height, basis, Geometry::default())
+    }
+
+    /// A sealer continuing an existing shard-id sequence.
+    ///
+    /// For the second half of a mixed publication: shard ids are the wallet's
+    /// stable handle on a range, and restarting them at zero after a geometry
+    /// change would publish two shards under one id.
+    pub fn resume(
+        policy: SealPolicy,
+        first_height: u64,
+        basis: PageBasis,
+        geometry: Geometry,
+        next_shard_id: u64,
+    ) -> Self {
+        let mut sealer = Self::with_geometry(policy, first_height, basis, geometry);
+        sealer.next_shard_id = next_shard_id;
+        sealer
     }
 
     /// A sealer that counts occupancy against a geometry other than the
@@ -559,6 +624,34 @@ impl Sealer {
         Ok(sealed)
     }
 
+    /// Closes the current shard at a forced boundary, and reopens numbering for
+    /// a different geometry.
+    ///
+    /// A shard's row indices are taken against one row count, so a shard cannot
+    /// span two geometries: the transition has to be a boundary, and the shard
+    /// before it is *sealed* rather than left as a growing tail. It is final —
+    /// nothing after the cutoff can be added to it — so publishing it as
+    /// provisional would tell a wallet to expect a revision that will never
+    /// come.
+    ///
+    /// Returns `None` if nothing has been accumulated, which is the case when
+    /// the cutoff falls exactly on a boundary the thresholds already produced.
+    ///
+    /// The caller then continues with a sealer built for the new geometry and
+    /// policy, resumed at the next shard id — see [`Sealer::resume`].
+    pub fn seal_at_geometry_change(&mut self) -> Option<SealedShard> {
+        self.start_height?;
+        Some(self.close(Some(SealReason::GeometryChanged)))
+    }
+
+    /// The shard id the next shard would take.
+    ///
+    /// What a successor sealer resumes from, so ids stay a single ascending
+    /// sequence across a geometry change rather than restarting at zero.
+    pub fn next_shard_id(&self) -> u64 {
+        self.next_shard_id
+    }
+
     /// Closes whatever is still accumulating.
     ///
     /// The result is the tail: a shard that reached no limit and is therefore
@@ -574,6 +667,53 @@ impl Sealer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The policy a geometry implies must be exactly what the publisher used to
+    /// spell out by hand, or moving the rule here would silently re-shard the
+    /// chain under the geometry that is already published.
+    #[test]
+    fn the_default_geometry_implies_the_policy_the_publisher_used() {
+        let policy = SealPolicy::for_geometry(&crate::layout::RECENT_8K);
+        assert_eq!(policy.scripts.capacity, 114_688);
+        assert_eq!(policy.scripts.target, 98_304);
+        assert_eq!(policy.page_rows.capacity, 8_192);
+        assert_eq!(policy.page_rows.target, 7_936);
+    }
+
+    /// Every registry entry must imply a policy that is actually sealable:
+    /// positive targets, targets under capacity, and enough headroom that one
+    /// more block cannot jump the gap between them.
+    #[test]
+    fn every_geometry_implies_a_usable_policy() {
+        for geometry in crate::layout::PROFILES {
+            let policy = SealPolicy::for_geometry(geometry);
+            Limit::new(policy.scripts.target, policy.scripts.capacity)
+                .unwrap_or_else(|error| panic!("{}: {error}", geometry.name));
+            Limit::new(policy.page_rows.target, policy.page_rows.capacity)
+                .unwrap_or_else(|error| panic!("{}: {error}", geometry.name));
+            assert!(
+                policy.scripts.target < policy.scripts.capacity,
+                "{}: the directory needs placement headroom",
+                geometry.name
+            );
+            assert!(
+                policy.page_rows.target < policy.page_rows.capacity,
+                "{}: the page table needs a block of headroom",
+                geometry.name
+            );
+        }
+    }
+
+    /// A wider archive geometry must buy proportionally more of both, so the
+    /// two tables still close a shard at about the same occupancy. One that
+    /// scaled only the pages would fill its directory first and waste them.
+    #[test]
+    fn a_wider_geometry_seals_later_in_both_tables() {
+        let recent = SealPolicy::for_geometry(&crate::layout::RECENT_8K);
+        let archive = SealPolicy::for_geometry(&crate::layout::ARCHIVE_WIDE);
+        assert!(archive.scripts.target > recent.scripts.target);
+        assert!(archive.page_rows.target > recent.page_rows.target);
+    }
     use crate::layout::{fragments_for, EVENTS_PER_PAGE, INLINE_EVENTS};
     use transparent_events::ReceiveEvent;
 
@@ -757,6 +897,93 @@ mod tests {
     /// A shard that never reaches a limit is the tail: it must come out
     /// unsealed, so a consumer does not treat a still-growing range as
     /// immutable.
+    /// A geometry change forces a boundary, and the shard before it is sealed
+    /// rather than left as a growing tail.
+    ///
+    /// A shard's rows are addressed at one row count, so nothing after the
+    /// cutoff can join the shard before it. Leaving it provisional would tell a
+    /// wallet to expect a revision that will never be published.
+    #[test]
+    fn a_geometry_change_seals_the_shard_before_it() {
+        let mut sealer = Sealer::new(generous(), 100);
+        for height in 100..105 {
+            assert_eq!(
+                sealer.push_block(height, &block_of_new_scripts(height, 0, 3)),
+                Ok(Vec::new())
+            );
+        }
+        let closed = sealer
+            .seal_at_geometry_change()
+            .expect("five blocks are accumulated");
+        assert_eq!((closed.start_height, closed.end_height), (100, 104));
+        assert_eq!(closed.reason, Some(SealReason::GeometryChanged));
+        assert_eq!(closed.shard_id, 0);
+        // Nowhere near a limit: the boundary is forced, which is exactly why it
+        // needs a reason of its own rather than being reported as a full shard.
+        assert_eq!(closed.occupancy.scripts, 3);
+    }
+
+    /// A cutoff landing on a boundary the thresholds already produced adds no
+    /// empty shard.
+    ///
+    /// An empty shard is not harmless: a wallet queries every shard whose
+    /// filter matches, and one covering no blocks is a range that cannot be
+    /// addressed to a height at all.
+    #[test]
+    fn a_geometry_change_on_an_existing_boundary_seals_nothing() {
+        let mut sealer = Sealer::new(generous(), 100);
+        assert_eq!(sealer.seal_at_geometry_change(), None);
+    }
+
+    /// Shard ids continue across a geometry change.
+    ///
+    /// The id is the wallet's stable handle on a range and the map is indexed by
+    /// it, so a successor that restarted at zero would publish two shards under
+    /// one id and the map would not load at all.
+    #[test]
+    fn ids_continue_across_a_geometry_change() {
+        let mut archive = Sealer::new(policy((10, 1_000), (1_000, 10_000)), 100);
+        let mut sealed = Vec::new();
+        let mut tag = 0u32;
+        for offset in 0..6u64 {
+            let block = block_of_new_scripts(100 + offset, tag, 4);
+            tag += 4;
+            sealed.extend(archive.push_block(100 + offset, &block).unwrap());
+        }
+        sealed.extend(archive.seal_at_geometry_change());
+        let next_id = archive.next_shard_id();
+        assert_eq!(next_id, sealed.len() as u64);
+
+        let mut recent = Sealer::resume(
+            SealPolicy::for_geometry(&crate::layout::RECENT_8K),
+            106,
+            PageBasis::default(),
+            crate::layout::RECENT_8K,
+            next_id,
+        );
+        for offset in 0..3u64 {
+            let block = block_of_new_scripts(106 + offset, tag, 4);
+            tag += 4;
+            sealed.extend(recent.push_block(106 + offset, &block).unwrap());
+        }
+        sealed.extend(recent.finish());
+
+        // One ascending, gapless sequence across the change, and the ranges
+        // tile the journal without a hole at the boundary.
+        for (index, shard) in sealed.iter().enumerate() {
+            assert_eq!(shard.shard_id, index as u64, "ids must not restart");
+        }
+        for pair in sealed.windows(2) {
+            assert_eq!(
+                pair[1].start_height,
+                pair[0].end_height + 1,
+                "the boundary must not drop a height"
+            );
+        }
+        assert_eq!(sealed.first().unwrap().start_height, 100);
+        assert_eq!(sealed.last().unwrap().end_height, 108);
+    }
+
     #[test]
     fn a_journal_below_every_limit_yields_one_unsealed_tail() {
         let mut sealer = Sealer::new(generous(), 100);

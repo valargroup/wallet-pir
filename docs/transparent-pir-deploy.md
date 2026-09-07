@@ -16,6 +16,20 @@ and nothing else.
 | Shard set | `/srv/transparent-pir/shards` on the worker |
 | Published set | `/srv/zakura/transparent-shards-v6` on the coordinator |
 | Coverage | 3 shards, heights 3,428,143–3,473,474, 169 MB |
+| Serving schema | `transparent-shard-v6` |
+
+**This build serves `transparent-shard-v7`, which the deployed set is not.**
+A v7 binary refuses a v6 set at load and a v6 binary refuses a v7 one, so
+deploying this build against `/srv/zakura/transparent-shards-v6` is an outage
+rather than a degraded service. Publish a v7 set into a directory of its own
+first — `shard-publish` refuses a `shards.json` of another schema — and deploy
+with `shard_dir` pointing at it. The v6 set and the running binary stay as the
+rollback baseline until that has verified.
+
+The sections below describe what this build does. Everything marked as new
+against the live worker — the geometry registry, the bounded runtime cache, the
+revision-addressed routes, `/metrics` and `/v1/ready` — arrives with that
+deploy, not before it.
 
 TLS terminates on the worker, not behind the Enhance coordinator's Caddy. The
 two never share a Caddyfile: the coordinator's is rendered and installed by
@@ -41,17 +55,40 @@ shard to find its own history, which is the cost the design exists to avoid.
 | Per-block filters | `enhance-pir.valargroup.dev` | the rest of `/v1/filters/*` |
 | Private retrieval | `transparent-pir.valargroup.dev` | `/v1/shards*` |
 
+Private retrieval is addressed by **revision**, not by shard alone:
+
+```
+GET  /v1/shards/init
+GET  /v1/shards/{id}/revisions/{manifest_digest}/setup/{table}/{segment}
+POST /v1/shards/{id}/revisions/{manifest_digest}/query/{table}
+```
+
+The digest is the one the map publishes for that shard, so this is public and
+already in the wallet's hands. What it buys is that a tail republished mid-sync
+cannot answer a query prepared against the revision it replaced. A digest the
+worker no longer holds returns **409** with the current map digest, which tells
+the wallet to refresh the map and re-derive that range rather than accept rows
+for a range it did not ask about. The worker keeps three superseded revisions
+per shard by default (`--retain-revisions`), so an ordinary republication does
+not strand a wallet mid-sync.
+
+`/v1/shards/init` now publishes **one entry per geometry the worker holds**
+rather than one pair of schemes for the fleet, because a set may mix them. Each
+entry carries the row counts beside the derived scheme, so a client checks the
+pair instead of adopting either.
+
 The shard map and range filters answer at the same paths on both hosts, so a
 wallet points at either origin by changing only the base URL. The transparent
 host serves them from `transparent-shard-server`, which already loads and
 digest-verifies every `filter.bin`; retaining the bytes costs about a hundred
 kilobytes per shard, negligible beside a 257 MiB runtime.
 
-`/v1/health` is **not** routed publicly on either host. It reports shard counts
-and how many runtimes are built, which is operator information; the deploy
-verifies it over the VPC and asserts it returns 404 through the edge, because
-the way that goes wrong is a route wider than intended and the failure is
-otherwise silent.
+`/v1/health`, `/v1/ready` and `/metrics` are **not** routed publicly on either
+host. They report shard counts, retained revisions, cache occupancy, and build
+and eviction rates — operator information, and a running commentary on how much
+traffic the worker is taking. The deploy verifies them over the VPC and asserts
+each returns 404 through the edge, because the way that goes wrong is a route
+wider than intended and the failure is otherwise silent.
 
 An earlier revision kept public bytes off the retrieval origin entirely, so a
 filter download and a private query could not be correlated. That rule bought
@@ -104,6 +141,21 @@ is added, verify a risky change out of band — for a shard-set change, confirm
 every filter matches the digest its map publishes, since the service refuses to
 start otherwise and would roll the whole Enhance deploy back.
 
+**The schema bump reaches this service too, and it is the sharper edge of the
+two.** `ShardFilters::open` deserializes `shards.json` into the same `ShardMap`
+the wallet uses, so a v7 build cannot read the v6 map: no `geometry` on an
+entry, and `seal` is now keyed by geometry name rather than a single record.
+The unit pins `--shard-dir` to `/srv/zakura/transparent-shards-v6`, and the
+service refuses to start on a set it cannot read — inside the Enhance
+coordinated rollout, whose blast radius is the live Enhance service.
+
+So the filter service's `--shard-dir` must be repointed to the v7 set **in the
+same change that ships the v7 binary**, not after it. Publish the v7 set first,
+update `transparent-filter-server.service`, and only then run
+`deploy-enhance-pir.yml`. Deploying the Enhance artifact from this build with
+the unit still pointing at the v6 set will fail at startup and roll Enhance
+back.
+
 ## Publishing a shard set
 
 `backfill-transparent-events.yml`, action `publish`, with `data_dir` (the event
@@ -126,11 +178,62 @@ than waiting on RPC — so contention costs real blocks per second.
 reads it once at startup, so publishing a new set is a unit change and a
 restart, not a hot swap.
 
+## Geometry is per shard, not per fleet
+
+A shard names its geometry from a closed registry, and a set may mix them —
+archive geometry for old, dense history, a narrower one for the recent window
+wallets synchronise constantly. The registry is in
+`pir/transparent-shard/src/layout.rs`:
+
+| Name | Directory rows | Page rows | Directory query |
+|---|---:|---:|---:|
+| `recent-8k` | 8,192 | 8,192 | 128,008 B |
+| `recent-4k` | 4,096 | 4,096 | 106,504 B |
+| `archive-32k` | 32,768 | 32,768 | 258,056 B |
+| `archive-wide` | 32,768 | 65,536 | 258,056 B |
+
+Every entry keeps 3,584-byte rows, so only the row *counts* vary. That is what
+keeps the record codec, `EVENTS_PER_PAGE` (36) and `DIRECTORY_SLOTS` (14) fixed
+across the registry — widening a row is a schema change and a republication, not
+a new entry, and `Geometry::validate_publishable` refuses one.
+
+Seal thresholds are derived from the geometry rather than given
+(`SealPolicy::for_geometry`): the directory keeps a seventh in reserve for
+two-choice placement, the page table a thirty-second for one more block. A
+mixed set therefore publishes one set of thresholds per geometry, keyed by name.
+
+`shard-publish --archive-geometry X --recent-from H` publishes the two-tier set;
+the cutoff is a forced shard boundary, because a shard's rows are addressed at
+one row count and none may span the change. Derive `H` from the pinned anchor's
+chain timestamp, not from a block count — a height standing in for "six months"
+drifts with the interval, and re-deriving it later re-shards the chain.
+
+## Runtimes are bounded, not kept
+
+Table plaintext is verified at startup and released; what is retained is the
+path and the digest, and the bytes are re-read and re-verified when a runtime is
+built from them. Runtimes live in a byte-bounded LRU with single-flight
+construction: one build per identity, everyone else waits, and a request that
+cannot make room gets a `503` with `Retry-After` rather than pushing the process
+past its budget.
+
+Room is reserved *before* a build starts, from the size the geometry implies,
+because the build is what allocates. The reservation counts the encoded database
+and the pack matrices and nothing else, so `--cache-bytes` is set below the
+host's real headroom: 8 GiB against `MemoryMax=12G` leaves 4 GiB for allocator
+fragmentation, the transient plaintext each build reads, the shared parameters,
+and in-flight requests. Re-measure with `shard-residency` before raising it.
+
+`--build-slots` defaults to 1 and `--query-slots` to 2, the latter because
+`shard-scaling` measured evaluation saturating at two threads. The unit file
+passes `--cache-bytes 8589934592` with those two defaults.
+
 ## What the fleet costs, measured
 
 Per-runtime resident memory, measured with `shard-residency` at the pinned
 geometry, decomposing exactly: a 32 MiB `u16` database plus three 32 MiB pack
-matrices, the three being `t_exp_left`.
+matrices, the three being `t_exp_left`. `runtime::reserved_bytes` computes the
+same two terms, and a unit test pins it to this measurement.
 
 | | |
 |---|---|
@@ -183,7 +286,13 @@ on every incremental sync, which is the traffic every wallet pays constantly.
   Restoration cost at 32,768 is extrapolated from the 0–330,000 census, and the
   same extrapolation was already 55% wrong for shard count. `census
   --shard-matches` computes it directly over the full journal; run it before
-  provisioning eleven hosts.
+  provisioning eleven hosts. `shard-census` now takes `--geometry`,
+  `--start-height` and `--end-height` (inclusive) and prints its anchor, so the
+  archive tier and the recent window can be scored as the separate questions
+  they are.
+- **No two-tier set has been published or served.** The registry, the mixed
+  publisher, the bounded cache and the revision routes are implemented and
+  tested; the geometry decision itself still rests on the census.
 - **Which limit binds is not uniform along the chain.** At 8,192 over the full
   journal, 1,042 shards close on page rows and 48 on scripts. `census
   --per-shard` emits heights and the closing limit per shard, so the mid-range
@@ -205,6 +314,12 @@ on every incremental sync, which is the traffic every wallet pays constantly.
   before buying the fleet.
 
 ## Known drift and hazards
+
+- **A v7 build of `transparent-filter-server` cannot read the v6 shard map**,
+  and that binary is activated by the Enhance coordinated rollout rather than by
+  the transparent one. See "The filter service" above: repoint its `--shard-dir`
+  to the v7 set in the same change, or the Enhance deploy fails at startup and
+  rolls back.
 
 - The live `enhance-pir-coordinator` firewall has **SSH open to `0.0.0.0/0`**,
   which is drift from Terraform. A full `terraform apply` reverts it and locks

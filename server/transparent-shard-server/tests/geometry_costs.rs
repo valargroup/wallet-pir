@@ -13,7 +13,8 @@
 
 use ipir_sp::modulus_switch::{published_c1_len, response_body_len};
 use ipir_sp::serialize::serialized_packing_keys_len;
-use transparent_shard::{DIRECTORY_ROWS, PAGE_ROWS, PAGE_ROW_BYTES};
+use transparent_shard::layout::{Geometry, PROFILES, RECENT_8K};
+use transparent_shard::PAGE_ROW_BYTES;
 
 /// One table's per-query and per-setup wire cost.
 struct Cost {
@@ -21,6 +22,22 @@ struct Cost {
     query: usize,
     response: usize,
     packing_keys: usize,
+}
+
+/// Which table of a geometry to cost. Local to this test: costing a table
+/// means reading its own two dimensions, and taking one from one table and one
+/// from the other is precisely the mistake worth making impossible here.
+#[derive(Clone, Copy)]
+enum Table {
+    Directory,
+    Pages,
+}
+
+fn table_cost(geometry: &Geometry, table: Table) -> Cost {
+    match table {
+        Table::Directory => cost(geometry.directory_rows, geometry.directory_row_bytes as u64),
+        Table::Pages => cost(geometry.page_rows, geometry.page_row_bytes as u64),
+    }
 }
 
 fn cost(rows: u64, row_bytes: u64) -> Cost {
@@ -101,8 +118,13 @@ fn evaluation_keys_dominate_every_query_whatever_the_geometry() {
 /// `docs/transparent-pir-evaluation/shard-utilisation/genesis-geometry-notes.md`.
 #[test]
 fn the_pinned_geometry_costs_what_it_did() {
-    let directory = cost(DIRECTORY_ROWS as u64, PAGE_ROW_BYTES as u64);
-    let pages = cost(PAGE_ROWS as u64, PAGE_ROW_BYTES as u64);
+    // Each table is costed at *its own* width. They agree across the whole
+    // registry today, and costing the directory at the page width was harmless
+    // for exactly that reason — right up until a geometry separated them, at
+    // which point this test would have gone on passing while reporting the
+    // wrong number.
+    let directory = table_cost(&RECENT_8K, Table::Directory);
+    let pages = table_cost(&RECENT_8K, Table::Pages);
     assert_eq!(directory.query, 128_008, "directory query");
     assert_eq!(pages.query, 128_008, "page query");
     assert_eq!(directory.setup, 14_336);
@@ -110,4 +132,35 @@ fn the_pinned_geometry_costs_what_it_did() {
     // Setup follows the row width, which neither table changed, so widening
     // the row *count* left the per-shard setup exactly where it was.
     assert_eq!(directory.response, pages.response);
+}
+
+/// Every registry geometry must be costable, and the archive tier must cost
+/// what the deployment plan says it does.
+///
+/// The plan's whole case for `archive-wide` is that a narrower directory keeps
+/// directory-only restoration at 258,056 upload bytes rather than the 430,088 a
+/// 65,536-row directory would cost, while the page table still absorbs dense
+/// old history. Those two numbers decide the tier, so they are pinned here
+/// rather than left in prose.
+#[test]
+fn the_archive_candidates_cost_what_the_plan_claims() {
+    let wide = table_cost(&transparent_shard::ARCHIVE_WIDE, Table::Directory);
+    assert_eq!(wide.query, 258_056, "archive-wide directory query");
+    let square = table_cost(&transparent_shard::ARCHIVE_32K, Table::Directory);
+    assert_eq!(square.query, 258_056, "archive-32k directory query");
+    // What a 65,536-row directory would have cost, and the reason neither
+    // candidate has one.
+    assert_eq!(cost(65_536, PAGE_ROW_BYTES as u64).query, 430_088);
+
+    for geometry in PROFILES {
+        for table in [Table::Directory, Table::Pages] {
+            let cost = table_cost(geometry, table);
+            // Setup and response follow the row *width*, which the registry
+            // holds constant, so every geometry pays the same for both and
+            // differs only in the query it uploads.
+            assert_eq!(cost.setup, 14_336, "{}", geometry.name);
+            assert_eq!(cost.response, 5_136, "{}", geometry.name);
+            assert_eq!(cost.packing_keys, 86_016, "{}", geometry.name);
+        }
+    }
 }

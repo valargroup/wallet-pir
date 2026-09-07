@@ -298,8 +298,14 @@ verify_public() {
     [[ "$attempt" -lt 30 ]] || fail "public endpoint never answered over TLS"
     sleep 10
   done
-  echo "$public" | jq -e '.directory_scheme and .pages_scheme' >/dev/null \
+  echo "$public" | jq -e '.geometries | length > 0' >/dev/null \
     || fail "public init is not the shard service: $public"
+  # Every geometry the worker serves must publish both tables' parameters. A
+  # half-populated entry would be a client deriving one table against the other.
+  echo "$public" \
+    | jq -e 'all(.geometries[]; .name and .directory_scheme and .pages_scheme
+                 and .directory_rows and .page_rows)' >/dev/null \
+    || fail "public init declares an incomplete geometry: $public"
 
   # The edge must serve the same set as the worker, not a stale or different one.
   local public_shards
@@ -316,6 +322,19 @@ verify_public() {
   [[ "$health_status" == "404" ]] \
     || fail "/v1/health is reachable publicly (HTTP $health_status); the route is too wide"
 
+  # Same rule for the metrics and readiness surfaces, which are new. They report
+  # cache occupancy, eviction and build rates -- operator information about how
+  # the worker is coping, and a running commentary on how much traffic it is
+  # taking. The Caddyfile allows only the routed prefixes, so this is a check
+  # that the allowlist was not widened rather than a check on the binary.
+  local operator_status
+  for operator_path in /metrics /v1/ready; do
+    operator_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+      --max-time 15 "$TRANSPARENT_PUBLIC_URL$operator_path")"
+    [[ "$operator_status" == "404" ]] \
+      || fail "$operator_path is reachable publicly (HTTP $operator_status); the route is too wide"
+  done
+
   # The public range filters. The service can serve these while the edge does
   # not route them, which is a silent half-deployment: the feature looks present
   # in the binary and is unreachable by any wallet. Compare the bytes against
@@ -331,7 +350,8 @@ verify_public() {
   [[ "$filter_bytes" -eq "$published_bytes" ]] \
     || fail "shard 0 filter is $filter_bytes bytes at the edge, $published_bytes as published"
 
-  echo "public edge serving $public_shards shards; shard 0 filter $filter_bytes B; /v1/health correctly 404"
+  echo "public edge serving $public_shards shards; shard 0 filter $filter_bytes B; \
+/v1/health, /metrics and /v1/ready correctly 404"
 }
 
 # ----------------------------------------------------------------------- main

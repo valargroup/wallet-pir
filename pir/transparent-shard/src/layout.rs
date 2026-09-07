@@ -389,22 +389,87 @@ impl PackedDemand {
 /// them and doubling the row count is the cheap one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Geometry {
+    /// The registry name this shape is published under.
+    ///
+    /// A shard names its geometry rather than restating its dimensions, so a
+    /// consumer selects one validated parameter set by name instead of
+    /// inferring it from numbers it would have to trust. The dimensions are
+    /// still published per segment and still checked against the named entry;
+    /// the name is what decides, and an unknown one is refused.
+    pub name: &'static str,
     pub directory_rows: u64,
     pub directory_row_bytes: usize,
     pub page_rows: u64,
+    pub page_row_bytes: usize,
     /// Events carried in a directory entry, which decides both how wide an
     /// entry is and whether a history touches the page table at all.
     pub inline_events: u32,
 }
 
+/// The default recent geometry, and what an unconfigured build publishes.
+pub const RECENT_8K: Geometry = Geometry {
+    name: "recent-8k",
+    directory_rows: 8_192,
+    directory_row_bytes: INSTANCE_BYTES,
+    page_rows: 8_192,
+    page_row_bytes: INSTANCE_BYTES,
+    inline_events: 2,
+};
+
+/// A narrower recent candidate: 43,008 fewer upload bytes per matched shard.
+///
+/// Not a default. Halving the scanned database does not halve latency, and more
+/// boundaries add filter downloads, setup and private queries that can erase
+/// the saving. Promote it only on measured total client bytes.
+pub const RECENT_4K: Geometry = Geometry {
+    name: "recent-4k",
+    directory_rows: 4_096,
+    page_rows: 4_096,
+    ..RECENT_8K
+};
+
+/// The square archive candidate, and the fallback if the wider one does not
+/// validate.
+pub const ARCHIVE_32K: Geometry = Geometry {
+    name: "archive-32k",
+    directory_rows: 32_768,
+    page_rows: 32_768,
+    ..RECENT_8K
+};
+
+/// The preferred archive candidate: a narrower directory than its pages.
+///
+/// The observed maximum is 284,221 scripts in a shard against the 458,752 a
+/// 32,768-row directory holds, so the directory has room to stay narrow while
+/// the page table absorbs dense old history. That keeps directory-only
+/// restoration at 258,056 upload bytes rather than 430,088.
+pub const ARCHIVE_WIDE: Geometry = Geometry {
+    name: "archive-wide",
+    directory_rows: 32_768,
+    page_rows: 65_536,
+    ..RECENT_8K
+};
+
+/// Every geometry a published shard may name.
+///
+/// A closed set rather than server-chosen parameters. Each entry is a shape the
+/// scheme serves, whose parameters a client validates once and reuses for every
+/// shard of that geometry; an arbitrary shape would cost a parameter set per
+/// shard and give a wallet nothing to check the server's choice against.
+pub const PROFILES: &[Geometry] = &[RECENT_8K, RECENT_4K, ARCHIVE_32K, ARCHIVE_WIDE];
+
+/// The registry entry named `name`, or `None` if there is no such geometry.
+///
+/// Callers must treat `None` as a hard error. A shard whose geometry this build
+/// does not know cannot be decoded, and skipping it would advance coverage over
+/// history that was never retrieved.
+pub fn by_name(name: &str) -> Option<&'static Geometry> {
+    PROFILES.iter().find(|geometry| geometry.name == name)
+}
+
 impl Default for Geometry {
     fn default() -> Self {
-        Self {
-            directory_rows: DIRECTORY_ROWS as u64,
-            directory_row_bytes: DIRECTORY_ROW_BYTES,
-            page_rows: PAGE_ROWS as u64,
-            inline_events: INLINE_EVENTS,
-        }
+        RECENT_8K
     }
 }
 
@@ -444,7 +509,7 @@ impl Geometry {
     }
 
     pub const fn page_bytes_per_segment(&self) -> u64 {
-        self.page_rows * PAGE_ROW_BYTES as u64
+        self.page_rows * self.page_row_bytes as u64
     }
 
     pub const fn fragments_for(&self, events: u32) -> u64 {
@@ -481,11 +546,60 @@ impl Geometry {
                 self.directory_row_bytes
             ));
         }
+        if self.page_row_bytes < INSTANCE_BYTES
+            || !self.page_row_bytes.is_multiple_of(INSTANCE_BYTES)
+        {
+            return Err(format!(
+                "{} page row bytes: the scheme charges in whole instances of {INSTANCE_BYTES}",
+                self.page_row_bytes
+            ));
+        }
         if self.directory_slots() == 0 {
             return Err(format!(
                 "a {}-byte entry does not fit a {}-byte row",
                 self.directory_entry_bytes(),
                 self.directory_row_bytes
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rejects a shape this build could not *encode*, as distinct from one the
+    /// scheme could not serve.
+    ///
+    /// [`Geometry::validate`] answers whether the PIR scheme would serve a
+    /// shape, which is the question a census asks of a candidate it will only
+    /// score. Publishing asks a stricter one, because the record codec in
+    /// [`crate::records`] and the fragment arithmetic above are compiled
+    /// against one row width: `DIRECTORY_SLOTS`, `EVENTS_PER_PAGE` and
+    /// `entries_per_row` are all derived from it, and every fixture is written
+    /// against the numbers that come out.
+    ///
+    /// So the registry varies row *counts* only. Widening a row is a codec
+    /// change — it moves `EVENTS_PER_PAGE` off 36 and `DIRECTORY_SLOTS` off 14,
+    /// which is a schema bump and a re-publication, not a new registry entry.
+    /// Lifting this means making those quantities functions of the geometry,
+    /// carrying them in `ManifestLayout`, and fixing `geometry_costs.rs`, which
+    /// prices the directory at the *page* width and is correct today only
+    /// because the two agree.
+    pub fn validate_publishable(&self) -> Result<(), String> {
+        self.validate()?;
+        if self.directory_row_bytes != DIRECTORY_ROW_BYTES {
+            return Err(format!(
+                "{} directory row bytes: this build encodes {DIRECTORY_ROW_BYTES}-byte rows",
+                self.directory_row_bytes
+            ));
+        }
+        if self.page_row_bytes != PAGE_ROW_BYTES {
+            return Err(format!(
+                "{} page row bytes: this build encodes {PAGE_ROW_BYTES}-byte rows",
+                self.page_row_bytes
+            ));
+        }
+        if self.inline_events != INLINE_EVENTS {
+            return Err(format!(
+                "{} inline events: this build encodes {INLINE_EVENTS}",
+                self.inline_events
             ));
         }
         Ok(())
@@ -528,6 +642,76 @@ pub const fn split_row(row: u64, per_segment: u64) -> (u32, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every registry entry must be servable by the scheme *and* encodable by
+    /// this build. A shape that failed either would be published as a name no
+    /// consumer could act on.
+    #[test]
+    fn every_registry_entry_is_publishable() {
+        for geometry in PROFILES {
+            geometry
+                .validate_publishable()
+                .unwrap_or_else(|error| panic!("{}: {error}", geometry.name));
+        }
+    }
+
+    /// Names are the addressing, so two entries sharing one would make the
+    /// registry ambiguous and `by_name` silently pick the first.
+    #[test]
+    fn registry_names_are_distinct_and_resolvable() {
+        for geometry in PROFILES {
+            assert_eq!(by_name(geometry.name), Some(geometry), "{}", geometry.name);
+        }
+        let names: std::collections::BTreeSet<&str> =
+            PROFILES.iter().map(|geometry| geometry.name).collect();
+        assert_eq!(names.len(), PROFILES.len(), "duplicate registry name");
+        assert_eq!(by_name("recent-16k"), None);
+        assert_eq!(by_name(""), None);
+    }
+
+    /// The registry varies row counts and nothing else. If this ever fails, the
+    /// record codec and `ManifestLayout` are part of the change — see
+    /// [`Geometry::validate_publishable`].
+    #[test]
+    fn the_registry_varies_row_counts_only() {
+        for geometry in PROFILES {
+            assert_eq!(geometry.directory_row_bytes, 3_584, "{}", geometry.name);
+            assert_eq!(geometry.page_row_bytes, 3_584, "{}", geometry.name);
+            assert_eq!(geometry.inline_events, 2, "{}", geometry.name);
+            assert_eq!(geometry.directory_slots(), 14, "{}", geometry.name);
+        }
+    }
+
+    /// The archive candidates are the ones the deployment plan turns on, so
+    /// their capacities are pinned rather than left to be recomputed by hand.
+    /// `archive-wide` exists because 284,221 observed scripts per shard fit a
+    /// 32,768-row directory's 458,752 slots with room, so the directory can
+    /// stay narrow while the page table absorbs dense history.
+    #[test]
+    fn the_archive_candidates_hold_what_they_claim() {
+        assert_eq!(ARCHIVE_32K.directory_capacity(), 458_752);
+        assert_eq!(ARCHIVE_WIDE.directory_capacity(), 458_752);
+        assert_eq!(ARCHIVE_WIDE.page_rows, 2 * ARCHIVE_WIDE.directory_rows);
+        assert_eq!(RECENT_4K.directory_capacity(), 57_344);
+        // A narrower directory buys a smaller query; a wider page table buys
+        // rows for old history. The two move independently, which is the point
+        // of having a pair rather than one number.
+        assert_eq!(ARCHIVE_WIDE.directory_bytes_per_segment(), 117_440_512);
+        assert_eq!(ARCHIVE_WIDE.page_bytes_per_segment(), 234_881_024);
+    }
+
+    /// A width the scheme *would* serve is still refused for publication,
+    /// because the record codec is compiled against one. Keeping the two
+    /// questions apart is what lets a census score a shape it must not build.
+    #[test]
+    fn a_servable_width_is_not_automatically_a_publishable_one() {
+        let wide = Geometry {
+            directory_row_bytes: 7_168,
+            ..Default::default()
+        };
+        wide.validate().expect("two instances is a legal width");
+        assert!(wide.validate_publishable().is_err());
+    }
 
     /// The compiled geometry is what `Default` reports. Everything a sweep says
     /// about a candidate is relative to this, so a drift here would silently

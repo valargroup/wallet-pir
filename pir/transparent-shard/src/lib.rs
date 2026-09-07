@@ -4,8 +4,15 @@
 //! filter, a private script directory, private event pages, and an optional
 //! private transaction-detail table. Its boundaries are decided by what it
 //! contains rather than by a fixed block width — see [`seal`] for why — and
-//! every shard shares one pinned table geometry, which is what lets one set of
-//! PIR parameters serve all of them.
+//! every shard names a table geometry from a small closed registry, which is
+//! what lets one set of PIR parameters serve every shard that names the same
+//! one.
+//!
+//! A set may mix them: archive geometry for old, dense history and a narrower
+//! recent geometry for the window wallets synchronise constantly. The registry
+//! is closed rather than open so a wallet validates a handful of parameter sets
+//! once instead of one per shard, and so a shard naming a shape this build does
+//! not know is refused rather than decoded as the shape it does know.
 //!
 //! This crate decides boundaries and lays out tables. It does not fetch chain
 //! data and it does not serve queries.
@@ -19,12 +26,14 @@ pub mod seal;
 
 pub use build::{build_shard, candidate_rows, place_scripts, BuildError, BuiltShard, Placement};
 pub use layout::{
-    entries_per_row, entry_bytes, fragments_for, shape_of, Geometry, PackedDemand, Shape,
-    DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW,
-    PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
+    by_name as geometry_by_name, entries_per_row, entry_bytes, fragments_for, shape_of, Geometry,
+    PackedDemand, Shape, ARCHIVE_32K, ARCHIVE_WIDE, DIRECTORY_ROWS, DIRECTORY_ROW_BYTES,
+    EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW, PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS,
+    PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES, PROFILES, RECENT_4K, RECENT_8K,
 };
 pub use manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
+    query_binding, ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry,
+    SCHEMA,
 };
 pub use page_row::{decode_page_row, encode_page_row, PageEntry};
 pub use records::{

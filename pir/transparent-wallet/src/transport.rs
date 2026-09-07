@@ -147,17 +147,29 @@ pub trait ShardTransport {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError>;
 
     /// One segment's published setup for one table, as JSON, with its cost.
+    ///
+    /// `revision` is the manifest digest the map named. Setup is derived from
+    /// a segment's own bytes, so a republished tail has different setup under a
+    /// different digest; addressing it by revision is what stops a wallet
+    /// decoding new bytes against the parameters of the revision it cached.
     fn setup(
         &mut self,
         shard_id: u64,
+        revision: &str,
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError>;
 
-    /// Answers one private query, against every segment of the shard.
+    /// Answers one private query, against every segment of the shard revision.
     ///
     /// The body is opaque and fixed length, and names a row within a segment
     /// rather than a segment: the answer carries one body per segment, in
     /// segment order.
-    fn query(&mut self, shard_id: u64, table: Table, body: &[u8]) -> Result<Vec<u8>, BoxError>;
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError>;
 }

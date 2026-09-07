@@ -46,6 +46,7 @@
 use crate::client::{ClientError, Table, TableClient};
 use crate::ledger::{Ledger, LedgerError};
 use crate::transport::{ByteCharges, FilterSource, ShardTransport};
+use std::collections::HashMap;
 use transparent_events::TransparentEvent;
 use transparent_filter::{
     validate_filter, BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap,
@@ -73,9 +74,37 @@ pub enum SyncError {
         served: String,
         expected: &'static str,
     },
+    /// A shard names a geometry this build has no parameters for.
+    ///
+    /// Fatal for the whole sync rather than a reason to skip the shard. Skipping
+    /// would advance coverage past a range whose history was never retrieved,
+    /// and the wallet would report a synchronised balance it has not earned.
+    #[error(
+        "shard set uses geometry {0}, which this build does not know; upgrade before syncing this \
+         range"
+    )]
+    UnknownGeometry(String),
 }
 
-/// The geometry a service declares, checked against this build's constants.
+/// One geometry's parameters, as a service declares them.
+///
+/// The dimensions come with the schemes so a wallet can check the pair rather
+/// than adopt either. A service naming a registry geometry but publishing other
+/// row counts under it is refused; so is one publishing the registry's row
+/// counts with a scheme they do not derive.
+pub struct GeometryParams {
+    pub name: String,
+    pub directory_rows: u64,
+    pub directory_row_bytes: u32,
+    pub directory_scheme: ipir_sp::YpirSchemeParams,
+    pub directory_setup_seed: u64,
+    pub page_rows: u64,
+    pub page_row_bytes: u32,
+    pub pages_scheme: ipir_sp::YpirSchemeParams,
+    pub pages_setup_seed: u64,
+}
+
+/// The geometries a service declares, checked against this build's registry.
 pub struct ServiceGeometry {
     /// The schema the service serves, from its init response.
     ///
@@ -85,10 +114,81 @@ pub struct ServiceGeometry {
     /// whatever it was handed would read a newer layout as the one it knows
     /// and reconstruct a plausible, wrong history. This is where that stops.
     pub schema: String,
-    pub directory_scheme: ipir_sp::YpirSchemeParams,
-    pub directory_setup_seed: u64,
-    pub pages_scheme: ipir_sp::YpirSchemeParams,
-    pub pages_setup_seed: u64,
+    /// One entry per geometry the service holds. A set spanning an archive tier
+    /// and a recent tier declares two.
+    pub geometries: Vec<GeometryParams>,
+}
+
+/// The prepared clients for one geometry: one per table.
+struct GeometryClients {
+    directory: TableClient,
+    pages: TableClient,
+}
+
+/// Every geometry a sync has prepared, by registry name.
+///
+/// Prepared on first use rather than up front, so a wallet syncing only recent
+/// history never pays to derive archive parameters. Once prepared, a geometry's
+/// clients are reused for every shard naming it — which is the saving that
+/// naming geometries from a closed registry exists to buy.
+struct Clients {
+    prepared: HashMap<String, GeometryClients>,
+}
+
+impl Clients {
+    /// Prepares the clients for `name`, checking the service's declaration
+    /// against this build's registry and re-deriving the scheme.
+    ///
+    /// Three things have to agree: the name must be one this build knows, the
+    /// dimensions the service published under it must be the registry's, and
+    /// the scheme must be what those dimensions derive. A service that could
+    /// move any one of them independently could choose a geometry for the
+    /// wallet, and choosing the geometry is choosing what the response reveals.
+    fn prepare(
+        &mut self,
+        name: &str,
+        declared: &[GeometryParams],
+    ) -> Result<&mut GeometryClients, SyncError> {
+        if !self.prepared.contains_key(name) {
+            let geometry = transparent_shard::layout::by_name(name)
+                .ok_or_else(|| SyncError::UnknownGeometry(name.to_string()))?;
+            let params = declared
+                .iter()
+                .find(|params| params.name == name)
+                .ok_or_else(|| {
+                    SyncError::Invalid(format!(
+                        "the map uses geometry {name} but the service declares no parameters for it"
+                    ))
+                })?;
+            if params.directory_rows != geometry.directory_rows
+                || params.directory_row_bytes != geometry.directory_row_bytes as u32
+                || params.page_rows != geometry.page_rows
+                || params.page_row_bytes != geometry.page_row_bytes as u32
+            {
+                return Err(SyncError::Invalid(format!(
+                    "the service declares geometry {name} with dimensions this build does not                      know it by"
+                )));
+            }
+            let clients = GeometryClients {
+                directory: TableClient::new(
+                    Table::Directory,
+                    geometry.directory_rows,
+                    geometry.directory_row_bytes as u32,
+                    params.directory_setup_seed,
+                    &params.directory_scheme,
+                )?,
+                pages: TableClient::new(
+                    Table::Pages,
+                    geometry.page_rows,
+                    geometry.page_row_bytes as u32,
+                    params.pages_setup_seed,
+                    &params.pages_scheme,
+                )?,
+            };
+            self.prepared.insert(name.to_string(), clients);
+        }
+        Ok(self.prepared.get_mut(name).expect("just prepared"))
+    }
 }
 
 /// What one sync recovered.
@@ -162,20 +262,9 @@ pub fn sync(
             })?
     };
 
-    let mut directory = TableClient::new(
-        Table::Directory,
-        transparent_shard::DIRECTORY_ROWS as u64,
-        transparent_shard::DIRECTORY_ROW_BYTES as u32,
-        geometry.directory_setup_seed,
-        &geometry.directory_scheme,
-    )?;
-    let mut pages = TableClient::new(
-        Table::Pages,
-        transparent_shard::PAGE_ROWS as u64,
-        transparent_shard::PAGE_ROW_BYTES as u32,
-        geometry.pages_setup_seed,
-        &geometry.pages_scheme,
-    )?;
+    let mut clients = Clients {
+        prepared: HashMap::new(),
+    };
 
     let mut charges = ByteCharges {
         map_bytes,
@@ -215,17 +304,23 @@ pub fn sync(
         );
         let matches = transparent_filter::match_range_scripts(&validated, key, scripts)?;
 
+        // The geometry is resolved only for a shard this wallet must actually
+        // read. A shard whose filter matched nothing holds no history for these
+        // scripts whatever its row counts — the filter is built over the shard's
+        // scripts and is independent of the table shape — so passing over it
+        // advances coverage across a range that was genuinely empty, not one
+        // that went unretrieved.
+        //
+        // That distinction is what makes an old wallet able to sync the recent
+        // window across an archive tier it cannot decode. It stops the moment
+        // there is something to fetch: an unknown geometry on a *matched* shard
+        // is fatal for the whole sync, because the alternative is reporting a
+        // synchronised balance over history that was never read.
         if !matches.is_empty() {
             matched_shards.push(entry.shard_id);
-            let recovered = retrieve_shard(
-                entry,
-                &matches,
-                scripts,
-                &mut directory,
-                &mut pages,
-                transport,
-                &mut charges,
-            )?;
+            let prepared = clients.prepare(&entry.geometry, &geometry.geometries)?;
+            let recovered =
+                retrieve_shard(entry, &matches, scripts, prepared, transport, &mut charges)?;
             unproductive += recovered.unproductive;
             events.extend(recovered.events);
         }
@@ -269,14 +364,21 @@ fn retrieve_shard(
     entry: &transparent_filter::ShardMapEntry,
     matches: &[usize],
     scripts: &[ScriptBytes],
-    directory: &mut TableClient,
-    pages: &mut TableClient,
+    clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
 ) -> Result<Recovered, SyncError> {
     let shard_id = entry.shard_id;
+    // The geometry is resolved once per shard rather than per row: the map
+    // named it, `Clients::prepare` checked it against the registry, and every
+    // offset below is taken against the same entry.
+    let geometry = transparent_shard::layout::by_name(&entry.geometry)
+        .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
+    let revision = entry.manifest_digest.as_str();
+    let GeometryClients { directory, pages } = clients;
     open_table(
         shard_id,
+        revision,
         Table::Directory,
         entry.directory_segments,
         directory,
@@ -299,13 +401,13 @@ fn retrieve_shard(
         // the shard's whole logical row space; each names one row within a
         // segment, and every segment answers it.
         let mut found: Option<DirectoryEntry> = None;
-        let rows = transparent_shard::DIRECTORY_ROWS as u64 * entry.directory_segments as u64;
+        let rows = geometry.directory_rows * entry.directory_segments as u64;
         for row in candidate_rows(shard_id, script.as_slice(), rows) {
-            let (_, within) =
-                transparent_shard::layout::split_row(row, transparent_shard::DIRECTORY_ROWS as u64);
+            let (_, within) = transparent_shard::layout::split_row(row, geometry.directory_rows);
             let answers = directory.fetch_row(
                 transport,
                 shard_id,
+                revision,
                 entry.directory_segments,
                 within as usize,
                 charges,
@@ -346,6 +448,7 @@ fn retrieve_shard(
     if !needs_pages.is_empty() {
         open_table(
             shard_id,
+            revision,
             Table::Pages,
             entry.page_segments,
             pages,
@@ -364,19 +467,18 @@ fn retrieve_shard(
                 let row = found.first_page.checked_add(ordinal).ok_or_else(|| {
                     SyncError::Invalid(format!("shard {shard_id} page extent overflows"))
                 })?;
-                let space = transparent_shard::PAGE_ROWS as u64 * u64::from(entry.page_segments);
+                let space = geometry.page_rows * u64::from(entry.page_segments);
                 if u64::from(row) >= space {
                     return Err(SyncError::Invalid(format!(
                         "shard {shard_id} page {row} is outside its {space}-row table"
                     )));
                 }
-                let (_, within) = transparent_shard::layout::split_row(
-                    row as u64,
-                    transparent_shard::PAGE_ROWS as u64,
-                );
+                let (_, within) =
+                    transparent_shard::layout::split_row(row as u64, geometry.page_rows);
                 let answers = pages.fetch_row(
                     transport,
                     shard_id,
+                    revision,
                     entry.page_segments,
                     within as usize,
                     charges,
@@ -440,6 +542,7 @@ fn retrieve_shard(
 /// with one segment — the ordinary case — costs exactly one setup per table.
 fn open_table(
     shard_id: u64,
+    revision: &str,
     table: Table,
     segments: u32,
     client: &mut TableClient,
@@ -453,11 +556,11 @@ fn open_table(
         )));
     }
     for segment in 0..segments {
-        if client.is_open(shard_id, segment) {
+        if client.is_open(revision, segment) {
             continue;
         }
         let (raw, cost) = transport
-            .setup(shard_id, table, segment)
+            .setup(shard_id, revision, table, segment)
             .map_err(|error| SyncError::Transport(error.to_string()))?;
         charges.add_setup(table, cost);
         let parsed: serde_json::Value = serde_json::from_slice(&raw)
@@ -468,7 +571,7 @@ fn open_table(
         let digest = parsed["public_params_sha256"]
             .as_str()
             .ok_or_else(|| SyncError::Invalid("setup has no digest".into()))?;
-        client.open_segment(shard_id, segment, params, digest)?;
+        client.open_segment(revision, segment, params, digest)?;
     }
     Ok(())
 }

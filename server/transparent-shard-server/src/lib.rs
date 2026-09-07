@@ -1,10 +1,13 @@
 //! Private retrieval from a published transparent shard set.
 //!
-//! Serves the private directory and page tables of many shards from one
-//! process, under one shared parameter set per table. It does not serve
-//! filters: those are public and belong to the filter service, and a wallet
-//! must not learn to fetch public bytes from the same place it makes private
-//! requests.
+//! Serves the private directory and page tables of many shard revisions from
+//! one process, under one shared parameter set per geometry per table. It also
+//! serves the public shard map and range filters, which the filter service
+//! serves at the same paths on its own host — so a wallet that wants its public
+//! and private bytes to come from different origins still has that, and one
+//! that wants a single endpoint has that too.
 
+pub mod metrics;
+pub mod runtime;
 pub mod service;
 pub mod shardset;

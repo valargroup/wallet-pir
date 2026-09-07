@@ -25,16 +25,12 @@ use transparent_filter::{filter_hash, BlockHash, ScriptBytes};
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::zakura::ZakuraClient;
 use transparent_shard::build::build_shard;
-use transparent_shard::layout::{DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, PAGE_ROWS, PAGE_ROW_BYTES};
+use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, PublishedRevision, ShardManifest,
     TableGeometry, SCHEMA,
 };
-use transparent_shard::records::DIRECTORY_SLOTS;
-use transparent_shard::seal::{Limit, SealPolicy, Sealer};
-
-/// Scripts one directory segment holds, which is the geometry and not a guess.
-const DIRECTORY_CAPACITY: u64 = DIRECTORY_ROWS as u64 * DIRECTORY_SLOTS as u64;
+use transparent_shard::seal::{PageBasis, SealPolicy, Sealer};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -45,30 +41,28 @@ struct Cli {
     data_dir: PathBuf,
     #[arg(long, default_value = "./transparent-shards")]
     output: PathBuf,
-    /// Scripts at which a shard prefers to seal.
+    /// Geometry for history at and after `--recent-from`.
     ///
-    /// Six sevenths of what a directory segment holds. The remaining seventh is
-    /// what one more block may add before the seal takes effect, and what
-    /// two-choice placement needs to keep every shard in one segment: relocation
-    /// holds this load, and the measured run placed 511 of 511 shards without a
-    /// second segment.
-    #[arg(long, default_value_t = DIRECTORY_CAPACITY - DIRECTORY_CAPACITY / 7)]
-    scripts_target: u64,
-    /// Scripts a shard's directory can hold.
+    /// The window wallets synchronise constantly, so it is sized for a small
+    /// query rather than for holding the most content.
+    #[arg(long, default_value = "recent-8k")]
+    recent_geometry: String,
+    /// Geometry for history before `--recent-from`.
     ///
-    /// Derived, never restated. This was a literal 28,672 that happened to
-    /// equal the geometry, which is a number that stops being true the moment
-    /// the geometry moves and says nothing when it does.
-    #[arg(long, default_value_t = DIRECTORY_CAPACITY)]
-    scripts_capacity: u64,
-    /// Page rows at which a shard prefers to seal.
+    /// Defaults to the recent geometry, which publishes a single-geometry set —
+    /// what every existing published set is. Give both this and `--recent-from`
+    /// to publish the two-tier set the deployment plan describes.
+    #[arg(long)]
+    archive_geometry: Option<String>,
+    /// First height of the recent tier.
     ///
-    /// Held under `PAGE_ROWS` with headroom, so a shard stays single-segment: a
-    /// second segment multiplies query cost for every user of the shard.
-    #[arg(long, default_value_t = PAGE_ROWS as u64 - PAGE_ROWS as u64 / 32)]
-    page_rows_target: u64,
-    #[arg(long, default_value_t = PAGE_ROWS as u64)]
-    page_rows_capacity: u64,
+    /// A forced shard boundary: a shard's rows are addressed at one row count,
+    /// so no shard may span the change. Derive it from the pinned anchor's
+    /// chain timestamp rather than from a block count — a height standing in
+    /// for "six months" drifts with the interval, and re-deriving it later
+    /// would re-shard the chain.
+    #[arg(long)]
+    recent_from: Option<u64>,
     /// Needed for exactly one thing: the block hash before the journal's first
     /// height, which is shard zero's parent and is by definition not in the
     /// journal.
@@ -76,6 +70,36 @@ struct Cli {
     zakura_rpc_url: String,
     #[arg(long)]
     zakura_cookie: PathBuf,
+}
+
+/// Writes `bytes` to `path` so that a reader sees either all of them or none.
+///
+/// Temp file, fsync, rename. A published set is read back by a service that
+/// refuses to start on a file that does not match its digest, so a half-written
+/// file is not a corruption a reader has to detect — but only if the partial
+/// state is never visible under the final name. `std::fs::write` truncates in
+/// place, so an interrupted publish leaves a short file *at the name the map
+/// points to*, which is exactly the state a deploy would then try to ship.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
+    use std::io::Write;
+    let temp = path.with_extension("tmp");
+    {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(bytes)?;
+        // The rename is ordered after the data only if the data is on disk
+        // first. Without this, a crash can leave the new name pointing at a
+        // file whose contents never arrived.
+        file.sync_all()?;
+    }
+    std::fs::rename(&temp, path)?;
+    // Durably link the new name into the directory, so the rename survives a
+    // crash rather than only the bytes it points to.
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+    Ok(())
 }
 
 fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError> {
@@ -90,8 +114,7 @@ fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError>
         }
         return Ok(());
     }
-    std::fs::write(&path, bytes)?;
-    Ok(())
+    write_atomic(&path, bytes)
 }
 
 #[tokio::main]
@@ -103,10 +126,43 @@ async fn main() -> Result<(), BoxError> {
     };
     let first = store.start_height();
 
-    let policy = SealPolicy {
-        scripts: Limit::new(cli.scripts_target, cli.scripts_capacity)?,
-        page_rows: Limit::new(cli.page_rows_target, cli.page_rows_capacity)?,
+    let recent: &'static Geometry = geometry_by_name(&cli.recent_geometry)
+        .ok_or_else(|| format!("unknown geometry {:?}", cli.recent_geometry))?;
+    let archive: &'static Geometry = match &cli.archive_geometry {
+        Some(name) => geometry_by_name(name).ok_or_else(|| format!("unknown geometry {name:?}"))?,
+        None => recent,
     };
+    // A cutoff is only meaningful if the two tiers differ, and two differing
+    // tiers are only publishable if there is a cutoff. Accepting either alone
+    // would silently publish a single-geometry set under a command line that
+    // asked for two.
+    let cutoff = match (cli.recent_from, archive.name == recent.name) {
+        (Some(_), true) => {
+            return Err("--recent-from needs an --archive-geometry that differs from                         --recent-geometry"
+                .into())
+        }
+        (None, false) => {
+            return Err("--archive-geometry needs --recent-from to say where the tiers                         divide"
+                .into())
+        }
+        (Some(height), false) => Some(height),
+        (None, true) => None,
+    };
+    if let Some(height) = cutoff {
+        if height <= first || height > covered {
+            return Err(format!(
+                "--recent-from {height} is outside the journal's {first}-{covered}"
+            )
+            .into());
+        }
+    }
+
+    // Thresholds are the geometry's, not the operator's. They are schema — two
+    // sets built under different ones are different partitions of the chain —
+    // and deriving them from the row counts is what stops a geometry acquiring
+    // a second, disagreeing policy.
+    let archive_policy = SealPolicy::for_geometry(archive);
+    let recent_policy = SealPolicy::for_geometry(recent);
     let genesis = BlockHash::from_display_hex(store.genesis_hash())?;
 
     // Shard zero's parent is the block before coverage begins, which the
@@ -116,12 +172,28 @@ async fn main() -> Result<(), BoxError> {
     let base_parent = BlockHash::from_display_hex(&zakura.block_hash(first - 1).await?)?;
 
     std::fs::create_dir_all(&cli.output)?;
-    eprintln!("journal {first}-{covered}, sealing at {policy:?}");
+    match cutoff {
+        None => eprintln!(
+            "journal {first}-{covered}, all {} sealing at {archive_policy:?}",
+            recent.name
+        ),
+        Some(height) => eprintln!(
+            "journal {first}-{covered}, {} below {height} at {archive_policy:?}, \
+             {} from {height} at {recent_policy:?}",
+            archive.name, recent.name
+        ),
+    }
 
     // Buffer each shard's events as the sealer decides boundaries. A shard's
     // events are needed all at once, since pages are per script and a script's
     // history can span the whole shard.
-    let mut sealer = Sealer::new(policy, first);
+    let mut geometry = if cutoff.is_some() { archive } else { recent };
+    let mut policy = if cutoff.is_some() {
+        archive_policy
+    } else {
+        recent_policy
+    };
+    let mut sealer = Sealer::with_geometry(policy, first, PageBasis::default(), *geometry);
     let mut pending: Vec<(
         u64,
         Vec<(ScriptBytes, transparent_events::TransparentEvent)>,
@@ -161,7 +233,9 @@ async fn main() -> Result<(), BoxError> {
         Vec<(ScriptBytes, transparent_events::TransparentEvent)>,
     )],
                    parent_block_hash: BlockHash,
-                   parent_manifest_digest: &str|
+                   parent_manifest_digest: &str,
+                   geometry: &'static Geometry,
+                   policy: SealPolicy|
      -> Result<(String, BlockHash, transparent_filter::ShardMapEntry), BoxError> {
         let terminal = store
             .block_at(shard.end_height)
@@ -179,6 +253,7 @@ async fn main() -> Result<(), BoxError> {
             genesis,
             terminal,
             transparent_filter::RANGE_PROFILE,
+            geometry,
             &events,
         )?;
 
@@ -213,6 +288,7 @@ async fn main() -> Result<(), BoxError> {
         let make = |revision: u32, supersedes: String| ShardManifest {
             schema: SCHEMA.to_string(),
             profile: transparent_filter::RANGE_PROFILE.to_string(),
+            geometry: geometry.name.to_string(),
             network: transparent_filter::NETWORK.to_string(),
             genesis_hash: store.genesis_hash().to_string(),
             shard_id: shard.shard_id,
@@ -243,8 +319,8 @@ async fn main() -> Result<(), BoxError> {
                 .directory
                 .iter()
                 .map(|segment| TableGeometry {
-                    rows: DIRECTORY_ROWS as u64,
-                    row_bytes: DIRECTORY_ROW_BYTES as u32,
+                    rows: geometry.directory_rows,
+                    row_bytes: geometry.directory_row_bytes as u32,
                     sha256: hex::encode(Sha256::digest(segment)),
                 })
                 .collect(),
@@ -252,8 +328,8 @@ async fn main() -> Result<(), BoxError> {
                 .pages
                 .iter()
                 .map(|segment| TableGeometry {
-                    rows: PAGE_ROWS as u64,
-                    row_bytes: PAGE_ROW_BYTES as u32,
+                    rows: geometry.page_rows,
+                    row_bytes: geometry.page_row_bytes as u32,
                     sha256: hex::encode(Sha256::digest(segment)),
                 })
                 .collect(),
@@ -326,6 +402,7 @@ async fn main() -> Result<(), BoxError> {
 
         let entry = transparent_filter::ShardMapEntry {
             shard_id: shard.shard_id,
+            geometry: geometry.name.to_string(),
             start_height: shard.start_height,
             end_height: shard.end_height,
             parent_block_hash: manifest.parent_block_hash.clone(),
@@ -344,6 +421,40 @@ async fn main() -> Result<(), BoxError> {
     };
 
     for height in first..=covered {
+        // The tiers divide at a height, so the archive sealer is closed before
+        // the first recent block is offered to anything. A shard's rows are
+        // addressed at one row count; one spanning the change could not be
+        // read at either.
+        if cutoff == Some(height) {
+            if let Some(shard) = sealer.seal_at_geometry_change() {
+                let (digest, terminal, entry) = publish(
+                    shard,
+                    &pending,
+                    parent_block_hash,
+                    &parent_manifest_digest,
+                    geometry,
+                    policy,
+                )?;
+                parent_manifest_digest = digest;
+                parent_block_hash = terminal;
+                entries.push(entry);
+                pending.clear();
+            }
+            // Ids continue across the change: a shard id is the wallet's stable
+            // handle on a range, and restarting at zero would publish two
+            // shards under one id.
+            let next_shard_id = sealer.next_shard_id();
+            geometry = recent;
+            policy = recent_policy;
+            sealer = Sealer::resume(
+                policy,
+                height,
+                PageBasis::default(),
+                *geometry,
+                next_shard_id,
+            );
+        }
+
         let events = store
             .events_at(height)?
             .ok_or_else(|| format!("height {height} is missing from the journal"))?;
@@ -359,8 +470,14 @@ async fn main() -> Result<(), BoxError> {
                 .position(|(h, _)| *h > shard.end_height)
                 .unwrap_or(pending.len());
             let carried = pending.split_off(split);
-            let (digest, terminal, entry) =
-                publish(shard, &pending, parent_block_hash, &parent_manifest_digest)?;
+            let (digest, terminal, entry) = publish(
+                shard,
+                &pending,
+                parent_block_hash,
+                &parent_manifest_digest,
+                geometry,
+                policy,
+            )?;
             parent_manifest_digest = digest;
             parent_block_hash = terminal;
             entries.push(entry);
@@ -368,7 +485,14 @@ async fn main() -> Result<(), BoxError> {
         }
     }
     if let Some(shard) = sealer.finish() {
-        let (_, _, entry) = publish(shard, &pending, parent_block_hash, &parent_manifest_digest)?;
+        let (_, _, entry) = publish(
+            shard,
+            &pending,
+            parent_block_hash,
+            &parent_manifest_digest,
+            geometry,
+            policy,
+        )?;
         entries.push(entry);
     }
 
@@ -378,18 +502,41 @@ async fn main() -> Result<(), BoxError> {
         profile: transparent_filter::RANGE_PROFILE.to_string(),
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: first,
-        seal: transparent_filter::SealParameters {
-            max_scripts: policy.scripts.target,
-            max_page_rows: policy.page_rows.target,
-            max_txids: 0,
-        },
+        // One entry per geometry the set actually used. A single-tier set
+        // publishes one; the two-tier set publishes both, because the two were
+        // sealed under different thresholds and one figure would describe
+        // neither.
+        seal: entries
+            .iter()
+            .map(|entry| entry.geometry.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|name| {
+                let used = if name == recent.name {
+                    recent_policy
+                } else {
+                    archive_policy
+                };
+                (
+                    name,
+                    transparent_filter::SealParameters {
+                        max_scripts: used.scripts.target,
+                        max_page_rows: used.page_rows.target,
+                        max_txids: 0,
+                    },
+                )
+            })
+            .collect(),
         shards: entries,
     };
     map.check_shape()
         .map_err(|error| format!("the published map is malformed: {error}"))?;
-    std::fs::write(
-        cli.output.join("shards.json"),
-        serde_json::to_vec_pretty(&map)?,
+    // Written last, and atomically. The map is what names every shard, so a
+    // truncated one is a set that cannot be loaded at all; and until it names
+    // them, the shard directories beside it are simply not part of any set.
+    write_atomic(
+        &cli.output.join("shards.json"),
+        &serde_json::to_vec_pretty(&map)?,
     )?;
 
     let filter_bytes: u64 = map.shards.iter().map(|s| s.scripts * 5 / 2).sum();

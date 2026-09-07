@@ -33,7 +33,8 @@
 //! which would flatter the plaintext side of the measurement.
 
 use clap::Parser;
-use transparent_shard_server::service::{SharedParams, TableRuntime};
+use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
+use transparent_shard_server::runtime::{reserved_bytes, SharedParams, TableRuntime};
 use transparent_shard_server::shardset::Table;
 
 #[derive(Parser)]
@@ -47,10 +48,18 @@ struct Cli {
     #[arg(long, default_value_t = 6)]
     runtimes: usize,
 
-    /// Which table's geometry to measure. Both are pinned to the same rows and
-    /// row width, so this exists to confirm that rather than to choose.
+    /// Which of the geometry's two tables to measure.
     #[arg(long, default_value = "directory")]
     table: String,
+
+    /// Which registry geometry to measure.
+    ///
+    /// The reservation the serving cache makes is a formula over the scheme,
+    /// and this is what checks it against a real process. Measure every
+    /// geometry the fleet will actually hold before sizing a cache budget from
+    /// the formula alone.
+    #[arg(long, default_value = "recent-8k")]
+    geometry: String,
 }
 
 /// This process's resident set size, in bytes.
@@ -78,18 +87,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("at least two runtimes are needed to read a slope".into());
     }
 
-    let plaintext = table.rows() * u64::from(table.row_bytes());
+    let geometry: &'static Geometry = geometry_by_name(&cli.geometry)
+        .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
+
+    let plaintext = table.rows(geometry) * u64::from(table.row_bytes(geometry));
     println!(
-        "table {:<9} {} rows x {} B = {:.2} MiB of plaintext",
+        "geometry {:<13} table {:<9} {} rows x {} B = {:.2} MiB of plaintext",
+        geometry.name,
         table.as_str(),
-        table.rows(),
-        table.row_bytes(),
+        table.rows(geometry),
+        table.row_bytes(geometry),
         mib(plaintext),
     );
 
     let baseline = rss();
-    let shared = SharedParams::build(table)?;
+    let shared = SharedParams::build(geometry, table)?;
     println!("scheme  {}", serde_json::to_string(&shared.scheme)?);
+    // What the serving cache reserves for one of these. The measurement below
+    // is what decides whether that reservation is honest; a formula that came
+    // in under the real slope would turn a bounded cache back into an
+    // unbounded one.
+    println!(
+        "cache reserves {:.2} MiB per runtime",
+        mib(reserved_bytes(shared.rlwe, &shared.scheme))
+    );
 
     // Held for every build and never rebuilt, so the plaintext is charged once
     // here rather than counted against any runtime.
@@ -112,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // or can be rebuilt when something actually asks for it, which is the
         // difference between the tail needing a host of its own and sharing one.
         let started = std::time::Instant::now();
-        held.push(TableRuntime::build(&shared, table, &rows)?);
+        held.push(TableRuntime::build(&shared, &rows)?);
         let elapsed = started.elapsed();
         let now = rss();
         println!(

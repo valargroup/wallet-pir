@@ -12,12 +12,16 @@ use std::path::Path;
 use tower::ServiceExt;
 use transparent_filter::{filter_hash, BlockHash, ScriptBytes, ShardMap, ShardMapEntry};
 use transparent_shard::build::build_shard;
-use transparent_shard::layout::{DIRECTORY_ROWS, DIRECTORY_ROW_BYTES, PAGE_ROWS, PAGE_ROW_BYTES};
+use transparent_shard::layout::{Geometry, RECENT_8K};
 use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
+    query_binding, ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry,
+    SCHEMA,
 };
-use transparent_shard_server::service::{router, ServiceState};
-use transparent_shard_server::shardset::{ShardSet, Table};
+use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
+use transparent_shard_server::shardset::{setup_seed, ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
+
+/// The geometry this fixture publishes at.
+const GEOMETRY: Geometry = RECENT_8K;
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const SHARDS: u64 = 3;
@@ -83,6 +87,7 @@ fn publish(dir: &Path) -> ShardMap {
             genesis(),
             terminal,
             transparent_filter::RANGE_PROFILE,
+            &GEOMETRY,
             &events,
         )
         .expect("build");
@@ -90,6 +95,7 @@ fn publish(dir: &Path) -> ShardMap {
         let manifest = ShardManifest {
             schema: SCHEMA.to_string(),
             profile: transparent_filter::RANGE_PROFILE.to_string(),
+            geometry: GEOMETRY.name.to_string(),
             network: transparent_filter::NETWORK.to_string(),
             genesis_hash: GENESIS.to_string(),
             shard_id,
@@ -120,8 +126,8 @@ fn publish(dir: &Path) -> ShardMap {
                 .directory
                 .iter()
                 .map(|segment| TableGeometry {
-                    rows: DIRECTORY_ROWS as u64,
-                    row_bytes: DIRECTORY_ROW_BYTES as u32,
+                    rows: GEOMETRY.directory_rows,
+                    row_bytes: GEOMETRY.directory_row_bytes as u32,
                     sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
                 })
                 .collect(),
@@ -129,8 +135,8 @@ fn publish(dir: &Path) -> ShardMap {
                 .pages
                 .iter()
                 .map(|segment| TableGeometry {
-                    rows: PAGE_ROWS as u64,
-                    row_bytes: PAGE_ROW_BYTES as u32,
+                    rows: GEOMETRY.page_rows,
+                    row_bytes: GEOMETRY.page_row_bytes as u32,
                     sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
                 })
                 .collect(),
@@ -159,6 +165,7 @@ fn publish(dir: &Path) -> ShardMap {
 
         entries.push(ShardMapEntry {
             shard_id,
+            geometry: GEOMETRY.name.to_string(),
             start_height: start,
             end_height: end,
             parent_block_hash: manifest.parent_block_hash.clone(),
@@ -182,11 +189,14 @@ fn publish(dir: &Path) -> ShardMap {
         profile: transparent_filter::RANGE_PROFILE.to_string(),
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
-        seal: transparent_filter::SealParameters {
-            max_scripts: 8_192,
-            max_page_rows: 2_048,
-            max_txids: 0,
-        },
+        seal: std::collections::BTreeMap::from([(
+            GEOMETRY.name.to_string(),
+            transparent_filter::SealParameters {
+                max_scripts: 8_192,
+                max_page_rows: 2_048,
+                max_txids: 0,
+            },
+        )]),
         shards: entries,
     };
     std::fs::write(
@@ -206,10 +216,10 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     publish(dir.path());
-    let set = ShardSet::open(dir.path()).expect("load");
-    let served = ShardSet::open(dir.path()).expect("load");
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
+    let served = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
     Fixture {
-        state: ServiceState::build(served).expect("state"),
+        state: ServiceState::build(served, ServiceConfig::default()).expect("state"),
         set,
         _dir: dir,
     }
@@ -245,21 +255,39 @@ async fn post(state: &ServiceState, path: &str, body: Vec<u8>) -> (StatusCode, V
     (status, body.to_vec())
 }
 
+/// The manifest digest naming the current revision of `shard_id`.
+///
+/// Every private route is addressed by revision, so a test that wants to reach
+/// a shard has to say which publication of it it means — the same thing a
+/// wallet reads out of the map.
+fn revision_of(f: &Fixture, shard_id: u64) -> String {
+    f.set.get(shard_id).unwrap().digest.clone()
+}
+
 /// Builds a client for one table and retrieves `row` from `shard_id`.
 async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u8> {
     let (status, raw) = get(&f.state, "/v1/shards/init").await;
     assert_eq!(status, StatusCode::OK);
     let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let geometries = init["geometries"].as_array().unwrap();
+    let published = geometries
+        .iter()
+        .find(|entry| entry["name"] == GEOMETRY.name)
+        .expect("the fixture's geometry is published");
     let scheme_key = match table {
         Table::Directory => "directory_scheme",
         Table::Pages => "pages_scheme",
     };
     let scheme: ipir_sp::YpirSchemeParams =
-        serde_json::from_value(init[scheme_key].clone()).unwrap();
+        serde_json::from_value(published[scheme_key].clone()).unwrap();
 
+    let revision = revision_of(f, shard_id);
     let (status, raw) = get(
         &f.state,
-        &format!("/v1/shards/{shard_id}/setup/{}/0", table.as_str()),
+        &format!(
+            "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/0",
+            table.as_str()
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -272,35 +300,42 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
 
     // Re-derive rather than trust: a client that adopted the server's
     // parameters would decode against whatever geometry the server chose.
-    let (rlwe, expected) =
-        ipir_sp::params_for_simplepir(table.rows(), (table.row_bytes() as u64) * 8).unwrap();
+    let (rlwe, expected) = ipir_sp::params_for_simplepir(
+        table.rows(&GEOMETRY),
+        (table.row_bytes(&GEOMETRY) as u64) * 8,
+    )
+    .unwrap();
     assert_eq!(
         scheme, expected,
         "the served scheme must be the one a client re-derives"
     );
 
     let mut seed = [0u8; 32];
-    seed[..8].copy_from_slice(&table.setup_seed().to_le_bytes());
+    seed[..8].copy_from_slice(&setup_seed(&GEOMETRY, table).to_le_bytes());
     let client = ipir_sp::IPIRClient::new(&rlwe, &expected);
     let setup_matrix = client.generate_public_query_setup_simplepir_from_seed(seed);
     let blocks = expected.db_cols / rlwe.d;
-    let published =
+    let published_c1 =
         ipir_sp::modulus_switch::recover_published_c1(&public_params, rlwe.d, blocks, rlwe.q);
 
     let (query, packing_keys, query_seed) =
         client.generate_fresh_query_simplepir(&setup_matrix, row);
-    let mut body = shard_id.to_le_bytes().to_vec();
+    let binding = query_binding(&revision, table.as_str());
+    let mut body = binding.to_vec();
     body.extend(ipir_sp::serialize::serialize_packing_keys(&rlwe, &packing_keys).unwrap());
     body.extend(query.to_switched_bytes(rlwe.q, expected.query_bits));
 
     let (status, response) = post(
         &f.state,
-        &format!("/v1/shards/{shard_id}/query/{}", table.as_str()),
+        &format!(
+            "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+            table.as_str()
+        ),
         body,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "query failed");
-    assert_eq!(&response[..8], &shard_id.to_le_bytes());
+    assert_eq!(&response[..8], &binding);
     // One body per segment. These fixtures are single-segment shards, so the
     // answer is one body; the multi-segment case has its own test.
     assert_eq!(
@@ -309,8 +344,8 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
         "one body per segment"
     );
 
-    let decoded = client.decode_response_simplepir(query_seed, &published, &response[16..]);
-    decoded[..table.row_bytes() as usize].to_vec()
+    let decoded = client.decode_response_simplepir(query_seed, &published_c1, &response[16..]);
+    decoded[..table.row_bytes(&GEOMETRY) as usize].to_vec()
 }
 
 fn raw_row(table_bytes: &[u8], row_bytes: usize, row: usize) -> &[u8] {
@@ -324,13 +359,10 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
         for (table, row) in [(Table::Directory, 11usize), (Table::Pages, 3)] {
             let decoded = retrieve(&f, shard_id, table, row).await;
             let shard = f.set.get(shard_id).unwrap();
+            let published = shard.segment(table, 0).unwrap().load().unwrap();
             assert_eq!(
                 decoded,
-                raw_row(
-                    shard.table(table, 0).unwrap(),
-                    table.row_bytes() as usize,
-                    row
-                ),
+                raw_row(&published, table.row_bytes(&GEOMETRY) as usize, row),
                 "shard {shard_id} {} row {row}",
                 table.as_str()
             );
@@ -338,44 +370,107 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
     }
 }
 
-/// The shard id is in the query prefix precisely so a query cannot be answered
-/// by the wrong shard. Without it a client would decode plausible nonsense.
-#[tokio::test]
-async fn a_query_built_for_one_shard_is_refused_by_another() {
-    let f = fixture();
-    let mut body = 0u64.to_le_bytes().to_vec();
+/// A full-length query body for the fixture's geometry, prefixed as `revision`
+/// and `table` require.
+fn padded_body(revision: &str, table: Table) -> Vec<u8> {
     let (rlwe, scheme) = ipir_sp::params_for_simplepir(
-        Table::Directory.rows(),
-        (Table::Directory.row_bytes() as u64) * 8,
+        table.rows(&GEOMETRY),
+        (table.row_bytes(&GEOMETRY) as u64) * 8,
     )
     .unwrap();
+    let mut body = query_binding(revision, table.as_str()).to_vec();
     body.resize(
         8 + ipir_sp::serialize::serialized_packing_keys_len(&rlwe)
             + (scheme.db_rows * scheme.query_bits).div_ceil(8),
         0,
     );
-    let (status, _) = post(&f.state, "/v1/shards/1/query/directory", body).await;
+    body
+}
+
+/// The binding in the query prefix is precisely so a query cannot be answered
+/// by the wrong shard. Without it a client would decode plausible nonsense.
+#[tokio::test]
+async fn a_query_built_for_one_shard_is_refused_by_another() {
+    let f = fixture();
+    let zero = revision_of(&f, 0);
+    let one = revision_of(&f, 1);
+    // Shard zero's binding, sent to shard one's revision.
+    let body = padded_body(&zero, Table::Directory);
+    let (status, _) = post(
+        &f.state,
+        &format!("/v1/shards/1/revisions/{one}/query/directory"),
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// The binding names the table as well as the revision, so a page query cannot
+/// be answered from the directory it shares a shard with.
+#[tokio::test]
+async fn a_query_built_for_one_table_is_refused_by_the_other() {
+    let f = fixture();
+    let revision = revision_of(&f, 0);
+    let body = padded_body(&revision, Table::Pages);
+    let (status, _) = post(
+        &f.state,
+        &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+        body,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
 async fn a_truncated_query_is_refused_rather_than_padded() {
     let f = fixture();
-    let body = 0u64.to_le_bytes().to_vec();
-    let (status, _) = post(&f.state, "/v1/shards/0/query/directory", body).await;
+    let revision = revision_of(&f, 0);
+    let body = query_binding(&revision, "directory").to_vec();
+    let (status, _) = post(
+        &f.state,
+        &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+        body,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
 async fn unknown_shards_and_tables_are_refused() {
     let f = fixture();
-    let (status, _) = get(&f.state, "/v1/shards/99/setup/directory/0").await;
+    let revision = revision_of(&f, 0);
+    // A digest nobody published is a revision this worker does not hold, which
+    // is a stale client rather than a malformed request.
+    let (status, _) = get(
+        &f.state,
+        &format!(
+            "/v1/shards/99/revisions/{}/setup/directory/0",
+            "aa".repeat(32)
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    // A real revision, but of another shard: that is a routing mistake, and the
+    // service must not confuse the two.
+    let (status, _) = get(
+        &f.state,
+        &format!("/v1/shards/1/revisions/{revision}/setup/directory/0"),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = get(&f.state, "/v1/shards/0/setup/nonsense/0").await;
+    let (status, _) = get(
+        &f.state,
+        &format!("/v1/shards/0/revisions/{revision}/setup/nonsense/0"),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     // A shard has the segments its manifest declares and no more. Asking for
     // one it does not have is a mistake, not an empty answer.
-    let (status, _) = get(&f.state, "/v1/shards/0/setup/directory/7").await;
+    let (status, _) = get(
+        &f.state,
+        &format!("/v1/shards/0/revisions/{revision}/setup/directory/7"),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -390,9 +485,10 @@ async fn every_shard_reports_the_same_scheme_but_its_own_setup() {
 
     let mut digests = Vec::new();
     for shard_id in 0..SHARDS {
+        let revision = revision_of(&f, shard_id);
         let (_, raw) = get(
             &f.state,
-            &format!("/v1/shards/{shard_id}/setup/directory/0"),
+            &format!("/v1/shards/{shard_id}/revisions/{revision}/setup/directory/0"),
         )
         .await;
         let setup: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -425,7 +521,7 @@ async fn a_shard_set_missing_a_shard_is_refused() {
             std::fs::remove_dir_all(&path).unwrap();
         }
     }
-    assert!(ShardSet::open(dir.path()).is_err());
+    assert!(ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).is_err());
 }
 
 /// A table edited after publication must fail at load, not be served under the
@@ -444,7 +540,7 @@ async fn a_tampered_table_is_refused_at_load() {
         std::fs::write(path.join("directory.0.bin"), bytes).unwrap();
         break;
     }
-    assert!(ShardSet::open(dir.path()).is_err());
+    assert!(ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).is_err());
 }
 
 /// The public range filters, which this service also serves.

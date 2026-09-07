@@ -23,9 +23,16 @@ TRANSPARENT_PUBLIC_HOST {
 		max_size 1MB
 	}
 
-	# Only the wallet-facing surface is routed. `/v1/health` is deliberately not
-	# here: it reports shard counts and how many runtimes are built, which is
-	# operator information, and the deploy verifies it over the VPC instead.
+	# Only the wallet-facing surface is routed. `/v1/health`, `/v1/ready` and
+	# `/metrics` are deliberately not here: they report shard counts, retained
+	# revisions, cache occupancy, eviction and build rates — operator
+	# information, and a running commentary on how much traffic this worker is
+	# taking. The deploy verifies them over the VPC and asserts each is a 404
+	# through the edge, because the way this goes wrong is a route wider than
+	# intended and the failure is otherwise silent.
+	#
+	# `/v1/shards*` covers the revision-addressed private routes, which are
+	# `/v1/shards/{id}/revisions/{digest}/...`.
 	handle /v1/shards* {
 		reverse_proxy 127.0.0.1:8093
 	}

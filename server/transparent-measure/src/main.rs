@@ -30,11 +30,11 @@ use transparent_events::TransparentEvent;
 use transparent_filter::{ScriptBytes, ShardMap};
 use transparent_filter_server::events::EventStore;
 use transparent_shard::manifest::ShardManifest;
-use transparent_shard_server::service::{router, ServiceState};
-use transparent_shard_server::shardset::ShardSet;
+use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
+use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_wallet::client::Table;
 use transparent_wallet::ledger::Ledger;
-use transparent_wallet::sync::{sync, ServiceGeometry};
+use transparent_wallet::sync::{sync, GeometryParams, ServiceGeometry};
 use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
 use workload::{ScriptCensus, Workload};
 
@@ -106,13 +106,14 @@ impl ShardTransport for HttpShards {
     fn setup(
         &mut self,
         shard_id: u64,
+        revision: &str,
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/setup/{}/{segment}",
+                "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
                 table.as_str()
             ))
@@ -124,11 +125,17 @@ impl ShardTransport for HttpShards {
         Ok((bytes, len))
     }
 
-    fn query(&mut self, shard_id: u64, table: Table, body: &[u8]) -> Result<Vec<u8>, BoxError> {
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
         Ok(self
             .client
             .post(format!(
-                "{}/v1/shards/{shard_id}/query/{}",
+                "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
                 self.base,
                 table.as_str()
             ))
@@ -277,7 +284,8 @@ struct Measurement {
 }
 
 async fn serve(set: ShardSet) -> Result<String, BoxError> {
-    let state = ServiceState::build(set).map_err(|e| -> BoxError { e.into() })?;
+    let state =
+        ServiceState::build(set, ServiceConfig::default()).map_err(|e| -> BoxError { e.into() })?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     tokio::spawn(async move {
@@ -297,7 +305,7 @@ async fn main() -> Result<(), BoxError> {
 
     // Load the published set and its filters before serving, so a corrupt set
     // fails here rather than mid-measurement.
-    let set = ShardSet::open(&cli.shard_dir)?;
+    let set = ShardSet::open(&cli.shard_dir, DEFAULT_RETAIN_REVISIONS)?;
     let map: ShardMap = set.map.clone();
     let map_bytes = serde_json::to_vec(&map)?.len() as u64;
     let mut filters = BTreeMap::new();
@@ -345,14 +353,33 @@ async fn main() -> Result<(), BoxError> {
                 .map_err(|e| e.to_string())?;
             let init: serde_json::Value =
                 serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+            // One entry per geometry the service holds: a two-tier set declares
+            // both, and a workload spanning the boundary needs both prepared.
+            let mut geometries = Vec::new();
+            for entry in init["geometries"]
+                .as_array()
+                .ok_or("init has no geometries")?
+            {
+                geometries.push(GeometryParams {
+                    name: entry["name"].as_str().unwrap_or_default().to_string(),
+                    directory_rows: entry["directory_rows"].as_u64().unwrap_or_default(),
+                    directory_row_bytes: entry["directory_row_bytes"].as_u64().unwrap_or_default()
+                        as u32,
+                    directory_scheme: serde_json::from_value(entry["directory_scheme"].clone())
+                        .map_err(|e| e.to_string())?,
+                    directory_setup_seed: entry["directory_setup_seed"]
+                        .as_u64()
+                        .unwrap_or_default(),
+                    page_rows: entry["page_rows"].as_u64().unwrap_or_default(),
+                    page_row_bytes: entry["page_row_bytes"].as_u64().unwrap_or_default() as u32,
+                    pages_scheme: serde_json::from_value(entry["pages_scheme"].clone())
+                        .map_err(|e| e.to_string())?,
+                    pages_setup_seed: entry["pages_setup_seed"].as_u64().unwrap_or_default(),
+                });
+            }
             let geometry = ServiceGeometry {
                 schema: init["schema"].as_str().unwrap_or_default().to_string(),
-                directory_scheme: serde_json::from_value(init["directory_scheme"].clone())
-                    .map_err(|e| e.to_string())?,
-                directory_setup_seed: init["directory_setup_seed"].as_u64().unwrap_or_default(),
-                pages_scheme: serde_json::from_value(init["pages_scheme"].clone())
-                    .map_err(|e| e.to_string())?,
-                pages_setup_seed: init["pages_setup_seed"].as_u64().unwrap_or_default(),
+                geometries,
             };
             let mut transport = HttpShards {
                 base: base_url,

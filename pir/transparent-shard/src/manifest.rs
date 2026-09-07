@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v6";
+pub const SCHEMA: &str = "transparent-shard-v7";
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -97,7 +97,21 @@ pub struct ManifestSeal {
 pub struct ShardManifest {
     pub schema: String,
     /// The range filter profile, distinct from the per-block one.
+    ///
+    /// Not the table geometry: this string is keyed into the shard's filter and
+    /// into its directory bucket salt, and it names the *filter* profile. The
+    /// geometry has its own field below, and confusing the two would silently
+    /// change where a script hashes to.
     pub profile: String,
+    /// The table geometry this shard was built at, by registry name.
+    ///
+    /// A set may mix them — archive geometry for old history, a narrower recent
+    /// geometry for the window wallets synchronise constantly — so a consumer
+    /// cannot infer one shard's shape from another's. The name selects one
+    /// validated parameter set; the per-segment `rows` and `row_bytes` below
+    /// remain, and are checked against it, so a manifest that named one shape
+    /// and published another is refused rather than served.
+    pub geometry: String,
     pub network: String,
     /// Chain identity, in display hex.
     pub genesis_hash: String,
@@ -146,6 +160,30 @@ pub struct ShardManifest {
     /// into the shard's page space, which a directory extent indexes.
     pub page_segments: Vec<TableGeometry>,
     pub occupancy: ManifestOccupancy,
+}
+
+/// Binds a private query to the revision and table it names.
+///
+/// Carried in a fixed-width prefix of every query body and echoed in every
+/// response. The revision is already public — it is in the map and in the
+/// request path — so this discloses nothing; what it buys is that a query
+/// routed to the wrong revision, or a response returned from one, fails a
+/// check instead of decoding into plausible rows from a range the wallet never
+/// asked about.
+///
+/// Eight bytes because it is a consistency check, not an authenticator: the
+/// server has already matched the full digest from the path, and both ends
+/// re-derive this from data they hold. Fixed width, so it leaks nothing about
+/// the selection.
+pub fn query_binding(manifest_digest: &str, table: &str) -> [u8; 8] {
+    let mut hasher = Sha256::new();
+    hasher.update(SCHEMA.as_bytes());
+    hasher.update(b"/query-binding\0");
+    hasher.update(manifest_digest.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(table.as_bytes());
+    let digest = hasher.finalize();
+    digest[..8].try_into().expect("eight bytes")
 }
 
 /// What a shard id already has published, as the publisher reads it back.
@@ -213,6 +251,7 @@ mod tests {
         ShardManifest {
             schema: SCHEMA.to_string(),
             profile: "zcash-transparent-range-v1".to_string(),
+            geometry: "recent-8k".to_string(),
             network: "main".to_string(),
             genesis_hash: "00".repeat(32),
             shard_id: 3,
