@@ -418,24 +418,55 @@ pub fn place_scripts(
     scripts: &[&[u8]],
     rows_per_segment: u64,
     slots: u64,
-) -> Result<Placement, String> {
+) -> Result<(Placement, Vec<u32>), String> {
     let mut segments = 1u32;
     loop {
-        let rows = rows_per_segment * segments as u64;
-        let mut load = vec![0u64; rows as usize];
+        let rows = (rows_per_segment * segments as u64) as usize;
+        // Occupancy by row, holding the index of each script placed there.
+        // Indices rather than bytes because relocation has to read a resident
+        // entry's *other* candidate, which means re-deriving its hash.
+        let mut occupants: Vec<Vec<u32>> = vec![Vec::new(); rows];
+        let mut assignment = vec![u32::MAX; scripts.len()];
         let mut overflowed: Option<&[u8]> = None;
-        for script in scripts {
-            let candidates = candidate_rows(shard_id, script, rows);
-            let chosen = candidates
+
+        for (index, script) in scripts.iter().enumerate() {
+            let candidates = candidate_rows(shard_id, script, rows as u64);
+            let [a, b] = [candidates[0] as usize, candidates[1] as usize];
+
+            // The cheap case, and the overwhelming majority: a candidate has
+            // room. Less loaded first, ties to the first candidate, exactly as
+            // the rule read before relocation existed.
+            let direct = if occupants[a].len() <= occupants[b].len() {
+                [a, b]
+            } else {
+                [b, a]
+            };
+            if let Some(&row) = direct
                 .iter()
-                .map(|row| *row as usize)
-                .min_by_key(|row| load[*row])
-                .expect("two candidates");
-            if load[chosen] >= slots {
-                overflowed = Some(script);
-                break;
+                .find(|&&row| occupants[row].len() < slots as usize)
+            {
+                occupants[row].push(index as u32);
+                assignment[index] = row as u32;
+                continue;
             }
-            load[chosen] += 1;
+
+            match relocate(
+                shard_id,
+                scripts,
+                &mut occupants,
+                &mut assignment,
+                [a, b],
+                slots,
+            ) {
+                Some(row) => {
+                    occupants[row].push(index as u32);
+                    assignment[index] = row as u32;
+                }
+                None => {
+                    overflowed = Some(script);
+                    break;
+                }
+            }
         }
 
         if let Some(script) = overflowed {
@@ -446,11 +477,102 @@ pub fn place_scripts(
             continue;
         }
 
-        return Ok(Placement {
-            segments,
-            max_row_load: load.into_iter().max().unwrap_or(0),
-        });
+        let max_row_load = occupants
+            .iter()
+            .map(|row| row.len() as u64)
+            .max()
+            .unwrap_or(0);
+        return Ok((
+            Placement {
+                segments,
+                max_row_load,
+            },
+            assignment,
+        ));
     }
+}
+
+/// Rows a relocation search may visit before giving up and taking a segment.
+///
+/// A bound rather than a budget for the whole shard: the search is per script,
+/// and the shortest path to a row with space is a handful of hops even at high
+/// load. Reaching this means the two-choice graph is genuinely saturated
+/// around both candidates, which another segment fixes and more searching does
+/// not.
+const MAX_RELOCATION_VISITS: usize = 512;
+
+/// Frees a slot in one of `roots` by moving residents to their other candidate.
+///
+/// Breadth-first, so the path taken is the shortest available and the search
+/// cannot cycle — a depth-first walk with a kick budget can revisit rows
+/// forever at high load, and a random walk would not be reproducible. Ties are
+/// broken by the order rows enter the frontier and, within a row, by the order
+/// entries were placed, both of which are functions of the script set alone.
+/// Two operators therefore relocate identically or the published digests stop
+/// being comparable, which is the property this whole module exists to keep.
+///
+/// Returns the row left with space, having applied every move on the path.
+fn relocate(
+    shard_id: u64,
+    scripts: &[&[u8]],
+    occupants: &mut [Vec<u32>],
+    assignment: &mut [u32],
+    roots: [usize; 2],
+    slots: u64,
+) -> Option<usize> {
+    let rows = occupants.len() as u64;
+    // Each visited row remembers how it was reached: the row before it, and
+    // the entry that would move between them. The root rows have no such edge.
+    let mut came_from: std::collections::HashMap<usize, (usize, u32)> = Default::default();
+    let mut queue: std::collections::VecDeque<usize> = Default::default();
+    for root in roots {
+        if came_from.insert(root, (usize::MAX, u32::MAX)).is_none() {
+            queue.push_back(root);
+        }
+    }
+
+    let mut visits = 0usize;
+    while let Some(row) = queue.pop_front() {
+        visits += 1;
+        if visits > MAX_RELOCATION_VISITS {
+            return None;
+        }
+        for &occupant in &occupants[row] {
+            let candidates = candidate_rows(shard_id, scripts[occupant as usize], rows);
+            let alternate = candidates
+                .iter()
+                .map(|alternate| *alternate as usize)
+                .find(|alternate| *alternate != row)
+                // A script whose two candidates collide has no alternate, so it
+                // can never be moved out of the row it is in.
+                .unwrap_or(row);
+            if alternate == row || came_from.contains_key(&alternate) {
+                continue;
+            }
+            came_from.insert(alternate, (row, occupant));
+            if occupants[alternate].len() < slots as usize {
+                // Walk the path back to a root, moving each entry forward as we
+                // go, which leaves exactly one slot free in the root.
+                let mut at = alternate;
+                while let Some(&(previous, moved)) = came_from.get(&at) {
+                    if previous == usize::MAX {
+                        return Some(at);
+                    }
+                    let position = occupants[previous]
+                        .iter()
+                        .position(|entry| *entry == moved)
+                        .expect("the entry was read from that row");
+                    occupants[previous].remove(position);
+                    occupants[at].push(moved);
+                    assignment[moved as usize] = at as u32;
+                    at = previous;
+                }
+                return Some(at);
+            }
+            queue.push_back(alternate);
+        }
+    }
+    None
 }
 
 /// Places every entry, adding a segment whenever placement does not fit.
@@ -468,7 +590,7 @@ fn place_directory(
         .iter()
         .map(|entry| entry.script.as_slice())
         .collect();
-    let placed = place_scripts(
+    let (placed, assignment) = place_scripts(
         shard_id,
         &scripts_only,
         DIRECTORY_ROWS as u64,
@@ -477,21 +599,14 @@ fn place_directory(
     .map_err(|script| BuildError::DirectoryFull { script })?;
     let segments = placed.segments;
     let rows = DIRECTORY_ROWS as u64 * segments as u64;
-    // Place each script into the less loaded of its two candidate rows.
-    // Ties go to the first candidate, so placement is a function of the
-    // script set and not of the order rows happened to fill.
+    // The placer's own assignment, not a second rule applied to the same
+    // input. Relocation means a script's row is a function of every script
+    // placed before it, so a greedy replay here would put entries in rows the
+    // segment count was not decided for — and only some of them, which is the
+    // kind of disagreement that produces a table a wallet cannot read.
     let mut buckets: Vec<Vec<&DirectoryEntry>> = vec![Vec::new(); rows as usize];
-    for entry in &entries {
-        let candidates = candidate_rows(shard_id, &entry.script, rows);
-        let chosen = candidates
-            .iter()
-            .map(|row| *row as usize)
-            .min_by_key(|row| buckets[*row].len())
-            .expect("two candidates");
-        // `place_scripts` settled the segment count over the identical
-        // script order under the identical rule, so no row can overflow.
-        debug_assert!(buckets[chosen].len() < crate::records::DIRECTORY_SLOTS);
-        buckets[chosen].push(entry);
+    for (entry, row) in entries.iter().zip(&assignment) {
+        buckets[*row as usize].push(entry);
     }
 
     let mut scripts = 0u64;
@@ -787,6 +902,93 @@ mod tests {
             assert!(found, "script {tag} is in neither candidate row");
         }
         assert_eq!(built.scripts, 300);
+    }
+
+    /// Scripts for a placement test, distinct and of the supported width.
+    fn placement_set(count: u32) -> Vec<Vec<u8>> {
+        (0..count)
+            .map(|tag| script(tag).as_slice().to_vec())
+            .collect()
+    }
+
+    fn place(count: u32, rows: u64, slots: u64) -> Placement {
+        let owned = placement_set(count);
+        let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
+        place_scripts(0, &refs, rows, slots)
+            .expect("placement terminates")
+            .0
+    }
+
+    /// Relocation is what decides how full the directory may run.
+    ///
+    /// Without it a script never moves once placed, so the first row to reach
+    /// its slot count ends the placement and costs the shard a whole segment —
+    /// which every wallet touching that shard then pays for, twice, in queries
+    /// and in setup. The measured ceiling for that rule was around 58% of slot
+    /// capacity. Following an augmenting path instead keeps one segment far
+    /// past it, at no cost to the client, which still reads the same two
+    /// candidate rows.
+    #[test]
+    fn relocation_keeps_one_segment_past_the_greedy_ceiling() {
+        let rows = 2_048u64;
+        let slots = crate::records::DIRECTORY_SLOTS as u64;
+        let capacity = rows * slots;
+
+        // 86% of capacity, the load at which the shipped seal target overflowed
+        // 42% of shards on the real journal under the greedy rule.
+        let placed = place((capacity * 6 / 7) as u32, rows, slots);
+        assert_eq!(
+            placed.segments, 1,
+            "relocation should hold 86% of capacity in one segment"
+        );
+        assert!(placed.max_row_load <= slots);
+    }
+
+    /// Placement must not depend on anything but the script set, because two
+    /// operators disagreeing here publish different bytes under the same
+    /// identity. Relocation makes this sharper than it was: a script's row now
+    /// depends on every script placed before it, so a search that explored in a
+    /// different order would silently produce a different table.
+    #[test]
+    fn placement_is_reproducible() {
+        let rows = 2_048u64;
+        let slots = crate::records::DIRECTORY_SLOTS as u64;
+        let owned = placement_set((rows * slots * 6 / 7) as u32);
+        let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
+
+        let first = place_scripts(0, &refs, rows, slots).expect("placement");
+        let again = place_scripts(0, &refs, rows, slots).expect("placement");
+        assert_eq!(first.0, again.0);
+        assert_eq!(first.1, again.1, "the same input must place identically");
+    }
+
+    /// Every script must still be in one of its own two candidate rows. This is
+    /// the only thing a wallet relies on, and the one property relocation could
+    /// plausibly break: an entry that moved has to land on *its* alternate, not
+    /// on a row that happened to have space.
+    #[test]
+    fn a_relocated_script_is_still_in_one_of_its_candidates() {
+        let rows = 2_048u64;
+        let slots = crate::records::DIRECTORY_SLOTS as u64;
+        let owned = placement_set((rows * slots * 6 / 7) as u32);
+        let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
+
+        let (placed, assignment) = place_scripts(0, &refs, rows, slots).expect("placement");
+        let span = rows * placed.segments as u64;
+        let mut occupied = vec![0u64; span as usize];
+        for (script, row) in refs.iter().zip(&assignment) {
+            let candidates = candidate_rows(0, script, span);
+            assert!(
+                candidates.contains(&u64::from(*row)),
+                "a script was placed outside both of its candidates"
+            );
+            occupied[*row as usize] += 1;
+        }
+        assert!(
+            occupied.iter().all(|load| *load <= slots),
+            "a row was filled past its slot count"
+        );
+        assert_eq!(assignment.len(), refs.len(), "every script is placed once");
     }
 
     /// A script's whole history must be reconstructible: the inline events plus

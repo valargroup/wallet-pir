@@ -364,6 +364,7 @@ impl Sealer {
             self.geometry.directory_rows,
             self.geometry.directory_slots(),
         )
+        .map(|(placement, _)| placement)
         // The rule adds a segment until everything fits and the cap is a
         // bug-catcher far above any reachable load, so a census reaching it is
         // a defect in the rule rather than a property of the journal.
