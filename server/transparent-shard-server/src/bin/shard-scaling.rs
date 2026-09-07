@@ -51,17 +51,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // table is nearly free in memory while halving the shard count -- which
         // is the opposite of how the geometry notes weigh storage.
         println!(
-            "{:>7} {:>8} {:>8} {:>10} {:>10} {:>10}",
-            "rows", "db_rows", "db_cols", "db MiB", "pack MiB", "total MiB"
+            "{:>7} {:>8} {:>8} {:>10} {:>10} {:>10} {:>10}",
+            "rows", "db_rows", "db_cols", "db MiB", "pack MiB", "total MiB", "query B"
         );
-        for rows in [2_048u64, 4_096, 8_192, 16_384, 32_768] {
+        for rows in [
+            2_048u64, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144,
+        ] {
             let (rlwe, sc) =
                 ipir_sp::params_for_simplepir(rows, u64::from(Table::Directory.row_bytes()) * 8)?;
             let db = (sc.db_rows * sc.db_cols * 2) as f64 / 1048576.0;
             let blocks = sc.db_cols / rlwe.d;
             let pack = (blocks * 3 * rlwe.d * rlwe.d * 8) as f64 / 1048576.0;
+            // What a wallet uploads per query: the shard id, the evaluation
+            // keys, and the first-dimension query, which is the only term that
+            // follows the row count.
+            let keys = ipir_sp::serialize::serialized_packing_keys_len(&rlwe);
+            let query = 8 + keys + (sc.db_rows * sc.query_bits).div_ceil(8);
             println!(
-                "{rows:>7} {:>8} {:>8} {db:>10.1} {pack:>10.1} {:>10.1}",
+                "{rows:>7} {:>8} {:>8} {db:>10.1} {pack:>10.1} {:>10.1} {query:>10}",
                 sc.db_rows,
                 sc.db_cols,
                 db + pack
