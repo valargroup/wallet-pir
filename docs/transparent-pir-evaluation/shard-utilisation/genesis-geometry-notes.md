@@ -1,5 +1,13 @@
 # Directory geometry against the genesis journal
 
+> **Scope, restated.** This covers genesis through ~330,000 — 9.4% of chain
+> height, and the densest part of it. The shard counts and fleet sizes below are
+> for that range and **not for the chain**; they were read as full-chain during
+> later work, which is the mistake this note exists to prevent. The whole-chain
+> census is [fullchain-geometry-notes.md](fullchain-geometry-notes.md): 1,091
+> shards and 64.1 GB at the same geometry, against the 511 and 30.01 GB here.
+> The relative comparisons below still hold; only their absolute scale does not.
+
 Measured 2026-09-07 on the coordinator, through the `census` action of the
 transparent-event backfill workflow, against the journal at
 `/srv/zakura/transparent-event-data` — **genesis through height ~330,000**, which

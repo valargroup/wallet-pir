@@ -5,8 +5,23 @@ in [the architecture document](../../transparent_pir_architecture.md), which
 previously warned that its census output was not linked and should not be
 quoted as a reproducible claim. This is that output.
 
-All of it covers the same journal: Ironwood activation through height
-3,473,474, 45,332 blocks, 869,283 events. The chain data and the published
+Most of it covers the same journal: Ironwood activation through height
+3,473,474, 45,332 blocks, 869,283 events. Two later sets do not, and the
+distinction matters more than it looks:
+
+| files | journal | scope |
+|---|---|---|
+| everything else here | `superseded-v1` | Ironwood → 3,473,474, 45,332 blocks |
+| `genesis-*` | partial genesis journal | genesis → ~330,000, **9.4% of chain height** |
+| `fullchain-*` | genesis journal, complete | genesis → 3,473,686, 352,873,356 events |
+
+**Only the `fullchain-*` figures describe the whole chain.** The `genesis-*`
+ones were read as full-chain during later work and are not: at the pinned
+geometry they report 511 shards and a 30.01 GB fleet where the whole chain is
+1,091 shards and 64.1 GB. See
+[fullchain-geometry-notes.md](fullchain-geometry-notes.md).
+
+ The chain data and the published
 bytes are real; the wallets in the measurement are synthetic script groupings
 drawn from the journal, not user traces.
 
