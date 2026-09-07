@@ -35,9 +35,13 @@ require_env() {
 
 validate_inputs() {
   require_env TRANSPARENT_WORKER_HOST TRANSPARENT_DEPLOY_USER TRANSPARENT_RELEASE_SHA \
-    TRANSPARENT_ARTIFACT_DIR TRANSPARENT_SHARD_DIR
+    TRANSPARENT_ARTIFACT_DIR TRANSPARENT_SHARD_DIR TRANSPARENT_PUBLIC_URL
   [[ "$TRANSPARENT_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     || fail "TRANSPARENT_RELEASE_SHA must be a full commit SHA"
+  # HTTPS only. The public host is what Caddy requests a certificate for, so a
+  # typo here becomes a rate-limited ACME failure rather than an obvious error.
+  [[ "$TRANSPARENT_PUBLIC_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] \
+    || fail "TRANSPARENT_PUBLIC_URL must be https:// and a bare host"
   [[ "$TRANSPARENT_WORKER_HOST" =~ ^[A-Za-z0-9._-]+$ ]] \
     || fail "TRANSPARENT_WORKER_HOST is not a plain host or address"
   [[ "$TRANSPARENT_DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] \
@@ -102,9 +106,10 @@ preflight() {
   worker_ssh bash -s <<'REMOTE'
 set -euo pipefail
 [[ "$(uname -m)" == "x86_64" ]] || { echo "worker is not x86_64" >&2; exit 1; }
-for tool in curl jq sha256sum systemctl rsync; do
+for tool in curl jq sha256sum systemctl rsync caddy; do
   command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }
 done
+systemctl is-enabled caddy >/dev/null 2>&1 || { echo "caddy is not enabled" >&2; exit 1; }
 sudo -n true || { echo "passwordless sudo is required" >&2; exit 1; }
 free -g | awk '/^Mem:/ {print "memory: " $2 " GiB total, " $7 " GiB available"}'
 REMOTE
@@ -128,20 +133,37 @@ stage() {
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   local -a opts
   mapfile -t opts < <(ssh_opts)
-  echo "== stage binary and unit"
+  echo "== stage binary, unit and Caddyfile"
+
+  # The public host is substituted here rather than on the worker, so the file
+  # that gets validated is byte-for-byte the file that gets installed.
+  local host="${TRANSPARENT_PUBLIC_URL#https://}"
+  local rendered="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.rendered"
+  sed "s/TRANSPARENT_PUBLIC_HOST/$host/" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-Caddyfile" >"$rendered"
+  grep -q "TRANSPARENT_PUBLIC_HOST" "$rendered" \
+    && fail "Caddyfile still carries an unsubstituted token"
+  grep -q "^$host {" "$rendered" || fail "rendered Caddyfile does not name $host"
+
   worker_ssh "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
     "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" \
     "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" \
     "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
     "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/"
+  scp "${opts[@]}" "$rendered" \
+    "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/Caddyfile"
+
   # Verified on the far side: a truncated copy that still looked like an ELF
-  # binary would otherwise be installed and only fail at start.
+  # binary would otherwise be installed and only fail at start. Caddy validates
+  # its own config before anything replaces the running one, so a syntax error
+  # is caught while the old config is still serving.
   worker_ssh bash -s -- "$staged" <<'REMOTE'
 set -euo pipefail
 cd "$1"
 sha256sum -c SHA256SUMS --ignore-missing
 chmod 0755 transparent-shard-server
+sudo caddy validate --config Caddyfile --adapter caddyfile
 REMOTE
 }
 
@@ -191,6 +213,14 @@ sudo install -m 0644 "$release/transparent-shard-server.service" \
   /etc/systemd/system/transparent-shard-server.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now transparent-shard-server.service
+
+# Caddy last, and reloaded rather than restarted, so an existing certificate and
+# its in-flight connections survive. It was validated before the service was
+# touched, so this is the step least likely to be the one that fails.
+sudo cp -f /etc/caddy/Caddyfile /opt/transparent-pir/rollback/Caddyfile 2>/dev/null || true
+sudo install -m 0644 "$staged/Caddyfile" /etc/caddy/Caddyfile
+sudo systemctl reload caddy || sudo systemctl restart caddy
+
 printf '%s\n' "$sha" | sudo tee /opt/transparent-pir/current-release >/dev/null
 rm -rf "$staged"
 REMOTE
@@ -251,6 +281,42 @@ verify() {
   echo "$init" | jq -e '.directory_scheme and .pages_scheme and .covered_through' >/dev/null \
     || fail "init is missing scheme or coverage: $init"
   echo "$init" | jq -r '"covered_through \(.covered_through), \(.shards) shards, schema \(.schema)"'
+
+  verify_public
+}
+
+# The public edge, over real TLS. A first deploy has to wait for Caddy to obtain
+# a certificate, which needs DNS to have propagated and the ACME challenge to
+# complete, so this polls rather than failing on the first refusal.
+verify_public() {
+  echo "== verify public edge at $TRANSPARENT_PUBLIC_URL"
+  local attempt public
+  for attempt in $(seq 1 30); do
+    if public="$(curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/init" 2>/dev/null)"; then
+      break
+    fi
+    [[ "$attempt" -lt 30 ]] || fail "public endpoint never answered over TLS"
+    sleep 10
+  done
+  echo "$public" | jq -e '.directory_scheme and .pages_scheme' >/dev/null \
+    || fail "public init is not the shard service: $public"
+
+  # The edge must serve the same set as the worker, not a stale or different one.
+  local public_shards
+  public_shards="$(echo "$public" | jq -er '.shards')"
+  [[ "$public_shards" -eq "$(jq -er '.shards | length' "$TRANSPARENT_SHARD_SOURCE/shards.json")" ]] \
+    || fail "public edge serves $public_shards shards"
+
+  # Operator surfaces must not be reachable from the internet. /v1/health is
+  # served on the VPC and answered above; through the edge it must be a 404, or
+  # the route is wider than it was meant to be.
+  local health_status
+  health_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/health")"
+  [[ "$health_status" == "404" ]] \
+    || fail "/v1/health is reachable publicly (HTTP $health_status); the route is too wide"
+
+  echo "public edge serving $public_shards shards; /v1/health correctly 404"
 }
 
 # ----------------------------------------------------------------------- main

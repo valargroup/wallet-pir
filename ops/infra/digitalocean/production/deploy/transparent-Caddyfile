@@ -1,0 +1,36 @@
+# Rendered by ops/scripts/deploy-transparent-shard.sh, which substitutes the
+# placeholder site name below with the host of TRANSPARENT_PUBLIC_URL before the
+# file is validated and installed. The placeholder is deliberately not repeated
+# in this comment: the substitution is a plain sed over the whole file, and a
+# second occurrence would be rewritten into a sentence that no longer parses.
+#
+# This runs on the worker, not on the Enhance coordinator. The coordinator's
+# Caddyfile is rendered and installed by deploy-enhance-pir.sh, and a token that
+# script does not substitute would fail `caddy validate` on its next deploy —
+# breaking a live service over a change that has nothing to do with it. Keeping
+# the transparent fleet's edge here means the two never share a file.
+TRANSPARENT_PUBLIC_HOST {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+
+	# The service already refuses a body that is not exactly the fixed query
+	# length, and axum caps it before that. This is the outer bound, so a large
+	# upload is dropped at the edge rather than buffered through the proxy.
+	request_body {
+		max_size 1MB
+	}
+
+	# Only the wallet-facing surface is routed. `/v1/health` is deliberately not
+	# here: it reports shard counts and how many runtimes are built, which is
+	# operator information, and the deploy verifies it over the VPC instead.
+	handle /v1/shards* {
+		reverse_proxy 127.0.0.1:8093
+	}
+
+	handle {
+		respond 404
+	}
+}
