@@ -10,12 +10,13 @@ Type=simple
 # reach this is the coordinator. It is deliberately not published: the
 # wallet-facing API is not designed yet, and the upstream default is loopback
 # for exactly that reason.
-ExecStart=/usr/local/bin/transparent-shard-server \
-  --listen 0.0.0.0:8093 \
-  --shard-dir /srv/transparent-pir/shards \
-  --cache-bytes 8589934592 \
-  --build-slots 1 \
-  --query-slots 2
+# One line on purpose. systemd honours backslash continuations, but nothing
+# validates this file before `systemctl enable --now` runs it -- unlike the
+# Caddyfile, which is validated while the old config is still serving -- so a
+# mis-parse here is a failed start, and a failed start is a rollback onto a
+# shard set the restored binary may not be able to read. The line is long; the
+# alternative is a parsing surface with no check in front of it.
+ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir /srv/transparent-pir/shards --cache-bytes 8589934592 --build-slots 1 --query-slots 2
 Restart=on-failure
 RestartSec=10
 User=root
