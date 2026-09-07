@@ -292,9 +292,21 @@ verify() {
   local init
   init="$(curl --fail --silent --max-time 30 "$url/v1/shards/init")" \
     || fail "init did not answer"
-  echo "$init" | jq -e '.directory_scheme and .pages_scheme and .covered_through' >/dev/null \
-    || fail "init is missing scheme or coverage: $init"
-  echo "$init" | jq -r '"covered_through \(.covered_through), \(.shards) shards, schema \(.schema)"'
+  echo "$init" | jq -e '(.geometries | length > 0) and .covered_through and .map_sha256' >/dev/null \
+    || fail "init is missing geometries, coverage or map digest: $init"
+
+  # The worker prepares parameters only for the geometries its set actually
+  # names, so this is what catches a worker serving a *different* set than the
+  # one just shipped: the shard count could match while the shapes did not.
+  local served_geometries expected_geometries
+  served_geometries="$(echo "$init" | jq -er '[.geometries[].name] | sort | join(",")')"
+  expected_geometries="$(jq -er '[.shards[].geometry] | unique | join(",")' \
+    "$TRANSPARENT_SHARD_SOURCE/shards.json")"
+  [[ "$served_geometries" == "$expected_geometries" ]] \
+    || fail "worker serves geometries [$served_geometries], the published map names [$expected_geometries]"
+
+  echo "$init" \
+    | jq -r '"covered_through \(.covered_through), \(.shards) shards, schema \(.schema), geometries \([.geometries[].name] | join(\" \"))"'
 
   verify_public
 }
