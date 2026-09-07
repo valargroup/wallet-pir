@@ -43,3 +43,27 @@ jobs:
             [{"name":"shard-group-01","replicas":[{"name":"worker-01a","ssh_host":"worker-01a.example.net","service_url":"http://10.0.0.2:8091"},{"name":"worker-01b","ssh_host":"worker-01b.example.net","service_url":"http://10.0.0.3:8091"}]}]
           TRANSPARENT_FILTER_SERVICE_FILE: ops/infra/digitalocean/production/deploy/transparent-filter-server.service
         run: ops/scripts/deploy-enhance-pir.sh validate
+      - name: Check transparent shard deployment shell
+        run: shellcheck ops/scripts/deploy-transparent-shard.sh
+      # A shard set the deploy would refuse: the map names two shards and only
+      # one directory is present. `validate` is offline, so it exercises the
+      # input and set checks without a host.
+      - name: Validate transparent shard inputs
+        env:
+          TRANSPARENT_WORKER_HOST: transparent-worker-01.example.net
+          TRANSPARENT_DEPLOY_USER: deploy
+          TRANSPARENT_RELEASE_SHA: 0000000000000000000000000000000000000000
+          TRANSPARENT_ARTIFACT_DIR: artifact
+          TRANSPARENT_SHARD_DIR: /srv/transparent-pir/shards
+        run: |
+          set -euo pipefail
+          shard_set="$RUNNER_TEMP/shard-set"
+          mkdir -p "$shard_set/aaa" "$shard_set/bbb"
+          printf '%s\n' '{"shards":[{"shard_id":0,"manifest_digest":"aaa"},{"shard_id":1,"manifest_digest":"bbb"}]}' >"$shard_set/shards.json"
+          TRANSPARENT_SHARD_SOURCE="$shard_set" ops/scripts/deploy-transparent-shard.sh validate
+          # And the same set with a shard directory missing must be refused.
+          rmdir "$shard_set/bbb"
+          if TRANSPARENT_SHARD_SOURCE="$shard_set" ops/scripts/deploy-transparent-shard.sh validate; then
+            echo "an incomplete shard set was accepted" >&2
+            exit 1
+          fi

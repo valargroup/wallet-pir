@@ -44,6 +44,27 @@ variable "worker_size" {
   default     = "s-4vcpu-8gb"
 }
 
+# Transparent PIR shard workers. A separate fleet from the Enhance workers
+# above: different binary, different tag, different firewall, and sized on a
+# measurement of its own rather than on the Enhance worker's 2 GiB.
+variable "transparent_worker_count" {
+  description = "Transparent PIR shard workers to provision. One serves the whole pilot set."
+  type        = number
+  default     = 1
+}
+
+variable "transparent_worker_size" {
+  description = <<-EOT
+    Transparent shard worker size. A shard costs ~257 MiB resident (128.5 MiB
+    per table segment: a 32 MiB u16 database plus three 32 MiB pack matrices),
+    so the 21-shard pilot needs 5.3 GiB and 16 GB leaves it room to double.
+    Evaluation is memory-bandwidth-bound and saturates at two threads, so this
+    buys memory rather than cores, from the $5.25/GB line.
+  EOT
+  type        = string
+  default     = "s-4vcpu-16gb-amd"
+}
+
 variable "image" {
   type    = string
   default = "ubuntu-24-04-x64"

@@ -1,0 +1,30 @@
+[Unit]
+Description=Transparent PIR shard retrieval worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Bound to the VPC interface, not to loopback and not to the internet. The
+# firewall opens 8093 to the coordinator tag alone, so the only thing that can
+# reach this is the coordinator. It is deliberately not published: the
+# wallet-facing API is not designed yet, and the upstream default is loopback
+# for exactly that reason.
+ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir /srv/transparent-pir/shards
+Restart=on-failure
+RestartSec=10
+User=root
+LimitNOFILE=1048576
+Environment=RUST_LOG=info
+
+# Sized from measurement rather than copied from the Enhance worker's 2 GiB,
+# which is a different table. A shard costs about 257 MiB resident (128.5 MiB
+# per table segment: a 32 MiB u16 database plus three 32 MiB pack matrices), so
+# the 21-shard pilot set is ~5.3 GiB. This leaves room for the set to roughly
+# double before the cap binds, and swap is off so a leak fails loudly here
+# rather than degrading into thrash.
+MemoryMax=12G
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target
