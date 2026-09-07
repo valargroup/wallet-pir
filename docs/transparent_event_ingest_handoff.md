@@ -14,8 +14,8 @@ as a transient systemd unit named `transparent-event-ingest`.
 | binary | `/usr/local/bin/transparent-event-ingest`, built from `7ad1100` |
 | source | the node's own RocksDB at `/root/.cache/zakura`, opened read-only |
 | target | height 3,473,686 (the finalized tip the run could see when it began) |
-| at handoff | height ~356,000, 169.2M events stored |
-| rate | ~170 blocks/s, roughly 5 hours remaining |
+| at handoff | height ~365,000, 174.5M events stored |
+| rate | ~160 blocks/s over the early chain; hours, not weeks |
 | control | `.github/workflows/backfill-transparent-events.yml`, actions `status`, `stop`, `start` |
 
 The workflow is the sanctioned interface and `status` is read-only, so it is
@@ -73,14 +73,19 @@ extract at once and append in order.
 
 | | RPC path | state path |
 |---|---:|---:|
-| blocks/s | 1.5 | ~170 |
+| blocks/s, around height 360,000 | 1.5 | ~160 |
 | resolution | 387 RPC lookups/block | local database lookups |
 | resident memory | ~530 MB peak | ~1.3 GB peak |
-| remaining, from ~350,000 | ~24 days | ~5 hours |
 
 Measured on the coordinator, `workers=6`, under the same `CPUWeight=20`. Host
 load *fell* across the cutover, from 3.44 to 1.74: the old path spent its time
 waiting.
+
+Do not read a single rate as the finishing time. Throughput tracks block
+density, not height: 1,000 blocks around 356,000 took 4 seconds and 1,000
+around 362,000 took 6, because the second thousand held nearly three times the
+events. Density rises a long way toward the tip, so the run will slow. The
+useful claim is the change of scale — weeks to hours — not a number of hours.
 
 **Verified against the old journal before cutting over.** A scratch run over
 heights 340,000-341,000 produced the same block hashes, the same event counts
