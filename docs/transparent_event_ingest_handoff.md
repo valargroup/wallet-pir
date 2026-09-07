@@ -1,6 +1,7 @@
 # Transparent event ingest: handoff
 
-Date: 2026-09-07. Status: running, optimized once, bottleneck moved.
+Date: 2026-09-07. Status: running on the state path; the count question is
+closed.
 
 ## What is running
 
@@ -10,14 +11,16 @@ as a transient systemd unit named `transparent-event-ingest`.
 | | |
 |---|---|
 | journal | `/srv/zakura/transparent-event-data`, pinned to **start height 0** |
-| binary | `/usr/local/bin/transparent-event-ingest`, built from `1e507be` |
-| target | height 3,474,631 (the node's tip when the run began) |
-| at handoff | height ~341,000, 161.8M events stored |
-| rate | 1.46 blocks/s, roughly 25 days remaining |
+| binary | `/usr/local/bin/transparent-event-ingest`, built from `7ad1100` |
+| source | the node's own RocksDB at `/root/.cache/zakura`, opened read-only |
+| target | height 3,473,686 (the finalized tip the run could see when it began) |
+| at handoff | height ~356,000, 169.2M events stored |
+| rate | ~170 blocks/s, roughly 5 hours remaining |
 | control | `.github/workflows/backfill-transparent-events.yml`, actions `status`, `stop`, `start` |
 
-The coordinator answers no SSH from a developer machine; the workflow is the
-only interface. `status` is read-only and safe to run at any time.
+The workflow is the sanctioned interface and `status` is read-only, so it is
+safe to run at any time. SSH to the coordinator also works, from an address the
+`enhance-pir-coordinator` DigitalOcean firewall admits.
 
 ## The one way to destroy this journal
 
@@ -32,9 +35,8 @@ directory and a run that begins again.
 mismatch. Do not remove it. To resume, always pass `start_height=0`.
 
 `start_height` is **not** where indexing begins. The loop resumes from
-`store.next_height()`, which is the last committed height plus one
-(`event-ingest.rs:146`). Interrupting is safe: coverage advances only at a
-commit, every 1,000 blocks.
+`store.next_height()`, which is the last committed height plus one.
+Interrupting is safe: coverage advances only at a commit, every 1,000 blocks.
 
 ## Resuming after a stop
 
@@ -42,93 +44,120 @@ commit, every 1,000 blocks.
 gh workflow run backfill-transparent-events.yml --ref main \
   -f action=stop
 gh workflow run backfill-transparent-events.yml --ref main \
-  -f action=start -f ref=<sha on main> -f start_height=0
+  -f action=start -f ref=<sha on main> -f start_height=0 \
+  -f state_dir=/root/.cache/zakura -f workers=6
 ```
 
 `start` refuses while a unit is active, so `stop` first. It rebuilds the binary
-from `ref` before launching, so the SHA decides what runs.
+from `ref` before launching, so the SHA decides what runs. **Omitting
+`state_dir` selects the old RPC path**, which is roughly a hundred times slower;
+it is kept only so an existing dispatch does not change meaning.
 
 ## What was changed, and what it bought
 
-Measured at height ~340,000, where a block took 1.34 s and needed 907
-previous-output lookups against 250 cache hits.
+The backfill used to read the chain over Zakura's JSON-RPC: `getblock` per
+height, then `getrawtransaction` for every previous output an input spends. At
+height 344,000 that was 387 lookups a block. The node answers all of them out of
+its own transaction index, so the work was already a database read, and the RPC
+added a round trip, a hex encoding and a re-parse to it.
 
-| Change | Where | Why |
-|---|---|---|
-| `PREVOUT_BATCH` 16 → 256 | `prevout.rs:27` | 907 lookups at a batch of 16 is 57 sequential round trips for one block. The node does the same work either way; the batch removes the waiting. The old value matched a Python collector's, which aligned two tools without either measuring. |
-| `DEFAULT_CACHE_OUTPUTS` 2M → 8M | `prevout.rs:50` | 2M outputs is a window of ~8,700 blocks at this density, so a spend reaching further back paid RPC — which is why only 22% of lookups hit. Also now settable per run via the `cache_outputs` workflow input, because the cost of guessing high is the OOM killer and that has already happened once over this range. |
-| Pipelined block fetch | `ingest.rs`, `event-ingest.rs` | The next block is fetched while the current one is resolved. Fetching is the only part of a block's work that reads no cache state, so it is the only part that can run ahead. |
+`7ad1100` reads the database instead. `zakura_state::init_read_only` opens the
+same RocksDB as a **secondary instance**, so a running node is undisturbed, and
+resolving a previous output becomes two local point lookups through
+`tx_loc_by_hash` and `tx_by_loc`. The output cache, its batching pre-pass and
+the pipelined fetch are all gone — they existed only to hide the round trip.
 
-Result, comparing the last old-binary interval with the first new one:
+Removing the cache also removed the reason blocks had to be handled one at a
+time. Nothing carries from one height to the next now, so `--workers` heights
+extract at once and append in order.
 
-| | before | after |
+| | RPC path | state path |
 |---|---:|---:|
-| minutes per 1,000 blocks | 21.6 | 11.4 |
-| blocks/s | 0.77 | 1.46 |
-| RPC lookups per block | 907 | 484 |
-| cache hits per block | 250 | 730 |
-| cache hit rate | 21.6% | 60.1% |
-| remaining | ~47 days | ~25 days |
+| blocks/s | 1.5 | ~170 |
+| resolution | 387 RPC lookups/block | local database lookups |
+| resident memory | ~530 MB peak | ~1.3 GB peak |
+| remaining, from ~350,000 | ~24 days | ~5 hours |
 
-One interval each, on a host that also serves PIR queries under `CPUWeight=20`.
-Treat 1.9x as indicative, not as a benchmark.
+Measured on the coordinator, `workers=6`, under the same `CPUWeight=20`. Host
+load *fell* across the cutover, from 3.44 to 1.74: the old path spent its time
+waiting.
+
+**Verified against the old journal before cutting over.** A scratch run over
+heights 340,000-341,000 produced the same block hashes, the same event counts
+and the same event bytes as the RPC-built journal — 1,000 blocks, 1,022,211
+events, byte for byte. The two paths share `extract_events`, so what this
+checks is the source, not the extraction.
+
+Rollback: `/root/transparent-event-ingest.rpc-path.bak` is the binary the first
+344,000 blocks were built by.
+
+### What the state path deliberately does not read
+
+Zakura also maintains `tx_loc_by_transparent_addr_loc`, keyed by address
+location and transaction location — already grouped by address and ordered by
+height, which is the shape a shard wants. It is not usable as the event source.
+That index is built with `filter_map(|utxo| utxo.output.address(network))`, so
+it holds only P2PKH and P2SH, while `extract.rs` indexes every nonempty output
+script that does not begin with `OP_RETURN`, raw. Sourcing events from it would
+silently drop every nonstandard script, and a wallet told it has no activity
+does not look again.
+
+## Building it
+
+`zakura-state` is pinned to `1faf150fc3648aae22c55a6b30f8f5a9b9ce934e`, the same
+revision as `zakura-chain` — and, not by coincidence, the revision the deployed
+`zakurad 1.3.0+g1faf150fc364` was built from. **That pin must track the node.**
+This code reads the on-disk format that node wrote; a node upgrade that changes
+the format needs this pin moved with it.
+
+The build needs `libclang-dev` for rocksdb's bindgen. It is installed on the
+coordinator now; a fresh host needs it before the workflow's build step will
+succeed.
 
 ## Where the time goes now
 
-Round trips are no longer the constraint: 484 lookups at a batch of 256 is about
-two per block. What remains is **volume** — the node reads 484 raw transactions
-per block from its index, and at 0.68 s a block that plausibly dominates.
+Unmeasured, and at five hours it no longer dominates anything. If it ever does:
+the work per block is a database read per spent output plus the parse, and the
+rate will fall as block density rises toward the tip, so the estimate above is
+optimistic for the later chain. `--workers` is the knob, held at 6 rather than
+the host's 8 cores because the coordinator also answers live PIR queries.
 
-Next levers, in the order worth trying:
+One property to keep in mind near the tip: a secondary instance sees only what
+the primary has flushed, so the visible finalized tip trails the node's, and the
+non-finalized state is invisible. For a backfill of buried history that is
+irrelevant. A height the secondary cannot see yet surfaces as a missing-block
+error rather than as a wrong answer.
 
-1. **A larger cache.** 8M outputs is a ~35,000-block window. Scripts are reused
-   heavily on this chain — mean 27 shards per script, max 2,748 — so spends
-   reach far back. 32M outputs is roughly 4 GB and about a 140,000-block window.
-   Check the coordinator's free memory first; a transaction-bounded cache was
-   OOM-killed over this range before, which is why the bound is outputs now.
-   Try it with `cache_outputs=32000000` rather than by changing the default.
-2. **Concurrent batches.** `prefetch_previous_outputs` walks chunks
-   sequentially (`prevout.rs:208`). At two batches a block this is small now,
-   but it grows again if the cache is not enlarged.
-3. **Measure before more.** Nothing here has been profiled on the host. The
-   claim that node fetch dominates is inference from counters, not a profile.
+## What was unresolved, and now is not
 
-## What is unresolved, and matters more than the speed
+**The journal's event count was checked against the node and is correct.**
+Comparing `blocks.bin` records with the node's verbose `getblock` — an
+independent path from the ingester's raw parse — at three heights:
 
-**The event count is unexplained by one of the repo's own figures.** The journal
-holds 161.8M events by height 341,000. `transparent_pir_design.md:288` records
-29,409,580 transparent outputs created at height 3,471,419 — for the *whole*
-chain — which cannot coexist with this. That figure is labelled there as copied
-and not independently verified, and it contradicts the repo's other, measured,
-figure: 288,426,459 address-transaction associations genesis to 3,471,098
-(`transparent_pir_mainnet_study.md:15`), which the journal *is* consistent with.
+| height | outputs | non-coinbase inputs | node total | journal |
+|---|---:|---:|---:|---:|
+| 106,500 | 803 | 13,305 | 14,108 | 14,108 |
+| 250,000 | 963 | 461 | 1,424 | 1,424 |
+| 340,000 | 961 | 4,614 | 5,575 | 5,575 |
 
-What has been checked:
+Exact at all three, and the mechanism is visible: height 106,500 carries 13,305
+non-coinbase inputs across 65 transactions. Events are dominated by **inputs**,
+which is why an outputs-only figure cannot bound them.
 
-- extraction emits exactly one event per output and one per non-coinbase input,
-  with no nesting (`extract.rs:83-170`) — read line by line;
-- the events are really stored, not a stale counter: the census reaches the same
-  total by walking every height;
-- distinct indexable scripts are **2,444,894**, under the study's 9,254,567
-  chain-wide addresses, so nothing is duplicating scripts;
-- `prevout.rs:24` independently records early-chain coinbases carrying thousands
-  of outputs, which is the mechanism for 450 events a block.
+So `transparent_pir_design.md:288`'s 29,409,580 transparent outputs is not a
+chain-cumulative count and should not be quoted as one. It reads as a UTXO
+snapshot — it says 95.32% unspent — which is what a live set looks like, not a
+history. The repo's other, measured figure (288,426,459 address-transaction
+associations, `transparent_pir_mainnet_study.md:15`) is the one the journal
+agrees with.
 
-The 29.4M figure also reads like a UTXO snapshot rather than a history: it says
-95.32% of outputs are unspent, which is what a live set looks like, not a
-cumulative record.
+Sizing derived from this journal is sound. Two caveats worth keeping: this
+checks event *counts*, not script bytes; and it is three heights, not a proof.
 
-**What would settle it:** count the transparent outputs of one real block from
-the density burst near height 106,500 — where the census reports 2,171 events a
-block — against an explorer or `getblock` directly. If it has hundreds of
-outputs, the journal is right and `transparent_pir_design.md` should stop
-quoting 29.4M without a caveat. If it has a dozen, the journal is wrong and
-every sizing figure derived from it is void. **Do this before anything is
-published from this journal.**
-
-Also unreported by the census: the journal's network and genesis hash.
-`EventStore` holds both. Printing them would make provenance checkable from the
-output rather than inferred.
+Provenance is settled too. The journal's `meta.json` carries mainnet genesis
+`00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08`. The census
+still does not print it, and printing it would make this checkable from the
+output rather than by reading the file.
 
 ## Related work in flight
 
@@ -137,3 +166,13 @@ The geometry decision this journal feeds is written up in
 It is not settled: the wallet-cost input arrived late and argues for wider
 shards than the note recommends. Nothing should be published until the
 end-to-end measurement runs.
+
+That decision is now much cheaper to defer. Re-running the journal after a
+geometry change used to be a 25-day commitment; it is an afternoon.
+
+## Leftovers on the coordinator
+
+- `/srv/zakura/state-ingest-check` — the scratch journal from the equivalence
+  check. Safe to delete.
+- `/root/state-ingest-build` — the tree the running binary was built from.
+  Delete once the change has landed on main and the workflow can rebuild it.
