@@ -3619,6 +3619,7 @@ dependencies = [
  "axum",
  "clap",
  "hex",
+ "ipir-sp",
  "prometheus",
  "reqwest",
  "serde",

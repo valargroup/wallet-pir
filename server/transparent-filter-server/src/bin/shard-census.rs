@@ -110,6 +110,20 @@ struct Cli {
     shard_matches: Option<PathBuf>,
 }
 
+/// Bytes one private row query uploads at this table shape.
+///
+/// The same formula the server bounds a request with, so a projection here and
+/// a measurement there cannot drift: packing keys, which the row count does not
+/// move, plus a body that it does. Response and published setup follow the row
+/// *width* instead and so are equal across every candidate compared here, which
+/// is why only the query is priced.
+fn query_bytes(rows: u64, row_bytes: usize) -> u64 {
+    let (rlwe, params) = ipir_sp::params_for_simplepir(rows, (row_bytes as u64) * 8)
+        .expect("a validated geometry has parameters");
+    (8 + ipir_sp::serialize::serialized_packing_keys_len(&rlwe)
+        + (params.db_rows * params.query_bits).div_ceil(8)) as u64
+}
+
 fn parse_limit(text: &str) -> Result<Limit, BoxError> {
     let (target, capacity) = text
         .split_once(':')
@@ -840,7 +854,15 @@ choose parameters for a set that will be published"
         drain_scripts(&mut run.matches, sealed, &mut run.shards)?;
         report(&run.name, &run.shards, &run.policy, &geometry, basis);
         if let Some(counter) = run.matches.take() {
-            counter.finish()?.report();
+            let distribution = counter.finish()?;
+            distribution.report();
+            // Priced at this geometry's own query sizes, because that is the
+            // comparison: a wider table costs more per query and is asked
+            // fewer of them, and only the product says which wins.
+            distribution.report_cost(
+                query_bytes(geometry.directory_rows, geometry.directory_row_bytes),
+                query_bytes(geometry.page_rows, PAGE_ROW_BYTES),
+            );
         }
     }
 
@@ -860,8 +882,8 @@ fn drain_scripts(
 ) -> Result<(), BoxError> {
     for mut shard in sealed {
         if let (Some(scripts), Some(counter)) = (shard.scripts.take(), matches.as_mut()) {
-            for script in scripts {
-                counter.record(&script)?;
+            for (script, fragments) in scripts {
+                counter.record(&script, fragments)?;
             }
         }
         into.push(shard);

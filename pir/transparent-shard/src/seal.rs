@@ -178,14 +178,21 @@ pub struct SealedShard {
     /// scripts — which is the reason it is produced here rather than by a
     /// caller that would have to retain them.
     pub placement: Option<Placement>,
-    /// The indexable scripts this shard holds, in placement order.
+    /// The indexable scripts this shard holds, each with the page fragments its
+    /// history in this shard costs to retrieve.
+    ///
+    /// Fragments rather than events, because fragments are what a wallet pays:
+    /// a history inside the inline allowance costs none, and one above it costs
+    /// a query per fragment. Carried per shard because that is where the
+    /// allowance is granted — the same script in two shards gets two of them,
+    /// which is the whole reason shard width changes what retrieval costs.
     ///
     /// `None` unless the sealer was asked for them. A caller that asks **must
     /// drain this as each shard is sealed**: it is one shard's scripts, which is
     /// bounded, but a caller that keeps every sealed shard and never takes them
     /// is holding the journal's whole script set, which over a genesis-to-tip
     /// journal is not bounded by anything useful.
-    pub scripts: Option<Vec<Vec<u8>>>,
+    pub scripts: Option<Vec<(Vec<u8>, u32)>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -377,7 +384,11 @@ impl Sealer {
             scripts: self.retain_scripts.then(|| {
                 self.placeable()
                     .into_iter()
-                    .map(|script| script.to_vec())
+                    .map(|script| {
+                        let events = self.scripts.get(script).copied().unwrap_or(0);
+                        let fragments = self.geometry.fragments_for(events) as u32;
+                        (script.to_vec(), fragments)
+                    })
                     .collect()
             }),
             shard_id: self.next_shard_id,

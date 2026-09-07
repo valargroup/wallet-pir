@@ -1,209 +1,304 @@
-# Plan: table utilisation through packed pages and generation lanes
+# Plan: table utilisation through packed pages
 
-Date: 2026-09-06. Status: implementation plan, not a measurement.
+Date: 2026-09-06. Status: amended implementation plan; new savings are unmeasured.
 
-## Context
+## Decision
 
-Published generations are mostly empty. Measured over the current set — six
-generations covering Ironwood activation to height 3,473,474, archived under
+Pack short histories into shared page rows while keeping one public generation
+boundary, manifest chain, and provisional tail for the directory and pages.
+Do not introduce independently routed page generations.
+
+The priority order is correctness, no additional selection leakage, common-case
+query cost, then storage utilisation. Some empty space is an acceptable cost of
+preserving the private lookup boundary. This work does not promise to make both
+tables full in every chain era.
+
+## Context and scope
+
+The existing measurement covers six generations from Ironwood activation to
+height 3,473,474, archived under
 [shard-utilisation](transparent-pir-evaluation/shard-utilisation/):
 
-| | |
+| Metric | Existing measurement |
 |---|---:|
 | Directory slots filled | 69.8% |
 | Page rows used | 82.6% |
 | Page slots filled | 45.2% |
-| **Live bytes of pinned bytes** | **44.70%** |
+| Live bytes of pinned bytes | 44.70% |
 | Plaintext tables | 220.2 MB |
 
-That is already up from 6.04% and 1.6 GB, through two changes: narrowing the
-page row from 17,920 to 3,584 bytes, and raising page rows per segment so
-generations grow until the directory fills too. Both were parameter choices.
-What remains is structural, and parameters cannot reach it.
+Earlier parameter changes narrowed page rows from 17,920 to 3,584 bytes and
+raised the page-row count per segment. Remaining waste has two sources: one
+script owns each used page row, and sealing either table also closes the other.
+Packing addresses the first. Shared boundaries deliberately retain the second.
 
-Two independent causes remain, on orthogonal axes:
+The measured history distribution is p50 2 events, p90 5, p95 8. The two newest
+events remain inline in the directory. A three-event history therefore needs a
+page row for just one older event. Sharing that row is the common-case storage
+opportunity. Early-chain script/event distributions differ from recent-chain
+ones; a full-journal census must establish how that changes the binding table.
 
-**A page row belongs to one script.** The measured distribution is p50 2 events,
-p90 5, p95 8. A script that touches a page at all typically fills a few slots of
-36, and a three-event history occupies a private 3,584-byte row for 144 bytes of
-payload. This is *within-row* waste, and it is why page slots sit at 45%.
+The initial implementation keeps the existing geometry: 3,584-byte rows,
+2,048 directory rows and 8,192 page rows per segment, two inline events, and 36
+events per history fragment. Geometry tuning is a separate, measured decision
+within this plan, not an assumed consequence of packing.
 
-**One boundary closes both tables.** The directory is sized by distinct scripts
-and the page table by page rows, but a generation seals when either binds — so
-the other is left short. Today page rows bind and the directory stops at 69.8%.
-This is *which-table-wastes*, and no choice of row counts fixes it, because the
-binding quantity is not the same everywhere on the chain.
+This is not a query-key reuse change, a large-history query-count optimisation,
+or a stronger privacy protocol. Query budgets and resumable work remain required
+for large or externally spammed histories. Exhausting a budget leaves coverage
+incomplete; it must not silently truncate a history.
 
-The second cause is about to get worse. The early chain is running **435 events
-per block** against Ironwood's 19, and its mining-pool coinbases produce large
-numbers of scripts holding one event each — script-dense and page-light, the
-opposite of recent chain. Across a genesis-covering set **the binding quantity
-flips partway through**, so a single page-rows-per-segment value cannot make
-both tables fill in both regimes.
+## Privacy contract
 
-## Goal, and what is deliberately not the goal
+Inherit the trust and leakage model in
+[the correctness and privacy contract](transparent_pir_design.md#correctness-and-privacy-contract):
+the initial profile trusts the indexer for completeness and correctness; PIR
+hides the selected row, not the truth of its contents. Current observable
+behavior includes selected chain ranges, whether page retrieval occurs, query
+volume, and timing. Public-chain information can make that behavior identifying.
+This change does not remove those disclosures or establish security against an
+actively malicious service.
 
-**Optimise the common case: a script with a short history.** That is what the
-distribution is made of, and it is what pays the padding today.
+The additional invariant for this work is:
 
-**Not the whale.** The 94,332-event history costs 351 MB and is the one workload
-losing against compact scanning. Nothing here improves it: its cost is query
-*count*, and neither change alters how many rows a long history occupies. The
-design's stated answer for large and externally spammed histories is query
-budgets and resumable work, and that remains the right answer. Contorting the
-table geometry around an exchange address would make the common case worse,
-which is the trade that produced the current waste in the first place.
+> For a fixed public generation revision and request count, public table
+> destinations and request/response sizes do not depend on the selected script
+> or on where its history was packed.
 
-**Also not wallet bytes.** A restoring wallet pays 1.43 MB, 79 times better than
-coverage-matched compact scanning. Its cost is dominated by an irreducible
-86 KB of packing keys on each 94 KB query, which only bounded key reuse
-addresses and which is out of scope. Expect this work to move storage, not the
-wallet's bill. Filter and setup bytes fall slightly as a side effect; that is
-not the point of it.
+Consequently:
 
-## Change 1: packed page rows
+- A directory entry locates pages only within the same generation revision.
+  There is no script-dependent page-generation or size-class endpoint.
+- Size classes are a builder detail. All classes occupy one logical page table
+  with the same PIR geometry; their row indices remain private.
+- If a table has multiple segments, the wallet queries every segment as today.
+  It must not expose the segment obtained from a locator.
+- Do not add script-dependent request deduplication when two histories share a
+  row, or skip a scheduled fetch because an earlier packed response happened to
+  contain another requested history. Such optimisations change the observable
+  transcript and need a separate privacy review.
+- Filters retain the existing download and local-matching policy. This work
+  adds no public lookup of a script, locator, or packing class.
 
-Let one page row carry several scripts' histories, the way a directory row
-already carries several entries.
+Independent page lanes are deferred because choosing a page container after a
+private directory lookup can reveal a partition of the scripts in that directory
+generation. Hiding that choice would require a separately costed retrieval
+mechanism. Coarser public ranges, padded query counts, dummy page requests, and
+scheduled retrieval are also separate privacy proposals; none is implied here.
 
-A row becomes a count followed by packed, variable-length entries, each an exact
-script plus its events. A client scans the row and keeps the entry whose script
-bytes match — the same discipline the directory uses, and the same reason:
-a row is located by an index that could point anywhere, so identity is checked
-against content rather than assumed.
+## Record and identity contract
 
-Placement stays **builder-assigned and directory-located**. The directory entry
-keeps `first_page` and `page_count`; the builder decides which scripts share a
-row. It does *not* become hash-addressed.
+`SCHEMA` moves from v4 to v5. The directory record stays unchanged, including
+`total_events`, the inline events, `first_page`, and `page_count`. Counts describe
+one exact script's history within this generation. No page-generation field is
+added, so the directory entry width and slot count remain unchanged.
 
-That distinction matters and is the reason to prefer this shape:
+A page row is exactly 3,584 bytes. Its encoding is:
 
-- Hash placement needs overflow handling, because a bucket can fill. Builder
-  placement cannot overflow — the builder simply starts another row.
-- A locator that the builder wrote cannot point at another script's data by
-  construction. A hash that collided can.
-- This is the table where a lost event yields a wrong balance that looks
-  entirely normal, so the failure modes worth removing are the silent ones.
+- A four-byte unsigned little-endian entry count.
+- That many consecutive variable-length entries, each a 64-byte header followed
+  immediately by `event_count` events in the existing canonical 96-byte event
+  encoding.
+- Zero bytes through the end of the row. An empty row is entirely zero.
 
-A history longer than one row still occupies a run of consecutive rows exactly
-as today, so the long-history path degrades to current behaviour rather than
-becoming a new one.
+Each entry header has these fields, in order:
 
-Expected: page slots 45% → ~85%, page rows roughly halving.
+| Field | Bytes | Encoding |
+|---|---:|---|
+| Script length | 2 | Unsigned little-endian, at most 40 |
+| Exact script | 40 | Script bytes followed by zero padding |
+| Fragment ordinal | 4 | Unsigned little-endian, zero-based |
+| Fragment count | 4 | Unsigned little-endian, nonzero |
+| Event count | 4 | Unsigned little-endian, 1 through 36 |
+| Minimum event height | 4 | Unsigned little-endian |
+| Maximum event height | 4 | Unsigned little-endian |
+| Reserved | 2 | Zero |
 
-## Change 2: generation lanes
+Entry size is `64 + 96 * event_count`; the count and bounded event count define
+parsing unambiguously without another length field. A full 36-event fragment
+uses 3,520 bytes, fitting after the four-byte row header. Put these constants and
+offsets in one canonical module and pin them with assertions and frozen vectors.
+A future event-width or script-limit change requires revalidating this schema.
 
-Give the directory and the page table their own boundary sequences.
+Entry identity is `(accepted generation revision, exact script, ordinal)`.
+Generation identity is supplied by the bound table/manifest context, not repeated
+inside every entry. The client validates the entire row, rejects duplicate script
+entries within it, and selects exactly one entry matching the expected script,
+ordinal, and fragment count across all returned segments. It also checks:
 
-Once pages are packed, page rows are sized by *paged events* rather than by
-paged scripts, so the two lanes are sized by genuinely independent quantities.
-Each then seals on its own, and neither is cut short by the other.
+- Bounded lengths/counts and checked locator arithmetic; every requested row is
+  inside the declared logical page table.
+- Canonical event encodings, ordering, and height bounds that agree with the
+  events and lie inside the generation range.
+- Zero reserved bytes, script padding, and unused row bytes.
+- The complete retrieved history, including inline events, has exactly the
+  directory's promised event count and satisfies existing replay validation.
 
-- **Directory lane**: seals on distinct scripts. Carries the public filter,
-  since the filter is what a wallet tests before it queries anything.
-- **Page lane**: seals on page rows.
+Missing, duplicate, malformed, or mismatched fragments fail the affected work as
+incomplete. Builder-assigned placement avoids hash-bucket overflow for pages;
+it does not make locators infallible or prove index completeness.
 
-**Page boundaries must be a subset of directory boundaries.** A page generation
-is a union of whole directory generations, never a partial one. This is what
-keeps a directory hit resolving to a single page generation: without it, a
-script's paged events could straddle several page generations and a wallet would
-pay a query per generation crossed, which would cost the common case more than
-the packing saved.
+## Deterministic packing and query-count contract
 
-Each lane gets its own published map, manifest chain and tail. The directory
-entry's locator gains the page generation it refers to.
+For each supported script, sort its events by the existing canonical event order.
+Keep the newest two inline, or all events if fewer. Let `p` be the number of
+remaining older events. The builder then uses these rules:
 
-Expected: directory slots ~97%, and page rows able to fill independently of how
-script-dense the range happens to be.
+1. `p = 0`: no page entry or page query.
+2. `1 <= p <= 36`: place the whole older history in size class `p`. It is one
+   entry with ordinal zero and fragment count one. Never split it to fill a gap.
+3. `p > 36`: split into ascending consecutive chunks of 36 events, with a final
+   shorter chunk if needed. Allocate a dedicated contiguous run of rows, one
+   entry per row. Do not share the final row in this version.
 
-## Expected effect
+Emit short-history classes in increasing `p`. Within each class, sort by exact
+script bytes and fill rows with whole entries. Then emit long histories in exact
+script order, preserving each contiguous run. Each script occurs once in this
+generation's directory and belongs to exactly one of these categories.
 
-Estimates, to be replaced by census output before anything is published:
+For a short-history class, the number of entries per row is exactly:
 
-| | Now | Packed | Packed + lanes |
-|---|---:|---:|---:|
-| Directory slots | 69.8% | ~70% | ~97% |
-| Page slots | 45.2% | ~85% | ~85% |
-| Live of pinned | 44.7% | ~60% | **~77%** |
-| Storage, this range | 220 MB | ~150 MB | **~117 MB** |
+`entries_per_row(p) = floor((3584 - 4) / (64 + 96 * p))`.
 
-The lane change is worth little without packing and vice versa: fixing one
-shifts the bind onto the other. That is the argument for doing both, and for
-doing them together.
+This is size-class packing, not general bin packing. It deliberately forgoes
+mixing different lengths or reusing long-history tails so placement and seal
+accounting stay exact and inexpensive. The census must measure the resulting
+waste, including partially filled final rows in each class. Do not carry forward
+the earlier generic-packing estimate of 85% utilisation.
 
-## Work
+For a fixed generation range and script, page-query count remains exactly
+`ceil(p / 36)`, as in v4. Multiple scripts can now name the same `first_page`,
+but a wallet retrieving each history independently still makes the same number
+of logical row requests. Long histories keep contiguous extents. Physical query
+count also depends on segment count, which must be measured separately.
 
-**Packed rows** — `pir/transparent-shard/src/records.rs`. A page row becomes
-count-prefixed variable entries. Reuse the directory row's shape: an entry
-carries its exact script, unused bytes are zero, and a row with content past its
-count is refused. Keep the header's height bounds per entry rather than per row,
-since a client navigates by them.
+## Exact incremental sealing
 
-**Builder packing** — `pir/transparent-shard/src/build.rs`. Replace the
-one-row-per-script loop with a packer that fills a row before starting another,
-walking scripts in sorted order so the result stays a deterministic function of
-the events. Long histories keep their contiguous runs.
+Keep shared generation boundaries. The sealer tracks distinct scripts and page
+rows, closes both tables when either target is reached, and closes before a
+block that would breach capacity. Preserve the existing exception for a block
+that exceeds capacity alone: publish it using additional segments rather than
+stop publication or drop events.
 
-**Row accounting** — `pir/transparent-shard/src/layout.rs`. `page_rows_for` is
-currently per script and is what the sealer prices with. It becomes a function
-of packed occupancy, so the sealer needs the packer's accounting rather than a
-closed form. Keep it incremental: the seal pass streams blocks and must not
-re-pack a candidate range per block.
+Maintain each supported script's event count, short-history class counts `N[p]`,
+and the sum `L` of dedicated rows for long histories. Exact packed row demand is:
 
-**Lanes** — `manifest.rs`, `pir/transparent-filter/src/wire.rs`,
-`server/transparent-shard-server/`, `pir/transparent-wallet/`. Two maps, two
-manifest chains, two tails. The wallet's sync gains a page-generation lookup
-between the directory decode and the page fetch.
+`R = sum(p = 1..36, ceil(N[p] / entries_per_row(p))) + L`.
 
-**Schema** — `SCHEMA` moves to v5, and the set publishes to its own directory.
-`ShardSet::open` already refuses a set it cannot read, and the workflow already
-takes `shard_dir` and `data_dir` inputs.
+The contribution of a long history to `L` is `ceil(p / 36)`. Scripts outside
+private-table coverage contribute no page entries; keep the existing public
+filter coverage and excluded-script reporting rules.
 
-## Verification
+To project a block, aggregate its events by script, remove each touched script's
+old category contribution, and add its projected contribution. In particular,
+handle transitions across the inline threshold, between short classes, and from
+36 to 37 paged events. Evaluate on temporary deltas before deciding whether the
+block belongs in this generation. Commit the deltas only when absorbing it;
+reset all class state when sealing. No candidate-range sorting or repacking is
+needed per block. Page accounting costs O(touched scripts + 36) per block, in
+addition to existing event processing and directory accounting.
 
-1. `make check`. Geometry invariants are const assertions, so a packing change
-   that breaks one fails the build.
-2. **Exact replay equality is the gate.** Every workload must reconstruct its
-   UTXO set, spend set and per-transaction history identically to an independent
-   traversal of the journal — not merely the same balance. This is the check
-   that a packed row cannot silently lose an event, and it already exists.
-3. Add a test that builds a generation at high packing density and asserts every
-   script's history reassembles, since near-full rows are where a packer's
-   off-by-one lives.
-4. `shard-census` over the journal before publishing anything, confirming
-   generations stay single-segment and reporting the new fill.
-5. `measure` against the published set. The common-case workloads must not
-   regress; the whale is expected to stay where it is.
-6. Archive census and measurement output alongside the existing evidence.
+At build time, assert actual emitted row count equals `R`. Directory placement
+still uses the real two-choice placer; distinct-script capacity alone does not
+guarantee it fits one segment. Report placement-induced extra segments separately
+from the oversized-block exception. Do not assert a 97% directory fill target.
 
-## Risks
+## Publication and wallet behavior
 
-**The packer is the risk, not the lanes.** Lanes are bookkeeping: two
-sequences where there was one. The packer changes the table where a silent loss produces a
-wrong balance that looks normal. Builder-assigned placement removes the overflow
-case, and exact-equality replay is the check, but this is where the tests should
-be strongest.
+Keep one map, one manifest chain, and one provisional tail. Build the filter,
+directory, and page tables from the same event range and publish them as one
+immutable revision. The manifest binds both tables, geometry, and chain anchors.
+Make the complete revision available before exposing it through the map; a failed
+publication must leave the prior complete revision usable.
 
-**Sealing gets harder to price.** Today `page_rows_for` is a closed form the
-sealer evaluates per script incrementally. Packed occupancy is not, and a naive
-implementation would re-pack per candidate boundary and make the census
-quadratic. The accounting needs to stay incremental and slightly conservative:
-over-estimating rows seals early and wastes a little, under-estimating overflows
-a segment and multiplies query cost for every user of that generation.
+A provisional rebuild may reorder rows, including when a history changes packing
+class. It therefore produces a new revision of both tables together. A wallet
+must finish against its pinned available revision or discard/restart affected
+work against the replacement; it must never combine old directory locators with
+new pages. Cache/setup identity and resumed work must distinguish revisions.
+Retain the existing reorg rollback and provisional coverage rules. Sealed content
+is immutable under its published identity, not immune to chain reorganization.
 
-**Lane skew.** If the two lanes drift far apart in width, a directory generation
-could span more page generations than intended. The subset constraint prevents
-it structurally; it should also be asserted at publication rather than assumed.
+The wallet decodes the new packed row shape and preserves existing exact-key,
+fragment, total-event, and replay checks. Shared rows do not change the meaning
+of `first_page + ordinal`. The v5 set is published separately; clients and servers
+must reject unsupported schemas rather than decode v5 bytes as v4.
+
+## Implementation work
+
+- `pir/transparent-shard/src/records.rs`: define the v5 row codec, canonical
+  offsets, strict validation, and frozen encoding vectors.
+- `pir/transparent-shard/src/build.rs`: implement deterministic class packing,
+  dedicated long-history runs, and emitted-row/accounting equality checks.
+- `pir/transparent-shard/src/layout.rs` and `seal.rs`: centralize fragment and
+  class capacities; implement the incremental class counters. Distinguish
+  per-history query count from aggregate packed row demand in APIs and names.
+- `pir/transparent-shard/src/manifest.rs`: bump schema and accurately describe
+  packed geometry. Retain coupled table digests and revision semantics.
+- `pir/transparent-wallet/` and `server/transparent-shard-server/`: support the
+  codec, verify revision binding, and preserve private segment selection and
+  fixed request geometry. No second map or lane-lookup API is required.
+- Census and measurement tools: report event payload, encoding overhead, used
+  rows, pinned bytes, class-tail waste, segment counts, and wallet costs. Update
+  descriptions that currently assume one script per page row.
+
+## Measurement and acceptance gates
+
+The earlier 60%/77% live-byte and 150/117 MB storage projections are withdrawn:
+they did not model this packer, shared-boundary sealing, and actual directory
+placement. The existing measurements above are a baseline, not a v5 forecast.
+
+Compare three configurations over identical journal coverage: v4 baseline, v5
+packing with unchanged geometry and seal policy, and any proposed v5 geometry
+retuning. Also compare v4/v5 builds on identical fixed ranges to isolate packing
+from changed generation boundaries. Archive inputs, schema, geometry, policies,
+and output alongside the existing evidence.
+
+Acceptance requires:
+
+1. `make check`, codec vectors, and malformed-input tests pass. Cover truncation,
+   oversized counts, duplicate entries, wrong ordinals/counts, nonzero padding,
+   out-of-range locators, and arithmetic overflow without panics.
+2. Exact replay equality against an independent journal traversal for UTXOs,
+   spend sets, and per-transaction histories. Add generated histories covering
+   every short class, full/partial rows, empty generations, repeated scripts in
+   adjacent generations, and long-history boundaries.
+3. Incremental projection equals the actual builder row count across randomized
+   block sequences, threshold crossings, pre-block seals, and oversized blocks.
+   Equivalent input ordering produces identical published bytes.
+4. Fixed-range per-script page-query counts equal v4. Paired retrieval traces
+   for different scripts with equal query counts expose identical destinations,
+   message sizes, and segment schedules, excluding encrypted content and timing.
+   This checks the routing invariant, not a cryptographic privacy proof.
+5. Tail growth, sealing, stale/mixed revisions, interrupted publication, resume,
+   and reorg tests never accept mixed tables or advance incomplete coverage.
+6. Full-journal census reports storage and actual segment counts by chain era,
+   including provisional tails. Total pinned plaintext bytes must decrease
+   versus the coverage-matched baseline. Ordinary generations gaining segments
+   require investigation and correction before accepting the chosen geometry;
+   oversized-block cases remain explicitly supported and reported.
+7. End-to-end measurement for every existing common-case workload shows no
+   increase in physical PIR request count or total transferred bytes versus the
+   coverage-matched baseline. Report filter/setup/query/response bytes separately.
+   Report long-history costs and all changes caused by new boundaries as well;
+   a fixed-range page-count guarantee is not an end-to-end cost guarantee.
+8. Repeat baseline and candidate latency/build measurements on the same hardware
+   and report distributions and peak memory. Do not claim a performance win
+   from noisy single runs; an observed regression must be explained and resolved
+   or accepted through an explicit amendment before rollout.
+
+Keep the existing geometry for the first comparison. Select a different global
+geometry only if the measured comparison satisfies these gates. Do not choose
+script-dependent geometries or routing to rescue utilisation. If savings are
+small, retain the privacy contract and reconsider the optimisation rather than
+quietly introduce independent lanes.
 
 ## Sequencing
 
-Both need a schema change and a republish, and a genesis republish is on the
-order of fourteen hours at the measured rate. The composition argument says
-either alone captures well under half the benefit, so they should land together,
-once, and **before the genesis publish** rather than after.
+Implement and validate the codec, packer, and exact accounting together, then run
+the unchanged-geometry census before considering retuning. Complete wallet and
+publication validation and the measurement gates before publishing a v5 set.
 
-The genesis journal is still ingesting. When it lands, the census should report
-what each lane would seal at independently alongside the coupled result: if the
-binding quantity does flip between chain eras, that comparison shows it directly
-and settles whether lanes are worth their complexity on evidence rather than on
-the argument above.
+A genesis republish is expensive, so completing this before it is desirable, but
+the ingest/publish schedule is not a reason to waive the gates. Independent lanes, stronger traffic privacy, and query-key reuse each require
+their own design and evidence.

@@ -28,9 +28,17 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// Longest script recorded, matching the directory's own coverage limit.
 const SCRIPT_BYTES: usize = 40;
 
-/// One occurrence: padded script then length, so a plain byte comparison sorts
-/// by script and keeps two scripts with a common padded prefix apart.
-const RECORD: usize = SCRIPT_BYTES + 2;
+/// One occurrence: padded script, then length, then the fragments that script's
+/// history costs in this shard.
+///
+/// The sort key is the leading script and length, so a plain byte comparison
+/// still groups a script's occurrences and still keeps two scripts with a
+/// common padded prefix apart. The fragment count rides along in the tail,
+/// where it does not disturb that order.
+const RECORD: usize = SCRIPT_BYTES + 2 + 4;
+
+/// Bytes of a record that participate in the sort, which is the script key.
+const KEY: usize = SCRIPT_BYTES + 2;
 
 /// Occurrences held before a sorted run is spilled. About 42 MB.
 const RUN_RECORDS: usize = 1_000_000;
@@ -75,13 +83,14 @@ impl MatchCounter {
     ///
     /// Scripts too long for a directory entry are dropped, because they are
     /// never placed and so never cost a directory query.
-    pub fn record(&mut self, script: &[u8]) -> Result<(), BoxError> {
+    pub fn record(&mut self, script: &[u8], fragments: u32) -> Result<(), BoxError> {
         if script.len() > SCRIPT_BYTES {
             return Ok(());
         }
         let mut record = [0u8; RECORD];
         record[..script.len()].copy_from_slice(script);
-        record[SCRIPT_BYTES..].copy_from_slice(&(script.len() as u16).to_le_bytes());
+        record[SCRIPT_BYTES..KEY].copy_from_slice(&(script.len() as u16).to_le_bytes());
+        record[KEY..].copy_from_slice(&fragments.to_le_bytes());
         self.buffered.push(record);
         self.occurrences += 1;
         if self.buffered.len() >= self.run_records {
@@ -131,15 +140,32 @@ impl MatchCounter {
         }
 
         let mut counts: std::collections::BTreeMap<u64, u64> = Default::default();
-        let mut current: Option<([u8; RECORD], u64)> = None;
+        let mut scripts: Vec<Script> = Vec::new();
+        // Grouping is on the key alone. Two occurrences of one script differ in
+        // their fragment tails, so comparing whole records would split a script
+        // into one group per distinct history length it ever had.
+        let mut current: Option<([u8; KEY], Script)> = None;
         while let Some(std::cmp::Reverse((record, index))) = heap.pop() {
+            let key: [u8; KEY] = record[..KEY].try_into().expect("the key is a prefix");
+            let fragments =
+                u32::from_le_bytes(record[KEY..].try_into().expect("four trailing bytes")) as u64;
             match &mut current {
-                Some((held, run)) if *held == record => *run += 1,
+                Some((held, run)) if *held == key => {
+                    run.shards += 1;
+                    run.fragments += fragments;
+                }
                 other => {
                     if let Some((_, run)) = other.take() {
-                        *counts.entry(run).or_default() += 1;
+                        *counts.entry(run.shards).or_default() += 1;
+                        scripts.push(run);
                     }
-                    *other = Some((record, 1));
+                    *other = Some((
+                        key,
+                        Script {
+                            shards: 1,
+                            fragments,
+                        },
+                    ));
                 }
             }
             if let Some(next) = readers[index].next()? {
@@ -147,7 +173,8 @@ impl MatchCounter {
             }
         }
         if let Some((_, run)) = current {
-            *counts.entry(run).or_default() += 1;
+            *counts.entry(run.shards).or_default() += 1;
+            scripts.push(run);
         }
 
         for path in &self.runs {
@@ -155,6 +182,7 @@ impl MatchCounter {
         }
         Ok(Distribution {
             counts,
+            scripts,
             occurrences: self.occurrences,
         })
     }
@@ -181,10 +209,23 @@ impl RunReader {
     }
 }
 
-/// How many shards scripts appear in, as a histogram.
+/// What one script costs a wallet to restore.
+#[derive(Clone, Copy, Debug)]
+pub struct Script {
+    /// Shards it appears in. Two directory queries each.
+    pub shards: u64,
+    /// Page fragments across those shards. One query each.
+    pub fragments: u64,
+}
+
+/// How many shards scripts appear in, and what retrieving them costs.
 pub struct Distribution {
     /// Shards appeared in, to scripts that appeared in that many.
     counts: std::collections::BTreeMap<u64, u64>,
+    /// One entry per distinct script. Held because the cost question is about
+    /// the tail — a mean over a distribution whose maximum is a thousandfold
+    /// its median describes nobody.
+    scripts: Vec<Script>,
     occurrences: u64,
 }
 
@@ -212,6 +253,35 @@ impl Distribution {
     /// Scripts that appeared in exactly `g` shards, for tests and reporting.
     pub fn scripts_matching(&self, g: u64) -> u64 {
         self.counts.get(&g).copied().unwrap_or(0)
+    }
+
+    /// What restoring each script costs in private query bytes, as a
+    /// distribution.
+    ///
+    /// Two directory queries per shard the script appears in, one page query
+    /// per fragment, priced at the geometry's own query sizes. This is the term
+    /// a geometry decision moves: filters and the map are paid whatever the
+    /// shard boundaries are, and setup is a per-shard constant an order of
+    /// magnitude below a query.
+    ///
+    /// It prices a wallet that restores the whole journal for one script. A
+    /// real wallet holds many scripts and most of them are never used, so this
+    /// is the cost of an *active* script rather than of a wallet — which is the
+    /// comparison a geometry has to win, because the inactive ones cost the
+    /// same under every geometry.
+    pub fn cost_bytes(&self, directory_query: u64, page_query: u64) -> Vec<u64> {
+        let mut costs: Vec<u64> = self
+            .scripts
+            .iter()
+            .map(|script| script.shards * 2 * directory_query + script.fragments * page_query)
+            .collect();
+        costs.sort_unstable();
+        costs
+    }
+
+    /// Fragments across every script, which is the page-query total.
+    pub fn fragments(&self) -> u64 {
+        self.scripts.iter().map(|script| script.fragments).sum()
     }
 
     /// Prints the distribution and the directory queries it implies.
@@ -251,6 +321,38 @@ impl Distribution {
             self.occurrences
         );
     }
+
+    /// Prints what an active script pays to restore, at these query sizes.
+    pub fn report_cost(&self, directory_query: u64, page_query: u64) {
+        let costs = self.cost_bytes(directory_query, page_query);
+        if costs.is_empty() {
+            return;
+        }
+        let mb = |bytes: u64| bytes as f64 / 1e6;
+        let at = |p: f64| {
+            let index = ((p / 100.0) * costs.len() as f64).ceil().max(1.0) as usize - 1;
+            costs[index.min(costs.len() - 1)]
+        };
+        let total: u128 = costs.iter().map(|c| *c as u128).sum();
+        println!(
+            "  restoration cost per active script (queries only, {directory_query} B directory, \
+{page_query} B page)"
+        );
+        println!(
+            "    MB           mean {:7.2}  p50 {:7.2}  p90 {:7.2}  p95 {:7.2}  p99 {:8.2}  max {:9.2}",
+            total as f64 / costs.len() as f64 / 1e6,
+            mb(at(50.0)),
+            mb(at(90.0)),
+            mb(at(95.0)),
+            mb(at(99.0)),
+            mb(*costs.last().expect("nonempty")),
+        );
+        println!(
+            "    fragments    {} across all scripts, against {} script-shard pairs",
+            self.fragments(),
+            self.occurrences,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -262,10 +364,20 @@ mod tests {
     }
 
     fn count(occurrences: &[Vec<u8>], run_records: usize) -> Distribution {
+        count_with(
+            &occurrences
+                .iter()
+                .map(|s| (s.clone(), 0u32))
+                .collect::<Vec<_>>(),
+            run_records,
+        )
+    }
+
+    fn count_with(occurrences: &[(Vec<u8>, u32)], run_records: usize) -> Distribution {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut counter = MatchCounter::with_run_records(dir.path(), "test", run_records);
-        for script in occurrences {
-            counter.record(script).expect("recorded");
+        for (script, fragments) in occurrences {
+            counter.record(script, *fragments).expect("recorded");
         }
         let distribution = counter.finish().expect("merged");
         // Nothing is left behind: the merge removes what it read.
@@ -328,6 +440,41 @@ mod tests {
             1,
         );
         assert_eq!(d.scripts(), 1, "only the indexable script is counted");
+    }
+
+    /// A script's fragments accumulate across its shards while its identity
+    /// stays one group. Grouping on the whole record instead would split a
+    /// script into one group per history length it happened to have, which
+    /// reads as several scripts each appearing once.
+    #[test]
+    fn fragments_accumulate_without_splitting_the_script() {
+        let a = script(0xa, 25);
+        let b = script(0xb, 25);
+        let d = count_with(
+            &[
+                (a.clone(), 3),
+                (b.clone(), 0),
+                (a.clone(), 0),
+                (a.clone(), 7),
+                (b.clone(), 2),
+            ],
+            1,
+        );
+        assert_eq!(d.scripts(), 2, "two scripts, whatever their histories");
+        assert_eq!(d.fragments(), 12);
+
+        // a: 3 shards, 10 fragments. b: 2 shards, 2 fragments.
+        let costs = d.cost_bytes(100, 10);
+        assert_eq!(costs, vec![2 * 2 * 100 + 2 * 10, 3 * 2 * 100 + 10 * 10]);
+    }
+
+    /// A script inside the inline allowance everywhere costs page queries
+    /// nowhere, and is still counted.
+    #[test]
+    fn a_wholly_inline_script_costs_only_directory_queries() {
+        let d = count_with(&[(script(0xc, 25), 0), (script(0xc, 25), 0)], 1);
+        assert_eq!(d.fragments(), 0);
+        assert_eq!(d.cost_bytes(100, 10), vec![2 * 2 * 100]);
     }
 
     #[test]
