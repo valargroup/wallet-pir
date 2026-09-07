@@ -72,14 +72,28 @@ validate_shard_set() {
   named="$(jq -er '.shards | length' "$dir/shards.json")" \
     || fail "$dir/shards.json is not a readable shard map"
   [[ "$named" -gt 0 ]] || fail "$dir/shards.json names no shards"
-  # One directory per shard, named by its manifest digest.
+
+  # Every revision the map names must be on disk. This used to compare counts
+  # instead, which was the same check while a set had exactly one directory per
+  # shard -- and stopped being the same check when the publisher started leaving
+  # a superseded tail beside the revision that replaced it. Counting would then
+  # refuse a set the server loads happily, and it would refuse it *here*, in the
+  # gate that exists to keep a bad input from becoming an outage.
+  local digest missing=0
+  while read -r digest; do
+    [[ -d "$dir/$digest" ]] || { echo "  missing revision $digest"; missing=$((missing + 1)); }
+  done < <(jq -er '.shards[].manifest_digest' "$dir/shards.json")
+  [[ "$missing" -eq 0 ]] || fail "$dir is missing $missing of the $named revisions its map names"
+
+  # Anything else on disk is a superseded revision the worker may still be
+  # answering from, which is expected rather than an error. Reported, because an
+  # unbounded number of them is how a set quietly grows without the map moving.
   counted="$(find "$dir" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
-  [[ "$counted" -eq "$named" ]] \
-    || fail "$dir has $counted shard directories but its map names $named"
-  local schema
-  schema="$(jq -r '.shards[0].manifest_digest // empty' "$dir/shards.json")"
-  [[ -n "$schema" ]] || fail "$dir/shards.json entries carry no manifest digest"
-  echo "shard set $dir: $named shards"
+  local retained=$((counted - named))
+  local first_digest
+  first_digest="$(jq -r '.shards[0].manifest_digest // empty' "$dir/shards.json")"
+  [[ -n "$first_digest" ]] || fail "$dir/shards.json entries carry no manifest digest"
+  echo "shard set $dir: $named shards, $retained superseded revisions retained"
 }
 
 ssh_opts() {
