@@ -104,7 +104,8 @@ resource "digitalocean_droplet" "transparent_worker" {
   ipv6       = true
 
   user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
-    packages = jsonencode(local.common_packages)
+    packages          = jsonencode(local.common_packages)
+    deploy_public_key = var.transparent_worker_deploy_public_key
   })
 }
 

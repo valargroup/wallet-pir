@@ -65,6 +65,25 @@ variable "transparent_worker_size" {
   default     = "s-4vcpu-16gb-amd"
 }
 
+variable "transparent_worker_deploy_public_key" {
+  description = <<-EOT
+    Public half of the fleet deploy key, installed for root at first boot.
+
+    The existing Enhance hosts got this key by a hand edit of authorized_keys
+    rather than through DigitalOcean's ssh_keys, so a freshly provisioned
+    droplet would not accept the deploy workflow's key and every deploy would
+    need a manual fixup first. Rendering it through cloud-init makes a new
+    worker deployable the moment it boots. Public half only; never the private.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.transparent_worker_deploy_public_key == "" || can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-) ", var.transparent_worker_deploy_public_key))
+    error_message = "Must be an OpenSSH public key line, or empty. A private key starts with '-----BEGIN'."
+  }
+}
+
 variable "image" {
   type    = string
   default = "ubuntu-24-04-x64"
