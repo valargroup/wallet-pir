@@ -83,7 +83,24 @@ pub async fn build_block_events(
     cache: &mut OutputCache,
     height: u64,
 ) -> Result<BuiltEvents, BoxError> {
-    let (hash_display, block) = zakura.block(height).await?;
+    let fetched = zakura.block(height).await?;
+    build_fetched_block_events(zakura, cache, height, fetched).await
+}
+
+/// [`build_block_events`] over a block already in hand.
+///
+/// Split out so a caller can fetch the next block while this one is still being
+/// resolved and extracted. Fetching is the one part of the work that touches no
+/// cache state: which outputs a block creates and which it spends is a property
+/// of the block, and the cache only decides whether they have to be asked for.
+/// So the fetch can run ahead, and everything after it cannot.
+pub async fn build_fetched_block_events(
+    zakura: &ZakuraClient,
+    cache: &mut OutputCache,
+    height: u64,
+    fetched: (String, zakura_chain::block::Block),
+) -> Result<BuiltEvents, BoxError> {
+    let (hash_display, block) = fetched;
     let block_hash = BlockHash::from_display_hex(&hash_display)?;
     let event_height = u32::try_from(height)
         .map_err(|_| format!("height {height} does not fit the event encoding"))?;

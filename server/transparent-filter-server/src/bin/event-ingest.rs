@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 use transparent_filter_server::events::EventStore;
-use transparent_filter_server::ingest::{build_block_events, BoxError};
+use transparent_filter_server::ingest::{build_fetched_block_events, BoxError};
 use transparent_filter_server::prevout::OutputCache;
 use transparent_filter_server::zakura::ZakuraClient;
 
@@ -156,9 +156,33 @@ async fn main() -> Result<(), BoxError> {
         "starting event backfill"
     );
 
+    // The next block is fetched while this one is being resolved. Fetching is
+    // the only part of a block's work that depends on no cache state, so it is
+    // the only part that can run ahead; resolution and extraction both read a
+    // cache that the block before them has just written.
     let mut height = first;
+    let mut ahead = if height <= stop {
+        Some(tokio::spawn({
+            let zakura = zakura.clone();
+            async move { zakura.block(height).await }
+        }))
+    } else {
+        None
+    };
     while height <= stop {
-        let built = build_block_events(&zakura, &mut cache, height).await?;
+        let fetched = ahead
+            .take()
+            .expect("a fetch is in flight for every height in range")
+            .await??;
+        if height < stop {
+            let next = height + 1;
+            ahead = Some(tokio::spawn({
+                let zakura = zakura.clone();
+                async move { zakura.block(next).await }
+            }));
+        }
+
+        let built = build_fetched_block_events(&zakura, &mut cache, height, fetched).await?;
         rpc_lookups += built.rpc_lookups;
         cache_hits += built.cache_hits;
         store.append_block(height, built.block_hash, &built.events)?;

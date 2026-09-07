@@ -16,8 +16,15 @@ use zakura_chain::transparent::{Input, OutPoint};
 
 /// Previous transactions requested per JSON-RPC batch.
 ///
-/// Matches the batch size the Python collector uses against this node.
-pub const PREVOUT_BATCH: usize = 16;
+/// The backfill's critical path is round trips, not node work. Measured over
+/// the genesis range at height 339,000, a block needed 907 previous-output
+/// lookups against 250 cache hits, and at a batch of 16 that was 57 sequential
+/// round trips for one block of a 1.34-second budget. The node does the same
+/// work either way; what a larger batch removes is the waiting.
+///
+/// The earlier value matched the batch size a Python collector used against
+/// this node, which aligned the two tools without either of them measuring it.
+pub const PREVOUT_BATCH: usize = 256;
 
 /// Number of recently seen *outputs* whose scripts are retained.
 ///
@@ -27,10 +34,20 @@ pub const PREVOUT_BATCH: usize = 16;
 /// that range and was killed by the OOM killer partway through a genesis
 /// backfill. Outputs are what the map actually stores.
 ///
-/// At roughly a hundred bytes per entry this is a few hundred megabytes. It
-/// bounds memory rather than guaranteeing a hit rate: a miss is correct, just
-/// slower.
-pub const DEFAULT_CACHE_OUTPUTS: usize = 2_000_000;
+/// An entry is an outpoint, a script and their map overhead — near 110 bytes
+/// once the allocator and the load factor are counted — so this is around a
+/// gigabyte. It bounds memory rather than guaranteeing a hit rate: a miss is
+/// correct, just slower.
+///
+/// Sized from the miss rate rather than from a round number. Over the genesis
+/// range the cache held two million outputs and answered 22% of lookups: at
+/// roughly 230 outputs a block that is a window of about 8,700 blocks, and a
+/// spend reaching further back than that paid an RPC round trip. Eight million
+/// widens the window to about 35,000 blocks. A host with less memory than that
+/// deserves should pass `--cache-outputs`; the cost of guessing low is speed,
+/// and the cost of guessing high is the OOM killer, which is why this is a
+/// default and not a floor.
+pub const DEFAULT_CACHE_OUTPUTS: usize = 8_000_000;
 
 /// Outputs of transactions seen recently, with insertion-order eviction.
 ///

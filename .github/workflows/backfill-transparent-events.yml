@@ -32,6 +32,16 @@ on:
         required: false
         default: "3428143"
         type: string
+      cache_outputs:
+        description: >-
+          Start only. Outputs held in the previous-output cache; blank uses the
+          binary's default. Resolving previous outputs is the backfill's
+          dominant cost, so this trades resident memory for RPC round trips. A
+          transaction-bounded cache was once OOM-killed over the early chain, so
+          dial this down rather than up on a host that is short of memory.
+        required: false
+        default: ""
+        type: string
       stop_height:
         description: Last height to index; blank means the node's tip
         required: false
@@ -357,25 +367,42 @@ jobs:
           USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
           START: ${{ inputs.start_height }}
           STOP: ${{ inputs.stop_height }}
+          CACHE: ${{ inputs.cache_outputs }}
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
           SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/backfill-ssh/known_hosts"
             -o ConnectTimeout=10)
-          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" "$START" "$STOP" <<'REMOTE'
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "$UNIT" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" "$START" "$STOP" "$CACHE" <<'REMOTE'
           set -euo pipefail
           # `stop` is optional, and ssh re-splits the remote command, so an
           # empty trailing argument does not survive as an empty positional —
           # it simply is not there. Defaulting rather than indexing is what
           # keeps `set -u` from killing the script before anything runs.
-          unit="$1"; bin="$2"; data_dir="$3"; start="$4"; stop="${5:-}"
+          unit="$1"; bin="$2"; data_dir="$3"; start="$4"; stop="${5:-}"; cache="${6:-}"
+
+          # A journal is pinned to the height it started at, and opening it
+          # under a different one sets the whole thing aside and begins again.
+          # Resuming a long backfill with this input left at its default would
+          # therefore discard it silently — days of work, and no error. So the
+          # existing journal, if there is one, decides.
+          meta="$data_dir/meta.json"
+          if [[ -f "$meta" ]]; then
+            pinned=$(sudo sed -n 's/.*"start_height":[[:space:]]*\([0-9]*\).*/\1/p' "$meta")
+            if [[ -n "$pinned" && "$pinned" != "$start" ]]; then
+              echo "journal at $data_dir is pinned to start height $pinned, not $start;" >&2
+              echo "resuming it needs start_height=$pinned, and a fresh journal needs its own data_dir" >&2
+              exit 1
+            fi
+          fi
 
           args=(--data-dir "$data_dir"
                 --zakura-rpc-url http://127.0.0.1:8232
                 --zakura-cookie /root/.cache/zakura/.cookie
                 --start-height "$start")
           if [[ -n "$stop" ]]; then args+=(--stop-height "$stop"); fi
+          if [[ -n "$cache" ]]; then args+=(--cache-outputs "$cache"); fi
 
           # A transient unit that failed stays loaded in the failed state and
           # would make systemd-run refuse the name. The earlier is-active check
