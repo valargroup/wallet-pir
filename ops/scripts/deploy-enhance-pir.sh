@@ -2,15 +2,78 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 validate|preflight|deploy" >&2
+  echo "usage: $0 jq-programs|validate|preflight|deploy" >&2
   exit 2
 }
 
 MODE="${1:-}"
 case "$MODE" in
-  validate | preflight | deploy) ;;
+  jq-programs | validate | preflight | deploy) ;;
   *) usage ;;
 esac
+
+# ------------------------------------------------------------- jq programs
+#
+# The jq programs on the rollout path, named so ops/scripts/check-jq-contracts.sh
+# can compile each one. A jq program that does not compile exits 3, and every one
+# of these runs after the coordinator has been stopped -- the transparent script
+# lost a deploy that way, to `join(\" \")` inside an interpolation, and two of
+# these carry the same escaping shape: they are embedded in double-quoted bash
+# strings passed to ssh, where the inner quotes had to be backslashed.
+#
+# Only the rollout-path programs are here. The inventory, topology and Caddyfile
+# programs above are already compiled by `validate` mode, which CI runs on every
+# push; these are not reachable without a live fleet.
+#
+# Compile-checked but not evaluated: the payloads are the coordinator's, and a
+# fixture for them means standing up enhance-pir-server. Field-path drift here
+# is still uncovered -- see docs and check-jq-contracts.sh.
+readonly JQ_ENHANCE_WORKER_HOSTS='.[].replicas[].ssh_host'
+readonly JQ_ENHANCE_WORKER_NAMES='.[].replicas[].name'
+readonly JQ_ENHANCE_GROUP_COUNT='length'
+readonly JQ_ENHANCE_GENERATION='.generation'
+# Hoisting these two also removes the backslashed inner quotes they needed
+# inside the ssh command string.
+readonly JQ_ENHANCE_WORKER_OK='.status == "ok"'
+readonly JQ_ENHANCE_COORDINATOR_SERVING='.phase.phase == "serving"'
+# The `$expected` and `$old` below are jq variables, supplied by --argjson at
+# the call site, so single quotes are exactly right and shellcheck's SC2016 --
+# "expressions don't expand in single quotes" -- is the opposite of the advice
+# this wants.
+# shellcheck disable=SC2016
+readonly JQ_ENHANCE_HEALTH_WORKERS='.phase.phase == "serving" and .tables.enhance.workers == $expected'
+# shellcheck disable=SC2016
+readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.network == "main") and
+    (.generation.pool == "ironwood") and
+    (.generation.setup_seed | type == "number") and
+    ([.generation.shards[].worker] | unique | length) <= $expected and
+    (.generation.shards | length) > 0 and
+    (.params | type == "object") and
+    (.public_params_base64 | type == "string" and length > 0)'
+# shellcheck disable=SC2016
+readonly JQ_ENHANCE_NOT_REGRESSED='.anchor_height >= $old.anchor_height and
+    .ironwood_tree_size >= $old.ironwood_tree_size'
+
+# Emitted as NUL-terminated NAME<TAB>PROGRAM records for the contract checker.
+# NUL rather than newline because a program may itself span lines, and a
+# line-delimited format would split one in half. Not meant to be read by eye.
+# Listed explicitly, so a program added without being registered here is a
+# visible omission rather than a silent gap in the check.
+jq_programs() {
+  local name
+  for name in JQ_ENHANCE_WORKER_HOSTS JQ_ENHANCE_WORKER_NAMES JQ_ENHANCE_GROUP_COUNT \
+    JQ_ENHANCE_GENERATION JQ_ENHANCE_WORKER_OK JQ_ENHANCE_COORDINATOR_SERVING \
+    JQ_ENHANCE_HEALTH_WORKERS JQ_ENHANCE_INIT_COMPLETE JQ_ENHANCE_NOT_REGRESSED; do
+    printf '%s\t%s\0' "$name" "${!name}"
+  done
+}
+
+# Answered before the environment is required, so a checker can ask for the
+# programs without a fleet's worth of variables set.
+if [[ "$MODE" == "jq-programs" ]]; then
+  jq_programs
+  exit 0
+fi
 
 require_env() {
   local name="$1"
@@ -175,8 +238,8 @@ copy_to() {
   "${SCP[@]}" "$source" "$ENHANCE_DEPLOY_USER@$host:$destination"
 }
 
-mapfile -t WORKER_HOSTS < <(jq -r '.[].replicas[].ssh_host' <<<"$ENHANCE_WORKERS_JSON")
-mapfile -t WORKER_NAMES < <(jq -r '.[].replicas[].name' <<<"$ENHANCE_WORKERS_JSON")
+mapfile -t WORKER_HOSTS < <(jq -r "$JQ_ENHANCE_WORKER_HOSTS" <<<"$ENHANCE_WORKERS_JSON")
+mapfile -t WORKER_NAMES < <(jq -r "$JQ_ENHANCE_WORKER_NAMES" <<<"$ENHANCE_WORKERS_JSON")
 REMOTE_STAGE="/tmp/enhance-pir-$ENHANCE_RELEASE_SHA"
 
 preflight_host() {
@@ -443,7 +506,7 @@ as_root systemctl daemon-reload
 as_root systemctl enable --now enhance-pir-worker
 printf '%s\n' "$sha" | as_root tee /opt/enhance-pir/current-worker-release >/dev/null
 REMOTE
-  remote "$host" "curl --fail --silent --show-error http://127.0.0.1:8091/internal/health | jq -e '.status == \"ok\"' >/dev/null"
+  remote "$host" "curl --fail --silent --show-error http://127.0.0.1:8091/internal/health | jq -e '$JQ_ENHANCE_WORKER_OK' >/dev/null"
 }
 
 activate_coordinator() {
@@ -519,7 +582,7 @@ REMOTE
 }
 
 old_session="$(curl --fail --silent --show-error "$ENHANCE_PUBLIC_URL/v1/enhance/init" || true)"
-old_metadata="$(jq -c '.generation' <<<"$old_session" 2>/dev/null || true)"
+old_metadata="$(jq -c "$JQ_ENHANCE_GENERATION" <<<"$old_session" 2>/dev/null || true)"
 if [[ -z "$old_metadata" || "$old_metadata" == "null" ]]; then
   # A rollback may still be serving the split setup API during migration.
   old_metadata="$(curl --fail --silent --show-error "$ENHANCE_PUBLIC_URL/v1/enhance/generation" || true)"
@@ -549,7 +612,7 @@ if [[ "$rollout_ok" -eq 1 ]]; then
   # an empty data directory.
   serving=0
   for _ in $(seq 1 1800); do
-    if remote "$ENHANCE_COORDINATOR_HOST" "curl --fail --silent http://127.0.0.1:8080/v1/health | jq -e '.phase.phase == \"serving\"' >/dev/null"; then
+    if remote "$ENHANCE_COORDINATOR_HOST" "curl --fail --silent http://127.0.0.1:8080/v1/health | jq -e '$JQ_ENHANCE_COORDINATOR_SERVING' >/dev/null"; then
       serving=1
       break
     fi
@@ -563,10 +626,8 @@ if [[ "$rollout_ok" -eq 1 ]]; then
 fi
 if [[ "$rollout_ok" -eq 1 ]]; then
   expected_workers="${#WORKER_HOSTS[@]}"
-  if ! jq -e --argjson expected "$expected_workers" '
-    .phase.phase == "serving" and
-    .tables.enhance.workers == $expected
-  ' >/dev/null <<<"$health_json"; then
+  if ! jq -e --argjson expected "$expected_workers" \
+    "$JQ_ENHANCE_HEALTH_WORKERS" >/dev/null <<<"$health_json"; then
     rollout_ok=0
   fi
 fi
@@ -574,27 +635,18 @@ if [[ "$rollout_ok" -eq 1 ]]; then
   new_session="$(curl --fail --silent --show-error "$ENHANCE_PUBLIC_URL/v1/enhance/init")" || rollout_ok=0
 fi
 if [[ "$rollout_ok" -eq 1 ]]; then
-  new_metadata="$(jq -c '.generation' <<<"$new_session")" || rollout_ok=0
+  new_metadata="$(jq -c "$JQ_ENHANCE_GENERATION" <<<"$new_session")" || rollout_ok=0
 fi
 if [[ "$rollout_ok" -eq 1 ]]; then
-  expected_groups="$(jq 'length' <<<"$ENHANCE_WORKERS_JSON")"
-  if ! jq -e --argjson expected "$expected_groups" '
-    (.generation.network == "main") and
-    (.generation.pool == "ironwood") and
-    (.generation.setup_seed | type == "number") and
-    ([.generation.shards[].worker] | unique | length) <= $expected and
-    (.generation.shards | length) > 0 and
-    (.params | type == "object") and
-    (.public_params_base64 | type == "string" and length > 0)
-  ' >/dev/null <<<"$new_session"; then
+  expected_groups="$(jq "$JQ_ENHANCE_GROUP_COUNT" <<<"$ENHANCE_WORKERS_JSON")"
+  if ! jq -e --argjson expected "$expected_groups" \
+    "$JQ_ENHANCE_INIT_COMPLETE" >/dev/null <<<"$new_session"; then
     rollout_ok=0
   fi
 fi
 if [[ "$rollout_ok" -eq 1 && -n "$old_metadata" ]]; then
-  if ! jq -e --argjson old "$old_metadata" '
-    .anchor_height >= $old.anchor_height and
-    .ironwood_tree_size >= $old.ironwood_tree_size
-  ' >/dev/null <<<"$new_metadata"; then
+  if ! jq -e --argjson old "$old_metadata" \
+    "$JQ_ENHANCE_NOT_REGRESSED" >/dev/null <<<"$new_metadata"; then
     rollout_ok=0
   fi
 fi

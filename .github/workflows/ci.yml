@@ -32,8 +32,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check deployment shell
-        run: shellcheck ops/scripts/deploy-enhance-pir.sh
+      # Parses and lints every ops script, compiles every jq program the deploy
+      # scripts run, and evaluates the transparent ones against payloads
+      # `operator_payloads.rs` serialized from the server's own types. This
+      # replaces the bare shellcheck runs it subsumes, and covers what the
+      # `validate` invocations below cannot: they reach only the three programs
+      # that read shards.json, and neither of the two bugs that shipped on
+      # 2026-09-07 was in those three.
+      - name: Check ops contracts
+        run: ops/scripts/check-jq-contracts.sh
       - name: Validate example inventory
         env:
           ENHANCE_COORDINATOR_HOST: coordinator.example.net
@@ -43,8 +50,6 @@ jobs:
             [{"name":"shard-group-01","replicas":[{"name":"worker-01a","ssh_host":"worker-01a.example.net","service_url":"http://10.0.0.2:8091"},{"name":"worker-01b","ssh_host":"worker-01b.example.net","service_url":"http://10.0.0.3:8091"}]}]
           TRANSPARENT_FILTER_SERVICE_FILE: ops/infra/digitalocean/production/deploy/transparent-filter-server.service
         run: ops/scripts/deploy-enhance-pir.sh validate
-      - name: Check transparent shard deployment shell
-        run: shellcheck ops/scripts/deploy-transparent-shard.sh
       # A shard set the deploy would refuse: the map names two shards and only
       # one directory is present. `validate` is offline, so it exercises the
       # input and set checks without a host.

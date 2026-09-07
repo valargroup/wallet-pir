@@ -1,4 +1,4 @@
-.PHONY: build check test run-server run-worker load-test demo-check fmt
+.PHONY: build check check-ops test run-server run-worker load-test demo-check fmt
 
 LOAD_TEST_DURATION ?= 60s
 LOAD_TEST_PARALLELISM ?= 8
@@ -10,10 +10,18 @@ LOAD_TEST_URL ?= https://enhance-pir.valargroup.dev
 build:
 	cargo build --release --workspace --bins --features enhance-pir/cli
 
-check:
+check: check-ops
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --release
+
+# The deploy scripts' jq programs, compiled and run against payloads the server
+# serializes. Part of `check` because both of the bugs it exists to catch got
+# through a green `check`: CI exercises the scripts only in `validate` mode,
+# which never parses a served document. Cheap, and it needs no build, so it runs
+# first and fails in seconds rather than after the release test suite.
+check-ops:
+	ops/scripts/check-jq-contracts.sh
 
 test:
 	cargo test --workspace --release

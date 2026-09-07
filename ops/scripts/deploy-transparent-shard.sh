@@ -19,6 +19,70 @@ set -euo pipefail
 
 MODE="${1:-deploy}"
 
+# ------------------------------------------------------------- jq programs
+#
+# Every jq program this script runs, named rather than inline, so that
+# `jq-programs` mode can hand them to a checker. Two classes of bug have shipped
+# here that no offline check could see, and both are the reason these are
+# variables:
+#
+#   * A field moved. `.directory_scheme` became `.geometries[].directory_scheme`
+#     when a set became able to mix geometries. verify_public was migrated;
+#     verify was not, and it would have failed *after* activate.
+#   * A program did not compile. `join(\" \")` inside a jq interpolation, inside
+#     single-quoted bash: the backslashes reach jq literally, jq is in code
+#     context where \" is not an escape, and it exits 3 -- failing a deploy
+#     whose every substantive check had already passed.
+#
+# Note that shellcheck cannot look inside a single-quoted jq program -- it sees
+# one opaque word -- and `validate` mode reaches only the map programs, so
+# nothing exercised the rest.
+# Hoisting them lets ops/scripts/check-jq-contracts.sh compile each one and run
+# it against a payload serialized by the server's own types. The names carry the
+# payload, which is how the checker knows which fixture to feed each.
+#
+# Keep the prefixes: JQ_MAP_ reads shards.json, JQ_HEALTH_ reads /v1/health,
+# JQ_INIT_ reads /v1/shards/init from either the VPC or the public edge -- both
+# serve the same document.
+
+# shards.json, the published map. Serialized by ShardMap in
+# pir/transparent-filter/src/wire.rs.
+readonly JQ_MAP_SHARD_COUNT='.shards | length'
+readonly JQ_MAP_DIGESTS='.shards[].manifest_digest'
+readonly JQ_MAP_FIRST_DIGEST='.shards[0].manifest_digest'
+readonly JQ_MAP_GEOMETRIES='[.shards[].geometry] | unique | join(",")'
+
+# /v1/health on the VPC. An inline serde_json::json! in
+# server/transparent-shard-server/src/service.rs, so nothing in the type system
+# catches a rename here.
+readonly JQ_HEALTH_SERVING='.phase == "serving"'
+readonly JQ_HEALTH_SHARDS='.shards'
+
+# /v1/shards/init. InitResponse and GeometryInit in the same file.
+readonly JQ_INIT_COMPLETE='(.geometries | length > 0) and .covered_through and .map_sha256'
+readonly JQ_INIT_GEOMETRY_NAMES='[.geometries[].name] | sort | join(",")'
+readonly JQ_INIT_SHARDS='.shards'
+readonly JQ_INIT_HAS_GEOMETRIES='.geometries | length > 0'
+# Every geometry the worker serves must publish both tables' parameters. A
+# half-populated entry would be a client deriving one table against the other.
+readonly JQ_INIT_GEOMETRY_COMPLETE='all(.geometries[]; .name and .directory_scheme and .pages_scheme and .directory_rows and .page_rows)'
+readonly JQ_INIT_SUMMARY='"covered_through \(.covered_through), \(.shards) shards, schema \(.schema), geometries \([.geometries[].name] | join(" "))"'
+
+# Emitted as NUL-terminated NAME<TAB>PROGRAM records for the contract checker.
+# NUL rather than newline because a program may itself span lines, and a
+# line-delimited format would split one in half. Not meant to be read by eye.
+# Listed explicitly, so a program added without being registered here is a
+# visible omission rather than a silent gap in the check.
+jq_programs() {
+  local name
+  for name in JQ_MAP_SHARD_COUNT JQ_MAP_DIGESTS JQ_MAP_FIRST_DIGEST JQ_MAP_GEOMETRIES \
+    JQ_HEALTH_SERVING JQ_HEALTH_SHARDS \
+    JQ_INIT_COMPLETE JQ_INIT_GEOMETRY_NAMES JQ_INIT_SHARDS JQ_INIT_HAS_GEOMETRIES \
+    JQ_INIT_GEOMETRY_COMPLETE JQ_INIT_SUMMARY; do
+    printf '%s\t%s\0' "$name" "${!name}"
+  done
+}
+
 fail() {
   echo "error: $*" >&2
   exit 1
@@ -69,7 +133,7 @@ validate_shard_set() {
   [[ -d "$dir" ]] || fail "shard set $dir does not exist"
   [[ -f "$dir/shards.json" ]] || fail "$dir has no shards.json"
   local named counted
-  named="$(jq -er '.shards | length' "$dir/shards.json")" \
+  named="$(jq -er "$JQ_MAP_SHARD_COUNT" "$dir/shards.json")" \
     || fail "$dir/shards.json is not a readable shard map"
   [[ "$named" -gt 0 ]] || fail "$dir/shards.json names no shards"
 
@@ -79,10 +143,19 @@ validate_shard_set() {
   # a superseded tail beside the revision that replaced it. Counting would then
   # refuse a set the server loads happily, and it would refuse it *here*, in the
   # gate that exists to keep a bad input from becoming an outage.
+  # Read into an array rather than piping into `while`: a process substitution
+  # is invisible to both `set -e` and `pipefail`, so a jq that failed used to
+  # yield an empty stream, run the loop body zero times, leave missing=0, and
+  # pass the very gate that exists to stop a bad set becoming an outage.
   local digest missing=0
-  while read -r digest; do
+  local -a digests=()
+  mapfile -t digests < <(jq -er "$JQ_MAP_DIGESTS" "$dir/shards.json") \
+    || fail "$dir/shards.json does not list manifest digests"
+  [[ "${#digests[@]}" -eq "$named" ]] \
+    || fail "$dir/shards.json names $named shards but lists ${#digests[@]} digests"
+  for digest in "${digests[@]}"; do
     [[ -d "$dir/$digest" ]] || { echo "  missing revision $digest"; missing=$((missing + 1)); }
-  done < <(jq -er '.shards[].manifest_digest' "$dir/shards.json")
+  done
   [[ "$missing" -eq 0 ]] || fail "$dir is missing $missing of the $named revisions its map names"
 
   # Anything else on disk is a superseded revision the worker may still be
@@ -91,7 +164,7 @@ validate_shard_set() {
   counted="$(find "$dir" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
   local retained=$((counted - named))
   local first_digest
-  first_digest="$(jq -r '.shards[0].manifest_digest // empty' "$dir/shards.json")"
+  first_digest="$(jq -r "$JQ_MAP_FIRST_DIGEST // empty" "$dir/shards.json")"
   [[ -n "$first_digest" ]] || fail "$dir/shards.json entries carry no manifest digest"
   echo "shard set $dir: $named shards, $retained superseded revisions retained"
 }
@@ -277,12 +350,12 @@ verify() {
     [[ "$attempt" -lt 60 ]] || fail "worker never became healthy"
     sleep 10
   done
-  echo "$health" | jq -e '.phase == "serving"' >/dev/null \
+  echo "$health" | jq -e "$JQ_HEALTH_SERVING" >/dev/null \
     || fail "worker is not serving: $health"
 
   local served expected
-  served="$(echo "$health" | jq -er '.shards')"
-  expected="$(jq -er '.shards | length' "$TRANSPARENT_SHARD_SOURCE/shards.json")"
+  served="$(echo "$health" | jq -er "$JQ_HEALTH_SHARDS")"
+  expected="$(jq -er "$JQ_MAP_SHARD_COUNT" "$TRANSPARENT_SHARD_SOURCE/shards.json")"
   [[ "$served" -eq "$expected" ]] \
     || fail "worker serves $served shards, the published map names $expected"
   echo "serving $served shards"
@@ -292,21 +365,21 @@ verify() {
   local init
   init="$(curl --fail --silent --max-time 30 "$url/v1/shards/init")" \
     || fail "init did not answer"
-  echo "$init" | jq -e '(.geometries | length > 0) and .covered_through and .map_sha256' >/dev/null \
+  echo "$init" | jq -e "$JQ_INIT_COMPLETE" >/dev/null \
     || fail "init is missing geometries, coverage or map digest: $init"
 
   # The worker prepares parameters only for the geometries its set actually
   # names, so this is what catches a worker serving a *different* set than the
   # one just shipped: the shard count could match while the shapes did not.
   local served_geometries expected_geometries
-  served_geometries="$(echo "$init" | jq -er '[.geometries[].name] | sort | join(",")')"
-  expected_geometries="$(jq -er '[.shards[].geometry] | unique | join(",")' \
+  served_geometries="$(echo "$init" | jq -er "$JQ_INIT_GEOMETRY_NAMES")"
+  expected_geometries="$(jq -er "$JQ_MAP_GEOMETRIES" \
     "$TRANSPARENT_SHARD_SOURCE/shards.json")"
   [[ "$served_geometries" == "$expected_geometries" ]] \
     || fail "worker serves geometries [$served_geometries], the published map names [$expected_geometries]"
 
   echo "$init" \
-    | jq -r '"covered_through \(.covered_through), \(.shards) shards, schema \(.schema), geometries \([.geometries[].name] | join(" "))"'
+    | jq -r "$JQ_INIT_SUMMARY"
 
   verify_public
 }
@@ -324,20 +397,26 @@ verify_public() {
     [[ "$attempt" -lt 30 ]] || fail "public endpoint never answered over TLS"
     sleep 10
   done
-  echo "$public" | jq -e '.geometries | length > 0' >/dev/null \
+  echo "$public" | jq -e "$JQ_INIT_HAS_GEOMETRIES" >/dev/null \
     || fail "public init is not the shard service: $public"
   # Every geometry the worker serves must publish both tables' parameters. A
   # half-populated entry would be a client deriving one table against the other.
   echo "$public" \
-    | jq -e 'all(.geometries[]; .name and .directory_scheme and .pages_scheme
-                 and .directory_rows and .page_rows)' >/dev/null \
+    | jq -e "$JQ_INIT_GEOMETRY_COMPLETE" >/dev/null \
     || fail "public init declares an incomplete geometry: $public"
 
   # The edge must serve the same set as the worker, not a stale or different one.
   local public_shards
-  public_shards="$(echo "$public" | jq -er '.shards')"
-  [[ "$public_shards" -eq "$(jq -er '.shards | length' "$TRANSPARENT_SHARD_SOURCE/shards.json")" ]] \
-    || fail "public edge serves $public_shards shards"
+  local public_shards published_shards
+  public_shards="$(echo "$public" | jq -er "$JQ_INIT_SHARDS")"
+  # Read before the comparison rather than inside it. `set -e` does not apply
+  # within `[[ ]]`, so a jq that failed there produced an empty string, which
+  # `-eq` evaluates as 0 -- and a zero-shard map would have compared equal to a
+  # zero-shard edge.
+  published_shards="$(jq -er "$JQ_MAP_SHARD_COUNT" "$TRANSPARENT_SHARD_SOURCE/shards.json")" \
+    || fail "cannot read the published shard count"
+  [[ "$public_shards" -eq "$published_shards" ]] \
+    || fail "public edge serves $public_shards shards, the published map names $published_shards"
 
   # Operator surfaces must not be reachable from the internet. /v1/health is
   # served on the VPC and answered above; through the edge it must be a 404, or
@@ -353,7 +432,7 @@ verify_public() {
   # the worker is coping, and a running commentary on how much traffic it is
   # taking. The Caddyfile allows only the routed prefixes, so this is a check
   # that the allowlist was not widened rather than a check on the binary.
-  local operator_status
+  local operator_status operator_path
   for operator_path in /metrics /v1/ready; do
     operator_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
       --max-time 15 "$TRANSPARENT_PUBLIC_URL$operator_path")"
@@ -371,8 +450,10 @@ verify_public() {
     --output /dev/null --write-out '%{size_download}' \
     "$TRANSPARENT_PUBLIC_URL/v1/filters/shards/0/filter")" \
     || fail "the public edge does not serve shard filters"
-  published_bytes="$(wc -c <"$TRANSPARENT_SHARD_SOURCE/$(jq -er '.shards[0].manifest_digest' \
-    "$TRANSPARENT_SHARD_SOURCE/shards.json")/filter.bin" | tr -d ' ')"
+  local first_digest
+  first_digest="$(jq -er "$JQ_MAP_FIRST_DIGEST" "$TRANSPARENT_SHARD_SOURCE/shards.json")" \
+    || fail "cannot read the first shard's manifest digest"
+  published_bytes="$(wc -c <"$TRANSPARENT_SHARD_SOURCE/$first_digest/filter.bin" | tr -d ' ')"
   [[ "$filter_bytes" -eq "$published_bytes" ]] \
     || fail "shard 0 filter is $filter_bytes bytes at the edge, $published_bytes as published"
 
@@ -383,6 +464,11 @@ verify_public() {
 # ----------------------------------------------------------------------- main
 
 case "$MODE" in
+  jq-programs)
+    # For ops/scripts/check-jq-contracts.sh. Prints and exits without reading
+    # any input, so it is safe to call with no environment set.
+    jq_programs
+    ;;
   validate)
     # Offline, for CI. Exercises the input checks without touching a host.
     validate_inputs
@@ -411,6 +497,6 @@ case "$MODE" in
     echo "deployed $TRANSPARENT_RELEASE_SHA"
     ;;
   *)
-    fail "unknown mode $MODE (validate, preflight, deploy)"
+    fail "unknown mode $MODE (jq-programs, validate, preflight, deploy)"
     ;;
 esac

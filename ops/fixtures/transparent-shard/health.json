@@ -1,0 +1,13 @@
+{
+  "cache_budget_bytes": 4294967296,
+  "cache_resident_bytes": 0,
+  "geometries": [
+    "recent-4k",
+    "recent-8k"
+  ],
+  "map_sha256": "e5500b870c530513d05442b824c575263d460afcde19c8bb703b42f12ccae732",
+  "phase": "serving",
+  "revisions_held": 2,
+  "runtimes_built": 0,
+  "shards": 2
+}
