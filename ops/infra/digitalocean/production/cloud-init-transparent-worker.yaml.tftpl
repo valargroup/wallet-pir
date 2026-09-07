@@ -1,0 +1,13 @@
+#cloud-config
+package_update: true
+packages: ${packages}
+%{ if deploy_public_key != "" ~}
+# The deploy workflow authenticates as root with the fleet key. Installing it
+# here rather than by hand is what makes a rebuilt worker deployable without a
+# manual step; the Enhance hosts were done by hand and a new droplet would
+# otherwise refuse the deploy.
+ssh_authorized_keys:
+  - ${deploy_public_key}
+%{ endif ~}
+runcmd:
+  - mkdir -p /srv/transparent-pir/shards

@@ -38,6 +38,14 @@ resource "digitalocean_tag" "worker" {
   }
 }
 
+resource "digitalocean_tag" "transparent_worker" {
+  name = "transparent-pir-worker"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "digitalocean_droplet" "coordinator" {
   name       = local.coordinator_name
   image      = var.image
@@ -74,6 +82,30 @@ resource "digitalocean_droplet" "worker" {
 
   user_data = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
     packages = jsonencode(local.common_packages)
+  })
+}
+
+# Transparent PIR shard workers.
+#
+# Serves a published transparent shard set over the VPC. Deliberately not
+# reachable from the internet: the wallet-facing API is not designed yet, and
+# the firewall below opens its port to the coordinator tag alone.
+resource "digitalocean_droplet" "transparent_worker" {
+  count      = var.transparent_worker_count
+  name       = format("transparent-pir-worker-%02d", count.index + 1)
+  image      = var.image
+  region     = var.region
+  size       = var.transparent_worker_size
+  ssh_keys   = var.ssh_key_ids
+  vpc_uuid   = digitalocean_vpc.enhance.id
+  tags       = [digitalocean_tag.transparent_worker.name]
+  monitoring = true
+  backups    = var.enable_backups
+  ipv6       = true
+
+  user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
+    packages          = jsonencode(local.common_packages)
+    deploy_public_key = var.transparent_worker_deploy_public_key
   })
 }
 
@@ -185,11 +217,59 @@ resource "digitalocean_firewall" "worker" {
   }
 }
 
+# Same shape as the Enhance worker firewall: SSH from the coordinator and from
+# operator CIDRs, the service port from the coordinator tag alone, and no public
+# ingress at all.
+resource "digitalocean_firewall" "transparent_worker" {
+  name = "transparent-pir-workers"
+  tags = [digitalocean_tag.transparent_worker.name]
+
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "22"
+    source_tags = [digitalocean_tag.coordinator.name]
+  }
+
+  dynamic "inbound_rule" {
+    for_each = var.allowed_ssh_cidrs
+    content {
+      protocol         = "tcp"
+      port_range       = "22"
+      source_addresses = [inbound_rule.value]
+    }
+  }
+
+  # The shard retrieval service. Private queries reach it only by way of the
+  # coordinator, which is what keeps physical sharding behind the logical PIR
+  # interface.
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "8093"
+    source_tags = [digitalocean_tag.coordinator.name]
+  }
+
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+}
+
 resource "digitalocean_project_resources" "enhance" {
   project = var.project_id
   resources = concat(
     [digitalocean_droplet.coordinator.urn, digitalocean_volume.zakura.urn],
     [for worker in digitalocean_droplet.worker : worker.urn],
+    [for worker in digitalocean_droplet.transparent_worker : worker.urn],
   )
 }
 

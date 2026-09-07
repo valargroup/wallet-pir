@@ -1,0 +1,137 @@
+name: Deploy transparent shard worker
+
+# Stands up the transparent PIR shard retrieval worker.
+#
+# Separate from Deploy Enhance PIR on purpose. The two fleets share no state,
+# and the Enhance deploy script carries the one-time legacy rollback path this
+# repository's guidance protects; a transparent deploy must not be able to
+# disturb it. Nothing here touches the Enhance coordinator, its units, its
+# Caddyfile, or the filter service.
+#
+# The worker is not published. Its firewall opens 8093 to the coordinator tag
+# alone, because the wallet-facing API is not designed yet. Verification runs
+# from the runner, which is the coordinator, over the VPC.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full commit SHA on main with a successful CI run
+        required: true
+        type: string
+      shard_dir:
+        description: >-
+          Published shard set on the coordinator to ship. Must be a set of the
+          schema this build serves; a set published under another schema is
+          refused at load, after the service has already been stopped.
+        required: true
+        default: /srv/zakura/transparent-shards-v6
+        type: string
+      mode:
+        description: preflight stages and verifies the host without activating
+        required: true
+        default: preflight
+        type: choice
+        options: [preflight, deploy]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transparent-shard-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ${{ inputs.mode }} transparent shard worker
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 60
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Verify tested revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          api_headers=(
+            --header "Authorization: Bearer ${GH_TOKEN}"
+            --header 'Accept: application/vnd.github+json'
+            --header 'X-GitHub-Api-Version: 2022-11-28'
+          )
+          main_sha="$(curl --fail --silent --show-error "${api_headers[@]}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" | jq -er '.object.sha')"
+          [[ "$SHA" == "$main_sha" ]]
+          successful="$(curl --fail --silent --show-error "${api_headers[@]}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=success&per_page=1" \
+            | jq -er '.workflow_runs | length')"
+          [[ "$successful" -ge 1 ]]
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      # Niced, because the runner is also the production coordinator and is
+      # already sharing this host with a long-running backfill.
+      - name: Build the worker binary
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: |
+          set -euo pipefail
+          nice -n 10 cargo build --locked --release \
+            -p transparent-shard-server --bin transparent-shard-server
+
+      - name: Assemble checksummed artifact
+        run: |
+          set -euo pipefail
+          mkdir artifact
+          install -m 0755 target/release/transparent-shard-server artifact/
+          cp ops/infra/digitalocean/production/deploy/transparent-shard-server.service artifact/
+          printf '%s\n' '${{ inputs.ref }}' >artifact/revision
+          (cd artifact && sha256sum ./* >SHA256SUMS)
+          cat artifact/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transparent-shard-${{ inputs.ref }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Prepare ephemeral SSH material
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.TRANSPARENT_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_SSH_KEY:?production deployment SSH key is empty}"
+          : "${KNOWN_HOSTS:?TRANSPARENT_SSH_KNOWN_HOSTS is empty; add the worker host key}"
+          install -m 0700 -d "$RUNNER_TEMP/transparent-ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$RUNNER_TEMP/transparent-ssh/key"
+          printf '%s\n' "$KNOWN_HOSTS" >"$RUNNER_TEMP/transparent-ssh/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/transparent-ssh/key" "$RUNNER_TEMP/transparent-ssh/known_hosts"
+
+      - name: Deploy and verify
+        env:
+          TRANSPARENT_WORKER_HOST: ${{ vars.TRANSPARENT_WORKER_HOST }}
+          TRANSPARENT_DEPLOY_USER: ${{ vars.ENHANCE_DEPLOY_USER }}
+          TRANSPARENT_RELEASE_SHA: ${{ inputs.ref }}
+          TRANSPARENT_ARTIFACT_DIR: ${{ github.workspace }}/artifact
+          TRANSPARENT_SHARD_SOURCE: ${{ inputs.shard_dir }}
+          TRANSPARENT_SHARD_DIR: /srv/transparent-pir/shards
+          TRANSPARENT_SSH_KEY_PATH: ${{ runner.temp }}/transparent-ssh/key
+          TRANSPARENT_KNOWN_HOSTS_PATH: ${{ runner.temp }}/transparent-ssh/known_hosts
+        run: ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
+
+      - name: Remove SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/transparent-ssh"
