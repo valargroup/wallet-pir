@@ -114,6 +114,40 @@ on:
         required: false
         default: ""
         type: string
+      per_shard:
+        description: >-
+          Census only. Emit one TSV row per sealed shard for the first policy:
+          heights, occupancy and which limit closed it. Which limit binds is not
+          uniform along the chain, so a geometry chosen on the aggregate is
+          chosen on a mixture; this is what shows where.
+        required: false
+        default: false
+        type: boolean
+      geometry:
+        description: >-
+          Census only. Registry geometry to score against: recent-8k, recent-4k,
+          archive-32k or archive-wide. Blank scores the default. The seal
+          thresholds and the script sweep are derived from it, so this is the
+          input that decides which table the run is actually about.
+        required: false
+        default: ""
+        type: string
+      census_from:
+        description: >-
+          Census only. First height to census, inclusive. Blank starts at the
+          journal's first. Named apart from start_height, which belongs to the
+          ingest action and means something else.
+        required: false
+        default: ""
+        type: string
+      census_to:
+        description: >-
+          Census only. Last height to census, inclusive. Blank ends at the
+          journal's last. Bounded runs are how the archive tier and the recent
+          window get scored as the separate questions they are.
+        required: false
+        default: ""
+        type: string
       shard_dir:
         description: >-
           Where publish writes and measure reads; blank means the default set.
@@ -157,6 +191,9 @@ jobs:
           STOP: ${{ inputs.stop_height }}
           PAGE_ROWS: ${{ inputs.page_rows_per_segment }}
           POLICIES: ${{ inputs.policies }}
+          GEOMETRY: ${{ inputs.geometry }}
+          CENSUS_FROM: ${{ inputs.census_from }}
+          CENSUS_TO: ${{ inputs.census_to }}
         run: |
           set -euo pipefail
           if [[ "$ACTION" == "start" ]]; then
@@ -169,6 +206,15 @@ jobs:
           # passed through and left to the parser.
           [[ -z "$PAGE_ROWS" || "$PAGE_ROWS" =~ ^[0-9]+$ ]] \
             || { echo "page_rows_per_segment must be a number or blank"; exit 1; }
+          [[ -z "$CENSUS_FROM" || "$CENSUS_FROM" =~ ^[0-9]+$ ]] \
+            || { echo "census_from must be a number or blank"; exit 1; }
+          [[ -z "$CENSUS_TO" || "$CENSUS_TO" =~ ^[0-9]+$ ]] \
+            || { echo "census_to must be a number or blank"; exit 1; }
+          # Matched against the registry's shape rather than passed through: an
+          # unknown name is refused by the census itself, but this keeps a
+          # dispatch typo from reaching a sudo argument list at all.
+          [[ -z "$GEOMETRY" || "$GEOMETRY" =~ ^[a-z0-9-]+$ ]] \
+            || { echo "geometry must be a registry name or blank"; exit 1; }
           [[ -z "$POLICIES" || "$POLICIES" =~ ^[0-9]+:[0-9]+,[0-9]+:[0-9]+(\;[0-9]+:[0-9]+,[0-9]+:[0-9]+)*$ ]] \
             || { echo "policies must be target:cap,target:cap, semicolon separated"; exit 1; }
 
@@ -204,6 +250,10 @@ jobs:
           PLACEMENT: ${{ inputs.placement }}
           SHARD_MATCHES: ${{ inputs.shard_matches }}
           POLICIES: ${{ inputs.policies }}
+          GEOMETRY: ${{ inputs.geometry }}
+          CENSUS_FROM: ${{ inputs.census_from }}
+          CENSUS_TO: ${{ inputs.census_to }}
+          PER_SHARD: ${{ inputs.per_shard }}
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin shard-census
@@ -213,6 +263,10 @@ jobs:
           [[ -n "$DIR_ROWS" ]] && ARGS+=(--directory-rows-per-segment "$DIR_ROWS")
           [[ -n "$INLINE_EVENTS" ]] && ARGS+=(--inline-events "$INLINE_EVENTS")
           [[ "$PLACEMENT" == "true" ]] && ARGS+=(--placement)
+          [[ -n "$GEOMETRY" ]] && ARGS+=(--geometry "$GEOMETRY")
+          [[ -n "$CENSUS_FROM" ]] && ARGS+=(--start-height "$CENSUS_FROM")
+          [[ -n "$CENSUS_TO" ]] && ARGS+=(--end-height "$CENSUS_TO")
+          [[ "$PER_SHARD" == "true" ]] && ARGS+=(--per-shard)
           # Spilled under the runner temp so the job reclaims it, and away from
           # the journal rather than inside it: the census must not write into
           # the thing it was asked to measure.

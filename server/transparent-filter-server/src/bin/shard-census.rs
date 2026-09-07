@@ -179,42 +179,39 @@ fn parse_policy(text: &str) -> Result<SealPolicy, BoxError> {
     })
 }
 
-/// Candidate policies around the study's measured geometry.
+/// Candidate policies for the geometry being scored.
 ///
-/// A directory segment holds 14 slots across 2,048 rows — 28,672 scripts — so
-/// every target below sits inside one segment with slack, and the sweep varies
-/// the script limit alone.
+/// Derived from the geometry rather than written down, because a sweep that
+/// held the page limit at the compiled 8,192 while scoring a 65,536-row table
+/// would seal every shard on page rows and report it as a script-limit result.
+/// That is the specific way a geometry sweep lies: the numbers come out, they
+/// are just about a different table than the one named.
 ///
-/// Page rows are held at the publisher's default so the sweep measures the
-/// geometry actually in use. Setting them lower makes page rows bind first and
-/// the script limit inert, which reads as a script-limit result and is not one.
-///
-/// The page capacity tracks [`transparent_shard::PAGE_ROWS`] rather than a
-/// literal, so a table resized without revisiting this would not quietly sweep
-/// policies that overrun it — the check in `main` refuses those, and a default
-/// sweep that tripped its own check would be a poor way to find out.
-fn default_policies() -> Vec<(String, SealPolicy)> {
-    let capacity = transparent_shard::PAGE_ROWS as u64;
-    // A little under capacity, so an ordinary block seals before it overruns.
-    let target = capacity - capacity / 32;
-    [
-        ("scripts 4k", 4_096u64),
-        ("scripts 8k", 8_192),
-        ("scripts 12k", 12_288),
-        ("scripts 16k", 16_384),
-        ("scripts 24k", 24_576),
-    ]
-    .into_iter()
-    .map(|(name, scripts)| {
-        (
-            name.to_string(),
+/// The first entry is the policy the publisher would actually use at this
+/// geometry, so `--per-shard` reports the boundaries that would really be
+/// published. The rest sweep the script target below it at the same page limit,
+/// which is what isolates the script limit as the thing being varied. At the
+/// compiled geometry the sweep is the same 4k/8k/12k/16k/24k it always was.
+fn default_policies(geometry: &Geometry) -> Vec<(String, SealPolicy)> {
+    let derived = SealPolicy::for_geometry(geometry);
+    let capacity = geometry.directory_capacity();
+    let mut policies = vec![(format!("{} derived", geometry.name), derived)];
+    // Twenty-eighths of directory capacity: at 114,688 scripts these are
+    // exactly the absolute targets the archived censuses used.
+    for numerator in [1u64, 2, 3, 4, 6] {
+        let scripts = capacity * numerator / 28;
+        if scripts == 0 || scripts >= derived.scripts.target {
+            continue;
+        }
+        policies.push((
+            format!("scripts {scripts}"),
             SealPolicy {
-                scripts: Limit::new(scripts, scripts * 2).expect("valid"),
-                page_rows: Limit::new(target, capacity).expect("valid"),
+                scripts: Limit::new(scripts, (scripts * 2).min(capacity)).expect("valid"),
+                page_rows: derived.page_rows,
             },
-        )
-    })
-    .collect()
+        ));
+    }
+    policies
 }
 
 fn percentile(sorted: &[u64], p: f64) -> u64 {
@@ -773,23 +770,6 @@ fn main() -> Result<(), BoxError> {
         anchor.block_hash.to_display_hex()
     );
 
-    let policies: Vec<(String, SealPolicy)> = if cli.policies.is_empty() {
-        default_policies()
-    } else {
-        cli.policies
-            .iter()
-            .map(|text| Ok((text.clone(), parse_policy(text)?)))
-            .collect::<Result<_, BoxError>>()?
-    };
-
-    // One pass, every policy fed from it. Holding the journal first and
-    // replaying it per policy is what the earlier version did, and it does not
-    // survive a genesis-to-tip journal: a hundred million events carrying a
-    // heap-allocated script each is tens of gigabytes, far worse in memory than
-    // on disk. Reading each height once and handing it to every sealer gives
-    // the same "every policy sees exactly the same input" property for the cost
-    // of one block at a time, and a second pass would buy nothing because the
-    // run is dominated by reading and decoding the journal.
     let compiled = *geometry_by_name(&cli.geometry)
         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
     let geometry = Geometry {
@@ -806,6 +786,24 @@ fn main() -> Result<(), BoxError> {
     // A candidate the scheme would round up is a candidate whose reported cost
     // is not its cost, so it is refused rather than scored.
     geometry.validate()?;
+
+    let policies: Vec<(String, SealPolicy)> = if cli.policies.is_empty() {
+        default_policies(&geometry)
+    } else {
+        cli.policies
+            .iter()
+            .map(|text| Ok((text.clone(), parse_policy(text)?)))
+            .collect::<Result<_, BoxError>>()?
+    };
+
+    // One pass, every policy fed from it. Holding the journal first and
+    // replaying it per policy is what the earlier version did, and it does not
+    // survive a genesis-to-tip journal: a hundred million events carrying a
+    // heap-allocated script each is tens of gigabytes, far worse in memory than
+    // on disk. Reading each height once and handing it to every sealer gives
+    // the same "every policy sees exactly the same input" property for the cost
+    // of one block at a time, and a second pass would buy nothing because the
+    // run is dominated by reading and decoding the journal.
     let page_rows_per_segment = geometry.page_rows;
     let basis = if cli.unpacked {
         PageBasis::Fragments
@@ -997,4 +995,59 @@ fn drain_scripts(
         into.push(shard);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
+
+    /// At the compiled geometry the sweep must be exactly the absolute targets
+    /// the archived censuses under `docs/transparent-pir-evaluation/` were taken
+    /// at, or every comparison against them is silently rebased.
+    #[test]
+    fn the_default_sweep_is_unchanged_at_the_compiled_geometry() {
+        let policies = default_policies(&RECENT_8K);
+        let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
+        assert_eq!(scripts, vec![98_304, 4_096, 8_192, 12_288, 16_384, 24_576]);
+        // Every entry seals pages at the geometry's own limit, so the sweep
+        // varies the script limit and nothing else.
+        for (name, policy) in &policies {
+            assert_eq!(policy.page_rows.target, 7_936, "{name}");
+            assert_eq!(policy.page_rows.capacity, 8_192, "{name}");
+        }
+    }
+
+    /// The first entry is what the publisher would actually seal at, because
+    /// `--per-shard` reports the first policy only and per-shard boundaries are
+    /// worth having for the real one rather than an arbitrary sweep point.
+    #[test]
+    fn the_first_policy_is_the_one_the_publisher_would_use() {
+        for geometry in transparent_shard::layout::PROFILES {
+            let (name, first) = default_policies(geometry).remove(0);
+            assert_eq!(first, SealPolicy::for_geometry(geometry), "{name}");
+            assert!(name.starts_with(geometry.name), "{name}");
+        }
+    }
+
+    /// The whole point of deriving the sweep: at a wide geometry it must scale,
+    /// not stay pinned to the compiled table. A sweep that sealed a 65,536-row
+    /// page table at 8,192 rows would report a page-limit result and call it a
+    /// script-limit one.
+    #[test]
+    fn the_sweep_follows_a_wider_geometry() {
+        let policies = default_policies(&ARCHIVE_WIDE);
+        let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
+        assert_eq!(
+            scripts,
+            vec![393_216, 16_384, 32_768, 49_152, 65_536, 98_304]
+        );
+        for (name, policy) in &policies {
+            assert_eq!(policy.page_rows.capacity, 65_536, "{name}");
+            assert_eq!(policy.page_rows.target, 63_488, "{name}");
+        }
+        // And no swept target may reach the derived one, or the sweep would
+        // duplicate the policy it is meant to sit below.
+        assert!(scripts[1..].iter().all(|s| *s < scripts[0]));
+    }
 }
