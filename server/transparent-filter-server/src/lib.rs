@@ -9,5 +9,6 @@ pub mod prevout;
 pub mod service;
 pub mod shard_filters;
 pub mod shard_matches;
+pub mod state;
 pub mod store;
 pub mod zakura;
