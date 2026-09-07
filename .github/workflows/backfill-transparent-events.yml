@@ -259,7 +259,15 @@ jobs:
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
-          cargo build --locked --release -p transparent-filter-server --bin shard-publish
+          # The ingester shares this host and is the thing that must not be
+          # disturbed. It runs under a reduced CPUWeight, so an unniced build
+          # here would outrank it; since the state-backed reader landed it is
+          # CPU- and IO-bound on local RocksDB rather than waiting on RPC, so
+          # contention now costs real blocks per second. Both the build and the
+          # publish yield: lowest CPU priority, idle IO class.
+          NICE=(nice -n 19)
+          if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
+          "${NICE[@]}" cargo build --locked --release -p transparent-filter-server --bin shard-publish
           OUT="${SHARD_DIR_INPUT:-$SHARD_DIR}"
           # A shard set is a few gigabytes, and a second one beside it is a
           # second few. Say what is free before writing rather than after.
@@ -267,7 +275,7 @@ jobs:
           # Read-only against the journal; writes only its own output directory.
           # Publication is immutable, so re-running verifies rather than
           # rewrites and a changed byte is a hard error.
-          sudo ./target/release/shard-publish \
+          sudo "${NICE[@]}" ./target/release/shard-publish \
             --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" \
             --output "$OUT" \
             --zakura-cookie /root/.cache/zakura/.cookie 2>&1 | tee publish.txt
