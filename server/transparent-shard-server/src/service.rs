@@ -59,7 +59,7 @@ pub struct SharedParams {
 }
 
 impl SharedParams {
-    fn build(table: Table) -> Result<Self, String> {
+    pub fn build(table: Table) -> Result<Self, String> {
         let (rlwe, scheme) =
             ipir_sp::params_for_simplepir(table.rows(), (table.row_bytes() as u64) * 8)
                 .map_err(|error| error.to_string())?;
@@ -88,7 +88,7 @@ pub struct TableRuntime {
 }
 
 impl TableRuntime {
-    fn build(shared: &SharedParams, table: Table, rows: &[u8]) -> Result<Self, String> {
+    pub fn build(shared: &SharedParams, table: Table, rows: &[u8]) -> Result<Self, String> {
         let coefficients = RowPlaintextIter::new(
             rows,
             table.row_bytes() as usize,
