@@ -12,6 +12,10 @@ name = "transparent-shard-server"
 path = "src/bin/server.rs"
 
 [[bin]]
+name = "shard-scaling"
+path = "src/bin/shard-scaling.rs"
+
+[[bin]]
 name = "shard-residency"
 path = "src/bin/shard-residency.rs"
 
