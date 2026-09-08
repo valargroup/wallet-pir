@@ -11,8 +11,8 @@ Suggested reviewable changes:
 1. Documentation consolidation: `fe72ecc`; link validation `make check-docs`.
 2. Inventory/provenance report and workflow input reconciliation: `3969f96`, `2a3c5d3`, `b574681`, `113b22d`, `abe297b`; Gate 0 closed.
 3. Mixed-tier measurement and publication tooling parity.
-4. Wallet manifest validation and early request admission.
-5. Assignment-aware loading, router, prewarm/readiness and activation.
+4. Wallet manifest validation and early request admission: `6ff2bfe`; Gate 3 closed.
+5. Assignment-aware loading, router, prewarm/readiness and activation: `142c193`; code and tests complete, host rehearsals in Gate 7.
 6. Durable wallet continuation, provisional replacement and reorg recovery.
 7. Full-chain correctness evidence and host/fleet load evidence.
 8. Reviewed infrastructure configuration, rollout and recovery evidence.
@@ -55,26 +55,26 @@ Exit: full-chain retrieval is correct and publication/recovery is reproducible. 
 
 ## Gate 3 — Identity validation and bounded admission
 
-- [ ] Serve immutable revision manifests. Wallet recomputes their digests, compares them with its accepted map, verifies parent links and range/profile/table shape consistency, and derives geometry from the verified manifest.
-- [ ] Preserve the trusted-indexer assumption explicitly: matching a manifest hash supplied by the same indexer is not an independent completeness proof. A chain anchor alone does not authenticate the index.
-- [ ] Keep runtime exact-length request validation for each selected profile/table. Add early route-specific length checks before queueing/build work; the global maximum body limit remains a coarse ceiling, not the whole validation policy.
-- [ ] Bound waiting requests and retained body bytes as well as active evaluations. Add deadlines, cancellation and explicit retryable overload behavior. A semaphore with unlimited waiters can still exhaust memory.
-- [ ] Preserve revision/table query and response binding, setup reuse binding, exact script checks and uniform access across segments.
+- [x] Serve immutable revision manifests. Wallet recomputes their digests, compares them with its accepted map, verifies parent links and range/profile/table shape consistency, and derives geometry from the verified manifest. Manifest route and `verify_manifest` (`6ff2bfe`).
+- [x] Preserve the trusted-indexer assumption explicitly: matching a manifest hash supplied by the same indexer is not an independent completeness proof. A chain anchor alone does not authenticate the index. [Contract](contract.md), `6ff2bfe`.
+- [x] Keep runtime exact-length request validation for each selected profile/table. Add early route-specific length checks before queueing/build work; the global maximum body limit remains a coarse ceiling, not the whole validation policy. `6ff2bfe`.
+- [x] Bound waiting requests and retained body bytes as well as active evaluations. Add deadlines, cancellation and explicit retryable overload behavior. A semaphore with unlimited waiters can still exhaust memory. `admission.rs` (`6ff2bfe`).
+- [x] Preserve revision/table query and response binding, setup reuse binding, exact script checks and uniform access across segments. Unchanged and re-asserted by the Gate 3 tests.
 
-Validation: unknown/substituted geometry, altered manifest/table, mismatched map, stale setup, mixed revision, undersized/oversized body, slow uploads, cancelled queries and overload. All refuse explicitly without advancing coverage or making a public locator fallback. Verify oversized requests are rejected before expensive work.
+Validation: unknown/substituted geometry, altered manifest/table, mismatched map, stale setup, mixed revision, undersized/oversized body, slow uploads, cancelled queries and overload. All refuse explicitly without advancing coverage or making a public locator fallback. Verify oversized requests are rejected before expensive work. **Closed 2026-09-08**: `tests/round_trip.rs` (oversized before any work, no declared length, slow upload, full queue and cancellation, deadline, manifest route), `tests/wallet_sync.rs` (altered manifest refused with no private query, genuine manifests verified once per matched shard, existing geometry/schema/stale/overload cases), unit mutation table in `sync.rs`.
 
 ## Gate 4 — Assignment, routing, readiness and publication
 
-- [ ] Represent global set identity separately from worker assignment. Preserve global shard ids, ranges and manifest chain; do not renumber shards to make a local subset satisfy the current whole-set loader.
-- [ ] Implement assignment-aware artifact validation/loading and ownership metadata. Retain enough authenticated global metadata to validate a subset and reject wrong-set/wrong-revision requests.
-- [ ] Generate routing from public assignment data: recent full replicas, archive owners, revision availability and health. Never route on plaintext scripts, private rows or page locators. Keep table queries uniform across segments.
-- [ ] Prewarm all current assigned runtimes and the next advertised recent tail. Readiness reports assignment/map identity and warm state; retain a distinct loaded-only pilot mode.
-- [ ] Bound retained revision bytes and define pruning order. Default retention is three superseded revisions beyond current, not three total or an hour of guaranteed service. Retain required runtime state according to measured churn and budget.
-- [ ] Implement prepare/verify/activate with coherent discovery map and routing. During rollout, old requests reach a compatible retained revision or receive explicit recovery responses. Copy before ownership changes.
-- [ ] Add queue, cache/build, cold-start, RSS/cgroup, revision, assignment and sync-completion observability. Keep operator endpoints private; expose only required wallet paths publicly.
-- [ ] Preserve transparent/Enhance service boundaries. Add a filter-service-only preflight/deploy path or document and test the coordinated Enhance rollout until decoupled.
+- [x] Represent global set identity separately from worker assignment. Preserve global shard ids, ranges and manifest chain; do not renumber shards to make a local subset satisfy the current whole-set loader. `assignment.rs`, `LoadScope::Assigned` (`142c193`).
+- [x] Implement assignment-aware artifact validation/loading and ownership metadata. Retain enough authenticated global metadata to validate a subset and reject wrong-set/wrong-revision requests. `ShardSet::open_with` keeps every shard's manifest and filter, verifies assigned tables, refuses an assignment for another map, answers 421 for unassigned shards (`142c193`).
+- [x] Generate routing from public assignment data: recent full replicas, archive owners, revision availability and health. Never route on plaintext scripts, private rows or page locators. Keep table queries uniform across segments. `router.rs`, `shard-assign caddyfile`, golden `ops/fixtures/transparent-shard/Caddyfile.router` (`142c193`).
+- [x] Prewarm all current assigned runtimes and the next advertised recent tail. Readiness reports assignment/map identity and warm state; retain a distinct loaded-only pilot mode. `ReadinessMode`, `spawn_prewarm`, `--pilot-cold` (`142c193`). Retained superseded tails are warmed only into free budget.
+- [x] Bound retained revision bytes and define pruning order. Default retention is three superseded revisions beyond current, not three total or an hour of guaranteed service. Retain required runtime state according to measured churn and budget. `--retain-bytes`, `--prune-excess`, `shard-prune` (`142c193`); churn measurement is Gate 6.
+- [x] Implement prepare/verify/activate with coherent discovery map and routing. During rollout, old requests reach a compatible retained revision or receive explicit recovery responses. Copy before ownership changes. `deploy-transparent-shard.sh fleet-preflight/fleet-deploy/fleet-rollback` (`142c193`); not yet exercised on real hosts (Gate 7).
+- [x] Add queue, cache/build, cold-start, RSS/cgroup, revision, assignment and sync-completion observability. Keep operator endpoints private; expose only required wallet paths publicly. `metrics.rs`, `procmem.rs` (`142c193`); sync-completion is a client-side figure the Gate 6 harness reports.
+- [x] Preserve transparent/Enhance service boundaries. Add a filter-service-only preflight/deploy path or document and test the coordinated Enhance rollout until decoupled. `deploy-transparent-filter.sh`, `deploy-transparent-filter.yml`, `--check-shard-dir` (`142c193`); the Enhance workflow's filter staging is removed after the first successful filter-only deploy.
 
-Validation: concurrent cold requests for one runtime, eviction with active requests, second/third/fourth tail publication, missing owner, replica loss, router restart, interrupted copy, corrupt artifact, worker reboot, and map activation failure. Rollback restores coherent binary/set/routing. Archive-owner loss is explicit unavailability in the initial disjoint topology.
+Validation: concurrent cold requests for one runtime, eviction with active requests, second/third/fourth tail publication, missing owner, replica loss, router restart, interrupted copy, corrupt artifact, worker reboot, and map activation failure. Rollback restores coherent binary/set/routing. Archive-owner loss is explicit unavailability in the initial disjoint topology. Covered in tests: `tests/assignment.rs` (subset load, wrong map, 421, warm and pilot readiness, over-budget refusal, balancing, golden router, byte retention), `tests/revisions_and_cache.rs` (concurrent cold builds, in-use eviction, bound). Remaining as Gate 7 rehearsals on real hosts: missing owner, replica loss, router restart, interrupted copy, worker reboot, map activation failure, rollback.
 
 ## Gate 5 — Durable wallet continuation and integration
 
