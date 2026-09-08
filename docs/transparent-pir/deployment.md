@@ -186,6 +186,12 @@ static filter origin with the verified full-chain set, upgrades a recent canary,
 upgrades archive owners serially and then the remaining replicas, and builds a
 candidate without advancing public coverage. `activate` routes both public map
 origins through the coordinator's publication authority and enables the loop.
+Before activation, verify the router directly over HTTPS and switch
+`transparent_public_dns_target=router` with a reviewed DNS-only Terraform plan.
+The pilot can forward its wallet routes to the router during DNS propagation;
+preserve its previous Caddyfile for rollback. Confirm both public map URLs reach
+the authority, including clients that still resolve the pilot. A warm internal
+router does not establish that the public hostname points to it.
 Use `rollback` with the deployment SHA to restore the saved binaries, units and
 routing; rollback refuses an orphaned predecessor. Deep reorg recovery should
 normally be left to the controller rather than restoring historical artifacts.
@@ -202,7 +208,10 @@ Activation requires all archive owners and at least one warm recent replica.
 Lagging replicas leave current routing and are retried on later publications.
 Workers prepare through a root-only Unix control socket, keep current runtimes
 resident within their existing cache budgets, and swap snapshots without a
-restart. Both public map URLs, filters and initialization use the same active
+restart. Preparation evicts unpinned runtimes from retired generations before
+building and warms only current revisions. Retained revisions remain available
+on demand; filling spare cache capacity with them consumes the next build's
+scratch-memory headroom. Both public map URLs, filters and initialization use the same active
 publication. The controller keeps three unused candidate directories; workers
 keep three retired serving snapshots and defer collection while requests hold
 them. Three superseded normal tail revisions may also accompany the current set.

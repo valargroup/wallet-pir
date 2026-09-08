@@ -60,6 +60,17 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(replica,return_exceptions=True)
         self.assertEqual(await self.fleet.canonical_hash(100),'canonical')
 
+    async def test_control_preserves_a_rejection_returned_with_exit_status_one(self):
+        binary=self.root/'shard-control'
+        binary.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"ok":false,"error":"candidate map digest mismatch"}\'\nexit 1\n')
+        binary.chmod(0o700)
+        self.fleet.c['control_binary']=str(binary)
+        async def local_ssh(host,command,data=None):
+            return await module.run(['sh','-c',command],data)
+        self.fleet.ssh=local_ssh
+        with self.assertRaisesRegex(RuntimeError,'candidate map digest mismatch'):
+            await self.fleet.control({'id':'fixture','ssh_host':'unused'}, {'operation':'status'})
+
     @unittest.skipUnless(shutil.which('ssh-keygen'),'requires OpenSSH parser')
     def test_secret_without_final_newline_is_an_openssh_key_file(self):
         source=self.root/'generated-key'

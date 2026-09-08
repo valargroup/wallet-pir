@@ -107,6 +107,9 @@ class Fleet:
     async def control(self, worker, value):
         command = shlex.join([self.c.get('control_binary', '/usr/local/bin/shard-control'),
                               self.c.get('control_socket', '/run/transparent-pir/control.sock')])
+        # A rejected command is JSON on stdout with exit status 1. Preserve
+        # that diagnostic; transport failures and crashes must still fail SSH.
+        command += ' || [ "$?" -eq 1 ]'
         result = json.loads(await self.ssh(worker['ssh_host'], command, json.dumps(value).encode()))
         if not result.get('ok'):
             raise RuntimeError(f'{worker["id"]}: {result.get("error")}')
