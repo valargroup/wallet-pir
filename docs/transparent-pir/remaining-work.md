@@ -133,8 +133,10 @@ Each completed gate links source commits, exact commands and evidence. Update st
 
 ## Deployment-time improvements — 2026-09-08
 
-- [ ] Complete offline checks for persistent runtime restore, stable per-worker
+- [x] Complete offline checks for persistent runtime restore, stable per-worker
   deploy identity, healthy replica pairs and transaction-scoped rollback.
+  [Local validation evidence](evidence/deployment-runtime-local-2026-09-08/README.md);
+  `make check`, strict Clippy and follow-up cache/rollback tests passed.
 - [ ] After the current load measurement finishes, activate a cache-enabled
   replica and owner canary; verify cache population, compatible restart, memory,
   disk headroom and correct wallet recovery.
