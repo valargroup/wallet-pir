@@ -1324,6 +1324,10 @@ case "$MODE" in
     trap 'rc=$?; if (( rc != 0 )); then trap - EXIT; rollback_fleet; fi' EXIT
     timed_phase fleet_activate_router fleet_activate_router
     timed_phase fleet_verify_internal fleet_verify_internal
+    if [[ -n "$TRANSACTION_FILE" ]]; then
+      jq '.status = "complete"' "$TRANSACTION_FILE" >"$TRANSACTION_FILE.next"
+      mv "$TRANSACTION_FILE.next" "$TRANSACTION_FILE"
+    fi
     trap - EXIT
     echo "router configured for assignment $(assignment_digest)"
     ;;

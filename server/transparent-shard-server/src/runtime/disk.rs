@@ -563,6 +563,22 @@ mod cache_integration_tests {
         assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(Metrics::get(&metrics.disk_misses), 1);
         drop(cache);
+        let metrics = Arc::new(Metrics::default());
+        let tiny_disk = DiskCache::new(dir.path().join("too-small"), 1).unwrap();
+        let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
+            .with_disk(Some(tiny_disk));
+        assert_eq!(
+            cache
+                .get(key.clone(), shared.clone(), source.clone())
+                .await
+                .unwrap()
+                .get()
+                .public_params_sha256,
+            expected
+        );
+        assert_eq!(Metrics::get(&metrics.disk_write_failures), 1);
+        assert_eq!(Metrics::get(&metrics.builds), 1);
+        drop(cache);
         // A valid cache must not conceal plaintext corruption after startup.
         fs::write(&source.path, b"corrupt source").unwrap();
         let cache = RuntimeCache::new(shared.reserved_bytes(), 1, Arc::new(Metrics::default()))

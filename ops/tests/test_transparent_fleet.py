@@ -103,6 +103,61 @@ fleet_activate_workers
             self.assertIn("ready r1", lines)
             self.assertNotIn("start r2", lines)
 
+    def test_transaction_restores_files_and_helper_only_never_restarts(self):
+        for action, fail in [("restart", False), ("tools", False), ("restart", True)]:
+            with self.subTest(action=action, fail=fail), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)/"host"
+                previous = {
+                    "/usr/local/bin/transparent-shard-server": "old server",
+                    "/usr/local/bin/shard-prune": "old helper",
+                    "/etc/systemd/system/transparent-shard-server.service": "old unit",
+                    "/opt/transparent-pir/current-release": "old release",
+                    "/opt/transparent-pir/current-unit-digest": "old unit digest",
+                }
+                for path, content in previous.items():
+                    target = root/path.lstrip("/")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content)
+                sha = "a"*40
+                staged = root/("tmp/transparent-pir-"+sha)
+                staged.mkdir(parents=True)
+                for name in ["transparent-shard-server", "shard-prune", "unit.rendered", "assignment.json"]:
+                    (staged/name).write_text("new "+name)
+                workers = [dict(id="owner", ssh_host="owner", upstream="owner:8093", role="archive-owner", replica_group=None)]
+                assignment = Path(temp)/"assignment.json"
+                assignment.write_text(json.dumps(dict(workers=workers)))
+                plan = Path(temp)/"plan.json"
+                plan.write_text(json.dumps(dict(workers=dict(owner=dict(action=action, desired=dict(unit="new digest"), before={})))))
+                code = r'''
+DEPLOY_PLAN="$PLAN"
+assignment_digest() { echo assignment; }
+host_ssh() { shift; python3 ops/tests/remote_host.py "$@"; }
+wait_ready() { :; }
+transaction_begin
+trap 'rc=$?; if ((rc != 0)); then trap - EXIT; rollback_fleet; fi' EXIT
+fleet_activate_workers
+trap - EXIT
+rollback_fleet
+'''
+                env = dict(HOST_ROOT=str(root), TRANSPARENT_RELEASE_SHA=sha,
+                           TRANSPARENT_ARTIFACT_DIR=temp, TRANSPARENT_ASSIGNMENT=str(assignment),
+                           TRANSPARENT_FLEET_JSON=json.dumps(workers), PLAN=str(plan),
+                           TRANSPARENT_TRANSACTION_DIR=str(Path(temp)/"transactions"),
+                           FAIL_ACTIVATION=str(fail).lower())
+                if fail:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        shell(code, **env)
+                else:
+                    shell(code, **env)
+                for path, content in previous.items():
+                    self.assertEqual((root/path.lstrip("/")).read_text(), content)
+                if action == "tools":
+                    log = (root/"systemctl.log").read_text()
+                    self.assertNotIn("stop", log)
+                    self.assertNotIn("start", log)
+                latest = Path((Path(temp)/"transactions/latest").read_text().strip())
+                self.assertEqual(json.loads(latest.read_text())["status"], "rolled-back")
+
 
 if __name__ == "__main__":
     unittest.main()
