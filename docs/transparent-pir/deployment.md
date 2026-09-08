@@ -16,6 +16,7 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
 | Process MemoryMax | 7 GiB | 56 GiB |
+| Process MemoryHigh (hardening canary target) | 5.5 GiB = 5905580032 bytes | Unchanged |
 | Swap | Disabled for service | Disabled for service |
 | Build/query slots initially | 1 / 2 | 1 / 2 |
 | Disk restore slots | 4 | 4 |
@@ -238,3 +239,27 @@ when a pending observed block exceeds 30 seconds. Prometheus alert rules are in
 `ops/infra/digitalocean/production/deploy/transparent-publication-alerts.yml`.
 The production deployment key is supplied by the GitHub Environment and stored
 only in the controller's root-readable runtime credential directory.
+
+## Hardening rollout gate
+
+Continuous-publication recent worker upgrades preserve the 5.5 GiB MemoryHigh
+setting in both deployment paths. It triggers file-cache reclamation below the
+hard limit; cache and transient allocation admission remain separate. The
+[canary evidence](evidence/hardening-2026-09-08/README.md) records the observed
+tradeoff and failed lower threshold. Other workers retain their installed
+settings until their rollout.
+
+Run `ops/scripts/observe-transparent-hardening.py` on the coordinator with the
+expected worker binary digest and release `soak-query` executable. Its defaults
+require **both six hours and 300 new blocks**, two sustained query clients with
+exact source-byte comparisons, public and canary visibility within 30 seconds,
+canonical endpoints, no OOM or restart, and 20% host memory headroom. A reorg
+resets the counted block samples. The monitor is read-only and cannot trigger a
+rollout; preserve its result and raw NDJSON before rolling the next workers.
+
+After a passing canary, upgrade the remaining recent replicas individually,
+verify their warm/current identities, remove the reconciler's canary allowlist,
+and validate the archive deployment path before rolling owners. Preserve
+compatible rollback artifacts and keep orphaned publications withdrawn. Run
+24-hour monitoring after the fleet rollout. An elapsed timer alone is not a
+passing gate.

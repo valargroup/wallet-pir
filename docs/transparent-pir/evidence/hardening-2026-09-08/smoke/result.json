@@ -1,0 +1,13 @@
+{
+  "utc": "2026-09-08T22:59:34.336384+00:00",
+  "event": "result",
+  "passed": true,
+  "seconds": 60.35631494293921,
+  "blocks": 1,
+  "worker_samples": 3,
+  "exact_queries": [
+    330,
+    332
+  ],
+  "maximum_visibility_seconds": 14.686182381003164
+}
