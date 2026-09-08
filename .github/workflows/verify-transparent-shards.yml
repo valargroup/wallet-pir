@@ -1,0 +1,137 @@
+name: Verify transparent shards
+
+# Verifies a published shard set on the coordinator, read-only: every
+# manifest, table and filter digest, the parent chain, schema and profile
+# agreement, exact coverage and anchor, the tier boundary, and deterministic
+# reconstruction of sampled shards from the journal. The report is the
+# evidence a staging or activation cites. Nothing is installed or written
+# outside the runner's working directory.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full commit SHA on main to build the verifier from; recorded in the report
+        required: true
+        type: string
+      shard_dir:
+        description: The published set to verify
+        required: true
+        type: string
+      data_dir:
+        description: The journal the set was published from, for reconstruction
+        required: false
+        default: /srv/zakura/transparent-event-data
+        type: string
+      rebuild:
+        description: Shards to rebuild from the journal and compare, sampled by seed; 0 skips reconstruction
+        required: false
+        default: "4"
+        type: string
+      rebuild_all:
+        description: Rebuild every shard instead of a sample
+        required: false
+        default: false
+        type: boolean
+      seed:
+        required: false
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transparent-dataset-inventory
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify ${{ inputs.shard_dir }}
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 720
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          SHA: ${{ inputs.ref }}
+          SHARD_DIR: ${{ inputs.shard_dir }}
+          DATA_DIR: ${{ inputs.data_dir }}
+          REBUILD: ${{ inputs.rebuild }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a full commit SHA"; exit 1; }
+          [[ "$SHARD_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "shard_dir must be an absolute path"; exit 1; }
+          [[ "$DATA_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "data_dir must be an absolute path"; exit 1; }
+          [[ "$REBUILD" =~ ^[0-9]+$ && "$SEED" =~ ^[0-9]+$ ]] || { echo "rebuild and seed must be numbers"; exit 1; }
+          sudo test -f "$SHARD_DIR/shards.json" || { echo "$SHARD_DIR holds no shards.json"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Build and run the verifier
+        env:
+          # +pclmulqdq: these binaries link the node's RocksDB, whose CRC code
+          # takes the PCLMUL path once SSE4.2 is on, and x86-64-v3 turns SSE4.2
+          # on without PCLMUL. The coordinator's CPU has both.
+          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
+          SHA: ${{ inputs.ref }}
+          SHARD_DIR: ${{ inputs.shard_dir }}
+          DATA_DIR: ${{ inputs.data_dir }}
+          REBUILD: ${{ inputs.rebuild }}
+          REBUILD_ALL: ${{ inputs.rebuild_all }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          set -euo pipefail
+          NICE=(nice -n 19)
+          if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
+          "${NICE[@]}" cargo build --locked --release -p transparent-filter-server --bin shard-verify
+          mkdir -p verify
+          ARGS=(--shard-dir "$SHARD_DIR" --seed "$SEED" --source-sha "$SHA" --out verify/verify.json)
+          # The publication record, when the set carries one, supplies the
+          # expected start, anchor, cutoff and geometries; the verifier then
+          # checks the set against what the publisher said it built.
+          if sudo test -f "$SHARD_DIR/publication.json"; then
+            ARGS+=(--publication "$SHARD_DIR/publication.json")
+          fi
+          if [[ "$REBUILD_ALL" == "true" ]]; then
+            ARGS+=(--data-dir "$DATA_DIR" --rebuild-all)
+          elif [[ "$REBUILD" != "0" ]]; then
+            ARGS+=(--data-dir "$DATA_DIR" --rebuild "$REBUILD")
+          fi
+          # Read-only: the set and the journal through their read-only
+          # openers; the journal lives under the ingest unit's user, hence sudo.
+          set +e
+          sudo /usr/bin/time -v -o verify/time.txt "${NICE[@]}" ./target/release/shard-verify "${ARGS[@]}" 2>&1 \
+            | tee verify/verify.log
+          status=${PIPESTATUS[0]}
+          set -e
+          sudo chown "$(id -u)" verify/verify.json verify/time.txt 2>/dev/null || true
+          jq -c '{schema, tool_sha, failures, checks: (.checks | length)}' verify/verify.json || true
+          grep -E 'Maximum resident|Elapsed \(wall' verify/time.txt || true
+          {
+            echo "## Verification of $SHARD_DIR"
+            jq -r '.checks[] | "- \(if .ok then "ok" else "FAIL" end): \(.check)\(if .detail then " — " + (.detail|tostring) else "" end)"' verify/verify.json 2>/dev/null || echo "(no report)"
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transparent-verify
+          path: verify/
+          if-no-files-found: error
