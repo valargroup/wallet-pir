@@ -194,19 +194,41 @@ fn parse_verbose(value: &serde_json::Value) -> Result<VerboseTx, BoxError> {
     })
 }
 
+/// The node's code for a batch whose answer would exceed its response limit.
+const BATCH_RESPONSE_TOO_LARGE: i64 = -32011;
+
 async fn verbose_transactions(
     client: &ZakuraClient,
     txids: &[String],
     batch: usize,
 ) -> Result<Vec<VerboseTx>, BoxError> {
     let mut all = Vec::with_capacity(txids.len());
-    for chunk in txids.chunks(batch.max(1)) {
-        let calls: Vec<(&str, serde_json::Value)> = chunk
+    // Verbose transactions vary from a few hundred bytes to hundreds of
+    // kilobytes, so a fixed batch size is either slow or refused. Start at
+    // the configured size and halve on the node's too-large refusal; the
+    // answers are the same however they are batched.
+    let mut size = batch.max(1);
+    let mut start = 0;
+    while start < txids.len() {
+        let end = (start + size).min(txids.len());
+        let calls: Vec<(&str, serde_json::Value)> = txids[start..end]
             .iter()
             .map(|txid| ("getrawtransaction", serde_json::json!([txid, 1])))
             .collect();
-        for value in client.call_batch_values(&calls).await? {
-            all.push(parse_verbose(&value)?);
+        match client.call_batch_values(&calls).await {
+            Ok(values) => {
+                for value in values {
+                    all.push(parse_verbose(&value)?);
+                }
+                start = end;
+            }
+            Err(transparent_filter_server::zakura::ZakuraError::Rpc(
+                BATCH_RESPONSE_TOO_LARGE,
+                _,
+            )) if size > 1 => {
+                size /= 2;
+            }
+            Err(error) => return Err(error.into()),
         }
     }
     Ok(all)
