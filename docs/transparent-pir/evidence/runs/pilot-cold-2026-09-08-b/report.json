@@ -1,0 +1,346 @@
+{
+  "client": {
+    "label": "laptop macOS, residential, TLS",
+    "store": "memory"
+  },
+  "command": [
+    "./target/release/transparent-loadtest",
+    "--shard-url",
+    "https://transparent-pir.valargroup.dev",
+    "--sample",
+    "docs/transparent-pir/evidence/workload-sample-2026-09-08/sample.json",
+    "--steps",
+    "2,8",
+    "--step-duration",
+    "4m",
+    "--min-completed-per-class",
+    "5",
+    "--max-queries",
+    "1500",
+    "--run-id",
+    "pilot-cold-2026-09-08-b",
+    "--source-sha",
+    "4ba90197e71bd17f33b07b256c811099a68f4a84",
+    "--host-sku",
+    "s-4vcpu-16gb-amd (pilot, 8 GiB cache, all 174 shards)",
+    "--host-region",
+    "ams3",
+    "--client-label",
+    "laptop macOS, residential, TLS",
+    "--json-out",
+    "/private/tmp/claude-501/-Users-roman-projects-spendability-pir/c9f2f408-013c-4a6f-95aa-f020e5e48cae/scratchpad/pilot-cold-b.json"
+  ],
+  "filter_url": "https://transparent-pir.valargroup.dev",
+  "generated_at_unix": 1788856326,
+  "host": {
+    "region": "ams3",
+    "sku": "s-4vcpu-16gb-amd (pilot, 8 GiB cache, all 174 shards)"
+  },
+  "in_progress": false,
+  "limitations": [
+    "TLS handshake and connection bytes are not measured; byte figures are wallet-level payloads as the wallet charges them",
+    "clients are synthetic groupings of public scripts, not a user population",
+    "a step ends early once every class reached min_completed_per_class; rates are computed over the step's actual duration"
+  ],
+  "run_id": "pilot-cold-2026-09-08-b",
+  "sample": {
+    "clients": 1080,
+    "path": "docs/transparent-pir/evidence/workload-sample-2026-09-08/sample.json",
+    "sha256": "55ea216140ac9cefe281940db7d09fe327a58e06cecd305fd504aa4a0a5c8111"
+  },
+  "schema": "transparent-loadtest-v1",
+  "set": {
+    "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "anchor_height": 3473686,
+    "cutoff_height": 3262749,
+    "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "geometries": [
+      "archive-wide",
+      "recent-8k"
+    ],
+    "max_queries_per_sync": 1500,
+    "network": "main",
+    "profile": "zcash-transparent-range-v1",
+    "schema": "transparent-shard-v7",
+    "shards": 174,
+    "start_height": 0
+  },
+  "shard_url": "https://transparent-pir.valargroup.dev",
+  "source_sha": "4ba90197e71bd17f33b07b256c811099a68f4a84",
+  "steps": [
+    {
+      "classes": {
+        "multi-script": {
+          "completed": 1,
+          "events_recovered": 532,
+          "exact": 1,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "mismatched": 0,
+          "n": 1,
+          "requests": 211,
+          "stages": {
+            "filters": {
+              "bytes_down": 1293378,
+              "bytes_up": 0,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 11.922687
+            },
+            "manifest": {
+              "bytes_down": 18024,
+              "bytes_up": 0,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 3.779897
+            },
+            "query_directory": {
+              "bytes_down": 677952,
+              "bytes_up": 16897056,
+              "calls": 132,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 34.992657
+            },
+            "query_pages": {
+              "bytes_down": 123264,
+              "bytes_up": 3072192,
+              "calls": 24,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 6.227828
+            },
+            "setup_directory": {
+              "bytes_down": 272090,
+              "bytes_up": 0,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 6.352076
+            },
+            "setup_pages": {
+              "bytes_down": 252603,
+              "bytes_up": 0,
+              "calls": 13,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 3.302092
+            }
+          },
+          "sync_seconds": {
+            "max": 68.223,
+            "p50": 68.223,
+            "p95": 68.223,
+            "p99": 68.223
+          }
+        },
+        "restore-old": {
+          "completed": 0,
+          "events_recovered": 0,
+          "exact": 0,
+          "failed": 1,
+          "failures_by_message": {
+            "client: transport: shard 35 revision bb686c90ed31569c1a1a31b6b251b1575d44811da5a9bc15f22e6178f16ac08b: HTTP 502 Bad Gateway: ": 1
+          },
+          "http_409": 0,
+          "http_503": 0,
+          "mismatched": 0,
+          "n": 1,
+          "requests": 121,
+          "stages": {
+            "filters": {
+              "bytes_down": 7928190,
+              "bytes_up": 0,
+              "calls": 36,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 26.43617
+            },
+            "manifest": {
+              "bytes_down": 16846,
+              "bytes_up": 0,
+              "calls": 13,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 3.662272
+            },
+            "query_directory": {
+              "bytes_down": 184896,
+              "bytes_up": 9290016,
+              "calls": 36,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 10.939862
+            },
+            "query_pages": {
+              "bytes_down": 56496,
+              "bytes_up": 4730968,
+              "calls": 11,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 3.210684
+            },
+            "setup_directory": {
+              "bytes_down": 252681,
+              "bytes_up": 0,
+              "calls": 13,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 85.038885
+            },
+            "setup_pages": {
+              "bytes_down": 213763,
+              "bytes_up": 0,
+              "calls": 12,
+              "failures": 1,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 113.327016
+            }
+          },
+          "sync_seconds": {
+            "max": 243.839,
+            "p50": 243.839,
+            "p95": 243.839,
+            "p99": 243.839
+          }
+        },
+        "reused-tail": {
+          "completed": 0,
+          "events_recovered": 0,
+          "exact": 0,
+          "failed": 1,
+          "failures_by_message": {
+            "client: transport: shard 156 revision 25958f0f47418501d1c8dea94f1fb13b0b4b199677866b9f7f7d37481ec92e29: HTTP 502 Bad Gateway: ": 1
+          },
+          "http_409": 0,
+          "http_503": 0,
+          "mismatched": 0,
+          "n": 1,
+          "requests": 977,
+          "stages": {
+            "filters": {
+              "bytes_down": 667726,
+              "bytes_up": 0,
+              "calls": 2,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 3.016133
+            },
+            "manifest": {
+              "bytes_down": 2600,
+              "bytes_up": 0,
+              "calls": 2,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.946392
+            },
+            "query_directory": {
+              "bytes_down": 20544,
+              "bytes_up": 1032224,
+              "calls": 4,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 2.258969
+            },
+            "query_pages": {
+              "bytes_down": 4951104,
+              "bytes_up": 415034920,
+              "calls": 965,
+              "failures": 1,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 341.275533
+            },
+            "setup_directory": {
+              "bytes_down": 38876,
+              "bytes_up": 0,
+              "calls": 2,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.936423
+            },
+            "setup_pages": {
+              "bytes_down": 38868,
+              "bytes_up": 0,
+              "calls": 2,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.710726
+            }
+          },
+          "sync_seconds": {
+            "max": 380.671,
+            "p50": 380.671,
+            "p95": 380.671,
+            "p99": 380.671
+          }
+        },
+        "unused": {
+          "completed": 1,
+          "events_recovered": 0,
+          "exact": 1,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "mismatched": 0,
+          "n": 1,
+          "requests": 174,
+          "stages": {
+            "filters": {
+              "bytes_down": 63211867,
+              "bytes_up": 0,
+              "calls": 174,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 68.13025
+            }
+          },
+          "sync_seconds": {
+            "max": 68.671,
+            "p50": 68.671,
+            "p95": 68.671,
+            "p99": 68.671
+          }
+        }
+      },
+      "completed": 2,
+      "completed_syncs_per_second": 0.005254239311472353,
+      "concurrency": 2,
+      "duration_seconds": 380.645014709,
+      "error_rate": 0.5,
+      "exact": 2,
+      "failed": 2,
+      "http_503_rate": 0.0,
+      "metrics_after": null,
+      "metrics_before": null,
+      "syncs": 4,
+      "worst_p99_sync_seconds": 380.671
+    }
+  ],
+  "stop_reason": "error rate 0.500 above 0.05",
+  "stopped_at_concurrency": 2,
+  "total_seconds": 380.646431875
+}

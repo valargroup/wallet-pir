@@ -122,15 +122,35 @@ impl Overloaded {
     /// Only delta-seconds are read. The HTTP-date form is legal and this
     /// service never sends it; a value that will not parse is treated as no
     /// delay rather than as no refusal.
+    ///
+    /// A 502 or 504 is the edge failing to reach a worker: the service is
+    /// restarting, warming, or gone for the moment. That is the same thing to
+    /// a wallet as capacity refused — stop, keep the pending work, try later
+    /// — and the edge names no delay, so a short default stands in. A cold
+    /// pilot's service was killed and restarted under load on 2026-09-08 and
+    /// two syncs failed outright on the 502 rather than stopping short.
     pub fn from_http(status: u16, retry_after: Option<&str>) -> Option<Self> {
-        if status != 503 {
-            return None;
+        match status {
+            503 => {
+                let retry_after = retry_after?;
+                Some(Self {
+                    retry_after: retry_after.trim().parse().ok().map(Duration::from_secs),
+                })
+            }
+            502 | 504 => Some(Self {
+                retry_after: Some(
+                    retry_after
+                        .and_then(|value| value.trim().parse().ok())
+                        .map(Duration::from_secs)
+                        .unwrap_or(Self::EDGE_RETRY_AFTER),
+                ),
+            }),
+            _ => None,
         }
-        let retry_after = retry_after?;
-        Some(Self {
-            retry_after: retry_after.trim().parse().ok().map(Duration::from_secs),
-        })
     }
+
+    /// The delay assumed when the edge, not the service, refused.
+    pub const EDGE_RETRY_AFTER: Duration = Duration::from_secs(5);
 
     pub fn found_in(error: &BoxError) -> Option<&Self> {
         found_in(error)
@@ -448,6 +468,16 @@ mod tests {
             "a 503 without a delay is not retryable"
         );
         assert!(Overloaded::from_http(429, Some("1")).is_none());
+        // The edge failing to reach a worker is a refusal with an assumed delay.
+        let edge = Overloaded::from_http(502, None).expect("a 502 is retryable");
+        assert_eq!(edge.retry_after, Some(Overloaded::EDGE_RETRY_AFTER));
+        assert_eq!(
+            Overloaded::from_http(504, Some("2"))
+                .expect("a 504 is retryable")
+                .retry_after,
+            Some(Duration::from_secs(2))
+        );
+        assert!(Overloaded::from_http(500, None).is_none());
     }
 
     /// A delay in the HTTP-date form is legal and this service never sends it.

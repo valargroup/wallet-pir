@@ -913,14 +913,22 @@ impl ShardSet {
 
     /// Every geometry this set uses, in registry order.
     ///
-    /// What the service builds parameter sets for. A set that mixes archive and
-    /// recent shards needs both, and only both: preparing every registered
-    /// geometry would leak parameters for shapes this worker does not hold.
+    /// What the service builds parameter sets for: every geometry the map
+    /// names, whether or not this worker holds tables for it. The init
+    /// document is set-wide — a wallet fetches it once, from whichever worker
+    /// the edge picks, and refuses a map naming a geometry the document does
+    /// not declare — so a replica assigned only the recent tier still declares
+    /// the archive's parameters. They are a function of the geometry alone
+    /// and say nothing about which shards this process serves; the
+    /// assignment says that. Not every registered geometry, though: a shape
+    /// no shard in the set uses stays undeclared.
     pub fn geometries(&self) -> Vec<&'static Geometry> {
         let mut seen: Vec<&'static Geometry> = Vec::new();
-        for shard in &self.revisions {
-            if !seen.iter().any(|held| held.name == shard.geometry.name) {
-                seen.push(shard.geometry);
+        let held = self.revisions.iter().map(|shard| shard.geometry);
+        let named = self.metadata.values().map(|meta| meta.geometry);
+        for geometry in held.chain(named) {
+            if !seen.iter().any(|known| known.name == geometry.name) {
+                seen.push(geometry);
             }
         }
         seen.sort_by_key(|geometry| geometry.name);

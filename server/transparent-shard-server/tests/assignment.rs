@@ -448,10 +448,21 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
     assert_eq!(init["assigned_shards"], 2);
     assert_eq!(init["worker_id"], "archive-01");
     assert_eq!(init["assignment_sha256"], assignment.digest());
+    // Set-wide: the owner declares the other geometry's parameters
+    // too, since a wallet may fetch init from any worker and refuses a map
+    // naming a geometry the document leaves out.
+    let mut declared: Vec<&str> = init["geometries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["name"].as_str().unwrap())
+        .collect();
+    declared.sort_unstable();
+    assert_eq!(declared, ["recent-4k", "recent-8k"]);
     assert_eq!(
         init["geometries"].as_array().unwrap().len(),
-        1,
-        "only the held geometry"
+        2,
+        "every geometry the set names, not only the held one"
     );
 }
 

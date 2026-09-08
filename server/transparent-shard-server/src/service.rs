@@ -221,9 +221,10 @@ pub struct SetupResponse {
 impl ServiceState {
     pub fn build(set: ShardSet, config: ServiceConfig) -> Result<Self, String> {
         let metrics = Arc::new(Metrics::default());
-        // Only the geometries this worker actually holds. Preparing every
-        // registered one would publish parameters for shapes no shard here uses,
-        // which a client would reasonably read as an offer to serve them.
+        // Every geometry the set names, held here or not: the init document
+        // is set-wide and a wallet refuses a map it does not fully declare.
+        // Not every registered geometry, which would publish parameters for
+        // shapes no shard in the set uses.
         let mut params: HashMap<ParamsKey, Arc<SharedParams>> = HashMap::new();
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
