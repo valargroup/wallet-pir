@@ -60,6 +60,7 @@
       color: #b32f35;
     }
     .notice {
+      overflow-wrap: anywhere;
       border-left: 4px solid #d69a21;
       padding: 12px 18px;
       background: #fff7df;
@@ -142,65 +143,68 @@
     <p id="subtitle"></p>
   </header>
   <div id="errors"></div>
-  <div class="cards" id="cards"></div>
-  <h2>Load and client resources</h2>
-  <p class="muted">
-    One-second samples. CPU is shown in cores consumed; RSS sums the supervisor
-    and current wallet workers. Request rates include retries. Payload upload is
-    submitted bytes, excluding HTTP/TLS overhead.
-  </p>
-  <p class="muted" id="resource-summary"></p>
-  <div class="charts" id="loadcharts"></div>
-  <h2>Wallet profiles</h2>
-  <p class="muted">
-    Latency percentiles include exact recoveries only. Fewer than 100 exact
-    completions are marked sparse. Failures and incomplete work remain in
-    outcome counts.
-  </p>
-  <div class="scroll"><table id="profiles"></table></div>
-  <h2>Wallet timelines</h2>
-  <p class="muted">
-    Bars run from actual worker start to terminal outcome. Start offset reveals
-    scheduling skew. Expand stages to see HTTP activity windows; overlapping
-    windows are not a decomposition of total time.
-  </p>
-  <label
-    >Profile
-    <select id="profilefilter">
-      <option value="">All</option>
-    </select></label
-  >
-  <label
-    >Outcome
-    <select id="outcomefilter">
-      <option value="">All</option>
-      <option>exact</option>
-      <option>mismatched</option>
-      <option>incomplete</option>
-      <option>failed</option>
-      <option>timed_out</option>
-      <option>cancelled</option>
-    </select></label
-  >
-  <div class="scroll"><table id="wallets"></table></div>
-  <h2>Per-wallet aggregates</h2>
-  <p class="muted">
-    Grouped by sample wallet across all recoveries, including sustained
-    replacements. HTTP time sums request durations; it is not wall-clock
-    recovery time. Exact latency excludes unsuccessful recoveries.
-  </p>
-  <div class="scroll"><table id="wallet-aggregates"></table></div>
-  <h2>Server APM</h2>
-  <p class="muted">
-    Each named target is scraped independently. All traffic reaching that worker
-    contributes, including unrelated clients. Queue depth includes waiting and
-    running requests. Cache reservations and process RSS measure different
-    things. Latency quantiles come from interval histogram deltas, never
-    averaged across workers.
-  </p>
-  <div id="apm"></div>
-  <h2>Payload accounting</h2>
-  <div class="scroll"><table id="stages"></table></div>
+  <section id="preparation"></section>
+  <section id="measured">
+    <div class="cards" id="cards"></div>
+    <h2>Load and client resources</h2>
+    <p class="muted">
+      One-second samples. CPU is shown in cores consumed; RSS sums the
+      supervisor and current wallet workers. Request rates include retries.
+      Payload upload is submitted bytes, excluding HTTP/TLS overhead.
+    </p>
+    <p class="muted" id="resource-summary"></p>
+    <div class="charts" id="loadcharts"></div>
+    <h2>Wallet profiles</h2>
+    <p class="muted">
+      Latency percentiles include exact recoveries only. Fewer than 100 exact
+      completions are marked sparse. Failures and incomplete work remain in
+      outcome counts.
+    </p>
+    <div class="scroll"><table id="profiles"></table></div>
+    <h2>Wallet timelines</h2>
+    <p class="muted">
+      Bars run from actual worker start to terminal outcome. Start offset
+      reveals scheduling skew. Expand stages to see HTTP activity windows;
+      overlapping windows are not a decomposition of total time.
+    </p>
+    <label
+      >Profile
+      <select id="profilefilter">
+        <option value="">All</option>
+      </select></label
+    >
+    <label
+      >Outcome
+      <select id="outcomefilter">
+        <option value="">All</option>
+        <option>exact</option>
+        <option>mismatched</option>
+        <option>incomplete</option>
+        <option>failed</option>
+        <option>timed_out</option>
+        <option>cancelled</option>
+      </select></label
+    >
+    <div class="scroll"><table id="wallets"></table></div>
+    <h2>Per-wallet aggregates</h2>
+    <p class="muted">
+      Grouped by sample wallet across all recoveries, including sustained
+      replacements. HTTP time sums request durations; it is not wall-clock
+      recovery time. Exact latency excludes unsuccessful recoveries.
+    </p>
+    <div class="scroll"><table id="wallet-aggregates"></table></div>
+    <h2>Server APM</h2>
+    <p class="muted">
+      Each named target is scraped independently. All traffic reaching that
+      worker contributes, including unrelated clients. Queue depth includes
+      waiting and running requests. Cache reservations and process RSS measure
+      different things. Latency quantiles come from interval histogram deltas,
+      never averaged across workers.
+    </p>
+    <div id="apm"></div>
+    <h2>Payload accounting</h2>
+    <div class="scroll"><table id="stages"></table></div>
+  </section>
   <h2>Provenance and limits</h2>
   <p>
     Every measured recovery uses an independent store seeded with prior ledger
@@ -260,9 +264,68 @@
     text($("title"), R.config.name);
     text(
       $("subtitle"),
-      `${R.config.mode} · ${Object.values(R.config.profiles).reduce((a, b) => a + b, 0)} configured slots · ${R.config.store} · ${new Date(R.created_at * 1000).toISOString()} · ${R.success ? "PASS" : "UNSUCCESSFUL / INCOMPLETE"}`,
+      `${R.config.mode} · ${Object.values(R.config.profiles).reduce((a, b) => a + b, 0)} configured slots · ${R.config.store} · ${new Date(R.created_at * 1000).toISOString()} · ${R.success ? "PASS" : !R.finished_at ? "IN PROGRESS" : "FAILED"}`,
     );
-    $("subtitle").className = R.success ? "pass" : "fail";
+    $("subtitle").className = R.success
+      ? "pass"
+      : !R.finished_at
+        ? "muted"
+        : "fail";
+    const notStarted = !R.started_at && !R.users.length;
+    if (notStarted) {
+      $("measured").hidden = true;
+      const status =
+        R.phase === "preparation_failed"
+          ? "Preparation failed — measured wave not started"
+          : R.phase === "measurement_failed"
+            ? "Measured wave could not start"
+            : "Preparing wallet history — measured wave not started";
+      el("h2", $("preparation"), status);
+      el(
+        "p",
+        $("preparation"),
+        "Preparation traffic is separate from measured recovery results. Open a batch report for live checkpoints, request stages and per-wallet bandwidth.",
+      );
+    } else if ((R.preparation || []).length) {
+      el("h2", $("preparation"), "Wallet preparation");
+    }
+    for (const batch of R.preparation || []) {
+      const detail = el("details", $("preparation"));
+      detail.open = batch.status !== "complete";
+      const summary = batch.summary || {};
+      el(
+        "summary",
+        detail,
+        `Batch ${batch.batch}: ${batch.status} · ${summary.outcomes?.exact || 0} / ${summary.started ?? batch.wallets ?? 0} prepared`,
+      );
+      const link = el("a", detail, "Open preparation report");
+      // Reports contain only generated relative artifact links, never URLs from errors.
+      if (/^preparation\/batch-\d+\/report\.html$/.test(batch.report))
+        link.href = batch.report;
+      for (const error of batch.errors || [])
+        el("p", detail, error).className = "notice";
+      const scroll = el("div", detail);
+      scroll.className = "scroll";
+      table(
+        el("table", scroll),
+        [
+          "User / sample",
+          "Profile",
+          "Outcome",
+          "Upload",
+          "Download",
+          "Error / completion",
+        ],
+        (batch.users || []).map((u) => [
+          `${u.id} / ${u.sample_index}`,
+          u.profile,
+          u.outcome,
+          bytes(u.http_totals?.bytes_up || 0),
+          bytes(u.http_totals?.bytes_down || 0),
+          u.error || u.completion || "",
+        ]),
+      );
+    }
     for (const error of R.errors || [])
       el("p", $("errors"), error).className = "notice";
     if (R.interrupted)

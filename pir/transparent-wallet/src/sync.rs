@@ -1637,6 +1637,38 @@ fn retrieve_shard_into<S: WalletStore>(
     let geometry = transparent_shard::layout::by_name(&entry.geometry)
         .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
     let revision = entry.manifest_digest.as_str();
+    // An overload can occur after the directory commit but before pages finish.
+    // with_refusals calls this function again on retry. Resume those durable
+    // entries first: rediscovering their directories would enqueue duplicate
+    // work and leave the original entries pending after the retry succeeds.
+    let pending: Vec<_> = store
+        .pending()?
+        .into_iter()
+        .filter(|p| p.shard_id == shard_id && p.revision_digest == revision)
+        .collect();
+    if !pending.is_empty() {
+        if let Some(stopped) = finish_pages(
+            store,
+            entry,
+            &pending,
+            clients,
+            transport,
+            charges,
+            limits,
+            target_anchor,
+            chain,
+        )? {
+            return Ok(Some(stopped));
+        }
+    }
+    let matched: Vec<_> = matched
+        .iter()
+        .filter(|script| !pending.iter().any(|p| &p.script == *script))
+        .collect();
+    if matched.is_empty() {
+        // The earlier directory commit also covered all unmatched scripts.
+        return Ok(None);
+    }
     let set_digest = store
         .set_identity()?
         .map(|identity| identity.digest())

@@ -39,6 +39,8 @@ enum Fault {
     RefuseFilter,
     RetryQuery,
     Drift,
+    RetryMap,
+    RetryPageSetup,
 }
 async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
     let set = ShardSet::open(&dir.join("shards"), DEFAULT_RETAIN_REVISIONS).unwrap();
@@ -59,6 +61,17 @@ async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
                         _ => {}
                     }
                 }
+                if matches!(fault, Fault::RetryPageSetup)
+                    && path.contains("/setup/pages")
+                    && calls.fetch_add(1, Ordering::SeqCst) == 0
+                {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        [("retry-after", "0")],
+                        "busy",
+                    )
+                        .into_response();
+                }
                 if matches!(fault, Fault::RetryQuery)
                     && path.contains("/query/")
                     && calls.fetch_add(1, Ordering::SeqCst) < 2
@@ -69,6 +82,12 @@ async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
                         "busy",
                     )
                         .into_response();
+                }
+                if matches!(fault, Fault::RetryMap)
+                    && path == "/v1/filters/shards"
+                    && calls.fetch_add(1, Ordering::SeqCst) == 0
+                {
+                    return (StatusCode::BAD_GATEWAY, "temporary gateway outage").into_response();
                 }
                 if matches!(fault, Fault::Drift)
                     && path == "/v1/filters/shards"
@@ -425,6 +444,18 @@ async fn catch_up_seeds_prior_history_and_keeps_measurement_separate() {
                     .unwrap()
         );
     }
+    let (retry_base, _) = service(dir.path(), Fault::RetryMap).await;
+    let retry = run(dir.path(), &retry_base, "retry-map", "wave", 1, 120, false).await;
+    assert_eq!(retry["success"], true);
+    assert_eq!(retry["preparation"][0]["status"], "complete");
+    let requests = fs::read_to_string(
+        dir.path()
+            .join("retry-map/preparation/batch-0/preflight.ndjson"),
+    )
+    .unwrap();
+    assert!(requests
+        .lines()
+        .any(|line| serde_json::from_str::<Value>(line).unwrap()["status"] == 502));
     // A bad oracle must stop preparation, never bless the measured wave.
     sample["clients"][0]["expected_digest"] = json!("incorrect");
     fs::write(&path, serde_json::to_vec(&sample).unwrap()).unwrap();
@@ -449,8 +480,90 @@ async fn catch_up_seeds_prior_history_and_keeps_measurement_separate() {
             .unwrap();
     assert_eq!(report["success"], false);
     assert!(report["users"].as_array().unwrap().is_empty());
+    assert_eq!(report["phase"], "preparation_failed");
+    assert_eq!(report["preparation"][0]["status"], "failed");
+    assert_eq!(
+        report["preparation"][0]["users"][0]["outcome"],
+        "mismatched"
+    );
+    assert_eq!(
+        report["preparation"][0]["report"],
+        "preparation/batch-0/report.html"
+    );
+    if let Ok(destination) = std::env::var("TRANSPARENT_SIMULATION_QA_DIR") {
+        let target = Path::new(&destination).join("preparation-failed");
+        fs::create_dir_all(&target).unwrap();
+        fs::copy(
+            dir.path().join("bad-seed/report.html"),
+            target.join("report.html"),
+        )
+        .unwrap();
+    }
     assert!(report["errors"][0]
         .as_str()
         .unwrap()
         .contains("preparation unsuccessful"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn preparation_cap_does_not_reduce_measured_wave_concurrency() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[1, 2, 3]);
+    let path = dir.path().join("sample.json");
+    let mut data: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let from = common::FIRST + 2 * common::SPAN;
+    for (client, tag) in data["clients"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(1..=3)
+    {
+        let mut events: Vec<_> = common::chain()
+            .into_iter()
+            .flatten()
+            .filter(|(s, e)| *s == common::script(tag) && u64::from(e.height()) >= from)
+            .map(|(_, e)| e)
+            .collect();
+        events.sort_by_key(|e| e.sort_key());
+        events.dedup();
+        let mut hash = Sha256::new();
+        for event in &events {
+            hash.update(event.to_bytes());
+        }
+        client["required_from"] = json!(from);
+        client["expected_digest"] = json!(hex::encode(hash.finalize()));
+        client["journal_events"] = json!(events.len());
+    }
+    fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+    let (base, _) = service(dir.path(), Fault::None).await;
+    let report = run(dir.path(), &base, "bounded-prep", "wave", 3, 120, false).await;
+    assert_eq!(report["success"], true);
+    assert_eq!(report["phase"], "complete");
+    assert_eq!(report["summary"]["started"], 3);
+    let batches = report["preparation"].as_array().unwrap();
+    assert_eq!(batches.len(), 2);
+    assert_eq!(batches[0]["summary"]["started"], 2);
+    assert_eq!(batches[1]["summary"]["started"], 1);
+    for batch in batches {
+        assert_eq!(batch["status"], "complete");
+        for user in batch["users"].as_array().unwrap() {
+            assert!(user["finished_at"].as_f64().unwrap() < report["started_at"].as_f64().unwrap());
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn page_setup_retry_finishes_existing_pending_work() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[3]);
+    for store in ["sqlite", "memory"] {
+        let (base, _) = service(dir.path(), Fault::RetryPageSetup).await;
+        let config = json!({"schema":"transparent-scenario-v1","name":store,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"store":store,"recovery_deadline_seconds":120,"metrics_targets":{"missing-worker":"http://127.0.0.1:1/metrics"}});
+        let report = run_config(dir.path(), store, config).await;
+        assert_eq!(report["summary"]["stages"]["setup_pages"]["http_503"], 1.0);
+        assert_eq!(report["summary"]["stages"]["query_directory"]["calls"], 2.0);
+        assert_eq!(report["users"][0]["events_exact"], true);
+        assert_eq!(report["users"][0]["completion"], "Complete");
+        assert_eq!(report["success"], true);
+    }
 }

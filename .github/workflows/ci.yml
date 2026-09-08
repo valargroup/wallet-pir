@@ -41,8 +41,10 @@ jobs:
       # librocksdb-sys, whose build generates bindings with libclang.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev
       - run: cargo fmt --all --check
-      - name: Test simulation report APM arithmetic
-        run: node --test server/transparent-loadtest/tests/apm.test.cjs
+      - name: Test simulation report helpers
+        run: |
+          node --test server/transparent-loadtest/tests/apm.test.cjs
+          python3 server/transparent-loadtest/tests/test_open_report.py
       - run: >-
           cargo clippy --all-targets --all-features
           -p transparent-events -p transparent-filter -p transparent-shard

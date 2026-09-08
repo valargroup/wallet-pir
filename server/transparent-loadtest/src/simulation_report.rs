@@ -26,6 +26,10 @@ pub struct Report {
     pub success: bool,
     pub errors: Vec<String>,
     pub users: Vec<Value>,
+    #[serde(default)]
+    pub preparation: Vec<Value>,
+    #[serde(default)]
+    pub phase: String,
     pub metrics: Vec<Value>,
     pub seconds: BTreeMap<u64, Value>,
     pub summary: Value,
@@ -80,6 +84,8 @@ impl Report {
             success: false,
             errors: Vec::new(),
             users: Vec::new(),
+            preparation: Vec::new(),
+            phase: "preparing".into(),
             metrics: Vec::new(),
             seconds: BTreeMap::new(),
             summary: Value::Null,

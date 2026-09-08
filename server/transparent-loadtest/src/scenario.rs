@@ -68,6 +68,8 @@ pub struct Config {
     pub profiles: BTreeMap<String, usize>,
     #[serde(default = "default_seed")]
     pub seed: u64,
+    #[serde(default = "preparation_concurrency")]
+    pub preparation_concurrency: usize,
     #[serde(default = "ten_minutes")]
     pub duration_seconds: u64,
     #[serde(default = "ten_minutes")]
@@ -85,6 +87,10 @@ pub struct Config {
     #[serde(default)]
     pub notes: String,
 }
+fn preparation_concurrency() -> usize {
+    2
+}
+
 fn default_seed() -> u64 {
     1
 }
@@ -113,6 +119,9 @@ impl Config {
     fn validate(&self) -> Result<()> {
         if self.schema != "transparent-scenario-v1" {
             bail!("unsupported scenario schema");
+        }
+        if !(1..=512).contains(&self.preparation_concurrency) {
+            bail!("preparation_concurrency must be between 1 and 512");
         }
         if self.profiles.is_empty()
             || self.profiles.values().any(|n| *n == 0)
@@ -373,10 +382,12 @@ fn recover(job: &Job) -> Result<Value> {
     let options = job.config.options();
     let mut filters = HttpFilterSource::new(job.config.filter_origin(), &options)
         .map_err(io_error)?
-        .with_observer(observer.clone());
+        .with_observer(observer.clone())
+        .with_retry_attempts(if job.preparing { 3 } else { 1 });
     let mut transport = HttpShardTransport::new(&job.config.shard_url, &options)
         .map_err(io_error)?
-        .with_observer(observer);
+        .with_observer(observer)
+        .with_retry_attempts(if job.preparing { 3 } else { 1 });
     let (map, map_bytes) = filters.map().map_err(io_error)?;
     if digest(&serde_json::to_vec(&map)?) != job.map_digest {
         bail!("publication changed before recovery");
@@ -636,8 +647,19 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
     )?;
     let seeds = out.join("seeds");
     fs::create_dir(&seeds)?;
+    simulation_report::write(&out, &report)?;
     let result = (|| {
-        prepare(&config, &sample, &selector, &out, &seeds, &interrupted)?;
+        prepare(
+            &config,
+            &sample,
+            &selector,
+            &out,
+            &seeds,
+            &interrupted,
+            &mut report,
+        )?;
+        report.phase = "measuring".into();
+        simulation_report::write(&out, &report)?;
         run(
             &config,
             &sample,
@@ -655,6 +677,14 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
     report.finished_at = Some(now());
     report.interrupted = interrupted.load(Ordering::Relaxed);
     report.finalize();
+    report.phase = if report.success {
+        "complete"
+    } else if report.phase == "preparing" {
+        "preparation_failed"
+    } else {
+        "measurement_failed"
+    }
+    .into();
     simulation_report::write(&out, &report)?;
     result?;
     if !report.success {
@@ -681,11 +711,13 @@ fn preflight(
     let (map, _) = HttpFilterSource::new(config.filter_origin(), &config.options())
         .map_err(io_error)?
         .with_observer(observer.clone())
+        .with_retry_attempts(3)
         .map()
         .map_err(io_error)?;
     let geometry = HttpShardTransport::new(&config.shard_url, &config.options())
         .map_err(io_error)?
         .with_observer(observer)
+        .with_retry_attempts(3)
         .geometry()
         .map_err(io_error)?;
     let hash = digest(&serde_json::to_vec(&map)?);
@@ -694,6 +726,7 @@ fn preflight(
 
 /// Prepare only the wave's selected wallets, or the entire replacement pool for
 /// sustained runs. Batch sizes never exceed the configured per-profile slots.
+#[allow(clippy::too_many_arguments)]
 fn prepare(
     config: &Config,
     sample: &Sample,
@@ -701,6 +734,7 @@ fn prepare(
     out: &Path,
     seeds: &Path,
     interrupted: &AtomicBool,
+    parent: &mut Report,
 ) -> Result<()> {
     let mut remaining: BTreeMap<String, Vec<usize>> = selector
         .pools
@@ -727,8 +761,10 @@ fn prepare(
             bail!("wallet preparation interrupted");
         }
         let mut pools = BTreeMap::new();
+        let mut capacity = config.preparation_concurrency;
         for (class, pool) in &mut remaining {
-            let n = pool.len().min(config.profiles[class]);
+            let n = pool.len().min(config.profiles[class]).min(capacity);
+            capacity -= n;
             if n > 0 {
                 pools.insert(class.clone(), pool.drain(..n).collect::<Vec<_>>());
             }
@@ -743,6 +779,10 @@ fn prepare(
         fs::create_dir_all(directory.join("stores"))?;
         fs::create_dir(directory.join("logs"))?;
         let mut report = Report::new(&prep, digest(&fs::read(&config.sample)?));
+        let link = format!("preparation/batch-{batch}/report.html");
+        parent.preparation.push(json!({"batch":batch,"status":"running","report":link,"wallets":prep.profiles.values().sum::<usize>()}));
+        simulation_report::write(&directory, &report)?;
+        simulation_report::write(out, parent)?;
         eprintln!("{} (excluded from measured load)", prep.name);
         let result = run(
             &prep,
@@ -763,7 +803,16 @@ fn prepare(
         report.finished_at = Some(now());
         report.interrupted = interrupted.load(Ordering::Relaxed);
         report.finalize();
+        report.phase = if report.success {
+            "complete"
+        } else {
+            "preparation_failed"
+        }
+        .into();
         simulation_report::write(&directory, &report)?;
+        parent.preparation[batch] = json!({"batch":batch,"status":if report.success {"complete"} else {"failed"},"report":link,
+            "summary":report.summary,"errors":report.errors,"users":report.users});
+        simulation_report::write(out, parent)?;
         result?;
         if !report.success {
             bail!(
@@ -985,7 +1034,7 @@ fn run(
                 last_host = Instant::now();
             }
             if last_checkpoint.elapsed() >= Duration::from_secs(5) {
-                simulation_report::checkpoint(out, report)?;
+                simulation_report::write(out, report)?;
                 last_checkpoint = Instant::now();
             }
             if last_progress.elapsed() >= Duration::from_secs(10) {

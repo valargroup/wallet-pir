@@ -37,6 +37,23 @@ fn build(options: &HttpOptions) -> Result<reqwest::blocking::Client, BoxError> {
         .build()?)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+struct HttpStatusError {
+    status: u16,
+    message: String,
+}
+
+fn status_error(status: reqwest::StatusCode, shard: u64, revision: &str, body: &[u8]) -> BoxError {
+    Box::new(HttpStatusError {
+        status: status.as_u16(),
+        message: format!(
+            "shard {shard} revision {revision}: HTTP {status}: {}",
+            String::from_utf8_lossy(body)
+        ),
+    })
+}
+
 /// Reads a reply, turning a refusal the wallet can act on into one.
 ///
 /// The body and the `retry-after` header are read before the status is thrown
@@ -66,11 +83,7 @@ pub fn checked(
     ) {
         return Err(refused);
     }
-    Err(format!(
-        "shard {shard_id} revision {revision}: HTTP {status}: {}",
-        String::from_utf8_lossy(&body)
-    )
-    .into())
+    Err(status_error(status, shard_id, revision, &body))
 }
 
 /// One completed HTTP attempt. Contains no URL, query body, script or key.
@@ -89,7 +102,52 @@ pub struct HttpObservation {
 /// Optional local observer. Called once per attempt, including transport errors.
 pub type HttpObserver = Arc<dyn Fn(HttpObservation) + Send + Sync>;
 
+/// Opt-in retries for transient transport failures. The observer records every
+/// attempt; callers must still impose an overall recovery deadline.
 fn execute(
+    request: reqwest::blocking::RequestBuilder,
+    stage: &'static str,
+    bytes_up: u64,
+    binding: Option<(u64, &str)>,
+    observer: &Option<HttpObserver>,
+    attempts: usize,
+) -> Result<Vec<u8>, BoxError> {
+    if attempts <= 1 {
+        return execute_once(request, stage, bytes_up, binding, observer);
+    }
+    for attempt in 0..attempts {
+        let copy = request
+            .try_clone()
+            .ok_or("HTTP request cannot be retried")?;
+        let result = execute_once(copy, stage, bytes_up, binding, observer);
+        let delay = result.as_ref().err().and_then(|error| {
+            if let Some(overloaded) = crate::transport::Overloaded::found_in(error) {
+                return overloaded.retry_after;
+            }
+            if error
+                .downcast_ref::<HttpStatusError>()
+                .is_some_and(|error| matches!(error.status, 408 | 502..=504))
+            {
+                return Some(Duration::from_secs(1));
+            }
+            error.downcast_ref::<reqwest::Error>().and_then(|error| {
+                (error.is_timeout()
+                    || error.is_connect()
+                    || error
+                        .status()
+                        .is_some_and(|s| matches!(s.as_u16(), 408 | 502..=504)))
+                .then_some(Duration::from_secs(1))
+            })
+        });
+        if attempt + 1 == attempts || delay.is_none() {
+            return result;
+        }
+        std::thread::sleep(delay.unwrap());
+    }
+    unreachable!("attempts is positive")
+}
+
+fn execute_once(
     request: reqwest::blocking::RequestBuilder,
     stage: &'static str,
     bytes_up: u64,
@@ -129,11 +187,7 @@ fn execute(
                 ) {
                     return Err(error);
                 }
-                return Err(format!(
-                    "shard {shard} revision {revision}: HTTP {code}: {}",
-                    String::from_utf8_lossy(&body)
-                )
-                .into());
+                return Err(status_error(code, shard, revision, &body));
             }
         } else if let Some(error) = public_error {
             return Err(Box::new(error) as BoxError);
@@ -158,6 +212,7 @@ pub struct HttpShardTransport {
     base: String,
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
+    attempts: usize,
 }
 
 impl HttpShardTransport {
@@ -166,7 +221,15 @@ impl HttpShardTransport {
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
             observer: None,
+            attempts: 1,
         })
+    }
+
+    /// Opt into a bounded number of attempts per HTTP call (1–3). This is
+    /// separate from wallet-level overload retries and defaults to one attempt.
+    pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
+        self.attempts = attempts.clamp(1, 3);
+        self
     }
 
     /// Attach an observer without changing request or retry behavior.
@@ -190,6 +253,7 @@ impl ShardTransport for HttpShardTransport {
             0,
             None,
             &self.observer,
+            self.attempts,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -205,6 +269,7 @@ impl ShardTransport for HttpShardTransport {
             0,
             Some((shard_id, revision)),
             &self.observer,
+            self.attempts,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -230,6 +295,7 @@ impl ShardTransport for HttpShardTransport {
             0,
             Some((shard_id, revision)),
             &self.observer,
+            self.attempts,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -257,6 +323,7 @@ impl ShardTransport for HttpShardTransport {
             body.len() as u64,
             Some((shard_id, revision)),
             &self.observer,
+            self.attempts,
         )
     }
 }
@@ -266,6 +333,7 @@ pub struct HttpFilterSource {
     base: String,
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
+    attempts: usize,
 }
 
 impl HttpFilterSource {
@@ -274,7 +342,15 @@ impl HttpFilterSource {
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
             observer: None,
+            attempts: 1,
         })
+    }
+
+    /// Opt into a bounded number of attempts per HTTP call (1–3). This is
+    /// separate from wallet-level overload retries and defaults to one attempt.
+    pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
+        self.attempts = attempts.clamp(1, 3);
+        self
     }
 
     /// Attach an observer without changing request or retry behavior.
@@ -300,6 +376,7 @@ impl FilterSource for HttpFilterSource {
             0,
             None,
             &self.observer,
+            self.attempts,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -313,6 +390,7 @@ impl FilterSource for HttpFilterSource {
             0,
             None,
             &self.observer,
+            self.attempts,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -324,6 +402,58 @@ mod observation_tests {
     use super::*;
     use std::io::{Read, Write};
     use std::sync::Mutex;
+
+    #[test]
+    fn opt_in_retries_are_bounded_and_account_for_every_response() {
+        for statuses in [
+            vec![502, 200],
+            vec![502, 502, 502],
+            vec![408, 200],
+            vec![404],
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let expected = statuses.len();
+            let success = statuses.last() == Some(&200);
+            let server = std::thread::spawn(move || {
+                for status in statuses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        stream.read_exact(&mut byte).unwrap();
+                        request.push(byte[0]);
+                        assert!(request.len() <= 4096);
+                    }
+                    write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: 2\r\nRetry-After: 0\r\nConnection: close\r\n\r\nok").unwrap();
+                }
+            });
+            let observations = Arc::new(Mutex::new(Vec::new()));
+            let observed = observations.clone();
+            let observer: HttpObserver = Arc::new(move |o| observed.lock().unwrap().push(o));
+            let request = reqwest::blocking::Client::new().get(format!("http://{address}"));
+            let result = execute(
+                request,
+                "setup_directory",
+                0,
+                Some((1, "revision")),
+                &Some(observer),
+                3,
+            );
+            assert_eq!(result.is_ok(), success);
+            server.join().unwrap();
+            let observations = observations.lock().unwrap();
+            assert_eq!(observations.len(), expected);
+            assert_eq!(
+                observations.iter().map(|o| o.bytes_down).sum::<u64>(),
+                expected as u64 * 2
+            );
+            assert_eq!(
+                observations.iter().filter(|o| o.failed).count(),
+                expected - usize::from(success)
+            );
+        }
+    }
 
     #[test]
     fn observes_success_refusal_payload_and_connection_failure_without_changing_results() {

@@ -102,6 +102,7 @@ A `transparent-scenario-v1` JSON file contains:
 | `sample` | Journal sample path relative to the scenario file |
 | `shard_url`, `filter_url` | Retrieval origin; filters default to retrieval |
 | `profiles` | Class name → positive concurrent slot count; 1–512 total |
+| `preparation_concurrency` | Total preparation workers across all profiles, default 2; measured concurrency is unchanged |
 | `seed` | Deterministic class shuffle, default 1 |
 | `duration_seconds` | Sustained admission window, default 600 |
 | `recovery_deadline_seconds` | Hard deadline from dispatch, default 600 |
@@ -218,8 +219,8 @@ warm persistent wallet cache.
 
 Preparation uses killable workers and the recovery deadline, without the measured
 query budget or latency SLO. It prepares only selected wallets for a wave and the
-entire replacement pool for sustained mode, in batches bounded by the configured
-profile concurrency. Large pools can take substantial preparation time. No measured
+entire replacement pool for sustained mode, in batches bounded by both `preparation_concurrency` (default 2 total workers)
+and the configured profile concurrency. Large pools can take substantial preparation time. No measured
 load starts if preparation fails. The same Make commands handle preparation.
 
 `preparation/batch-N/report.html` and `report.json` preserve preparation traffic,
@@ -234,3 +235,26 @@ count, HTTP requests/failures, upload/download totals and cumulative HTTP time.
 aggregate table and `summary.wallets` group repeated recoveries by sample index,
 with outcome counts, exact/unsuccessful latency distributions and HTTP totals.
 HTTP time sums request durations and should not be interpreted as wall-clock time.
+
+Preparation adapters retry temporary connection/time-out failures and retryable
+408/502/503/504 responses up to three HTTP attempts per call, preserving completed
+store work and counting every attempt in preparation traffic. They honor server
+retry delays; the worker's original hard deadline still bounds the entire recovery.
+The wallet's own overload retries may follow. Publication preflight/postflight
+checks also get up to three HTTP attempts. Measured wallet requests retain their
+existing retry policy. Invalid data, event mismatches and changed publications
+are never converted into successful results by retries.
+
+The main HTML/JSON report now includes preparation batch summaries, failed-wallet
+errors, upload/download totals and relative links to each detailed batch report.
+It is created before preparation starts. Batch HTML checkpoints update while work
+runs; reload the report to see updates. If preparation fails, measured charts are
+hidden and the report explicitly says the measured wave never started.
+`make transparent-sim-open` also recognizes older empty failure reports and opens
+their saved preparation results without changing historical report files.
+
+The wallet retry path also resumes pending pages before repeating directory
+retrieval. A page-setup overload after the directory commit previously created
+duplicate pending entries: one copy could finish while the original remained,
+producing `PendingLimit` despite matching event counts. A real HTTP regression
+test exercises this sequence without preparation-level retries.

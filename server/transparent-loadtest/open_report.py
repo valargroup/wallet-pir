@@ -62,6 +62,23 @@ def select_report(directory):
     return max(available, key=lambda path: (path.stat().st_mtime_ns, str(path))).resolve()
 
 
+def display_report(report):
+    """Older runs stored preparation failures separately from an empty main report."""
+    try:
+        data = json.loads(report.with_suffix(".json").read_text())
+    except (OSError, ValueError):
+        return report
+    if not isinstance(data, dict) or data.get("users") or data.get("preparation"):
+        return report
+    if data.get("success") or not data.get("errors"):
+        return report
+    batches = list(report.parent.glob("preparation/batch-*/report.html"))
+    if not batches:
+        return report
+    print("Measured wave did not start; opening its preparation results.", flush=True)
+    return max(batches, key=lambda path: path.stat().st_mtime_ns).resolve()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--remember", metavar="DIRECTORY")
@@ -69,7 +86,7 @@ def main():
     if args.remember:
         remember(args.remember)
         return
-    report = select_report(os.environ.get("SIM_OUT"))
+    report = display_report(select_report(os.environ.get("SIM_OUT")))
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     if not shutil.which(opener):
         raise ValueError(f"{opener} is unavailable. Open this file in your browser: {report}")
