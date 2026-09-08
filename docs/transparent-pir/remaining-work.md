@@ -92,14 +92,14 @@ Validation: crash before/after persistence boundaries, old receive/new spend acr
 
 Use actual selected regional SKUs, including their CPU sharing model. Test recent candidates on shared and dedicated small hosts before selecting a sustained-load configuration. The existing c-8 microbenchmark is not a measurement of either proposed host family.
 
-- [ ] Measure one recent and one archive target host over real HTTP/TLS: cold construction, warm query service, cache residency and peak RSS with revisions and in-flight requests.
+- [ ] Measure one recent and one archive target host over real HTTP/TLS: cold construction, warm query service, cache residency and peak RSS with revisions and in-flight requests. Warm-up, residency and RSS per host recorded in [status](status.md); TLS not yet on the fleet path (the public name still points at the pilot).
 - [ ] Run 1, 2 and 4 recent replicas concurrently to test independent aggregate bandwidth and newest-shard hotspot distribution. Concurrent droplets may share physical-host bandwidth; do not assume linear speedup.
-- [ ] Run both archive assignments while recent catch-up and ingest/publication continue. Report skew and archive demand separately; old nine-host restore capacity does not transfer.
-- [ ] Step client concurrency through 8, 32, 128 and 512, stopping safely at saturation. Distinguish simulated clients, active requests, physical PIR queries, wallet syncs and daily active users.
-- [ ] Workload classes: unused wallets, small active wallets, daily/weekly/30-day catch-up, six-month restore, old-birthday restore, multi-script wallets and reused/spammed-script tails. Include warm/cold filters and setup, tail churn and retries.
-- [ ] Collect at least 100 completed traces per ordinary class in each of three independent runs, plus sustained saturation and recovery runs. Retain failures and incomplete jobs in denominators.
-- [ ] Record upload, response, setup, filter and HTTP/TLS totals; completed syncs/s, p50/p95/p99 latency, queue wait/depth, errors/retries, RSS, peak client memory and cold misses. Measure mobile device/network performance separately from desktop loopback.
-- [ ] Establish proposed product latency objectives from those reports and record them before release. No current numerical wallet latency SLO is established by the evidence.
+- [ ] Run both archive assignments while recent catch-up and ingest/publication continue. Report skew and archive demand separately; old nine-host restore capacity does not transfer. Both owners served all three repetitions; skew recorded (archive-02 seven times archive-01); ingest and publication were not running during the series.
+- [ ] Step client concurrency through 8, 32, 128 and 512, stopping safely at saturation. Distinguish simulated clients, active requests, physical PIR queries, wallet syncs and daily active users. Done through 32 in three repetitions; the 128-wallet step was disturbed by owner restarts in [r2](evidence/runs/fleet-series-2026-09-08-r2/README.md) and [r3](evidence/runs/fleet-series-2026-09-08-r3/README.md) and client-bound in r1; 512 not reached.
+- [x] Workload classes: unused wallets, small active wallets, daily/weekly/30-day catch-up, six-month restore, old-birthday restore, multi-script wallets and reused/spammed-script tails. Include warm/cold filters and setup, tail churn and retries. The harness runs nine classes from the [workload sample](evidence/workload-sample-2026-09-08/README.md); false positives and reused scripts included.
+- [ ] Collect at least 100 completed traces per ordinary class in each of three independent runs, plus sustained saturation and recovery runs. Retain failures and incomplete jobs in denominators. At 32 wallets: 123 per class in each of r1, r2, r3; sustained saturation and recovery runs not yet done.
+- [x] Record upload, response, setup, filter and HTTP/TLS totals; completed syncs/s, p50/p95/p99 latency, queue wait/depth, errors/retries, RSS, peak client memory and cold misses. Measure mobile device/network performance separately from desktop loopback. Per class and stage in every run record; TLS is stated as unmeasured; per-worker `/metrics` (queue depth, RSS, cgroup) scraped at every step boundary from [r2](evidence/runs/fleet-series-2026-09-08-r2/README.md) on.
+- [x] Establish proposed product latency objectives from those reports and record them before release. No current numerical wallet latency SLO is established by the evidence. Proposed in [deployment](deployment.md#proposed-wallet-objectives-from-the-2026-09-08-fleet-series) from the 8- and 32-wallet steps; not adopted.
 
 Exit: exact recovery still passes under load; queues and memory remain bounded; no OOM or hidden failed work; normal admitted demand is at most 50% of measured sustainable completed-sync throughput and meets the recorded workload SLOs. Repeat only after meaningful code/configuration changes or unresolved results.
 
@@ -137,14 +137,19 @@ Each completed gate links source commits, exact commands and evidence. Update st
   deploy identity, healthy replica pairs and transaction-scoped rollback.
   [Local validation evidence](evidence/deployment-runtime-local-2026-09-08/README.md);
   `make check`, strict Clippy and follow-up cache/rollback tests passed.
-- [ ] After the current load measurement finishes, activate a cache-enabled
-  replica and owner canary; verify cache population, compatible restart, memory,
-  disk headroom and correct wallet recovery.
+- [x] Activate initial cache-enabled replica and owner canaries; verify cache
+  population, compatible restart, memory and disk headroom. All eleven baseline
+  wallet cases passed; the final nine overlapped publisher upgrades.
+  [Live evidence](evidence/deployment-runtime-live-2026-09-08/README.md).
+- [ ] Validate four-slot restores on live canaries. The single-slot archive
+  warm deployment took 746 seconds; continuous publication is now active,
+  preventing the fixed-publication rollout from safely continuing.
 - [ ] Measure a compatible-binary fleet deployment below ten minutes, excluding
   build/CI; verify unchanged rollouts cause zero restarts and router-only changes
   leave workers serving. Preserve decisions, phase timings and regression results.
 - [ ] Rehearse failed-batch and explicit transaction rollback with the cached
-  previous release. Keep these gates open until host evidence exists.
+  previous release. Explicit replica rollback passed and preserved all five
+  deferred worker PIDs; failed-batch live rehearsal remains open.
 
 
 ## Continuous publication release gate

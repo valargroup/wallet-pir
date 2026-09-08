@@ -12,6 +12,33 @@ worker_digest() {
 
 worker_action() { jq -r --arg id "$1" '.workers[$id].action' "$DEPLOY_PLAN"; }
 
+# Only preserve the control paths installed by the publisher workflow. Unknown
+# control configuration requires reconciliation, not a silent downgrade.
+publisher_control_enabled() {
+  local args=" $1 "
+  if [[ "$args" != *--control-socket* && "$args" != *--active-record* ]]; then
+    echo false; return
+  fi
+  [[ "$args" == *' --control-socket /run/transparent-pir/control.sock '* &&
+     "$args" == *' --active-record /opt/transparent-publisher/active.json '* ]] \
+    || fail "unrecognized publisher control arguments; reconcile before a fleet rollout"
+  echo true
+}
+
+fleet_has_publisher_control() {
+  [[ -n "${DEPLOY_PLAN:-}" && -r "$DEPLOY_PLAN" ]] &&
+    jq -e '.publisher_control == true' "$DEPLOY_PLAN" >/dev/null
+}
+
+fleet_check_publisher_shadow() {
+  local config="${TRANSPARENT_PUBLISHER_CONFIG:-/opt/transparent-publisher/controller.json}"
+  if fleet_has_publisher_control || [[ -e "$config" ]]; then
+    if [[ ! -r "$config" ]] || ! jq -e '.shadow == true' "$config" >/dev/null; then
+      fail "fixed-publication fleet rollout requires the continuous publisher to remain in shadow"
+    fi
+  fi
+}
+
 # Unknown or unhealthy state never qualifies for a skip.
 classify_worker() {
   local ready="$1" installed="$2" wanted="$3" tools_match="$4"
@@ -31,8 +58,8 @@ classify_worker() {
 
 fleet_diff() {
   DEPLOY_PLAN="$TRANSPARENT_ARTIFACT_DIR/deploy-plan.json"
-  printf '{"workers":{}}\n' >"$DEPLOY_PLAN"
-  local id host cache memory slots extra assignment_sha unit ready installed wanted action tools_match binary helper
+  printf '{"workers":{},"publisher_control":false}\n' >"$DEPLOY_PLAN"
+  local id host cache memory slots extra assignment_sha unit ready installed wanted action tools_match binary helper control
   assignment_sha="$(assignment_digest)"
   binary="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" | cut -d' ' -f1)"
   helper="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/shard-prune" | cut -d' ' -f1)"
@@ -43,10 +70,6 @@ fleet_diff() {
     cache="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .cache_bytes' "$TRANSPARENT_ASSIGNMENT")"
     memory="$(worker_field "$id" memory_max)"
     slots="$(worker_field "$id" build_slots)"; [[ "$slots" != null && -n "$slots" ]] || slots=1
-    extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess --runtime-cache-dir /srv/transparent-pir/runtime-cache --runtime-cache-max-bytes $((cache * 2))"
-    render_unit "$cache" "$memory" "$extra" ".$id" "$slots"
-    unit="$(unit_digest "$RENDERED_UNIT")"
-    wanted="$(jq -cn --arg binary "$binary" --arg unit "$unit" --arg assignment "$(worker_digest "$id")" --arg map "$EXPECTED_MAP_SHA256" '{binary:$binary,unit:$unit,assignment:$assignment,map:$map}')"
     installed="$(host_ssh "$host" bash -s <<'REMOTE'
 set -euo pipefail
 binary="$(sha256sum /usr/local/bin/transparent-shard-server 2>/dev/null | cut -d' ' -f1 || true)"
@@ -54,11 +77,29 @@ helper="$(sha256sum /usr/local/bin/shard-prune 2>/dev/null | cut -d' ' -f1 || tr
 unit="$(sed -E 's@--assignment /opt/transparent-pir/assignments/[0-9a-f]+\.json@--assignment ASSIGNMENT@g' /etc/systemd/system/transparent-shard-server.service 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
 recorded="$(cat /opt/transparent-pir/current-unit-digest 2>/dev/null || true)"
 drop_ins="$(systemctl show transparent-shard-server.service -p DropInPaths --value)"
-jq -cn --arg binary "$binary" --arg helper "$helper" --arg unit "$unit" --arg recorded "$recorded" --arg drop_ins "$drop_ins" '{binary:$binary,helper:$helper,unit:$unit,recorded_unit:$recorded,drop_ins:$drop_ins}'
+exec_start="$(sed -n 's/^ExecStart=//p' /etc/systemd/system/transparent-shard-server.service 2>/dev/null || true)"
+jq -cn --arg binary "$binary" --arg helper "$helper" --arg unit "$unit" --arg recorded "$recorded" --arg drop_ins "$drop_ins" --arg exec_start "$exec_start" '{binary:$binary,helper:$helper,unit:$unit,recorded_unit:$recorded,drop_ins:$drop_ins,exec_start:$exec_start}'
 REMOTE
 )"
+    control="$(publisher_control_enabled "$(jq -r '.exec_start' <<<"$installed")")"
+    extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess --runtime-cache-dir /srv/transparent-pir/runtime-cache --runtime-cache-max-bytes $((cache * 2))"
+    if [[ "$control" == true ]]; then
+      extra+=" --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
+    fi
+    render_unit "$cache" "$memory" "$extra" ".$id" "$slots"
+    if [[ "$control" == true ]]; then
+      awk '{print; if ($0 == "[Service]") print "RuntimeDirectory=transparent-pir"}' "$RENDERED_UNIT" >"$RENDERED_UNIT.next"
+      mv "$RENDERED_UNIT.next" "$RENDERED_UNIT"
+    fi
+    unit="$(unit_digest "$RENDERED_UNIT")"
+    wanted="$(jq -cn --arg binary "$binary" --arg unit "$unit" --arg assignment "$(worker_digest "$id")" --arg map "$EXPECTED_MAP_SHA256" '{binary:$binary,unit:$unit,assignment:$assignment,map:$map}')"
     ready="$(curl --silent --max-time 10 "http://$(worker_field "$id" upstream)/v1/ready" || true)"
     jq -e 'type == "object"' <<<"$ready" >/dev/null 2>&1 || ready='{}'
+    if [[ "$control" == true ]]; then
+      jq -e --arg map "$EXPECTED_MAP_SHA256" --arg assignment "$(worker_digest "$id")" \
+        '.ready == true and .map_sha256 == $map and .worker_assignment_sha256 == $assignment' <<<"$ready" >/dev/null \
+        || fail "publisher-controlled worker $id must be healthy on the planned publication and assignment"
+    fi
     tools_match="$(jq -r --arg helper "$helper" '.helper == $helper' <<<"$installed")"
     action="$(classify_worker "$ready" "$installed" "$wanted" "$tools_match")"
     if [[ -n "${TRANSPARENT_CANARY_WORKER_IDS:-}" ]]; then
@@ -67,10 +108,11 @@ REMOTE
       if [[ ",$TRANSPARENT_CANARY_WORKER_IDS," != *",$id,"* ]]; then action=defer; fi
     fi
     echo "== diff $id: $action (binary, effective assignment, unit and warm readiness compared)"
-    jq --arg id "$id" --arg action "$action" --argjson desired "$wanted" --argjson before "$ready" \
-      '.workers[$id] = {action:$action,desired:$desired,before:$before}' "$DEPLOY_PLAN" >"$DEPLOY_PLAN.next"
+    jq --arg id "$id" --arg action "$action" --argjson desired "$wanted" --argjson before "$ready" --argjson control "$control" \
+      '.publisher_control = (.publisher_control or $control) | .workers[$id] = {action:$action,desired:$desired,before:$before,publisher_control:$control}' "$DEPLOY_PLAN" >"$DEPLOY_PLAN.next"
     mv "$DEPLOY_PLAN.next" "$DEPLOY_PLAN"
   done
+  fleet_check_publisher_shadow
 }
 
 transaction_begin() {

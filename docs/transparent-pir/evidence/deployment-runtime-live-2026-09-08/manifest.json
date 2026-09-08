@@ -1,0 +1,42 @@
+{
+  "initial_revision": "cc2023f5555098ae5cf73a1174f7348d2afb3425",
+  "restore_concurrency_revision": "6573249f13519fb05f32e523bd12feba88706215",
+  "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+  "shard_source": "/srv/zakura/transparent-shards-v7-full",
+  "recent_from": 3262749,
+  "headroom": 0.06,
+  "runs": {
+    "replica-cold": 34217669823,
+    "replica-rollback": 34218455113,
+    "replica-warm": 34218986173,
+    "archive-cold": 34219443444,
+    "archive-warm": 34221468055
+  },
+  "filesystem_cache": "Not flushed. These are routine restart measurements, not cold-device benchmarks.",
+  "timing": "Sum fleet_* rows only; worker:* rows overlap fleet_activate_workers. Build/CI excluded.",
+  "log_extraction": "Workflow logs preserve only the Deploy and verify step; all timestamps and step content retained. Trailing whitespace normalized for repository checks.",
+  "status": "Initial cache canaries and rollback passed; single-slot archive missed the ten-minute target. Four-slot live validation, paired fleet activation, no-op rollout and final regression remain blocked by active continuous publication.",
+  "baseline_regression": {
+    "fixture_source": "server/transparent-regression/fixtures/mainnet.json",
+    "selection": [
+      "small-active",
+      "old-receive-recent-spend"
+    ],
+    "expected_values": "Unchanged subset of the committed fixture",
+    "client_revision": "6573249f13519fb05f32e523bd12feba88706215",
+    "server_revision": "cc2023f5555098ae5cf73a1174f7348d2afb3425",
+    "server_scope": "Two cache-enabled canaries; other workers remain on 8802cd0",
+    "passed": true,
+    "remaining_cases": {
+      "directory": "baseline-remaining-regression",
+      "passed": true,
+      "count": 9,
+      "server_scope": "Mixed fleet, overlapping external publisher binary upgrades; not a controlled performance measurement."
+    }
+  },
+  "external_publisher": {
+    "run": 34225958778,
+    "observed_shadow": false,
+    "effect": "Public map now advances; canceled queued four-slot canary 34228351961 before activation. Remaining baseline cases overlapped publisher worker upgrades, so are correctness evidence only."
+  }
+}

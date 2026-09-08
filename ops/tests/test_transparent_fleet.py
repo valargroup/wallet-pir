@@ -13,12 +13,78 @@ SCRIPT = ROOT / "ops/scripts/deploy-transparent-shard.sh"
 def shell(code, **env):
     return subprocess.run(
         ["bash", "-c", 'source "$SCRIPT" library\n' + code],
-        env={**os.environ, "SCRIPT": str(SCRIPT), **env},
+        env={**os.environ, "SCRIPT": str(SCRIPT),
+             "TRANSPARENT_PUBLISHER_CONFIG": "/nonexistent/transparent-publisher-test/controller.json", **env},
         cwd=ROOT, text=True, capture_output=True, check=True,
     ).stdout.strip()
 
 
 class FleetTests(unittest.TestCase):
+    def test_publisher_control_paths_and_shadow_guard(self):
+        args = "/bin/server --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
+        self.assertEqual(shell('publisher_control_enabled "$ARGS"', ARGS=args), "true")
+        self.assertEqual(shell('publisher_control_enabled /bin/server'), "false")
+        for invalid in [args.replace('/run/transparent-pir/control.sock', '/other.sock'),
+                        '/bin/server --active-record /other.json']:
+            with self.assertRaises(subprocess.CalledProcessError):
+                shell('publisher_control_enabled "$ARGS"', ARGS=invalid)
+        with tempfile.TemporaryDirectory() as temp:
+            plan, config = Path(temp)/'plan.json', Path(temp)/'controller.json'
+            plan.write_text('{"publisher_control":true}')
+            env = dict(PLAN=str(plan), TRANSPARENT_PUBLISHER_CONFIG=str(config))
+            code = 'DEPLOY_PLAN="$PLAN"; fleet_check_publisher_shadow; echo allowed'
+            with self.assertRaises(subprocess.CalledProcessError):
+                shell(code, **env)
+            config.write_text('{"shadow":true}')
+            self.assertEqual(shell(code, **env), "allowed")
+            config.write_text('{"shadow":false}')
+            with self.assertRaises(subprocess.CalledProcessError):
+                shell(code, **env)
+            # Even a legacy/router-only plan must not overwrite an active authority.
+            plan.write_text('{}')
+            with self.assertRaises(subprocess.CalledProcessError):
+                shell(code, **env)
+            config.unlink()
+            self.assertEqual(shell(code, **env), "allowed")
+
+    def test_diff_preserves_publisher_control_and_leaves_retention_intact(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ['transparent-shard-server','shard-prune']:
+                (root/name).write_text('binary')
+            (root/'transparent-shard-server.service').write_text(
+                (ROOT/'ops/infra/digitalocean/production/deploy/transparent-shard-server.service').read_text())
+            worker = dict(id='owner',role='archive-owner',replica_group=None,ssh_host='owner',upstream='owner:8093',cache_bytes=1024,memory_max='1G')
+            assignment = root/'assignment.json'
+            assignment.write_text(json.dumps(dict(workers=[worker])))
+            config = root/'controller.json'
+            config.write_text('{"shadow":true}')
+            installed = dict(binary='old',helper='old',unit='old',recorded_unit='old',drop_ins='',
+                exec_start='/bin/server --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json')
+            code = r'''
+EXPECTED_MAP_SHA256=map
+assignment_digest() { printf '%064d\n' 0; }
+worker_digest() { echo assignment; }
+shard_set_path() { echo /srv/set; }
+host_ssh() { cat >/dev/null; echo read >>"$LOG"; echo "$INSTALLED"; }
+curl() { echo "$READY"; }
+fleet_diff
+fleet_prune
+'''
+            ready = dict(ready=True,mode='warm',warm_runtimes=0,target_runtimes=0,map_sha256='map',worker_assignment_sha256='assignment')
+            env = dict(TRANSPARENT_FLEET_JSON=json.dumps([worker]), TRANSPARENT_ASSIGNMENT=str(assignment),
+                TRANSPARENT_ARTIFACT_DIR=temp, TRANSPARENT_PUBLISHER_CONFIG=str(config),
+                INSTALLED=json.dumps(installed), LOG=str(root/'calls'))
+            shell(code, READY=json.dumps(ready), **env)
+            unit = (root/'transparent-shard-server.service.owner.rendered').read_text()
+            self.assertEqual(unit.count('RuntimeDirectory=transparent-pir\n'), 1)
+            self.assertIn('--control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json', unit)
+            self.assertIn('--runtime-cache-dir /srv/transparent-pir/runtime-cache', unit)
+            self.assertTrue(json.loads((root/'deploy-plan.json').read_text())['publisher_control'])
+            self.assertEqual((root/'calls').read_text().splitlines(), ['read'])
+            with self.assertRaises(subprocess.CalledProcessError):
+                shell(code, READY=json.dumps({**ready,'worker_assignment_sha256':'changed'}), **env)
+
     def test_worker_decisions(self):
         wanted = dict(binary="bin", unit="unit", assignment="assignment", map="map")
         installed = dict(binary="bin", unit="unit", recorded_unit="unit")

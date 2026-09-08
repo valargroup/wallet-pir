@@ -790,6 +790,7 @@ REMOTE
 # Renders the router's Caddyfile from the assignment, stages it on the router
 # and validates it there; nothing is installed.
 fleet_stage_router() {
+  fleet_check_publisher_shadow
   local -a opts
   mapfile -t opts < <(ssh_opts)
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
@@ -808,11 +809,13 @@ fleet_stage_router() {
     echo "== stage router ($TRANSPARENT_ROUTER_HOST): Caddyfile"
     host_ssh "$TRANSPARENT_ROUTER_HOST" "mkdir -p $(printf %q "$staged")"
     scp "${opts[@]}" "$caddyfile" "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_ROUTER_HOST:$staged/Caddyfile"
-    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "${TRANSPARENT_CANARY_WORKER_IDS:-}" <<'REMOTE'
+    local publisher=false
+    if fleet_has_publisher_control; then publisher=true; fi
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "${TRANSPARENT_CANARY_WORKER_IDS:-}" "$publisher" <<'REMOTE'
 set -euo pipefail
-if [[ -n "$2" ]]; then
+if [[ -n "$2" || "$3" == true ]]; then
   diff -q <(sudo sed '/^[[:space:]]*#/d' /etc/caddy/Caddyfile) <(sed '/^[[:space:]]*#/d' "$1/Caddyfile") >/dev/null \
-    || { echo "canary rollout requires unchanged routing" >&2; exit 1; }
+    || { echo "canary or publisher-controlled rollout requires unchanged routing" >&2; exit 1; }
 fi
 sudo caddy validate --config "$1/Caddyfile" --adapter caddyfile
 if sudo test -r /etc/caddy/Caddyfile; then
@@ -952,6 +955,7 @@ REMOTE
     printf 'worker:%s\t%s\n' "$id" "$((SECONDS - started))" >>"$TRANSPARENT_ARTIFACT_DIR/deploy-timings.tsv"
   }
   run_batch() {
+    fleet_check_publisher_shadow
     local id host log i failed=0
     local -a pids=() logs=()
     for id in "$@"; do
@@ -1012,6 +1016,7 @@ REMOTE
 }
 
 fleet_activate_router() {
+  fleet_check_publisher_shadow
   [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]] || { echo "no router host; skipping"; return 0; }
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   echo "== activate router ($TRANSPARENT_ROUTER_HOST)"
@@ -1127,6 +1132,10 @@ fleet_prune() {
   for id in $(worker_ids); do
     host="$(worker_field "$id" ssh_host)"
     [[ "$(worker_action "$id")" == restart ]] || continue
+    if jq -e --arg id "$id" '.workers[$id].publisher_control == true' "$DEPLOY_PLAN" >/dev/null; then
+      echo "== retain $id: publisher-controlled active, prepared and retired publications are left intact"
+      continue
+    fi
     echo "== prune $id ($host)"
     host_ssh "$host" bash -s -- "$(shard_set_path)" "$id" "$TRANSACTION_ID" <<'REMOTE'
 set -euo pipefail
@@ -1218,6 +1227,7 @@ REMOTE
 }
 
 fleet_rollback_all() {
+  fleet_check_publisher_shadow
   local root="${TRANSPARENT_TRANSACTION_DIR:-$HOME/.local/state/transparent-pir-deploy}"
   TRANSACTION_FILE="$(cat "$root/latest")"
   TRANSACTION_ID="$(jq -er '.id' "$TRANSACTION_FILE")"
