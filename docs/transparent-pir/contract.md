@@ -79,7 +79,8 @@ Call work complete only when all of the following hold:
   exhausted resource budgets affecting that coverage.
 
 Persist coverage by script/discovery scope and chain range, separately from
-shielded scan progress. An incomplete result may expose known history as partial;
+shielded scan progress, with the block hash each range rests on, so a reorg
+is detected against the wallet's own chain view rather than the service's. An incomplete result may expose known history as partial;
 it must not assert a fully synchronized balance. Keep the current spend-verification
 path until the replacement's coverage/trust contract is explicitly accepted.
 

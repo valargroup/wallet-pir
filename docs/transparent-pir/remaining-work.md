@@ -13,7 +13,7 @@ Suggested reviewable changes:
 3. Mixed-tier measurement and publication tooling parity.
 4. Wallet manifest validation and early request admission: `6ff2bfe`; Gate 3 closed.
 5. Assignment-aware loading, router, prewarm/readiness and activation: `142c193`; code and tests complete, host rehearsals in Gate 7.
-6. Durable wallet continuation, provisional replacement and reorg recovery.
+6. Durable wallet continuation, provisional replacement and reorg recovery: `ba9680e`; the Vizor wiring remains a separate deliverable.
 7. Full-chain correctness evidence and host/fleet load evidence.
 8. Reviewed infrastructure configuration, rollout and recovery evidence.
 9. Optional `recent-4k-8k` measurement and separate promotion decision.
@@ -78,15 +78,15 @@ Validation: concurrent cold requests for one runtime, eviction with active reque
 
 ## Gate 5 — Durable wallet continuation and integration
 
-- [ ] Define wallet-owned persistence for ledger, discovery scope, accepted anchor, settled coverage, provisional revision coverage and unresolved private work.
-- [ ] Implement sync into an existing ledger. Moving the birthday forward cannot substitute for retaining an old receive when applying a recent spend.
-- [ ] Commit ledger and coverage atomically; make retries idempotent. Newly derived/imported scripts receive their required historical discovery coverage.
-- [ ] Implement truncate/rollback and replay for replaced provisional ranges and reorgs. Reject contradictory duplicates; do not append replacement ranges as disjoint history.
-- [ ] Persist setup/filter reuse only under verified chain, set, revision and profile identity. A refresh must not silently accept an unrelated publication or a lower anchor.
-- [ ] Keep recovery bounded with durable pending work; an exhausted limit or outage never becomes a synchronized balance or plaintext address/outpoint lookup.
-- [ ] Integrate first with Vizor through wallet-owned adapters. Run alongside existing sync until the wallet owner accepts the documented trusted-indexer completeness model. Separately account for pending transactions and mixed-pool display/enhancement.
+- [x] Define wallet-owned persistence for ledger, discovery scope, accepted anchor, settled coverage, provisional revision coverage and unresolved private work. `WalletStore` in `pir/transparent-wallet/src/store.rs`; `MemoryStore`; SQLite reference `pir/transparent-wallet-store` (`ba9680e`).
+- [x] Implement sync into an existing ledger. Moving the birthday forward cannot substitute for retaining an old receive when applying a recent spend. `sync_into`; `required_from` is never raised (`ba9680e`).
+- [x] Commit ledger and coverage atomically; make retries idempotent. Newly derived/imported scripts receive their required historical discovery coverage. One commit per shard and per page; `ScriptProvider::on_activity` (`ba9680e`).
+- [x] Implement truncate/rollback and replay for replaced provisional ranges and reorgs. Reject contradictory duplicates; do not append replacement ranges as disjoint history. `rollback_above`, provisional reconciliation, `ChainView` reorg detection with per-shard coverage hashes (`ba9680e`).
+- [x] Persist setup/filter reuse only under verified chain, set, revision and profile identity. A refresh must not silently accept an unrelated publication or a lower anchor. `SetupKey`, `SetIdentity`, `SyncError::AnchorRegressed` (`ba9680e`).
+- [x] Keep recovery bounded with durable pending work; an exhausted limit or outage never becomes a synchronized balance or plaintext address/outpoint lookup. `WorkLimits`, `PendingPages`, `Completion::Incomplete` with no anchor commit (`ba9680e`).
+- [ ] Integrate first with Vizor through wallet-owned adapters. Run alongside existing sync until the wallet owner accepts the documented trusted-indexer completeness model. Separately account for pending transactions and mixed-pool display/enhancement. The adapter boundary and a plain-data facade (`TransparentSync`) exist (`ba9680e`); the Vizor repository change is a separate deliverable.
 
-Validation: crash before/after persistence boundaries, old receive/new spend across separate sync calls, restarted wallet, offline receive/spend, imported keys/gaps, empty history, tail replacement, reorg across tier boundary, stale revision refresh and prolonged overload. Compare full ledger/history with independent replay after each recovery.
+Validation: crash before/after persistence boundaries, old receive/new spend across separate sync calls, restarted wallet, offline receive/spend, imported keys/gaps, empty history, tail replacement, reorg across tier boundary, stale revision refresh and prolonged overload. Compare full ledger/history with independent replay after each recovery. **Covered**: `pir/transparent-wallet-store/tests/store_semantics.rs` over both stores; `server/transparent-shard-server/tests/wallet_continuation.rs` (old receive/new spend, required height raise, query budget resuming pages exactly, restart, crash before and after the pending commit, gap advance and imported script, unused wallet, superseded tail truncated and replayed, reorg below the tier boundary, other set and lower anchor refused, unrelenting overload), each compared with an independent traversal.
 
 ## Gate 6 — Target-host and fleet capacity
 

@@ -17,7 +17,7 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 ## Product boundaries
 
-Active transparent recovery uses `pir/transparent-events`, `pir/transparent-filter`, `pir/transparent-shard`, `pir/transparent-wallet`, `server/transparent-filter-server`, and `server/transparent-shard-server`.
+Active transparent recovery uses `pir/transparent-events`, `pir/transparent-filter`, `pir/transparent-shard`, `pir/transparent-wallet`, `pir/transparent-wallet-store`, `server/transparent-filter-server`, and `server/transparent-shard-server`.
 
 `pir/transparent-history`, `server/transparent-history-server`, `server/transparent-measure`, and the older Python retrieval/navigation/reuse tools are research backends. Some remain workspace members and test inputs; they do not define deployed geometry or fleet sizing. `pir/transparent-spend` is the separate retained outpoint protocol. Enhance PIR has its own [architecture](../architecture.md) and [runbook](../enhance-pir-deploy.md). The excluded nullifier/witness [demos](../../demos/legacy-spendability/README.md) are historical.
 
