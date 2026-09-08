@@ -6,6 +6,8 @@ Artifact transfer and warm preparation run concurrently; activation requires all
 archive owners and at least one recent replica. SSH authenticates every operation.
 """
 import asyncio
+from contextlib import asynccontextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -70,6 +72,23 @@ class Fleet:
             for field in ['id', 'ssh_host', 'upstream']:
                 if not re.fullmatch(r'[A-Za-z0-9_.:-]+', worker[field]):
                     raise ValueError(f'invalid roster {field}')
+
+    @asynccontextmanager
+    async def lock(self, name, wait=True):
+        # Shared with the reconciler process. Never block the event loop on flock.
+        with (self.root / (name + '.lock')).open('a') as stream:
+            while True:
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if not wait:
+                        raise RuntimeError('worker preparation already in progress')
+                    await asyncio.sleep(0.05)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream, fcntl.LOCK_UN)
 
     async def canonical_hash(self, height):
         if height not in self.canonical:
@@ -164,20 +183,12 @@ class Fleet:
             await asyncio.gather(*tasks, return_exceptions=True)
         return done_values
 
-    async def prepare(self, req):
-        digest = req['map_sha256']
-        if not re.fullmatch('[0-9a-f]{64}', digest):
-            raise ValueError('invalid map digest')
+    async def stage(self, worker, req, assignment):
         source = Path(req['directory']).resolve(strict=True)
-        assignment = self.root / (digest + '.assignment.json')
-        # Same map retries preserve assignment provenance and its digest.
-        if not assignment.exists():
-            await run([self.c['assign_binary'], 'plan', '--shard-dir', source, '--roster', self.c['roster'],
-                       '--recent-from-height', str(req['recent_from']), '--headroom', '0.05',
-                       '--out-assignment', assignment, '--source-sha', req['source_sha']])
+        digest = req['map_sha256']
         remote_dir = self.c.get('worker_root', '/srv/transparent-pir/publications') + '/' + digest
         remote_assignment = remote_dir + '/assignment.json'
-        async def stage(worker):
+        async with self.lock('worker-' + worker['id'], wait=False):
             status = await self.control(worker, {'operation': 'status'})
             before = status['active']
             current_digests = {e['manifest_digest'] for e in json.loads((source/'shards.json').read_text())['shards']}
@@ -203,8 +214,22 @@ class Fleet:
             publication = {'directory': remote_dir, 'assignment': remote_assignment, 'map_sha256': digest}
             await self.control(worker, {'operation':'prepare','expected':before['map_sha256'],'publication':publication})
             return {'expected':before['map_sha256'], 'publication':publication}
+
+    async def prepare(self, req):
+        digest = req['map_sha256']
+        if not re.fullmatch('[0-9a-f]{64}', digest):
+            raise ValueError('invalid map digest')
+        atomic_json(self.root/'desired.json', req)
+        atomic_json(self.root/(digest+'.request.json'), req)
+        source = Path(req['directory']).resolve(strict=True)
+        assignment = self.root / (digest + '.assignment.json')
+        # Same map retries preserve assignment provenance and its digest.
+        if not assignment.exists():
+            await run([self.c['assign_binary'], 'plan', '--shard-dir', source, '--roster', self.c['roster'],
+                       '--recent-from-height', str(req['recent_from']), '--headroom', '0.05',
+                       '--out-assignment', assignment, '--source-sha', req['source_sha']])
         async def bounded_stage(worker):
-            return await asyncio.wait_for(stage(worker), 24)
+            return await asyncio.wait_for(self.stage(worker, req, assignment), 24)
         prepared = await self.collect(bounded_stage, self.roster, early=True)
         if not self.quorum(prepared):
             raise RuntimeError('warm prepare quorum unavailable')
@@ -249,7 +274,7 @@ class Fleet:
         command = f'set -eu\ncat > {quoted}.live-next\nif cmp -s {quoted}.live-next {quoted} && sha256sum {quoted} | cmp -s - {quoted}.live-applied.sha256; then rm {quoted}.live-next; exit 0; fi\ncaddy validate --config {quoted}.live-next --adapter caddyfile >&2\ncp {quoted} {quoted}.live-previous\nmv {quoted}.live-next {quoted}\nif ! systemctl reload caddy; then cp {quoted}.live-previous {quoted}; systemctl reload caddy; exit 1; fi\nsha256sum {quoted} > {quoted}.live-applied.sha256.next\nmv {quoted}.live-applied.sha256.next {quoted}.live-applied.sha256'
         await self.ssh(self.c['router_host'], command, text.encode())
 
-    async def activate(self, req):
+    async def _activate(self, req):
         digest = req['map_sha256']
         prepared = req['prepared']['workers']
         workers = [w for w in self.roster if w['id'] in prepared]
@@ -267,9 +292,11 @@ class Fleet:
         assignment = json.loads(Path(req['prepared']['assignment']).read_text())
         await self.route(workers, assignment)
         atomic_json(self.root/'active.json',{'map_sha256':digest,'workers':list(active),'assignment':req['prepared']['assignment']})
+        atomic_json(self.root/'withdrawn.json', {'withdrawn':False})
         return {'ok':True,'upstreams':[w['upstream'] for w in workers], 'recent_replicas':sum(w['role']=='recent-replica' for w in workers)}
 
-    async def invalidate(self, req):
+    async def _invalidate(self, req):
+        atomic_json(self.root/'withdrawn.json', {'withdrawn':True})
         # Withdraw routing before contacting workers, including unreachable ones.
         await self.route([])
         async def revoke(worker):
@@ -280,6 +307,60 @@ class Fleet:
         revoked = await self.collect(revoke,self.roster)
         return {'ok':True,'invalidated':list(revoked)}
 
+    async def activate(self, req):
+        async with self.lock('routing'):
+            return await self._activate(req)
+
+    async def invalidate(self, req):
+        async with self.lock('routing'):
+            return await self._invalidate(req)
+
+    def reconciliation_target(self):
+        if (self.root/'withdrawn.json').exists() and json.loads((self.root/'withdrawn.json').read_text())['withdrawn']:
+            return None
+        try:
+            active = json.loads((self.root/'active.json').read_text())
+            desired = json.loads((self.root/'desired.json').read_text())
+        except FileNotFoundError:
+            return None
+        return (active, desired) if active['map_sha256'] == desired['map_sha256'] else None
+
+    async def reconcile(self):
+        target = self.reconciliation_target()
+        if target is None:
+            return
+        active, req = target
+        digest = active['map_sha256']
+        assignment_path = Path(active['assignment'])
+        self.canonical.clear()
+        async def catch_up(worker):
+            if worker['role'] != 'recent-replica' or worker['id'] in active['workers']:
+                return
+            try:
+                prepared = await asyncio.wait_for(self.stage(worker, req, assignment_path), 60)
+                async with self.lock('routing'):
+                    current = self.reconciliation_target()
+                    if current is None or current[0]['map_sha256'] != digest:
+                        return
+                    tail = json.loads((Path(req['directory'])/'shards.json').read_text())['shards'][-1]
+                    self.canonical.pop(tail['end_height'], None)
+                    if await self.canonical_hash(tail['end_height']) != tail['terminal_block_hash']:
+                        raise RuntimeError('catch-up publication is no longer canonical')
+                    # Serialize worker activation with foreground preparation too.
+                    async with self.lock('worker-' + worker['id'], wait=False):
+                        await self.control(worker, {'operation':'activate', 'expected':prepared['expected'], 'map_sha256':digest})
+                        status = await self.control(worker, {'operation':'status'})
+                        if status['active']['map_sha256'] != digest or not status['warm'] or status.get('invalidated'):
+                            raise RuntimeError('catch-up did not attest current warm revision')
+                        latest = current[0]
+                        ids = set(latest['workers']) | {worker['id']}
+                        await self.route([w for w in self.roster if w['id'] in ids], json.loads(assignment_path.read_text()))
+                        latest['workers'] = sorted(ids)
+                        atomic_json(self.root/'active.json', latest)
+            except Exception as exc:
+                print(json.dumps({'event':'replica_catch_up_failed','worker':worker['id'],'error':str(exc)}), file=sys.stderr)
+        await asyncio.gather(*(catch_up(w) for w in self.roster))
+
     async def request(self, req):
         if req['operation']=='prepare':
             return await self.prepare(req)
@@ -288,13 +369,23 @@ class Fleet:
         if req['operation']=='invalidate':
             return await self.invalidate(req)
         if req['operation']=='withdraw':
-            await self.route([])
-            return {'ok':True}
+            async with self.lock('routing'):
+                atomic_json(self.root/'withdrawn.json', {'withdrawn':True})
+                await self.route([])
+                return {'ok':True}
         raise ValueError('unknown fleet operation')
 
 
 async def main():
     config = json.loads(Path(sys.argv[1]).read_text())
+    if '--reconcile' in sys.argv[2:]:
+        fleet = Fleet(config)
+        while True:
+            try:
+                await fleet.reconcile()
+            except Exception as exc:
+                print(str(exc), file=sys.stderr)
+            await asyncio.sleep(2)
     request = json.load(sys.stdin)
     print(json.dumps(await Fleet(config).request(request)))
 

@@ -165,6 +165,7 @@ systemctl restart transparent-shard-server
 
 
 async def rollback(fleet, saved):
+    subprocess.run(['systemctl','stop','transparent-replica-reconciler'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     # A binary rollback must never resurrect an orphaned publication. Validate
     # the static predecessor against the node before changing routing or units.
@@ -236,6 +237,7 @@ async def main():
             os.replace('/usr/local/bin/'+name+'.next','/usr/local/bin/'+name)
         shutil.copy2(SCRIPT/'transparent-live-fleet.py',ROOT/'transparent-live-fleet.py')
         shutil.copy2(SCRIPT.parent/'infra/digitalocean/production/deploy/transparent-publish-controller.service','/etc/systemd/system/transparent-publish-controller.service')
+        shutil.copy2(SCRIPT.parent/'infra/digitalocean/production/deploy/transparent-replica-reconciler.service','/etc/systemd/system/transparent-replica-reconciler.service')
         Path('/srv/zakura/transparent-publications').mkdir(exist_ok=True)
         # Recent canary first; archive owners follow serially, then other replicas.
         recent=[w for w in fleet.roster if w['role']=='recent-replica']
@@ -266,6 +268,7 @@ async def main():
         LIVE.atomic_json(ROOT/'controller.json',config)
         route_coordinator()
         execute(['systemctl','restart','transparent-publish-controller'])
+        execute(['systemctl','enable','--now','transparent-replica-reconciler'])
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
             try:
