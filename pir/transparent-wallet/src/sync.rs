@@ -1163,9 +1163,9 @@ fn read_shard_into<S: WalletStore>(
     let bytes = match store.filter(&entry.manifest_digest, &entry.filter_hash)? {
         Some(bytes) => bytes,
         None => {
-            let (bytes, cost) = filters
-                .filter(entry.shard_id)
-                .map_err(|error| SyncError::Transport(error.to_string()))?;
+            let (bytes, cost) = filters.filter(entry.shard_id).map_err(|error| {
+                SyncError::Transport(crate::transport::describe_error(error.as_ref()))
+            })?;
             charges.filter_bytes += cost;
             // Bind the bytes to the map before believing anything they say.
             if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
@@ -1538,7 +1538,7 @@ fn refresh_map(
 ) -> Result<(ShardMap, String), SyncError> {
     let (bytes, cost) = filters
         .shard_map()
-        .map_err(|error| SyncError::Transport(error.to_string()))?;
+        .map_err(|error| SyncError::Transport(crate::transport::describe_error(error.as_ref())))?;
     charges.map_bytes += cost;
     let fresh: ShardMap = serde_json::from_slice(&bytes).map_err(|error| {
         SyncError::Invalid(format!("refreshed shard map is malformed: {error}"))

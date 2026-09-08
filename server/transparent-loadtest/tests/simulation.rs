@@ -790,3 +790,75 @@ async fn measured_upload_retry_is_exact_and_fully_accounted() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn measured_connection_close_retries_and_retains_diagnostics() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[3]);
+    for attempts in [1, 3] {
+        let (base, _) = service(dir.path(), Fault::None).await;
+        let upstream = base.trim_start_matches("http://").to_owned();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_url = format!("http://{}", listener.local_addr().unwrap());
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let proxy = tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                let upstream = upstream.clone();
+                let dropped = dropped.clone();
+                tokio::spawn(async move {
+                    let mut headers = Vec::new();
+                    while !headers.ends_with(b"\r\n\r\n") {
+                        let Ok(byte) = client.read_u8().await else {
+                            return;
+                        };
+                        headers.push(byte);
+                        assert!(headers.len() < 8192);
+                    }
+                    if String::from_utf8_lossy(&headers).contains("/query/")
+                        && dropped.fetch_add(1, Ordering::SeqCst) == 0
+                    {
+                        // Drop the established connection with no HTTP response.
+                        return;
+                    }
+                    let mut server = tokio::net::TcpStream::connect(upstream).await.unwrap();
+                    // Inspect each request by closing the upstream connection after its response.
+                    let headers = String::from_utf8(headers)
+                        .unwrap()
+                        .replace("\r\n\r\n", "\r\nConnection: close\r\n\r\n");
+                    server.write_all(headers.as_bytes()).await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                });
+            }
+        });
+        let name = format!("connection-close-{attempts}");
+        let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":proxy_url,"profiles":{"test":1},"recovery_deadline_seconds":120,"measured_http_attempts":attempts});
+        let report = run_config(dir.path(), &name, config).await;
+        proxy.abort();
+        assert_eq!(report["success"], attempts == 3, "{report}");
+        let lines: Vec<Value> = fs::read_to_string(dir.path().join(&name).join("requests.ndjson"))
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        let failed = lines.iter().find(|e| e["failed"] == true).unwrap();
+        assert!(failed["status"].is_null());
+        let cause = failed["transport_error"].as_str().unwrap();
+        assert!(!cause.is_empty());
+        if attempts == 3 {
+            assert_eq!(report["summary"]["exact_after_retry"], 1);
+            assert_eq!(report["users"][0]["http_totals"]["retry_attempts"], 1.0);
+            assert!(lines.iter().any(|e| e["request_id"] == failed["request_id"]
+                && e["attempt"] == 2
+                && e["status"] == 200));
+        } else {
+            assert!(
+                report["users"][0]["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains(cause),
+                "{report}"
+            );
+        }
+    }
+}

@@ -107,6 +107,8 @@ pub struct HttpObservation {
     /// Response payload bytes read, including error responses.
     pub bytes_down: u64,
     pub failed: bool,
+    /// Underlying transport causes, without the top-level request URL.
+    pub transport_error: Option<String>,
 }
 
 /// Optional local observer. Called once per attempt, including transport errors.
@@ -166,6 +168,14 @@ fn execute(
             error.downcast_ref::<reqwest::Error>().and_then(|error| {
                 (error.is_timeout()
                     || error.is_connect()
+                    // These read-only API calls have buffered, replayable bodies.
+                    // Established-connection failures are often Request or Body,
+                    // rather than Connect. Builder/status errors stay separate.
+                    || error.is_request()
+                    || error.is_body()
+                    // Response::bytes classifies an interrupted body as Decode.
+                    // Protocol decoding happens after execute and is not retried.
+                    || error.is_decode()
                     || error.status().is_some_and(|s| {
                         matches!(s.as_u16(), 408 | 502 | 504)
                             || (retry_overload && s.as_u16() == 503)
@@ -242,6 +252,19 @@ fn execute_once(
             bytes_up,
             bytes_down,
             failed: result.is_err(),
+            transport_error: result.as_ref().err().and_then(|error| {
+                let error = error.downcast_ref::<reqwest::Error>()?;
+                if error.is_status() {
+                    return None;
+                }
+                let mut causes = Vec::new();
+                let mut source = std::error::Error::source(error);
+                while let Some(cause) = source {
+                    causes.push(cause.to_string());
+                    source = cause.source();
+                }
+                Some(causes.join(": "))
+            }),
         });
     }
     result
@@ -468,6 +491,113 @@ mod observation_tests {
     use super::*;
     use std::io::{Read, Write};
     use std::sync::Mutex;
+
+    #[test]
+    fn retries_established_connection_failures_with_bounded_attempts() {
+        // Exercise both public GETs and private POSTs, with and without telemetry.
+        for partial_body in [false, true] {
+            for private in [false, true] {
+                for (attempts, failures, observe) in
+                    [(1, 1, true), (3, 1, true), (3, 3, true), (3, 1, false)]
+                {
+                    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                    let address = listener.local_addr().unwrap();
+                    listener.set_nonblocking(true).unwrap();
+                    let expected = attempts.min(failures + 1);
+                    let server = std::thread::spawn(move || {
+                        let deadline = Instant::now() + Duration::from_secs(60);
+                        for index in 0..expected {
+                            let mut stream = loop {
+                                match listener.accept() {
+                                    Ok((stream, _)) => break stream,
+                                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                        assert!(Instant::now() < deadline, "missing retry {index}");
+                                        std::thread::sleep(Duration::from_millis(10));
+                                    }
+                                    Err(e) => panic!("{e}"),
+                                }
+                            };
+                            stream.set_nonblocking(false).unwrap();
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(30)))
+                                .unwrap();
+                            let mut headers = Vec::new();
+                            while !headers.ends_with(b"\r\n\r\n") {
+                                let mut byte = [0];
+                                stream.read_exact(&mut byte).unwrap();
+                                headers.push(byte[0]);
+                                assert!(headers.len() <= 4096);
+                            }
+                            if private {
+                                let mut body = [0; 7];
+                                stream.read_exact(&mut body).unwrap();
+                                assert_eq!(&body, b"payload");
+                            }
+                            if index >= failures {
+                                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").unwrap();
+                            } else if partial_body {
+                                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial").unwrap();
+                            }
+                            // Close an established connection before headers or a full body.
+                        }
+                    });
+                    let events = Arc::new(Mutex::new(Vec::new()));
+                    let observed = events.clone();
+                    let observer: Option<HttpObserver> = observe.then(|| {
+                        Arc::new(move |o: HttpObservation| observed.lock().unwrap().push(o))
+                            as HttpObserver
+                    });
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(Duration::from_secs(30))
+                        .build()
+                        .unwrap();
+                    let url = format!("http://{address}");
+                    let request = if private {
+                        client.post(&url).body("payload")
+                    } else {
+                        client.get(&url)
+                    };
+                    let result = execute(
+                        request,
+                        "test",
+                        if private { 7 } else { 0 },
+                        private.then_some((1, "revision")),
+                        &observer,
+                        attempts,
+                        false,
+                    );
+                    server.join().unwrap();
+                    assert_eq!(
+                        result.is_ok(),
+                        failures < attempts,
+                        "partial={partial_body} private={private}: {result:?}"
+                    );
+                    if let Ok(body) = result {
+                        assert_eq!(body, b"ok");
+                    }
+                    let events = events.lock().unwrap();
+                    assert_eq!(events.len(), if observe { expected } else { 0 });
+                    for (index, event) in events.iter().enumerate() {
+                        assert_eq!(event.request_id, events[0].request_id);
+                        assert_eq!(event.attempt, index + 1);
+                        assert_eq!(event.bytes_up, if private { 7 } else { 0 });
+                        assert_eq!(event.failed, index < failures);
+                        assert_eq!(
+                            event.status,
+                            (partial_body || index >= failures).then_some(200)
+                        );
+                        if event.failed {
+                            let cause = event.transport_error.as_ref().unwrap();
+                            assert!(!cause.is_empty());
+                            assert!(!cause.contains(&url));
+                        } else {
+                            assert!(event.transport_error.is_none());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn opt_in_retries_are_bounded_and_account_for_every_response() {

@@ -30,6 +30,18 @@ use std::time::Duration;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// Retain transport causes when crossing the wallet's string-valued error boundary.
+pub(crate) fn describe_error(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut description = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        description.push_str(": ");
+        description.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    description
+}
+
 /// A request named a shard revision the service no longer serves.
 ///
 /// Concrete, and boxed into [`BoxError`], rather than a variant of the

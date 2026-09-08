@@ -222,7 +222,7 @@ fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 fn io_error(error: transparent_wallet::transport::BoxError) -> anyhow::Error {
-    anyhow::anyhow!(error.to_string())
+    anyhow::Error::from_boxed(error)
 }
 
 /// Independent deterministic shuffle per class, with active sample exclusion.
@@ -440,7 +440,7 @@ fn worker() -> Result<()> {
                 result
             }
             Err(error) => {
-                json!({"type":"outcome", "id":job.id, "at":now(), "outcome":"failed", "error":error.to_string()})
+                json!({"type":"outcome", "id":job.id, "at":now(), "outcome":"failed", "error":format!("{error:#}")})
             }
         };
         emit(&event)?;
@@ -456,7 +456,7 @@ fn recover(job: &Job) -> Result<Value> {
         if emit(
             &json!({"type":"request", "id":id, "at":now(), "stage":o.stage,
             "request_id":o.request_id,"attempt":o.attempt,"status":o.status, "seconds":o.elapsed.as_secs_f64(), "bytes_up":o.bytes_up,
-            "bytes_down":o.bytes_down, "failed":o.failed}),
+            "bytes_down":o.bytes_down, "failed":o.failed, "transport_error":o.transport_error}),
         )
         .is_err()
         {

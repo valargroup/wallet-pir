@@ -291,5 +291,5 @@ pub(crate) fn classify_transport(error: crate::transport::BoxError) -> ClientErr
     if let Some(overloaded) = Overloaded::found_in(&error) {
         return ClientError::Overloaded(overloaded.clone());
     }
-    ClientError::Transport(error.to_string())
+    ClientError::Transport(crate::transport::describe_error(error.as_ref()))
 }

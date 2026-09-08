@@ -26,6 +26,7 @@ transparent-wallet-store = { path = "../../pir/transparent-wallet-store" }
 sysinfo = "0.36"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util"] }
 tempfile = "3"
 axum = "0.7"
 transparent-shard = { path = "../../pir/transparent-shard" }

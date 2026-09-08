@@ -282,7 +282,8 @@ with outcome counts, exact/unsuccessful latency distributions and HTTP totals.
 HTTP time sums request durations and should not be interpreted as wall-clock time.
 
 Preparation adapters retain their bounded transient/overload retry policy.
-Measured adapters retry HTTP 408/502/504 and connection/request timeouts when
+Measured adapters retry HTTP 408/502/504, connection/request timeouts,
+request-send failures on established connections, and interrupted response bodies when
 `measured_http_attempts` exceeds one, waiting one second before the second
 attempt and two before the third. Typed overloads remain in the wallet's
 existing refusal policy, without an extra measured HTTP retry layer.
@@ -292,6 +293,10 @@ client defaults remain one HTTP attempt. Server upload deadlines are unchanged.
 Request logs include process-local `request_id` and `attempt` (identify a call
 with wallet run ID plus request ID). Reports retain every response status and
 attempt's submitted/received payload bytes, including failed attempts.
+Transport failures also include `transport_error` with the underlying cause chain
+in request logs, even when a subsequent retry succeeds. Terminal wallet errors
+retain their cause chain in the report. Request construction errors and protocol
+validation errors are not retried by this HTTP policy.
 `retry_attempts`, `retried_requests`, `http_status_counts`, and
 `exact_after_retry` make retries visible alongside ordinary success rates.
 End-to-end latency includes backoff; HTTP stage time sums attempts only.
