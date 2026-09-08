@@ -280,6 +280,14 @@ window at the pinned 8,192 — on 11–12 `s-4vcpu-16gb-amd`, about $950/mo. The
 recent class costs ~9 GiB over an all-archive fleet and buys a 2x smaller query
 on every incremental sync, which is the traffic every wallet pays constantly.
 
+## Geometry decision
+
+The archive tier's geometry is **decided**: `archive-wide`, 32,768 directory
+rows and 65,536 page rows, with the recent tier unchanged at `recent-8k`. The
+reasoning, the evidence and the one measurement it still rests on are in
+[transparent_pir_geometry_decision.md](transparent_pir_geometry_decision.md).
+Nothing is published at that geometry yet.
+
 ## What is not settled
 
 - ~~**`g` is unmeasured at wide geometry.**~~ **Measured 2026-09-07** over the

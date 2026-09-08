@@ -101,6 +101,13 @@ more interesting one: the shipped geometry is itself 0.4% under the rule, which
 is why 48 of its shards close on scripts rather than page rows. It works, but
 it has no placement margin, and that is a property of what ships today.
 
+## The decision taken on this evidence
+
+`archive-wide` for the archive tier; `archive-32k` dominated and not to be
+published; the recent tier unchanged. Recorded with its conditions in
+[transparent_pir_geometry_decision.md](../../transparent_pir_geometry_decision.md),
+which also carries the droplet measurements that settled the server-cost half.
+
 ## What this does and does not decide
 
 Against the plan's acceptance rule — *reject if it introduces ordinary
