@@ -137,7 +137,7 @@ jobs:
           cp ops/infra/digitalocean/production/deploy/transparent-shard-server.service artifact/
           cp ops/infra/digitalocean/production/deploy/transparent-Caddyfile artifact/
           printf '%s\n' '${{ inputs.ref }}' >artifact/revision
-          (cd artifact && sha256sum ./* >SHA256SUMS)
+          (cd artifact && rm -f SHA256SUMS && sha256sum ./* >SHA256SUMS)
           cat artifact/SHA256SUMS
 
       # The assignment is planned here, on the runner that holds the set, and
@@ -166,7 +166,7 @@ jobs:
             --out-caddyfile artifact/Caddyfile.router --public-host "${PUBLIC_URL#https://}" \
             --source-sha "$SHA"
           sudo chown "$(id -u)" artifact/assignment.json artifact/Caddyfile.router
-          (cd artifact && sha256sum ./* >SHA256SUMS)
+          (cd artifact && rm -f SHA256SUMS && sha256sum ./* >SHA256SUMS)
           {
             echo '## Fleet assignment'
             echo '```'
