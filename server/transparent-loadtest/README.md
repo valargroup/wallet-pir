@@ -127,17 +127,27 @@ The report separates exact completions during load and drain. Whole-run exact
 throughput divides all exact completions by execution time including drain;
 load-window throughput counts only exact completions within that window.
 
-The sample must supply an anchor hash. The runner checks genesis, range and tip,
-records a canonical serialized map digest, and checks that digest per recovery
-and after the run. Publication drift or failed postflight invalidates the run.
-Ordinary wallet retry/revision behavior remains in the reference library. This
-mode is for a stable publication, not a tail-churn experiment.
+The sample must supply an anchor hash. The default wave and sustained scenarios
+set `allow_advancing_publication: true`: recovery stays pinned to the sample's
+historical height/hash, while the service may publish newer blocks. Genesis and
+range must match, the publication must cover the target, and any named endpoint
+at the target must agree with its hash. The sample provides the benchmark's
+accepted target; this is not independent live chain verification. Events above
+that target never enter the digest comparison. Prepared ledger seeds are bound
+to the same genesis and target.
+
+Custom scenarios default to strict publication matching. With
+`allow_advancing_publication: false`, the served tip must equal the sample target,
+and map changes during preparation or measurement invalidate the run.
+Reports record `publication_stable` separately from `publication_compatible`,
+plus the sampled target and served tip. Failed postflight remains unsuccessful
+in both modes. Wallet revision/refusal checks remain enabled.
 
 Every started job has a terminal outcome: `exact`, `mismatched`, `incomplete`,
 `failed`, `timed_out` or `cancelled`. Only complete syncs matching both the
 journal-derived event count and SHA-256 digest are exact. A query budget does not
 turn partial progress into success. A nonzero exit follows any unsuccessful
-recovery, unstable publication, interruption, supervisor error, or configured
+recovery, incompatible publication (or any drift in strict mode), interruption, supervisor error, or configured
 latency objective violation. Missing APM does not fail exact recovery, but the
 report labels the missing evidence. SIGINT/SIGTERM finalize a report; SIGKILL
 may leave an unfinished checkpoint and append-only evidence.
@@ -209,7 +219,7 @@ for capacity claims.
 ### Wallet initialization and summaries
 
 Before measured load begins, wallets whose requested window starts after the
-publication start undergo a separate full recovery against the pinned publication.
+publication start undergo a separate full recovery through the sampled anchor.
 Preparation must complete with no unresolved spends and match the sample's
 independent expected count and digest for the requested window. Only events
 strictly before that window are saved as the initial ledger. The measured recovery
@@ -231,7 +241,7 @@ load starts if preparation fails. The same Make commands handle preparation.
 durations, failures and APM separately. `seeds/sample-N.json` retains prior events.
 The main report contains only measured recovery traffic and latency; preparation
 can warm server caches, so these are not cold-server benchmarks. Publication
-changes between preparation and measurement abort the affected recoveries.
+changes between preparation and measurement abort the affected recoveries in strict mode.
 
 The recovery table includes event correctness, unresolved spends, seeded event
 count, HTTP requests/failures, upload/download totals and cumulative HTTP time.
@@ -246,7 +256,7 @@ store work and counting every attempt in preparation traffic. They honor server
 retry delays; the worker's original hard deadline still bounds the entire recovery.
 The wallet's own overload retries may follow. Publication preflight/postflight
 checks also get up to three HTTP attempts. Measured wallet requests retain their
-existing retry policy. Invalid data, event mismatches and changed publications
+existing retry policy. Invalid data, event mismatches and incompatible publications
 are never converted into successful results by retries.
 
 The main HTML/JSON report now includes preparation batch summaries, failed-wallet

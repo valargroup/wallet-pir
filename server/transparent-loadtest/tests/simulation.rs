@@ -41,16 +41,31 @@ enum Fault {
     Drift,
     RetryMap,
     RetryPageSetup,
+    Advance,
 }
 async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
     let set = ShardSet::open(&dir.join("shards"), DEFAULT_RETAIN_REVISIONS).unwrap();
+    let published_map = serde_json::to_value(&set.map).unwrap();
     let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
     let map_calls = Arc::new(AtomicUsize::new(0));
     let app = router(state.clone()).layer(middleware::from_fn(
         move |request: axum::extract::Request, next: Next| {
             let calls = map_calls.clone();
+            let mut advanced_map = published_map.clone();
             async move {
                 let path = request.uri().path();
+                if matches!(fault, Fault::Advance) && path == "/v1/filters/shards" {
+                    let n = calls.fetch_add(1, Ordering::SeqCst) as u64 + 1;
+                    let tip = advanced_map["shards"]
+                        .as_array_mut()
+                        .unwrap()
+                        .last_mut()
+                        .unwrap();
+                    let height = tip["end_height"].as_u64().unwrap() + n;
+                    tip["end_height"] = json!(height);
+                    tip["terminal_block_hash"] = json!(common::hash_at(height).to_display_hex());
+                    return axum::Json(advanced_map).into_response();
+                }
                 if path.ends_with("/filter") {
                     match fault {
                         Fault::SlowFilter => tokio::time::sleep(Duration::from_secs(30)).await,
@@ -604,5 +619,70 @@ async fn page_setup_retry_finishes_existing_pending_work() {
         assert_eq!(report["users"][0]["events_exact"], true);
         assert_eq!(report["users"][0]["completion"], "Complete");
         assert_eq!(report["success"], true);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn historical_sample_keeps_its_target_on_a_newer_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[1, 2]);
+    let path = dir.path().join("sample.json");
+    let mut data: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let target = common::FIRST + 2 * common::SPAN + 20;
+    let from = common::FIRST + common::SPAN;
+    data["anchor_height"] = json!(target);
+    data["anchor_hash"] = json!(common::hash_at(target).to_display_hex());
+    for (client, tag) in data["clients"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(1..=2)
+    {
+        let mut events: Vec<_> = common::chain()
+            .into_iter()
+            .flatten()
+            .filter(|(s, e)| {
+                *s == common::script(tag) && (from..=target).contains(&u64::from(e.height()))
+            })
+            .map(|(_, e)| e)
+            .collect();
+        events.sort_by_key(|e| e.sort_key());
+        events.dedup();
+        let mut hash = Sha256::new();
+        for event in &events {
+            hash.update(event.to_bytes());
+        }
+        client["required_from"] = json!(from);
+        client["expected_digest"] = json!(hex::encode(hash.finalize()));
+        client["journal_events"] = json!(events.len());
+    }
+    fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+    let (base, _) = service(dir.path(), Fault::Advance).await;
+    for advancing in [false, true] {
+        let name = if advancing { "historical" } else { "strict" };
+        let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":2},"recovery_deadline_seconds":120,"allow_advancing_publication":advancing});
+        let report = run_config(dir.path(), name, config).await;
+        assert_eq!(report["success"], advancing, "{report}");
+        if advancing {
+            assert_eq!(report["publication_stable"], false);
+            assert_eq!(report["publication_compatible"], true);
+            assert_eq!(report["publication"]["anchor_height"], target);
+            assert!(report["publication"]["served_tip_height"].as_u64().unwrap() > target);
+            assert_eq!(report["summary"]["outcomes"]["exact"], 2);
+            assert!(report["users"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|u| u["seeded_events"] == 1));
+        } else {
+            assert!(dir
+                .path()
+                .join("strict/preparation/batch-0/map.json")
+                .exists());
+            assert!(report["errors"][0]
+                .as_str()
+                .unwrap()
+                .contains("sample target"));
+        }
     }
 }

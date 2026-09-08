@@ -22,6 +22,8 @@ pub struct Report {
     pub finished_at: Option<f64>,
     pub publication: Value,
     pub publication_stable: Option<bool>,
+    #[serde(default)]
+    pub publication_compatible: Option<bool>,
     pub interrupted: bool,
     pub success: bool,
     pub errors: Vec<String>,
@@ -80,6 +82,7 @@ impl Report {
             finished_at: None,
             publication: Value::Null,
             publication_stable: None,
+            publication_compatible: None,
             interrupted: false,
             success: false,
             errors: Vec::new(),
@@ -322,7 +325,9 @@ impl Report {
             .max());
         self.success = !self.users.is_empty()
             && exact as usize == self.users.len()
-            && self.publication_stable == Some(true)
+            && (self.publication_stable == Some(true)
+                || (self.config.allow_advancing_publication
+                    && self.publication_compatible == Some(true)))
             && !self.interrupted
             && self.errors.is_empty();
         if let Some(limit) = self.config.max_p99_exact_seconds {

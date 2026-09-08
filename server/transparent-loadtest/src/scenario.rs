@@ -70,6 +70,8 @@ pub struct Config {
     pub seed: u64,
     #[serde(default = "preparation_concurrency")]
     pub preparation_concurrency: usize,
+    #[serde(default)]
+    pub allow_advancing_publication: bool,
     #[serde(default = "preparation_deadline")]
     pub preparation_deadline_seconds: u64,
     #[serde(default = "ten_minutes")]
@@ -265,6 +267,9 @@ struct Job {
     config: Config,
     wallet: SampleClient,
     map_digest: String,
+    genesis_hash: String,
+    start_height: u64,
+    anchor: Anchor,
     store_path: PathBuf,
     seed_path: PathBuf,
     preparing: bool,
@@ -273,6 +278,8 @@ struct Job {
 #[derive(Serialize, Deserialize)]
 struct Seed {
     map_sha256: String,
+    genesis_hash: String,
+    anchor: Anchor,
     events: Vec<SeedEvent>,
 }
 
@@ -290,12 +297,18 @@ fn seed_store(
     map: &transparent_filter::ShardMap,
     path: &Path,
     wallet: &SampleClient,
+    job: &Job,
 ) -> Result<()> {
     let seed: Seed = serde_json::from_slice(
         &fs::read(path)
             .with_context(|| format!("missing prepared wallet history: {}", path.display()))?,
     )?;
-    if seed.map_sha256 != digest(&serde_json::to_vec(map)?) {
+    if seed.genesis_hash != map.genesis_hash || seed.anchor != job.anchor {
+        bail!("prepared history belongs to a different chain or workload anchor");
+    }
+    if !job.config.allow_advancing_publication
+        && seed.map_sha256 != digest(&serde_json::to_vec(map)?)
+    {
         bail!("publication changed since wallet preparation");
     }
     store.bind_set(&SetIdentity::of(map))?;
@@ -396,15 +409,20 @@ fn recover(job: &Job) -> Result<Value> {
         .with_observer(observer)
         .with_retry_attempts(if job.preparing { 3 } else { 1 });
     let (map, map_bytes) = filters.map().map_err(io_error)?;
-    if digest(&serde_json::to_vec(&map)?) != job.map_digest {
+    validate_publication(
+        &map,
+        &job.genesis_hash,
+        job.start_height,
+        &job.anchor,
+        job.config.allow_advancing_publication,
+    )?;
+    if !job.config.allow_advancing_publication
+        && digest(&serde_json::to_vec(&map)?) != job.map_digest
+    {
         bail!("publication changed before recovery");
     }
     let geometry = transport.geometry().map_err(io_error)?;
-    let tip = map.shards.last().context("empty map")?;
-    let anchor = Anchor {
-        height: tip.end_height,
-        hash: tip.terminal_block_hash.clone(),
-    };
+    let anchor = job.anchor.clone();
     let scripts: Vec<ScriptEntry> = job
         .wallet
         .scripts
@@ -422,7 +440,9 @@ fn recover(job: &Job) -> Result<Value> {
         })
         .collect::<Result<_>>()?;
     let mut provider = StaticScripts(scripts);
-    let chain = StaticChain::from_map(&map);
+    let mut chain = StaticChain::from_map(&map);
+    // The journal sample supplies the benchmark's accepted historical target.
+    chain.hashes.insert(anchor.height, anchor.hash.clone());
     let limits = WorkLimits {
         max_queries: job.config.max_queries,
         max_private_bytes: None,
@@ -432,7 +452,7 @@ fn recover(job: &Job) -> Result<Value> {
         Store::Memory => Box::new(MemoryStore::new()),
     };
     if !job.preparing && job.wallet.required_from > map.start_height {
-        seed_store(&mut store, &map, &job.seed_path, &job.wallet)?;
+        seed_store(&mut store, &map, &job.seed_path, &job.wallet, job)?;
     }
     let seeded_events = store.events()?.len();
     let report = sync_into(
@@ -469,7 +489,9 @@ fn recover(job: &Job) -> Result<Value> {
         fs::write(
             &job.seed_path,
             serde_json::to_vec(&Seed {
-                map_sha256: job.map_digest.clone(),
+                map_sha256: digest(&serde_json::to_vec(&map)?),
+                genesis_hash: map.genesis_hash.clone(),
+                anchor: anchor.clone(),
                 events: seed,
             })?,
         )?;
@@ -833,6 +855,33 @@ fn prepare(
     Ok(())
 }
 
+/// A benchmark may keep its journal-validated target while the service advances.
+/// A named endpoint at that height must still agree; events above the target
+/// are excluded by the wallet and never enter the expected-event comparison.
+fn validate_publication(
+    map: &transparent_filter::ShardMap,
+    genesis: &str,
+    start: u64,
+    anchor: &Anchor,
+    advancing: bool,
+) -> Result<()> {
+    let tip = map.shards.last().context("empty shard map")?;
+    let named_hash = StaticChain::from_map(map)
+        .hashes
+        .get(&anchor.height)
+        .cloned();
+    if map.genesis_hash != genesis
+        || map.start_height != start
+        || tip.end_height < anchor.height
+        || (!advancing && tip.end_height != anchor.height)
+        || named_hash.as_ref().is_some_and(|hash| hash != &anchor.hash)
+    {
+        bail!("served publication does not match workload: sample target {} ({}), served tip {} ({}); chain/range must match{}", anchor.height, anchor.hash, tip.end_height, tip.terminal_block_hash,
+            if advancing { " and cover the sample target" } else { "; use allow_advancing_publication for historical-target recovery on an advancing service" });
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run(
     config: &Config,
@@ -846,20 +895,28 @@ fn run(
 ) -> Result<()> {
     let (map, map_digest, schema) = preflight(config, out, "preflight.ndjson")?;
     let tip = map.shards.last().context("empty shard map")?;
-    if map.genesis_hash != sample.genesis_hash
-        || map.start_height != sample.start_height
-        || tip.end_height != sample.anchor_height
-        || sample.anchor_hash.as_deref() != Some(&tip.terminal_block_hash)
-    {
-        bail!("served publication does not match the workload sample");
-    }
+    fs::write(out.join("map.json"), serde_json::to_vec_pretty(&map)?)?;
+    let anchor = Anchor {
+        height: sample.anchor_height,
+        hash: sample
+            .anchor_hash
+            .clone()
+            .context("workload sample has no anchor hash")?,
+    };
+    validate_publication(
+        &map,
+        &sample.genesis_hash,
+        sample.start_height,
+        &anchor,
+        config.allow_advancing_publication,
+    )?;
     report.provenance["phase"] = json!(if preparing {
         "wallet_preparation"
     } else {
         "measured_recovery"
     });
     report.provenance["wallet_initialization"] = json!("Prior ledger events only; independent stores with cold filter/setup caches. Preparation can warm server caches.");
-    report.publication = json!({"map_sha256":map_digest, "schema":schema,"genesis_hash":map.genesis_hash,"start_height":map.start_height,"anchor_height":tip.end_height,"anchor_hash":tip.terminal_block_hash,"cutoff_height":sample.cutoff_height,"shards":map.shards.len(),"geometries":map.seal.keys().collect::<Vec<_>>()});
+    report.publication = json!({"map_sha256":map_digest, "schema":schema,"genesis_hash":map.genesis_hash,"start_height":map.start_height,"anchor_height":anchor.height,"anchor_hash":anchor.hash,"served_tip_height":tip.end_height,"served_tip_hash":tip.terminal_block_hash,"cutoff_height":sample.cutoff_height,"shards":map.shards.len(),"geometries":map.seal.keys().collect::<Vec<_>>()});
     fs::write(out.join("map.json"), serde_json::to_vec_pretty(&map)?)?;
     let (tx, rx) = mpsc::channel();
     let mut requests = File::create(out.join("requests.ndjson"))?;
@@ -1016,6 +1073,9 @@ fn run(
                     config: config.clone(),
                     wallet: sample.clients[sample_index].clone(),
                     map_digest: map_digest.clone(),
+                    genesis_hash: sample.genesis_hash.clone(),
+                    start_height: sample.start_height,
+                    anchor: anchor.clone(),
                     store_path: out.join("stores").join(format!("wallet-{id}.sqlite")),
                     seed_path: seeds.join(format!("sample-{sample_index}.json")),
                     preparing,
@@ -1103,7 +1163,18 @@ fn run(
     execution?;
     if !interrupted.load(Ordering::Relaxed) {
         match preflight(config, out, "postflight.ndjson") {
-            Ok((_, final_digest, final_schema)) => {
+            Ok((final_map, final_digest, final_schema)) => {
+                report.publication_compatible = Some(
+                    final_schema == schema
+                        && validate_publication(
+                            &final_map,
+                            &sample.genesis_hash,
+                            sample.start_height,
+                            &anchor,
+                            config.allow_advancing_publication,
+                        )
+                        .is_ok(),
+                );
                 report.publication_stable =
                     Some(final_digest == map_digest && final_schema == schema);
             }

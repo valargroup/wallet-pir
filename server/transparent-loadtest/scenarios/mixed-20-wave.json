@@ -16,6 +16,7 @@
     "reused-tail": 1
   },
   "seed": 1,
+  "allow_advancing_publication": true,
   "duration_seconds": 600,
   "recovery_deadline_seconds": 600,
   "request_timeout_seconds": 60,
