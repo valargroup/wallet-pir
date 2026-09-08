@@ -260,6 +260,18 @@ pub fn plan(
 /// — go to the recent pool, since every worker holds them. Operator routes
 /// are not routed at all.
 pub fn render_caddyfile(assignment: &Assignment, public_host: &str) -> String {
+    render_caddyfile_with(assignment, public_host, None)
+}
+
+/// As [`render_caddyfile`], with an optional second site: the same routes on
+/// a plain-HTTP listener (an address such as `10.0.0.5:8080`), for the load
+/// harness and deploy verification from inside the VPC before the public
+/// name points at the router. The firewall, not this file, keeps it private.
+pub fn render_caddyfile_with(
+    assignment: &Assignment,
+    public_host: &str,
+    internal_listen: Option<&str>,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "# Rendered by shard-assign for assignment {}.\n\
@@ -272,7 +284,23 @@ pub fn render_caddyfile(assignment: &Assignment, public_host: &str) -> String {
         "\ttls {\n\t\tissuer acme {\n\t\t\tdir https://acme-v02.api.letsencrypt.org/directory\n\t\t}\n\t}\n\n",
     );
     out.push_str("\trequest_body {\n\t\tmax_size 1MB\n\t}\n\n");
+    out.push_str(&render_routes(assignment));
+    out.push_str("\thandle {\n\t\trespond 404\n\t}\n}\n");
+    if let Some(listen) = internal_listen {
+        out.push_str(&format!(
+            "\n# Internal plain-HTTP listener, VPC only: the same routes without TLS.\nhttp://{listen} {{\n"
+        ));
+        out.push_str("\trequest_body {\n\t\tmax_size 1MB\n\t}\n\n");
+        out.push_str(&render_routes(assignment));
+        out.push_str("\thandle {\n\t\trespond 404\n\t}\n}\n");
+    }
+    out
+}
 
+/// The route handlers one site carries, shared by the public and the
+/// internal listener.
+fn render_routes(assignment: &Assignment) -> String {
+    let mut out = String::new();
     let health = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 5s\n\t\t\thealth_timeout 3s\n\t\t\tfail_duration 30s\n";
 
     // Replica groups first, then owners; both keyed by shard id.
@@ -345,7 +373,6 @@ pub fn render_caddyfile(assignment: &Assignment, public_host: &str) -> String {
     ));
     // Everything else, including any shard id no worker holds and every
     // operator route, is a 404 at the edge.
-    out.push_str("\thandle {\n\t\trespond 404\n\t}\n}\n");
     out
 }
 

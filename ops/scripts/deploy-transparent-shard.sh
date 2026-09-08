@@ -763,11 +763,26 @@ REMOTE
     cat "${ids[$i]#*:}"; rm -f "${ids[$i]#*:}"
   done
   [[ "$failed" -eq 0 ]] || fail "staging or copying failed on at least one worker; see above"
+  fleet_stage_router
+}
+
+# Renders the router's Caddyfile from the assignment, stages it on the router
+# and validates it there; nothing is installed.
+fleet_stage_router() {
+  local -a opts
+  mapfile -t opts < <(ssh_opts)
+  local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
     local host_name="${TRANSPARENT_PUBLIC_URL#https://}"
     local caddyfile="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.router.rendered"
+    # The internal listener carries the same routes over plain HTTP on the
+    # router's VPC address, for the load harness and verification from the
+    # coordinator before the public name points at the router.
+    local -a internal=()
+    [[ -n "${TRANSPARENT_ROUTER_INTERNAL_PORT:-}" ]] \
+      && internal=(--internal-listen "$TRANSPARENT_ROUTER_HOST:$TRANSPARENT_ROUTER_INTERNAL_PORT")
     "$TRANSPARENT_ARTIFACT_DIR/shard-assign" caddyfile --assignment "$TRANSPARENT_ASSIGNMENT" \
-      --public-host "$host_name" --out "$caddyfile"
+      --public-host "$host_name" "${internal[@]}" --out "$caddyfile"
     grep -q "^$host_name {" "$caddyfile" || fail "rendered router config does not name $host_name"
     echo "== stage router ($TRANSPARENT_ROUTER_HOST): Caddyfile"
     host_ssh "$TRANSPARENT_ROUTER_HOST" "mkdir -p $(printf %q "$staged")"
@@ -955,6 +970,21 @@ REMOTE
 # worker's first assigned shard, a manifest that digests to its path, and the
 # operator routes refused. Over the VPC: a request to a worker for a shard it
 # does not own is a 421, which is what proves the router is doing the routing.
+# The internal listener answers the same as the public edge; checked from the
+# coordinator, which the router's firewall admits.
+fleet_verify_internal() {
+  [[ -n "${TRANSPARENT_ROUTER_HOST:-}" && -n "${TRANSPARENT_ROUTER_INTERNAL_PORT:-}" ]] || return 0
+  local base="http://$TRANSPARENT_ROUTER_HOST:$TRANSPARENT_ROUTER_INTERNAL_PORT"
+  echo "== verify internal listener at $base"
+  local map
+  map="$(curl --silent --fail --max-time 20 "$base/v1/shards" | sha256sum | cut -d' ' -f1)" \
+    || fail "the internal listener did not serve the map"
+  [[ "$map" == "$EXPECTED_MAP_SHA256" ]] || fail "internal listener serves map $map, expected $EXPECTED_MAP_SHA256"
+  curl --silent --fail --max-time 20 "$base/v1/shards/init" | jq -e '.schema' >/dev/null \
+    || fail "the internal listener did not serve init"
+  echo "internal listener serving map $map"
+}
+
 fleet_verify_public() {
   echo "== verify public edge at $TRANSPARENT_PUBLIC_URL"
   local attempt public
@@ -1023,7 +1053,9 @@ fleet_prune() {
     host_ssh "$host" bash -s -- "$(shard_set_path)" "$id" <<'REMOTE'
 set -euo pipefail
 set_path="$1"; id="$2"
-assignment="$(sed -n 's/.*--assignment \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
+# From the ExecStart line only: the unit's comments mention the flag too.
+assignment="$(sed -n '/^ExecStart=/s/.*--assignment \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
+[[ -n "$assignment" && "$assignment" != *$'\n'* ]] || { echo "could not read the assignment path from the unit" >&2; exit 1; }
 sudo /usr/local/bin/shard-prune --shard-dir "$set_path" --assignment "$assignment" --worker-id "$id" --apply \
   | jq -r '"\(.deleted | length) removed, \(.bytes_freed) bytes freed"'
 REMOTE
@@ -1144,10 +1176,25 @@ case "$MODE" in
     trap 'rollback_fleet' ERR
     fleet_activate_workers
     fleet_activate_router
+    fleet_verify_internal
     fleet_verify_public
     trap - ERR
     fleet_prune
     echo "deployed $TRANSPARENT_RELEASE_SHA to the fleet under assignment $(assignment_digest)"
+    ;;
+  fleet-router)
+    # The router alone: a changed Caddyfile (a new listener, a changed
+    # assignment that moved no shard) without touching the warm workers.
+    validate_fleet_inputs
+    validate_shard_set "$TRANSPARENT_SHARD_SOURCE"
+    [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]] || fail "fleet-router needs TRANSPARENT_ROUTER_HOST"
+    fleet_stage_router
+    set -E
+    trap 'rollback_fleet' ERR
+    fleet_activate_router
+    fleet_verify_internal
+    trap - ERR
+    echo "router configured for assignment $(assignment_digest)"
     ;;
   fleet-rollback)
     validate_fleet_inputs
@@ -1155,6 +1202,6 @@ case "$MODE" in
     echo "fleet rolled back to the previously activated release"
     ;;
   *)
-    fail "unknown mode $MODE (jq-programs, validate, preflight, deploy, fleet-validate, fleet-preflight, fleet-deploy, fleet-rollback)"
+    fail "unknown mode $MODE (jq-programs, validate, preflight, deploy, fleet-validate, fleet-preflight, fleet-deploy, fleet-router, fleet-rollback)"
     ;;
 esac

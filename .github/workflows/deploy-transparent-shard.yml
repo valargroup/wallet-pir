@@ -36,7 +36,7 @@ on:
         required: true
         default: preflight
         type: choice
-        options: [preflight, deploy, fleet-preflight, fleet-deploy, fleet-rollback]
+        options: [preflight, deploy, fleet-preflight, fleet-deploy, fleet-router, fleet-rollback]
       recent_from:
         description: >-
           Fleet modes only. The recorded cutoff height; the shard beginning
@@ -224,6 +224,7 @@ jobs:
           # in one place; the router is optional until it exists.
           TRANSPARENT_FLEET_JSON: ${{ vars.TRANSPARENT_FLEET_JSON }}
           TRANSPARENT_ROUTER_HOST: ${{ vars.TRANSPARENT_ROUTER_HOST }}
+          TRANSPARENT_ROUTER_INTERNAL_PORT: "8080"
           TRANSPARENT_OWNER_ACTIVATION: ${{ inputs.owner_activation }}
           TRANSPARENT_ASSIGNMENT: ${{ github.workspace }}/artifact/assignment.json
         run: ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'

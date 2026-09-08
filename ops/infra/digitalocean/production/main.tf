@@ -387,6 +387,15 @@ resource "digitalocean_firewall" "transparent_router" {
     source_tags = [digitalocean_tag.coordinator.name]
   }
 
+  # The router's internal plain-HTTP listener, the same routes as the public
+  # site without TLS, for the load harness and deploy verification from the
+  # coordinator before the public name points here. VPC only.
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "8080"
+    source_tags = [digitalocean_tag.coordinator.name]
+  }
+
   dynamic "inbound_rule" {
     for_each = var.allowed_ssh_cidrs
     content {

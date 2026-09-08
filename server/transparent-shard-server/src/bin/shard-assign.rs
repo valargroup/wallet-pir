@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use transparent_filter::ShardMap;
 use transparent_shard_server::assignment::{Assignment, GeneratedBy};
-use transparent_shard_server::router::{files_for, plan, render_caddyfile, RosterEntry};
+use transparent_shard_server::router::{files_for, plan, render_caddyfile_with, RosterEntry};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -83,6 +83,10 @@ enum Command {
         assignment: PathBuf,
         #[arg(long)]
         public_host: String,
+        /// Also serve the same routes over plain HTTP on this address, for
+        /// clients inside the VPC.
+        #[arg(long)]
+        internal_listen: Option<String>,
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -158,7 +162,7 @@ fn main() -> Result<(), BoxError> {
             }
             if let Some(path) = out_caddyfile {
                 let host = public_host.ok_or("--out-caddyfile needs --public-host")?;
-                std::fs::write(&path, render_caddyfile(&assignment, &host))?;
+                std::fs::write(&path, render_caddyfile_with(&assignment, &host, None))?;
                 eprintln!("router config written to {}", path.display());
             }
         }
@@ -191,10 +195,12 @@ fn main() -> Result<(), BoxError> {
         Command::Caddyfile {
             assignment,
             public_host,
+            internal_listen,
             out,
         } => {
             let assignment = Assignment::load(&assignment)?;
-            let rendered = render_caddyfile(&assignment, &public_host);
+            let rendered =
+                render_caddyfile_with(&assignment, &public_host, internal_listen.as_deref());
             match out {
                 Some(path) => std::fs::write(path, rendered)?,
                 None => print!("{rendered}"),
