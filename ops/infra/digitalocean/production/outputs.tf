@@ -76,3 +76,7 @@ output "transparent_router_host" {
 output "transparent_router_public_ipv4" {
   value = [for router in digitalocean_droplet.transparent_router : router.ipv4_address]
 }
+
+output "transparent_loadgen_ipv4" {
+  value = [for host in digitalocean_droplet.transparent_loadgen : { public = host.ipv4_address, private = host.ipv4_address_private }]
+}

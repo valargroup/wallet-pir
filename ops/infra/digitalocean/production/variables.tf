@@ -200,3 +200,15 @@ variable "transparent_archive_build_slots" {
   type        = number
   default     = 1
 }
+
+variable "transparent_loadgen_count" {
+  description = "Dedicated-CPU load generators for the Gate 6 series; the coordinator's shared vCPUs saturate as a client at 128 wallets. Zero when not measuring."
+  type        = number
+  default     = 0
+}
+
+variable "transparent_loadgen_size" {
+  description = "Load generator size: dedicated CPU, so the client's own PIR work does not bound what the fleet is measured at."
+  type        = string
+  default     = "c-16"
+}

@@ -53,6 +53,14 @@ resource "digitalocean_tag" "transparent_worker" {
   }
 }
 
+resource "digitalocean_tag" "transparent_loadgen" {
+  name = "transparent-pir-loadgen"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "digitalocean_tag" "transparent_router" {
   name = "transparent-pir-router"
 
@@ -172,6 +180,32 @@ resource "digitalocean_droplet" "transparent_archive" {
 
   user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
     packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+    deploy_public_key = var.transparent_worker_deploy_public_key
+  })
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
+}
+
+# Load generators: measurement clients inside the VPC with dedicated CPUs,
+# reaching the workers and the router's internal listener. Not part of the
+# serving fleet; provisioned for a measurement and destroyed after.
+resource "digitalocean_droplet" "transparent_loadgen" {
+  count      = var.transparent_loadgen_count
+  name       = format("transparent-pir-loadgen-%02d", count.index + 1)
+  image      = var.image
+  region     = var.region
+  size       = var.transparent_loadgen_size
+  ssh_keys   = var.ssh_key_ids
+  vpc_uuid   = digitalocean_vpc.enhance.id
+  tags       = [digitalocean_tag.transparent_loadgen.name]
+  monitoring = true
+  backups    = false
+  ipv6       = false
+
+  user_data = templatefile("${path.module}/cloud-init-transparent-router.yaml.tftpl", {
+    packages          = jsonencode(concat(local.common_packages, ["build-essential", "pkg-config"]))
     deploy_public_key = var.transparent_worker_deploy_public_key
   })
 
@@ -343,7 +377,7 @@ resource "digitalocean_firewall" "transparent_worker" {
   inbound_rule {
     protocol    = "tcp"
     port_range  = "8093"
-    source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name]
+    source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name, digitalocean_tag.transparent_loadgen.name]
   }
 
   # Public TLS for transparent-pir.valargroup.dev. Port 80 is needed for the
@@ -393,7 +427,7 @@ resource "digitalocean_firewall" "transparent_router" {
   inbound_rule {
     protocol    = "tcp"
     port_range  = "8080"
-    source_tags = [digitalocean_tag.coordinator.name]
+    source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_loadgen.name]
   }
 
   dynamic "inbound_rule" {
@@ -432,6 +466,35 @@ resource "digitalocean_firewall" "transparent_router" {
   }
 }
 
+resource "digitalocean_firewall" "transparent_loadgen" {
+  name = "transparent-pir-loadgen"
+  tags = [digitalocean_tag.transparent_loadgen.name]
+
+  dynamic "inbound_rule" {
+    for_each = var.allowed_ssh_cidrs
+    content {
+      protocol         = "tcp"
+      port_range       = "22"
+      source_addresses = [inbound_rule.value]
+    }
+  }
+
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+}
+
 resource "digitalocean_project_resources" "enhance" {
   project = var.project_id
   resources = concat(
@@ -441,6 +504,7 @@ resource "digitalocean_project_resources" "enhance" {
     [for worker in digitalocean_droplet.transparent_recent : worker.urn],
     [for worker in digitalocean_droplet.transparent_archive : worker.urn],
     [for router in digitalocean_droplet.transparent_router : router.urn],
+    [for host in digitalocean_droplet.transparent_loadgen : host.urn],
   )
 }
 
