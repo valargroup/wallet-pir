@@ -42,6 +42,23 @@ Recorded by [inventory-transparent-dataset.yml run 34181566124](https://github.c
 
 Record later observations the same way: a dated evidence directory from the workflow's artifact, and this table updated to the newest run. Keep secrets out; keep hostnames only after verification.
 
+## Live deployment: observed 2026-09-08, full set and fleet
+
+Later the same day. Sources: the pilot deploy ([run 34194516569](https://github.com/valargroup/enhance-pir/actions/runs/34194516569)), the fleet deploys ([34199606073](https://github.com/valargroup/enhance-pir/actions/runs/34199606073), [34206126956](https://github.com/valargroup/enhance-pir/actions/runs/34206126956)), the router-only deploy ([34204103032](https://github.com/valargroup/enhance-pir/actions/runs/34204103032)), and the load runs under [evidence/runs](evidence/runs/). Hosts were read over SSH at the times stated in those records.
+
+| Field | Observed |
+|---|---|
+| Full-chain set | `/srv/zakura/transparent-shards-v7-full` on the coordinator: 174 shards (160 `archive-wide`, 14 `recent-8k`), map `06e5fa2b…`, [published](evidence/publication-2026-09-08/README.md) and [verified](evidence/publication-2026-09-08/README.md) |
+| Pilot worker | `transparent-pir-worker-01` serves the full set at release `00afb3e` behind an 8 GiB cache, `MemoryMax=12G`; the public name still points here. OOM-killed once under two concurrent cold archive restores ([record](evidence/runs/pilot-cold-2026-09-08-b/README.md)) |
+| Fleet | `transparent-pir-recent-01..04` (`s-4vcpu-8gb`, 10.142.0.10/.8/.7/.12), `transparent-pir-archive-01..02` (`m-8vcpu-64gb`, 10.142.0.6/.9), `transparent-pir-router-01` (`s-2vcpu-4gb`, 10.142.0.11, public 209.38.42.220); all ams3, Terraform-managed, `needrestart` exemption on every host |
+| Fleet activation | Workers at `8802cd0` under assignment `baf1e664…` (headroom 0.06: 80 archive shards per owner, 14 recent shards per replica); every worker warm; router Caddyfile rendered from the assignment with the public site and an internal listener on `10.142.0.11:8080` (VPC, coordinator only) |
+| Resident memory, warm and idle | archive owners 46.7–47.0 GB RSS (45.0 GiB reserved); replicas 4.2–4.4 GB (3.5 GiB reserved). Under an 8-wallet pass: owners 49.7 GB RSS / 51.7 GB cgroup of 56 GiB; replicas 4.6–4.9 GB of 7 GiB |
+| Warm-up | 4.5 s per table runtime with one build slot, and the same with two: about 12 min per owner on `archive-01`, about 20 on `archive-02`; about 4 min per replica |
+| Warm serving, 8 wallets, through the router | every covered sync exact; catch-ups p50 0.25–0.40 s, six-month restore 0.8 s, old-birthday restore 3.2–3.8 s (p99 23 s), 40-script wallet 6–7 s; no queue rejections ([run c](evidence/runs/fleet-warm-2026-09-08-c/README.md)) |
+| Public name | `transparent-pir.valargroup.dev` → pilot worker. The router holds no certificate until the name moves to it (Terraform `transparent_public_dns_target=router`) |
+| Not yet observed | The fleet under 32, 128 and 512 wallets (series running); the public name on the router; the filter origin on the coordinator serving the full set |
+
+
 ## Decision and evidence state
 
 The user accepted the two-tier target on 2026-09-07. [Deployment](deployment.md) owns its settings. Full-chain uniform geometry and single-c8 evaluation/residency evidence exist; mixed publication costs, target-host HTTP capacity, cross-host scaling and mobile wallet latency remain unmeasured. [Remaining work](remaining-work.md) is the authoritative checklist.
