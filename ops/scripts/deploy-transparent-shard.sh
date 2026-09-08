@@ -274,11 +274,13 @@ render_unit() {
   local memory_max="${2:-$PILOT_MEMORY_MAX}"
   local extra_args="${3:-}"
   local suffix="${4:-}"
+  local build_slots="${5:-1}"
   local set_path unit execstarts exec_line
   set_path="$(shard_set_path)"
   unit="$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service${suffix}.rendered"
   [[ "$cache_bytes" =~ ^[0-9]+$ ]] || fail "cache bytes must be a number: $cache_bytes"
   [[ "$memory_max" =~ ^[0-9]+[KMGT]?$ ]] || fail "MemoryMax must be a systemd size: $memory_max"
+  [[ "$build_slots" =~ ^[1-9][0-9]?$ ]] || fail "build slots must be a small positive number: $build_slots"
   # Quoted regex: an unquoted `[... ]` with a space inside is parsed as two
   # words. Letters, digits, space, dot, underscore, slash, equals, dash.
   local plain='^[-A-Za-z0-9 ._/=]*$'
@@ -286,10 +288,11 @@ render_unit() {
   sed -e "s|TRANSPARENT_SHARD_SET_PATH|$set_path|" \
     -e "s|TRANSPARENT_CACHE_BYTES|$cache_bytes|" \
     -e "s|TRANSPARENT_MEMORY_MAX|$memory_max|" \
+    -e "s|TRANSPARENT_BUILD_SLOTS|$build_slots|" \
     -e "s|TRANSPARENT_EXTRA_ARGS|$extra_args|" \
     "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" \
     | sed -e 's/[[:space:]]*$//' >"$unit"
-  grep -q "TRANSPARENT_SHARD_SET_PATH\|TRANSPARENT_CACHE_BYTES\|TRANSPARENT_MEMORY_MAX\|TRANSPARENT_EXTRA_ARGS" "$unit" \
+  grep -q "TRANSPARENT_SHARD_SET_PATH\|TRANSPARENT_CACHE_BYTES\|TRANSPARENT_MEMORY_MAX\|TRANSPARENT_BUILD_SLOTS\|TRANSPARENT_EXTRA_ARGS" "$unit" \
     && fail "unit still carries an unsubstituted token"
   execstarts="$(grep -c '^ExecStart=' "$unit" || true)"
   [[ "$execstarts" -eq 1 ]] \
@@ -700,48 +703,66 @@ fleet_prepare() {
   local assignment_sha
   assignment_sha="$(assignment_digest)"
   [[ "$assignment_sha" =~ ^[0-9a-f]{64}$ ]] || fail "could not compute the assignment digest"
-  local id host cache memory extra dest
-  for id in $(worker_ids); do
-    host="$(worker_field "$id" ssh_host)"
-    cache="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .cache_bytes' "$TRANSPARENT_ASSIGNMENT")"
-    memory="$(worker_field "$id" memory_max)"
-    [[ -n "$memory" && "$memory" != "null" ]] || fail "roster entry $id has no memory_max"
-    extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess"
-    render_unit "$cache" "$memory" "$extra" ".$id"
-    local unit="$RENDERED_UNIT"
-    echo "== stage $id ($host): binary, tools, unit, assignment"
-    host_ssh "$host" "mkdir -p $(printf %q "$staged")"
-    scp "${opts[@]}" \
-      "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" \
-      "$TRANSPARENT_ARTIFACT_DIR/shard-prune" \
-      "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
-      "$TRANSPARENT_ASSIGNMENT" \
-      "$TRANSPARENT_DEPLOY_USER@$host:$staged/"
-    scp "${opts[@]}" "$unit" "$TRANSPARENT_DEPLOY_USER@$host:$staged/unit.rendered"
-    # The unit names the assignment by its digest; the staged copy carries
-    # that name too, so the verify-only run below and the install find it.
-    host_ssh "$host" bash -s -- "$staged" "$assignment_sha" <<'REMOTE'
+  # One worker's staging and copy. Every worker's runs at once below: the
+  # copies are independent and the coordinator's disk and NIC, not any one
+  # worker, bound the total.
+  prepare_worker() {
+    local id="$1" host cache memory extra dest slots
+  host="$(worker_field "$id" ssh_host)"
+  cache="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .cache_bytes' "$TRANSPARENT_ASSIGNMENT")"
+  memory="$(worker_field "$id" memory_max)"
+  [[ -n "$memory" && "$memory" != "null" ]] || fail "roster entry $id has no memory_max"
+  extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess"
+  slots="$(worker_field "$id" build_slots)"
+  [[ -n "$slots" && "$slots" != "null" ]] || slots=1
+  render_unit "$cache" "$memory" "$extra" ".$id" "$slots"
+  local unit="$RENDERED_UNIT"
+  echo "== stage $id ($host): binary, tools, unit, assignment"
+  host_ssh "$host" "mkdir -p $(printf %q "$staged")"
+  scp "${opts[@]}" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" \
+    "$TRANSPARENT_ARTIFACT_DIR/shard-prune" \
+    "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
+    "$TRANSPARENT_ASSIGNMENT" \
+    "$TRANSPARENT_DEPLOY_USER@$host:$staged/"
+  scp "${opts[@]}" "$unit" "$TRANSPARENT_DEPLOY_USER@$host:$staged/unit.rendered"
+  # The unit names the assignment by its digest; the staged copy carries
+  # that name too, so the verify-only run below and the install find it.
+  host_ssh "$host" bash -s -- "$staged" "$assignment_sha" <<'REMOTE'
 set -euo pipefail
 cd "$1"
 sha256sum -c SHA256SUMS --ignore-missing
 chmod 0755 transparent-shard-server shard-prune
 cp -f assignment.json "$2.json"
 REMOTE
-    dest="$(shard_set_path)"
-    echo "== ship $id subset ($TRANSPARENT_SHARD_SOURCE -> $host:$dest)"
-    host_ssh "$host" "sudo mkdir -p $(printf %q "$dest") && sudo chown $(printf %q "$TRANSPARENT_DEPLOY_USER") $(printf %q "$dest")"
-    local list
-    list="$(mktemp)"
-    "$TRANSPARENT_ARTIFACT_DIR/shard-assign" files --shard-dir "$TRANSPARENT_SHARD_SOURCE" \
-      --assignment "$TRANSPARENT_ASSIGNMENT" --worker-id "$id" >"$list"
-    # -r explicitly: --files-from does not imply recursion into the listed
-    # directories. No --delete: the previous set stays where its unit points.
-    rsync -a -r --files-from="$list" --info=stats1 \
-      -e "ssh $(ssh_opts | tr '\n' ' ')" \
-      "$TRANSPARENT_SHARD_SOURCE/" \
-      "$TRANSPARENT_DEPLOY_USER@$host:$dest/"
-    rm -f "$list"
+  dest="$(shard_set_path)"
+  echo "== ship $id subset ($TRANSPARENT_SHARD_SOURCE -> $host:$dest)"
+  host_ssh "$host" "sudo mkdir -p $(printf %q "$dest") && sudo chown $(printf %q "$TRANSPARENT_DEPLOY_USER") $(printf %q "$dest")"
+  local list
+  list="$(mktemp)"
+  "$TRANSPARENT_ARTIFACT_DIR/shard-assign" files --shard-dir "$TRANSPARENT_SHARD_SOURCE" \
+    --assignment "$TRANSPARENT_ASSIGNMENT" --worker-id "$id" >"$list"
+  # -r explicitly: --files-from does not imply recursion into the listed
+  # directories. No --delete: the previous set stays where its unit points.
+  rsync -a -r --files-from="$list" --info=stats1 \
+    -e "ssh $(ssh_opts | tr '\n' ' ')" \
+    "$TRANSPARENT_SHARD_SOURCE/" \
+    "$TRANSPARENT_DEPLOY_USER@$host:$dest/"
+  rm -f "$list"
+  }
+  local -a pids=() ids=()
+  local id log
+  for id in $(worker_ids); do
+    log="$(mktemp)"
+    prepare_worker "$id" >"$log" 2>&1 &
+    pids+=($!); ids+=("$id:$log")
   done
+  local i failed=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then failed=1; fi
+    cat "${ids[$i]#*:}"; rm -f "${ids[$i]#*:}"
+  done
+  [[ "$failed" -eq 0 ]] || fail "staging or copying failed on at least one worker; see above"
   if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
     local host_name="${TRANSPARENT_PUBLIC_URL#https://}"
     local caddyfile="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.router.rendered"
@@ -768,8 +789,8 @@ REMOTE
 # budget the assignment does not fit all stop here.
 fleet_verify_prepared() {
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
-  local id host
-  for id in $(worker_ids); do
+  verify_worker() {
+    local id="$1" host
     host="$(worker_field "$id" ssh_host)"
     echo "== verify prepared $id ($host)"
     host_ssh "$host" bash -s -- "$staged" <<'REMOTE'
@@ -783,7 +804,21 @@ args="${args//\/opt\/transparent-pir\/assignments\//$staged/}"
 # shellcheck disable=SC2086
 "$staged/transparent-shard-server" $args --verify-only
 REMOTE
+  }
+  # Every worker verifies at once; each reads its own disk.
+  local -a pids=() logs=()
+  local id log
+  for id in $(worker_ids); do
+    log="$(mktemp)"
+    verify_worker "$id" >"$log" 2>&1 &
+    pids+=($!); logs+=("$log")
   done
+  local i failed=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then failed=1; fi
+    cat "${logs[$i]}"; rm -f "${logs[$i]}"
+  done
+  [[ "$failed" -eq 0 ]] || fail "verification failed on at least one worker; see above"
 }
 
 # Polls a worker's readiness over the VPC until it reports ready under the
@@ -818,12 +853,11 @@ fleet_activate_workers() {
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   local assignment_sha
   assignment_sha="$(assignment_digest)"
-  local id host upstream
-  for id in $(worker_ids_in_activation_order); do
+  activate_worker() {
+    local id="$1" host upstream
     host="$(worker_field "$id" ssh_host)"
     upstream="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .upstream' "$TRANSPARENT_ASSIGNMENT")"
     echo "== activate $id ($host)"
-    ACTIVATED_WORKERS+=("$host")
     host_ssh "$host" bash -s -- "$staged" "$TRANSPARENT_RELEASE_SHA" "$assignment_sha" <<'REMOTE'
 set -euo pipefail
 staged="$1"; sha="$2"; assignment_sha="$3"
@@ -849,10 +883,49 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now transparent-shard-server.service
 printf '%s\n' "$sha" | sudo tee /opt/transparent-pir/current-release >/dev/null
 REMOTE
-    # Warm before the next worker: a replica out of rotation is one the
-    # router's health check already sees as down; two at once halves the pool.
     wait_ready "$id" "$upstream" "$assignment_sha"
     host_ssh "$host" "rm -rf $(printf %q "$staged")"
+  }
+  local id host
+  # Archive owners hold disjoint ranges, so activating them together makes
+  # the whole archive unavailable at once instead of half at a time. That is
+  # acceptable on a first activation or when the operator says so
+  # (TRANSPARENT_OWNER_ACTIVATION=parallel), and halves a cold start whose
+  # length is the owners' warm-up; the default keeps one owner serving.
+  local -a owners=() replicas=()
+  for id in $(worker_ids_in_activation_order); do
+    if [[ "$(worker_field "$id" role)" == "archive-owner" ]]; then owners+=("$id"); else replicas+=("$id"); fi
+  done
+  if [[ "${TRANSPARENT_OWNER_ACTIVATION:-serial}" == "parallel" && "${#owners[@]}" -gt 1 ]]; then
+    echo "== activating ${#owners[@]} archive owners together"
+    local -a pids=() logs=()
+    local log
+    for id in "${owners[@]}"; do
+      host="$(worker_field "$id" ssh_host)"
+      ACTIVATED_WORKERS+=("$host")
+      log="$(mktemp)"
+      activate_worker "$id" >"$log" 2>&1 &
+      pids+=($!); logs+=("$log")
+    done
+    local i failed=0
+    for i in "${!pids[@]}"; do
+      if ! wait "${pids[$i]}"; then failed=1; fi
+      cat "${logs[$i]}"; rm -f "${logs[$i]}"
+    done
+    [[ "$failed" -eq 0 ]] || fail "an archive owner failed to activate; see above"
+  else
+    for id in "${owners[@]}"; do
+      host="$(worker_field "$id" ssh_host)"
+      ACTIVATED_WORKERS+=("$host")
+      activate_worker "$id"
+    done
+  fi
+  # Replicas one at a time: a replica out of rotation is one the router's
+  # health check already sees as down; two at once halves the pool.
+  for id in "${replicas[@]}"; do
+    host="$(worker_field "$id" ssh_host)"
+    ACTIVATED_WORKERS+=("$host")
+    activate_worker "$id"
   done
 }
 

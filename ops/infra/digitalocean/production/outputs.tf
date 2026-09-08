@@ -53,6 +53,7 @@ output "transparent_fleet_json" {
       upstream      = "${worker.ipv4_address_private}:8093"
       cache_bytes   = var.transparent_recent_cache_bytes
       memory_max    = var.transparent_recent_memory_max
+      build_slots   = 1
     }],
     [for worker in digitalocean_droplet.transparent_archive : {
       id            = worker.name
@@ -62,6 +63,7 @@ output "transparent_fleet_json" {
       upstream      = "${worker.ipv4_address_private}:8093"
       cache_bytes   = var.transparent_archive_cache_bytes
       memory_max    = var.transparent_archive_memory_max
+      build_slots   = var.transparent_archive_build_slots
     }],
   ))
 }

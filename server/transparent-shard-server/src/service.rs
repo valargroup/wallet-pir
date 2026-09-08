@@ -149,6 +149,9 @@ pub struct Inner {
     metrics: Arc<Metrics>,
     max_query_bytes: usize,
     warm: WarmState,
+    /// Builds the prewarm runs at once; the cache's own build slots bound
+    /// what any request can add on top.
+    build_slots: usize,
 }
 
 #[derive(Clone)]
@@ -265,6 +268,7 @@ impl ServiceState {
                     target,
                     finished: AtomicBool::new(false),
                 },
+                build_slots: config.build_slots.max(1),
             }),
         })
     }
@@ -287,35 +291,57 @@ impl ServiceState {
                 .current()
                 .map(|shard| shard.digest.clone())
                 .collect();
-            for (digest, table, segment) in inner.set.warm_targets() {
-                let Some(shard) = inner.set.revision(&digest) else {
-                    continue;
-                };
-                let shared = state.shared(shard, table);
-                let Some(source) = shard.segment(table, segment).cloned() else {
-                    continue;
-                };
-                // A superseded revision is warmed only into free budget.
-                if !current.contains(&digest)
-                    && inner.cache.resident_bytes() + shared.reserved_bytes() > inner.cache.budget()
-                {
-                    continue;
-                }
-                match inner
-                    .cache
-                    .get((digest.clone(), table, segment), shared, source)
-                    .await
-                {
-                    Ok(handle) => {
-                        drop(handle);
-                        Metrics::incr(&inner.metrics.warm_runtimes);
+            // `build_slots` builds at once, in warm-target order. On a host
+            // with one slot this is the sequential prewarm; on an archive
+            // owner with more, the cold start divides by the slot count.
+            let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+                inner.set.warm_targets(),
+            )));
+            let current = Arc::new(current);
+            let mut workers = tokio::task::JoinSet::new();
+            for _ in 0..inner.build_slots {
+                let state = state.clone();
+                let queue = queue.clone();
+                let current = current.clone();
+                workers.spawn(async move {
+                    let inner = &state.inner;
+                    loop {
+                        let next = queue.lock().unwrap().pop_front();
+                        let Some((digest, table, segment)) = next else {
+                            break;
+                        };
+                        let Some(shard) = inner.set.revision(&digest) else {
+                            continue;
+                        };
+                        let shared = state.shared(shard, table);
+                        let Some(source) = shard.segment(table, segment).cloned() else {
+                            continue;
+                        };
+                        // A superseded revision is warmed only into free budget.
+                        if !current.contains(&digest)
+                            && inner.cache.resident_bytes() + shared.reserved_bytes()
+                                > inner.cache.budget()
+                        {
+                            continue;
+                        }
+                        match inner
+                            .cache
+                            .get((digest.clone(), table, segment), shared, source)
+                            .await
+                        {
+                            Ok(handle) => {
+                                drop(handle);
+                                Metrics::incr(&inner.metrics.warm_runtimes);
+                            }
+                            Err(error) => {
+                                tracing::warn!(shard = %digest, table = table.as_str(), segment, %error, "prewarm failed");
+                                Metrics::incr(&inner.metrics.prewarm_failed);
+                            }
+                        }
                     }
-                    Err(error) => {
-                        tracing::warn!(shard = %digest, table = table.as_str(), segment, %error, "prewarm failed");
-                        Metrics::incr(&inner.metrics.prewarm_failed);
-                    }
-                }
+                });
             }
+            while workers.join_next().await.is_some() {}
             Metrics::set(
                 &inner.metrics.prewarm_micros,
                 started.elapsed().as_micros() as u64,

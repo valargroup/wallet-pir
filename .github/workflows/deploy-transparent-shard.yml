@@ -51,6 +51,15 @@ on:
         required: false
         default: "0.15"
         type: string
+      owner_activation:
+        description: >-
+          Fleet modes only. serial keeps one archive owner serving while the
+          other restarts; parallel activates both at once, halving a cold
+          start at the cost of the whole archive being out until warm.
+        required: false
+        default: serial
+        type: choice
+        options: [serial, parallel]
       tested_locally:
         description: >-
           Skip the requirement for a successful CI run of the ref. Only when
@@ -215,6 +224,7 @@ jobs:
           # in one place; the router is optional until it exists.
           TRANSPARENT_FLEET_JSON: ${{ vars.TRANSPARENT_FLEET_JSON }}
           TRANSPARENT_ROUTER_HOST: ${{ vars.TRANSPARENT_ROUTER_HOST }}
+          TRANSPARENT_OWNER_ACTIVATION: ${{ inputs.owner_activation }}
           TRANSPARENT_ASSIGNMENT: ${{ github.workspace }}/artifact/assignment.json
         run: ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
 

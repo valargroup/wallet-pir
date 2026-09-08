@@ -189,3 +189,14 @@ variable "transparent_public_dns_target" {
     error_message = "Must be \"worker\" or \"router\"."
   }
 }
+
+variable "transparent_archive_build_slots" {
+  description = <<-EOT
+    Runtime builds an archive owner runs at once, for the prewarm and for
+    requests. Deployment records 1 as the initial value; the first fleet
+    activation measured one slot at about 4.4 s per table runtime, 12 minutes
+    per owner. Raising it is a measured decision recorded in deployment.md.
+  EOT
+  type        = number
+  default     = 1
+}
