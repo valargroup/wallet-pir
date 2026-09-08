@@ -10,6 +10,7 @@ Updated 2026-09-07. The accepted target is four small recent replicas and two la
 4. [Status](status.md): source-verified implementation and separately verified live state.
 5. [Remaining work](remaining-work.md): ordered deliverables, dependencies and acceptance gates.
 6. [Evidence](evidence/README.md): measurement provenance and limitations.
+7. [Wallet adapter contract](wallet-adapter.md): what a wallet supplies to, and may rely on from, the reference library.
 
 Do not infer live state from a plan, source code, a workflow default or an old handoff. Do not infer target settings from benchmark fixtures. An unresolved conflict is recorded in status rather than resolved by selecting the most recent prose.
 

@@ -122,6 +122,12 @@ resource "digitalocean_droplet" "transparent_worker" {
     packages          = jsonencode(concat(local.common_packages, ["caddy"]))
     deploy_public_key = var.transparent_worker_deploy_public_key
   })
+
+  # cloud-init runs once, at first boot. A plan that renders the template
+  # without the deploy key must not read as a reason to rebuild the host.
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 # The transparent two-tier fleet. Same VPC, tag and firewall as the pilot
