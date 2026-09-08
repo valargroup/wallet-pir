@@ -50,3 +50,12 @@ The current rollout is recorded in [continuous-publication evidence](evidence/co
 ## Decision and evidence state
 
 The user accepted the two-tier target on 2026-09-07. [Deployment](deployment.md) owns its settings. Full-chain uniform geometry and single-c8 evaluation/residency evidence exist; mixed publication evidence and limited target-host HTTP measurements are recorded; sustained capacity, cross-host scaling and mobile wallet latency remain open. [Remaining work](remaining-work.md) is the authoritative checklist.
+
+## Deployment runtime follow-up
+
+[Further live validation](evidence/deployment-runtime-followup-2026-09-08/README.md)
+confirmed four-slot startup prewarm at 17.644 seconds on recent-01 and 125.416
+seconds on archive-01 from current-process journals. Three new encrypted public
+row probes passed. Four workers still lack disk-cache configuration; recent-01
+has exhausted its disk-cache budget and rebuilds new tails without persisting
+them. A full-fleet deployment under ten minutes remains unverified.

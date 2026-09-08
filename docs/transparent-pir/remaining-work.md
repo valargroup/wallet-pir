@@ -141,9 +141,13 @@ Each completed gate links source commits, exact commands and evidence. Update st
   population, compatible restart, memory and disk headroom. All eleven baseline
   wallet cases passed; the final nine overlapped publisher upgrades.
   [Live evidence](evidence/deployment-runtime-live-2026-09-08/README.md).
-- [ ] Validate four-slot restores on live canaries. The single-slot archive
-  warm deployment took 746 seconds; continuous publication is now active,
-  preventing the fixed-publication rollout from safely continuing.
+- [x] Confirm four-slot restores on live canaries: publisher rollout journals
+  record 17.644-second recent and 125.416-second archive prewarm; archive
+  upgrade took 362.398 seconds. [Follow-up evidence](evidence/deployment-runtime-followup-2026-09-08/README.md).
+- [ ] Enable persistent caches on the remaining four workers and implement
+  publisher-aware disk-cache reclamation. The recent canary has exhausted its
+  cache budget and rebuilds new tail runtimes without persisting them. Continuous
+  publication requires a compatible rollout procedure before fleet timing tests.
 - [ ] Measure a compatible-binary fleet deployment below ten minutes, excluding
   build/CI; verify unchanged rollouts cause zero restarts and router-only changes
   leave workers serving. Preserve decisions, phase timings and regression results.
