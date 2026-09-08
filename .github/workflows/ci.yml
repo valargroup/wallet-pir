@@ -15,7 +15,10 @@ jobs:
   lint-and-test:
     name: Enhance PIR
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The workspace builds RocksDB from source since the state-backed ingest;
+    # a cold build plus the release test suite no longer fits in 25 minutes
+    # on a hosted runner, and every cancelled run left no cache behind.
+    timeout-minutes: 90
     env:
       # librocksdb-sys turns on SSE4.2 for its CRC32C code from the host's
       # features and cc-rs never adds -mpclmul, so the intrinsic that path
@@ -29,6 +32,8 @@ jobs:
           toolchain: 1.91.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       # transparent-filter-server links the node's RocksDB through
       # librocksdb-sys, whose build generates bindings with libclang.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev
