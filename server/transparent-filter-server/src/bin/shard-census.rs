@@ -1216,11 +1216,31 @@ sweeps do not apply to it"
             if entry.geometry != geometry {
                 differences.push(format!("geometry {} vs {geometry}", entry.geometry));
             }
-            if entry.scripts != shard.occupancy.scripts {
+            // The builder leaves out a script longer than a directory row can
+            // name and counts it in the manifest as excluded; the sealer,
+            // which never sees a script's length, counts it. The manifest
+            // beside the map says how many, so the two counts are compared
+            // on the same footing and the gap is printed rather than hidden.
+            let excluded = std::fs::read(
+                path.parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(&entry.manifest_digest)
+                    .join("manifest.json"),
+            )
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
+            .and_then(|manifest| manifest["occupancy"]["excluded_scripts"].as_u64())
+            .unwrap_or(0);
+            if entry.scripts + excluded != shard.occupancy.scripts {
                 differences.push(format!(
-                    "scripts {} vs {}",
+                    "scripts {} (+{excluded} excluded as oversized) vs {}",
                     entry.scripts, shard.occupancy.scripts
                 ));
+            } else if excluded > 0 {
+                println!(
+                    "compare: shard {} indexes {} scripts and excludes {excluded} oversized",
+                    entry.shard_id, entry.scripts
+                );
             }
             if entry.page_rows != shard.occupancy.page_rows {
                 differences.push(format!(
