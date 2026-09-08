@@ -52,6 +52,12 @@ struct Cli {
     /// fetches public bytes from the origin it makes private requests to.
     #[arg(long)]
     shard_dir: Option<PathBuf>,
+    /// Open `--shard-dir`, print its identity as JSON, and exit without
+    /// serving. The filter-only deploy runs this with the staged binary
+    /// before the running service is touched, so a set this build cannot
+    /// read is caught while the old service still answers.
+    #[arg(long, requires = "shard_dir")]
+    check_shard_dir: bool,
 }
 
 #[tokio::main]
@@ -60,6 +66,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
+    if cli.check_shard_dir {
+        let dir = cli.shard_dir.as_ref().expect("clap requires it");
+        let filters = ShardFilters::open(dir)?;
+        let map = filters.map();
+        println!(
+            "{}",
+            serde_json::json!({
+                "shard_dir": dir,
+                "schema": transparent_shard::manifest::SCHEMA,
+                "profile": map.profile,
+                "network": map.network,
+                "genesis_hash": map.genesis_hash,
+                "shards": filters.shard_count(),
+                "start_height": map.start_height,
+                "covered_through": filters.covered_through(),
+                "map_sha256": filters.map_digest(),
+            })
+        );
+        return Ok(());
+    }
 
     let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
     // Chain identity comes from the node, once, and is then pinned in the

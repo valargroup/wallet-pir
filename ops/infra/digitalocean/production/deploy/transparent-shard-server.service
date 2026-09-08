@@ -24,7 +24,13 @@ Type=simple
 # mis-parse here is a failed start, and a failed start is a rollback onto a
 # shard set the restored binary may not be able to read. The line is long; the
 # alternative is a parsing surface with no check in front of it.
-ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir TRANSPARENT_SHARD_SET_PATH --cache-bytes 8589934592 --build-slots 1 --query-slots 2
+#
+# TRANSPARENT_CACHE_BYTES, TRANSPARENT_MEMORY_MAX and TRANSPARENT_EXTRA_ARGS are
+# substituted the same way. A single-host pilot gets 8 GiB, 12G and nothing
+# extra; a fleet worker gets its roster's budgets and
+# `--assignment <file> --worker-id <id> --prune-excess`, under which it loads
+# only its assigned tables, prewarms them, and reports ready only once warm.
+ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir TRANSPARENT_SHARD_SET_PATH --cache-bytes TRANSPARENT_CACHE_BYTES --build-slots 1 --query-slots 2 TRANSPARENT_EXTRA_ARGS
 Restart=on-failure
 RestartSec=10
 User=root
@@ -45,7 +51,7 @@ Environment=RUST_LOG=info
 # Re-measure with `shard-residency` before raising --cache-bytes. Swap is off so
 # a reservation that drifted low fails loudly here rather than degrading into
 # thrash.
-MemoryMax=12G
+MemoryMax=TRANSPARENT_MEMORY_MAX
 MemorySwapMax=0
 
 [Install]

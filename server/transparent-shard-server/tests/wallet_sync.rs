@@ -982,10 +982,11 @@ async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
             .unwrap()
             .text()
             .unwrap();
+        // Series carry labels, so match the name and read the last field.
         let queries: u64 = metrics
             .lines()
-            .find(|line| line.starts_with("transparent_shard_queries_total "))
-            .and_then(|line| line.split(' ').nth(1))
+            .find(|line| line.starts_with("transparent_shard_queries_total"))
+            .and_then(|line| line.rsplit(' ').next())
             .and_then(|value| value.parse().ok())
             .unwrap();
         (error, queries)

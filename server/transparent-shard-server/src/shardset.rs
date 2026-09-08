@@ -55,10 +55,12 @@
 //! same bytes at the same paths on its own host, so a wallet that wants two
 //! origins still has them.
 
+use crate::assignment::{Assignment, WorkerRole, WorkerScope};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use transparent_filter::{filter_hash, ShardMap};
 use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
 use transparent_shard::manifest::{ShardManifest, SCHEMA};
@@ -70,6 +72,69 @@ use transparent_shard::manifest::{ShardManifest, SCHEMA};
 /// case — a wallet holding setup for the revision that was current when it
 /// started — and the publisher only ever supersedes the tail.
 pub const DEFAULT_RETAIN_REVISIONS: usize = 3;
+
+/// Which shards of the set this process verifies tables for.
+#[derive(Clone)]
+pub enum LoadScope {
+    /// Every shard the map names. The pilot and single-worker shape.
+    Whole,
+    /// Only the shards an assignment gives this worker. Every other shard's
+    /// manifest and filter are still loaded, so the worker answers the public
+    /// routes for the whole set; only its tables are a subset.
+    Assigned {
+        assignment: Arc<Assignment>,
+        worker_id: String,
+    },
+}
+
+/// How a set is loaded.
+#[derive(Clone)]
+pub struct LoadOptions {
+    /// Superseded revisions kept per shard, beyond the one the map names.
+    pub retain_revisions: usize,
+    /// Bytes of superseded revisions kept per shard, on disk, beyond the
+    /// current one. `None` bounds by count alone.
+    pub retain_bytes: Option<u64>,
+    /// Whether revisions past the bound are reported prunable rather than
+    /// refused. The whole-set pilot refuses; a fleet worker reports, and the
+    /// deploy prunes after activation.
+    pub prune_excess: bool,
+    pub scope: LoadScope,
+}
+
+impl LoadOptions {
+    pub fn whole(retain_revisions: usize) -> Self {
+        Self {
+            retain_revisions,
+            retain_bytes: None,
+            prune_excess: false,
+            scope: LoadScope::Whole,
+        }
+    }
+}
+
+/// A superseded revision on disk that the retention bound does not cover.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrunableRevision {
+    pub path: PathBuf,
+    pub shard_id: u64,
+    pub revision: u32,
+    pub digest: String,
+    pub bytes: u64,
+}
+
+/// A shard revision's manifest and filter, without its tables.
+///
+/// Kept for every current shard of the set whatever the assignment, so any
+/// worker can serve the map, the filters and the manifests. A few hundred
+/// kilobytes per shard.
+pub struct RevisionMeta {
+    pub manifest: ShardManifest,
+    pub digest: String,
+    pub canonical_manifest: Vec<u8>,
+    pub filter: Vec<u8>,
+    pub geometry: &'static Geometry,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
@@ -282,7 +347,16 @@ impl LoadedShard {
         }
     }
 
-    fn open(dir: &Path) -> Result<Self, LoadError> {
+    /// Reads and checks a revision directory's manifest and filter, without
+    /// touching its tables.
+    ///
+    /// Everything about the revision's identity is settled here: the
+    /// directory is named by the manifest digest, the schema is this build's,
+    /// the geometry is registered, and the filter digests to what the
+    /// manifest says. What is *not* settled is whether the tables are present
+    /// and intact, which `verify_tables` does for the shards this process
+    /// serves.
+    pub fn read_manifest(dir: &Path) -> Result<RevisionMeta, LoadError> {
         let raw = read(&dir.join("manifest.json"))?;
         let manifest: ShardManifest =
             serde_json::from_slice(&raw).map_err(|source| LoadError::Json {
@@ -321,6 +395,44 @@ impl LoadedShard {
             ))
         })?;
 
+        let filter = read(&dir.join("filter.bin"))?;
+        if filter_hash(&filter).to_display_hex() != manifest.filter_hash {
+            return Err(LoadError::Invalid(format!(
+                "filter of shard {} does not match its manifest digest",
+                manifest.shard_id
+            )));
+        }
+        let canonical_manifest = manifest.canonical_bytes();
+        Ok(RevisionMeta {
+            manifest,
+            digest,
+            canonical_manifest,
+            filter,
+            geometry,
+        })
+    }
+
+    /// Bytes this revision's tables occupy on disk, from the manifest.
+    pub fn table_bytes(meta: &RevisionMeta) -> u64 {
+        let geometry = meta.geometry;
+        let directory = meta.manifest.directory_segments.len() as u64
+            * geometry.directory_rows
+            * geometry.directory_row_bytes as u64;
+        let pages = meta.manifest.page_segments.len() as u64
+            * geometry.page_rows
+            * geometry.page_row_bytes as u64;
+        directory + pages
+    }
+
+    /// Verifies every table segment of a revision and produces the loaded shard.
+    pub fn verify_tables(dir: &Path, meta: RevisionMeta) -> Result<Self, LoadError> {
+        let RevisionMeta {
+            manifest,
+            digest,
+            canonical_manifest,
+            filter,
+            geometry,
+        } = meta;
         // Every segment must match the named geometry, not just the first: a
         // segment with its own widths would silently need its own parameters,
         // and sharing one set per geometry is the whole point of naming it.
@@ -367,15 +479,6 @@ impl LoadedShard {
         let directory = tables.next().expect("directory segments");
         let pages = tables.next().expect("page segments");
 
-        let filter = read(&dir.join("filter.bin"))?;
-        if filter_hash(&filter).to_display_hex() != manifest.filter_hash {
-            return Err(LoadError::Invalid(format!(
-                "filter of shard {} does not match its manifest digest",
-                manifest.shard_id
-            )));
-        }
-
-        let canonical_manifest = manifest.canonical_bytes();
         Ok(Self {
             manifest,
             digest,
@@ -407,6 +510,13 @@ pub struct ShardSet {
     /// Index into `revisions` by manifest digest, for revision-addressed
     /// requests.
     by_digest: BTreeMap<String, usize>,
+    /// The current revision's manifest and filter for every shard the map
+    /// names, tables or not. What the public routes are answered from.
+    metadata: BTreeMap<String, RevisionMeta>,
+    /// This worker's place in the assignment, when it has one.
+    scope: Option<WorkerScope>,
+    /// Superseded revisions past the retention bound, when pruning is allowed.
+    prunable: Vec<PrunableRevision>,
 }
 
 impl ShardSet {
@@ -418,6 +528,16 @@ impl ShardSet {
     /// shards were silently missing would advance coverage over history it
     /// never retrieved.
     pub fn open(dir: &Path, retain_revisions: usize) -> Result<Self, LoadError> {
+        Self::open_with(dir, &LoadOptions::whole(retain_revisions))
+    }
+
+    /// Loads the set under explicit options; see [`LoadOptions`].
+    ///
+    /// Under an assignment, every directory's manifest and filter are read
+    /// and checked, the map is checked against the assignment, and tables are
+    /// verified only for assigned shards. Unassigned shards' table files may
+    /// be absent; their manifests and filters may not.
+    pub fn open_with(dir: &Path, options: &LoadOptions) -> Result<Self, LoadError> {
         let raw = read(&dir.join("shards.json"))?;
         let map: ShardMap = serde_json::from_slice(&raw).map_err(|source| LoadError::Json {
             path: dir.join("shards.json"),
@@ -426,12 +546,44 @@ impl ShardSet {
         map.check_shape()
             .map_err(|error| LoadError::Invalid(format!("shard map is malformed: {error}")))?;
 
+        // Serialized here, once, so what is served and what is digested are the
+        // same bytes.
+        let map_json = serde_json::to_vec(&map).map_err(|source| LoadError::Json {
+            path: dir.join("shards.json"),
+            source,
+        })?;
+        let map_digest = hex::encode(Sha256::digest(&map_json));
+
+        // The assignment is checked against the map before any directory is
+        // read: a worker given the wrong assignment must not spend minutes
+        // verifying tables it will then refuse to serve.
+        let scope = match &options.scope {
+            LoadScope::Whole => None,
+            LoadScope::Assigned {
+                assignment,
+                worker_id,
+            } => {
+                assignment
+                    .check_against(&map, &map_digest)
+                    .map_err(|error| LoadError::Invalid(error.to_string()))?;
+                Some(
+                    assignment
+                        .scope_for(worker_id)
+                        .map_err(|error| LoadError::Invalid(error.to_string()))?,
+                )
+            }
+        };
+        let assigned = |shard_id: u64| match &scope {
+            None => true,
+            Some(scope) => scope.assigned.contains(&shard_id),
+        };
+
         // Index by manifest digest, which is the identity of a *revision*.
         // Indexing by shard id would make a republished tail — old and new
         // revision directories side by side, which is exactly what the
         // publisher writes — look like two directories claiming one shard, and
         // refuse to start on a set the publisher considers well formed.
-        let mut by_digest: BTreeMap<String, LoadedShard> = BTreeMap::new();
+        let mut by_digest: BTreeMap<String, (PathBuf, RevisionMeta)> = BTreeMap::new();
         for entry in std::fs::read_dir(dir).map_err(|source| LoadError::Io {
             path: dir.to_path_buf(),
             source,
@@ -443,12 +595,15 @@ impl ShardSet {
             if !entry.path().is_dir() {
                 continue;
             }
-            let shard = LoadedShard::open(&entry.path())?;
+            let meta = LoadedShard::read_manifest(&entry.path())?;
             // A digest names its own content, so two directories cannot hold
             // the same digest and different bytes. One filesystem path per
             // digest is still required, so the source of a revision is
             // unambiguous.
-            if by_digest.insert(shard.digest.clone(), shard).is_some() {
+            if by_digest
+                .insert(meta.digest.clone(), (entry.path(), meta))
+                .is_some()
+            {
                 return Err(LoadError::Invalid(format!(
                     "two directories in {} hold the same manifest digest",
                     dir.display()
@@ -458,15 +613,17 @@ impl ShardSet {
 
         let mut revisions: Vec<LoadedShard> = Vec::with_capacity(map.shards.len());
         let mut current: BTreeMap<u64, usize> = BTreeMap::new();
+        let mut metadata: BTreeMap<String, RevisionMeta> = BTreeMap::new();
+        let mut current_revision: BTreeMap<u64, (u32, bool)> = BTreeMap::new();
         let mut parent_digest = String::new();
         for entry in &map.shards {
-            let shard = by_digest.remove(&entry.manifest_digest).ok_or_else(|| {
+            let (path, meta) = by_digest.remove(&entry.manifest_digest).ok_or_else(|| {
                 LoadError::Invalid(format!(
                     "the map names revision {} of shard {} but it is absent",
                     entry.manifest_digest, entry.shard_id
                 ))
             })?;
-            let manifest = &shard.manifest;
+            let manifest = &meta.manifest;
             if manifest.shard_id != entry.shard_id
                 || manifest.geometry != entry.geometry
                 || manifest.start_height != entry.start_height
@@ -495,51 +652,119 @@ impl ShardSet {
                     entry.shard_id
                 )));
             }
-            parent_digest = shard.digest.clone();
-            current.insert(entry.shard_id, revisions.len());
-            revisions.push(shard);
+            parent_digest = meta.digest.clone();
+            current_revision.insert(entry.shard_id, (manifest.revision, manifest.sealed));
+            if assigned(entry.shard_id) {
+                let shard = LoadedShard::verify_tables(&path, meta)?;
+                metadata.insert(
+                    shard.digest.clone(),
+                    RevisionMeta {
+                        manifest: shard.manifest.clone(),
+                        digest: shard.digest.clone(),
+                        canonical_manifest: shard.canonical_manifest.clone(),
+                        filter: shard.filter.clone(),
+                        geometry: shard.geometry,
+                    },
+                );
+                current.insert(entry.shard_id, revisions.len());
+                revisions.push(shard);
+            } else {
+                metadata.insert(meta.digest.clone(), meta);
+            }
         }
 
         // What is left is either a superseded revision of a shard the map names
         // — which is retained so a wallet mid-sync can still be answered from
         // the revision it fetched setup for — or something that does not belong
-        // in this set at all.
-        let mut retained: BTreeMap<u64, usize> = BTreeMap::new();
-        for (digest, shard) in by_digest {
-            let shard_id = shard.manifest.shard_id;
-            let Some(&index) = current.get(&shard_id) else {
+        // in this set at all. Under an assignment, superseded revisions of
+        // unassigned shards are simply not this worker's concern.
+        struct Superseded {
+            revision: u32,
+            bytes: u64,
+            digest: String,
+            path: PathBuf,
+            meta: RevisionMeta,
+        }
+        let mut retained: BTreeMap<u64, Vec<Superseded>> = BTreeMap::new();
+        for (digest, (path, meta)) in by_digest {
+            let shard_id = meta.manifest.shard_id;
+            let Some(&(published_revision, published_sealed)) = current_revision.get(&shard_id)
+            else {
                 return Err(LoadError::Invalid(format!(
                     "revision {digest} is on disk but shard {shard_id} is not in the map"
                 )));
             };
-            let published = &revisions[index].manifest;
             // A revision at or past the current one is not a predecessor. It is
             // either the same content under a second digest or a publication
             // the map has not caught up with, and serving either would mean
             // answering for a revision no wallet was told about.
-            if shard.manifest.revision >= published.revision {
+            if meta.manifest.revision >= published_revision {
                 return Err(LoadError::Invalid(format!(
                     "revision {} of shard {shard_id} is on disk but the map names revision {}",
-                    shard.manifest.revision, published.revision
+                    meta.manifest.revision, published_revision
                 )));
             }
             // A sealed shard is final, so it has no superseded revisions to
             // retain; one on disk means the set was assembled from two
             // different partitions of the chain.
-            if published.sealed && shard.manifest.sealed {
+            if published_sealed && meta.manifest.sealed {
                 return Err(LoadError::Invalid(format!(
                     "shard {shard_id} is sealed but has a second sealed revision on disk"
                 )));
             }
-            let held = retained.entry(shard_id).or_default();
-            *held += 1;
-            if *held > retain_revisions {
-                return Err(LoadError::Invalid(format!(
-                    "shard {shard_id} has more than {retain_revisions} superseded revisions on \
-                     disk; prune the set or raise --retain-revisions"
-                )));
+            if !assigned(shard_id) {
+                continue;
             }
-            revisions.push(shard);
+            let bytes = LoadedShard::table_bytes(&meta) + meta.filter.len() as u64;
+            retained.entry(shard_id).or_default().push(Superseded {
+                revision: meta.manifest.revision,
+                bytes,
+                digest,
+                path,
+                meta,
+            });
+        }
+
+        // Newest first; the bound keeps what a lagging wallet is likeliest to
+        // still hold and lets the oldest go.
+        let mut prunable = Vec::new();
+        for (shard_id, mut held) in retained {
+            held.sort_by(|a, b| b.revision.cmp(&a.revision));
+            let mut kept = 0usize;
+            let mut kept_bytes = 0u64;
+            for Superseded {
+                revision,
+                bytes,
+                digest,
+                path,
+                meta,
+            } in held
+            {
+                let within = kept < options.retain_revisions
+                    && options
+                        .retain_bytes
+                        .is_none_or(|bound| kept_bytes + bytes <= bound);
+                if within {
+                    kept += 1;
+                    kept_bytes += bytes;
+                    let shard = LoadedShard::verify_tables(&path, meta)?;
+                    revisions.push(shard);
+                } else if options.prune_excess {
+                    prunable.push(PrunableRevision {
+                        path,
+                        shard_id,
+                        revision,
+                        digest,
+                        bytes,
+                    });
+                } else {
+                    return Err(LoadError::Invalid(format!(
+                        "shard {shard_id} has more than {} superseded revisions on disk; \
+                         prune the set or raise --retain-revisions",
+                        options.retain_revisions
+                    )));
+                }
+            }
         }
 
         let by_digest = revisions
@@ -548,14 +773,6 @@ impl ShardSet {
             .map(|(index, shard)| (shard.digest.clone(), index))
             .collect();
 
-        // Serialized here, once, so what is served and what is digested are the
-        // same bytes.
-        let map_json = serde_json::to_vec(&map).map_err(|source| LoadError::Json {
-            path: dir.join("shards.json"),
-            source,
-        })?;
-        let map_digest = hex::encode(Sha256::digest(&map_json));
-
         Ok(Self {
             map,
             map_json,
@@ -563,6 +780,9 @@ impl ShardSet {
             revisions,
             current,
             by_digest,
+            metadata,
+            scope,
+            prunable,
         })
     }
 
@@ -587,11 +807,103 @@ impl ShardSet {
 
     /// Shards the map names.
     pub fn len(&self) -> usize {
-        self.current.len()
+        self.map.shards.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.current.is_empty()
+        self.map.shards.is_empty()
+    }
+
+    /// Shards this process holds tables for.
+    pub fn assigned_len(&self) -> usize {
+        self.current.len()
+    }
+
+    /// The current revision of every shard this process holds tables for.
+    pub fn current(&self) -> impl Iterator<Item = &LoadedShard> {
+        self.current
+            .values()
+            .map(move |&index| &self.revisions[index])
+    }
+
+    /// Whether this process holds tables for `shard_id`.
+    pub fn is_assigned(&self, shard_id: u64) -> bool {
+        self.current.contains_key(&shard_id)
+    }
+
+    /// Whether the map names `shard_id` at all.
+    pub fn names(&self, shard_id: u64) -> bool {
+        (shard_id as usize) < self.map.shards.len()
+    }
+
+    /// The current revision's manifest and filter for any shard the map
+    /// names, assigned or not.
+    pub fn meta(&self, shard_id: u64) -> Option<&RevisionMeta> {
+        self.map
+            .shards
+            .get(shard_id as usize)
+            .and_then(|entry| self.metadata.get(&entry.manifest_digest))
+    }
+
+    /// The manifest and filter of a revision by digest: the current revision
+    /// of any shard, or a superseded revision this process holds.
+    pub fn meta_by_digest(&self, digest: &str) -> Option<(&ShardManifest, &[u8], &[u8])> {
+        if let Some(meta) = self.metadata.get(digest) {
+            return Some((&meta.manifest, &meta.canonical_manifest, &meta.filter));
+        }
+        self.revision(digest).map(|shard| {
+            (
+                &shard.manifest,
+                shard.canonical_manifest.as_slice(),
+                shard.filter.as_slice(),
+            )
+        })
+    }
+
+    /// This worker's place in the assignment, if it loaded under one.
+    pub fn scope(&self) -> Option<&WorkerScope> {
+        self.scope.as_ref()
+    }
+
+    /// Superseded revisions the retention bound does not cover.
+    pub fn prunable(&self) -> &[PrunableRevision] {
+        &self.prunable
+    }
+
+    /// Every runtime this worker should hold warm, in the order to build
+    /// them: current revisions of assigned shards, newest shard first for a
+    /// recent replica so the tail wallets hit hardest is ready first, then
+    /// retained superseded revisions.
+    pub fn warm_targets(&self) -> Vec<(String, Table, u32)> {
+        let mut current: Vec<&LoadedShard> =
+            self.current.values().map(|&i| &self.revisions[i]).collect();
+        match self.scope.as_ref().map(|scope| scope.role) {
+            Some(WorkerRole::RecentReplica) => {
+                current.sort_by(|a, b| b.manifest.shard_id.cmp(&a.manifest.shard_id))
+            }
+            _ => current.sort_by_key(|shard| shard.manifest.shard_id),
+        }
+        let current_digests: BTreeSet<&str> = current.iter().map(|s| s.digest.as_str()).collect();
+        let mut superseded: Vec<&LoadedShard> = self
+            .revisions
+            .iter()
+            .filter(|shard| !current_digests.contains(shard.digest.as_str()))
+            .collect();
+        superseded.sort_by(|a, b| {
+            b.manifest
+                .revision
+                .cmp(&a.manifest.revision)
+                .then(b.manifest.shard_id.cmp(&a.manifest.shard_id))
+        });
+        let mut targets = Vec::new();
+        for shard in current.into_iter().chain(superseded) {
+            for table in [Table::Directory, Table::Pages] {
+                for segment in 0..shard.segments(table) {
+                    targets.push((shard.digest.clone(), table, segment));
+                }
+            }
+        }
+        targets
     }
 
     /// Every revision held, current and superseded.

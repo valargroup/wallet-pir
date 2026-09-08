@@ -348,20 +348,28 @@ async fn the_operator_payloads_match_what_ops_parses() {
     );
     assert_eq!(init["shards"], serde_json::json!(map.shards.len()));
 
-    // Nothing parses /v1/ready's body — the deploy only asserts it 404s through
-    // the public edge — so it is checked here rather than kept as a fixture.
+    // The deploy reads /v1/ready over the VPC to assert which map and
+    // assignment a worker runs under, so its body is a fixture too. In
+    // loaded-only mode the worker is ready as soon as the set is loaded.
     let (status, body) = get(&state, "/v1/ready").await;
     assert_eq!(status, StatusCode::OK);
     let ready: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(ready, serde_json::json!({ "ready": true }));
+    assert_eq!(ready["ready"], serde_json::json!(true));
+    assert_eq!(ready["mode"], serde_json::json!("loaded-only"));
+    assert_eq!(ready["map_sha256"], health["map_sha256"]);
 
     let (status, body) = get(&state, "/metrics").await;
     assert_eq!(status, StatusCode::OK);
     let rendered = String::from_utf8(body).expect("metrics are utf-8");
-    assert!(rendered.contains("transparent_shard_shards "));
+    assert!(rendered.contains("transparent_shard_shards{map_sha256="));
+    assert!(rendered.contains("transparent_shard_build_seconds_bucket{"));
 
     golden("init.json", &init);
     golden("health.json", &health);
+    // The prewarm timing is a measurement, not a contract.
+    let mut ready_fixture = ready.clone();
+    ready_fixture["prewarm_seconds"] = serde_json::json!(0.0);
+    golden("ready.json", &ready_fixture);
     golden(
         "shards.json",
         &serde_json::from_slice(&std::fs::read(dir.path().join("shards.json")).unwrap()).unwrap(),

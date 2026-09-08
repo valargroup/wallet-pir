@@ -62,6 +62,7 @@ fixture_for() {
   case "$1" in
     JQ_MAP_*) echo "$FIXTURES/shards.json" ;;
     JQ_HEALTH_*) echo "$FIXTURES/health.json" ;;
+    JQ_READY_*) echo "$FIXTURES/ready.json" ;;
     JQ_INIT_*) echo "$FIXTURES/init.json" ;;
     *) return 1 ;;
   esac
@@ -70,7 +71,7 @@ fixture_for() {
 echo "== ops/scripts/deploy-transparent-shard.sh: compile and evaluate"
 while IFS=$'\t' read -r -d '' name program; do
   if ! fixture="$(fixture_for "$name")"; then
-    bad "$name" "no fixture: name it JQ_MAP_*, JQ_HEALTH_* or JQ_INIT_*"
+    bad "$name" "no fixture: name it JQ_MAP_*, JQ_HEALTH_*, JQ_READY_* or JQ_INIT_*"
     continue
   fi
   [[ -f "$fixture" ]] || {
@@ -117,6 +118,22 @@ while IFS=$'\t' read -r -d '' name program; do
     fi
   fi
 done < <(ops/scripts/deploy-enhance-pir.sh jq-programs)
+
+# The filter-only deploy reads the filter service's own payloads, which have
+# no fixture here; compiled only, like the enhance programs.
+echo "== ops/scripts/deploy-transparent-filter.sh: compile only (no fixtures yet)"
+while IFS=$'\t' read -r -d '' name program; do
+  if output="$(jq -n "$program" 2>&1 >/dev/null)"; then
+    note "$name" "compiles"
+  else
+    status=$?
+    if [[ "$status" -eq 3 ]]; then
+      bad "$name" "does not compile: ${output//$'\n'/ }"
+    else
+      note "$name" "compiles"
+    fi
+  fi
+done < <(ops/scripts/deploy-transparent-filter.sh jq-programs)
 
 # The published fixture is a real ShardMap, so the script's own offline gate
 # should accept it -- CI's hand-written one carries no `geometry` key and only

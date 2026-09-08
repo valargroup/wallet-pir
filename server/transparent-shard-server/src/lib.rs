@@ -8,7 +8,10 @@
 //! that wants a single endpoint has that too.
 
 pub mod admission;
+pub mod assignment;
 pub mod metrics;
+pub mod procmem;
+pub mod router;
 pub mod runtime;
 pub mod service;
 pub mod shardset;

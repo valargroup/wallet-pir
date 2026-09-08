@@ -1,0 +1,90 @@
+# Do not edit: the assignment is the source, and every worker reports
+# the assignment digest it runs under.
+transparent.example {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+
+	request_body {
+		max_size 1MB
+	}
+
+	@recent path_regexp ^/v1/shards/(4|5)/revisions/[0-9a-f]{64}/(setup|query)/
+	handle @recent {
+		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
+			lb_policy round_robin
+			lb_try_duration 2s
+			health_uri /v1/ready
+			health_interval 5s
+			health_timeout 3s
+			fail_duration 30s
+		}
+	}
+
+	@owner_archive_01 path_regexp ^/v1/shards/(0|1)/revisions/[0-9a-f]{64}/(setup|query)/
+	handle @owner_archive_01 {
+		reverse_proxy 10.0.1.1:8093 {
+			health_uri /v1/ready
+			health_interval 5s
+			health_timeout 3s
+			fail_duration 30s
+		}
+	}
+
+	@owner_archive_02 path_regexp ^/v1/shards/(2|3)/revisions/[0-9a-f]{64}/(setup|query)/
+	handle @owner_archive_02 {
+		reverse_proxy 10.0.1.2:8093 {
+			health_uri /v1/ready
+			health_interval 5s
+			health_timeout 3s
+			fail_duration 30s
+		}
+	}
+
+	@manifest path_regexp ^/v1/shards/[0-9]+/revisions/[0-9a-f]{64}/manifest$
+	handle @manifest {
+		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
+			lb_policy round_robin
+			health_uri /v1/ready
+			health_interval 5s
+			health_timeout 3s
+			fail_duration 30s
+		}
+	}
+
+	handle /v1/shards/init {
+		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
+			lb_policy round_robin
+			health_uri /v1/ready
+			health_interval 5s
+			health_timeout 3s
+			fail_duration 30s
+		}
+	}
+
+	handle /v1/shards {
+		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
+			lb_policy round_robin
+			health_uri /v1/ready
+			health_interval 5s
+			health_timeout 3s
+			fail_duration 30s
+		}
+	}
+
+	handle /v1/filters/* {
+		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
+			lb_policy round_robin
+			health_uri /v1/ready
+			health_interval 5s
+			health_timeout 3s
+			fail_duration 30s
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}

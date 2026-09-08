@@ -1,4 +1,6 @@
 {
+  "assigned_shards": 2,
+  "assignment_sha256": null,
   "covered_through": 3428222,
   "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
   "geometries": [
@@ -92,7 +94,9 @@
   "map_sha256": "e5500b870c530513d05442b824c575263d460afcde19c8bb703b42f12ccae732",
   "network": "main",
   "profile": "zcash-transparent-range-v1",
+  "role": null,
   "schema": "transparent-shard-v7",
   "shards": 2,
-  "start_height": 3428143
+  "start_height": 3428143,
+  "worker_id": null
 }

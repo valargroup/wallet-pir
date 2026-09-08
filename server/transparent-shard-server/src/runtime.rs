@@ -374,6 +374,7 @@ impl RuntimeCache {
                             &self.metrics.build_micros,
                             started.elapsed().as_micros() as u64,
                         );
+                        self.metrics.build_seconds.observe(started.elapsed());
                     }
                     Err(_) => Metrics::incr(&self.metrics.build_failures),
                 }

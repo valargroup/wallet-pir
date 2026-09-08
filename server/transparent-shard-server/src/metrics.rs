@@ -10,11 +10,86 @@
 //! healthy from outside. So the numbers that decide whether a worker is sized
 //! correctly are counters here rather than inferences from latency.
 //!
+//! A fleet changes it again. Every series carries the worker's id, role and the
+//! digests of the map and assignment it runs under, so a dashboard over many
+//! workers can tell a replica from an owner and a worker on the old assignment
+//! from one on the new. Cold-build latency is a histogram rather than a total,
+//! because the tail is what a wallet meets on a cold shard. And the process's
+//! real memory is sampled beside the cache's reservation, because the gap
+//! between them is what the memory budget has to cover.
+//!
 //! These are operator bytes. The edge does not route them; the deploy asserts
 //! that, because the way it goes wrong is a route wider than intended and the
 //! failure is otherwise silent.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+/// Cold-build latency buckets, in seconds. Builds take a second or so at the
+/// recent geometry and around fourteen at the archive geometry on the
+/// measured host; the top bucket is for a host that is worse than measured.
+const BUILD_BUCKETS: [f64; 9] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+
+/// A fixed-bucket histogram in Prometheus's cumulative form.
+#[derive(Debug)]
+pub struct Histogram {
+    buckets: &'static [f64],
+    counts: Vec<AtomicU64>,
+    sum_micros: AtomicU64,
+    count: AtomicU64,
+}
+
+impl Histogram {
+    fn new(buckets: &'static [f64]) -> Self {
+        Self {
+            buckets,
+            counts: buckets.iter().map(|_| AtomicU64::new(0)).collect(),
+            sum_micros: AtomicU64::new(0),
+            count: AtomicU64::new(0),
+        }
+    }
+
+    pub fn observe(&self, elapsed: Duration) {
+        let seconds = elapsed.as_secs_f64();
+        for (bucket, count) in self.buckets.iter().zip(&self.counts) {
+            if seconds <= *bucket {
+                count.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.sum_micros
+            .fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    fn render(&self, name: &str, help: &str, labels: &str, out: &mut String) {
+        out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} histogram\n"));
+        let comma = if labels.is_empty() { "" } else { "," };
+        for (bucket, count) in self.buckets.iter().zip(&self.counts) {
+            out.push_str(&format!(
+                "{name}_bucket{{{labels}{comma}le=\"{bucket}\"}} {}\n",
+                count.load(Ordering::Relaxed)
+            ));
+        }
+        out.push_str(&format!(
+            "{name}_bucket{{{labels}{comma}le=\"+Inf\"}} {}\n",
+            self.count()
+        ));
+        let braces = if labels.is_empty() {
+            String::new()
+        } else {
+            format!("{{{labels}}}")
+        };
+        out.push_str(&format!(
+            "{name}_sum{braces} {}\n{name}_count{braces} {}\n",
+            self.sum_micros.load(Ordering::Relaxed) as f64 / 1e6,
+            self.count()
+        ));
+    }
+}
 
 /// Counters and gauges for one process.
 ///
@@ -22,7 +97,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// two of them from either side of one request would draw the same conclusion.
 /// Paying for stronger ordering on the query path to make a scrape
 /// self-consistent would be spending latency on a report.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Metrics {
     pub queries: AtomicU64,
     pub query_errors: AtomicU64,
@@ -30,10 +105,14 @@ pub struct Metrics {
     pub overloads: AtomicU64,
     /// Queries and setups refused because the revision they named is gone.
     pub stale_revisions: AtomicU64,
+    /// Requests for a shard this worker is not assigned.
+    pub unassigned_refusals: AtomicU64,
     pub setups: AtomicU64,
     pub builds: AtomicU64,
     pub build_failures: AtomicU64,
     pub build_micros: AtomicU64,
+    /// Cold-build latency, by bucket.
+    pub build_seconds: Histogram,
     /// Requests that waited on a build another request had already started,
     /// rather than starting a second one.
     ///
@@ -67,6 +146,63 @@ pub struct Metrics {
     pub query_queue_depth: AtomicU64,
     /// Query body bytes currently buffered.
     pub body_bytes_in_flight: AtomicU64,
+    /// Runtimes the prewarm has built or found, and the number it aims for.
+    pub warm_runtimes: AtomicU64,
+    pub target_runtimes: AtomicU64,
+    pub prewarm_failed: AtomicU64,
+    pub prewarm_micros: AtomicU64,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            queries: AtomicU64::new(0),
+            query_errors: AtomicU64::new(0),
+            overloads: AtomicU64::new(0),
+            stale_revisions: AtomicU64::new(0),
+            unassigned_refusals: AtomicU64::new(0),
+            setups: AtomicU64::new(0),
+            builds: AtomicU64::new(0),
+            build_failures: AtomicU64::new(0),
+            build_micros: AtomicU64::new(0),
+            build_seconds: Histogram::new(&BUILD_BUCKETS),
+            build_coalesced: AtomicU64::new(0),
+            evictions: AtomicU64::new(0),
+            resident_bytes: AtomicU64::new(0),
+            cache_entries: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            query_queue_micros: AtomicU64::new(0),
+            manifests: AtomicU64::new(0),
+            query_length_rejections: AtomicU64::new(0),
+            queue_rejections: AtomicU64::new(0),
+            body_budget_rejections: AtomicU64::new(0),
+            upload_timeouts: AtomicU64::new(0),
+            deadline_exceeded: AtomicU64::new(0),
+            queries_cancelled: AtomicU64::new(0),
+            query_queue_depth: AtomicU64::new(0),
+            body_bytes_in_flight: AtomicU64::new(0),
+            warm_runtimes: AtomicU64::new(0),
+            target_runtimes: AtomicU64::new(0),
+            prewarm_failed: AtomicU64::new(0),
+            prewarm_micros: AtomicU64::new(0),
+        }
+    }
+}
+
+/// What a scrape says beyond the counters: the identity every series carries
+/// and the gauges the set and the process supply.
+#[derive(Clone, Debug, Default)]
+pub struct Snapshot {
+    /// `(name, value)` pairs printed on every series. Empty in whole-set mode.
+    pub labels: Vec<(String, String)>,
+    pub shards: u64,
+    pub assigned_shards: u64,
+    pub revisions: u64,
+    pub prunable_revisions: u64,
+    pub cache_budget_bytes: u64,
+    pub process_rss_bytes: Option<u64>,
+    pub cgroup_memory_bytes: Option<(u64, Option<u64>)>,
 }
 
 impl Metrics {
@@ -91,30 +227,53 @@ impl Metrics {
     }
 
     /// Renders the Prometheus text exposition format.
-    pub fn render(&self, shards: usize, revisions: usize, budget_bytes: u64) -> String {
+    pub fn render(&self, snapshot: &Snapshot) -> String {
+        let labels = snapshot
+            .labels
+            .iter()
+            .map(|(name, value)| format!("{name}=\"{}\"", value.replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(",");
+        let braces = if labels.is_empty() {
+            String::new()
+        } else {
+            format!("{{{labels}}}")
+        };
         let mut out = String::new();
         let mut line = |name: &str, kind: &str, help: &str, value: u64| {
             out.push_str(&format!(
-                "# HELP {name} {help}\n# TYPE {name} {kind}\n{name} {value}\n"
+                "# HELP {name} {help}\n# TYPE {name} {kind}\n{name}{braces} {value}\n"
             ));
         };
         line(
             "transparent_shard_shards",
             "gauge",
             "Shards the served map names.",
-            shards as u64,
+            snapshot.shards,
+        );
+        line(
+            "transparent_shard_assigned_shards",
+            "gauge",
+            "Shards this worker holds tables for.",
+            snapshot.assigned_shards,
         );
         line(
             "transparent_shard_revisions_held",
             "gauge",
             "Shard revisions loaded, current and superseded.",
-            revisions as u64,
+            snapshot.revisions,
+        );
+        line(
+            "transparent_shard_prunable_revisions",
+            "gauge",
+            "Superseded revisions on disk past the retention bound.",
+            snapshot.prunable_revisions,
         );
         line(
             "transparent_shard_cache_budget_bytes",
             "gauge",
             "Byte budget for prepared runtimes.",
-            budget_bytes,
+            snapshot.cache_budget_bytes,
         );
         line(
             "transparent_shard_cache_resident_bytes",
@@ -195,6 +354,12 @@ impl Metrics {
             Self::get(&self.stale_revisions),
         );
         line(
+            "transparent_shard_unassigned_refusals_total",
+            "counter",
+            "Requests for a shard this worker is not assigned.",
+            Self::get(&self.unassigned_refusals),
+        );
+        line(
             "transparent_shard_setups_total",
             "counter",
             "Published setups served.",
@@ -260,6 +425,106 @@ impl Metrics {
             "Query body bytes currently buffered.",
             Self::get(&self.body_bytes_in_flight),
         );
+        line(
+            "transparent_shard_warm_runtimes",
+            "gauge",
+            "Runtimes the prewarm has built or found resident.",
+            Self::get(&self.warm_runtimes),
+        );
+        line(
+            "transparent_shard_target_runtimes",
+            "gauge",
+            "Runtimes the prewarm aims to hold.",
+            Self::get(&self.target_runtimes),
+        );
+        line(
+            "transparent_shard_prewarm_failed_total",
+            "counter",
+            "Runtimes the prewarm could not build.",
+            Self::get(&self.prewarm_failed),
+        );
+        line(
+            "transparent_shard_prewarm_microseconds_total",
+            "counter",
+            "Time the prewarm spent building.",
+            Self::get(&self.prewarm_micros),
+        );
+        if let Some(rss) = snapshot.process_rss_bytes {
+            line(
+                "transparent_shard_process_rss_bytes",
+                "gauge",
+                "Resident set size of the process.",
+                rss,
+            );
+        }
+        if let Some((current, max)) = snapshot.cgroup_memory_bytes {
+            line(
+                "transparent_shard_cgroup_memory_current_bytes",
+                "gauge",
+                "Memory charged to the process's cgroup.",
+                current,
+            );
+            if let Some(max) = max {
+                line(
+                    "transparent_shard_cgroup_memory_max_bytes",
+                    "gauge",
+                    "The cgroup's memory limit.",
+                    max,
+                );
+            }
+        }
+        self.build_seconds.render(
+            "transparent_shard_build_seconds",
+            "Cold runtime build latency.",
+            &labels,
+            &mut out,
+        );
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labels_reach_every_series_and_the_histogram_is_cumulative() {
+        let metrics = Metrics::default();
+        metrics.build_seconds.observe(Duration::from_millis(300));
+        metrics.build_seconds.observe(Duration::from_secs(3));
+        let snapshot = Snapshot {
+            labels: vec![
+                ("worker_id".into(), "r1".into()),
+                ("role".into(), "recent-replica".into()),
+            ],
+            shards: 4,
+            assigned_shards: 2,
+            revisions: 2,
+            prunable_revisions: 0,
+            cache_budget_bytes: 1,
+            process_rss_bytes: Some(2),
+            cgroup_memory_bytes: Some((3, None)),
+        };
+        let text = metrics.render(&snapshot);
+        assert!(
+            text.contains("transparent_shard_shards{worker_id=\"r1\",role=\"recent-replica\"} 4")
+        );
+        assert!(text.contains(
+            "transparent_shard_assigned_shards{worker_id=\"r1\",role=\"recent-replica\"} 2"
+        ));
+        assert!(text.contains(
+            "transparent_shard_process_rss_bytes{worker_id=\"r1\",role=\"recent-replica\"} 2"
+        ));
+        assert!(text.contains("transparent_shard_build_seconds_bucket{worker_id=\"r1\",role=\"recent-replica\",le=\"0.5\"} 1"));
+        assert!(text.contains("transparent_shard_build_seconds_bucket{worker_id=\"r1\",role=\"recent-replica\",le=\"4\"} 2"));
+        assert!(text.contains("transparent_shard_build_seconds_bucket{worker_id=\"r1\",role=\"recent-replica\",le=\"+Inf\"} 2"));
+        assert!(text.contains(
+            "transparent_shard_build_seconds_count{worker_id=\"r1\",role=\"recent-replica\"} 2"
+        ));
+        assert!(!text.contains("cgroup_memory_max"));
+
+        let bare = metrics.render(&Snapshot::default());
+        assert!(bare.contains("transparent_shard_shards 0\n"));
+        assert!(bare.contains("transparent_shard_build_seconds_bucket{le=\"+Inf\"} 2"));
     }
 }

@@ -53,6 +53,16 @@ jobs:
       # A shard set the deploy would refuse: the map names two shards and only
       # one directory is present. `validate` is offline, so it exercises the
       # input and set checks without a host.
+      - name: Validate transparent filter inputs
+        env:
+          TRANSPARENT_FILTER_HOST: coordinator.example.net
+          TRANSPARENT_DEPLOY_USER: deploy
+          TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+          TRANSPARENT_ARTIFACT_DIR: ops/infra/digitalocean/production/deploy
+          TRANSPARENT_FILTER_SHARD_DIR: /srv/zakura/transparent-shards-v7
+          ENHANCE_PUBLIC_URL: https://enhance-pir.example.net
+        run: ops/scripts/deploy-transparent-filter.sh validate
+
       - name: Validate transparent shard inputs
         env:
           TRANSPARENT_WORKER_HOST: transparent-worker-01.example.net

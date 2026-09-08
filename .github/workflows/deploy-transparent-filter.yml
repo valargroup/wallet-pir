@@ -1,0 +1,139 @@
+name: Deploy transparent filter service
+
+# Ships the transparent filter service on its own, without an Enhance rollout.
+# It shares the coordinator host with Enhance, so it shares that workflow's
+# concurrency group and its SSH material, and it saves rollback copies under
+# the same paths -- but it touches no Enhance unit and no Caddyfile.
+#
+# The staged binary is asked to read the shard directory the unit will name
+# before the running service is stopped, which is the check the coordinated
+# rollout could not make.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full commit SHA on main with a successful CI run
+        required: true
+        type: string
+      shard_dir:
+        description: >-
+          Published shard set on the coordinator whose map and filters the
+          service serves. Must be the set the retrieval fleet serves.
+        required: true
+        default: /srv/zakura/transparent-shards-v7
+        type: string
+      mode:
+        description: preflight stages and verifies without activating
+        required: true
+        default: preflight
+        type: choice
+        options: [preflight, deploy]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enhance-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ${{ inputs.mode }} transparent filter service
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 60
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Verify tested revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.ref }}
+          SHARD_DIR: ${{ inputs.shard_dir }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SHARD_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          api_headers=(
+            --header "Authorization: Bearer ${GH_TOKEN}"
+            --header 'Accept: application/vnd.github+json'
+            --header 'X-GitHub-Api-Version: 2022-11-28'
+          )
+          main_sha="$(curl --fail --silent --show-error "${api_headers[@]}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" | jq -er '.object.sha')"
+          [[ "$SHA" == "$main_sha" ]]
+          successful="$(curl --fail --silent --show-error "${api_headers[@]}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=success&per_page=1" \
+            | jq -er '.workflow_runs | length')"
+          [[ "$successful" -ge 1 ]]
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Build the filter service
+        env:
+          # See the backfill workflow: the node's RocksDB needs PCLMUL once
+          # SSE4.2 is on, and x86-64-v3 turns on only the latter.
+          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+        run: |
+          set -euo pipefail
+          nice -n 10 cargo build --locked --release \
+            -p transparent-filter-server --bin transparent-filter-server
+
+      - name: Assemble checksummed artifact
+        run: |
+          set -euo pipefail
+          mkdir artifact
+          install -m 0755 target/release/transparent-filter-server artifact/
+          cp ops/infra/digitalocean/production/deploy/transparent-filter-server.service artifact/
+          printf '%s\n' '${{ inputs.ref }}' >artifact/revision
+          (cd artifact && sha256sum ./* >SHA256SUMS)
+          cat artifact/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transparent-filter-${{ inputs.ref }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Prepare ephemeral SSH material
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.ENHANCE_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_SSH_KEY:?production deployment SSH key is empty}"
+          : "${KNOWN_HOSTS:?ENHANCE_SSH_KNOWN_HOSTS is empty}"
+          install -m 0700 -d "$RUNNER_TEMP/filter-ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$RUNNER_TEMP/filter-ssh/key"
+          printf '%s\n' "$KNOWN_HOSTS" >"$RUNNER_TEMP/filter-ssh/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/filter-ssh/key" "$RUNNER_TEMP/filter-ssh/known_hosts"
+
+      - name: Deploy and verify
+        env:
+          TRANSPARENT_FILTER_HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
+          TRANSPARENT_DEPLOY_USER: ${{ vars.ENHANCE_DEPLOY_USER }}
+          TRANSPARENT_RELEASE_SHA: ${{ inputs.ref }}
+          TRANSPARENT_ARTIFACT_DIR: ${{ github.workspace }}/artifact
+          TRANSPARENT_FILTER_SHARD_DIR: ${{ inputs.shard_dir }}
+          # The runner is the coordinator, so the set is local: its map is
+          # compared with what the staged binary reads.
+          TRANSPARENT_SHARD_SOURCE: ${{ inputs.shard_dir }}
+          ENHANCE_PUBLIC_URL: ${{ vars.ENHANCE_PUBLIC_URL }}
+          TRANSPARENT_PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
+          TRANSPARENT_SSH_KEY_PATH: ${{ runner.temp }}/filter-ssh/key
+          TRANSPARENT_KNOWN_HOSTS_PATH: ${{ runner.temp }}/filter-ssh/known_hosts
+        run: ops/scripts/deploy-transparent-filter.sh '${{ inputs.mode }}'
+
+      - name: Remove SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/filter-ssh"

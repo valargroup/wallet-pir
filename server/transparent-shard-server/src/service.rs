@@ -36,7 +36,7 @@
 //! wants them.
 
 use crate::admission::{Admission, AdmissionConfig, AdmissionError};
-use crate::metrics::Metrics;
+use crate::metrics::{Metrics, Snapshot};
 use crate::runtime::{CacheError, RuntimeCache, RuntimeHandle, SharedParams};
 use crate::shardset::{LoadedShard, ShardSet, Table};
 use axum::extract::{Path as AxumPath, Request, State};
@@ -48,6 +48,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ipir_sp::YpirSchemeParams;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use transparent_shard::manifest::query_binding;
 
@@ -84,6 +85,21 @@ pub struct ServiceConfig {
     pub upload_deadline: std::time::Duration,
     /// How long a request may wait in total before a retryable refusal.
     pub query_deadline: std::time::Duration,
+    /// What `/v1/ready` attests; see [`ReadinessMode`].
+    pub readiness: ReadinessMode,
+}
+
+/// What readiness means for this process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadinessMode {
+    /// Ready once a set is loaded. Runtimes build on demand, so a cold worker
+    /// is serving correctly and slowly. The correctness pilot's mode, and the
+    /// whole-set default.
+    LoadedOnly,
+    /// Ready once every assigned runtime is warm. A worker in a fleet is held
+    /// out of rotation until it can answer at full speed, which is what lets
+    /// a restarting replica rejoin without a wallet meeting its cold cache.
+    Warm,
 }
 
 impl Default for ServiceConfig {
@@ -97,8 +113,16 @@ impl Default for ServiceConfig {
             max_body_bytes: admission.max_body_bytes,
             upload_deadline: admission.upload_deadline,
             query_deadline: admission.query_deadline,
+            readiness: ReadinessMode::LoadedOnly,
         }
     }
+}
+
+/// The prewarm's progress toward holding every assigned runtime.
+struct WarmState {
+    mode: ReadinessMode,
+    target: usize,
+    finished: AtomicBool,
 }
 
 impl ServiceConfig {
@@ -124,6 +148,7 @@ pub struct Inner {
     admission: Admission,
     metrics: Arc<Metrics>,
     max_query_bytes: usize,
+    warm: WarmState,
 }
 
 #[derive(Clone)]
@@ -169,6 +194,11 @@ pub struct InitResponse {
     pub map_sha256: String,
     /// One entry per geometry this worker holds, not per registered geometry.
     pub geometries: Vec<GeometryInit>,
+    /// Shards this worker holds tables for. Equal to `shards` in whole-set mode.
+    pub assigned_shards: usize,
+    pub worker_id: Option<String>,
+    pub role: Option<String>,
+    pub assignment_sha256: Option<String>,
 }
 
 /// What the setup route returns, per segment.
@@ -203,6 +233,25 @@ impl ServiceState {
         if params.is_empty() {
             return Err("the shard set names no geometry to serve".into());
         }
+        // What every current assigned runtime reserves together. In warm mode
+        // that has to fit the cache with nothing evicted: an assignment that
+        // needs eviction to be served is a worker that thrashes, and it is
+        // refused here rather than discovered under load.
+        let mut assigned_reserved = 0u64;
+        for shard in set.current() {
+            for table in [Table::Directory, Table::Pages] {
+                let shared = &params[&(shard.geometry.name, table)];
+                assigned_reserved += shared.reserved_bytes() * u64::from(shard.segments(table));
+            }
+        }
+        if config.readiness == ReadinessMode::Warm && assigned_reserved > config.cache_bytes {
+            return Err(format!(
+                "the assignment needs {assigned_reserved} bytes of runtimes, the cache budget is {}",
+                config.cache_bytes
+            ));
+        }
+        let target = set.warm_targets().len();
+        Metrics::set(&metrics.target_runtimes, target as u64);
         Ok(Self {
             inner: Arc::new(Inner {
                 set,
@@ -211,8 +260,117 @@ impl ServiceState {
                 admission: Admission::new(config.admission(), metrics.clone()),
                 metrics,
                 max_query_bytes,
+                warm: WarmState {
+                    mode: config.readiness,
+                    target,
+                    finished: AtomicBool::new(false),
+                },
             }),
         })
+    }
+
+    /// Builds every runtime this worker should hold, in the order the set
+    /// prescribes, and marks the worker warm when done.
+    ///
+    /// Current assigned revisions always; retained superseded revisions only
+    /// while the budget has room without evicting anything already warm. A
+    /// request arriving during the prewarm for a runtime it has not reached
+    /// yet is served the ordinary way, and the prewarm finds that runtime
+    /// resident when it gets there.
+    pub fn spawn_prewarm(&self) -> tokio::task::JoinHandle<()> {
+        let state = self.clone();
+        tokio::spawn(async move {
+            let inner = &state.inner;
+            let started = std::time::Instant::now();
+            let current: std::collections::BTreeSet<String> = inner
+                .set
+                .current()
+                .map(|shard| shard.digest.clone())
+                .collect();
+            for (digest, table, segment) in inner.set.warm_targets() {
+                let Some(shard) = inner.set.revision(&digest) else {
+                    continue;
+                };
+                let shared = state.shared(shard, table);
+                let Some(source) = shard.segment(table, segment).cloned() else {
+                    continue;
+                };
+                // A superseded revision is warmed only into free budget.
+                if !current.contains(&digest)
+                    && inner.cache.resident_bytes() + shared.reserved_bytes() > inner.cache.budget()
+                {
+                    continue;
+                }
+                match inner
+                    .cache
+                    .get((digest.clone(), table, segment), shared, source)
+                    .await
+                {
+                    Ok(handle) => {
+                        drop(handle);
+                        Metrics::incr(&inner.metrics.warm_runtimes);
+                    }
+                    Err(error) => {
+                        tracing::warn!(shard = %digest, table = table.as_str(), segment, %error, "prewarm failed");
+                        Metrics::incr(&inner.metrics.prewarm_failed);
+                    }
+                }
+            }
+            Metrics::set(
+                &inner.metrics.prewarm_micros,
+                started.elapsed().as_micros() as u64,
+            );
+            inner.warm.finished.store(true, Ordering::Release);
+            tracing::info!(
+                warm = Metrics::get(&inner.metrics.warm_runtimes),
+                target = inner.warm.target,
+                failed = Metrics::get(&inner.metrics.prewarm_failed),
+                seconds = started.elapsed().as_secs_f64(),
+                "prewarm finished"
+            );
+        })
+    }
+
+    /// The worker's identity for reports: assignment digest, id and role when
+    /// it loaded under an assignment.
+    fn identity(&self) -> serde_json::Value {
+        match self.inner.set.scope() {
+            Some(scope) => serde_json::json!({
+                "worker_id": scope.worker_id,
+                "role": scope.role.as_str(),
+                "replica_group": scope.replica_group,
+                "assignment_sha256": scope.assignment_sha256,
+            }),
+            None => serde_json::json!({
+                "worker_id": null,
+                "role": null,
+                "replica_group": null,
+                "assignment_sha256": null,
+            }),
+        }
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        let inner = &self.inner;
+        let mut labels = vec![("map_sha256".to_string(), inner.set.map_digest.clone())];
+        if let Some(scope) = inner.set.scope() {
+            labels.push(("worker_id".to_string(), scope.worker_id.clone()));
+            labels.push(("role".to_string(), scope.role.as_str().to_string()));
+            labels.push((
+                "assignment_sha256".to_string(),
+                scope.assignment_sha256.clone(),
+            ));
+        }
+        Snapshot {
+            labels,
+            shards: inner.set.len() as u64,
+            assigned_shards: inner.set.assigned_len() as u64,
+            revisions: inner.set.revisions().len() as u64,
+            prunable_revisions: inner.set.prunable().len() as u64,
+            cache_budget_bytes: inner.cache.budget(),
+            process_rss_bytes: crate::procmem::process_rss_bytes(),
+            cgroup_memory_bytes: crate::procmem::cgroup_memory_bytes(),
+        }
     }
 
     /// The largest body any geometry this worker serves can legitimately send.
@@ -258,6 +416,21 @@ impl ServiceState {
                 "revision {digest} is not a revision of shard {shard_id}"
             ))),
             None => {
+                // A shard the map names but this worker is not assigned is a
+                // routing fault, and is said so: the wallet's map is not
+                // stale, and refreshing it would not help.
+                if self.inner.set.names(shard_id) && !self.inner.set.is_assigned(shard_id) {
+                    Metrics::incr(&self.inner.metrics.unassigned_refusals);
+                    return Err(RequestError::NotAssigned {
+                        shard_id,
+                        worker_id: self
+                            .inner
+                            .set
+                            .scope()
+                            .map(|scope| scope.worker_id.clone())
+                            .unwrap_or_default(),
+                    });
+                }
                 Metrics::incr(&self.inner.metrics.stale_revisions);
                 Err(RequestError::Stale {
                     shard_id,
@@ -309,6 +482,12 @@ enum RequestError {
     Busy(&'static str),
     /// The body did not arrive in time. The client is the slow party.
     UploadTimeout,
+    /// The shard exists but this worker does not hold its tables. A routing
+    /// fault; not retryable here and not a reason to refresh the map.
+    NotAssigned {
+        shard_id: u64,
+        worker_id: String,
+    },
 }
 
 impl From<AdmissionError> for RequestError {
@@ -339,6 +518,19 @@ impl RequestError {
             RequestError::UploadTimeout => json(
                 StatusCode::REQUEST_TIMEOUT,
                 serde_json::json!({ "error": "the query body did not arrive in time" }),
+            ),
+            // 421: the request reached a server that is not configured to
+            // answer it. No retry delay, so a wallet does not spin on it, and
+            // the map digest so an operator can see which set the worker holds.
+            RequestError::NotAssigned {
+                shard_id,
+                worker_id,
+            } => json(
+                StatusCode::MISDIRECTED_REQUEST,
+                serde_json::json!({
+                    "error": format!("shard {shard_id} is not assigned to worker {worker_id}"),
+                    "map_sha256": map_digest,
+                }),
             ),
             // The same shape as the cache refusal: 503 with a delay, which is
             // what the wallet keys its retry on. The body says which bound.
@@ -417,47 +609,91 @@ pub fn router(state: ServiceState) -> Router {
 
 async fn health(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
-    json(
-        StatusCode::OK,
-        serde_json::json!({
-            "phase": "serving",
-            "shards": inner.set.len(),
-            "revisions_held": inner.set.revisions().len(),
-            "geometries": inner.set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
-            "map_sha256": inner.set.map_digest,
-            "cache_budget_bytes": inner.cache.budget(),
-            "cache_resident_bytes": inner.cache.resident_bytes(),
-            "runtimes_built": inner.cache.entries(),
-        }),
-    )
+    let mut body = serde_json::json!({
+        "phase": "serving",
+        "shards": inner.set.len(),
+        "assigned_shards": inner.set.assigned_len(),
+        "revisions_held": inner.set.revisions().len(),
+        "prunable_revisions": inner.set.prunable().len(),
+        "geometries": inner.set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
+        "map_sha256": inner.set.map_digest,
+        "cache_budget_bytes": inner.cache.budget(),
+        "cache_resident_bytes": inner.cache.resident_bytes(),
+        "runtimes_built": inner.cache.entries(),
+        "readiness_mode": match inner.warm.mode {
+            ReadinessMode::LoadedOnly => "loaded-only",
+            ReadinessMode::Warm => "warm",
+        },
+        "warm_runtimes": Metrics::get(&inner.metrics.warm_runtimes),
+        "target_runtimes": inner.warm.target,
+    });
+    if let (Some(body), Some(identity)) = (body.as_object_mut(), state.identity().as_object()) {
+        for (key, value) in identity {
+            body.insert(key.clone(), value.clone());
+        }
+    }
+    json(StatusCode::OK, body)
 }
 
-/// Ready once a set is loaded, which is the only precondition this service has.
+/// What readiness attests depends on the mode.
 ///
-/// Deliberately not "ready once runtimes are warm". Runtimes are built on
-/// demand, so a worker with a cold cache is serving correctly and slowly, and
-/// reporting it unready would take it out of rotation exactly when the first
-/// wallet needs it.
+/// Loaded-only: a set is loaded, which is the only precondition for serving
+/// correctly. Runtimes build on demand, so a cold worker is slow, not wrong;
+/// this is the correctness pilot's mode.
+///
+/// Warm: every assigned runtime has been built, so a router that health-checks
+/// this route holds a restarting worker out of rotation until it can answer at
+/// full speed. The body carries the map and assignment digests either way, so
+/// a deploy can assert which set and assignment a worker is actually running.
 async fn ready(State(state): State<ServiceState>) -> Response {
-    if state.inner.set.is_empty() {
-        return json(
-            StatusCode::SERVICE_UNAVAILABLE,
-            serde_json::json!({ "ready": false, "reason": "no shards loaded" }),
-        );
+    let inner = &state.inner;
+    let warm = Metrics::get(&inner.metrics.warm_runtimes);
+    let mut body = serde_json::json!({
+        "mode": match inner.warm.mode {
+            ReadinessMode::LoadedOnly => "loaded-only",
+            ReadinessMode::Warm => "warm",
+        },
+        "map_sha256": inner.set.map_digest,
+        "shards": inner.set.len(),
+        "assigned_shards": inner.set.assigned_len(),
+        "warm_runtimes": warm,
+        "target_runtimes": inner.warm.target,
+        "prewarm_failed": Metrics::get(&inner.metrics.prewarm_failed),
+        "prewarm_finished": inner.warm.finished.load(Ordering::Acquire),
+        "prewarm_seconds": Metrics::get(&inner.metrics.prewarm_micros) as f64 / 1e6,
+    });
+    if let (Some(body), Some(identity)) = (body.as_object_mut(), state.identity().as_object()) {
+        for (key, value) in identity {
+            body.insert(key.clone(), value.clone());
+        }
     }
-    json(StatusCode::OK, serde_json::json!({ "ready": true }))
+    let object = body.as_object_mut().expect("an object");
+    if inner.set.is_empty() {
+        object.insert("ready".into(), serde_json::json!(false));
+        object.insert("reason".into(), serde_json::json!("no shards loaded"));
+        return json(StatusCode::SERVICE_UNAVAILABLE, body);
+    }
+    if inner.warm.mode == ReadinessMode::Warm && (warm as usize) < inner.warm.target {
+        object.insert("ready".into(), serde_json::json!(false));
+        object.insert(
+            "reason".into(),
+            serde_json::json!(if inner.warm.finished.load(Ordering::Acquire) {
+                "prewarm finished short of its target"
+            } else {
+                "prewarming"
+            }),
+        );
+        return json(StatusCode::SERVICE_UNAVAILABLE, body);
+    }
+    object.insert("ready".into(), serde_json::json!(true));
+    json(StatusCode::OK, body)
 }
 
 async fn metrics(State(state): State<ServiceState>) -> Response {
-    let inner = &state.inner;
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4")],
-        inner.metrics.render(
-            inner.set.len(),
-            inner.set.revisions().len(),
-            inner.cache.budget(),
-        ),
+        state.inner.metrics.render(&state.snapshot()),
     )
         .into_response()
 }
@@ -489,7 +725,9 @@ async fn shard_filter(
     State(state): State<ServiceState>,
     AxumPath(shard_id): AxumPath<u64>,
 ) -> Response {
-    let Some(shard) = state.inner.set.get(shard_id) else {
+    // From the set-wide metadata, so a worker answers for every shard the
+    // map names whether or not it holds that shard's tables.
+    let Some(meta) = state.inner.set.meta(shard_id) else {
         return json(
             StatusCode::NOT_FOUND,
             serde_json::json!({ "error": format!("no shard {shard_id}") }),
@@ -501,7 +739,7 @@ async fn shard_filter(
             ("content-type", "application/octet-stream"),
             ("cache-control", "public, max-age=31536000, immutable"),
         ],
-        shard.filter.clone(),
+        meta.filter.clone(),
     )
         .into_response()
 }
@@ -544,6 +782,16 @@ async fn init(State(state): State<ServiceState>) -> Response {
         covered_through: last.end_height,
         map_sha256: inner.set.map_digest.clone(),
         geometries,
+        assigned_shards: inner.set.assigned_len(),
+        worker_id: inner.set.scope().map(|scope| scope.worker_id.clone()),
+        role: inner
+            .set
+            .scope()
+            .map(|scope| scope.role.as_str().to_string()),
+        assignment_sha256: inner
+            .set
+            .scope()
+            .map(|scope| scope.assignment_sha256.clone()),
     };
     json(
         StatusCode::OK,
@@ -568,19 +816,28 @@ async fn manifest(
     AxumPath((shard_id, digest)): AxumPath<(u64, String)>,
 ) -> Response {
     let map_digest = state.inner.set.map_digest.clone();
-    let shard = match state.revision(shard_id, &digest) {
-        Ok(shard) => shard,
-        Err(error) => return error.into_response(&map_digest),
+    // The current revision of any shard the map names, or a superseded
+    // revision this worker still holds. Every worker holds every current
+    // manifest, so the route needs no routing by owner.
+    let Some((manifest, canonical, _)) = state.inner.set.meta_by_digest(&digest) else {
+        Metrics::incr(&state.inner.metrics.stale_revisions);
+        return RequestError::Stale { shard_id, digest }.into_response(&map_digest);
     };
+    if manifest.shard_id != shard_id {
+        return RequestError::Bad(format!(
+            "revision {digest} is not a revision of shard {shard_id}"
+        ))
+        .into_response(&map_digest);
+    }
     Metrics::incr(&state.inner.metrics.manifests);
     (
         StatusCode::OK,
         [
             ("content-type", "application/json"),
             ("cache-control", "public, max-age=31536000, immutable"),
-            ("x-manifest-sha256", shard.digest.as_str()),
+            ("x-manifest-sha256", digest.as_str()),
         ],
-        shard.canonical_manifest.clone(),
+        canonical.to_vec(),
     )
         .into_response()
 }

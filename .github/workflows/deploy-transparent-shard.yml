@@ -28,11 +28,29 @@ on:
         default: /srv/zakura/transparent-shards-v7
         type: string
       mode:
-        description: preflight stages and verifies the host without activating
+        description: >-
+          Single-host modes preflight/deploy target TRANSPARENT_WORKER_HOST as
+          before. fleet-* modes plan an assignment over TRANSPARENT_FLEET_JSON,
+          ship each worker its subset, verify it with the staged binary, then
+          activate owners, replicas and the router in that order.
         required: true
         default: preflight
         type: choice
-        options: [preflight, deploy]
+        options: [preflight, deploy, fleet-preflight, fleet-deploy, fleet-rollback]
+      recent_from:
+        description: >-
+          Fleet modes only. The recorded cutoff height; the shard beginning
+          there starts the replicated recent tier. Must be a shard boundary.
+        required: false
+        default: ""
+        type: string
+      headroom:
+        description: >-
+          Fleet modes only. Fraction of each worker's cache kept free of
+          assigned runtimes when planning.
+        required: false
+        default: "0.15"
+        type: string
 
 permissions:
   contents: read
@@ -82,24 +100,61 @@ jobs:
 
       # Niced, because the runner is also the production coordinator and is
       # already sharing this host with a long-running backfill.
-      - name: Build the worker binary
+      - name: Build the worker binary and fleet tools
         env:
           RUSTFLAGS: -C target-cpu=x86-64-v3
         run: |
           set -euo pipefail
           nice -n 10 cargo build --locked --release \
-            -p transparent-shard-server --bin transparent-shard-server
+            -p transparent-shard-server --bin transparent-shard-server \
+            --bin shard-assign --bin shard-prune
 
       - name: Assemble checksummed artifact
         run: |
           set -euo pipefail
           mkdir artifact
           install -m 0755 target/release/transparent-shard-server artifact/
+          install -m 0755 target/release/shard-assign artifact/
+          install -m 0755 target/release/shard-prune artifact/
           cp ops/infra/digitalocean/production/deploy/transparent-shard-server.service artifact/
           cp ops/infra/digitalocean/production/deploy/transparent-Caddyfile artifact/
           printf '%s\n' '${{ inputs.ref }}' >artifact/revision
           (cd artifact && sha256sum ./* >SHA256SUMS)
           cat artifact/SHA256SUMS
+
+      # The assignment is planned here, on the runner that holds the set, and
+      # kept with the artifact: it is the durable record of which worker was
+      # meant to hold what, and its digest is what every worker reports.
+      - name: Plan the fleet assignment
+        if: startsWith(inputs.mode, 'fleet-')
+        env:
+          FLEET_JSON: ${{ vars.TRANSPARENT_FLEET_JSON }}
+          SHARD_DIR: ${{ inputs.shard_dir }}
+          RECENT_FROM: ${{ inputs.recent_from }}
+          HEADROOM: ${{ inputs.headroom }}
+          SHA: ${{ inputs.ref }}
+          PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          : "${FLEET_JSON:?TRANSPARENT_FLEET_JSON is empty; set the roster variable}"
+          [[ "$RECENT_FROM" =~ ^[0-9]+$ ]] || { echo "recent_from must be the recorded cutoff height"; exit 1; }
+          [[ "$HEADROOM" =~ ^0\.[0-9]+$ ]] || { echo "headroom must be a fraction like 0.15"; exit 1; }
+          printf '%s\n' "$FLEET_JSON" >artifact/roster.json
+          jq -e 'type == "array" and length > 0' artifact/roster.json >/dev/null
+          sudo artifact/shard-assign plan \
+            --shard-dir "$SHARD_DIR" --roster artifact/roster.json \
+            --recent-from-height "$RECENT_FROM" --headroom "$HEADROOM" \
+            --out-assignment artifact/assignment.json \
+            --out-caddyfile artifact/Caddyfile.router --public-host "${PUBLIC_URL#https://}" \
+            --source-sha "$SHA"
+          sudo chown "$(id -u)" artifact/assignment.json artifact/Caddyfile.router
+          (cd artifact && sha256sum ./* >SHA256SUMS)
+          {
+            echo '## Fleet assignment'
+            echo '```'
+            jq -r '.workers[] | "\(.id)\t\(.role)\t\(.shards | length) shards\t\(.estimated_resident_bytes) bytes reserved"' artifact/assignment.json
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -138,6 +193,11 @@ jobs:
           TRANSPARENT_PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
           TRANSPARENT_SSH_KEY_PATH: ${{ runner.temp }}/transparent-ssh/key
           TRANSPARENT_KNOWN_HOSTS_PATH: ${{ runner.temp }}/transparent-ssh/known_hosts
+          # Fleet modes. The roster is a repository variable so the hosts live
+          # in one place; the router is optional until it exists.
+          TRANSPARENT_FLEET_JSON: ${{ vars.TRANSPARENT_FLEET_JSON }}
+          TRANSPARENT_ROUTER_HOST: ${{ vars.TRANSPARENT_ROUTER_HOST }}
+          TRANSPARENT_ASSIGNMENT: ${{ github.workspace }}/artifact/assignment.json
         run: ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
 
       - name: Remove SSH material

@@ -3,10 +3,14 @@
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing_subscriber::EnvFilter;
-use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
-use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
+use transparent_shard_server::assignment::Assignment;
+use transparent_shard_server::service::{router, ReadinessMode, ServiceConfig, ServiceState};
+use transparent_shard_server::shardset::{
+    LoadOptions, LoadScope, ShardSet, DEFAULT_RETAIN_REVISIONS,
+};
 
 #[derive(Parser)]
 #[command(
@@ -67,6 +71,32 @@ struct Cli {
     /// Seconds a request may wait in total before it is refused retryably.
     #[arg(long, default_value_t = 30)]
     query_deadline_secs: u64,
+    /// The fleet assignment this worker loads its subset from. With
+    /// `--worker-id`. Without it the whole set is loaded and served.
+    #[arg(long, requires = "worker_id")]
+    assignment: Option<PathBuf>,
+    /// This worker's id in the assignment.
+    #[arg(long, requires = "assignment")]
+    worker_id: Option<String>,
+    /// Bytes of superseded revisions to keep per shard, on disk, beyond the
+    /// current one. Unbounded by default; the count bound still applies.
+    #[arg(long)]
+    retain_bytes: Option<u64>,
+    /// Report superseded revisions past the retention bound as prunable
+    /// rather than refusing to start. The fleet's mode; the deploy prunes
+    /// after activation with `shard-prune`.
+    #[arg(long)]
+    prune_excess: bool,
+    /// Report ready as soon as the set is loaded, without prewarming. The
+    /// correctness pilot's mode. Under an assignment the default is to
+    /// prewarm every assigned runtime and report ready only then.
+    #[arg(long)]
+    pilot_cold: bool,
+    /// Load and verify the set under these options, print what would be
+    /// served, and exit without listening. The deploy runs this with the
+    /// staged binary before it stops the running service.
+    #[arg(long)]
+    verify_only: bool,
 }
 
 #[tokio::main]
@@ -76,20 +106,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
     let cli = Cli::parse();
 
+    let scope = match (&cli.assignment, &cli.worker_id) {
+        (Some(path), Some(worker_id)) => LoadScope::Assigned {
+            assignment: Arc::new(Assignment::load(path)?),
+            worker_id: worker_id.clone(),
+        },
+        _ => LoadScope::Whole,
+    };
+    let options = LoadOptions {
+        retain_revisions: cli.retain_revisions,
+        retain_bytes: cli.retain_bytes,
+        prune_excess: cli.prune_excess,
+        scope,
+    };
     // Loading verifies every shard against its own manifest digest. A corrupt
     // shard must fail here rather than be served, or every client would reject
     // its rows as a PIR fault instead of as a corrupt shard.
-    let set = ShardSet::open(&cli.shard_dir, cli.retain_revisions)?;
+    let set = ShardSet::open_with(&cli.shard_dir, &options)?;
     tracing::info!(
         shards = set.len(),
+        assigned = set.assigned_len(),
         revisions = set.revisions().len(),
+        prunable = set.prunable().len(),
         geometries = ?set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
         map_sha256 = set.map_digest,
+        worker_id = set.scope().map(|scope| scope.worker_id.as_str()),
+        assignment_sha256 = set.scope().map(|scope| scope.assignment_sha256.as_str()),
         start = set.map.start_height,
         covered_through = set.map.shards.last().map(|s| s.end_height),
         "loaded shard set"
     );
+    for prunable in set.prunable() {
+        tracing::warn!(
+            shard = prunable.shard_id,
+            revision = prunable.revision,
+            bytes = prunable.bytes,
+            path = %prunable.path.display(),
+            "superseded revision past the retention bound; prune it"
+        );
+    }
 
+    let readiness = if cli.assignment.is_some() && !cli.pilot_cold {
+        ReadinessMode::Warm
+    } else {
+        ReadinessMode::LoadedOnly
+    };
     let config = ServiceConfig {
         cache_bytes: cli.cache_bytes,
         build_slots: cli.build_slots,
@@ -98,14 +159,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         max_body_bytes: cli.body_bytes,
         upload_deadline: std::time::Duration::from_secs(cli.upload_deadline_secs),
         query_deadline: std::time::Duration::from_secs(cli.query_deadline_secs),
+        readiness,
     };
+    if cli.verify_only {
+        // Everything the service would check before listening has been
+        // checked, including that the assignment fits the cache in warm mode.
+        ServiceState::build(set, config)
+            .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
+        println!("verified: the set loads and the configuration is servable");
+        return Ok(());
+    }
     let state = ServiceState::build(set, config)
         .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
     let limit = state.max_query_bytes();
-    let app = router(state).layer(RequestBodyLimitLayer::new(limit));
+    let app = router(state.clone()).layer(RequestBodyLimitLayer::new(limit));
 
+    // Bound before the prewarm starts, so the operator routes answer while
+    // the runtimes build and a router's health check sees "not ready" rather
+    // than "connection refused".
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
-    tracing::info!(listen = %cli.listen, max_query_bytes = limit, "serving");
+    tracing::info!(listen = %cli.listen, max_query_bytes = limit, ?readiness, "serving");
+    let _prewarm = state.spawn_prewarm();
     axum::serve(listener, app).await?;
     Ok(())
 }

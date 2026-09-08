@@ -58,8 +58,22 @@ readonly JQ_MAP_GEOMETRIES='[.shards[].geometry] | unique | join(",")'
 readonly JQ_HEALTH_SERVING='.phase == "serving"'
 readonly JQ_HEALTH_SHARDS='.shards'
 
+readonly JQ_HEALTH_ASSIGNED='.assigned_shards'
+
+# /v1/ready on the VPC. What the fleet deploy asserts before a worker is put
+# back in rotation: which map and assignment it runs under, and whether every
+# assigned runtime is warm. Nullable fields are defaulted so the contract
+# check, which requires a truthy result, passes against the whole-set fixture.
+readonly JQ_READY_OK='.ready == true'
+readonly JQ_READY_MAP='.map_sha256'
+readonly JQ_READY_ASSIGNMENT='.assignment_sha256 // ""'
+readonly JQ_READY_WARM='"\(.warm_runtimes)/\(.target_runtimes) runtimes warm, mode \(.mode)"'
+readonly JQ_READY_REASON='.reason // "ready"'
+
 # /v1/shards/init. InitResponse and GeometryInit in the same file.
 readonly JQ_INIT_COMPLETE='(.geometries | length > 0) and .covered_through and .map_sha256'
+readonly JQ_INIT_MAP='.map_sha256'
+readonly JQ_INIT_ASSIGNED='.assigned_shards'
 readonly JQ_INIT_GEOMETRY_NAMES='[.geometries[].name] | sort | join(",")'
 readonly JQ_INIT_SHARDS='.shards'
 readonly JQ_INIT_HAS_GEOMETRIES='.geometries | length > 0'
@@ -76,8 +90,10 @@ readonly JQ_INIT_SUMMARY='"covered_through \(.covered_through), \(.shards) shard
 jq_programs() {
   local name
   for name in JQ_MAP_SHARD_COUNT JQ_MAP_DIGESTS JQ_MAP_FIRST_DIGEST JQ_MAP_GEOMETRIES \
-    JQ_HEALTH_SERVING JQ_HEALTH_SHARDS \
+    JQ_HEALTH_SERVING JQ_HEALTH_SHARDS JQ_HEALTH_ASSIGNED \
+    JQ_READY_OK JQ_READY_MAP JQ_READY_ASSIGNMENT JQ_READY_WARM JQ_READY_REASON \
     JQ_INIT_COMPLETE JQ_INIT_GEOMETRY_NAMES JQ_INIT_SHARDS JQ_INIT_HAS_GEOMETRIES \
+    JQ_INIT_MAP JQ_INIT_ASSIGNED \
     JQ_INIT_GEOMETRY_COMPLETE JQ_INIT_SUMMARY; do
     printf '%s\t%s\0' "$name" "${!name}"
   done
@@ -246,15 +262,35 @@ shard_set_path() {
 # `fail`, and a `fail` inside `$(render_unit)` would exit the subshell while the
 # caller carried on with an empty path -- which is how a broken unit reached the
 # end of a validate run reporting success.
+# Single-host pilot budgets. A fleet worker gets its roster's values instead.
+PILOT_CACHE_BYTES=8589934592
+PILOT_MEMORY_MAX=12G
+
 RENDERED_UNIT=""
 render_unit() {
+  # Optional overrides, for a fleet worker: cache bytes, MemoryMax, extra
+  # arguments, and the file name to render to.
+  local cache_bytes="${1:-$PILOT_CACHE_BYTES}"
+  local memory_max="${2:-$PILOT_MEMORY_MAX}"
+  local extra_args="${3:-}"
+  local suffix="${4:-}"
   local set_path unit execstarts exec_line
   set_path="$(shard_set_path)"
-  unit="$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service.rendered"
-  sed "s|TRANSPARENT_SHARD_SET_PATH|$set_path|" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" >"$unit"
-  grep -q "TRANSPARENT_SHARD_SET_PATH" "$unit" \
-    && fail "unit still carries an unsubstituted shard-set token"
+  unit="$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service${suffix}.rendered"
+  [[ "$cache_bytes" =~ ^[0-9]+$ ]] || fail "cache bytes must be a number: $cache_bytes"
+  [[ "$memory_max" =~ ^[0-9]+[KMGT]?$ ]] || fail "MemoryMax must be a systemd size: $memory_max"
+  # Quoted regex: an unquoted `[... ]` with a space inside is parsed as two
+  # words. Letters, digits, space, dot, underscore, slash, equals, dash.
+  local plain='^[-A-Za-z0-9 ._/=]*$'
+  [[ "$extra_args" =~ $plain ]] || fail "extra arguments contain characters the unit must not carry"
+  sed -e "s|TRANSPARENT_SHARD_SET_PATH|$set_path|" \
+    -e "s|TRANSPARENT_CACHE_BYTES|$cache_bytes|" \
+    -e "s|TRANSPARENT_MEMORY_MAX|$memory_max|" \
+    -e "s|TRANSPARENT_EXTRA_ARGS|$extra_args|" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" \
+    | sed -e 's/[[:space:]]*$//' >"$unit"
+  grep -q "TRANSPARENT_SHARD_SET_PATH\|TRANSPARENT_CACHE_BYTES\|TRANSPARENT_MEMORY_MAX\|TRANSPARENT_EXTRA_ARGS" "$unit" \
+    && fail "unit still carries an unsubstituted token"
   execstarts="$(grep -c '^ExecStart=' "$unit" || true)"
   [[ "$execstarts" -eq 1 ]] \
     || fail "rendered unit has $execstarts ExecStart lines, expected exactly 1"
@@ -536,6 +572,425 @@ verify_public() {
 /v1/health, /metrics and /v1/ready correctly 404"
 }
 
+# ---------------------------------------------------------------------- fleet
+#
+# Many workers and a router, from one assignment. The assignment is generated
+# by `shard-assign plan` in the workflow from the published set and the
+# roster, and every worker reports its digest in /v1/ready, so the deploy can
+# assert that each host runs the assignment it shipped. Order matters and is
+# fixed: every host is prepared and its subset verified with the staged binary
+# before any running service is stopped; archive owners activate before recent
+# replicas; each worker is polled until it is warm; the router switches last;
+# the public edge is verified through the router; pruning runs after that.
+#
+# The single-host modes above are unchanged: this is what the pilot grows into,
+# not a replacement for it.
+
+fleet_json() { printf '%s' "$TRANSPARENT_FLEET_JSON"; }
+
+validate_fleet_inputs() {
+  require_env TRANSPARENT_FLEET_JSON TRANSPARENT_ASSIGNMENT TRANSPARENT_DEPLOY_USER \
+    TRANSPARENT_RELEASE_SHA TRANSPARENT_ARTIFACT_DIR TRANSPARENT_SHARD_DIR \
+    TRANSPARENT_PUBLIC_URL TRANSPARENT_SHARD_SOURCE
+  [[ "$TRANSPARENT_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    || fail "TRANSPARENT_RELEASE_SHA must be a full commit SHA"
+  [[ "$TRANSPARENT_PUBLIC_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] \
+    || fail "TRANSPARENT_PUBLIC_URL must be https:// and a bare host"
+  [[ "$TRANSPARENT_SHARD_DIR" = /* ]] || fail "TRANSPARENT_SHARD_DIR must be absolute"
+  [[ -f "$TRANSPARENT_ASSIGNMENT" ]] || fail "assignment $TRANSPARENT_ASSIGNMENT does not exist"
+  jq -e 'type == "array" and length > 0' <<<"$(fleet_json)" >/dev/null \
+    || fail "TRANSPARENT_FLEET_JSON must be a nonempty array"
+  local id host
+  while IFS=$'\t' read -r id host; do
+    [[ "$id" =~ ^[A-Za-z0-9_-]+$ ]] || fail "worker id $id is not a plain name"
+    [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]] || fail "worker $id ssh_host is not a plain host"
+    jq -e --arg id "$id" '.workers[] | select(.id == $id)' "$TRANSPARENT_ASSIGNMENT" >/dev/null \
+      || fail "roster names worker $id but the assignment does not"
+  done < <(jq -r '.[] | "\(.id)\t\(.ssh_host)"' <<<"$(fleet_json)")
+  if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
+    [[ "$TRANSPARENT_ROUTER_HOST" =~ ^[A-Za-z0-9._-]+$ ]] || fail "TRANSPARENT_ROUTER_HOST is not a plain host"
+  fi
+  if command -v "$TRANSPARENT_ARTIFACT_DIR/shard-assign" >/dev/null; then
+    "$TRANSPARENT_ARTIFACT_DIR/shard-assign" check --shard-dir "$TRANSPARENT_SHARD_SOURCE" \
+      --assignment "$TRANSPARENT_ASSIGNMENT" || fail "the assignment does not describe $TRANSPARENT_SHARD_SOURCE"
+  fi
+  ASSIGNMENT_SHA256="$(sha256sum "$TRANSPARENT_ASSIGNMENT" | cut -d' ' -f1)"
+  EXPECTED_MAP_SHA256="$(jq -er '.set.map_sha256' "$TRANSPARENT_ASSIGNMENT")" \
+    || fail "the assignment carries no map digest"
+  echo "assignment file $ASSIGNMENT_SHA256 for map $EXPECTED_MAP_SHA256"
+}
+ASSIGNMENT_SHA256=""
+EXPECTED_MAP_SHA256=""
+
+# The assignment's own digest, as the worker computes it over the canonical
+# (compact) serialization, is what /v1/ready reports; the file digest above
+# only names the artifact. Both are recorded.
+assignment_digest() {
+  "$TRANSPARENT_ARTIFACT_DIR/shard-assign" check --shard-dir "$TRANSPARENT_SHARD_SOURCE" \
+    --assignment "$TRANSPARENT_ASSIGNMENT" | awk '{print $1}'
+}
+
+host_ssh() {
+  local host="$1"; shift
+  local -a opts
+  mapfile -t opts < <(ssh_opts)
+  # shellcheck disable=SC2029
+  ssh "${opts[@]}" "$TRANSPARENT_DEPLOY_USER@$host" "$@"
+}
+
+worker_field() { jq -r --arg id "$1" ".[] | select(.id == \$id) | .$2" <<<"$(fleet_json)"; }
+worker_ids() { jq -r '.[].id' <<<"$(fleet_json)"; }
+# Archive owners first, then replicas, which is the activation order.
+worker_ids_in_activation_order() {
+  jq -r '(map(select(.role == "archive-owner")) + map(select(.role != "archive-owner"))) | .[].id' <<<"$(fleet_json)"
+}
+
+# MiB of the files one worker receives, summed from the set's own directory.
+subset_size_mib() {
+  local id="$1" total=0 size entry
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    size="$(du -sm "$TRANSPARENT_SHARD_SOURCE/${entry%/}" 2>/dev/null | cut -f1)"
+    total=$((total + ${size:-0}))
+  done < <("$TRANSPARENT_ARTIFACT_DIR/shard-assign" files --shard-dir "$TRANSPARENT_SHARD_SOURCE" \
+    --assignment "$TRANSPARENT_ASSIGNMENT" --worker-id "$id")
+  echo "$total"
+}
+
+fleet_preflight() {
+  local id host
+  for id in $(worker_ids); do
+    host="$(worker_field "$id" ssh_host)"
+    echo "== preflight $id ($host)"
+    host_ssh "$host" bash -s <<'REMOTE'
+set -euo pipefail
+[[ "$(uname -m)" == "x86_64" ]] || { echo "worker is not x86_64" >&2; exit 1; }
+for tool in curl jq sha256sum systemctl rsync; do
+  command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }
+done
+sudo -n true || { echo "passwordless sudo is required" >&2; exit 1; }
+free -g | awk '/^Mem:/ {print "memory: " $2 " GiB total, " $7 " GiB available"}'
+REMOTE
+    # Capacity against this worker's own file list, not the whole set.
+    local need have
+    need="$(subset_size_mib "$id")"
+    have="$(host_ssh "$host" "df -Pm $(printf %q "$(dirname "$TRANSPARENT_SHARD_DIR")") | awk 'NR==2 {print \$4}'")"
+    echo "$id needs ${need} MiB; has ${have} MiB free"
+    (( have > need * 2 + 1024 )) || fail "$id has too little space for its subset"
+  done
+  if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
+    echo "== preflight router ($TRANSPARENT_ROUTER_HOST)"
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s <<'REMOTE'
+set -euo pipefail
+for tool in caddy curl systemctl; do
+  command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }
+done
+systemctl is-enabled caddy >/dev/null 2>&1 || { echo "caddy is not enabled" >&2; exit 1; }
+sudo -n true || { echo "passwordless sudo is required" >&2; exit 1; }
+REMOTE
+  fi
+}
+
+# Stages binary, unit, assignment and this worker's subset on every host, and
+# the router's Caddyfile on the router. Nothing is activated.
+fleet_prepare() {
+  local -a opts
+  mapfile -t opts < <(ssh_opts)
+  local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
+  local assignment_sha
+  assignment_sha="$(assignment_digest)"
+  [[ "$assignment_sha" =~ ^[0-9a-f]{64}$ ]] || fail "could not compute the assignment digest"
+  local id host cache memory extra dest
+  for id in $(worker_ids); do
+    host="$(worker_field "$id" ssh_host)"
+    cache="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .cache_bytes' "$TRANSPARENT_ASSIGNMENT")"
+    memory="$(worker_field "$id" memory_max)"
+    [[ -n "$memory" && "$memory" != "null" ]] || fail "roster entry $id has no memory_max"
+    extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess"
+    render_unit "$cache" "$memory" "$extra" ".$id"
+    local unit="$RENDERED_UNIT"
+    echo "== stage $id ($host): binary, tools, unit, assignment"
+    host_ssh "$host" "mkdir -p $(printf %q "$staged")"
+    scp "${opts[@]}" \
+      "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" \
+      "$TRANSPARENT_ARTIFACT_DIR/shard-prune" \
+      "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
+      "$TRANSPARENT_ASSIGNMENT" \
+      "$TRANSPARENT_DEPLOY_USER@$host:$staged/"
+    scp "${opts[@]}" "$unit" "$TRANSPARENT_DEPLOY_USER@$host:$staged/unit.rendered"
+    host_ssh "$host" bash -s -- "$staged" <<'REMOTE'
+set -euo pipefail
+cd "$1"
+sha256sum -c SHA256SUMS --ignore-missing
+chmod 0755 transparent-shard-server shard-prune
+REMOTE
+    dest="$(shard_set_path)"
+    echo "== ship $id subset ($TRANSPARENT_SHARD_SOURCE -> $host:$dest)"
+    host_ssh "$host" "sudo mkdir -p $(printf %q "$dest") && sudo chown $(printf %q "$TRANSPARENT_DEPLOY_USER") $(printf %q "$dest")"
+    local list
+    list="$(mktemp)"
+    "$TRANSPARENT_ARTIFACT_DIR/shard-assign" files --shard-dir "$TRANSPARENT_SHARD_SOURCE" \
+      --assignment "$TRANSPARENT_ASSIGNMENT" --worker-id "$id" >"$list"
+    # -r explicitly: --files-from does not imply recursion into the listed
+    # directories. No --delete: the previous set stays where its unit points.
+    rsync -a -r --files-from="$list" --info=stats1 \
+      -e "ssh $(ssh_opts | tr '\n' ' ')" \
+      "$TRANSPARENT_SHARD_SOURCE/" \
+      "$TRANSPARENT_DEPLOY_USER@$host:$dest/"
+    rm -f "$list"
+  done
+  if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
+    local host_name="${TRANSPARENT_PUBLIC_URL#https://}"
+    local caddyfile="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.router.rendered"
+    "$TRANSPARENT_ARTIFACT_DIR/shard-assign" caddyfile --assignment "$TRANSPARENT_ASSIGNMENT" \
+      --public-host "$host_name" --out "$caddyfile"
+    grep -q "^$host_name {" "$caddyfile" || fail "rendered router config does not name $host_name"
+    echo "== stage router ($TRANSPARENT_ROUTER_HOST): Caddyfile"
+    host_ssh "$TRANSPARENT_ROUTER_HOST" "mkdir -p $(printf %q "$staged")"
+    scp "${opts[@]}" "$caddyfile" "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_ROUTER_HOST:$staged/Caddyfile"
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" <<'REMOTE'
+set -euo pipefail
+sudo caddy validate --config "$1/Caddyfile" --adapter caddyfile
+if sudo test -r /etc/caddy/Caddyfile; then
+  echo "router config changes (live -> staged):"
+  sudo diff -u /etc/caddy/Caddyfile "$1/Caddyfile" || true
+fi
+REMOTE
+  fi
+}
+
+# The staged binary loads and verifies each worker's subset under its own
+# unit's arguments while the running service is untouched. This is the gate
+# between "copied" and "activated": a partial copy, a wrong assignment or a
+# budget the assignment does not fit all stop here.
+fleet_verify_prepared() {
+  local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
+  local id host
+  for id in $(worker_ids); do
+    host="$(worker_field "$id" ssh_host)"
+    echo "== verify prepared $id ($host)"
+    host_ssh "$host" bash -s -- "$staged" <<'REMOTE'
+set -euo pipefail
+staged="$1"
+exec_line="$(sed -n 's/^ExecStart=//p' "$staged/unit.rendered")"
+# The unit's own arguments, with the binary and the assignment path pointed at
+# the staged copies, so what is verified is what will run.
+args="${exec_line#* }"
+args="${args//\/opt\/transparent-pir\/assignments\//$staged/}"
+# shellcheck disable=SC2086
+"$staged/transparent-shard-server" $args --verify-only
+REMOTE
+  done
+}
+
+# Polls a worker's readiness over the VPC until it reports ready under the
+# expected map and assignment, or gives up.
+wait_ready() {
+  local id="$1" upstream="$2" expect_assignment="$3" attempts="${4:-120}"
+  local attempt ready
+  for attempt in $(seq 1 "$attempts"); do
+    if ready="$(curl --silent --max-time 10 "http://$upstream/v1/ready" 2>/dev/null)" && [[ -n "$ready" ]]; then
+      if echo "$ready" | jq -e "$JQ_READY_OK" >/dev/null 2>&1; then
+        local map assignment
+        map="$(echo "$ready" | jq -er "$JQ_READY_MAP")"
+        assignment="$(echo "$ready" | jq -er "$JQ_READY_ASSIGNMENT")"
+        [[ "$map" == "$EXPECTED_MAP_SHA256" ]] \
+          || fail "$id is ready under map $map, expected $EXPECTED_MAP_SHA256"
+        [[ "$assignment" == "$expect_assignment" ]] \
+          || fail "$id is ready under assignment $assignment, expected $expect_assignment"
+        echo "$id ready: $(echo "$ready" | jq -r "$JQ_READY_WARM")"
+        return 0
+      fi
+      [[ $((attempt % 6)) -eq 0 ]] && echo "$id: $(echo "$ready" | jq -r "$JQ_READY_REASON"), $(echo "$ready" | jq -r "$JQ_READY_WARM")"
+    fi
+    sleep 10
+  done
+  fail "$id never became ready"
+}
+
+ACTIVATED_WORKERS=()
+ROUTER_ACTIVATED=0
+
+fleet_activate_workers() {
+  local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
+  local assignment_sha
+  assignment_sha="$(assignment_digest)"
+  local id host upstream
+  for id in $(worker_ids_in_activation_order); do
+    host="$(worker_field "$id" ssh_host)"
+    upstream="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .upstream' "$TRANSPARENT_ASSIGNMENT")"
+    echo "== activate $id ($host)"
+    ACTIVATED_WORKERS+=("$host")
+    host_ssh "$host" bash -s -- "$staged" "$TRANSPARENT_RELEASE_SHA" "$assignment_sha" <<'REMOTE'
+set -euo pipefail
+staged="$1"; sha="$2"; assignment_sha="$3"
+release="/opt/transparent-pir/releases/$sha"
+sudo mkdir -p "$release" /opt/transparent-pir/rollback /opt/transparent-pir/assignments
+sudo install -m 0755 "$staged/transparent-shard-server" "$release/"
+sudo install -m 0755 "$staged/shard-prune" "$release/"
+sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
+sudo install -m 0644 "$staged/$(basename "$(ls "$staged"/*.json | head -1)")" "/opt/transparent-pir/assignments/$assignment_sha.json"
+if [[ -x /usr/local/bin/transparent-shard-server ]]; then
+  sudo cp -f /usr/local/bin/transparent-shard-server /opt/transparent-pir/rollback/
+fi
+if [[ -f /etc/systemd/system/transparent-shard-server.service ]]; then
+  sudo cp -f /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/rollback/
+fi
+sudo systemctl stop transparent-shard-server.service 2>/dev/null || true
+sudo install -m 0755 "$release/transparent-shard-server" /usr/local/bin/transparent-shard-server.next
+sudo mv -f /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server
+sudo install -m 0755 "$release/shard-prune" /usr/local/bin/shard-prune
+sudo install -m 0644 "$release/transparent-shard-server.service" \
+  /etc/systemd/system/transparent-shard-server.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now transparent-shard-server.service
+printf '%s\n' "$sha" | sudo tee /opt/transparent-pir/current-release >/dev/null
+REMOTE
+    # Warm before the next worker: a replica out of rotation is one the
+    # router's health check already sees as down; two at once halves the pool.
+    wait_ready "$id" "$upstream" "$assignment_sha"
+    host_ssh "$host" "rm -rf $(printf %q "$staged")"
+  done
+}
+
+fleet_activate_router() {
+  [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]] || { echo "no router host; skipping"; return 0; }
+  local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
+  echo "== activate router ($TRANSPARENT_ROUTER_HOST)"
+  ROUTER_ACTIVATED=1
+  host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" <<'REMOTE'
+set -euo pipefail
+staged="$1"
+sudo mkdir -p /opt/transparent-pir/rollback
+sudo cp -f /etc/caddy/Caddyfile /opt/transparent-pir/rollback/Caddyfile 2>/dev/null || true
+sudo caddy validate --config "$staged/Caddyfile" --adapter caddyfile
+sudo install -m 0644 "$staged/Caddyfile" /etc/caddy/Caddyfile
+sudo systemctl reload caddy || sudo systemctl restart caddy
+rm -rf "$staged"
+REMOTE
+}
+
+# Through the router, over TLS: the set identity, one private setup per
+# worker's first assigned shard, a manifest that digests to its path, and the
+# operator routes refused. Over the VPC: a request to a worker for a shard it
+# does not own is a 421, which is what proves the router is doing the routing.
+fleet_verify_public() {
+  echo "== verify public edge at $TRANSPARENT_PUBLIC_URL"
+  local attempt public
+  for attempt in $(seq 1 30); do
+    if public="$(curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/init" 2>/dev/null)"; then
+      break
+    fi
+    [[ "$attempt" -lt 30 ]] || fail "public endpoint never answered over TLS"
+    sleep 10
+  done
+  local public_map
+  public_map="$(echo "$public" | jq -er "$JQ_INIT_MAP")" || fail "public init carries no map digest"
+  [[ "$public_map" == "$EXPECTED_MAP_SHA256" ]] \
+    || fail "the edge serves map $public_map, the assignment was made for $EXPECTED_MAP_SHA256"
+  local operator_path operator_status
+  for operator_path in /v1/health /metrics /v1/ready; do
+    operator_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+      --max-time 15 "$TRANSPARENT_PUBLIC_URL$operator_path")"
+    [[ "$operator_status" == "404" ]] \
+      || fail "$operator_path is reachable publicly (HTTP $operator_status); the route is too wide"
+  done
+  local id first digest status upstream other other_digest
+  for id in $(worker_ids); do
+    first="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .shards[0] // empty' "$TRANSPARENT_ASSIGNMENT")"
+    [[ -n "$first" ]] || continue
+    digest="$(jq -er --argjson id "$first" '.shards[] | select(.shard_id == $id) | .manifest_digest' "$TRANSPARENT_SHARD_SOURCE/shards.json")"
+    status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 60 \
+      "$TRANSPARENT_PUBLIC_URL/v1/shards/$first/revisions/$digest/setup/directory/0")"
+    [[ "$status" == "200" ]] || fail "setup for shard $first (owned by $id) is HTTP $status through the edge"
+    local served
+    served="$(curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/$first/revisions/$digest/manifest" | sha256sum | cut -d' ' -f1)"
+    [[ "$served" == "$digest" ]] || fail "manifest for shard $first digests to $served, not $digest"
+    # The worker's own view over the VPC: it holds exactly the shards the
+    # assignment gives it.
+    upstream="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .upstream' "$TRANSPARENT_ASSIGNMENT")"
+    local assigned expected_assigned
+    assigned="$(curl --fail --silent --max-time 15 "http://$upstream/v1/health" | jq -er "$JQ_HEALTH_ASSIGNED")" \
+      || fail "$id health does not report an assigned shard count"
+    expected_assigned="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .shards | length' "$TRANSPARENT_ASSIGNMENT")"
+    [[ "$assigned" -eq "$expected_assigned" ]] \
+      || fail "$id holds $assigned shards, the assignment gives it $expected_assigned"
+    local init_assigned
+    init_assigned="$(curl --fail --silent --max-time 15 "http://$upstream/v1/shards/init" | jq -er "$JQ_INIT_ASSIGNED")" \
+      || fail "$id init does not report an assigned shard count"
+    [[ "$init_assigned" -eq "$expected_assigned" ]] \
+      || fail "$id init reports $init_assigned assigned shards, health reports $assigned"
+    # A shard this worker does not own, asked of it directly.
+    other="$(jq -er --arg id "$id" '[.workers[] | select(.id != $id) | .shards[]] | map(select(. as $s | ($ARGS.named.mine | index($s)) == null)) | .[0] // empty' \
+      --argjson mine "$(jq -c --arg id "$id" '.workers[] | select(.id == $id) | .shards' "$TRANSPARENT_ASSIGNMENT")" "$TRANSPARENT_ASSIGNMENT")"
+    if [[ -n "$other" ]]; then
+      other_digest="$(jq -er --argjson id "$other" '.shards[] | select(.shard_id == $id) | .manifest_digest' "$TRANSPARENT_SHARD_SOURCE/shards.json")"
+      status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 \
+        "http://$upstream/v1/shards/$other/revisions/$other_digest/setup/directory/0")"
+      [[ "$status" == "421" ]] || fail "$id answered HTTP $status for unassigned shard $other; expected 421"
+    fi
+    echo "$id: shard $first served through the edge; unassigned shard refused directly"
+  done
+  echo "public edge serves map $public_map; operator routes 404"
+}
+
+fleet_prune() {
+  local id host
+  for id in $(worker_ids); do
+    host="$(worker_field "$id" ssh_host)"
+    echo "== prune $id ($host)"
+    host_ssh "$host" bash -s -- "$(shard_set_path)" "$id" <<'REMOTE'
+set -euo pipefail
+set_path="$1"; id="$2"
+assignment="$(sed -n 's/.*--assignment \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
+sudo /usr/local/bin/shard-prune --shard-dir "$set_path" --assignment "$assignment" --worker-id "$id" --apply \
+  | jq -r '"\(.deleted | length) removed, \(.bytes_freed) bytes freed"'
+REMOTE
+  done
+}
+
+rollback_fleet() {
+  echo "== rollback fleet" >&2
+  if [[ "$ROUTER_ACTIVATED" -eq 1 && -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s <<'REMOTE' || true
+set -euo pipefail
+if sudo test -r /opt/transparent-pir/rollback/Caddyfile; then
+  sudo install -m 0644 /opt/transparent-pir/rollback/Caddyfile /etc/caddy/Caddyfile
+  sudo systemctl reload caddy || sudo systemctl restart caddy
+fi
+REMOTE
+  fi
+  local host
+  for host in "${ACTIVATED_WORKERS[@]}"; do
+    host_ssh "$host" bash -s <<'REMOTE' || true
+set -euo pipefail
+if [[ -x /opt/transparent-pir/rollback/transparent-shard-server ]]; then
+  sudo install -m 0755 /opt/transparent-pir/rollback/transparent-shard-server /usr/local/bin/transparent-shard-server
+  if [[ -f /opt/transparent-pir/rollback/transparent-shard-server.service ]]; then
+    sudo install -m 0644 /opt/transparent-pir/rollback/transparent-shard-server.service /etc/systemd/system/transparent-shard-server.service
+  fi
+  sudo systemctl daemon-reload
+  sudo systemctl restart transparent-shard-server.service || true
+else
+  sudo systemctl disable --now transparent-shard-server.service || true
+fi
+sudo journalctl -u transparent-shard-server.service -n 40 --no-pager || true
+REMOTE
+  done
+}
+
+# An explicit rollback of every roster host and the router, for an operator
+# who has decided the activated release must go back.
+fleet_rollback_all() {
+  ROUTER_ACTIVATED=1
+  ACTIVATED_WORKERS=()
+  local id
+  for id in $(worker_ids); do
+    ACTIVATED_WORKERS+=("$(worker_field "$id" ssh_host)")
+  done
+  rollback_fleet
+}
+
 # ----------------------------------------------------------------------- main
 
 case "$MODE" in
@@ -585,7 +1040,40 @@ case "$MODE" in
     trap - ERR
     echo "deployed $TRANSPARENT_RELEASE_SHA"
     ;;
+  fleet-validate)
+    validate_fleet_inputs
+    validate_shard_set "$TRANSPARENT_SHARD_SOURCE"
+    echo "fleet inputs, assignment and shard set are valid"
+    ;;
+  fleet-preflight)
+    validate_fleet_inputs
+    validate_shard_set "$TRANSPARENT_SHARD_SOURCE"
+    fleet_preflight
+    fleet_prepare
+    fleet_verify_prepared
+    echo "fleet preflight complete; every subset verified with the staged binary; nothing was activated"
+    ;;
+  fleet-deploy)
+    validate_fleet_inputs
+    validate_shard_set "$TRANSPARENT_SHARD_SOURCE"
+    fleet_preflight
+    fleet_prepare
+    fleet_verify_prepared
+    set -E
+    trap 'rollback_fleet' ERR
+    fleet_activate_workers
+    fleet_activate_router
+    fleet_verify_public
+    trap - ERR
+    fleet_prune
+    echo "deployed $TRANSPARENT_RELEASE_SHA to the fleet under assignment $(assignment_digest)"
+    ;;
+  fleet-rollback)
+    validate_fleet_inputs
+    fleet_rollback_all
+    echo "fleet rolled back to the previously activated release"
+    ;;
   *)
-    fail "unknown mode $MODE (jq-programs, validate, preflight, deploy)"
+    fail "unknown mode $MODE (jq-programs, validate, preflight, deploy, fleet-validate, fleet-preflight, fleet-deploy, fleet-rollback)"
     ;;
 esac

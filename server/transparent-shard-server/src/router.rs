@@ -1,0 +1,543 @@
+//! Planning an assignment over a roster of workers, and rendering the edge
+//! that routes to it.
+//!
+//! Routing is public data only. A request names a shard id, a revision digest
+//! and a table in its path; the edge maps the shard id to the workers that
+//! hold it and nothing else. The selected script, the row inside the table and
+//! the page locator are inside the private body and never reach a routing
+//! decision. Every replica of the recent tier holds the same shards, so the
+//! newest shard — the one every syncing wallet touches — draws on every
+//! replica's bandwidth; archive shards have one owner each, and losing that
+//! owner makes its range unavailable, explicitly, until it is rebuilt.
+
+use crate::assignment::{
+    Assignment, GeneratedBy, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
+};
+use crate::runtime::reserved_bytes;
+use crate::shardset::Table;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use transparent_filter::{ShardMap, ShardMapEntry};
+
+/// One worker as the operator describes it, before shards are assigned.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RosterEntry {
+    pub id: String,
+    pub role: WorkerRole,
+    #[serde(default)]
+    pub replica_group: Option<String>,
+    /// How the deploy reaches the host.
+    pub ssh_host: String,
+    /// How the router reaches the service: `host:port`.
+    pub upstream: String,
+    pub cache_bytes: u64,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PlanError {
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// Bytes every runtime of `entry` reserves: both tables, every segment.
+pub fn shard_reserved_bytes(entry: &ShardMapEntry) -> Result<u64, PlanError> {
+    let geometry = transparent_shard::layout::by_name(&entry.geometry).ok_or_else(|| {
+        PlanError::Invalid(format!(
+            "shard {} names geometry {}, which this build does not know",
+            entry.shard_id, entry.geometry
+        ))
+    })?;
+    let mut total = 0u64;
+    for (table, segments) in [
+        (Table::Directory, entry.directory_segments),
+        (Table::Pages, entry.page_segments),
+    ] {
+        let (rlwe, scheme) = ipir_sp::params_for_simplepir(
+            table.rows(geometry),
+            table.row_bytes(geometry) as u64 * 8,
+        )
+        .map_err(|error| PlanError::Invalid(error.to_string()))?;
+        total += reserved_bytes(&rlwe, &scheme) * u64::from(segments);
+    }
+    Ok(total)
+}
+
+/// Plans an assignment: every recent shard on every replica, the archive
+/// split into contiguous ranges balanced by reserved bytes across owners.
+///
+/// `headroom` is the fraction of each worker's cache that must stay free of
+/// assigned runtimes, for retained revisions and the transient cost of a
+/// build. A worker that cannot hold its share within that is a refusal, not a
+/// plan: an assignment that relies on eviction is a worker that thrashes.
+pub fn plan(
+    map: &ShardMap,
+    map_sha256: &str,
+    roster: &[RosterEntry],
+    recent_from_shard: u64,
+    headroom: f64,
+    generated_by: GeneratedBy,
+) -> Result<Assignment, PlanError> {
+    if !(0.0..1.0).contains(&headroom) {
+        return Err(PlanError::Invalid("headroom must be in [0, 1)".into()));
+    }
+    let shards = map.shards.len() as u64;
+    if recent_from_shard > shards {
+        return Err(PlanError::Invalid(format!(
+            "recent_from_shard {recent_from_shard} is beyond the set's {shards} shards"
+        )));
+    }
+    if roster.is_empty() {
+        return Err(PlanError::Invalid("the roster is empty".into()));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for entry in roster {
+        if !ids.insert(entry.id.as_str()) {
+            return Err(PlanError::Invalid(format!(
+                "worker {} appears twice",
+                entry.id
+            )));
+        }
+    }
+    let costs: Vec<u64> = map
+        .shards
+        .iter()
+        .map(shard_reserved_bytes)
+        .collect::<Result<_, _>>()?;
+    let budget = |entry: &RosterEntry| (entry.cache_bytes as f64 * (1.0 - headroom)) as u64;
+
+    let recent: Vec<u64> = (recent_from_shard..shards).collect();
+    let recent_bytes: u64 = recent.iter().map(|id| costs[*id as usize]).sum();
+    let archive: Vec<u64> = (0..recent_from_shard).collect();
+    let archive_bytes: u64 = archive.iter().map(|id| costs[*id as usize]).sum();
+
+    let owners: Vec<&RosterEntry> = roster
+        .iter()
+        .filter(|entry| entry.role == WorkerRole::ArchiveOwner)
+        .collect();
+    let replicas: Vec<&RosterEntry> = roster
+        .iter()
+        .filter(|entry| entry.role == WorkerRole::RecentReplica)
+        .collect();
+    if !recent.is_empty() && replicas.is_empty() {
+        return Err(PlanError::Invalid(
+            "the set has a recent tier but the roster has no recent replica".into(),
+        ));
+    }
+    if !archive.is_empty() && owners.is_empty() {
+        return Err(PlanError::Invalid(
+            "the set has an archive tier but the roster has no archive owner".into(),
+        ));
+    }
+
+    let mut workers: Vec<WorkerAssignment> = Vec::new();
+
+    // The archive is cut into contiguous ranges. Contiguity keeps an owner's
+    // range legible ("shards 0-80") and a rebuild a single copy; the cut
+    // points are chosen so each owner's reserved bytes are as close to the
+    // per-owner share as a contiguous split allows.
+    if !archive.is_empty() {
+        let share = archive_bytes as f64 / owners.len() as f64;
+        let mut ranges: Vec<Vec<u64>> = Vec::new();
+        let mut current: Vec<u64> = Vec::new();
+        let mut current_bytes = 0u64;
+        let mut cumulative = 0f64;
+        for &id in &archive {
+            let cost = costs[id as usize];
+            // Close the range when adding this shard would carry it past the
+            // next cut point, unless this is the last owner's range.
+            let remaining_owners = owners.len() - ranges.len();
+            let target = share * (ranges.len() + 1) as f64;
+            if remaining_owners > 1
+                && !current.is_empty()
+                && cumulative + cost as f64 > target
+                && (cumulative + cost as f64 - target) > (target - cumulative)
+            {
+                ranges.push(std::mem::take(&mut current));
+                current_bytes = 0;
+            }
+            current.push(id);
+            current_bytes += cost;
+            cumulative += cost as f64;
+            let _ = current_bytes;
+        }
+        ranges.push(current);
+        while ranges.len() < owners.len() {
+            ranges.push(Vec::new());
+        }
+        for (owner, range) in owners.iter().zip(ranges) {
+            let bytes: u64 = range.iter().map(|id| costs[*id as usize]).sum();
+            if bytes > budget(owner) {
+                return Err(PlanError::Invalid(format!(
+                    "archive owner {} would hold {} bytes of runtimes ({} shards) against a \
+                     budget of {} after {:.0}% headroom; add owners or memory rather than rely \
+                     on eviction",
+                    owner.id,
+                    bytes,
+                    range.len(),
+                    budget(owner),
+                    headroom * 100.0
+                )));
+            }
+            workers.push(WorkerAssignment {
+                id: owner.id.clone(),
+                role: WorkerRole::ArchiveOwner,
+                replica_group: None,
+                upstream: owner.upstream.clone(),
+                cache_bytes: owner.cache_bytes,
+                shards: range,
+                estimated_resident_bytes: bytes,
+            });
+        }
+    } else {
+        for owner in &owners {
+            workers.push(WorkerAssignment {
+                id: owner.id.clone(),
+                role: WorkerRole::ArchiveOwner,
+                replica_group: None,
+                upstream: owner.upstream.clone(),
+                cache_bytes: owner.cache_bytes,
+                shards: Vec::new(),
+                estimated_resident_bytes: 0,
+            });
+        }
+    }
+
+    for replica in &replicas {
+        if recent_bytes > budget(replica) {
+            return Err(PlanError::Invalid(format!(
+                "recent replica {} would hold {} bytes of runtimes ({} shards) against a budget \
+                 of {} after {:.0}% headroom; the recent tier has outgrown its replicas",
+                replica.id,
+                recent_bytes,
+                recent.len(),
+                budget(replica),
+                headroom * 100.0
+            )));
+        }
+        workers.push(WorkerAssignment {
+            id: replica.id.clone(),
+            role: WorkerRole::RecentReplica,
+            replica_group: Some(
+                replica
+                    .replica_group
+                    .clone()
+                    .unwrap_or_else(|| "recent".to_string()),
+            ),
+            upstream: replica.upstream.clone(),
+            cache_bytes: replica.cache_bytes,
+            shards: recent.clone(),
+            estimated_resident_bytes: recent_bytes,
+        });
+    }
+
+    let assignment = Assignment {
+        schema: ASSIGNMENT_SCHEMA.to_string(),
+        set: SetIdentity {
+            shard_schema: transparent_shard::manifest::SCHEMA.to_string(),
+            map_sha256: map_sha256.to_string(),
+            network: map.network.clone(),
+            genesis_hash: map.genesis_hash.clone(),
+            shards,
+            start_height: map.start_height,
+            covered_through: map.shards.last().map(|e| e.end_height).unwrap_or(0),
+            recent_from_shard,
+        },
+        generated_by,
+        workers,
+        unassigned: Vec::new(),
+    };
+    assignment
+        .check_shape()
+        .map_err(|error| PlanError::Invalid(error.to_string()))?;
+    Ok(assignment)
+}
+
+/// Renders the router's Caddyfile for an assignment.
+///
+/// Private routes are matched on the shard id in the path and sent to that
+/// shard's owners: the recent pool round-robin with health checks, each
+/// archive owner alone. Set-wide public bytes — map, init, filters, manifests
+/// — go to the recent pool, since every worker holds them. Operator routes
+/// are not routed at all.
+pub fn render_caddyfile(assignment: &Assignment, public_host: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Rendered by shard-assign for assignment {}.\n\
+         # Do not edit: the assignment is the source, and every worker reports\n\
+         # the assignment digest it runs under.\n",
+        assignment.digest()
+    ));
+    out.push_str(&format!("{public_host} {{\n"));
+    out.push_str(
+        "\ttls {\n\t\tissuer acme {\n\t\t\tdir https://acme-v02.api.letsencrypt.org/directory\n\t\t}\n\t}\n\n",
+    );
+    out.push_str("\trequest_body {\n\t\tmax_size 1MB\n\t}\n\n");
+
+    let health = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 5s\n\t\t\thealth_timeout 3s\n\t\t\tfail_duration 30s\n";
+
+    // Replica groups first, then owners; both keyed by shard id.
+    let mut groups: BTreeMap<&str, (Vec<&str>, &[u64])> = BTreeMap::new();
+    let mut owners: Vec<&WorkerAssignment> = Vec::new();
+    for worker in &assignment.workers {
+        match worker.role {
+            WorkerRole::RecentReplica => {
+                let group = worker.replica_group.as_deref().unwrap_or("recent");
+                let entry = groups.entry(group).or_insert((Vec::new(), &worker.shards));
+                entry.0.push(&worker.upstream);
+            }
+            WorkerRole::ArchiveOwner => owners.push(worker),
+        }
+    }
+    let ids_pattern = |ids: &[u64]| {
+        ids.iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    for (group, (upstreams, shards)) in &groups {
+        if shards.is_empty() {
+            continue;
+        }
+        out.push_str(&format!(
+            "\t@{group} path_regexp ^/v1/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
+            ids_pattern(shards)
+        ));
+        out.push_str(&format!(
+            "\thandle @{group} {{\n\t\treverse_proxy {} {{\n\t\t\tlb_policy round_robin\n\t\t\tlb_try_duration 2s\n{health}\t\t}}\n\t}}\n\n",
+            upstreams.join(" ")
+        ));
+    }
+    for owner in &owners {
+        if owner.shards.is_empty() {
+            continue;
+        }
+        let name = owner.id.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+        out.push_str(&format!(
+            "\t@owner_{name} path_regexp ^/v1/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
+            ids_pattern(&owner.shards)
+        ));
+        out.push_str(&format!(
+            "\thandle @owner_{name} {{\n\t\treverse_proxy {} {{\n{health}\t\t}}\n\t}}\n\n",
+            owner.upstream
+        ));
+    }
+
+    // Set-wide public bytes from whichever pool has the most members: every
+    // worker holds every manifest and filter.
+    let public_pool: Vec<&str> = groups
+        .values()
+        .max_by_key(|(upstreams, _)| upstreams.len())
+        .map(|(upstreams, _)| upstreams.clone())
+        .unwrap_or_else(|| owners.iter().map(|o| o.upstream.as_str()).collect());
+    let pool = public_pool.join(" ");
+    out.push_str(&format!(
+        "\t@manifest path_regexp ^/v1/shards/[0-9]+/revisions/[0-9a-f]{{64}}/manifest$\n\
+         \thandle @manifest {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+    ));
+    out.push_str(&format!(
+        "\thandle /v1/shards/init {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+    ));
+    out.push_str(&format!(
+        "\thandle /v1/shards {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+    ));
+    out.push_str(&format!(
+        "\thandle /v1/filters/* {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+    ));
+    // Everything else, including any shard id no worker holds and every
+    // operator route, is a 404 at the edge.
+    out.push_str("\thandle {\n\t\trespond 404\n\t}\n}\n");
+    out
+}
+
+/// The files a worker needs from a published set, relative to the set's
+/// root: the map, every current revision's manifest and filter, and the
+/// whole directory of every assigned shard's current and retained revisions.
+///
+/// Superseded revisions are included only for assigned shards, and only
+/// those on disk at the source; the worker's own retention bound decides
+/// what it keeps.
+pub fn files_for(
+    set_dir: &std::path::Path,
+    map: &ShardMap,
+    assignment: &Assignment,
+    worker_id: &str,
+) -> Result<Vec<String>, PlanError> {
+    let scope = assignment
+        .scope_for(worker_id)
+        .map_err(|error| PlanError::Invalid(error.to_string()))?;
+    let mut files = vec!["shards.json".to_string()];
+    let current: std::collections::BTreeSet<&str> = map
+        .shards
+        .iter()
+        .map(|e| e.manifest_digest.as_str())
+        .collect();
+    let mut by_shard: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    for entry in std::fs::read_dir(set_dir)
+        .map_err(|error| PlanError::Invalid(format!("{}: {error}", set_dir.display())))?
+    {
+        let entry = entry.map_err(|error| PlanError::Invalid(error.to_string()))?;
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let manifest: transparent_shard::manifest::ShardManifest =
+            match std::fs::read(entry.path().join("manifest.json"))
+                .ok()
+                .and_then(|raw| serde_json::from_slice(&raw).ok())
+            {
+                Some(manifest) => manifest,
+                None => continue,
+            };
+        if current.contains(name.as_str()) {
+            files.push(format!("{name}/manifest.json"));
+            files.push(format!("{name}/filter.bin"));
+        }
+        by_shard.entry(manifest.shard_id).or_default().push(name);
+    }
+    for id in &scope.assigned {
+        for name in by_shard.get(id).into_iter().flatten() {
+            files.push(format!("{name}/"));
+        }
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use transparent_filter::SealParameters;
+
+    fn entry(shard_id: u64, geometry: &str) -> ShardMapEntry {
+        ShardMapEntry {
+            shard_id,
+            geometry: geometry.into(),
+            start_height: shard_id * 100,
+            end_height: shard_id * 100 + 99,
+            parent_block_hash: "00".repeat(32),
+            terminal_block_hash: "11".repeat(32),
+            filter_hash: "22".repeat(32),
+            scripts: 1,
+            page_rows: 1,
+            txids: 0,
+            directory_segments: 1,
+            page_segments: 1,
+            manifest_digest: format!("{:064x}", shard_id),
+            revision: 0,
+            sealed: true,
+        }
+    }
+
+    fn map(archive: u64, recent: u64) -> ShardMap {
+        let mut shards = Vec::new();
+        for id in 0..archive {
+            shards.push(entry(id, "archive-wide"));
+        }
+        for id in archive..archive + recent {
+            shards.push(entry(id, "recent-8k"));
+        }
+        ShardMap {
+            genesis_hash: "33".repeat(32),
+            network: "main".into(),
+            profile: "zcash-transparent-range-v1".into(),
+            range_envelope_version: 1,
+            start_height: 0,
+            seal: BTreeMap::from([(
+                "recent-8k".to_string(),
+                SealParameters {
+                    max_scripts: 1,
+                    max_page_rows: 1,
+                    max_txids: 0,
+                },
+            )]),
+            shards,
+        }
+    }
+
+    fn roster(owners: usize, replicas: usize, cache: u64) -> Vec<RosterEntry> {
+        let mut roster = Vec::new();
+        for i in 0..owners {
+            roster.push(RosterEntry {
+                id: format!("archive-{i}"),
+                role: WorkerRole::ArchiveOwner,
+                replica_group: None,
+                ssh_host: format!("10.0.1.{i}"),
+                upstream: format!("10.0.1.{i}:8093"),
+                cache_bytes: cache,
+            });
+        }
+        for i in 0..replicas {
+            roster.push(RosterEntry {
+                id: format!("recent-{i}"),
+                role: WorkerRole::RecentReplica,
+                replica_group: None,
+                ssh_host: format!("10.0.2.{i}"),
+                upstream: format!("10.0.2.{i}:8093"),
+                cache_bytes: cache,
+            });
+        }
+        roster
+    }
+
+    fn generated() -> GeneratedBy {
+        GeneratedBy {
+            tool: "test".into(),
+            source_sha: None,
+            generated_at: "now".into(),
+        }
+    }
+
+    #[test]
+    fn the_archive_is_split_contiguously_and_balanced_by_reserved_bytes() {
+        let map = map(10, 4);
+        let assignment = plan(&map, "ab", &roster(2, 4, 64 << 30), 10, 0.1, generated()).unwrap();
+        let owners: Vec<&WorkerAssignment> = assignment
+            .workers
+            .iter()
+            .filter(|w| w.role == WorkerRole::ArchiveOwner)
+            .collect();
+        assert_eq!(owners.len(), 2);
+        assert_eq!(owners[0].shards, vec![0, 1, 2, 3, 4]);
+        assert_eq!(owners[1].shards, vec![5, 6, 7, 8, 9]);
+        assert_eq!(
+            owners[0].estimated_resident_bytes,
+            owners[1].estimated_resident_bytes
+        );
+        let replicas: Vec<&WorkerAssignment> = assignment
+            .workers
+            .iter()
+            .filter(|w| w.role == WorkerRole::RecentReplica)
+            .collect();
+        assert_eq!(replicas.len(), 4);
+        for replica in replicas {
+            assert_eq!(replica.shards, vec![10, 11, 12, 13]);
+            assert_eq!(replica.replica_group.as_deref(), Some("recent"));
+        }
+        assert!(assignment.unassigned.is_empty());
+    }
+
+    #[test]
+    fn a_roster_that_cannot_hold_its_share_is_refused() {
+        let map = map(10, 4);
+        let error = plan(&map, "ab", &roster(2, 4, 1 << 30), 10, 0.1, generated()).unwrap_err();
+        assert!(error.to_string().contains("rely on eviction"), "{error}");
+    }
+
+    #[test]
+    fn the_caddyfile_routes_each_shard_to_its_owners_and_nothing_else() {
+        let map = map(4, 2);
+        let assignment = plan(&map, "ab", &roster(2, 2, 64 << 30), 4, 0.1, generated()).unwrap();
+        let rendered = render_caddyfile(&assignment, "transparent.example");
+        assert!(rendered.contains("transparent.example {"));
+        assert!(rendered.contains("@recent path_regexp ^/v1/shards/(4|5)/revisions/"));
+        assert!(rendered.contains("reverse_proxy 10.0.2.0:8093 10.0.2.1:8093 {"));
+        assert!(rendered.contains("@owner_archive_0 path_regexp ^/v1/shards/(0|1)/revisions/"));
+        assert!(rendered.contains("@owner_archive_1 path_regexp ^/v1/shards/(2|3)/revisions/"));
+        assert!(rendered.contains("health_uri /v1/ready"));
+        assert!(!rendered.contains("/metrics"));
+        assert!(rendered
+            .trim_end()
+            .ends_with("handle {\n\t\trespond 404\n\t}\n}"));
+    }
+}
