@@ -1,0 +1,10 @@
+{
+  "manifest_sha256": "682a3dd85457bcda8201134980b0ee392885a51039615a7e24c61accc67b67ed",
+  "live_map_sha256": "c455895e52ec63ad8fad888bd7e6c777b0f1f355de382e22e5ceb06d704c7ffa",
+  "covered_children": 160,
+  "parents": 20,
+  "parent_bytes": 12752297,
+  "public_tip": 3476743,
+  "map_url": "https://enhance-pir.valargroup.dev/v1/filters/shards",
+  "output": "/srv/transparent-parent-filters/releases/archive-k8-m100-5577b34"
+}

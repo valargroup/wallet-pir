@@ -1,6 +1,6 @@
 # Parent-filter evaluation
 
-This is an opt-in experiment, not a deployed protocol or production parameter recommendation. Recent catch-up bandwidth is the primary objective. The existing mixed-20 synthetic weights are secondary; these are not wallet population frequencies.
+This implements an opt-in experiment. The user subsequently approved [production artifact hosting](evidence/parent-filters-production-2026-09-08/README.md); the full paired performance benchmark remains incomplete. Recent catch-up bandwidth is the primary objective. The existing mixed-20 synthetic weights are secondary; these are not wallet population frequencies.
 
 ## Reproduce
 

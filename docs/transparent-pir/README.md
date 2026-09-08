@@ -34,4 +34,4 @@ Superseded transparent PIR documents and their old paths have been deleted. Raw 
 
 ## Experiments
 
-[Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. It does not establish deployed behavior or production parameters.
+[Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. The later [production artifact rollout](evidence/parent-filters-production-2026-09-08/README.md) records HTTPS verification and the bounded production recovery canary.

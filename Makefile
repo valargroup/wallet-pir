@@ -28,6 +28,7 @@ check: check-ops check-docs
 # first and fails in seconds rather than after the release test suite.
 check-ops:
 	ops/scripts/check-jq-contracts.sh
+	python3 ops/tests/test_transparent_parents.py
 	python3 ops/tests/test_transparent_fleet.py
 	python3 ops/tests/test_transparent_publication.py
 

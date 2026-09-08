@@ -1,0 +1,7 @@
+{
+  "url": "https://enhance-pir.valargroup.dev/v1/filters/parents/archive-wide.json",
+  "manifest_sha256": "682a3dd85457bcda8201134980b0ee392885a51039615a7e24c61accc67b67ed",
+  "caddy_before_sha256": "30c532938aceed759ca531bfa20b459f007795ce43abc52fe5faab27d8675b60",
+  "caddy_after_sha256": "edf6a0654940c8e071eef980bb677698aa0e46235234a57ee1e8a9609c6630f1",
+  "result": "active"
+}

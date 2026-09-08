@@ -2,6 +2,10 @@
 
 Source inspection: 2026-09-08 through worker hardening `9af5c12` and catch-up correction `7b76b39`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
+## Archive parent artifacts: observed 2026-09-08
+
+The [production parent-filter rollout](evidence/parent-filters-production-2026-09-08/README.md) published the archive bundle on the existing public filter origin. All 20 bodies were verified over HTTPS and all 160 archive descriptors matched both production origins. The updated reference client (`5577b34`) completed 5/5 exact recoveries with parents enabled and 5/5 with direct filters; the three recent profiles downloaded identical bytes. This was a small deployment canary, not the unfinished paired performance study. Wallet applications require explicit opt-in; no application release or PIR worker rollout was performed.
+
 ## Source-verified implementation
 
 | Capability | Observed state |
