@@ -128,7 +128,6 @@ async fn reconcile(
     }
 }
 
-
 /// Rolls coverage back to the highest block the node's database still agrees
 /// with. The state-backed twin of [`reconcile`].
 fn reconcile_state(reader: &StateReader, store: &mut EventStore, tip: u64) -> Result<(), BoxError> {
@@ -193,10 +192,9 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     let node_tip = reader.tip_height()?;
     let stop = cli.stop_height.unwrap_or(node_tip);
     if stop > node_tip {
-        return Err(format!(
-            "stop height {stop} is above the visible finalized tip {node_tip}"
-        )
-        .into());
+        return Err(
+            format!("stop height {stop} is above the visible finalized tip {node_tip}").into(),
+        );
     }
     if stop < cli.start_height {
         return Err(format!(
@@ -226,7 +224,9 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     );
 
     let mut inflight: std::collections::VecDeque<
-        tokio::task::JoinHandle<Result<(u64, transparent_filter_server::ingest::BuiltEvents), BoxError>>,
+        tokio::task::JoinHandle<
+            Result<(u64, transparent_filter_server::ingest::BuiltEvents), BoxError>,
+        >,
     > = std::collections::VecDeque::new();
     let mut to_spawn = first;
     let mut height = first;
