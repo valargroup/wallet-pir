@@ -1,0 +1,20 @@
+[package]
+name = "transparent-wallet-store"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "transparent_wallet_store"
+path = "src/lib.rs"
+
+[dependencies]
+hex = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+thiserror = "2"
+transparent-events = { path = "../transparent-events" }
+transparent-wallet = { path = "../transparent-wallet" }
+
+[dev-dependencies]
+tempfile = "3"
+transparent-filter = { path = "../transparent-filter" }

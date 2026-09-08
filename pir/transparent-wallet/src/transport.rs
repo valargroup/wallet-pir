@@ -370,6 +370,42 @@ pub trait ShardTransport {
     ) -> Result<Vec<u8>, BoxError>;
 }
 
+impl<T: FilterSource + ?Sized> FilterSource for Box<T> {
+    fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        (**self).shard_map()
+    }
+    fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
+        (**self).filter(shard_id)
+    }
+}
+
+impl<T: ShardTransport + ?Sized> ShardTransport for Box<T> {
+    fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        (**self).init()
+    }
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        (**self).manifest(shard_id, revision)
+    }
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
+        (**self).setup(shard_id, revision, table, segment)
+    }
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
+        (**self).query(shard_id, revision, table, body)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

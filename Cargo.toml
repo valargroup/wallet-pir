@@ -6,6 +6,7 @@ members = [
     "pir/transparent-filter",
     "pir/transparent-shard",
     "pir/transparent-wallet",
+    "pir/transparent-wallet-store",
     "pir/transparent-history",
     "pir/transparent-spend",
     "pir/load-test",

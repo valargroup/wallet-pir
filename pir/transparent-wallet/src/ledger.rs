@@ -90,6 +90,9 @@ pub struct Ledger {
     /// Every recovered receive, kept after it is spent so history survives.
     receives: BTreeMap<(Txid, u32), Utxo>,
     spends: Vec<ConfirmedSpend>,
+    /// Index into `spends` by consumed outpoint, so a long history does not
+    /// pay a scan per spend.
+    spent_index: BTreeMap<(Txid, u32), usize>,
     unresolved: Vec<UnresolvedSpend>,
 }
 
@@ -119,6 +122,66 @@ impl Ledger {
             self.apply(script, event)?;
         }
         Ok(())
+    }
+
+    /// Applies a later batch to a ledger that already holds history, then
+    /// retries every unresolved spend against the receives now present.
+    ///
+    /// This is a returning wallet's path: a receive kept from an earlier sync
+    /// resolves a spend found today, and a receive found today — from a
+    /// script's historical discovery after a gap-limit advance — resolves a
+    /// spend recorded as unresolved earlier.
+    pub fn extend(
+        &mut self,
+        events: &mut [(Vec<u8>, TransparentEvent)],
+    ) -> Result<(), LedgerError> {
+        self.replay(events)?;
+        self.resolve_unresolved()
+    }
+
+    fn resolve_unresolved(&mut self) -> Result<(), LedgerError> {
+        let pending = std::mem::take(&mut self.unresolved);
+        for unresolved in pending {
+            let key = (
+                unresolved.event.spent_txid,
+                unresolved.event.spent_output_index,
+            );
+            if self.receives.contains_key(&key) {
+                self.apply_spend(&unresolved.script, &unresolved.event)?;
+            } else {
+                self.unresolved.push(unresolved);
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes every receive and spend above `height`, restoring outputs
+    /// whose spend was removed but whose receive survives. A reorg, or a
+    /// replaced provisional tail.
+    pub fn truncate_above(&mut self, height: u32) {
+        self.receives
+            .retain(|_, utxo| utxo.creation_height <= height);
+        self.utxos.retain(|key, _| self.receives.contains_key(key));
+        let kept: Vec<ConfirmedSpend> = self
+            .spends
+            .drain(..)
+            .filter(|spend| spend.height <= height)
+            .collect();
+        self.spent_index.clear();
+        self.spends = Vec::new();
+        for spend in kept {
+            let key = (spend.spent_txid, spend.spent_output_index);
+            self.spent_index.insert(key, self.spends.len());
+            self.spends.push(spend);
+        }
+        // An output whose spend was above the cut is unspent again.
+        for (key, utxo) in &self.receives {
+            if !self.spent_index.contains_key(key) {
+                self.utxos.entry(*key).or_insert_with(|| utxo.clone());
+            }
+        }
+        self.unresolved
+            .retain(|unresolved| unresolved.event.height <= height);
     }
 
     fn apply(&mut self, script: &[u8], event: &TransparentEvent) -> Result<(), LedgerError> {
@@ -163,11 +226,7 @@ impl Ledger {
         // transaction is not a repeat: one output cannot be consumed twice on
         // one chain, so the two sources contradict each other and taking either
         // one would produce a ledger that looks fine and is wrong.
-        if let Some(existing) = self
-            .spends
-            .iter()
-            .find(|spend| (spend.spent_txid, spend.spent_output_index) == key)
-        {
+        if let Some(existing) = self.spent_index.get(&key).map(|&index| &self.spends[index]) {
             if existing.spending_txid != event.spending_txid || existing.height != event.height {
                 return Err(LedgerError::DoubleSpend(
                     event.spent_txid.to_display_hex(),
@@ -187,6 +246,7 @@ impl Ledger {
                     script: utxo.script.clone(),
                 };
                 self.utxos.remove(&key);
+                self.spent_index.insert(key, self.spends.len());
                 self.spends.push(spend);
             }
             None => {
@@ -506,6 +566,60 @@ mod tests {
         assert_eq!(summary.received, 4_000);
         assert_eq!(summary.spent, 5_000);
         assert_eq!(summary.net(), -1_000, "the fee leaves the wallet");
+    }
+
+    /// A returning wallet: the receive was kept from an earlier sync, the
+    /// spend arrives in a later one, and the two resolve.
+    #[test]
+    fn a_spend_extended_later_resolves_against_a_kept_receive() {
+        let mut ledger = replay(vec![receive(1, 0, 5_000, 100)]);
+        let mut later = vec![spend(1, 1, 0, 2, 110)];
+        ledger.extend(&mut later).unwrap();
+        assert_eq!(ledger.spends().len(), 1);
+        assert!(ledger.unresolved().is_empty());
+        assert_eq!(ledger.confirmed_balance(), 0);
+    }
+
+    /// The other order: a spend recorded as unresolved is resolved by a
+    /// receive discovered later, as historical discovery of a new script
+    /// produces.
+    #[test]
+    fn an_unresolved_spend_is_resolved_by_a_receive_extended_later() {
+        let mut ledger = replay(vec![spend(1, 1, 0, 2, 110)]);
+        assert_eq!(ledger.unresolved().len(), 1);
+        let mut later = vec![receive(1, 0, 5_000, 100)];
+        ledger.extend(&mut later).unwrap();
+        assert!(ledger.unresolved().is_empty());
+        assert_eq!(ledger.spends().len(), 1);
+        assert_eq!(ledger.confirmed_balance(), 0);
+    }
+
+    /// Truncation removes what is above the cut and restores an output whose
+    /// spend was cut away while its receive remains.
+    #[test]
+    fn truncating_above_a_height_restores_outputs_spent_above_it() {
+        let mut ledger = replay(vec![
+            receive(1, 0, 5_000, 100),
+            receive(2, 0, 3_000, 150),
+            spend(1, 1, 0, 3, 200),
+            spend(9, 9, 0, 4, 210),
+        ]);
+        assert_eq!(ledger.confirmed_balance(), 3_000);
+        ledger.truncate_above(199);
+        assert_eq!(ledger.confirmed_balance(), 8_000, "the cut spend is undone");
+        assert!(ledger.spends().is_empty());
+        assert!(
+            ledger.unresolved().is_empty(),
+            "unresolved above the cut is gone too"
+        );
+        ledger.truncate_above(120);
+        assert_eq!(ledger.utxos().count(), 1);
+        assert_eq!(ledger.confirmed_balance(), 5_000);
+        // A spend applied after truncation is indexed correctly again.
+        let mut later = vec![spend(1, 1, 0, 3, 200)];
+        ledger.extend(&mut later).unwrap();
+        assert_eq!(ledger.spends().len(), 1);
+        assert_eq!(ledger.confirmed_balance(), 0);
     }
 
     /// Recovering a coinbase receive does not make it spendable. The flag is

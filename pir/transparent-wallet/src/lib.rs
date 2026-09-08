@@ -14,13 +14,29 @@
 //! What this does not hide is which chain ranges the wallet queried. See
 //! [`sync`] for the statement of that leak.
 
+pub mod adapters;
 pub mod client;
+pub mod facade;
+#[cfg(feature = "reqwest")]
+pub mod http;
 pub mod ledger;
+pub mod memory_store;
+pub mod store;
 pub mod sync;
 pub mod transport;
 
+pub use adapters::{Acceptance, ChainView, ScriptProvider, StaticChain, StaticScripts};
+pub use facade::{FacadeError, LedgerSnapshot, SyncRequest, SyncStatus, TransparentSync};
 pub use ledger::{ConfirmedSpend, Ledger, LedgerError, TransactionSummary, UnresolvedSpend, Utxo};
-pub use sync::{sync, GeometryParams, ServiceGeometry, SyncError, SyncOutcome};
+pub use memory_store::MemoryStore;
+pub use store::{
+    Anchor, CoverageKind, CoverageRange, PendingPages, ScriptEntry, ScriptOrigin, SetIdentity,
+    SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
+};
+pub use sync::{
+    sync, sync_into, Completion, GeometryParams, IncompleteReason, ServiceGeometry, SyncError,
+    SyncOutcome, SyncReport, WorkLimits,
+};
 pub use transport::{
     refusal, ByteCharges, FilterSource, Overloaded, ShardTransport, StaleRevision, TableCharges,
 };

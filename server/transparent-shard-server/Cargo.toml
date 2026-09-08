@@ -53,5 +53,6 @@ tempfile = "3"
 transparent-events = { path = "../../pir/transparent-events" }
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "223626ffdd28bd1400dd0b62027a8f366665aa4f" }
 tower = { version = "0.5", features = ["util"] }
-transparent-wallet = { path = "../../pir/transparent-wallet" }
+transparent-wallet = { path = "../../pir/transparent-wallet", features = ["reqwest"] }
+transparent-wallet-store = { path = "../../pir/transparent-wallet-store" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

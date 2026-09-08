@@ -43,13 +43,18 @@
 //! periods than quiet ones. This code does not hide it and must not be
 //! described as if it did.
 
+use crate::adapters::{Acceptance, ChainView, ScriptProvider, StaticChain, StaticScripts};
 use crate::client::{classify_transport, ClientError, Table, TableClient};
 use crate::ledger::{Ledger, LedgerError};
+use crate::memory_store::MemoryStore;
+use crate::store::{
+    uncovered, Anchor, CoverageKind, CoverageRange, PendingPages, ScriptEntry, ScriptOrigin,
+    SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
+};
 use crate::transport::{ByteCharges, FilterSource, ShardTransport, StaleRevision};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
-use transparent_events::TransparentEvent;
 use transparent_filter::{
     validate_filter, BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap,
 };
@@ -70,6 +75,13 @@ pub enum SyncError {
     Record(#[from] transparent_shard::records::RecordError),
     #[error("transport: {0}")]
     Transport(String),
+    #[error("store: {0}")]
+    Store(#[from] StoreError),
+    /// The store's accepted anchor lies above the offered map's end, and the
+    /// wallet's chain still accepts it. A lower anchor is never accepted
+    /// silently.
+    #[error("the store's anchor {stored} is above the map's end {offered}, which the chain still accepts")]
+    AnchorRegressed { stored: u64, offered: u64 },
     #[error("{0}")]
     Invalid(String),
     #[error("service serves schema {served}, this build reads {expected}")]
@@ -145,6 +157,11 @@ const OVERLOAD_BACKOFF: Duration = Duration::from_millis(250);
 /// Ceiling on any single wait, so a service asking for an implausible delay
 /// cannot park a sync inside it.
 const OVERLOAD_BACKOFF_CAP: Duration = Duration::from_secs(2);
+
+/// Passes a sync makes while the wallet's rules keep adding scripts. A
+/// gap-limit advance that never converges is a wallet fault; this stops it
+/// from becoming an unbounded sync.
+const MAX_DISCOVERY_PASSES: u32 = 16;
 
 /// One geometry's parameters, as a service declares them.
 ///
@@ -226,7 +243,8 @@ impl Clients {
                 || params.page_row_bytes != geometry.page_row_bytes as u32
             {
                 return Err(SyncError::Invalid(format!(
-                    "the service declares geometry {name} with dimensions this build does not                      know it by"
+                    "the service declares geometry {name} with dimensions this build does not \
+                     know it by"
                 )));
             }
             let clients = GeometryClients {
@@ -293,10 +311,91 @@ pub struct ProvisionalCoverage {
     pub end_height: u64,
 }
 
+/// Bounds on one call to [`sync_into`]. `None` is unbounded.
+///
+/// Reaching a bound is not an error: the sync commits what it has, records
+/// the page work still owed, and reports `Incomplete`. The next call resumes
+/// from the durable pending work.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WorkLimits {
+    /// Private queries, directory and pages together.
+    pub max_queries: Option<u64>,
+    /// Private bytes: setup, query uploads and responses.
+    pub max_private_bytes: Option<u64>,
+}
+
+impl WorkLimits {
+    pub const UNLIMITED: Self = Self {
+        max_queries: None,
+        max_private_bytes: None,
+    };
+}
+
+/// Why a sync stopped short.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IncompleteReason {
+    QueryBudget,
+    ByteBudget,
+    /// The store would not hold more pending page work.
+    PendingLimit,
+    /// The service stayed at capacity for the whole retry budget on this shard.
+    Overloaded {
+        shard_id: u64,
+    },
+    /// The wallet's chain view could not confirm a block its coverage rests
+    /// on, so neither a reorg nor its absence could be established.
+    ChainUnknown {
+        height: u64,
+    },
+    /// The wallet's rules kept adding scripts past the pass bound.
+    DiscoveryUnbounded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Completion {
+    Complete,
+    Incomplete {
+        reason: IncompleteReason,
+        /// Pending page retrievals left in the store.
+        pending: usize,
+    },
+}
+
+/// What one [`sync_into`] call did.
+pub struct SyncReport {
+    /// The store's whole ledger after this sync, not only what it added.
+    pub ledger: Ledger,
+    pub charges: ByteCharges,
+    pub matched_shards: Vec<u64>,
+    pub unproductive_matches: u64,
+    /// Height through which every script in scope is covered from its
+    /// required height, provisional coverage included.
+    pub covered_through: u64,
+    /// The same counting settled coverage only.
+    pub settled_through: u64,
+    pub provisional: Vec<ProvisionalCoverage>,
+    pub map_refreshes: u32,
+    pub completion: Completion,
+    /// The height everything above was rolled back to, if this sync found a
+    /// reorg or a replaced provisional tail.
+    pub rolled_back_to: Option<u64>,
+    /// Provisional revision digests whose coverage was truncated and
+    /// re-derived.
+    pub replaced_revisions: Vec<String>,
+    /// Scripts the wallet's rules added during this sync.
+    pub scripts_added: usize,
+    /// Store commits this sync made.
+    pub commits: u64,
+}
+
 /// Runs one sync from `birthday` to the end of the published map.
 ///
 /// `scripts` is the wallet's derived script set. It never leaves the machine:
 /// matching is local, and a private query names a row, not a script.
+///
+/// One-shot: a fresh in-memory store, every script required from `birthday`,
+/// no work limits, and the map's own blocks accepted as the chain. A returning
+/// wallet uses [`sync_into`] with its own store.
 pub fn sync(
     map: &ShardMap,
     map_bytes: u64,
@@ -306,6 +405,72 @@ pub fn sync(
     scripts: &[ScriptBytes],
     birthday: u64,
 ) -> Result<SyncOutcome, SyncError> {
+    let mut store = MemoryStore::new();
+    let mut provider = StaticScripts(
+        scripts
+            .iter()
+            .map(|script| ScriptEntry {
+                script: script.as_slice().to_vec(),
+                origin: ScriptOrigin::Derived,
+                required_from: birthday,
+            })
+            .collect(),
+    );
+    let chain = StaticChain::from_map(map);
+    let report = sync_into(
+        &mut store,
+        map,
+        map_bytes,
+        geometry,
+        &chain,
+        &mut provider,
+        filters,
+        transport,
+        &WorkLimits::UNLIMITED,
+    )?;
+    match report.completion {
+        Completion::Complete => Ok(SyncOutcome {
+            ledger: report.ledger,
+            charges: report.charges,
+            matched_shards: report.matched_shards,
+            unproductive_matches: report.unproductive_matches,
+            covered_through: report.covered_through,
+            settled_through: report.settled_through,
+            provisional: report.provisional,
+            map_refreshes: report.map_refreshes,
+        }),
+        // Without a store to keep it, incomplete work is a failure.
+        Completion::Incomplete {
+            reason: IncompleteReason::Overloaded { shard_id },
+            ..
+        } => Err(SyncError::Overloaded {
+            shard_id,
+            attempts: MAX_OVERLOAD_ATTEMPTS,
+        }),
+        Completion::Incomplete { reason, .. } => Err(SyncError::Invalid(format!(
+            "the sync stopped short: {reason:?}"
+        ))),
+    }
+}
+
+/// Syncs a wallet's store to the end of the published map.
+///
+/// See the module documentation for the shape of a sync. The store is the
+/// wallet's memory: what it holds decides what is fetched, and what is
+/// fetched is committed to it shard by shard. On return the store is
+/// consistent whether the sync completed or not.
+#[allow(clippy::too_many_arguments)]
+pub fn sync_into<S: WalletStore>(
+    store: &mut S,
+    map: &ShardMap,
+    map_bytes: u64,
+    geometry: &ServiceGeometry,
+    chain: &impl ChainView,
+    scripts: &mut impl ScriptProvider,
+    filters: &mut impl FilterSource,
+    transport: &mut impl ShardTransport,
+    limits: &WorkLimits,
+) -> Result<SyncReport, SyncError> {
     if geometry.schema != transparent_shard::SCHEMA {
         return Err(SyncError::Schema {
             served: geometry.schema.clone(),
@@ -316,239 +481,663 @@ pub fn sync(
         .map_err(|error| SyncError::Invalid(format!("shard map is malformed: {error}")))?;
     let genesis = BlockHash::from_display_hex(&map.genesis_hash)?;
 
-    // With content-sealed shards there is no width to divide by, so the map is
-    // the only way to turn a height into a shard. A birthday before coverage
-    // begins starts at shard zero; one past the tip covers nothing.
-    let first_shard = if birthday <= map.start_height {
-        0
-    } else {
-        map.shard_for_height(birthday)
-            .map(|shard| shard.shard_id)
-            .ok_or_else(|| {
-                SyncError::Invalid(format!("birthday {birthday} is beyond published coverage"))
-            })?
-    };
+    // The store is bound to a publication lineage. A map from another
+    // lineage is refused before anything is read from it.
+    let identity = SetIdentity::of(map);
+    store.bind_set(&identity).map_err(|error| match error {
+        StoreError::SetMismatch { stored, offered } => SyncError::MapDiverged(format!(
+            "the store is bound to set {stored}, this map is {offered}"
+        )),
+        other => SyncError::Store(other),
+    })?;
+    let first_commit = store.last_commit()?;
 
-    let mut clients = Clients {
-        prepared: HashMap::new(),
+    let Some(tip_entry) = map.shards.last() else {
+        return Err(SyncError::Invalid("the map names no shards".into()));
     };
+    let through = tip_entry.end_height;
+
+    // A map that ends below the anchor the wallet accepted is not a newer
+    // publication; if the wallet's chain still accepts that anchor, the
+    // map is refused rather than silently rewound.
+    if let Some(anchor) = store.anchor()? {
+        if anchor.height > through
+            && chain.is_accepted(anchor.height, &anchor.hash) == Acceptance::Accepted
+        {
+            return Err(SyncError::AnchorRegressed {
+                stored: anchor.height,
+                offered: through,
+            });
+        }
+    }
 
     let mut charges = ByteCharges {
         map_bytes,
         ..Default::default()
     };
-    let mut matched_shards = Vec::new();
-    let mut unproductive = 0u64;
-    let mut events: Vec<(Vec<u8>, TransparentEvent)> = Vec::new();
-    let mut covered_through = birthday.max(map.start_height).saturating_sub(1);
-    let mut settled_through = covered_through;
-    let mut provisional = Vec::new();
+    let mut rolled_back_to: Option<u64> = None;
+    let mut replaced_revisions: Vec<String> = Vec::new();
 
-    let mut active: Cow<'_, ShardMap> = Cow::Borrowed(map);
-    let mut index = first_shard as usize;
-    let mut refreshes = 0u32;
-    // Only a map this sync fetched itself can be compared with the digest the
-    // service reports. The caller passed a parsed map and a byte count, not the
-    // bytes, so there is nothing to hash until a refresh produces some.
-    let mut held_map_digest: Option<String> = None;
-
-    while index < active.shards.len() {
-        // Cloned so the borrow of `active` ends before a refresh may replace
-        // it. An entry is a handful of short strings; the filter download it
-        // gates dwarfs the copy.
-        let entry = active.shards[index].clone();
-        let previous_digest = index
-            .checked_sub(1)
-            .map(|before| active.shards[before].manifest_digest.clone())
-            .unwrap_or_default();
-        let read = read_shard(
-            &entry,
-            &previous_digest,
-            &active,
-            genesis,
-            scripts,
-            geometry,
-            &mut clients,
-            filters,
-            transport,
-            &mut charges,
-        );
-        match read {
-            Ok(recovered) => {
-                if let Some(recovered) = recovered {
-                    // Pushed after the retrieval, not before it: a shard that
-                    // was re-derived under a later revision would otherwise
-                    // appear twice, and "matched" can only observably mean
-                    // matched and read.
-                    matched_shards.push(entry.shard_id);
-                    unproductive += recovered.unproductive;
-                    events.extend(recovered.events);
+    // Reorg detection over what the store holds. Every distinct block the
+    // coverage rests on is asked of the wallet's chain, newest first; the
+    // first rejected one rolls everything above the highest accepted block
+    // below it back. Sealed coverage the map now describes differently is
+    // the same finding from the publication's side.
+    let mut rests_on: BTreeMap<u64, String> = BTreeMap::new();
+    for entry in store.scripts()? {
+        for range in store.coverage(&entry.script)? {
+            rests_on
+                .entry(range.end_height)
+                .or_insert(range.terminal_block_hash.clone());
+            if range.kind == CoverageKind::Settled {
+                if let Some(published) = map.shards.get(range.shard_id as usize) {
+                    if published.sealed
+                        && published.start_height == range.start_height
+                        && (published.end_height != range.end_height
+                            || published.terminal_block_hash != range.terminal_block_hash)
+                    {
+                        // Sealed content is immutable; a different sealed
+                        // shard at the same place is another chain.
+                        rests_on.insert(range.end_height, "reorganised".into());
+                    }
                 }
-                // Reached only after every segment of this shard was retrieved
-                // and validated: an error above leaves coverage where it was.
-                covered_through = entry.end_height;
-                if entry.sealed {
-                    settled_through = entry.end_height;
-                } else {
-                    provisional.push(ProvisionalCoverage {
-                        shard_id: entry.shard_id,
-                        revision: entry.revision,
-                        manifest_digest: entry.manifest_digest.clone(),
-                        end_height: entry.end_height,
-                    });
-                }
-                index += 1;
             }
-            Err(SyncError::StaleRevision { stale, .. }) => {
-                // The service withdrew this revision while the sync was reading
-                // it. Refresh the map, check it is the same set continued, and
-                // re-derive this range from whatever replaced it. Everything
-                // read from earlier shards stands; everything this attempt read
-                // is discarded, and the bytes it cost are still charged.
-                if refreshes >= MAX_MAP_REFRESHES
-                    || (stale.map_sha256.is_some()
-                        && stale.map_sha256.as_deref() == held_map_digest.as_deref())
-                {
-                    // Either the budget is gone, or the service says the map
-                    // this sync already holds is the current one — so refetching
-                    // it again cannot produce a live revision.
-                    return Err(SyncError::StaleRevision {
-                        shard_id: entry.shard_id,
-                        stale,
-                        refreshes,
-                    });
+        }
+    }
+    let mut ancestor: Option<u64> = None;
+    let mut unknown: Option<u64> = None;
+    for (height, hash) in rests_on.iter().rev() {
+        let acceptance = if hash == "reorganised" {
+            Acceptance::Rejected
+        } else {
+            chain.is_accepted(*height, hash)
+        };
+        match acceptance {
+            Acceptance::Rejected => {
+                // Roll back to the highest accepted block below this one.
+                let mut below = map.start_height.saturating_sub(1);
+                for (candidate, candidate_hash) in rests_on.range(..height).rev() {
+                    if chain.is_accepted(*candidate, candidate_hash) == Acceptance::Accepted {
+                        below = *candidate;
+                        break;
+                    }
                 }
-                let (fresh, digest) = refresh_map(&active, covered_through, filters, &mut charges)?;
-                refreshes += 1;
-                held_map_digest = Some(digest);
-                let Some(resume) = fresh.shard_for_height(covered_through + 1).map(|shard| {
-                    fresh
-                        .shards
-                        .iter()
-                        .position(|candidate| candidate.shard_id == shard.shard_id)
-                        .expect("shard_for_height returns an entry of this map")
-                }) else {
-                    // The refreshed map no longer advertises anything past what
-                    // this sync already covered. `check_continuation` has
-                    // established that it does not end *below* that, so nothing
-                    // was skipped: coverage is exactly what it would have been
-                    // had the withdrawn tail never been advertised at all.
-                    break;
-                };
-                if fresh.shards[resume].manifest_digest == stale.revision {
-                    // The map still names the revision the service refused.
-                    // They disagree with each other, and asking again loops.
-                    return Err(SyncError::StaleRevision {
-                        shard_id: entry.shard_id,
-                        stale,
-                        refreshes,
-                    });
-                }
-                // `check_continuation` has established that the refreshed map
-                // agrees about every range already covered, so the shard
-                // resumed at begins exactly where coverage left off. Retracting
-                // provisional records past that point is therefore a no-op, but
-                // it is the rule `ProvisionalCoverage` documents — a re-derived
-                // range replaces rather than extends — and it belongs written
-                // where the re-derivation happens.
-                let resume_start = fresh.shards[resume].start_height;
-                provisional.retain(|covered| covered.end_height < resume_start);
-                covered_through = resume_start.saturating_sub(1);
-                active = Cow::Owned(fresh);
-                index = resume;
+                ancestor = Some(below);
+                break;
             }
-            Err(other) => return Err(other),
+            Acceptance::Accepted => break,
+            Acceptance::Unknown => {
+                unknown = Some(*height);
+            }
+        }
+    }
+    if let Some(height) = ancestor {
+        store.rollback_above(height, "reorg")?;
+        rolled_back_to = Some(height);
+    } else if let Some(height) = unknown {
+        if ancestor.is_none() && !rests_on.is_empty() {
+            // Nothing could be confirmed. Reading on would either accept a
+            // branch the wallet has not seen or roll back on a guess.
+            let ledger = store.ledger()?;
+            let (covered, settled) = coverage_summary(store, map)?;
+            return Ok(SyncReport {
+                ledger,
+                charges,
+                matched_shards: Vec::new(),
+                unproductive_matches: 0,
+                covered_through: covered,
+                settled_through: settled,
+                provisional: provisional_of(store, map)?,
+                map_refreshes: 0,
+                completion: Completion::Incomplete {
+                    reason: IncompleteReason::ChainUnknown { height },
+                    pending: store.pending()?.len(),
+                },
+                rolled_back_to,
+                replaced_revisions,
+                scripts_added: 0,
+                commits: store.last_commit()? - first_commit,
+            });
         }
     }
 
-    let mut ledger = Ledger::new();
-    ledger.replay(&mut events)?;
+    // Provisional reconciliation. A tail revision the map has moved past is
+    // truncated and re-derived; one the map has sealed is promoted.
+    let mut truncate_from: Option<u64> = None;
+    let mut promote: Vec<(u64, String)> = Vec::new();
+    for range in store.provisional()? {
+        match map.shards.get(range.shard_id as usize) {
+            Some(published) if published.manifest_digest == range.revision_digest => {
+                if published.sealed {
+                    promote.push((range.shard_id, range.revision_digest.clone()));
+                }
+            }
+            _ => {
+                truncate_from = Some(
+                    truncate_from
+                        .map_or(range.start_height, |held: u64| held.min(range.start_height)),
+                );
+                if !replaced_revisions.contains(&range.revision_digest) {
+                    replaced_revisions.push(range.revision_digest.clone());
+                }
+            }
+        }
+    }
+    if let Some(start) = truncate_from {
+        let below = start.saturating_sub(1);
+        if rolled_back_to.is_none_or(|held| held > below) {
+            store.rollback_above(below, "provisional tail replaced")?;
+            rolled_back_to = Some(below);
+        }
+    }
+    for (shard_id, digest) in promote {
+        store.promote_provisional(shard_id, &digest)?;
+    }
 
-    Ok(SyncOutcome {
-        ledger,
+    // The wallet's script set, with its own required heights.
+    store.add_scripts(&scripts.scripts())?;
+    let mut scripts_added = 0usize;
+    let mut clients = Clients {
+        prepared: HashMap::new(),
+    };
+    let mut matched_shards: Vec<u64> = Vec::new();
+    let mut unproductive = 0u64;
+    let mut refreshes = 0u32;
+    let mut held_map_digest: Option<String> = None;
+    let mut active: Cow<'_, ShardMap> = Cow::Borrowed(map);
+    let mut completion = Completion::Complete;
+
+    'passes: for pass in 0..=MAX_DISCOVERY_PASSES {
+        if pass == MAX_DISCOVERY_PASSES {
+            completion = Completion::Incomplete {
+                reason: IncompleteReason::DiscoveryUnbounded,
+                pending: store.pending()?.len(),
+            };
+            break;
+        }
+        let entries = store.scripts()?;
+        let mut active_scripts: Vec<Vec<u8>> = Vec::new();
+
+        // Pending page work first: it is already located, and finishing it
+        // is the cheapest coverage available.
+        let pending = store.pending()?;
+        let mut by_revision: BTreeMap<(u64, String), Vec<PendingPages>> = BTreeMap::new();
+        for item in pending {
+            by_revision
+                .entry((item.shard_id, item.revision_digest.clone()))
+                .or_default()
+                .push(item);
+        }
+        for ((shard_id, digest), items) in by_revision {
+            let Some(entry) = active.shards.get(shard_id as usize) else {
+                continue;
+            };
+            if entry.manifest_digest != digest {
+                // Its revision is gone; the reconciliation above rolled its
+                // coverage back and the ordinary planning will re-derive it.
+                continue;
+            }
+            let entry = entry.clone();
+            let previous_digest = previous_digest_of(&active, shard_id);
+            let outcome = with_refusals(
+                store,
+                &active,
+                &entry,
+                &previous_digest,
+                geometry,
+                &mut clients,
+                transport,
+                &mut charges,
+                limits,
+                |store, prepared, transport, charges| {
+                    finish_pages(store, &entry, &items, prepared, transport, charges, limits)
+                },
+            );
+            match outcome {
+                Ok(Some(stopped)) => {
+                    completion = stopped;
+                    break 'passes;
+                }
+                Ok(None) => {
+                    if !matched_shards.contains(&shard_id) {
+                        matched_shards.push(shard_id);
+                    }
+                    for item in &items {
+                        if !active_scripts.contains(&item.script) {
+                            active_scripts.push(item.script.clone());
+                        }
+                    }
+                }
+                Err(SyncError::StaleRevision { .. }) => {
+                    // Handled by the ordinary planning below on the next map.
+                }
+                Err(other) => return Err(other),
+            }
+        }
+
+        // Plan: which shards each script still needs.
+        let through = active
+            .shards
+            .last()
+            .map(|e| e.end_height)
+            .unwrap_or(through);
+        let mut work: BTreeMap<usize, Vec<Vec<u8>>> = BTreeMap::new();
+        for entry in &entries {
+            let from = entry.required_from.max(active.start_height);
+            if from > through {
+                continue;
+            }
+            let coverage = store.coverage(&entry.script)?;
+            for (gap_start, gap_end) in uncovered(&coverage, from, through) {
+                for (index, shard) in active.shards.iter().enumerate() {
+                    if shard.end_height < gap_start {
+                        continue;
+                    }
+                    if shard.start_height > gap_end {
+                        break;
+                    }
+                    let scripts = work.entry(index).or_default();
+                    if !scripts.contains(&entry.script) {
+                        scripts.push(entry.script.clone());
+                    }
+                }
+            }
+        }
+
+        let mut index_iter: Vec<usize> = work.keys().copied().collect();
+        let mut position = 0usize;
+        while position < index_iter.len() {
+            let index = index_iter[position];
+            let Some(entry) = active.shards.get(index).cloned() else {
+                break;
+            };
+            let scripts_here = work.get(&index).cloned().unwrap_or_default();
+            let previous_digest = previous_digest_of(&active, entry.shard_id);
+            let result = read_shard_into(
+                store,
+                &active,
+                &entry,
+                &previous_digest,
+                genesis,
+                &scripts_here,
+                geometry,
+                &mut clients,
+                filters,
+                transport,
+                &mut charges,
+                limits,
+            );
+            match result {
+                Ok(ShardRead::Done { matched }) => {
+                    if !matched.is_empty() {
+                        if !matched_shards.contains(&entry.shard_id) {
+                            matched_shards.push(entry.shard_id);
+                        }
+                        for script in matched {
+                            if !active_scripts.contains(&script) {
+                                active_scripts.push(script);
+                            }
+                        }
+                    }
+                    position += 1;
+                }
+                Ok(ShardRead::Unproductive { count }) => {
+                    unproductive += count;
+                    position += 1;
+                }
+                Ok(ShardRead::Stopped(stopped)) => {
+                    completion = stopped;
+                    break 'passes;
+                }
+                Err(SyncError::StaleRevision { stale, .. }) => {
+                    // The service withdrew this revision while the sync was
+                    // reading it. Refresh the map, check it is the same set
+                    // continued, roll this shard's provisional coverage back,
+                    // and re-derive from whatever replaced it.
+                    if refreshes >= MAX_MAP_REFRESHES
+                        || (stale.map_sha256.is_some()
+                            && stale.map_sha256.as_deref() == held_map_digest.as_deref())
+                    {
+                        return Err(SyncError::StaleRevision {
+                            shard_id: entry.shard_id,
+                            stale,
+                            refreshes,
+                        });
+                    }
+                    let (covered, _) = coverage_summary(store, &active)?;
+                    let (fresh, digest) = refresh_map(&active, covered, filters, &mut charges)?;
+                    refreshes += 1;
+                    held_map_digest = Some(digest);
+                    let Some(resume) = fresh
+                        .shards
+                        .iter()
+                        .position(|candidate| candidate.shard_id == entry.shard_id)
+                    else {
+                        // The refreshed map no longer advertises this range.
+                        active = Cow::Owned(fresh);
+                        break;
+                    };
+                    if fresh.shards[resume].manifest_digest == stale.revision {
+                        return Err(SyncError::StaleRevision {
+                            shard_id: entry.shard_id,
+                            stale,
+                            refreshes,
+                        });
+                    }
+                    let resume_start = fresh.shards[resume].start_height;
+                    let below = resume_start.saturating_sub(1);
+                    store.rollback_above(below, "revision withdrawn mid-sync")?;
+                    if rolled_back_to.is_none_or(|held| held > below) {
+                        rolled_back_to = Some(below);
+                    }
+                    if !replaced_revisions.contains(&stale.revision) {
+                        replaced_revisions.push(stale.revision.clone());
+                    }
+                    active = Cow::Owned(fresh);
+                    // Re-plan against the new map from this shard on.
+                    let mut rest: Vec<usize> = (resume..active.shards.len()).collect();
+                    index_iter.truncate(position);
+                    index_iter.append(&mut rest);
+                    for later in resume..active.shards.len() {
+                        work.entry(later).or_insert_with(|| scripts_here.clone());
+                    }
+                }
+                Err(other) => return Err(other),
+            }
+        }
+
+        let added = scripts.on_activity(&active_scripts);
+        if added.is_empty() {
+            break;
+        }
+        scripts_added += store.add_scripts(&added)?;
+    }
+
+    let (covered_through, settled_through) = coverage_summary(store, &active)?;
+    if completion == Completion::Complete {
+        if !store.pending()?.is_empty() {
+            completion = Completion::Incomplete {
+                reason: IncompleteReason::PendingLimit,
+                pending: store.pending()?.len(),
+            };
+        } else if let Some(tip) = active.shards.last() {
+            if chain.is_accepted(tip.end_height, &tip.terminal_block_hash) != Acceptance::Rejected {
+                store.commit_anchor(
+                    &Anchor {
+                        height: tip.end_height,
+                        hash: tip.terminal_block_hash.clone(),
+                    },
+                    settled_through,
+                    covered_through,
+                )?;
+            }
+        }
+    }
+    matched_shards.sort_unstable();
+    Ok(SyncReport {
+        ledger: store.ledger()?,
         charges,
         matched_shards,
         unproductive_matches: unproductive,
         covered_through,
         settled_through,
-        provisional,
+        provisional: provisional_of(store, &active)?,
         map_refreshes: refreshes,
+        completion,
+        rolled_back_to,
+        replaced_revisions,
+        scripts_added,
+        commits: store.last_commit()? - first_commit,
     })
 }
 
-/// Reads one shard: its filter always, its history only if a script matched.
-///
-/// `Ok(None)` means the filter matched nothing, which is a genuinely empty
-/// range rather than one that went unretrieved — the filter is built over the
-/// shard's own scripts and is independent of the table shape, so passing over
-/// it is safe even for a geometry this build cannot decode. That is what lets
-/// an old wallet sync the recent window across an archive tier it does not
-/// know. It stops the moment there is something to fetch: an unknown geometry
-/// on a *matched* shard is fatal, because the alternative is reporting a
-/// synchronised balance over history that was never read.
-///
-/// The filter is fetched here rather than by the caller because a republished
-/// shard publishes a new filter with its new content. Re-deriving a shard
-/// therefore means re-matching it, not merely re-querying it.
+fn previous_digest_of(map: &ShardMap, shard_id: u64) -> String {
+    shard_id
+        .checked_sub(1)
+        .and_then(|before| map.shards.get(before as usize))
+        .map(|entry| entry.manifest_digest.clone())
+        .unwrap_or_default()
+}
+
+/// Heights through which every script is covered from its required height:
+/// provisional coverage included, then settled only. The minimum over
+/// scripts, so one script's gap holds the whole wallet's figure down.
+fn coverage_summary<S: WalletStore>(store: &S, map: &ShardMap) -> Result<(u64, u64), SyncError> {
+    let through = map.shards.last().map(|e| e.end_height).unwrap_or(0);
+    let floor = map.start_height.saturating_sub(1);
+    let mut covered = through;
+    let mut settled = through;
+    let entries = store.scripts()?;
+    if entries.is_empty() {
+        return Ok((floor, floor));
+    }
+    for entry in entries {
+        let from = entry.required_from.max(map.start_height);
+        let ranges = store.coverage(&entry.script)?;
+        let all = uncovered(&ranges, from, through);
+        let mine = all
+            .first()
+            .map_or(through, |(start, _)| start.saturating_sub(1));
+        covered = covered.min(mine);
+        let settled_ranges: Vec<CoverageRange> = ranges
+            .iter()
+            .filter(|range| range.kind == CoverageKind::Settled)
+            .cloned()
+            .collect();
+        let settled_gaps = uncovered(&settled_ranges, from, through);
+        let mine_settled = settled_gaps
+            .first()
+            .map_or(through, |(start, _)| start.saturating_sub(1));
+        settled = settled.min(mine_settled);
+    }
+    Ok((covered.max(floor), settled.max(floor)))
+}
+
+fn provisional_of<S: WalletStore>(
+    store: &S,
+    map: &ShardMap,
+) -> Result<Vec<ProvisionalCoverage>, SyncError> {
+    let mut seen: BTreeMap<(u64, String), u64> = BTreeMap::new();
+    for range in store.provisional()? {
+        let end = seen
+            .entry((range.shard_id, range.revision_digest.clone()))
+            .or_insert(range.end_height);
+        *end = (*end).max(range.end_height);
+    }
+    Ok(seen
+        .into_iter()
+        .map(
+            |((shard_id, manifest_digest), end_height)| ProvisionalCoverage {
+                shard_id,
+                // The digest identifies the revision; its number is the map's.
+                revision: map
+                    .shards
+                    .get(shard_id as usize)
+                    .filter(|entry| entry.manifest_digest == manifest_digest)
+                    .map(|entry| entry.revision)
+                    .unwrap_or(0),
+                manifest_digest,
+                end_height,
+            },
+        )
+        .collect())
+}
+
+enum ShardRead {
+    /// Every script in scope was covered; `matched` names those with history.
+    Done { matched: Vec<Vec<u8>> },
+    /// The filter matched but nothing was found; coverage advanced anyway.
+    Unproductive { count: u64 },
+    /// A budget or refusal stopped the sync with the store consistent.
+    Stopped(Completion),
+}
+
+/// Reads one shard for the scripts that need it, committing to the store.
 #[allow(clippy::too_many_arguments)]
-fn read_shard(
+fn read_shard_into<S: WalletStore>(
+    store: &mut S,
+    map: &ShardMap,
     entry: &transparent_filter::ShardMapEntry,
     previous_digest: &str,
-    map: &ShardMap,
     genesis: BlockHash,
-    scripts: &[ScriptBytes],
+    scripts: &[Vec<u8>],
     geometry: &ServiceGeometry,
     clients: &mut Clients,
     filters: &mut impl FilterSource,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
-) -> Result<Option<Recovered>, SyncError> {
-    let profile = map.profile.as_str();
-    // Every filter in range is downloaded, matched or not.
-    let (bytes, cost) = filters
-        .filter(entry.shard_id)
-        .map_err(|error| SyncError::Transport(error.to_string()))?;
-    charges.filter_bytes += cost;
+    limits: &WorkLimits,
+) -> Result<ShardRead, SyncError> {
+    // Every filter in range is downloaded, matched or not; a filter the store
+    // already holds under this revision and digest is reused.
+    let bytes = match store.filter(&entry.manifest_digest, &entry.filter_hash)? {
+        Some(bytes) => bytes,
+        None => {
+            let (bytes, cost) = filters
+                .filter(entry.shard_id)
+                .map_err(|error| SyncError::Transport(error.to_string()))?;
+            charges.filter_bytes += cost;
+            // Bind the bytes to the map before believing anything they say.
+            if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
+                return Err(SyncError::Invalid(format!(
+                    "shard {} filter does not match its published digest",
+                    entry.shard_id
+                )));
+            }
+            store.put_filter(
+                &entry.manifest_digest,
+                &entry.filter_hash,
+                entry.sealed,
+                &bytes,
+            )?;
+            bytes
+        }
+    };
     charges.filters_checked += 1;
-
-    // Bind the bytes to the map before believing anything they say.
-    if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
-        return Err(SyncError::Invalid(format!(
-            "shard {} filter does not match its published digest",
-            entry.shard_id
-        )));
-    }
     let validated = validate_filter(&bytes, FilterLimits::default())?;
     let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
     let key = ShardKey::derive(
-        profile,
+        &map.profile,
         genesis,
         entry.shard_id,
         entry.start_height,
         entry.end_height,
         terminal,
     );
-    let matches = transparent_filter::match_range_scripts(&validated, key, scripts)?;
+    let owned: Vec<ScriptBytes> = scripts
+        .iter()
+        .map(|script| ScriptBytes::new(script.clone()))
+        .collect();
+    let matches = transparent_filter::match_range_scripts(&validated, key, &owned)?;
     if matches.is_empty() {
-        return Ok(None);
+        // A genuinely empty range for every script here: coverage advances
+        // with no private request.
+        store.commit_shard(ShardCommit {
+            shard_id: entry.shard_id,
+            revision_digest: entry.manifest_digest.clone(),
+            sealed: entry.sealed,
+            start_height: entry.start_height,
+            end_height: entry.end_height,
+            terminal_block_hash: entry.terminal_block_hash.clone(),
+            events: Vec::new(),
+            covered_scripts: scripts.to_vec(),
+            pending_upsert: Vec::new(),
+            pending_complete: Vec::new(),
+        })?;
+        return Ok(ShardRead::Done {
+            matched: Vec::new(),
+        });
     }
-
     // A geometry this build does not know is fatal the moment there is
     // something to fetch, whatever the manifest would say about it.
     if transparent_shard::layout::by_name(&entry.geometry).is_none() {
         return Err(SyncError::UnknownGeometry(entry.geometry.clone()));
     }
+    let matched_scripts: Vec<Vec<u8>> = matches.iter().map(|&i| scripts[i].clone()).collect();
+    let unmatched: Vec<Vec<u8>> = scripts
+        .iter()
+        .filter(|script| !matched_scripts.contains(script))
+        .cloned()
+        .collect();
 
-    // Retried here, one level inside the map-refresh loop, because an overload
-    // says nothing about the map: refetching it would be pure cost, and the
-    // same revision is still the right one to ask for.
-    //
-    // The manifest is fetched and checked before any private request, once
-    // per revision this sync touches. What it establishes is that the map,
-    // the manifest and the registry tell one story about this shard; it does
-    // not establish that the story is complete, because the same publisher
-    // told all of it. Its fetch meets the same two refusals a private request
-    // can, and they are lifted the same way.
+    let outcome = with_refusals(
+        store,
+        map,
+        entry,
+        previous_digest,
+        geometry,
+        clients,
+        transport,
+        charges,
+        limits,
+        |store, prepared, transport, charges| {
+            retrieve_shard_into(
+                store,
+                entry,
+                &matched_scripts,
+                &unmatched,
+                prepared,
+                transport,
+                charges,
+                limits,
+            )
+        },
+    )?;
+    match outcome {
+        Some(stopped) => Ok(ShardRead::Stopped(stopped)),
+        None => {
+            // Which matched scripts actually held history is what the
+            // caller's gap-limit rule wants; the store knows.
+            let mut found = Vec::new();
+            let mut unproductive = 0u64;
+            let events = store.events()?;
+            for script in &matched_scripts {
+                let has_history = events
+                    .iter()
+                    .any(|stored| stored.script == *script && stored.shard_id == entry.shard_id);
+                if has_history {
+                    found.push(script.clone());
+                } else {
+                    unproductive += 1;
+                }
+            }
+            if found.is_empty() {
+                Ok(ShardRead::Unproductive {
+                    count: unproductive,
+                })
+            } else {
+                Ok(ShardRead::Done { matched: found })
+            }
+        }
+    }
+}
+
+/// Runs `work` against a shard, verifying the manifest first and lifting the
+/// service's two refusals: a withdrawn revision propagates for the map
+/// refresh, an overload is retried with backoff and then reported as an
+/// incomplete sync with the store consistent.
+#[allow(clippy::too_many_arguments)]
+fn with_refusals<S: WalletStore, T: ShardTransport, F>(
+    store: &mut S,
+    map: &ShardMap,
+    entry: &transparent_filter::ShardMapEntry,
+    previous_digest: &str,
+    geometry: &ServiceGeometry,
+    clients: &mut Clients,
+    transport: &mut T,
+    charges: &mut ByteCharges,
+    limits: &WorkLimits,
+    mut work: F,
+) -> Result<Option<Completion>, SyncError>
+where
+    F: FnMut(
+        &mut S,
+        &mut GeometryClients,
+        &mut T,
+        &mut ByteCharges,
+    ) -> Result<Option<Completion>, SyncError>,
+{
+    let _ = limits;
     let mut attempt = 1u32;
     let mut manifest: Option<ShardManifest> = None;
     loop {
@@ -565,10 +1154,12 @@ fn read_shard(
                 }
                 Err(SyncError::Client(ClientError::Overloaded(overloaded))) => {
                     if attempt >= MAX_OVERLOAD_ATTEMPTS {
-                        return Err(SyncError::Overloaded {
-                            shard_id: entry.shard_id,
-                            attempts: attempt,
-                        });
+                        return Ok(Some(Completion::Incomplete {
+                            reason: IncompleteReason::Overloaded {
+                                shard_id: entry.shard_id,
+                            },
+                            pending: store.pending()?.len(),
+                        }));
                     }
                     std::thread::sleep(overload_backoff(attempt, overloaded.retry_after));
                     attempt += 1;
@@ -577,16 +1168,9 @@ fn read_shard(
                 Err(other) => return Err(other),
             },
         };
-        // The geometry is the verified manifest's, which `verify_manifest`
-        // has shown to be the map's as well.
         let prepared = clients.prepare(&verified.geometry, &geometry.geometries)?;
-        match retrieve_shard(entry, &matches, scripts, prepared, transport, charges) {
-            Ok(recovered) => return Ok(Some(recovered)),
-            // Both refusals reach here wrapped as client errors, because setup
-            // and query both report through `ClientError`. Lifting them to
-            // their own `SyncError` variants at this one boundary is what lets
-            // the caller's loop match on a withdrawn revision without knowing
-            // which of the two requests met it.
+        match work(store, prepared, transport, charges) {
+            Ok(stopped) => return Ok(stopped),
             Err(SyncError::Client(ClientError::Stale(stale))) => {
                 return Err(SyncError::StaleRevision {
                     shard_id: entry.shard_id,
@@ -596,19 +1180,37 @@ fn read_shard(
             }
             Err(SyncError::Client(ClientError::Overloaded(overloaded))) => {
                 if attempt >= MAX_OVERLOAD_ATTEMPTS {
-                    return Err(SyncError::Overloaded {
-                        shard_id: entry.shard_id,
-                        attempts: attempt,
-                    });
+                    return Ok(Some(Completion::Incomplete {
+                        reason: IncompleteReason::Overloaded {
+                            shard_id: entry.shard_id,
+                        },
+                        pending: store.pending()?.len(),
+                    }));
                 }
-                // Nothing partial is kept: `retrieve_shard` returns its events
-                // by value, so a refused attempt leaves no state to unwind.
+                // Nothing partial is lost: every commit so far stands, and
+                // the work resumes from the store on the next attempt.
                 std::thread::sleep(overload_backoff(attempt, overloaded.retry_after));
                 attempt += 1;
             }
             Err(other) => return Err(other),
         }
     }
+}
+
+/// Whether a budget has been reached.
+fn budget_stopped(charges: &ByteCharges, limits: &WorkLimits) -> Option<IncompleteReason> {
+    if let Some(max) = limits.max_queries {
+        if charges.queries() >= max {
+            return Some(IncompleteReason::QueryBudget);
+        }
+    }
+    if let Some(max) = limits.max_private_bytes {
+        let private = charges.setup_bytes() + charges.query_upload() + charges.query_download();
+        if private >= max {
+            return Some(IncompleteReason::ByteBudget);
+        }
+    }
+    None
 }
 
 /// Fetches a matched shard's manifest and verifies it against the map.
@@ -839,30 +1441,31 @@ fn check_continuation(
     Ok(())
 }
 
-struct Recovered {
-    events: Vec<(Vec<u8>, TransparentEvent)>,
-    unproductive: u64,
-}
-
-/// Retrieves every matched script's history from one shard, across all of its
-/// segments.
-fn retrieve_shard(
+/// The directory phase for one shard: both candidate rows for every matched
+/// script, inline events committed, page work recorded; then the pages.
+#[allow(clippy::too_many_arguments)]
+fn retrieve_shard_into<S: WalletStore>(
+    store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
-    matches: &[usize],
-    scripts: &[ScriptBytes],
+    matched: &[Vec<u8>],
+    unmatched: &[Vec<u8>],
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
-) -> Result<Recovered, SyncError> {
+    limits: &WorkLimits,
+) -> Result<Option<Completion>, SyncError> {
     let shard_id = entry.shard_id;
-    // The geometry is resolved once per shard rather than per row: the map
-    // named it, `Clients::prepare` checked it against the registry, and every
-    // offset below is taken against the same entry.
     let geometry = transparent_shard::layout::by_name(&entry.geometry)
         .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
     let revision = entry.manifest_digest.as_str();
+    let set_digest = store
+        .set_identity()?
+        .map(|identity| identity.digest())
+        .unwrap_or_default();
     let GeometryClients { directory, pages } = clients;
     open_table(
+        store,
+        &set_digest,
         shard_id,
         revision,
         Table::Directory,
@@ -872,15 +1475,18 @@ fn retrieve_shard(
         charges,
     )?;
 
-    let mut events = Vec::new();
-    let mut unproductive = 0u64;
-    let mut needs_pages = Vec::new();
+    if let Some(reason) = budget_stopped(charges, limits) {
+        return Ok(Some(Completion::Incomplete {
+            reason,
+            pending: store.pending()?.len(),
+        }));
+    }
 
-    for index in matches {
-        let script = scripts
-            .get(*index)
-            .ok_or_else(|| SyncError::Invalid("match index outside the script set".into()))?;
+    let mut events: Vec<StoredEvent> = Vec::new();
+    let mut covered: Vec<Vec<u8>> = unmatched.to_vec();
+    let mut pending_upsert: Vec<PendingPages> = Vec::new();
 
+    for script in matched {
         // Both candidate rows are queried. Querying only the first and stopping
         // on a hit would make the number of queries depend on where the script
         // landed, which is a function of the script. Candidates are taken over
@@ -888,7 +1494,7 @@ fn retrieve_shard(
         // segment, and every segment answers it.
         let mut found: Option<DirectoryEntry> = None;
         let rows = geometry.directory_rows * entry.directory_segments as u64;
-        for row in candidate_rows(shard_id, script.as_slice(), rows) {
+        for row in candidate_rows(shard_id, script, rows) {
             let (_, within) = transparent_shard::layout::split_row(row, geometry.directory_rows);
             let answers = directory.fetch_row(
                 transport,
@@ -903,7 +1509,7 @@ fn retrieve_shard(
                     // The row is selected by a hash, and a hash can collide or
                     // be misplaced; the segment is not named at all. The exact
                     // script bytes are what settle both.
-                    if candidate.script == script.as_slice() {
+                    if candidate.script == *script {
                         if found.is_some() {
                             return Err(SyncError::Invalid(format!(
                                 "shard {shard_id} holds a script twice"
@@ -914,119 +1520,235 @@ fn retrieve_shard(
                 }
             }
         }
-
         match found {
             // A filter match with no directory entry is either a false positive
             // or a script outside the private tables' coverage. Both are
-            // wasted work rather than errors, and both are counted.
-            None => unproductive += 1,
-            Some(entry) => {
-                for event in &entry.inline {
-                    events.push((entry.script.clone(), *event));
+            // wasted work rather than errors; coverage still advances.
+            None => covered.push(script.clone()),
+            Some(found) => {
+                for event in &found.inline {
+                    events.push(StoredEvent {
+                        script: found.script.clone(),
+                        event: *event,
+                        shard_id,
+                        revision_digest: revision.to_string(),
+                    });
                 }
-                if entry.page_count > 0 {
-                    needs_pages.push(entry);
+                if found.page_count > 0 {
+                    pending_upsert.push(PendingPages {
+                        id: None,
+                        shard_id,
+                        revision_digest: revision.to_string(),
+                        script: found.script.clone(),
+                        first_page: found.first_page,
+                        page_count: found.page_count,
+                        total_events: found.total_events,
+                        inline: found.inline.clone(),
+                        next_ordinal: 0,
+                        attempts: 0,
+                    });
+                } else {
+                    covered.push(script.clone());
                 }
             }
         }
     }
 
-    if !needs_pages.is_empty() {
-        open_table(
-            shard_id,
-            revision,
-            Table::Pages,
-            entry.page_segments,
-            pages,
-            transport,
-            charges,
-        )?;
-        for found in needs_pages {
-            let mut recovered = found.inline.len() as u32;
-            for ordinal in 0..found.page_count {
-                // The extent indexes the shard's page space, which is its
-                // segments concatenated, so an extent that runs past a segment
-                // boundary needs no special handling here. It must still land
-                // inside that space: a directory entry is a claim like any
-                // other, and one pointing past the table would otherwise be
-                // answered by whatever the arithmetic wrapped onto.
-                let row = found.first_page.checked_add(ordinal).ok_or_else(|| {
-                    SyncError::Invalid(format!("shard {shard_id} page extent overflows"))
-                })?;
-                let space = geometry.page_rows * u64::from(entry.page_segments);
-                if u64::from(row) >= space {
-                    return Err(SyncError::Invalid(format!(
-                        "shard {shard_id} page {row} is outside its {space}-row table"
-                    )));
-                }
-                let (_, within) =
-                    transparent_shard::layout::split_row(row as u64, geometry.page_rows);
-                let answers = pages.fetch_row(
-                    transport,
-                    shard_id,
-                    revision,
-                    entry.page_segments,
-                    within as usize,
-                    charges,
-                )?;
-                // A directory entry could point anywhere, and every segment
-                // answered; an entry's own header is what says whose history it
-                // holds, and exactly one may claim this fragment.
-                //
-                // A packed row also carries other scripts' histories. Those are
-                // discarded, and deliberately not used: two of a wallet's own
-                // scripts sharing a row still cost two fetches. Satisfying the
-                // second from the first response would make the request
-                // transcript depend on which scripts share a row, which is a
-                // fact about other people's history and not this wallet's.
-                let mut fragment = None;
-                for raw in answers {
-                    for candidate in decode_page_row(&raw)? {
-                        if candidate.script == found.script
-                            && candidate.ordinal == ordinal
-                            && candidate.fragment_count == found.page_count
-                        {
-                            if fragment.is_some() {
-                                return Err(SyncError::Invalid(format!(
-                                    "shard {shard_id} holds page {row} twice"
-                                )));
-                            }
-                            fragment = Some(candidate);
-                        }
-                    }
-                }
-                let fragment = fragment.ok_or_else(|| {
-                    SyncError::Invalid(format!(
-                        "shard {shard_id} page {row} does not belong to the entry that located it"
-                    ))
-                })?;
-                recovered += fragment.events.len() as u32;
-                for event in fragment.events {
-                    events.push((found.script.clone(), event));
-                }
-            }
-            // The directory promised a total; the pages must account for it, or
-            // the wallet cannot tell a complete history from a truncated one.
-            if recovered != found.total_events {
-                return Err(SyncError::Invalid(format!(
-                    "shard {shard_id} yielded {recovered} events where the directory promised {}",
-                    found.total_events
-                )));
-            }
-        }
-    }
-
-    Ok(Recovered {
+    // The directory phase is one commit: inline events, coverage for every
+    // script that needs no pages, and the page work owed for the rest. Page
+    // retrieval that follows resumes from the store even if nothing else of
+    // this call survives.
+    let pending_ids_before: std::collections::BTreeSet<u64> =
+        store.pending()?.iter().filter_map(|p| p.id).collect();
+    store.commit_shard(ShardCommit {
+        shard_id,
+        revision_digest: revision.to_string(),
+        sealed: entry.sealed,
+        start_height: entry.start_height,
+        end_height: entry.end_height,
+        terminal_block_hash: entry.terminal_block_hash.clone(),
         events,
-        unproductive,
-    })
+        covered_scripts: covered,
+        pending_upsert,
+        pending_complete: Vec::new(),
+    })?;
+    let owed: Vec<PendingPages> = store
+        .pending()?
+        .into_iter()
+        .filter(|p| {
+            p.shard_id == shard_id
+                && p.revision_digest == revision
+                && p.id.is_some_and(|id| !pending_ids_before.contains(&id))
+        })
+        .collect();
+    if owed.is_empty() {
+        return Ok(None);
+    }
+    let _ = pages;
+    finish_pages(store, entry, &owed, clients, transport, charges, limits)
 }
 
-/// Fetches the published setup for every segment of a shard's table, once.
+/// Fetches the pages still owed for one shard revision, committing each
+/// page's events with the pending item's progress, and closing each item
+/// with its script's coverage when its total is accounted for.
+#[allow(clippy::too_many_arguments)]
+fn finish_pages<S: WalletStore>(
+    store: &mut S,
+    entry: &transparent_filter::ShardMapEntry,
+    owed: &[PendingPages],
+    clients: &mut GeometryClients,
+    transport: &mut impl ShardTransport,
+    charges: &mut ByteCharges,
+    limits: &WorkLimits,
+) -> Result<Option<Completion>, SyncError> {
+    let shard_id = entry.shard_id;
+    let geometry = transparent_shard::layout::by_name(&entry.geometry)
+        .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
+    let revision = entry.manifest_digest.as_str();
+    let set_digest = store
+        .set_identity()?
+        .map(|identity| identity.digest())
+        .unwrap_or_default();
+    let pages = &mut clients.pages;
+    open_table(
+        store,
+        &set_digest,
+        shard_id,
+        revision,
+        Table::Pages,
+        entry.page_segments,
+        pages,
+        transport,
+        charges,
+    )?;
+    for item in owed {
+        let mut recovered = item.inline.len() as u32
+            + store
+                .events()?
+                .iter()
+                .filter(|stored| {
+                    stored.script == item.script
+                        && stored.shard_id == shard_id
+                        && stored.revision_digest == revision
+                        && !item.inline.contains(&stored.event)
+                })
+                .count() as u32;
+        for ordinal in item.next_ordinal..item.page_count {
+            if let Some(reason) = budget_stopped(charges, limits) {
+                return Ok(Some(Completion::Incomplete {
+                    reason,
+                    pending: store.pending()?.len(),
+                }));
+            }
+            // The extent indexes the shard's page space, which is its segments
+            // concatenated. It must still land inside that space: a directory
+            // entry is a claim like any other.
+            let row = item.first_page.checked_add(ordinal).ok_or_else(|| {
+                SyncError::Invalid(format!("shard {shard_id} page extent overflows"))
+            })?;
+            let space = geometry.page_rows * u64::from(entry.page_segments);
+            if u64::from(row) >= space {
+                return Err(SyncError::Invalid(format!(
+                    "shard {shard_id} page {row} is outside its {space}-row table"
+                )));
+            }
+            let (_, within) = transparent_shard::layout::split_row(row as u64, geometry.page_rows);
+            let answers = pages.fetch_row(
+                transport,
+                shard_id,
+                revision,
+                entry.page_segments,
+                within as usize,
+                charges,
+            )?;
+            // A directory entry could point anywhere, and every segment
+            // answered; an entry's own header is what says whose history it
+            // holds, and exactly one may claim this fragment.
+            //
+            // A packed row also carries other scripts' histories. Those are
+            // discarded, and deliberately not used: two of a wallet's own
+            // scripts sharing a row still cost two fetches. Satisfying the
+            // second from the first response would make the request
+            // transcript depend on which scripts share a row, which is a
+            // fact about other people's history and not this wallet's.
+            let mut fragment = None;
+            for raw in answers {
+                for candidate in decode_page_row(&raw)? {
+                    if candidate.script == item.script
+                        && candidate.ordinal == ordinal
+                        && candidate.fragment_count == item.page_count
+                    {
+                        if fragment.is_some() {
+                            return Err(SyncError::Invalid(format!(
+                                "shard {shard_id} holds page {row} twice"
+                            )));
+                        }
+                        fragment = Some(candidate);
+                    }
+                }
+            }
+            let fragment = fragment.ok_or_else(|| {
+                SyncError::Invalid(format!(
+                    "shard {shard_id} page {row} does not belong to the entry that located it"
+                ))
+            })?;
+            recovered += fragment.events.len() as u32;
+            let events: Vec<StoredEvent> = fragment
+                .events
+                .iter()
+                .map(|event| StoredEvent {
+                    script: item.script.clone(),
+                    event: *event,
+                    shard_id,
+                    revision_digest: revision.to_string(),
+                })
+                .collect();
+            let last = ordinal + 1 == item.page_count;
+            // The directory promised a total; the pages must account for it,
+            // or the wallet cannot tell a complete history from a truncated one.
+            if last && recovered != item.total_events {
+                return Err(SyncError::Invalid(format!(
+                    "shard {shard_id} yielded {recovered} events where the directory promised {}",
+                    item.total_events
+                )));
+            }
+            let mut progressed = item.clone();
+            progressed.next_ordinal = ordinal + 1;
+            progressed.attempts += 1;
+            store.commit_shard(ShardCommit {
+                shard_id,
+                revision_digest: revision.to_string(),
+                sealed: entry.sealed,
+                start_height: entry.start_height,
+                end_height: entry.end_height,
+                terminal_block_hash: entry.terminal_block_hash.clone(),
+                events,
+                covered_scripts: if last {
+                    vec![item.script.clone()]
+                } else {
+                    Vec::new()
+                },
+                pending_upsert: if last { Vec::new() } else { vec![progressed] },
+                pending_complete: if last {
+                    item.id.into_iter().collect()
+                } else {
+                    Vec::new()
+                },
+            })?;
+        }
+    }
+    Ok(None)
+}
+
+/// Fetches the published setup for every segment of a shard's table, once,
+/// reusing what the store holds under the exact set, revision and segment.
 ///
 /// Each segment publishes its own `c1`, so each is opened separately; a shard
 /// with one segment — the ordinary case — costs exactly one setup per table.
-fn open_table(
+#[allow(clippy::too_many_arguments)]
+fn open_table<S: WalletStore>(
+    store: &mut S,
+    set_digest: &str,
     shard_id: u64,
     revision: &str,
     table: Table,
@@ -1045,19 +1767,41 @@ fn open_table(
         if client.is_open(revision, segment) {
             continue;
         }
-        let (raw, cost) = transport
-            .setup(shard_id, revision, table, segment)
-            .map_err(|error| SyncError::from(classify_transport(error)))?;
-        charges.add_setup(table, cost);
-        let parsed: serde_json::Value = serde_json::from_slice(&raw)
-            .map_err(|error| SyncError::Transport(error.to_string()))?;
-        let params = parsed["public_params"]
-            .as_str()
-            .ok_or_else(|| SyncError::Invalid("setup has no public_params".into()))?;
-        let digest = parsed["public_params_sha256"]
-            .as_str()
-            .ok_or_else(|| SyncError::Invalid("setup has no digest".into()))?;
-        client.open_segment(revision, segment, params, digest)?;
+        let key = SetupKey {
+            set_digest: set_digest.to_string(),
+            revision_digest: revision.to_string(),
+            table,
+            segment,
+        };
+        let (params, digest) = match store.setup(&key)? {
+            Some(blob) => (blob.public_params_base64, blob.public_params_sha256),
+            None => {
+                let (raw, cost) = transport
+                    .setup(shard_id, revision, table, segment)
+                    .map_err(|error| SyncError::from(classify_transport(error)))?;
+                charges.add_setup(table, cost);
+                let parsed: serde_json::Value = serde_json::from_slice(&raw)
+                    .map_err(|error| SyncError::Transport(error.to_string()))?;
+                let params = parsed["public_params"]
+                    .as_str()
+                    .ok_or_else(|| SyncError::Invalid("setup has no public_params".into()))?
+                    .to_string();
+                let digest = parsed["public_params_sha256"]
+                    .as_str()
+                    .ok_or_else(|| SyncError::Invalid("setup has no digest".into()))?
+                    .to_string();
+                (params, digest)
+            }
+        };
+        client.open_segment(revision, segment, &params, &digest)?;
+        // Kept only after the client verified it against its digest.
+        store.put_setup(
+            &key,
+            &SetupBlob {
+                public_params_base64: params,
+                public_params_sha256: digest,
+            },
+        )?;
     }
     Ok(())
 }

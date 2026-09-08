@@ -56,7 +56,7 @@ pub enum ClientError {
 }
 
 /// Which table a query addresses.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Table {
     Directory,
     Pages,
