@@ -27,106 +27,25 @@ use transparent_events::EVENT_BYTES;
 /// Bytes in one directory row.
 pub const DIRECTORY_ROW_BYTES: usize = 3_584;
 
-/// Bytes in one page row.
+/// Bytes in one packed page row for the baseline geometry.
 ///
-/// The scheme's smallest instance, and chosen for storage rather than for query
-/// count. A page belongs to one script, so a row is only ever as full as that
-/// script's history: the measured distribution is p50 2 events, p90 5, p95 8,
-/// which means a script that touches a page at all typically fills a few per
-/// cent of it. At 17,920 bytes the published set stored 16.1 events per used
-/// page row of 185 slots — 8.7% — and 6.04% of the fleet's pinned bytes were
-/// real data.
-///
-/// The mainnet study's sweep picked 17,920 on a different criterion: it cut one
-/// 9,152-event outlier from 255 page queries to 50. That study also recorded
-/// that the sweep "does not select one global row width for both tables", which
-/// is what this width acts on.
-///
-/// The trade is real and falls on the heaviest histories, which need
-/// proportionally more rows. The design's answer for those is query budgets and
-/// resumable work, not a wider row for everyone.
+/// One PIR instance carries 3,584 bytes. Short histories can share a row;
+/// larger histories use multiple fragments and private page requests.
 pub const PAGE_ROW_BYTES: usize = 3_584;
 
-/// Rows in every shard's directory table.
+/// Directory rows per segment for the baseline `recent-8k` geometry.
 ///
-/// Pinned, and identical for every shard: `params_for_simplepir` derives the
-/// PIR parameters from the row count, so a shard with its own row count would
-/// need its own parameter set. It pads rows to a multiple of 2,048, and 2,048
-/// is its floor, so this is four times the smallest table the scheme serves.
-///
-/// At 14 slots a row it holds 114,688 scripts. The reason it is not the floor
-/// is what a wallet pays rather than what the fleet stores. A script costs two
-/// directory queries in every shard it appears in, and over the genesis journal
-/// a script appears in 27 shards on average and 2,794 at the worst. Widening
-/// the table makes shards hold more and so makes there be fewer of them: at
-/// 2,048 rows that journal seals into 2,797 shards, at 8,192 into 511. The
-/// query grows 96,264 bytes to 128,008 and is asked five times less often, and
-/// the product is what a restoration pays — mean 5.71 MB against 3.75, p99
-/// 118.33 against 65.67.
-///
-/// The wider table also halves the fleet, 56.27 GB to 30.01 GB, because a shard
-/// pins its tables whole and there are fewer shards to pin. Storage and query
-/// cost point the same way here; they did not have to.
-///
-/// **The figures in the two paragraphs above are from a census covering 9.4% of
-/// chain height, not the whole chain.** They compare 2,048 against 8,192 over
-/// that partial journal, and the relative argument they make for the wider
-/// table still holds — but every absolute number in them is wrong at full
-/// scale. Over the complete journal, 8,192 seals into 1,091 shards rather than
-/// 511, a script appears in 6.55 shards on average rather than 27, and mean
-/// restoration is 2.03 MB rather than 3.75. See
-/// `docs/transparent-pir-evaluation/shard-utilisation/fullchain-geometry-comparison.md`,
-/// which is the authoritative cross-geometry comparison; this partial census
-/// has now been misread as full-chain twice.
-///
-/// Measured in `docs/transparent-pir-evaluation/shard-utilisation/genesis-geometry-notes.md`,
-/// which also records what this costs: the heaviest single history in the
-/// journal pays 1,561.95 MB against 1,482.22 at half the width, because its
-/// fragment count is fixed by its event count and only the query premium
-/// reaches it. That case is answered by query budgets, not by geometry.
+/// Named profiles below may use other row counts. At 14 slots per row, this
+/// baseline has capacity for 114,688 script entries before placement slack.
+/// Deployment decisions and coverage-matched evidence are maintained in
+/// `docs/transparent-pir/deployment.md` and `docs/transparent-pir/evidence/README.md`.
 pub const DIRECTORY_ROWS: usize = 8_192;
 
-/// Rows in every shard's page table, per segment.
+/// Page rows per segment for the baseline `recent-8k` geometry.
 ///
-/// Sized so the two tables fill together, and measured rather than reasoned:
-/// see the geometry sweep archived under
-/// `docs/transparent-pir-evaluation/shard-utilisation/`.
-///
-/// Packing short histories into shared rows cut row demand roughly in half, and
-/// at 8,192 that saving was invisible — a table padded to 8,192 costs the same
-/// whether 6,763 rows are used or 3,489, so every row packing recovered was
-/// already padding. At 4,096 the same journal stores 132.1 MB where the v4
-/// layout stored 220.2 MB, over the same six generations, with no generation
-/// needing a second segment.
-///
-/// Halving again loses. At 2,048 the page limit closes nearly every generation,
-/// the range splits into eleven, and pinned bytes rise to 161.5 MB: the
-/// directory is charged per generation, and eleven directories cost more than
-/// the page rows saved. It also doubles the published setup a restoring wallet
-/// fetches, which is the cost a smaller table was supposed to reduce.
-///
-/// The row count also sets query size — `params_for_simplepir` derives the
-/// scheme from it — so this is 21,504 bytes off every page query as well. See
-/// `transparent-shard-server/tests/geometry_costs.rs`, which pins that.
-///
-/// # Why it went back up
-///
-/// The paragraphs above chose 4,096 over 8,192 on pinned bytes, holding the
-/// shard boundaries fixed. They do not stay fixed: the page table is what
-/// closes a shard, so halving it doubles the shards a journal seals into, and
-/// the argument above only saw that at 2,048, where it called the result a
-/// loss. The same effect runs the other way from 4,096.
-///
-/// What it costs is a fragment count that is *per script per shard*. Fewer
-/// shards means fewer per-shard histories, so page queries fall with shard
-/// count rather than staying flat, which is the step the earlier reasoning
-/// missed. Fragments do rise — 9.94M to 12.12M over the genesis journal,
-/// because the two inline events are granted per shard and there are fewer
-/// shards to grant them — and that 22% loses to a five-fold fall in directory
-/// queries.
-///
-/// Sized with [`DIRECTORY_ROWS`], not independently: the two tables have to
-/// close a shard at about the same occupancy or one of them is padding.
+/// A profile may pair a different page count with its directory count. Sealing
+/// considers both script capacity and exact packed page demand. Smaller tables
+/// may add shard boundaries, so evaluate total retrieval cost over equal ranges.
 pub const PAGE_ROWS: usize = 8_192;
 
 /// Events stored directly in a script's directory entry.

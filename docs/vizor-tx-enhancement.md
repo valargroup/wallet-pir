@@ -1,5 +1,7 @@
 # Vizor Ironwood transaction enhancement
 
+Scope: Enhance PIR. For transparent script-history recovery, use the [current transparent PIR index](transparent-pir/README.md); the retained outpoint-keyed transparent-spend protocol is a different component.
+
 Enhance PIR replaces transaction-specific retrieval for the encrypted output
 data a wallet needs after compact scanning. The wallet derives an Ironwood
 output position, sends a private real-or-dummy query, and receives one fixed

@@ -1,5 +1,7 @@
 # Enhance PIR deployment
 
+Scope: Enhance PIR. For transparent script-history recovery, use the [current transparent PIR index](transparent-pir/README.md); the retained outpoint-keyed transparent-spend protocol is a different component.
+
 The coordinator publishes the Enhance table for one best-chain-tip generation,
 on its replicated workers. A tip reorg truncates the journal to the common
 ancestor before a replacement generation is published.

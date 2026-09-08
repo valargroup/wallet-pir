@@ -104,18 +104,11 @@ fn evaluation_keys_dominate_every_query_whatever_the_geometry() {
     }
 }
 
-/// The geometry actually pinned, so a parameter change has to restate its cost.
+/// Pin the baseline geometry's per-query upload size.
 ///
-/// Both tables are 8,192 rows and a query costs 128,008 bytes. The directory
-/// paid 96,264 at 2,048 rows and the pages 106,504 at 4,096, so this is about
-/// 21,504 bytes more per query than the narrowest either has been.
-///
-/// It is more per query and fewer queries. Widening a table makes a shard hold
-/// more, so a journal seals into fewer shards, and a script costs two directory
-/// queries in each shard it appears in. Over the genesis journal that trade is
-/// 2,797 shards against 511, and a restoration's mean falls from 5.71 MB to
-/// 3.75 despite every query being larger. The measurement is archived under
-/// `docs/transparent-pir-evaluation/shard-utilisation/genesis-geometry-notes.md`.
+/// Both recent-8k tables have 8,192 rows and upload 128,008 bytes per query.
+/// This is a wire-size check, not a complete wallet-sync measurement; see
+/// `docs/transparent-pir/evidence/README.md` for dataset-scoped comparisons.
 #[test]
 fn the_pinned_geometry_costs_what_it_did() {
     // Each table is costed at *its own* width. They agree across the whole

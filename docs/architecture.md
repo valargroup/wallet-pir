@@ -1,5 +1,7 @@
 # Enhance PIR architecture
 
+Scope: Enhance PIR. For transparent script-history recovery, use the [current transparent PIR index](transparent-pir/README.md); the retained outpoint-keyed transparent-spend protocol is a different component.
+
 Enhance PIR is split at the network boundary.
 
 - `pir/enhance` defines the wire metadata, record layout, query preparation,

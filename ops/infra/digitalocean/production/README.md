@@ -11,9 +11,12 @@ This Terraform root manages the Enhance PIR production fleet in the
 - a dedicated VPC and firewalls. Only the coordinator may reach worker port
   8091. SSH is restricted to `allowed_ssh_cidrs`.
 
-That is the whole production shape. Worker pools per table, a second
+That describes the Enhance shape only. Transparent shard resources also live in
+this Terraform root; use the [transparent deployment target](../../../../docs/transparent-pir/deployment.md)
+and [verified-status record](../../../../docs/transparent-pir/status.md) before changing them.
+The proposed transparent fleet is not established by this README. Worker pools per table, a second
 coordinator, a separate ingest host, and artifact publishing to Spaces are
-documented as a growth path in `docs/pir_deployment_architecture.md` §6 and
+documented as a growth path in the historical `docs/archive/pir_deployment_architecture.md` §6 and
 are deliberately not built.
 
 ## State

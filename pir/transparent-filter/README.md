@@ -1,5 +1,7 @@
 # transparent-filter
 
+For current transparent script-history recovery and deployment, start at [the transparent PIR index](../../docs/transparent-pir/README.md). This document covers only the component named here.
+
 BIP 158 transparent activity filters for Zcash: the `zcash-transparent-basic-v1`
 application profile, a strict decoder, wallet-side matching, and the range
 delivery envelope.

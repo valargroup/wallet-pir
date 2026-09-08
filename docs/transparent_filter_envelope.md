@@ -1,5 +1,7 @@
 # Transparent filter range envelope, version 1
 
+Part of the active [transparent PIR documentation](transparent-pir/README.md). This reference defines the filter surface/format; fleet parameters and deployment status live in the linked index.
+
 Status: specification of the implemented format. Versioned separately from
 BIP 158: the envelope may change without any filter byte changing, and a filter
 byte may never change because the envelope did.

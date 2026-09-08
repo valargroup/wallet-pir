@@ -1,7 +1,12 @@
 # Enhance PIR
 
-This repository implements private Ironwood transaction enhancement. A wallet
-uses an output position to recover the encrypted data needed to complete a note
+This repository implements private Ironwood transaction enhancement and transparent
+script-history recovery. For transparent PIR, start at the [current documentation
+index](docs/transparent-pir/README.md); it separates the accepted deployment target,
+source implementation and verified live state.
+
+Ironwood transaction enhancement lets a wallet
+use an output position to recover the encrypted data needed to complete a note
 without revealing the position to the server.
 
 The active Enhance protocol has one fixed-width, 725-byte record:
@@ -18,16 +23,25 @@ The active Enhance protocol has one fixed-width, 725-byte record:
 
 ```text
 pir/enhance/                 Enhance protocol types and client
+pir/transparent-events/      transparent receive/spend event model
+pir/transparent-filter/      public activity filters
+pir/transparent-shard/       private directory/pages, geometry and manifests
+pir/transparent-wallet/      transparent history recovery client
+server/transparent-filter-server/ ingest, census, publication and filter HTTP
+server/transparent-shard-server/  revision-bound private retrieval
+pir/transparent-history/     retained research backend
 pir/transparent-spend/       outpoint-keyed spend protocol; retained, not served
 server/enhance-pir-server/   coordinator, worker, ingest, and storage
 server/pir-apm/              operational dashboard and alerting
 ops/                         deployment tooling and infrastructure
-docs/                        active design and operator documentation
+docs/transparent-pir/        authoritative transparent PIR documentation
+docs/                        product documentation and measurement evidence
 docs/archive/                historical designs, not current behavior
 demos/legacy-spendability/   inactive nullifier and witness experiments
 ```
 
-The root Cargo workspace contains active PIR code only. The old nullifier
+The root Cargo workspace contains active PIR code and retained transparent-history
+research crates. Workspace membership alone does not establish deployment status. The old nullifier
 and witness demos are an excluded, independently buildable workspace; CI does
 not build or deploy them.
 
@@ -84,3 +98,12 @@ built them completely; that remains a trusted-indexer assumption. Because a
 negative result advances coverage, an omitted script produces a wrong balance
 rather than a visible failure, so `/v1/filters/digests` exists to let a wallet
 compare what independent operators publish for the same blocks.
+
+## Transparent PIR deployment direction
+
+The accepted target uses small replicated recent workers and larger archive
+workers with wider tables. Read [deployment](docs/transparent-pir/deployment.md)
+for parameters, [status](docs/transparent-pir/status.md) for what is verified, and
+[remaining work](docs/transparent-pir/remaining-work.md) for rollout gates.
+Historical transparent-spend and transparent-history experiments do not specify
+this deployment.

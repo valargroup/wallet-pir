@@ -1,5 +1,7 @@
 # Transparent activity filter API, version 1
 
+Part of the active [transparent PIR documentation](transparent-pir/README.md). This reference defines the filter surface/format; fleet parameters and deployment status live in the linked index.
+
 Status: the public wallet-facing surface of `server/transparent-filter-server`.
 Served over TLS on the Enhance PIR host under `/v1/filters/`. The wire format of
 a range response is specified separately in
@@ -122,7 +124,7 @@ against the wallet's own accepted block hash binds *where* the filter claims to
 be, not *what* it contains.
 
 This is the boundary the design's
-[trusted-service profile](transparent_pir_architecture.md#trust-and-completeness)
+[trusted-service profile](transparent-pir/architecture.md)
 states for private retrieval as well: digests and structural checks are
 consistency checks against corruption and stale data, not evidence that the
 index matches the chain.

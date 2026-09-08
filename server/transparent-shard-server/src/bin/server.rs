@@ -14,8 +14,8 @@ use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
     about = "Private retrieval from a published transparent shard set"
 )]
 struct Cli {
-    /// Loopback by default: the wallet-facing API is not designed yet, and
-    /// nothing should be reachable from the internet until it is.
+    /// Loopback by default. Deployment exposes only the required wallet routes
+    /// through its proxy and keeps operational endpoints private.
     #[arg(long, default_value = "127.0.0.1:8092")]
     listen: SocketAddr,
     #[arg(long, default_value = "./transparent-shards")]
@@ -31,16 +31,16 @@ struct Cli {
     cache_bytes: u64,
     /// Runtime builds that may run at once.
     ///
-    /// A build is about a second of CPU and a few hundred megabytes of
-    /// transient allocation, so this is the knob that decides whether a burst
-    /// of cold requests fits alongside the steady-state cache.
+    /// Build latency and transient allocation depend on geometry and hardware.
+    /// Bound construction separately from evaluation and measure process RSS
+    /// while cold requests overlap the steady-state cache.
     #[arg(long, default_value_t = 1)]
     build_slots: usize,
     /// Query evaluations that may run at once.
     ///
-    /// Two, because `shard-scaling` measured evaluation saturating at two
-    /// threads. More admits queueing without throughput and holds more runtimes
-    /// pinned against eviction while it does.
+    /// Start at two and benchmark the selected host. The recorded c-8 run
+    /// saturated at one evaluation thread; more slots are not a throughput
+    /// guarantee and hold more runtimes pinned against eviction.
     #[arg(long, default_value_t = 2)]
     query_slots: usize,
     /// Superseded revisions to keep per shard, beyond the one the map names.

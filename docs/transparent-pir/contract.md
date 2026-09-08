@@ -1,13 +1,6 @@
 # Transparent PIR recovery and privacy contract
 
-Date: 2026-09-04. Status: proposed v1 evaluation contract, not a deployed protocol.
-
-This defines the behavior to evaluate for the
-[transparent PIR recommendation](transparent_pir_architecture.md), which supersedes
-the [earlier proposal](transparent_pir_design.md). The companion
-[feasibility assessment](transparent_pir_evaluation.md) records evidence,
-acceptance gates, and the next experiment. Numerical gates are proposed defaults;
-they are not measured performance promises or authorization to deploy.
+Status: normative requirements for the accepted two-tier target, 2026-09-07. Requirements here are not claims that every capability is implemented; see [status](status.md) and [remaining work](remaining-work.md).
 
 The intended interface is reusable by Zcash wallets. **Vizor is the first
 integration and benchmark target**, not a protocol dependency. Keep network
