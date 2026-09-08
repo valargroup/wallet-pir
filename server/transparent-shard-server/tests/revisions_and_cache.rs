@@ -685,7 +685,7 @@ async fn live_prepare_activate_and_invalidate() {
     live.command(Command::Prepare {
         expected: old_map.clone(),
         publication: Publication {
-            directory: b,
+            directory: b.clone(),
             assignment: None,
             map_sha256: new_map.clone(),
         },
@@ -698,6 +698,32 @@ async fn live_prepare_activate_and_invalidate() {
         .await
         .unwrap();
     assert_eq!(before.headers()["x-shard-map-sha256"], old_map);
+    // A fork notice arriving after preparation invalidates that preparation,
+    // even when the currently advertised predecessor is below the fork.
+    live.command(Command::Invalidate {
+        expected: old_map.clone(),
+        from_height: FIRST + 2,
+        keep_digests: Default::default(),
+    })
+    .await
+    .unwrap();
+    assert!(live
+        .command(Command::Activate {
+            expected: old_map.clone(),
+            map_sha256: new_map.clone(),
+        })
+        .await
+        .is_err());
+    live.command(Command::Prepare {
+        expected: old_map.clone(),
+        publication: Publication {
+            directory: b,
+            assignment: None,
+            map_sha256: new_map.clone(),
+        },
+    })
+    .await
+    .unwrap();
     live.command(Command::Activate {
         expected: old_map.clone(),
         map_sha256: new_map.clone(),

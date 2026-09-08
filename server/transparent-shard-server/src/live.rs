@@ -71,6 +71,7 @@ struct Inner {
     record: PathBuf,
     retired: RwLock<Vec<Active>>,
     operations: tokio::sync::Mutex<()>,
+    publication_gate: std::sync::Mutex<()>,
     epoch: std::sync::atomic::AtomicU64,
 }
 #[derive(Clone)]
@@ -99,6 +100,7 @@ impl LiveService {
             record,
             retired: RwLock::new(Vec::new()),
             operations: tokio::sync::Mutex::new(()),
+            publication_gate: std::sync::Mutex::new(()),
             epoch: std::sync::atomic::AtomicU64::new(0),
         })))
     }
@@ -115,6 +117,7 @@ impl LiveService {
             keep_digests,
         } = &command
         {
+            let _gate = self.0.publication_gate.lock().unwrap();
             let active = self.0.active.read().unwrap();
             if &active.publication.map_sha256 != expected {
                 return Err("active predecessor changed".into());
@@ -242,6 +245,9 @@ impl LiveService {
                     }
                 }
                 let mut candidate = self.0.candidate.lock().await;
+                // Invalidation must not land between the epoch check and the
+                // durable active pointer swap, including after a restart.
+                let _gate = self.0.publication_gate.lock().unwrap();
                 let next = candidate.as_ref().ok_or("no prepared candidate")?;
                 if next.epoch != self.0.epoch.load(std::sync::atomic::Ordering::Acquire) {
                     return Err("reorg invalidated prepared candidate".into());
