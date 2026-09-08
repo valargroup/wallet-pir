@@ -43,7 +43,7 @@ Retain space for the current assignment, candidate publication and rollback arti
 
 Losing an archive host makes its range unavailable until recovery. Recent replication does not make archive or router highly available. The initial target accepts that explicit interruption. If archive availability requirements change, evaluate two 128 GiB hosts with complete archive copies, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
 
-## Proposed wallet objectives, from the 2026-09-08 fleet series
+## Proposed wallet objectives from the 2026-09-08 fleet series
 
 Proposed, not adopted: they come from three repetitions of the load series
 against the activated fleet ([r1](evidence/runs/fleet-series-2026-09-08-r1/README.md),
