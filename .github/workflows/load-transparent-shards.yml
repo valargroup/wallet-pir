@@ -1,0 +1,185 @@
+name: Load-test transparent shards
+
+# Runs the wallet-level load harness from the coordinator, inside the VPC,
+# against a shard origin: real syncs through the wallet crate's HTTP adapters
+# at stepped concurrency, every recovery checked against the committed
+# workload sample's expected digest. The report is the run's evidence; the
+# harness never writes to the origin. The coordinator is the client host, so
+# its eight shared vCPUs bound the client side of every figure; the report
+# records that.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full commit SHA on main to build the harness from; the sample is read from this checkout
+        required: true
+        type: string
+      shard_url:
+        description: Private retrieval origin, e.g. http://10.142.0.10:8093 for one worker or the router's public URL
+        required: true
+        type: string
+      filter_url:
+        description: Public filter origin; blank uses shard_url
+        required: false
+        default: ""
+        type: string
+      sample_path:
+        description: Workload sample, relative to the checkout
+        required: false
+        default: docs/transparent-pir/evidence/workload-sample-2026-09-08/sample.json
+        type: string
+      steps:
+        description: Concurrency steps, comma separated
+        required: false
+        default: "8,32,128,512"
+        type: string
+      step_duration:
+        required: false
+        default: 10m
+        type: string
+      min_completed_per_class:
+        description: Completed syncs per class after which a step may end early
+        required: false
+        default: "100"
+        type: string
+      classes:
+        description: Only these classes, comma separated; blank runs all
+        required: false
+        default: ""
+        type: string
+      max_p99_sync_s:
+        description: Stop stepping when any class's p99 sync time exceeds this many seconds; blank disables
+        required: false
+        default: ""
+        type: string
+      metrics_url:
+        description: Scrape this origin's /metrics at step boundaries; blank skips
+        required: false
+        default: ""
+        type: string
+      store:
+        description: Per-client store
+        required: false
+        default: memory
+        type: choice
+        options: [memory, sqlite]
+      run_id:
+        description: Run identifier recorded in the report and the artifact name
+        required: true
+        type: string
+      host_sku:
+        description: The origin host's SKU, recorded in the report
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transparent-load
+  cancel-in-progress: false
+
+jobs:
+  load:
+    name: load ${{ inputs.run_id }} against ${{ inputs.shard_url }}
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 300
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          SHA: ${{ inputs.ref }}
+          SHARD_URL: ${{ inputs.shard_url }}
+          FILTER_URL: ${{ inputs.filter_url }}
+          SAMPLE: ${{ inputs.sample_path }}
+          STEPS: ${{ inputs.steps }}
+          STEP_DURATION: ${{ inputs.step_duration }}
+          MIN_COMPLETED: ${{ inputs.min_completed_per_class }}
+          CLASSES: ${{ inputs.classes }}
+          MAX_P99: ${{ inputs.max_p99_sync_s }}
+          METRICS_URL: ${{ inputs.metrics_url }}
+          RUN_ID: ${{ inputs.run_id }}
+          HOST_SKU: ${{ inputs.host_sku }}
+        run: |
+          set -euo pipefail
+          url='^https?://[A-Za-z0-9.:_-]+(/[A-Za-z0-9._/-]*)?$'
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a full commit SHA"; exit 1; }
+          [[ "$SHARD_URL" =~ $url ]] || { echo "shard_url must be an http(s) origin"; exit 1; }
+          [[ -z "$FILTER_URL" || "$FILTER_URL" =~ $url ]] || { echo "filter_url must be an http(s) origin or blank"; exit 1; }
+          [[ -z "$METRICS_URL" || "$METRICS_URL" =~ $url ]] || { echo "metrics_url must be an http(s) origin or blank"; exit 1; }
+          sample_re='^[A-Za-z0-9._/-]+\.json$'
+          if ! [[ "$SAMPLE" =~ $sample_re ]] || [[ "${SAMPLE:0:1}" == "/" ]] || [[ "$SAMPLE" == *".."* ]]; then
+            echo "sample_path must be a relative .json path"; exit 1
+          fi
+          [[ "$STEPS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "steps must be comma-separated numbers"; exit 1; }
+          [[ "$STEP_DURATION" =~ ^[0-9]+[smh]$ ]] || { echo "step_duration must be like 10m"; exit 1; }
+          [[ "$MIN_COMPLETED" =~ ^[0-9]+$ ]] || { echo "min_completed_per_class must be a number"; exit 1; }
+          [[ -z "$CLASSES" || "$CLASSES" =~ ^[a-z0-9-]+(,[a-z0-9-]+)*$ ]] || { echo "classes must be comma-separated names or blank"; exit 1; }
+          [[ -z "$MAX_P99" || "$MAX_P99" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "max_p99_sync_s must be a number or blank"; exit 1; }
+          [[ "$RUN_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "run_id must be a plain token"; exit 1; }
+          sku_re='^[A-Za-z0-9._ /-]+$'
+          [[ -z "$HOST_SKU" || "$HOST_SKU" =~ $sku_re ]] || { echo "host_sku has characters the report must not carry"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Build and run the harness
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+          SHA: ${{ inputs.ref }}
+          SHARD_URL: ${{ inputs.shard_url }}
+          FILTER_URL: ${{ inputs.filter_url }}
+          SAMPLE: ${{ inputs.sample_path }}
+          STEPS: ${{ inputs.steps }}
+          STEP_DURATION: ${{ inputs.step_duration }}
+          MIN_COMPLETED: ${{ inputs.min_completed_per_class }}
+          CLASSES: ${{ inputs.classes }}
+          MAX_P99: ${{ inputs.max_p99_sync_s }}
+          METRICS_URL: ${{ inputs.metrics_url }}
+          STORE: ${{ inputs.store }}
+          RUN_ID: ${{ inputs.run_id }}
+          HOST_SKU: ${{ inputs.host_sku }}
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p transparent-loadtest
+          mkdir -p load
+          sha256sum "$SAMPLE" | tee load/sample-sha256.txt
+          ARGS=(--shard-url "$SHARD_URL" --sample "$SAMPLE" --steps "$STEPS"
+            --step-duration "$STEP_DURATION" --min-completed-per-class "$MIN_COMPLETED"
+            --run-id "$RUN_ID" --source-sha "$SHA" --host-region ams3
+            --client-label "enhance-pir-coordinator-01 (m-8vcpu-64gb-intel, shared with ingest), VPC, plain HTTP"
+            --json-out "load/report.json")
+          [[ -n "$FILTER_URL" ]] && ARGS+=(--filter-url "$FILTER_URL")
+          [[ -n "$CLASSES" ]] && ARGS+=(--classes "$CLASSES")
+          [[ -n "$MAX_P99" ]] && ARGS+=(--max-p99-sync-s "$MAX_P99")
+          [[ -n "$METRICS_URL" ]] && ARGS+=(--metrics-url "$METRICS_URL")
+          [[ -n "$HOST_SKU" ]] && ARGS+=(--host-sku "$HOST_SKU")
+          if [[ "$STORE" == "sqlite" ]]; then mkdir -p load/stores; ARGS+=(--store-dir load/stores); fi
+          # Client-side resource use is part of the record: the harness runs
+          # the PIR client for every wallet, and the coordinator's CPUs are
+          # what bound it.
+          /usr/bin/time -v -o load/time.txt ./target/release/transparent-loadtest "${ARGS[@]}" 2>&1 | tee load/harness.log
+          rm -rf load/stores
+          grep -E 'Maximum resident|Elapsed \(wall|Percent of CPU' load/time.txt || true
+          {
+            echo "## Load run $RUN_ID against $SHARD_URL"
+            jq -r '.steps[] | "- \(.concurrency) clients: \(.syncs) syncs, \(.exact) exact, \(.failed) failed, \(.completed_syncs_per_second*100|round/100)/s, error rate \(.error_rate*1000|round/1000), 503 rate \(.http_503_rate*1000|round/1000), worst p99 \(.worst_p99_sync_seconds)s"' load/report.json
+            jq -r '"stopped at: \(.stopped_at_concurrency // "none"); reason: \(.stop_reason // "steps exhausted")"' load/report.json
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transparent-load-${{ inputs.run_id }}
+          path: load/
+          if-no-files-found: error
