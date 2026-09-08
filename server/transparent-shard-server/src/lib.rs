@@ -9,6 +9,7 @@
 
 pub mod admission;
 pub mod assignment;
+pub mod memory;
 pub mod metrics;
 pub mod procmem;
 pub mod router;

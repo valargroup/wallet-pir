@@ -9,6 +9,7 @@
   ],
   "map_sha256": "e5500b870c530513d05442b824c575263d460afcde19c8bb703b42f12ccae732",
   "phase": "serving",
+  "prewarm_operations_total": 0,
   "prunable_revisions": 0,
   "readiness_mode": "loaded-only",
   "replica_group": null,
@@ -18,6 +19,7 @@
   "shards": 2,
   "target_runtimes": 4,
   "warm_runtimes": 0,
+  "work_memory_reserved_bytes": 0,
   "worker_assignment_sha256": null,
   "worker_id": null
 }

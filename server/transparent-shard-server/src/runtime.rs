@@ -300,6 +300,7 @@ struct Inner {
 
 /// A byte-bounded, single-flight cache of prepared runtimes.
 pub struct RuntimeCache {
+    pub(crate) work_memory: Arc<crate::memory::WorkMemory>,
     inner: Mutex<Inner>,
     budget: u64,
     build_slots: Arc<tokio::sync::Semaphore>,
@@ -312,6 +313,7 @@ pub struct RuntimeCache {
 impl RuntimeCache {
     pub fn new(budget: u64, build_slots: usize, metrics: Arc<Metrics>) -> Self {
         Self {
+            work_memory: Arc::new(crate::memory::WorkMemory::default()),
             inner: Mutex::new(Inner {
                 entries: HashMap::new(),
                 resident: 0,
@@ -393,9 +395,11 @@ impl RuntimeCache {
             // A failed build leaves nothing to serve, so the reservation is
             // released and the next request may try again. Keeping the entry
             // would hold budget for a runtime that does not exist.
-            self.forget(&key);
+            drop(handle);
+            self.forget(&key, &slot);
+            return built.map(|_| unreachable!("failed initialization"));
         }
-        built.map(|_| handle)
+        Ok(handle)
     }
 
     /// Restores use streaming buffers and their own concurrency bound. A miss
@@ -415,6 +419,10 @@ impl RuntimeCache {
                 .acquire_owned()
                 .await
                 .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
+            let memory = self
+                .work_memory
+                .reserve(shared.reserved_bytes().saturating_mul(2))
+                .ok_or(CacheError::Overloaded)?;
             let restore_pin = pin.clone();
             let restore_key = key.clone();
             let restore_shared = shared.clone();
@@ -422,6 +430,7 @@ impl RuntimeCache {
             let metrics = self.metrics.clone();
             let restored =
                 tokio::task::spawn_blocking(move || -> Result<Option<TableRuntime>, CacheError> {
+                    let _memory = memory;
                     let _permit = permit;
                     let _pin = restore_pin;
                     let started = std::time::Instant::now();
@@ -463,9 +472,16 @@ impl RuntimeCache {
             .acquire_owned()
             .await
             .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
+        // Includes the new runtime and conservative scratch space for encoding,
+        // setup/preprocessing and disk serialization. Calibrate in residency tests.
+        let memory = self
+            .work_memory
+            .reserve(shared.reserved_bytes().saturating_mul(4))
+            .ok_or(CacheError::Overloaded)?;
         let disk = self.disk.clone();
         let metrics = self.metrics.clone();
         tokio::task::spawn_blocking(move || {
+            let _memory = memory;
             let _permit = permit;
             let _pin = pin;
             let started = std::time::Instant::now();
@@ -546,9 +562,16 @@ impl RuntimeCache {
             .map(|(key, _)| key.clone())
     }
 
-    fn forget(&self, key: &RuntimeKey) {
+    fn forget(&self, key: &RuntimeKey, failed: &Arc<Slot>) {
         let mut inner = self.inner.lock().expect("runtime cache");
-        if let Some(entry) = inner.entries.remove(key) {
+        // A waiter on a failed slot may resume after a retry installed a new
+        // slot under the same key. It must not release the new allocation's budget.
+        if inner
+            .entries
+            .get(key)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.slot, failed) && Arc::strong_count(failed) == 2)
+        {
+            let entry = inner.entries.remove(key).expect("matching slot");
             inner.resident -= entry.reserved;
         }
         self.publish(&inner);
@@ -574,6 +597,14 @@ impl RuntimeCache {
             Metrics::incr(&self.metrics.evictions);
         }
         self.publish(&inner);
+        drop(inner);
+        let before = crate::procmem::process_rss_bytes();
+        crate::procmem::release_allocator_pages();
+        tracing::info!(
+            rss_before = before,
+            rss_after = crate::procmem::process_rss_bytes(),
+            "retired runtime memory reclaimed"
+        );
     }
 
     /// Entries currently held, for health reporting and tests.
@@ -591,6 +622,21 @@ mod tests {
         let (rlwe, scheme) = ipir_sp::params_for_simplepir(rows, row_bytes as u64 * 8)
             .expect("a registry geometry has parameters");
         reserved_bytes(&rlwe, &scheme)
+    }
+
+    #[test]
+    fn failed_waiter_cannot_forget_a_replacement_slot() {
+        let cache = RuntimeCache::new(1024, 1, Arc::new(Metrics::default()));
+        let key = ("revision".to_string(), Table::Directory, 0);
+        let (failed, _) = cache.slot_for(key.clone(), 100).unwrap();
+        cache.forget(&key, &failed);
+        let (replacement, _) = cache.slot_for(key.clone(), 100).unwrap();
+        cache.forget(&key, &failed);
+        assert_eq!(cache.resident_bytes(), 100);
+        assert!(Arc::ptr_eq(
+            &cache.slot_for(key, 100).unwrap().0,
+            &replacement
+        ));
     }
 
     /// The reservation must match what `shard-residency` measured at the pinned

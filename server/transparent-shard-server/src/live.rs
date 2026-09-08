@@ -58,6 +58,7 @@ struct Active {
     publication: Publication,
 }
 struct Candidate {
+    prepared_at: std::time::Instant,
     state: ServiceState,
     publication: Publication,
     epoch: u64,
@@ -147,12 +148,13 @@ impl LiveService {
             return Ok(serde_json::json!({"invalidated": true, "from_height":from_height}));
         }
         if matches!(command, Command::Status) {
+            let candidate = self.0.candidate.try_lock().ok().and_then(|c| c.as_ref().map(|c| serde_json::json!({"map_sha256":c.publication.map_sha256,"age_seconds":c.prepared_at.elapsed().as_secs_f64(),"epoch":c.epoch})));
             let active = self.0.active.read().unwrap();
             let retired = self.0.retired.read().unwrap();
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":!self.0.invalid.read().unwrap().is_empty(),"retired_snapshots":retired.len(),"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":!self.0.invalid.read().unwrap().is_empty(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.lock().await;
@@ -226,6 +228,7 @@ impl LiveService {
                     );
                 }
                 *self.0.candidate.lock().await = Some(Candidate {
+                    prepared_at: std::time::Instant::now(),
                     state: next,
                     publication: publication.clone(),
                     epoch,
