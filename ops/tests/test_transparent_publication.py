@@ -139,6 +139,19 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
             await self.fleet.activate({'map_sha256':'new','prepared':{'workers':{w['id']:{'expected':'old'} for w in self.roster}}})
         self.assertEqual(routed,[[]])
 
+    async def test_prepare_uses_cancellable_direct_ssh_while_status_reuses_sessions(self):
+        commands = []
+        async def capture(args, data=None, timeout=25):
+            commands.append(args)
+            return b'{"ok":true,"result":{}}'
+        with patch.object(module, 'run', capture):
+            await self.fleet.control(self.roster[0], {'operation':'prepare'})
+            await self.fleet.control(self.roster[0], {'operation':'status'})
+        self.assertIn('-oControlPath=none', commands[0])
+        self.assertNotIn('-oControlMaster=auto', commands[0])
+        self.assertIn('-oControlMaster=auto', commands[1])
+        self.assertNotIn('-oControlPath=none', commands[1])
+
     def test_ssh_reuse_socket_directory_is_private(self):
         self.assertEqual((self.root/'ssh').stat().st_mode & 0o777, 0o700)
 

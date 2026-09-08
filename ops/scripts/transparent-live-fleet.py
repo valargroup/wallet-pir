@@ -62,9 +62,9 @@ class Fleet:
         control_dir.chmod(0o700)
         self.canonical = {}
         self.rpc_slots = asyncio.Semaphore(8)
-        self.ssh_args = ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes',
-                         '-o', 'UserKnownHostsFile=' + config['known_hosts'], '-i', config['ssh_key'],
-                         '-oControlMaster=auto', '-oControlPersist=60',
+        self.direct_ssh_args = ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes',
+                         '-o', 'UserKnownHostsFile=' + config['known_hosts'], '-i', config['ssh_key']]
+        self.ssh_args = self.direct_ssh_args + ['-oControlMaster=auto', '-oControlPersist=60',
                          '-o', 'ControlPath=' + str(control_dir / '%C')]
         for worker in self.roster:
             for field in ['id', 'ssh_host', 'upstream']:
@@ -110,8 +110,10 @@ class Fleet:
             await self.control(worker,{'operation':'invalidate','expected':status['active']['map_sha256'],'from_height':from_height,'keep_digests':keep})
         return keep
 
-    async def ssh(self, host, command, data=None, timeout=25):
-        return await run(self.ssh_args + ['root@' + host, command], data, timeout)
+    async def ssh(self, host, command, data=None, timeout=25, multiplex=True):
+        args = self.ssh_args if multiplex else self.direct_ssh_args + [
+            '-oControlMaster=no', '-oControlPersist=no', '-oControlPath=none']
+        return await run(args + ['root@' + host, command], data, timeout)
 
     async def control(self, worker, value):
         command = shlex.join([self.c.get('control_binary', '/usr/local/bin/shard-control'),
@@ -119,7 +121,11 @@ class Fleet:
         # A rejected command is JSON on stdout with exit status 1. Preserve
         # that diagnostic; transport failures and crashes must still fail SSH.
         command += ' || [ "$?" -eq 1 ]'
-        result = json.loads(await self.ssh(worker['ssh_host'], command, json.dumps(value).encode()))
+        # A multiplex master retains a long command's pipe descriptors after
+        # its client is killed. Use a direct connection for preparation so
+        # cancelling a slower replica cannot delay an already warm quorum.
+        options = {'multiplex':False} if value.get('operation') == 'prepare' else {}
+        result = json.loads(await self.ssh(worker['ssh_host'], command, json.dumps(value).encode(), **options))
         if not result.get('ok'):
             raise RuntimeError(f'{worker["id"]}: {result.get("error")}')
         return result['result']
