@@ -396,18 +396,25 @@ fn run_client(
     let result = attempt();
     let snapshot = stages.lock().unwrap().clone();
     match result {
-        Ok((incomplete, digest, events)) => Outcome {
-            class: spec.class.clone(),
-            total: started.elapsed(),
-            completed: incomplete.is_none(),
-            exact: incomplete.is_none()
-                && digest == spec.expected_digest
-                && events == spec.journal_events,
-            incomplete,
-            failed: None,
-            stages: snapshot,
-            events,
-        },
+        Ok((incomplete, digest, events)) => {
+            // A synthetic wallet starts from an empty store at a height inside
+            // its history, so a spend of an older output is unresolved by
+            // construction; the wallet rightly withholds its anchor, but the
+            // range was covered and the events are what the journal says.
+            // That counts as complete here, and is reported by reason.
+            let covered =
+                incomplete.is_none() || incomplete.as_deref() == Some("unresolved-spends");
+            Outcome {
+                class: spec.class.clone(),
+                total: started.elapsed(),
+                completed: covered,
+                exact: covered && digest == spec.expected_digest && events == spec.journal_events,
+                incomplete,
+                failed: None,
+                stages: snapshot,
+                events,
+            }
+        }
         Err(error) => Outcome {
             class: spec.class.clone(),
             total: started.elapsed(),
@@ -817,6 +824,7 @@ fn write_report(
             "TLS handshake and connection bytes are not measured; byte figures are wallet-level payloads as the wallet charges them",
             "clients are synthetic groupings of public scripts, not a user population",
             "a step ends early once every class reached min_completed_per_class; rates are computed over the step's actual duration",
+            "a sync that stopped only for unresolved spends counts as completed: synthetic wallets begin with an empty store inside their history, so older receives are absent by construction; the count is reported per class",
         ],
     });
     let text = serde_json::to_string_pretty(&report)?;
