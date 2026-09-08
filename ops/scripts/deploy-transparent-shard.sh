@@ -823,9 +823,14 @@ REMOTE
 
 # Polls a worker's readiness over the VPC until it reports ready under the
 # expected map and assignment, or gives up.
+# Polls a worker's readiness over the VPC until it reports ready under the
+# expected map and assignment. Gives up when the warm-up stops making
+# progress for `stall` polls, or after `attempts` polls in all: an archive
+# owner's warm-up is minutes per host and varies between hosts, and a fixed
+# cap gave up on one at 135 of 160 runtimes.
 wait_ready() {
-  local id="$1" upstream="$2" expect_assignment="$3" attempts="${4:-120}"
-  local attempt ready
+  local id="$1" upstream="$2" expect_assignment="$3" attempts="${4:-720}" stall="${5:-30}"
+  local attempt ready warm last_warm="" stalled=0
   for attempt in $(seq 1 "$attempts"); do
     if ready="$(curl --silent --max-time 10 "http://$upstream/v1/ready" 2>/dev/null)" && [[ -n "$ready" ]]; then
       if echo "$ready" | jq -e "$JQ_READY_OK" >/dev/null 2>&1; then
@@ -839,15 +844,15 @@ wait_ready() {
         echo "$id ready: $(echo "$ready" | jq -r "$JQ_READY_WARM")"
         return 0
       fi
-      [[ $((attempt % 6)) -eq 0 ]] && echo "$id: $(echo "$ready" | jq -r "$JQ_READY_REASON"), $(echo "$ready" | jq -r "$JQ_READY_WARM")"
+      warm="$(echo "$ready" | jq -r "$JQ_READY_WARM")"
+      if [[ "$warm" == "$last_warm" ]]; then stalled=$((stalled + 1)); else stalled=0; last_warm="$warm"; fi
+      [[ $((attempt % 6)) -eq 0 ]] && echo "$id: $(echo "$ready" | jq -r "$JQ_READY_REASON"), $warm"
+      [[ "$stalled" -lt "$stall" ]] || fail "$id stopped warming at $warm for $((stall * 10)) s"
     fi
     sleep 10
   done
-  fail "$id never became ready"
+  fail "$id never became ready after $((attempts * 10)) s"
 }
-
-ACTIVATED_WORKERS=()
-ROUTER_ACTIVATED=0
 
 fleet_activate_workers() {
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
