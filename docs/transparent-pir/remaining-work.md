@@ -10,7 +10,7 @@ Suggested reviewable changes:
 
 1. Documentation consolidation: `fe72ecc`; link validation `make check-docs`.
 2. Inventory/provenance report and workflow input reconciliation: `3969f96`, `2a3c5d3`, `b574681`, `113b22d`, `abe297b`; Gate 0 closed.
-3. Mixed-tier measurement and publication tooling parity.
+3. Mixed-tier measurement and publication tooling parity: census tooling `0aaf25c`, `2a3c5d3` (`shard-census --recent-from`, `--compare-map`), two-tier census recorded `b2c91cc`; publication and comparison pending the full-chain run.
 4. Wallet manifest validation and early request admission: `6ff2bfe`; Gate 3 closed.
 5. Assignment-aware loading, router, prewarm/readiness and activation: `142c193`; code and tests complete, host rehearsals in Gate 7.
 6. Durable wallet continuation, provisional replacement and reorg recovery: `ba9680e`; the Vizor wiring remains a separate deliverable.
@@ -33,12 +33,12 @@ Deliverable: dated nonsecret inventory and dataset manifest, reproducible cutoff
 
 ## Gate 1 — Mixed-tier census and geometry validation
 
-- [ ] Use existing census `--start-height`/`--end-height` over both inclusive ranges; retain actual policy derivation. Do not implement range controls that already exist.
-- [ ] Run `--placement`, `--per-shard` and exact script-match aggregation. Save network/anchor, full command, tool SHA, geometry, policy, elapsed time and peak RSS with raw output.
-- [ ] Add a combined report or shared sealer orchestration that reproduces publisher boundaries and aggregates exact script identity across both tiers. Merge per-script query/byte costs before computing percentiles; do not add tier p99s or assume scripts occur in only one tier.
-- [ ] Compare predicted and emitted shard boundaries, segment counts, placement and table lengths. Report reasons for sealing, occupancy, ordinary versus oversized-block shards, filters/setup, reserved runtime and separately projected/measured RSS.
+- [x] Use existing census `--start-height`/`--end-height` over both inclusive ranges; retain actual policy derivation. Do not implement range controls that already exist. Run as one two-tier census with `--recent-from 3262749 --archive-geometry archive-wide --geometry recent-8k --end-height 3473686`, policies derived by `SealPolicy::for_geometry` ([census 2026-09-08](evidence/census-2026-09-08/README.md)).
+- [x] Run `--placement`, `--per-shard` and exact script-match aggregation. Save network/anchor, full command, tool SHA, geometry, policy, elapsed time and peak RSS with raw output. All in [census 2026-09-08](evidence/census-2026-09-08/README.md): 174 shards (160 archive, 14 recent), 3 min 37 s, 715 MiB peak.
+- [x] Add a combined report or shared sealer orchestration that reproduces publisher boundaries and aggregates exact script identity across both tiers. Merge per-script query/byte costs before computing percentiles; do not add tier p99s or assume scripts occur in only one tier. `shard-census --recent-from` runs the publisher's sealer through the geometry change and merges matches by script identity across tiers (`fn tiers`, `report_cost_by_tier`); 66,305 scripts occur in both.
+- [ ] Compare predicted and emitted shard boundaries (`shard-census --compare-map` against the full-chain publication, pending its completion), segment counts, placement and table lengths. Report reasons for sealing, occupancy, ordinary versus oversized-block shards, filters/setup, reserved runtime and separately projected/measured RSS.
 - [ ] Measure ordinary recent catch-up and old-birthday restoration across the same mixed set. Include unused scripts/filter false positives, reused scripts and multiple-script wallets.
-- [ ] Size archive assignments by resident bytes and recent complete replicas by their actual working set, including revision overlap. Revisit deployment budgets if they do not fit; do not conceal cache eviction as all-resident serving.
+- [ ] Size archive assignments by resident bytes and recent complete replicas by their actual working set, including revision overlap. Revisit deployment budgets if they do not fit; do not conceal cache eviction as all-resident serving. Reservation arithmetic is in the census README (80 archive shards per owner, 45.0 GiB of 48; 14 recent shards, 3.5 GiB of 5); measured process RSS on the target hosts is Gate 6.
 
 Exit: ordinary shards have one segment per table, oversized blocks remain correctly retrievable, complete coverage is exact, and measured/projection labels are unambiguous. Mixed-set sizing replaces the uniform 162-shard proxy before fleet procurement.
 

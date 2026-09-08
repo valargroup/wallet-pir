@@ -405,6 +405,9 @@ struct ClassStats {
     hist: Option<Histogram<u64>>,
     stages: BTreeMap<&'static str, StageTotals>,
     events: u64,
+    /// Distinct failure messages and how often each occurred, capped so a
+    /// report stays readable; the count is exact, the message set is not.
+    failures_by_message: BTreeMap<String, u64>,
 }
 
 impl ClassStats {
@@ -416,8 +419,12 @@ impl ClassStats {
         if outcome.exact {
             self.exact += 1;
         }
-        if outcome.failed.is_some() {
+        if let Some(message) = &outcome.failed {
             self.failed += 1;
+            if self.failures_by_message.len() < 16 || self.failures_by_message.contains_key(message)
+            {
+                *self.failures_by_message.entry(message.clone()).or_default() += 1;
+            }
         }
         let hist = self
             .hist
@@ -456,6 +463,7 @@ impl ClassStats {
             "http_409": refused_409,
             "http_503": refused_503,
             "events_recovered": self.events,
+            "failures_by_message": self.failures_by_message,
             "stages": self.stages.iter().map(|(stage, t)| (stage.to_string(), serde_json::json!({
                 "calls": t.calls, "bytes_up": t.up, "bytes_down": t.down,
                 "seconds": t.micros as f64 / 1e6, "http_409": t.http_409, "http_503": t.http_503, "failures": t.failures,
