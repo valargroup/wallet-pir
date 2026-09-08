@@ -1,0 +1,53 @@
+# Droplet measurements, DigitalOcean c-8 (ams3)
+
+Host: 8 dedicated Intel Xeon Platinum 8280 @ 2.70GHz, 1 thread/core, 15 GiB,
+Ubuntu 24.04, Linux 6.8.0-124-generic x86_64. Built at rev a24964b,
+RUSTFLAGS=-C target-cpu=x86-64-v3, --release (fat LTO).
+
+## Saturation (shard-scaling, 4s per point)
+```
+########## recent-8k / directory
+one shard's encoded database: 32.0 MiB (8192 x 2048 u16)
+geometry recent-8k table directory (8192 rows x 3584 B)
+each thread scans its own copy, so this is independent shards on one host
+threads      evals/s        GiB/s    speedup   efficiency
+      1        824.5        25.77      1.00x         100%
+      2        821.8        25.68      1.00x          50%
+      3        822.0        25.69      1.00x          33%
+      4        820.0        25.62      0.99x          25%
+      6        820.0        25.62      0.99x          17%
+      8        821.8        25.68      1.00x          12%
+########## archive-32k / directory
+one shard's encoded database: 128.0 MiB (32768 x 2048 u16)
+geometry archive-32k table directory (32768 rows x 3584 B)
+each thread scans its own copy, so this is independent shards on one host
+threads      evals/s        GiB/s    speedup   efficiency
+      1        207.2        25.91      1.00x         100%
+      2        210.2        26.28      1.01x          51%
+      3        213.2        26.66      1.03x          34%
+      4        213.0        26.62      1.03x          26%
+      6        213.2        26.66      1.03x          17%
+      8        212.2        26.53      1.02x          13%
+########## archive-wide / pages
+one shard's encoded database: 256.0 MiB (65536 x 2048 u16)
+geometry archive-wide table pages (65536 rows x 3584 B)
+each thread scans its own copy, so this is independent shards on one host
+threads      evals/s        GiB/s    speedup   efficiency
+      1        106.8        26.69      1.00x         100%
+      2        108.0        27.00      1.01x          51%
+      3        108.0        27.00      1.01x          34%
+      4        108.2        27.06      1.01x          25%
+      6        108.8        27.19      1.02x          17%
+      8        108.8        27.19      1.02x          13%
+
+```
+
+## Residency and cold-start build (shard-residency, 6 runtimes)
+```
+  recent-8k     directory  reserved 128.00 MiB measured 134.72 MiB build 3.81s
+  recent-8k     pages      reserved 128.00 MiB measured 134.72 MiB build 3.81s
+  archive-32k   directory  reserved 224.00 MiB measured 230.69 MiB build 5.71s
+  archive-wide  directory  reserved 224.00 MiB measured 230.69 MiB build 5.75s
+  archive-wide  pages      reserved 352.00 MiB measured 358.75 MiB build 8.32s
+
+```
