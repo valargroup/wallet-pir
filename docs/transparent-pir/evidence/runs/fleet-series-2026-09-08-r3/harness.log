@@ -1,0 +1,8 @@
+== step: 8 concurrent clients for 10m
+   438 syncs, 433 completed, 433 exact, 0 failed; 0.35 completed/s; error rate 0.011; 503 rate 0.000; worst p99 829.4s
+== step: 32 concurrent clients for 10m
+   1108 syncs, 1097 completed, 1097 exact, 1 failed; 0.77 completed/s; error rate 0.010; 503 rate 0.000; worst p99 1223.7s
+== step: 128 concurrent clients for 10m
+   1822 syncs, 1704 completed, 1704 exact, 118 failed; 3.08 completed/s; error rate 0.065; 503 rate 0.001; worst p99 445.4s
+   saturation: error rate 0.065 above 0.05; not stepping further
+EXIT=0

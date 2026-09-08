@@ -43,6 +43,39 @@ Retain space for the current assignment, candidate publication and rollback arti
 
 Losing an archive host makes its range unavailable until recovery. Recent replication does not make archive or router highly available. The initial target accepts that explicit interruption. If archive availability requirements change, evaluate two 128 GiB hosts with complete archive copies, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
 
+## Proposed wallet objectives, from the 2026-09-08 fleet series
+
+Proposed, not adopted: they come from three repetitions of the load series
+against the activated fleet ([r1](evidence/runs/fleet-series-2026-09-08-r1/README.md),
+[r2](evidence/runs/fleet-series-2026-09-08-r2/README.md),
+[r3](evidence/runs/fleet-series-2026-09-08-r3/README.md)) at 8 and 32
+concurrent wallets from a client inside the VPC over plain HTTP, and a
+wallet over the internet pays TLS and its own client work on top. The 128-
+and 512-wallet steps are not yet cleanly measured (owner restarts by hand
+during both 128-wallet steps), so no throughput objective is proposed.
+
+| Wallet class | Observed p50 / p95 at 32 wallets (r2, r3) | Proposed objective | Private bytes per sync |
+|---|---|---|---:|
+| Catch-up, 1–30 days, 4 scripts | 0.6–0.9 s / 1.0–1.8 s | p95 under 5 s | about 1 MB |
+| Small active wallet, 1 script | 0.4 s / 1.2–1.4 s | p95 under 5 s | about 2 MB |
+| Six-month restore, 10 scripts | 1.8–1.9 s / 3.5–3.6 s | p95 under 10 s | about 3 MB |
+| Old-birthday restore, 3 scripts | 8–9 s / 37–38 s | p95 under 60 s | 73 MB, 63 MB of it filters |
+| Forty-script wallet from the cutoff | 14–15 s / 22 s | p95 under 60 s | about 20 MB |
+| Unused wallet from genesis | 6 s / 7–8 s | p95 under 15 s | 63 MB of filters, no private work |
+
+Outside any objective: the heaviest reused scripts (hundreds of thousands
+of events) take minutes and hundreds of megabytes and are a per-script tail
+a product must bound with its own work budget. Every covered sync in every
+step of every repetition digested exactly to the journal.
+
+Capacity findings the objectives rest on: no worker refused a query at 8 or
+32 wallets, queue depth stayed under 6 on the hot owner, memory was flat
+(owners 49.7 GB resident against 56 GiB, replicas 4.9 GB against 7 GiB).
+Demand between the two archive owners was seven to one, set by where the
+reused scripts live, not by shard count: the archive split by resident
+bytes is even, the split by demand is not. Balancing owners by demand, or a
+third owner, is the lever if archive-02's queue grows at higher load.
+
 ## Budget baseline
 
 Public DigitalOcean list prices checked 2026-09-07: four regular Basic 8 GiB/4 vCPU hosts at $48, two regular memory-optimized 64 GiB/8 vCPU hosts at $336, one Basic 4 GiB router at $24: **$888/month compute**. [Provider pricing](https://www.digitalocean.com/pricing/droplets).
