@@ -68,6 +68,17 @@ pub const PAGE_ROW_BYTES: usize = 3_584;
 /// pins its tables whole and there are fewer shards to pin. Storage and query
 /// cost point the same way here; they did not have to.
 ///
+/// **The figures in the two paragraphs above are from a census covering 9.4% of
+/// chain height, not the whole chain.** They compare 2,048 against 8,192 over
+/// that partial journal, and the relative argument they make for the wider
+/// table still holds — but every absolute number in them is wrong at full
+/// scale. Over the complete journal, 8,192 seals into 1,091 shards rather than
+/// 511, a script appears in 6.55 shards on average rather than 27, and mean
+/// restoration is 2.03 MB rather than 3.75. See
+/// `docs/transparent-pir-evaluation/shard-utilisation/fullchain-geometry-comparison.md`,
+/// which is the authoritative cross-geometry comparison; this partial census
+/// has now been misread as full-chain twice.
+///
 /// Measured in `docs/transparent-pir-evaluation/shard-utilisation/genesis-geometry-notes.md`,
 /// which also records what this costs: the heaviest single history in the
 /// journal pays 1,561.95 MB against 1,482.22 at half the width, because its

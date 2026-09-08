@@ -360,11 +360,19 @@ wallet bytes, and it is worse on server work.
 
 `g`, the number of shards a script appears in, falls **sublinearly** with shard
 count. Measured script-shard occurrences across the three censuses are 60.645M,
-32.277M and 23.923M — a ratio of about **0.73 per doubling**, so mean `g` runs
-27.4 → 14.6 → 10.8. Scripts per shard rise 1.44× when shards halve, eating half
-the benefit. Note that the frequently cited "27.4 mean, 563 p99" belongs to the
-**2,048-row, 2,797-shard** genesis census; at 8,192 rows and 511 shards the same
-journal measures **12.2 mean, 202 p99**.
+32.277M and 23.923M — a ratio of about **0.73 per doubling**. Divided by the
+**9,264,547 distinct indexable scripts** the tool counted, mean `g` runs
+**6.55 → 3.48 → 2.58**, with p99 140 → 58 → 35 and maxima 986 → 297 → 156.
+Scripts per shard rise 1.44× when shards halve, eating half the benefit.
+
+The occurrence figures and the 0.73 ratio above are measured. An earlier
+revision of this paragraph scaled them from the frequently cited "27.4 mean" to
+give 27.4 → 14.6 → 10.8; that anchor implies 2.21M distinct scripts and is
+wrong. "27.4 mean, 563 p99" belongs to a **genesis census covering 9.4% of
+chain height**, not to this journal, and nothing derived from it describes the
+whole chain. Full-chain per-script figures are in
+[fullchain-geometry-comparison.md](transparent-pir-evaluation/shard-utilisation/fullchain-geometry-comparison.md),
+which is the authoritative cross-geometry comparison.
 
 Whole-chain restoration, summed over every script in the chain:
 
