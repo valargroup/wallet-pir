@@ -1,0 +1,162 @@
+{
+  "utc": "2026-09-08T11:20:29.482580+00:00",
+  "node_height": 3476168,
+  "node_hash": "00000000003c6a868a9640181ea222f1a4cb49af4512ca08ee9affa8adbad067",
+  "genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "origins": {
+    "https://transparent-pir.valargroup.dev": {
+      "sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "shards": 174,
+      "tail": {
+        "shard_id": 173,
+        "geometry": "recent-8k",
+        "start_height": 3473055,
+        "end_height": 3473686,
+        "parent_block_hash": "00000000003e455005fade71c0add35ab5d19ccfbf22a7651c721827be389c3f",
+        "terminal_block_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+        "filter_hash": "0a2b17b971d4b46bade5f41cf96718277c07570f19ff89eb2a50aed092975cfd",
+        "scripts": 5203,
+        "page_rows": 378,
+        "txids": 4278,
+        "directory_segments": 1,
+        "page_segments": 1,
+        "manifest_digest": "1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5",
+        "revision": 0,
+        "sealed": false
+      }
+    },
+    "https://enhance-pir.valargroup.dev": {
+      "sha256": "581cb0f5fc2791dabd78b2021e8f862daf89b59218dbcf8a3155461baf70e525",
+      "shards": 3,
+      "tail": {
+        "shard_id": 2,
+        "geometry": "recent-8k",
+        "start_height": 3465653,
+        "end_height": 3473474,
+        "parent_block_hash": "00000000001cb8e63ae81ae4372fc8b0122d19ac14d46ab473884bb2f5e2dc81",
+        "terminal_block_hash": "000000000050f22214edfb39713d20e1cb4598d1571442f436e01c5a53bc4e6e",
+        "filter_hash": "f9c3e104c39850569024e336056c5b076c95e757e05739e27491b17a9964d93d",
+        "scripts": 35767,
+        "page_rows": 5444,
+        "txids": 57236,
+        "directory_segments": 1,
+        "page_segments": 1,
+        "manifest_digest": "2f38cdcf8c06d238a6bb2c46ce40b2484103d6a57bb565dbbca8f7b7b265f74b",
+        "revision": 0,
+        "sealed": false
+      }
+    }
+  },
+  "workers": {
+    "10": {
+      "assigned_shards": 14,
+      "assignment_sha256": "b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b",
+      "binary_sha256": "fcea2d492fd20910c1cd316f11245eef0429fe1109e2af5c1fffc8fd1bda3a02",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 47.092662,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 3757180672,
+        "hits": 28,
+        "limit_bytes": 10737418240,
+        "misses": 0,
+        "write_failures": 0
+      },
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_assignment_sha256": "706c25dd8e3d2b5b140121b5ea81e2d84614020f6299b5223f3cb8f5fcf096ca",
+      "worker_id": "transparent-pir-recent-01"
+    },
+    "8": {
+      "assigned_shards": 14,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 203.864254,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_id": "transparent-pir-recent-02"
+    },
+    "7": {
+      "assigned_shards": 14,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 202.060833,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_id": "transparent-pir-recent-03"
+    },
+    "12": {
+      "assigned_shards": 14,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 160.117629,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_id": "transparent-pir-recent-04"
+    },
+    "6": {
+      "error": "HTTP Error 503: Service Unavailable"
+    },
+    "9": {
+      "assigned_shards": 80,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 750.782763,
+      "ready": true,
+      "replica_group": null,
+      "role": "archive-owner",
+      "shards": 174,
+      "target_runtimes": 160,
+      "warm_runtimes": 160,
+      "worker_id": "transparent-pir-archive-02"
+    }
+  },
+  "journal": {
+    "meta": {
+      "version": 1,
+      "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+      "start_height": 0
+    },
+    "checkpoint_hex": "3c3ce8180a0000005034f00900000000",
+    "files": {
+      "blocks.bin": 166736976,
+      "events.bin": 43367545916
+    }
+  },
+  "host": {
+    "platform": "Linux enhance-pir-coordinator-01 6.8.0-124-generic #124-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 13:00:45 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+    "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           40 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  8\nOn-line CPU(s) list:                     0-7\nVendor ID:                               GenuineIntel\nBIOS Vendor ID:                          QEMU\nModel name:                              INTEL(R) XEON(R) GOLD 6548N\nBIOS Model name:                         pc-i440fx-6.1  CPU @ 2.0GHz\nBIOS CPU family:                         1\nCPU family:                              6\nModel:                                   106\nThread(s) per core:                      1\nCore(s) per socket:                      8\nSocket(s):                               1\nStepping:                                6\nBogoMIPS:                                5600.00\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault pti ssbd ibrs ibpb tpr_shadow flexpriority ept vpid ept_ad fsgsbase bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap clflushopt clwb avx512cd avx512bw avx512vl xsaveopt xsavec xgetbv1 wbnoinvd arat vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq\nVirtualization:                          VT-x\nHypervisor vendor:                       KVM\nVirtualization type:                     full\nL1d cache:                               256 KiB (8 instances)\nL1i cache:                               256 KiB (8 instances)\nL2 cache:                                32 MiB (8 instances)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-7\nVulnerability Gather data sampling:      Unknown: Dependent on hypervisor status\nVulnerability Indirect target selection: Mitigation; Aligned branch/return thunks\nVulnerability Itlb multihit:             KVM: Mitigation: VMX disabled\nVulnerability L1tf:                      Mitigation; PTE Inversion; VMX conditional cache flushes, SMT disabled\nVulnerability Mds:                       Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown\nVulnerability Meltdown:                  Mitigation; PTI\nVulnerability Mmio stale data:           Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Retpolines; IBPB conditional; IBRS_FW; STIBP disabled; RSB filling; PBRSB-eIBRS Not affected; BHI Retpoline\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Not affected\n",
+    "memory": "               total        used        free      shared  buff/cache   available\nMem:     67427414016 13480738816  7513387008    61472768 47247843328 53946675200\nSwap:              0           0           0\n",
+    "disk": "Filesystem         1B-blocks         Used    Available Use% Mounted on\n/dev/sda       1098974756864 676402528256 422572228608  62% /srv/zakura\n/dev/vda1       206900281344  12753776640 194129727488   7% /\n"
+  }
+}

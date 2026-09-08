@@ -1,0 +1,20 @@
+# TYPE transparent_publication_node_height gauge
+transparent_publication_node_height 3476261
+# TYPE transparent_publication_journal_height gauge
+transparent_publication_journal_height 0
+# TYPE transparent_publication_public_height gauge
+transparent_publication_public_height 3476261
+# TYPE transparent_publication_lag_blocks gauge
+transparent_publication_lag_blocks 0
+# TYPE transparent_publication_oldest_unpublished_seconds gauge
+transparent_publication_oldest_unpublished_seconds 0
+# TYPE transparent_publication_withdrawn gauge
+transparent_publication_withdrawn 0
+# TYPE transparent_publication_ready_recent_replicas gauge
+transparent_publication_ready_recent_replicas 4
+# TYPE transparent_publication_last_cycle_seconds gauge
+transparent_publication_last_cycle_seconds 7.666875937
+# TYPE transparent_publication_last_freshness_seconds gauge
+transparent_publication_last_freshness_seconds 0
+# TYPE transparent_publication_reorg_depth gauge
+transparent_publication_reorg_depth 0

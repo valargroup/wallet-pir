@@ -1,0 +1,68 @@
+ops/scripts/check-jq-contracts.sh
+== shell syntax and lint
+  ops/scripts/check-jq-contracts.sh  ok
+  ops/scripts/deploy-enhance-pir.sh  ok
+  ops/scripts/deploy-transparent-filter.sh ok
+  ops/scripts/deploy-transparent-shard.sh ok
+  ops/scripts/transparent-fleet-state.sh ok
+== ops/scripts/deploy-transparent-shard.sh: compile and evaluate
+  JQ_MAP_SHARD_COUNT                 ok against shards.json
+  JQ_MAP_DIGESTS                     ok against shards.json
+  JQ_MAP_FIRST_DIGEST                ok against shards.json
+  JQ_MAP_GEOMETRIES                  ok against shards.json
+  JQ_HEALTH_SERVING                  ok against health.json
+  JQ_HEALTH_SHARDS                   ok against health.json
+  JQ_HEALTH_ASSIGNED                 ok against health.json
+  JQ_READY_OK                        ok against ready.json
+  JQ_READY_MAP                       ok against ready.json
+  JQ_READY_ASSIGNMENT                ok against ready.json
+  JQ_READY_WARM                      ok against ready.json
+  JQ_READY_REASON                    ok against ready.json
+  JQ_READY_BINARY                    ok against ready.json
+  JQ_READY_WORKER_ASSIGNMENT         ok against ready.json
+  JQ_INIT_COMPLETE                   ok against init.json
+  JQ_INIT_GEOMETRY_NAMES             ok against init.json
+  JQ_INIT_SHARDS                     ok against init.json
+  JQ_INIT_HAS_GEOMETRIES             ok against init.json
+  JQ_INIT_MAP                        ok against init.json
+  JQ_INIT_ASSIGNED                   ok against init.json
+  JQ_INIT_GEOMETRY_COMPLETE          ok against init.json
+  JQ_INIT_SUMMARY                    ok against init.json
+== ops/scripts/deploy-enhance-pir.sh: compile only (no fixtures yet)
+  JQ_ENHANCE_WORKER_HOSTS            compiles
+  JQ_ENHANCE_WORKER_NAMES            compiles
+  JQ_ENHANCE_GROUP_COUNT             compiles
+  JQ_ENHANCE_GENERATION              compiles
+  JQ_ENHANCE_WORKER_OK               compiles
+  JQ_ENHANCE_COORDINATOR_SERVING     compiles
+  JQ_ENHANCE_HEALTH_WORKERS          compiles
+  JQ_ENHANCE_INIT_COMPLETE           compiles
+  JQ_ENHANCE_NOT_REGRESSED           compiles
+== ops/scripts/deploy-transparent-filter.sh: compile only (no fixtures yet)
+  JQ_FILTER_CHECK_MAP                compiles
+  JQ_FILTER_CHECK_SUMMARY            compiles
+  JQ_FILTER_HEALTH_SERVING           compiles
+== ops/scripts/deploy-transparent-shard.sh validate, against the real fixture
+  validate                           accepts the published fixture
+
+all ops contract checks passed
+python3 ops/tests/test_transparent_fleet.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 1.816s
+
+OK
+python3 ops/tests/test_transparent_publication.py
+.{"event": "fleet_command", "tool": "sh", "seconds": 0.490975, "exit_code": 0}
+.a2: owner lost during activation
+.........{"event": "fleet_command", "tool": "sh", "seconds": 0.437342, "exit_code": 0}
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 500: 'RPC error'>
+  _warnings.warn(self.warn_message, ResourceWarning)
+{"event": "fleet_command", "tool": "sh", "seconds": 0.01301, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.022148, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.019694, "exit_code": 0}
+.
+----------------------------------------------------------------------
+Ran 12 tests in 1.606s
+
+OK

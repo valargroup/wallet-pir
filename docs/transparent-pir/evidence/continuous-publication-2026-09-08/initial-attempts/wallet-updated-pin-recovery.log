@@ -1,0 +1,101 @@
+    Updating git repository `https://github.com/valargroup/enhance-pir.git`
+From https://github.com/valargroup/enhance-pir
+ * [new ref]         87226c31e6e3d42b6707992e9303e85da9a044d2 -> refs/commit/87226c31e6e3d42b6707992e9303e85da9a044d2
+     Locking 8 packages to latest compatible versions
+      Adding enhance-pir v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+      Adding enhance-pir-server v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+      Adding transparent-events v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+      Adding transparent-filter v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+      Adding transparent-shard v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+      Adding transparent-shard-server v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+      Adding transparent-spend-pir v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+      Adding transparent-wallet v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling transparent-filter v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling transparent-events v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling transparent-spend-pir v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling enhance-pir v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling enhance-pir-server v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling transparent-shard v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling transparent-wallet v0.1.0 (https://github.com/valargroup/enhance-pir.git?rev=87226c31e6e3d42b6707992e9303e85da9a044d2#87226c31)
+   Compiling zakura-wallet-transparent v0.1.0 (/private/tmp/transparent-publish-task/wallet-validation/zakura/wallet-transparent)
+error[E0053]: method `rollback_above` has an incompatible type for trait
+   --> zakura/wallet-transparent/src/store.rs:342:48
+    |
+342 |     fn rollback_above(&mut self, height_above: u64, reason: &str) -> Result<u64, StoreError> {
+    |                                                ^^^ expected `&Anchor`, found `u64`
+    |
+    = note: expected signature `fn(&mut PirStore<'_>, &Anchor, &_) -> Result<_, _>`
+               found signature `fn(&mut PirStore<'_>, u64, &_) -> Result<_, _>`
+help: change the parameter type to match the trait
+    |
+342 -     fn rollback_above(&mut self, height_above: u64, reason: &str) -> Result<u64, StoreError> {
+342 +     fn rollback_above(&mut self, height_above: &Anchor, reason: &str) -> Result<u64, StoreError> {
+    |
+
+error[E0061]: this function takes 10 arguments but 9 arguments were supplied
+   --> zakura/wallet-transparent/src/source.rs:157:17
+    |
+157 |                   sync_into(
+    |  _________________^^^^^^^^^-
+158 | |                     &mut store,
+159 | |                     &map,
+160 | |                     map_cost,
+...   |
+166 | |                     &self.limits,
+167 | |                 )?
+    | |_________________- argument #10 of type `&Anchor` is missing
+    |
+note: function defined here
+   --> /Users/roman/.cargo/git/checkouts/enhance-pir-45703bb4e00f7aca/87226c3/pir/transparent-wallet/src/sync.rs:470:8
+    |
+470 | pub fn sync_into<S: WalletStore>(
+    |        ^^^^^^^^^
+help: provide the argument
+    |
+157 |                 sync_into(
+...
+166 |                     &self.limits,
+167 ~                     /* &Anchor */,
+168 ~                 )?
+    |
+
+error[E0063]: missing field `source_anchor` in initializer of `transparent_wallet::CoverageRange`
+  --> zakura/wallet-transparent/src/store.rs:64:5
+   |
+64 |     CoverageRange {
+   |     ^^^^^^^^^^^^^ missing `source_anchor`
+
+error[E0063]: missing fields `target_anchor` and `validated_events` in initializer of `transparent_wallet::PendingPages`
+   --> zakura/wallet-transparent/src/store.rs:100:8
+    |
+100 |     Ok(PendingPages {
+    |        ^^^^^^^^^^^^ missing `target_anchor` and `validated_events`
+
+error[E0004]: non-exhaustive patterns: `&IncompleteReason::PublicationBehind { .. }` and `&IncompleteReason::UnresolvedSpends` not covered
+   --> zakura/wallet-transparent/src/source.rs:280:90
+    |
+280 |         Completion::Incomplete { reason, .. } => TransparentCompletion::Incomplete(match reason {
+    |                                                                                          ^^^^^^ patterns `&IncompleteReason::PublicationBehind { .. }` and `&IncompleteReason::UnresolvedSpends` not covered
+    |
+note: `IncompleteReason` defined here
+   --> /Users/roman/.cargo/git/checkouts/enhance-pir-45703bb4e00f7aca/87226c3/pir/transparent-wallet/src/sync.rs:336:1
+    |
+336 | pub enum IncompleteReason {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+352 |     PublicationBehind {
+    |     ----------------- not covered
+...
+355 |     UnresolvedSpends,
+    |     ---------------- not covered
+    = note: the matched value is of type `&IncompleteReason`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern, a match arm with multiple or-patterns as shown, or multiple match arms
+    |
+286 ~             IncompleteReason::DiscoveryUnbounded => "discovery-unbounded".into(),
+287 ~             &IncompleteReason::PublicationBehind { .. } | &IncompleteReason::UnresolvedSpends => todo!(),
+    |
+
+Some errors have detailed explanations: E0004, E0053, E0061, E0063.
+For more information about an error, try `rustc --explain E0004`.
+error: could not compile `zakura-wallet-transparent` (lib) due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...

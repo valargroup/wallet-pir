@@ -206,6 +206,11 @@ reported separately from steady-state freshness.
 
 Activation requires all archive owners and at least one warm recent replica.
 Lagging replicas leave current routing and are retried on later publications.
+Short fleet operations reuse authenticated SSH sessions for up to 60 seconds;
+long preparation calls use direct connections so cancelling a slower replica
+does not delay an already warm quorum. An unchanged router configuration skips
+reload only when its successful application marker matches; an interrupted
+rename/reload is retried.
 Workers prepare through a root-only Unix control socket, keep current runtimes
 resident within their existing cache budgets, and swap snapshots without a
 restart. Preparation evicts unpinned runtimes from retired generations before
@@ -213,8 +218,11 @@ building and warms only current revisions. Retained revisions remain available
 on demand; filling spare cache capacity with them consumes the next build's
 scratch-memory headroom. Both public map URLs, filters and initialization use the same active
 publication. The controller keeps three unused candidate directories; workers
-keep three retired serving snapshots and defer collection while requests hold
-them. Three superseded normal tail revisions may also accompany the current set.
+keep the newest three retired serving snapshots plus any older snapshot still
+held by a request. An old reader does not prevent collection of other idle
+snapshots. The server releases its startup snapshot after launching prewarm;
+private control status reports `retired_snapshots` so a growing backlog is
+visible. Three superseded normal tail revisions may also accompany the current set.
 Immutable files are shared by hard link rather than copied per block.
 
 A reorg withdraws public coverage before rebuilding. Workers refuse orphaned

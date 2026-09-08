@@ -1,0 +1,18 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.86s
+     Running tests/live.rs (target/debug/deps/live-67687955e57d6c2a)
+
+running 1 test
+
+thread 'a_fresh_wallet_recovers_from_its_birthday' (240563282) panicked at zakura/wallet-transparent/tests/live.rs:196:41:
+a recovery completes: Sync("shard 173 filter does not match its published digest")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test a_fresh_wallet_recovers_from_its_birthday ... FAILED
+
+failures:
+
+failures:
+    a_fresh_wallet_recovers_from_its_birthday
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 5.26s
+
+error: test failed, to rerun pass `-p zakura-wallet-transparent --test live`

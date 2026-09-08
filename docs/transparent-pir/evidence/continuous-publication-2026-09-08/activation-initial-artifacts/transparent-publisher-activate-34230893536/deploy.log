@@ -1,0 +1,107 @@
+{"level":"info","ts":1788873363.6041753,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile.publication-next","config_adapter":"caddyfile"}
+{"level":"info","ts":1788873363.6065543,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+{"level":"info","ts":1788873363.606573,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+{"level":"info","ts":1788873363.606605,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc000322460"}
+{"level":"info","ts":1788873363.606935,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc000322460"}
+Valid configuration
+waiting for activation: <urlopen error [Errno 111] Connection refused>
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+waiting for activation: public origins disagree after activation
+Traceback (most recent call last):
+  File "/opt/actions-runner/_work/enhance-pir/enhance-pir/ops/scripts/deploy-transparent-publisher.py", line 262, in <module>
+    asyncio.run(main())
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/opt/actions-runner/_work/enhance-pir/enhance-pir/ops/scripts/deploy-transparent-publisher.py", line 258, in main
+    raise RuntimeError('activation deadline exceeded; controller retains retry/recovery state')
+RuntimeError: activation deadline exceeded; controller retains retry/recovery state

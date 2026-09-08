@@ -1,0 +1,283 @@
+{
+  "run_id": "continuous-publication-2026-09-08",
+  "state": "service_acceptance_passed_wallet_adapter_migration_pending",
+  "network": "zcash-mainnet",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "sources": {
+    "controller": "c676fb69ea9d2dd32d141be4ca86778a0608b650",
+    "fleet_hook": "08e22612fa13f67946bac0a8ec7d5718a959e37f",
+    "workers": "6e0c65c1b2cb4f4e4bae1fb4e1b34e282ea19ea2",
+    "runtime_headroom_fix": "507ca1e",
+    "snapshot_lifetime_fix": "6e0c65c",
+    "wallet_pir_pin": "5758ffd0cff4157daddb0502bbcbd97d43a97216",
+    "ssh_reuse_and_router_noop": "51ca6bb73b7a2444c5472c68c9a282c96b88dc4a",
+    "prepare_cancellation_fix": "08e22612fa13f67946bac0a8ec7d5718a959e37f",
+    "client_filter_refresh": "87226c31e6e3d42b6707992e9303e85da9a044d2"
+  },
+  "schema": "transparent-shard-v7",
+  "coverage_start": 0,
+  "cutoff_height": 3262749,
+  "cutoff_rule": "existing verified two-year cutoff retained",
+  "geometries": {
+    "archive-wide": {
+      "directory_rows": 32768,
+      "page_rows": 65536,
+      "shards": 160
+    },
+    "recent-8k": {
+      "directory_rows": 8192,
+      "page_rows": 8192,
+      "shards": 14
+    }
+  },
+  "seal_policy": {
+    "archive-wide": {
+      "scripts_target": 393216,
+      "scripts_capacity": 458752,
+      "page_rows_target": 63488,
+      "page_rows_capacity": 65536
+    },
+    "recent-8k": {
+      "scripts_target": 98304,
+      "scripts_capacity": 114688,
+      "page_rows_target": 7936,
+      "page_rows_capacity": 8192
+    }
+  },
+  "packing": "existing content sealing, no key reuse",
+  "fleet": {
+    "region": "ams3",
+    "recent": {
+      "count": 4,
+      "sku": "s-4vcpu-8gb",
+      "runtime_budget_bytes": 5368709120,
+      "memory_max_bytes": 7516192768,
+      "build_slots": 1,
+      "query_slots": 2
+    },
+    "archive": {
+      "count": 2,
+      "sku": "m-8vcpu-64gb",
+      "runtime_budget_bytes": 51539607552,
+      "memory_max_bytes": 60129542144,
+      "build_slots": 1
+    },
+    "router": {
+      "count": 1,
+      "sku": "s-2vcpu-4gb",
+      "ipv4": "209.38.42.220"
+    },
+    "machine_details": "baseline.json and final-state.json contain observed CPU, OS, RAM and disk"
+  },
+  "build": {
+    "rust": "1.91.0",
+    "profile": "release",
+    "rustflags": "-C target-cpu=x86-64-v3",
+    "cflags": "-mpclmul",
+    "cxxflags": "-mpclmul",
+    "jobs": 2,
+    "commands": [
+      "cargo +1.91.0 build --locked --release -j2 -p transparent-shard-server --bin transparent-shard-server --bin shard-control",
+      "cargo +1.91.0 test --locked --release -j2 -p transparent-shard-server"
+    ],
+    "worker_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a",
+    "control_binary_sha256": "6263e4cd7aaf647334ab5e0ad37ee4a166963cb6d01dd79cb2e3b71987a31cce"
+  },
+  "observation": {
+    "command": "python3 /opt/transparent-publisher-build/observe.py",
+    "host": "enhance-pir-coordinator-01",
+    "node_poll_seconds": 1,
+    "worker_sample_seconds": 30,
+    "minimum_new_blocks": 20,
+    "ordinary_block_max_seconds": 30,
+    "duration_limit_seconds": 3600,
+    "origins": [
+      "https://transparent-pir.valargroup.dev/v1/shards",
+      "https://enhance-pir.valargroup.dev/v1/filters/shards"
+    ],
+    "workload": "natural mainnet blocks; no synthetic wallet saturation",
+    "comparison": "old static publication through 3473686; not identical workload capacity comparison",
+    "result": {
+      "utc": "2026-09-08T15:48:55.389593+00:00",
+      "event": "result",
+      "blocks": 20,
+      "canonical_unchanged": true,
+      "orphan_samples": 0,
+      "error_samples": 0,
+      "origin_mismatch_samples": 0,
+      "passed": true,
+      "p50": 17.562436860986054,
+      "p95": 24.355571413063444,
+      "maximum": 26.687365445075557,
+      "duration": 1200.3577283200575
+    },
+    "inclusive_heights": [
+      3476357,
+      3476376
+    ],
+    "sample_count": 40,
+    "raw": "live-blocks.jsonl.gz"
+  },
+  "wallet": {
+    "client_os": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+    "command_template": "ZAKURA_TRANSPARENT_FILTERS=https://enhance-pir.valargroup.dev ZAKURA_TRANSPARENT_SHARDS=https://transparent-pir.valargroup.dev cargo test --locked -p zakura-wallet-transparent --test live TEST -- --ignored --nocapture",
+    "tests": [
+      "a_fresh_wallet_recovers_from_its_birthday",
+      "a_real_private_query_returns_a_row_this_build_can_decode"
+    ],
+    "private_query_shards": [
+      0,
+      173
+    ],
+    "concurrency": 1,
+    "birthday": 3428143,
+    "seed": "synthetic fixed [11; 32], no user key",
+    "limitations": [
+      "No actual user transaction or balance checked",
+      "Fresh recovery fixture accepts publication boundary hashes as its test chain view",
+      "Observer independently verifies canonical public endpoints",
+      "No mobile latency or fleet throughput measurement"
+    ],
+    "git_head": "4d9535140d27d237f1cf5e43738e1f7705098275",
+    "source_state": "pre-existing dirty integration checkout; relevant file hashes in wallet-source.json"
+  },
+  "retention_canary": {
+    "generations": 12,
+    "canonical_maps": 3,
+    "passed": true,
+    "retired_after_collect_max": 3,
+    "runtime_reserved_bytes": 4026531840,
+    "oom_events": 0,
+    "restarts": 0,
+    "cold_prepare_retry": true,
+    "raw": "retention-canary.log.gz"
+  },
+  "native_tests": {
+    "targets": 16,
+    "passed": 98,
+    "failed": 0,
+    "ignored": 0
+  },
+  "failure_evidence": "initial-attempts/",
+  "limitations": [
+    "Historical catch-up and repair pauses excluded from steady-state freshness",
+    "Live one-block reorg affected journal above then-public endpoint; deep published reorg tested deterministically",
+    "Disjoint archive owners and single router",
+    "No completed fixed-publication accepted-anchor regression or saturation claim"
+  ],
+  "ci": {
+    "url": "https://github.com/valargroup/enhance-pir/actions/runs/34238043832",
+    "conclusion": "success",
+    "targets": 47,
+    "passed": 438,
+    "failed": 0,
+    "ignored": 0
+  },
+  "operations_tests": {
+    "passed": 13,
+    "failed": 0,
+    "log": "fleet-cancellation-ops.log"
+  },
+  "ssh_cancellation_probe": {
+    "command": "sleep 3",
+    "cancel_after_seconds": 0.5,
+    "multiplex_cancellation_seconds": 2.517421818920411,
+    "direct_cancellation_seconds": 0.0006392779760062695,
+    "raw": "ssh-cancellation-proof.jsonl"
+  },
+  "final_publication": {
+    "data_dir": "/srv/zakura/transparent-event-data",
+    "elapsed_seconds": 0.767304295,
+    "generated_at": "2026-09-08T15:48:55.137250127+00:00",
+    "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "journal": {
+      "covered_through": 3476377,
+      "events_stored": 352978055,
+      "start_height": 0
+    },
+    "network": "main",
+    "output": "/srv/zakura/transparent-publications/candidate-3476377-00000000006ff28d527cad392f2738e1b78f84fe5b12962e918472d4cfa4e47e-1788882534370091023",
+    "published": {
+      "anchor_hash": "00000000006ff28d527cad392f2738e1b78f84fe5b12962e918472d4cfa4e47e",
+      "archive_geometry": "archive-wide",
+      "archive_policy": "SealPolicy { scripts: Limit { target: 393216, capacity: 458752 }, page_rows: Limit { target: 63488, capacity: 65536 } }",
+      "archive_shards": 160,
+      "map_bytes": 117689,
+      "map_sha256": "80dcb63cd2dcc1436640e72b10922057ae078ac360ce81d812d8d9f7bb54f755",
+      "multi_segment_shards": 0,
+      "recent_from": 3262749,
+      "recent_geometry": "recent-8k",
+      "recent_policy": "SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }",
+      "recent_shards": 14,
+      "shards": 174,
+      "start_height": 0,
+      "tail_revision": 57,
+      "through": 3476377
+    },
+    "schema": "transparent-publication-v1",
+    "shard_schema": "transparent-shard-v7",
+    "tool_sha": "c676fb69ea9d2dd32d141be4ca86778a0608b650"
+  },
+  "final_capture_utc": "2026-09-08T15:49:57.665579+00:00",
+  "final_public_height": 3476377,
+  "final_node_height": 3476378,
+  "worker_counter_deltas": {
+    "transparent-pir-recent-01": {
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "transparent-pir-recent-02": {
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "transparent-pir-recent-03": {
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "transparent-pir-recent-04": {
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "transparent-pir-archive-01": {
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "transparent-pir-archive-02": {
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    }
+  },
+  "client_validation": {
+    "passed": 146,
+    "failed": 0,
+    "ignored": 0,
+    "targets": 22,
+    "strict_clippy": "passed",
+    "dedicated_filter_race_and_corruption_tests": "2 passed",
+    "adapter_pin_attempt": "failed to compile due to pre-existing accepted-anchor API migration gap",
+    "shared_wallet_checkout_modified": false
+  },
+  "deployed_source_ci": {
+    "url": "https://github.com/valargroup/enhance-pir/actions/runs/34244943746",
+    "conclusion": "success",
+    "targets": 47,
+    "passed": 438,
+    "failed": 0,
+    "ignored": 0
+  },
+  "handoff": {
+    "utc": "2026-09-08T16:02:05.165818+00:00",
+    "node_height": 3476386,
+    "public_height": 3476386,
+    "public_hash": "0000000000750d8b48fab10486f41819f6fd5a4b04ade97d6053fba36feeebf8",
+    "origins_equal": true,
+    "workers_warm": true,
+    "ready_recent_replicas": 1
+  }
+}

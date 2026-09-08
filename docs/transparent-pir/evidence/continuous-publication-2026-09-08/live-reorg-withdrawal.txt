@@ -1,0 +1,20 @@
+{"acknowledged":true,"from_height":3476290}{"candidate_height":3476294,"cycle_seconds":27.178659376,"freshness_seconds":27.29552708,"journal_height":3476296,"map_sha256":"95ef87fbc31716e8f13fab8e56e276394d1e482347976ded3f5b76f54b5bc09f","node_hash":"000000000015e2aeb46e8b4d384d03e9531f5cf10f259869f755590fce570775","node_height":3476296,"phase":"serving","public_hash":"000000000064c7f27a9fc5bc5f455b4e15cd11c3e8c7f1764a5e283539ff34cd","public_height":3476263,"publication_error":"fleet operation failed: exit status: 1","ready_replicas":1,"reorg_depth":1}# TYPE transparent_publication_node_height gauge
+transparent_publication_node_height 3476296
+# TYPE transparent_publication_journal_height gauge
+transparent_publication_journal_height 3476296
+# TYPE transparent_publication_public_height gauge
+transparent_publication_public_height 3476263
+# TYPE transparent_publication_lag_blocks gauge
+transparent_publication_lag_blocks 33
+# TYPE transparent_publication_oldest_unpublished_seconds gauge
+transparent_publication_oldest_unpublished_seconds 2127.018825489
+# TYPE transparent_publication_withdrawn gauge
+transparent_publication_withdrawn 1
+# TYPE transparent_publication_ready_recent_replicas gauge
+transparent_publication_ready_recent_replicas 1
+# TYPE transparent_publication_last_cycle_seconds gauge
+transparent_publication_last_cycle_seconds 27.178659376
+# TYPE transparent_publication_last_freshness_seconds gauge
+transparent_publication_last_freshness_seconds 27.29552708
+# TYPE transparent_publication_reorg_depth gauge
+transparent_publication_reorg_depth 1

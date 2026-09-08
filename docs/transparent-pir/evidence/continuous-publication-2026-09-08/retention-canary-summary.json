@@ -1,0 +1,143 @@
+{
+  "result": {
+    "utc": "2026-09-08T14:42:39.882007+00:00",
+    "event": "result",
+    "passed": true,
+    "generations": 12,
+    "public_routing_unchanged": true
+  },
+  "generations": [
+    {
+      "height": 3476320,
+      "seconds": 33.40301643998828,
+      "retired_snapshots": 1,
+      "revision_count": 21,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 5178933248.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7293161472\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 1630\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476321,
+      "seconds": 22.441110231913626,
+      "retired_snapshots": 2,
+      "revision_count": 22,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 5361311744.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7411347456\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 1630\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476322,
+      "seconds": 25.143277716008015,
+      "retired_snapshots": 3,
+      "revision_count": 23,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 5528264704.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7455752192\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 1630\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476320,
+      "seconds": 20.275117127108388,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 5482618880.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7409180672\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 1630\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476321,
+      "seconds": 22.561854872037657,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 5683056640.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7487729664\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 1696\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476322,
+      "seconds": 20.970428586006165,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 5686116352.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7515643904\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 1761\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476320,
+      "seconds": 19.49822047003545,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 5686185984.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7515725824\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 1761\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476321,
+      "seconds": 21.504189656930976,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 6067527680.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7482097664\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 2314\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476322,
+      "seconds": 21.03256699803751,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 6268043264.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7481958400\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 2811\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476320,
+      "seconds": 21.51061342097819,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 6617554944.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7482347520\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 3771\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476321,
+      "seconds": 22.7975831059739,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 6636371968.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7469666304\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 3843\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "height": 3476322,
+      "seconds": 21.202285968931392,
+      "retired_snapshots": 3,
+      "revision_count": 19,
+      "rss_bytes": {
+        "transparent_shard_process_rss_bytes": 6464294912.0
+      },
+      "reserved_bytes": 4026531840.0,
+      "memory": "NRestarts=0\nMemoryCurrent=7247745024\nMemoryPeak=7516192768\nlow 0\nhigh 0\nmax 3843\noom 0\noom_kill 0\noom_group_kill 0\n"
+    }
+  ]
+}

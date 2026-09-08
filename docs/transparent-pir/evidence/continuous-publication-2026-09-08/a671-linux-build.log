@@ -1,0 +1,12 @@
+   Compiling reqwest v0.12.28
+   Compiling zakura-orchard v1.0.1
+   Compiling zakura-primitives v1.0.1
+   Compiling zakura-chain v6.0.0 (https://github.com/zakura-core/zakura.git?rev=1faf150fc3648aae22c55a6b30f8f5a9b9ce934e#1faf150f)
+   Compiling transparent-filter v0.1.0 (/opt/transparent-publisher-build/a671e4e/pir/transparent-filter)
+   Compiling enhance-pir v0.1.0 (/opt/transparent-publisher-build/a671e4e/pir/enhance)
+   Compiling transparent-spend-pir v0.1.0 (/opt/transparent-publisher-build/a671e4e/pir/transparent-spend)
+   Compiling transparent-events v0.1.0 (/opt/transparent-publisher-build/a671e4e/pir/transparent-events)
+   Compiling enhance-pir-server v0.1.0 (/opt/transparent-publisher-build/a671e4e/server/enhance-pir-server)
+   Compiling transparent-shard v0.1.0 (/opt/transparent-publisher-build/a671e4e/pir/transparent-shard)
+   Compiling transparent-shard-server v0.1.0 (/opt/transparent-publisher-build/a671e4e/server/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 1m 09s

@@ -1,0 +1,1 @@
+{"utc": "2026-09-08T14:44:54.809545+00:00", "event": "takeover", "result": {"ok": true, "upstreams": ["10.142.0.10:8093", "10.142.0.6:8093", "10.142.0.9:8093"], "recent_replicas": 1}, "public_map_sha256": "df2471ae79c92f2b0c7ed1f3d6114e5e08edcaadbf7cacf4e8bbaff516f71806", "height": 3476312}

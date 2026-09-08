@@ -1,0 +1,12 @@
+{
+  "generations": 12,
+  "distinct_heights": [
+    3476279,
+    3476281
+  ],
+  "maximum_rss_bytes": 5572624384.0,
+  "maximum_reserved_bytes": 4026531840.0,
+  "maximum_seconds": 24.65950177097693,
+  "p50_seconds": 5.979443173040636,
+  "scope": "isolated recent-01; repeated real canonical candidates; public routing unchanged; not live freshness acceptance"
+}

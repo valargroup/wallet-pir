@@ -1,6 +1,6 @@
 # Transparent PIR documentation
 
-Updated 2026-09-07. The accepted target is four small recent replicas and two larger archive workers. This is an approved direction, not a claim of deployed fleet capacity.
+Updated 2026-09-08. The accepted target is four small recent replicas and two larger archive workers. Deployment observations and continuous-publication verification are recorded in [status](status.md); they do not establish sustained fleet capacity.
 
 ## Reading order and authority
 

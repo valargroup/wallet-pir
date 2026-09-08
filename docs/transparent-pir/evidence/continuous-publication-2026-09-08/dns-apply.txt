@@ -1,0 +1,63 @@
+cloudflare_dns_record.transparent[0]: Modifying... [id=65c3923986f44095db0a7983aef26730]
+cloudflare_dns_record.transparent[0]: Modifications complete after 1s [id=65c3923986f44095db0a7983aef26730]
+
+Warning: Applied changes may be incomplete
+
+The plan was created with the -target option in effect, so some changes
+requested in the configuration may have been ignored and the output values
+may not be fully updated. Run the following command to verify that no other
+changes are pending:
+    terraform plan
+
+Note that the -target option is not suitable for routine use, and is provided
+only for exceptional situations such as recovering from errors or mistakes,
+or when Terraform specifically suggests to use it as part of an error
+message.
+
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+
+Outputs:
+
+coordinator_private_ipv4 = "10.142.0.3"
+coordinator_public_ipv4 = "167.99.42.60"
+public_url = "https://enhance-pir.valargroup.dev"
+transparent_fleet_json = "[{\"build_slots\":1,\"cache_bytes\":5368709120,\"id\":\"transparent-pir-recent-01\",\"memory_max\":\"7G\",\"replica_group\":\"recent\",\"role\":\"recent-replica\",\"ssh_host\":\"10.142.0.10\",\"upstream\":\"10.142.0.10:8093\"},{\"build_slots\":1,\"cache_bytes\":5368709120,\"id\":\"transparent-pir-recent-02\",\"memory_max\":\"7G\",\"replica_group\":\"recent\",\"role\":\"recent-replica\",\"ssh_host\":\"10.142.0.8\",\"upstream\":\"10.142.0.8:8093\"},{\"build_slots\":1,\"cache_bytes\":5368709120,\"id\":\"transparent-pir-recent-03\",\"memory_max\":\"7G\",\"replica_group\":\"recent\",\"role\":\"recent-replica\",\"ssh_host\":\"10.142.0.7\",\"upstream\":\"10.142.0.7:8093\"},{\"build_slots\":1,\"cache_bytes\":5368709120,\"id\":\"transparent-pir-recent-04\",\"memory_max\":\"7G\",\"replica_group\":\"recent\",\"role\":\"recent-replica\",\"ssh_host\":\"10.142.0.12\",\"upstream\":\"10.142.0.12:8093\"},{\"build_slots\":1,\"cache_bytes\":51539607552,\"id\":\"transparent-pir-archive-01\",\"memory_max\":\"56G\",\"replica_group\":null,\"role\":\"archive-owner\",\"ssh_host\":\"10.142.0.6\",\"upstream\":\"10.142.0.6:8093\"},{\"build_slots\":1,\"cache_bytes\":51539607552,\"id\":\"transparent-pir-archive-02\",\"memory_max\":\"56G\",\"replica_group\":null,\"role\":\"archive-owner\",\"ssh_host\":\"10.142.0.9\",\"upstream\":\"10.142.0.9:8093\"}]"
+transparent_loadgen_ipv4 = [
+  {
+    "private" = "10.142.0.13"
+    "public" = "152.42.137.247"
+  },
+]
+transparent_router_host = "10.142.0.11"
+transparent_router_public_ipv4 = [
+  "209.38.42.220",
+]
+transparent_worker_private_ipv4 = [
+  "10.142.0.4",
+]
+worker_groups = [
+  {
+    "name" = "shard-group-01"
+    "replicas" = [
+      {
+        "name" = "enhance-pir-worker-01"
+        "private_ipv4" = "10.142.0.5"
+        "public_ipv4" = "159.65.206.6"
+      },
+      {
+        "name" = "enhance-pir-worker-02"
+        "private_ipv4" = "10.142.0.2"
+        "public_ipv4" = "188.166.9.67"
+      },
+    ]
+  },
+]
+worker_private_ipv4 = [
+  "10.142.0.5",
+  "10.142.0.2",
+]
+worker_public_ipv4 = [
+  "159.65.206.6",
+  "188.166.9.67",
+]
+zakura_volume_id = "acc70a79-a6bc-11f1-ad2b-5eeddbd662ff"

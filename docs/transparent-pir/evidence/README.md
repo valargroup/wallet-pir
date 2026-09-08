@@ -1,11 +1,12 @@
 # Transparent PIR evidence
 
-Updated 2026-09-07. Evidence supports the [deployment decision](../deployment.md); it is not itself an operating instruction. [Remaining work](../remaining-work.md) owns unmeasured gates.
+Updated 2026-09-08. Evidence supports the [deployment decision](../deployment.md); it is not itself an operating instruction. [Remaining work](../remaining-work.md) owns unmeasured gates.
 
 ## Evidence ledger
 
 | Evidence | Scope | Valid use | Limit |
 |---|---|---|---|
+| [Continuous publication rollout](continuous-publication-2026-09-08/README.md) | Mainnet RPC ingestion, suffix publication, warm activation, public routing and wallet adapter | Dated rollout, reorg withdrawal, memory corrections and final acceptance record | See the run result; no user balance, mobile latency or saturation claim |
 | [Local deployment runtime validation](deployment-runtime-local-2026-09-08/README.md) | Synthetic rows at both deployed geometries; offline rollout harness | Cache correctness, restore feasibility and activation/rollback checks | No live deployment-time, cold-disk or fleet-capacity claim |
 | Full-chain raw runs: [recent-8k](../../transparent-pir-evaluation/shard-utilisation/fullchain-8192.txt), [archive-32k](../../transparent-pir-evaluation/shard-utilisation/fullchain-archive-32k.txt), [archive-wide](../../transparent-pir-evaluation/shard-utilisation/fullchain-archive-wide.txt) | Heights 0–3,473,686; 352,873,356 events; 9,264,547 indexable scripts; uniform geometry runs | Relative shard counts, plaintext allocation, chain-script matches and projected query upload | Not a mixed-tier publication, wallet-population sample, mobile latency or HTTP throughput |
 | [Deployed regression 2026-09-08](regression-deployed-2026-09-08/README.md) | Full-chain publication, 11 required profiles; 33 completed syncs | Five profiles passed exact recovery checks | Run failed during sixth profile with HTTP 502; remaining profiles blocked, release gate remains open |

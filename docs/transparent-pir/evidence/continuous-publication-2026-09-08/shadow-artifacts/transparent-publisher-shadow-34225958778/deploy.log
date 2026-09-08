@@ -1,0 +1,23 @@
+{"covered_through":3473686,"genesis_hash":"00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08","map_sha256":"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba","network":"main","profile":"zcash-transparent-range-v1","schema":"transparent-shard-v7","shard_dir":"/srv/zakura/transparent-shards-v7-full","shards":174,"start_height":0}
+[2m2026-09-08T12:30:54.731509Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m174 [3massigned[0m[2m=[0m14 [3mrevisions[0m[2m=[0m14 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-8k"] [3mmap_sha256[0m[2m=[0m"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba" [3mworker_id[0m[2m=[0m"transparent-pir-recent-01" [3massignment_sha256[0m[2m=[0m"b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3473686
+transparent-pir-recent-01: warm with publication control
+[2m2026-09-08T12:33:52.071198Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m174 [3massigned[0m[2m=[0m80 [3mrevisions[0m[2m=[0m80 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-8k"] [3mmap_sha256[0m[2m=[0m"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba" [3mworker_id[0m[2m=[0m"transparent-pir-archive-01" [3massignment_sha256[0m[2m=[0m"143054ae445d09bc2502bc66af80ccf939b38fe8f6486a9ba29b3a38b07ecdf0" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3473686
+transparent-pir-archive-01: warm with publication control
+[2m2026-09-08T12:47:15.846993Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m174 [3massigned[0m[2m=[0m80 [3mrevisions[0m[2m=[0m80 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-8k"] [3mmap_sha256[0m[2m=[0m"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba" [3mworker_id[0m[2m=[0m"transparent-pir-archive-02" [3massignment_sha256[0m[2m=[0m"1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3473686
+transparent-pir-archive-02: warm with publication control
+[2m2026-09-08T13:02:48.785715Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m174 [3massigned[0m[2m=[0m14 [3mrevisions[0m[2m=[0m14 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-8k"] [3mmap_sha256[0m[2m=[0m"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3473686
+transparent-pir-recent-02: warm with publication control
+[2m2026-09-08T13:06:45.293347Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m174 [3massigned[0m[2m=[0m14 [3mrevisions[0m[2m=[0m14 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-8k"] [3mmap_sha256[0m[2m=[0m"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba" [3mworker_id[0m[2m=[0m"transparent-pir-recent-03" [3massignment_sha256[0m[2m=[0m"1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3473686
+transparent-pir-recent-03: warm with publication control
+[2m2026-09-08T13:10:49.673906Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m174 [3massigned[0m[2m=[0m14 [3mrevisions[0m[2m=[0m14 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-8k"] [3mmap_sha256[0m[2m=[0m"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba" [3mworker_id[0m[2m=[0m"transparent-pir-recent-04" [3massignment_sha256[0m[2m=[0m"1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3473686
+transparent-pir-recent-04: warm with publication control
+Created symlink /etc/systemd/system/multi-user.target.wants/transparent-publish-controller.service → /etc/systemd/system/transparent-publish-controller.service.
+{
+  "build_seconds": 4.394690937,
+  "candidate_height": 3473770,
+  "journal_height": 3473849,
+  "node_hash": "00000000004205394a0a850064613ced628fb4ea09f4e1d1f51ca4b29b03db16",
+  "node_height": 3476259,
+  "phase": "shadow_verified",
+  "shadow_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d"
+}

@@ -1,0 +1,10 @@
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-shard-server)
+    Finished `release-fast` profile [optimized] target(s) in 12.58s
+     Running tests/wallet_sync.rs (target/release-fast/deps/wallet_sync-b1b7e9d0564a7b00)
+
+running 2 tests
+test a_corrupt_filter_with_an_unchanged_map_is_never_accepted ... ok
+test a_filter_replaced_after_the_map_was_read_refreshes_before_matching ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 7.28s
+

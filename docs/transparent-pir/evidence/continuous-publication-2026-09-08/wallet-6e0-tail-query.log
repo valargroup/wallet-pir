@@ -1,0 +1,10 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.40s
+     Running tests/live.rs (target/debug/deps/live-67687955e57d6c2a)
+
+running 1 test
+probing shard 173 (recent-8k, 1 directory segments)
+one directory row in 980.120875ms: setup 19435 B, up 128008 B, down 5136 B
+test a_real_private_query_returns_a_row_this_build_can_decode ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 3.65s
+

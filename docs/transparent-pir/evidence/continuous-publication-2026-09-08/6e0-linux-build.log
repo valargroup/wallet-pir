@@ -1,0 +1,8 @@
+   Compiling transparent-filter v0.1.0 (/opt/transparent-publisher-build/6e0c65c/pir/transparent-filter)
+   Compiling enhance-pir v0.1.0 (/opt/transparent-publisher-build/6e0c65c/pir/enhance)
+   Compiling transparent-spend-pir v0.1.0 (/opt/transparent-publisher-build/6e0c65c/pir/transparent-spend)
+   Compiling transparent-events v0.1.0 (/opt/transparent-publisher-build/6e0c65c/pir/transparent-events)
+   Compiling enhance-pir-server v0.1.0 (/opt/transparent-publisher-build/6e0c65c/server/enhance-pir-server)
+   Compiling transparent-shard v0.1.0 (/opt/transparent-publisher-build/6e0c65c/pir/transparent-shard)
+   Compiling transparent-shard-server v0.1.0 (/opt/transparent-publisher-build/6e0c65c/server/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 47.43s

@@ -1,0 +1,409 @@
+{
+  "start": {
+    "utc": "2026-09-08T15:28:55.031865+00:00",
+    "event": "start",
+    "node_height": 3476356,
+    "target_blocks": 20
+  },
+  "result": {
+    "utc": "2026-09-08T15:48:55.389593+00:00",
+    "event": "result",
+    "blocks": 20,
+    "canonical_unchanged": true,
+    "orphan_samples": 0,
+    "error_samples": 0,
+    "origin_mismatch_samples": 0,
+    "passed": true,
+    "p50": 17.562436860986054,
+    "p95": 24.355571413063444,
+    "maximum": 26.687365445075557,
+    "duration": 1200.3577283200575
+  },
+  "height_start": 3476357,
+  "height_end": 3476376,
+  "consecutive": true,
+  "latencies": [
+    {
+      "height": 3476357,
+      "seconds": 17.47389371099416,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476358,
+      "seconds": 20.03823574492708,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476359,
+      "seconds": 18.62723007099703,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476360,
+      "seconds": 15.42760202405043,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476361,
+      "seconds": 17.55209047801327,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476362,
+      "seconds": 16.475019079982303,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476363,
+      "seconds": 19.603995195007883,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476364,
+      "seconds": 24.355571413063444,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476365,
+      "seconds": 17.46706627297681,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476366,
+      "seconds": 15.477646402083337,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476367,
+      "seconds": 17.44009966799058,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476368,
+      "seconds": 18.62541677802801,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476369,
+      "seconds": 17.57278324395884,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476370,
+      "seconds": 18.500609667040408,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476371,
+      "seconds": 17.414838931057602,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476372,
+      "seconds": 18.553097874042578,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476373,
+      "seconds": 15.473729408928193,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476374,
+      "seconds": 22.68376108200755,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476375,
+      "seconds": 16.469686553929932,
+      "ready_replicas": 1
+    },
+    {
+      "height": 3476376,
+      "seconds": 26.687365445075557,
+      "ready_replicas": 1
+    }
+  ],
+  "exceptions": [],
+  "worker_metric_samples": 40,
+  "sampled_worker_metrics": {
+    "10": {
+      "transparent_shard_cache_resident_bytes": {
+        "min": 3758096384.0,
+        "max": 4026531840.0,
+        "first": 4026531840.0,
+        "last": 4026531840.0
+      },
+      "transparent_shard_builds_total": {
+        "min": 62.0,
+        "max": 96.0,
+        "first": 62.0,
+        "last": 96.0
+      },
+      "transparent_shard_build_failures_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_overloads_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_process_rss_bytes": {
+        "min": 6165602304.0,
+        "max": 6290100224.0,
+        "first": 6225207296.0,
+        "last": 6225338368.0
+      }
+    },
+    "8": {
+      "transparent_shard_cache_resident_bytes": {
+        "min": 3758096384.0,
+        "max": 4026531840.0,
+        "first": 4026531840.0,
+        "last": 4026531840.0
+      },
+      "transparent_shard_builds_total": {
+        "min": 62.0,
+        "max": 95.0,
+        "first": 62.0,
+        "last": 95.0
+      },
+      "transparent_shard_build_failures_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_overloads_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_process_rss_bytes": {
+        "min": 5263994880.0,
+        "max": 5573054464.0,
+        "first": 5350969344.0,
+        "last": 5573054464.0
+      }
+    },
+    "7": {
+      "transparent_shard_cache_resident_bytes": {
+        "min": 3758096384.0,
+        "max": 4026531840.0,
+        "first": 4026531840.0,
+        "last": 4026531840.0
+      },
+      "transparent_shard_builds_total": {
+        "min": 62.0,
+        "max": 96.0,
+        "first": 62.0,
+        "last": 96.0
+      },
+      "transparent_shard_build_failures_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_overloads_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_process_rss_bytes": {
+        "min": 4943503360.0,
+        "max": 5262073856.0,
+        "first": 5217759232.0,
+        "last": 5262073856.0
+      }
+    },
+    "12": {
+      "transparent_shard_cache_resident_bytes": {
+        "min": 3892314112.0,
+        "max": 4026531840.0,
+        "first": 4026531840.0,
+        "last": 3892314112.0
+      },
+      "transparent_shard_builds_total": {
+        "min": 62.0,
+        "max": 96.0,
+        "first": 62.0,
+        "last": 96.0
+      },
+      "transparent_shard_build_failures_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_overloads_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_process_rss_bytes": {
+        "min": 5924245504.0,
+        "max": 5938913280.0,
+        "first": 5938913280.0,
+        "last": 5925031936.0
+      }
+    },
+    "6": {
+      "transparent_shard_cache_resident_bytes": {
+        "min": 48318382080.0,
+        "max": 48318382080.0,
+        "first": 48318382080.0,
+        "last": 48318382080.0
+      },
+      "transparent_shard_builds_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_build_failures_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_overloads_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_process_rss_bytes": {
+        "min": 49344299008.0,
+        "max": 49346097152.0,
+        "first": 49344299008.0,
+        "last": 49346097152.0
+      }
+    },
+    "9": {
+      "transparent_shard_cache_resident_bytes": {
+        "min": 48318382080.0,
+        "max": 48318382080.0,
+        "first": 48318382080.0,
+        "last": 48318382080.0
+      },
+      "transparent_shard_builds_total": {
+        "min": 160.0,
+        "max": 160.0,
+        "first": 160.0,
+        "last": 160.0
+      },
+      "transparent_shard_build_failures_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_overloads_total": {
+        "min": 0.0,
+        "max": 0.0,
+        "first": 0.0,
+        "last": 0.0
+      },
+      "transparent_shard_process_rss_bytes": {
+        "min": 49951485952.0,
+        "max": 49957105664.0,
+        "first": 49951485952.0,
+        "last": 49957105664.0
+      }
+    }
+  },
+  "control_counts": {
+    "transparent-pir-recent-01": {
+      "retired_snapshots": {
+        "min": 3,
+        "max": 3,
+        "first": 3,
+        "last": 3
+      },
+      "revision_count": {
+        "min": 20,
+        "max": 20,
+        "first": 20,
+        "last": 20
+      }
+    },
+    "transparent-pir-recent-02": {
+      "retired_snapshots": {
+        "min": 0,
+        "max": 0,
+        "first": 0,
+        "last": 0
+      },
+      "revision_count": {
+        "min": 17,
+        "max": 17,
+        "first": 17,
+        "last": 17
+      }
+    },
+    "transparent-pir-recent-03": {
+      "retired_snapshots": {
+        "min": 0,
+        "max": 0,
+        "first": 0,
+        "last": 0
+      },
+      "revision_count": {
+        "min": 17,
+        "max": 17,
+        "first": 17,
+        "last": 17
+      }
+    },
+    "transparent-pir-recent-04": {
+      "retired_snapshots": {
+        "min": 3,
+        "max": 4,
+        "first": 4,
+        "last": 3
+      },
+      "revision_count": {
+        "min": 20,
+        "max": 21,
+        "first": 21,
+        "last": 20
+      }
+    },
+    "transparent-pir-archive-01": {
+      "retired_snapshots": {
+        "min": 3,
+        "max": 4,
+        "first": 4,
+        "last": 3
+      },
+      "revision_count": {
+        "min": 80,
+        "max": 80,
+        "first": 80,
+        "last": 80
+      }
+    },
+    "transparent-pir-archive-02": {
+      "retired_snapshots": {
+        "min": 3,
+        "max": 4,
+        "first": 4,
+        "last": 3
+      },
+      "revision_count": {
+        "min": 80,
+        "max": 80,
+        "first": 80,
+        "last": 80
+      }
+    }
+  }
+}

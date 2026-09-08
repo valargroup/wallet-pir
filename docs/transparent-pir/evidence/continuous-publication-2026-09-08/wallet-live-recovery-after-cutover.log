@@ -1,0 +1,11 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.23s
+     Running tests/live.rs (target/debug/deps/live-67687955e57d6c2a)
+
+running 1 test
+recovered in 3.788659458s: 0 outputs, 0 spends, 0 unresolved, 0 pending, covered through Some(BlockHeight(3476263)), complete
+settled through Some(BlockHeight(3473054)), 1 provisional shards, anchor Some(TransparentAnchor { height: BlockHeight(3476263), hash: "000000000064c7f27a9fc5bc5f455b4e15cd11c3e8c7f1764a5e283539ff34cd" }), last sync Some("complete")
+second run in 2.16696125s: complete
+test a_fresh_wallet_recovers_from_its_birthday ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 7.51s
+

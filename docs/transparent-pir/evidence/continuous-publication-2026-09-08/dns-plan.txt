@@ -1,0 +1,43 @@
+digitalocean_vpc.enhance: Refreshing state... [id=c5bd6679-aa32-48fc-9d5d-51d422fb3468]
+digitalocean_tag.transparent_worker: Refreshing state... [id=transparent-pir-worker]
+digitalocean_tag.transparent_router: Refreshing state... [id=transparent-pir-router]
+digitalocean_droplet.transparent_router[0]: Refreshing state... [id=598646451]
+digitalocean_droplet.transparent_worker[0]: Refreshing state... [id=598528110]
+cloudflare_dns_record.transparent[0]: Refreshing state... [id=65c3923986f44095db0a7983aef26730]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+
+Terraform will perform the following actions:
+
+  # cloudflare_dns_record.transparent[0] will be updated in-place
+  ~ resource "cloudflare_dns_record" "transparent" {
+      ~ comment             = "Transparent PIR shard worker; managed by Terraform" -> "Transparent PIR router; managed by Terraform"
+      ~ comment_modified_on = "2026-09-07T17:37:27Z" -> (known after apply)
+      ~ content             = "164.90.205.186" -> "209.38.42.220"
+        id                  = "65c3923986f44095db0a7983aef26730"
+      ~ modified_on         = "2026-09-07T17:37:27Z" -> (known after apply)
+        name                = "transparent-pir.valargroup.dev"
+        tags                = []
+        # (8 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 1 to change, 0 to destroy.
+
+Warning: Resource targeting is in effect
+
+You are creating a plan with the -target option, which means that the result
+of this plan may not represent all of the changes requested by the current
+configuration.
+
+The -target option is not for routine use, and is provided only for
+exceptional situations such as recovering from errors or mistakes, or when
+Terraform specifically suggests to use it as part of an error message.
+
+─────────────────────────────────────────────────────────────────────────────
+
+Saved the plan to: /tmp/transparent-publish-task/dns.tfplan
+
+To perform exactly these actions, run the following command to apply:
+    terraform apply "/tmp/transparent-publish-task/dns.tfplan"
