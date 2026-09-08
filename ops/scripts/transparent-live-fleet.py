@@ -334,7 +334,8 @@ class Fleet:
         assignment_path = Path(active['assignment'])
         self.canonical.clear()
         async def catch_up(worker):
-            if worker['role'] != 'recent-replica' or worker['id'] in active['workers']:
+            allowed = self.c.get('reconcile_workers')
+            if (allowed is not None and worker['id'] not in allowed) or worker['role'] != 'recent-replica' or worker['id'] in active['workers']:
                 return
             try:
                 prepared = await asyncio.wait_for(self.stage(worker, req, assignment_path), 60)

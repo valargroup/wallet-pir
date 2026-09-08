@@ -69,6 +69,11 @@ class ReconcilerTests(unittest.IsolatedAsyncioTestCase):
         self.fleet.control.assert_not_awaited()
         self.fleet.route.assert_not_awaited()
 
+    async def test_canary_scope_does_not_prepare_other_replicas(self):
+        self.fleet.c['reconcile_workers'] = ['fast']
+        await self.fleet.reconcile()
+        self.fleet.stage.assert_not_awaited()
+
     async def test_worker_lock_excludes_competing_preparation(self):
         async with self.fleet.lock('worker-slow'):
             with self.assertRaises(RuntimeError):
