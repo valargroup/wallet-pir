@@ -1,4 +1,4 @@
-.PHONY: build check check-ops test run-server run-worker load-test demo-check fmt
+.PHONY: build check check-ops check-docs test run-server run-worker load-test demo-check fmt
 
 LOAD_TEST_DURATION ?= 60s
 LOAD_TEST_PARALLELISM ?= 8
@@ -10,7 +10,7 @@ LOAD_TEST_URL ?= https://enhance-pir.valargroup.dev
 build:
 	cargo build --release --workspace --bins --features enhance-pir/cli
 
-check: check-ops
+check: check-ops check-docs
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --release
@@ -22,6 +22,12 @@ check: check-ops
 # first and fails in seconds rather than after the release test suite.
 check-ops:
 	ops/scripts/check-jq-contracts.sh
+
+# Every relative Markdown link must resolve. The transparent PIR documentation
+# rules delete superseded prose instead of leaving stubs, so a dangling link is
+# the failure this catches.
+check-docs:
+	tools/check-doc-links.sh
 
 test:
 	cargo test --workspace --release
