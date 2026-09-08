@@ -9,5 +9,14 @@ packages: ${packages}
 ssh_authorized_keys:
   - ${deploy_public_key}
 %{ endif ~}
+write_files:
+  # An automatic package upgrade must not restart the shard service, which
+  # takes minutes to load and loses its warm cache, or the edge. The daily
+  # unattended-upgrade did exactly that to the pilot on 2026-09-08; deploys
+  # are what restart these units.
+  - path: /etc/needrestart/conf.d/transparent-pir.conf
+    content: |
+      $nrconf{override_rc}{qr(^transparent-shard-server\.service$)} = 0;
+      $nrconf{override_rc}{qr(^caddy\.service$)} = 0;
 runcmd:
   - mkdir -p /srv/transparent-pir/shards

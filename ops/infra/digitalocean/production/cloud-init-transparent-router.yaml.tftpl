@@ -7,6 +7,11 @@ packages: ${packages}
 ssh_authorized_keys:
   - ${deploy_public_key}
 %{ endif ~}
+write_files:
+  # The daily unattended-upgrade must not bounce the edge; deploys reload it.
+  - path: /etc/needrestart/conf.d/transparent-pir.conf
+    content: |
+      $nrconf{override_rc}{qr(^caddy\.service$)} = 0;
 runcmd:
   # Where the deploy stages a rendered Caddyfile and keeps the one it replaced.
   - mkdir -p /opt/transparent-pir/staging /opt/transparent-pir/rollback
