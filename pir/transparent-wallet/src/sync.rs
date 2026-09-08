@@ -1169,10 +1169,20 @@ fn read_shard_into<S: WalletStore>(
             charges.filter_bytes += cost;
             // Bind the bytes to the map before believing anything they say.
             if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
-                return Err(SyncError::Invalid(format!(
-                    "shard {} filter does not match its published digest",
-                    entry.shard_id
-                )));
+                // The public filter URL is shard-addressed: activation may
+                // have replaced it since this map was fetched. Never cache or
+                // match these bytes. The bounded stale-revision path requires
+                // a changed, validated map before retrying; an unchanged map
+                // still fails, including when the filter was simply corrupt.
+                return Err(SyncError::StaleRevision {
+                    shard_id: entry.shard_id,
+                    stale: StaleRevision {
+                        shard_id: entry.shard_id,
+                        revision: entry.manifest_digest.clone(),
+                        map_sha256: None,
+                    },
+                    refreshes: 0,
+                });
             }
             store.put_filter(
                 &entry.manifest_digest,

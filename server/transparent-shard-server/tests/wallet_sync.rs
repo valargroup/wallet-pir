@@ -1423,6 +1423,15 @@ impl FilterSource for TwoSetFilters {
 /// earlier history reproduces the traversal exactly.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_map() {
+    replaced_tail_recovers(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_filter_replaced_after_the_map_was_read_refreshes_before_matching() {
+    replaced_tail_recovers(true).await;
+}
+
+async fn replaced_tail_recovers(filter_race: bool) {
     let before_dir = tempfile::tempdir().unwrap();
     let after_dir = tempfile::tempdir().unwrap();
 
@@ -1434,7 +1443,7 @@ async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_ma
     let tail = (SHARDS - 1) as usize;
     let height = FIRST + (SHARDS - 1) * SPAN + 42;
     before_chain[tail].push((
-        script(2),
+        script(if filter_race { 999 } else { 2 }),
         TransparentEvent::Receive(ReceiveEvent {
             height: height as u32,
             txid: txid(9_999),
@@ -1462,12 +1471,30 @@ async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_ma
     // rather than merely superseded and still answerable.
     let base = serve(after_dir.path()).await;
 
-    let wallet = vec![script(1), script(2), script(3)];
+    if filter_race {
+        assert_ne!(
+            map_before.shards[tail].filter_hash,
+            map_after.shards[tail].filter_hash
+        );
+    }
+    let wallet = vec![script(1), script(2), script(3), script(999)];
+    let expected_wallet = wallet.clone();
     let filters = TwoSetFilters {
         before: PublishedFilters::load(before_dir.path(), &map_before),
         after: PublishedFilters::load(after_dir.path(), &map_after),
-        refreshed: false,
+        refreshed: filter_race,
     };
+    let first_filters = if filter_race {
+        &filters.after
+    } else {
+        &filters.before
+    };
+    let expected_filter_bytes = first_filters
+        .filters
+        .values()
+        .map(|bytes| bytes.len() as u64)
+        .sum::<u64>()
+        + filters.after.filters[&(SHARDS - 1)].len() as u64;
     let map_bytes = serde_json::to_vec(&map_before).unwrap().len() as u64;
     let outcome = tokio::task::spawn_blocking(move || {
         let client = reqwest::blocking::Client::new();
@@ -1508,7 +1535,7 @@ async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_ma
     .await
     .unwrap();
 
-    let expected = traverse(&after_chain, &[script(1), script(2), script(3)], 0);
+    let expected = traverse(&after_chain, &expected_wallet, 0);
     compare(&outcome.ledger, &expected);
 
     assert_eq!(
@@ -1538,13 +1565,13 @@ async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_ma
         "the provisional record must name the revision actually read, never the refused one"
     );
     assert_eq!(outcome.provisional[0].revision, 1);
-    // The tail's filter is downloaded twice: once for the attempt that was
-    // refused, and again after the refresh, because a republished shard
-    // publishes a new filter with its new content.
+    // Both the rejected attempt and the verified replacement cost bytes;
+    // mismatched bytes must never become a checked or persisted filter.
+    assert_eq!(outcome.charges.filter_bytes, expected_filter_bytes);
     assert_eq!(
         outcome.charges.filters_checked,
-        SHARDS + 1,
-        "the abandoned attempt's filter is still paid for"
+        SHARDS + u64::from(!filter_race),
+        "a mismatched filter is charged in bytes but never counted as checked"
     );
     assert!(
         outcome.charges.map_bytes > map_bytes,
@@ -1793,6 +1820,15 @@ async fn a_503_that_names_no_delay_is_not_retried() {
 /// not earned.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_that_cannot_help_stops_the_sync_rather_than_looping() {
+    unhelpful_refresh_stops(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_corrupt_filter_with_an_unchanged_map_is_never_accepted() {
+    unhelpful_refresh_stops(true).await;
+}
+
+async fn unhelpful_refresh_stops(corrupt_filter: bool) {
     let before_dir = tempfile::tempdir().unwrap();
     let after_dir = tempfile::tempdir().unwrap();
 
@@ -1826,7 +1862,10 @@ async fn a_refresh_that_cannot_help_stops_the_sync_rather_than_looping() {
     let base = serve(after_dir.path()).await;
 
     let wallet = vec![script(1), script(2)];
-    let filters = PublishedFilters::load(before_dir.path(), &map_before);
+    let mut filters = PublishedFilters::load(before_dir.path(), &map_before);
+    if corrupt_filter {
+        filters.filters.get_mut(&(SHARDS - 1)).unwrap().push(0);
+    }
     let map_bytes = serde_json::to_vec(&map_before).unwrap().len() as u64;
     let error = tokio::task::spawn_blocking(move || {
         let client = reqwest::blocking::Client::new();
