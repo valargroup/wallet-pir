@@ -191,6 +191,21 @@ fn execute(
     unreachable!("attempts is positive")
 }
 
+fn response_body(response: reqwest::blocking::Response, stage: &str) -> Result<Vec<u8>, BoxError> {
+    let limit = match stage {
+        "parent_manifest" => 2 * 1024 * 1024,
+        "parent_filters" => transparent_filter::experimental_parent::LIMITS.max_bytes,
+        _ => return Ok(response.bytes()?.to_vec()),
+    };
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    response.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err("experimental parent response exceeds size limit".into());
+    }
+    Ok(bytes)
+}
+
 fn execute_once(
     request: reqwest::blocking::RequestBuilder,
     stage: &'static str,
@@ -202,7 +217,7 @@ fn execute_once(
         let response = request.send()?;
         return match binding {
             Some((shard, revision)) => checked(response, shard, revision),
-            None => Ok(response.error_for_status()?.bytes()?.to_vec()),
+            None => response_body(response.error_for_status()?, stage),
         };
     }
     let started = Instant::now();
@@ -218,7 +233,7 @@ fn execute_once(
             .get("retry-after")
             .and_then(|h| h.to_str().ok())
             .map(str::to_owned);
-        let body = response.bytes()?.to_vec();
+        let body = response_body(response, stage)?;
         bytes_down = body.len() as u64;
         if let Some((shard, revision)) = binding {
             if !code.is_success() {
@@ -406,7 +421,12 @@ impl ShardTransport for HttpShardTransport {
 }
 
 /// The public filter origin over HTTP: the map and each shard's filter.
+#[path = "experimental_parent_http.rs"]
+mod experimental_parent_http;
+use experimental_parent_http::ParentExperiment;
+
 pub struct HttpFilterSource {
+    parent_experiments: Vec<ParentExperiment>,
     base: String,
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
@@ -415,8 +435,17 @@ pub struct HttpFilterSource {
 }
 
 impl HttpFilterSource {
+    /// Explicit research opt-in. The geometry prevents archive discovery from
+    /// adding any requests to wallets that only need recent history.
+    pub fn with_parent_experiment(mut self, manifest_url: String, geometry: String) -> Self {
+        self.parent_experiments
+            .push(ParentExperiment::new(manifest_url, geometry));
+        self
+    }
+
     pub fn new(base_url: impl Into<String>, options: &HttpOptions) -> Result<Self, BoxError> {
         Ok(Self {
+            parent_experiments: Vec::new(),
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
             observer: None,
@@ -456,6 +485,40 @@ impl HttpFilterSource {
 }
 
 impl FilterSource for HttpFilterSource {
+    fn uses_parents(&self) -> bool {
+        !self.parent_experiments.is_empty()
+    }
+    fn prepare_parents(
+        &mut self,
+        map: &transparent_filter::ShardMap,
+        uncached: &[u64],
+        store: &mut dyn crate::WalletStore,
+    ) -> Result<u64, BoxError> {
+        let mut states = std::mem::take(&mut self.parent_experiments);
+        let result = states.iter_mut().try_fold(0, |cost, state| {
+            Ok(cost + state.prepare(self, map, uncached, store)?)
+        });
+        self.parent_experiments = states;
+        result
+    }
+    fn parent_negative(
+        &mut self,
+        map: &transparent_filter::ShardMap,
+        id: u64,
+        scripts: &[Vec<u8>],
+        store: &mut dyn crate::WalletStore,
+    ) -> Result<(bool, u64), BoxError> {
+        let mut states = std::mem::take(&mut self.parent_experiments);
+        let result = states
+            .iter_mut()
+            .try_fold((false, 0), |(negative, cost), state| {
+                let (next, bytes) = state.negative(self, map, id, scripts, store)?;
+                Ok((negative || next, cost + bytes))
+            });
+        self.parent_experiments = states;
+        result
+    }
+
     fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = execute(
             self.client.get(format!("{}/v1/filters/shards", self.base)),

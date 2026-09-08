@@ -4,6 +4,10 @@ Updated 2026-09-08 against source `6ff2bfe`. The user accepted the [deployment t
 
 ## Sequence and critical path
 
+Optional parent-filter experiment: the [full-journal sweep and HTTP prototype](evidence/parent-filters-2026-09-08/README.md) are implemented. Recent direct retrieval wins the offline objective; archive K=8/M=100/P=6 is provisional. The baseline warm-up timed out on a 530,514-event wallet, before candidate measurements.
+
+- [ ] Establish a baseline completion budget for that workload, then repeat the same frozen finalists and paired seeds under identical limits. Require the recent latency and total-byte gates before adopting parent parameters. This optional experiment does not change the deployment target.
+
 Deliver documentation first, then verified inventory and dataset, mixed census, full-chain correctness pilot, fleet/wallet prerequisites, target-host load tests, and staged activation. The optional narrower recent directory must not block the initial deployment. Do not provision the full fleet before mixed-set sizing and target-host measurements justify it.
 
 Suggested reviewable changes:

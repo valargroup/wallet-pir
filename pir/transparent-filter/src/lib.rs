@@ -15,6 +15,7 @@ pub mod build_filter;
 pub mod client;
 pub mod digest;
 pub mod envelope;
+pub mod experimental_parent;
 pub mod error;
 pub mod hash;
 #[cfg(feature = "client")]

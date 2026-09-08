@@ -861,6 +861,21 @@ pub fn sync_into<S: WalletStore>(
             }
         }
 
+        if filters.uses_parents() {
+            let mut uncached = Vec::new();
+            for index in work.keys() {
+                let entry = &active.shards[*index];
+                if store
+                    .filter(&entry.manifest_digest, &entry.filter_hash)?
+                    .is_none()
+                {
+                    uncached.push(entry.shard_id);
+                }
+            }
+            charges.filter_bytes += filters
+                .prepare_parents(&active, &uncached, store)
+                .map_err(|e| SyncError::Transport(e.to_string()))?;
+        }
         let mut index_iter: Vec<usize> = work.keys().copied().collect();
         let mut position = 0usize;
         while position < index_iter.len() {
@@ -1158,57 +1173,70 @@ fn read_shard_into<S: WalletStore>(
             ))
         }
     }
-    // Every filter in range is downloaded, matched or not; a filter the store
-    // already holds under this revision and digest is reused.
-    let bytes = match store.filter(&entry.manifest_digest, &entry.filter_hash)? {
-        Some(bytes) => bytes,
-        None => {
-            let (bytes, cost) = filters.filter(entry.shard_id).map_err(|error| {
-                SyncError::Transport(crate::transport::describe_error(error.as_ref()))
-            })?;
-            charges.filter_bytes += cost;
-            // Bind the bytes to the map before believing anything they say.
-            if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
-                // The public filter URL is shard-addressed: activation may
-                // have replaced it since this map was fetched. Never cache or
-                // match these bytes. The bounded stale-revision path requires
-                // a changed, validated map before retrying; an unchanged map
-                // still fails, including when the filter was simply corrupt.
-                return Err(SyncError::StaleRevision {
-                    shard_id: entry.shard_id,
-                    stale: StaleRevision {
-                        shard_id: entry.shard_id,
-                        revision: entry.manifest_digest.clone(),
-                        map_sha256: None,
-                    },
-                    refreshes: 0,
-                });
-            }
-            store.put_filter(
-                &entry.manifest_digest,
-                &entry.filter_hash,
-                entry.sealed,
-                &bytes,
-            )?;
-            bytes
-        }
+    // Ordinary sources download every filter in range. The explicit experiment
+    // may establish a parent negative; both paths use the same bounded commit.
+    let cached = store.filter(&entry.manifest_digest, &entry.filter_hash)?;
+    let (parent_negative, parent_cost) = if cached.is_none() {
+        filters
+            .parent_negative(map, entry.shard_id, scripts, store)
+            .map_err(|e| SyncError::Transport(e.to_string()))?
+    } else {
+        (false, 0)
     };
-    charges.filters_checked += 1;
-    let validated = validate_filter(&bytes, FilterLimits::default())?;
-    let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
-    let key = ShardKey::derive(
-        &map.profile,
-        genesis,
-        entry.shard_id,
-        entry.start_height,
-        entry.end_height,
-        terminal,
-    );
-    let owned: Vec<ScriptBytes> = scripts
-        .iter()
-        .map(|script| ScriptBytes::new(script.clone()))
-        .collect();
-    let matches = transparent_filter::match_range_scripts(&validated, key, &owned)?;
+    charges.filter_bytes += parent_cost;
+    let matches = if parent_negative {
+        Vec::new()
+    } else {
+        let bytes = match cached {
+            Some(bytes) => bytes,
+            None => {
+                let (bytes, cost) = filters.filter(entry.shard_id).map_err(|error| {
+                    SyncError::Transport(crate::transport::describe_error(error.as_ref()))
+                })?;
+                charges.filter_bytes += cost;
+                // Bind the bytes to the map before believing anything they say.
+                if transparent_filter::filter_hash(&bytes).to_display_hex() != entry.filter_hash {
+                    // The public filter URL is shard-addressed: activation may
+                    // have replaced it since this map was fetched. Never cache or
+                    // match these bytes. The bounded stale-revision path requires
+                    // a changed, validated map before retrying; an unchanged map
+                    // still fails, including when the filter was simply corrupt.
+                    return Err(SyncError::StaleRevision {
+                        shard_id: entry.shard_id,
+                        stale: StaleRevision {
+                            shard_id: entry.shard_id,
+                            revision: entry.manifest_digest.clone(),
+                            map_sha256: None,
+                        },
+                        refreshes: 0,
+                    });
+                }
+                store.put_filter(
+                    &entry.manifest_digest,
+                    &entry.filter_hash,
+                    entry.sealed,
+                    &bytes,
+                )?;
+                bytes
+            }
+        };
+        charges.filters_checked += 1;
+        let validated = validate_filter(&bytes, FilterLimits::default())?;
+        let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
+        let key = ShardKey::derive(
+            &map.profile,
+            genesis,
+            entry.shard_id,
+            entry.start_height,
+            entry.end_height,
+            terminal,
+        );
+        let owned: Vec<ScriptBytes> = scripts
+            .iter()
+            .map(|script| ScriptBytes::new(script.clone()))
+            .collect();
+        transparent_filter::match_range_scripts(&validated, key, &owned)?
+    };
     if matches.is_empty() {
         // A genuinely empty range for every script here: coverage advances
         // with no private request.
