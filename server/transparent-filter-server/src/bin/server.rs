@@ -26,8 +26,9 @@ struct Cli {
     listen: SocketAddr,
     #[arg(long, default_value = "http://127.0.0.1:8232")]
     zakura_rpc_url: String,
-    #[arg(long)]
-    zakura_cookie: PathBuf,
+    /// Not needed to check a shard directory, which reads no node.
+    #[arg(long, required_unless_present = "check_shard_dir")]
+    zakura_cookie: Option<PathBuf>,
     #[arg(long, default_value = "./transparent-filter-data")]
     data_dir: PathBuf,
     /// First height to publish a filter for. Defaults to Ironwood activation.
@@ -87,7 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
 
-    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+    let cookie = cli
+        .zakura_cookie
+        .as_ref()
+        .ok_or("--zakura-cookie is required to serve")?;
+    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, cookie)?;
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a store built against one chain must never be served as another.
     let genesis_hash = zakura.genesis_hash().await?;
