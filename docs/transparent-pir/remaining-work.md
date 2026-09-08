@@ -8,7 +8,7 @@ Deliver documentation first, then verified inventory and dataset, mixed census, 
 
 Suggested reviewable changes:
 
-1. Documentation consolidation (this change).
+1. Documentation consolidation: `fe72ecc`; link validation `make check-docs`.
 2. Inventory/provenance report and workflow input reconciliation.
 3. Mixed-tier measurement and publication tooling parity.
 4. Wallet manifest validation and early request admission.

@@ -61,6 +61,13 @@ The filter service currently ships through the Enhance deployment workflow. A fi
 
 The journal's start height is persistent identity, not a resume cursor. Read metadata before starting ingestion; a genesis journal requires `start_height=0`. A mismatched start can set the old journal aside. Keep the workflow mismatch guard and resume from committed next height. Publication uses the read-only journal-opening path.
 
+Ingest reads the chain from the node's own RocksDB (`--state-dir`, the
+workflow's `state_dir` input, `/root/.cache/zakura` on the coordinator) as a
+read-only secondary instance; previous outputs resolve through the node's
+transaction index. Omitting `state_dir` selects the JSON-RPC path, which is
+roughly a hundred times slower and exists only so an old dispatch keeps its
+meaning. Resume a genesis journal with `start_height=0` and `state_dir` set.
+
 Historical reports mention Terraform state drift, unintended transparent-spend provisioning, SSH firewall drift, volume lookup mismatch and stale SSH host keys. Re-verify these as preflight findings rather than blindly following archived repair commands. Inspect the saved plan and protect the shared node/volume and Enhance services.
 
 Freeze the initial cutoff for the pilot. Derive six calendar months from the pinned UTC anchor timestamp with a documented month-end rule and a deterministic height selection; record the chosen height instead of recalculating it each publish. Enforce a forced shard boundary there. Do not use approximate block counts as calendar time.
