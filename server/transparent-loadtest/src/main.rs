@@ -62,6 +62,11 @@ struct Args {
     /// Stop stepping when any ordinary class's p99 sync time exceeds this.
     #[arg(long)]
     max_p99_sync_s: Option<f64>,
+    /// Private queries one sync may spend before it stops as incomplete; the
+    /// wallet's own work budget. Unset is unlimited, and one script with a
+    /// million events then holds a step for hours.
+    #[arg(long)]
+    max_queries: Option<u64>,
     /// Only these classes, comma separated.
     #[arg(long, value_delimiter = ',')]
     classes: Option<Vec<String>>,
@@ -321,6 +326,10 @@ fn run_client(
         .filter_url
         .clone()
         .unwrap_or_else(|| args.shard_url.clone());
+    let limits = WorkLimits {
+        max_queries: args.max_queries,
+        max_private_bytes: None,
+    };
     let attempt = || -> anyhow::Result<(bool, String, u64)> {
         let mut transport = Counting {
             inner: HttpShardTransport::new(&args.shard_url, &options)
@@ -347,7 +356,7 @@ fn run_client(
                     &mut provider,
                     &mut filters,
                     &mut transport,
-                    &WorkLimits::UNLIMITED,
+                    &limits,
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 let _ = std::fs::remove_file(&path);
@@ -364,7 +373,7 @@ fn run_client(
                     &mut provider,
                     &mut filters,
                     &mut transport,
-                    &WorkLimits::UNLIMITED,
+                    &limits,
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 (report.completion == Completion::Complete, digest, events)
@@ -529,12 +538,13 @@ async fn main() -> anyhow::Result<()> {
     }
     let clients: Vec<SampleClient> = sample
         .clients
-        .into_iter()
+        .iter()
         .filter(|c| {
             args.classes
                 .as_ref()
                 .is_none_or(|wanted| wanted.contains(&c.class))
         })
+        .cloned()
         .collect();
     if clients.is_empty() {
         bail!("no clients selected");
@@ -659,6 +669,22 @@ async fn main() -> anyhow::Result<()> {
             "metrics_before": metrics_before,
             "metrics_after": metrics_after,
         }));
+        // The report so far, so a run stopped early still leaves its steps.
+        write_report(
+            &args,
+            &map,
+            &tip,
+            &sample,
+            &sample_sha256,
+            &filter_url,
+            &geometry.schema,
+            clients.len(),
+            &steps_out,
+            None,
+            None,
+            started_all,
+            true,
+        )?;
         let mut reason = None;
         if error_rate > args.max_error_rate {
             reason = Some(format!(
@@ -687,6 +713,42 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    write_report(
+        &args,
+        &map,
+        &tip,
+        &sample,
+        &sample_sha256,
+        &filter_url,
+        &geometry.schema,
+        clients.len(),
+        &steps_out,
+        stopped_at,
+        stop_reason,
+        started_all,
+        false,
+    )?;
+    Ok(())
+}
+
+/// Writes the report; called after every step so an interrupted run keeps
+/// what it measured, and once more at the end with `in_progress` false.
+#[allow(clippy::too_many_arguments)]
+fn write_report(
+    args: &Args,
+    map: &ShardMap,
+    tip: &transparent_filter::ShardMapEntry,
+    sample: &Sample,
+    sample_sha256: &str,
+    filter_url: &str,
+    schema: &str,
+    clients: usize,
+    steps: &[serde_json::Value],
+    stopped_at: Option<usize>,
+    stop_reason: Option<String>,
+    started_all: Instant,
+    in_progress: bool,
+) -> anyhow::Result<()> {
     let report = serde_json::json!({
         "schema": "transparent-loadtest-v1",
         "run_id": args.run_id,
@@ -696,7 +758,7 @@ async fn main() -> anyhow::Result<()> {
         "shard_url": args.shard_url,
         "filter_url": filter_url,
         "set": {
-            "schema": geometry.schema,
+            "schema": schema,
             "genesis_hash": map.genesis_hash,
             "network": map.network,
             "profile": map.profile,
@@ -704,14 +766,16 @@ async fn main() -> anyhow::Result<()> {
             "anchor_height": tip.end_height,
             "anchor_hash": tip.terminal_block_hash,
             "cutoff_height": sample.cutoff_height,
+            "max_queries_per_sync": args.max_queries,
             "shards": map.shards.len(),
             "geometries": map.seal.keys().collect::<Vec<_>>(),
         },
-        "sample": {"path": args.sample, "sha256": sample_sha256, "clients": clients.len()},
+        "sample": {"path": args.sample, "sha256": sample_sha256, "clients": clients},
         "host": {"sku": args.host_sku, "region": args.host_region},
         "client": {"label": args.client_label, "store": if args.store_dir.is_some() { "sqlite" } else { "memory" }},
-        "steps": steps_out,
+        "steps": steps,
         "stopped_at_concurrency": stopped_at,
+        "in_progress": in_progress,
         "stop_reason": stop_reason,
         "total_seconds": started_all.elapsed().as_secs_f64(),
         "limitations": [
@@ -724,6 +788,12 @@ async fn main() -> anyhow::Result<()> {
     match &args.json_out {
         Some(path) => std::fs::write(path, &text)?,
         None => println!("{text}"),
+    }
+    let text = serde_json::to_string_pretty(&report)?;
+    match &args.json_out {
+        Some(path) => std::fs::write(path, &text)?,
+        None if !in_progress => println!("{text}"),
+        None => {}
     }
     Ok(())
 }

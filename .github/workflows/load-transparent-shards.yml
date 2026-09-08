@@ -53,6 +53,11 @@ on:
         required: false
         default: ""
         type: string
+      max_queries:
+        description: Private queries one sync may spend before stopping as incomplete; blank is unlimited
+        required: false
+        default: "1500"
+        type: string
       metrics_url:
         description: Scrape this origin's /metrics at step boundaries; blank skips
         required: false
@@ -101,11 +106,13 @@ jobs:
           MIN_COMPLETED: ${{ inputs.min_completed_per_class }}
           CLASSES: ${{ inputs.classes }}
           MAX_P99: ${{ inputs.max_p99_sync_s }}
+          MAX_QUERIES: ${{ inputs.max_queries }}
           METRICS_URL: ${{ inputs.metrics_url }}
           RUN_ID: ${{ inputs.run_id }}
           HOST_SKU: ${{ inputs.host_sku }}
         run: |
           set -euo pipefail
+          [[ -z "$MAX_QUERIES" || "$MAX_QUERIES" =~ ^[0-9]+$ ]] || { echo "max_queries must be a number or blank"; exit 1; }
           url='^https?://[A-Za-z0-9.:_-]+(/[A-Za-z0-9._/-]*)?$'
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a full commit SHA"; exit 1; }
           [[ "$SHARD_URL" =~ $url ]] || { echo "shard_url must be an http(s) origin"; exit 1; }
@@ -145,6 +152,7 @@ jobs:
           MIN_COMPLETED: ${{ inputs.min_completed_per_class }}
           CLASSES: ${{ inputs.classes }}
           MAX_P99: ${{ inputs.max_p99_sync_s }}
+          MAX_QUERIES: ${{ inputs.max_queries }}
           METRICS_URL: ${{ inputs.metrics_url }}
           STORE: ${{ inputs.store }}
           RUN_ID: ${{ inputs.run_id }}
@@ -162,6 +170,7 @@ jobs:
           [[ -n "$FILTER_URL" ]] && ARGS+=(--filter-url "$FILTER_URL")
           [[ -n "$CLASSES" ]] && ARGS+=(--classes "$CLASSES")
           [[ -n "$MAX_P99" ]] && ARGS+=(--max-p99-sync-s "$MAX_P99")
+          [[ -n "$MAX_QUERIES" ]] && ARGS+=(--max-queries "$MAX_QUERIES")
           [[ -n "$METRICS_URL" ]] && ARGS+=(--metrics-url "$METRICS_URL")
           [[ -n "$HOST_SKU" ]] && ARGS+=(--host-sku "$HOST_SKU")
           if [[ "$STORE" == "sqlite" ]]; then mkdir -p load/stores; ARGS+=(--store-dir load/stores); fi
