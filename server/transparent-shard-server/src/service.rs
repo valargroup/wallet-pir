@@ -395,6 +395,7 @@ impl ServiceState {
             prunable_revisions: inner.set.prunable().len() as u64,
             cache_budget_bytes: inner.cache.budget(),
             process_rss_bytes: crate::procmem::process_rss_bytes(),
+            process_cpu: crate::procmem::process_cpu(),
             cgroup_memory_bytes: crate::procmem::cgroup_memory_bytes(),
         }
     }
@@ -921,6 +922,17 @@ async fn setup(
 }
 
 async fn query(
+    state: State<ServiceState>,
+    path: AxumPath<(u64, String, String)>,
+    request: Request,
+) -> Response {
+    let mut timer = crate::metrics::QueryTimer::new(state.0.inner.metrics.clone());
+    let response = query_inner(state, path, request).await;
+    timer.finish(response.status().is_success());
+    response
+}
+
+async fn query_inner(
     State(state): State<ServiceState>,
     AxumPath((shard_id, digest, table)): AxumPath<(u64, String, String)>,
     request: Request,
@@ -1064,7 +1076,9 @@ async fn query(
     // if the client goes away meanwhile the evaluation still finishes and is
     // discarded, but the slot is released when it does, not when the dropped
     // future would have been polled.
+    let evaluation_metrics = metrics.clone();
     let evaluated = tokio::task::spawn_blocking(move || {
+        let _timer = evaluation_metrics.evaluation_seconds.timer();
         let mut answer = Vec::new();
         for handle in &handles {
             match handle.get().evaluate(&shared, binding, &body) {

@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Transparent PIR simulation</title>
+  <style>
+    :root {
+      font:
+        15px/1.55 system-ui,
+        sans-serif;
+      color: #142b3b;
+      background: #f2f5f8;
+    }
+    body {
+      max-width: 1440px;
+      margin: auto;
+      padding: 32px;
+    }
+    h1 {
+      font-size: 30px;
+      margin: 4px 0;
+    }
+    h2 {
+      font-size: 21px;
+      margin-top: 32px;
+    }
+    h3 {
+      font-size: 16px;
+      margin: 0 0 10px;
+    }
+    .muted,
+    small {
+      color: #526779;
+    }
+    .cards,
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .card,
+    article {
+      background: white;
+      border: 1px solid #dce3eb;
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .charts {
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+    }
+    .value {
+      font-size: 28px;
+      font-weight: 650;
+    }
+    .pass {
+      color: #137348;
+    }
+    .fail {
+      color: #b32f35;
+    }
+    .notice {
+      border-left: 4px solid #d69a21;
+      padding: 12px 18px;
+      background: #fff7df;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+    }
+    th,
+    td {
+      text-align: left;
+      border-bottom: 1px solid #dde4eb;
+      padding: 9px;
+      vertical-align: top;
+    }
+    th {
+      background: #edf2f6;
+    }
+    td.num {
+      text-align: right;
+    }
+    .scroll {
+      overflow: auto;
+      max-height: 650px;
+    }
+    canvas {
+      width: 100%;
+      height: 210px;
+    }
+    select,
+    input,
+    button {
+      font: inherit;
+      padding: 6px;
+      border: 1px solid #acbcca;
+      border-radius: 5px;
+      background: white;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+    .bar {
+      height: 12px;
+      border-radius: 3px;
+      background: #168d77;
+      min-width: 2px;
+    }
+    .bar.failed,
+    .bar.timed_out,
+    .bar.cancelled,
+    .bar.incomplete,
+    .bar.mismatched {
+      background: #c75c45;
+    }
+    .timeline {
+      width: 240px;
+      min-width: 240px;
+    }
+    details {
+      margin: 12px 0;
+    }
+    a {
+      color: #126ca5;
+    }
+    .legend {
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    footer {
+      margin-top: 36px;
+      color: #526779;
+    }
+  </style>
+  <header>
+    <div class="muted">TRANSPARENT PIR · RECOVERY SIMULATION</div>
+    <h1 id="title"></h1>
+    <p id="subtitle"></p>
+  </header>
+  <div id="errors"></div>
+  <div class="cards" id="cards"></div>
+  <h2>Load and client resources</h2>
+  <p class="muted">
+    One-second samples. CPU is shown in cores consumed; RSS sums the supervisor
+    and current wallet workers. Request rates include retries. Payload upload is
+    submitted bytes, excluding HTTP/TLS overhead.
+  </p>
+  <p class="muted" id="resource-summary"></p>
+  <div class="charts" id="loadcharts"></div>
+  <h2>Wallet profiles</h2>
+  <p class="muted">
+    Latency percentiles include exact recoveries only. Fewer than 100 exact
+    completions are marked sparse. Failures and incomplete work remain in
+    outcome counts.
+  </p>
+  <div class="scroll"><table id="profiles"></table></div>
+  <h2>Wallet timelines</h2>
+  <p class="muted">
+    Bars run from actual worker start to terminal outcome. Start offset reveals
+    scheduling skew. Expand stages to see HTTP activity windows; overlapping
+    windows are not a decomposition of total time.
+  </p>
+  <label
+    >Profile
+    <select id="profilefilter">
+      <option value="">All</option>
+    </select></label
+  >
+  <label
+    >Outcome
+    <select id="outcomefilter">
+      <option value="">All</option>
+      <option>exact</option>
+      <option>mismatched</option>
+      <option>incomplete</option>
+      <option>failed</option>
+      <option>timed_out</option>
+      <option>cancelled</option>
+    </select></label
+  >
+  <div class="scroll"><table id="wallets"></table></div>
+  <h2>Per-wallet aggregates</h2>
+  <p class="muted">
+    Grouped by sample wallet across all recoveries, including sustained
+    replacements. HTTP time sums request durations; it is not wall-clock
+    recovery time. Exact latency excludes unsuccessful recoveries.
+  </p>
+  <div class="scroll"><table id="wallet-aggregates"></table></div>
+  <h2>Server APM</h2>
+  <p class="muted">
+    Each named target is scraped independently. All traffic reaching that worker
+    contributes, including unrelated clients. Queue depth includes waiting and
+    running requests. Cache reservations and process RSS measure different
+    things. Latency quantiles come from interval histogram deltas, never
+    averaged across workers.
+  </p>
+  <div id="apm"></div>
+  <h2>Payload accounting</h2>
+  <div class="scroll"><table id="stages"></table></div>
+  <h2>Provenance and limits</h2>
+  <p>
+    Every measured recovery uses an independent store seeded with prior ledger
+    events when its window starts after the publication start. Filter/setup
+    caches start cold. Preparation reports are separate; preparation can warm
+    server caches. The runner does not reset server caches. No socket-level,
+    TLS, or mobile-network measurements are inferred. A client timeout may leave
+    an already admitted server evaluation finishing in the background. Missing
+    metrics are unavailable, never zero.
+  </p>
+  <details>
+    <summary>Resolved scenario, publication, and build</summary>
+    <pre id="provenance"></pre>
+  </details>
+  <footer>
+    Standalone report · raw evidence lives beside this file in JSON and NDJSON ·
+    no external assets
+  </footer>
+  <script type="application/json" id="data">
+    __REPORT_DATA__
+  </script>
+  <script>
+    "use strict";
+    const R = JSON.parse(document.getElementById("data").textContent),
+      S = R.summary || {},
+      start = R.started_at || R.created_at,
+      end = R.execution_finished_at || R.finished_at || start;
+    const $ = (id) => document.getElementById(id),
+      text = (el, s) => (el.textContent = s),
+      fmt = (n, d = 2) =>
+        n == null || !Number.isFinite(Number(n))
+          ? "unavailable"
+          : Number(n).toLocaleString(undefined, { maximumFractionDigits: d }),
+      secs = (n) => (n == null ? "—" : fmt(n) + " s"),
+      bytes = (n) => fmt(Number(n || 0) / 1048576) + " MiB";
+    function el(tag, parent, value) {
+      const e = document.createElement(tag);
+      if (value !== undefined) e.textContent = value;
+      if (parent) parent.append(e);
+      return e;
+    }
+    function table(id, headers, rows) {
+      const t = typeof id === "string" ? $(id) : id;
+      t.replaceChildren();
+      const head = el("tr", el("thead", t));
+      headers.forEach((h) => el("th", head, h));
+      const body = el("tbody", t);
+      for (const row of rows) {
+        const tr = el("tr", body);
+        for (const value of row) {
+          const td = el("td", tr);
+          if (value instanceof Node) td.append(value);
+          else td.textContent = value;
+        }
+      }
+    }
+    text($("title"), R.config.name);
+    text(
+      $("subtitle"),
+      `${R.config.mode} · ${Object.values(R.config.profiles).reduce((a, b) => a + b, 0)} configured slots · ${R.config.store} · ${new Date(R.created_at * 1000).toISOString()} · ${R.success ? "PASS" : "UNSUCCESSFUL / INCOMPLETE"}`,
+    );
+    $("subtitle").className = R.success ? "pass" : "fail";
+    for (const error of R.errors || [])
+      el("p", $("errors"), error).className = "notice";
+    if (R.interrupted)
+      el(
+        "p",
+        $("errors"),
+        "Run interrupted; started work remains in the outcomes.",
+      ).className = "notice";
+    for (const [label, value] of [
+      ["Exact recoveries", `${S.outcomes?.exact || 0} / ${S.started || 0}`],
+      ["Exact recoveries / second", fmt(S.exact_per_second)],
+      ["Load / drain", `${secs(S.load_seconds)} / ${secs(S.drain_seconds)}`],
+      [
+        "Exact during load / drain",
+        `${S.exact_during_load || 0} / ${S.exact_during_drain || 0}`,
+      ],
+    ]) {
+      const c = el("article", $("cards"));
+      el("small", c, label);
+      el("div", c, value).className = "value";
+    }
+    function chart(parent, title, series, unit = "") {
+      const card = el("article", parent);
+      el("h3", card, title);
+      const canvas = el("canvas", card);
+      canvas.setAttribute("aria-label", title);
+      const legend = el("div", card);
+      legend.className = "legend";
+      const colors = ["#137f75", "#3666b0", "#c26f2b", "#9649a5"];
+      series.forEach((s, i) => {
+        const l = el(
+          "span",
+          legend,
+          s.name +
+            (s.points.some((p) => Number.isFinite(p[1]))
+              ? "  "
+              : " (unavailable)  "),
+        );
+        l.style.color = colors[i % colors.length];
+      });
+      const points = series
+        .flatMap((s) => s.points)
+        .filter((p) => Number.isFinite(p[1]));
+      if (!points.length) {
+        el("p", card, "Unavailable: no compatible measurements.");
+        return;
+      }
+      function draw() {
+        const dpr = window.devicePixelRatio || 1,
+          w = canvas.clientWidth,
+          h = 210;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        const c = canvas.getContext("2d");
+        c.scale(dpr, dpr);
+        const left = 52,
+          top = 14,
+          right = w - 12,
+          bottom = h - 30;
+        const xmax = Math.max(1, end - start, ...points.map((p) => p[0])),
+          ymax = Math.max(0.001, ...points.map((p) => p[1])) * 1.1;
+        c.font = "11px system-ui";
+        c.strokeStyle = "#e1e6ec";
+        c.fillStyle = "#526779";
+        for (let i = 0; i < 5; i++) {
+          const y = bottom - ((bottom - top) * i) / 4;
+          c.beginPath();
+          c.moveTo(left, y);
+          c.lineTo(right, y);
+          c.stroke();
+          const tick = (ymax * i) / 4;
+          const label =
+            tick === 0
+              ? "0"
+              : tick < 0.01
+                ? tick.toExponential(1)
+                : fmt(tick, tick < 1 ? 3 : 1);
+          c.fillText(label, 2, y + 4);
+        }
+        c.fillText("0 s", left, h - 8);
+        c.fillText(fmt(xmax, 0) + " s", right - 50, h - 8);
+        c.fillText(unit, left, 10);
+        series.forEach((s, i) => {
+          c.strokeStyle = colors[i % colors.length];
+          c.lineWidth = 1.8;
+          c.beginPath();
+          let connected = false;
+          for (const [x, y] of s.points) {
+            if (!Number.isFinite(y)) {
+              connected = false;
+              continue;
+            }
+            const px = left + (x / xmax) * (right - left),
+              py = bottom - (y / ymax) * (bottom - top);
+            if (connected) c.lineTo(px, py);
+            else c.moveTo(px, py);
+            connected = true;
+          }
+          c.stroke();
+        });
+      }
+      draw();
+      new ResizeObserver(draw).observe(canvas);
+    }
+    text(
+      $("resource-summary"),
+      "Run " +
+        R.run_id +
+        " · Sampled peak client RSS: " +
+        (S.client_peak_rss_bytes == null
+          ? "unavailable"
+          : bytes(S.client_peak_rss_bytes)),
+    );
+    const hosts = R.metrics.filter((m) => m.target === "load-client");
+    const transitions = R.users
+      .flatMap((u) => [
+        [u.started_at || u.scheduled_at, 1],
+        [u.finished_at || end, -1],
+      ])
+      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    let active = 0;
+    const occupancy = [[0, 0]];
+    for (const [at, change] of transitions) {
+      occupancy.push([at - start, active]);
+      active += change;
+      occupancy.push([at - start, active]);
+    }
+    chart(
+      $("loadcharts"),
+      "Active users",
+      [{ name: "Observed recovery starts / finishes", points: occupancy }],
+      "users",
+    );
+    const bins = Array.from(
+      { length: Math.max(1, Math.ceil(end - start)) },
+      (_, s) => [s, R.seconds?.[s] || { requests: 0, request_seconds: 0 }],
+    );
+    chart(
+      $("loadcharts"),
+      "HTTP requests",
+      [
+        { name: "Attempts/s", points: bins.map(([s, v]) => [s, v.requests]) },
+        {
+          name: "Failures/s",
+          points: bins.map(([s, v]) => [s, v.failures || 0]),
+        },
+      ],
+      "requests/s",
+    );
+    chart(
+      $("loadcharts"),
+      "Payload throughput",
+      [
+        {
+          name: "Upload",
+          points: bins.map(([s, v]) => [s, (v.bytes_up || 0) / 1048576]),
+        },
+        {
+          name: "Download",
+          points: bins.map(([s, v]) => [s, (v.bytes_down || 0) / 1048576]),
+        },
+      ],
+      "MiB/s",
+    );
+    chart(
+      $("loadcharts"),
+      "Client RSS",
+      [
+        {
+          name: "Supervisor + workers",
+          points: hosts.map((m) => [
+            m.at - start,
+            m.processes.reduce((a, p) => a + p.rss_bytes, 0) / 1048576,
+          ]),
+        },
+      ],
+      "MiB",
+    );
+    let lastHost = null;
+    const cpus = hosts.map((m) => {
+      let cpu = null;
+      if (lastHost) {
+        const dt = m.at - lastHost.at;
+        if (dt > 0) {
+          let matched = 0;
+          cpu = 0;
+          for (const p of m.processes) {
+            const prev = lastHost.processes.find(
+              (q) => q.pid === p.pid && q.start_time === p.start_time,
+            );
+            if (prev && p.cpu_seconds >= prev.cpu_seconds) {
+              cpu += (p.cpu_seconds - prev.cpu_seconds) / dt;
+              matched++;
+            }
+          }
+          if (!matched) cpu = null;
+        }
+      }
+      lastHost = m;
+      return [m.at - start, cpu];
+    });
+    chart(
+      $("loadcharts"),
+      "Client CPU",
+      [{ name: "Sampled cores (process churn can undercount)", points: cpus }],
+      "cores",
+    );
+    chart(
+      $("loadcharts"),
+      "Client HTTP attempt latency",
+      [
+        {
+          name: "Mean completed attempt",
+          points: bins.map(([s, v]) => [s, v.request_seconds / v.requests]),
+        },
+      ],
+      "seconds",
+    );
+    table(
+      "profiles",
+      [
+        "Profile",
+        "Started",
+        "Exact",
+        "Other",
+        "p50",
+        "p95",
+        "p99",
+        "Unsuccessful max",
+        "Payload totals / stages",
+        "Evidence",
+      ],
+      Object.entries(S.profiles || {}).map(([name, v]) => {
+        const detail = el("details"),
+          stages = Object.values(v.stages || {});
+        el(
+          "summary",
+          detail,
+          bytes(stages.reduce((a, s) => a + (s.bytes_up || 0), 0)) +
+            " ↑ / " +
+            bytes(stages.reduce((a, s) => a + (s.bytes_down || 0), 0)) +
+            " ↓",
+        );
+        el("pre", detail, JSON.stringify(v.stages, null, 2));
+        return [
+          name,
+          v.started,
+          v.exact_seconds.n,
+          v.unsuccessful_seconds.n,
+          secs(v.exact_seconds.p50),
+          secs(v.exact_seconds.p95),
+          secs(v.exact_seconds.p99),
+          secs(v.unsuccessful_seconds.max),
+          detail,
+          v.exact_seconds.sparse ? "Sparse (<100 exact)" : "≥100 exact",
+        ];
+      }),
+    );
+    for (const profile of Object.keys(R.config.profiles))
+      el("option", $("profilefilter"), profile).value = profile;
+    function wallets() {
+      const users = R.users.filter(
+        (u) =>
+          (!$("profilefilter").value ||
+            u.profile === $("profilefilter").value) &&
+          (!$("outcomefilter").value || u.outcome === $("outcomefilter").value),
+      );
+      table(
+        "wallets",
+        [
+          "User / sample",
+          "Profile",
+          "Outcome",
+          "Start offset",
+          "Duration",
+          "Events / expected",
+          "Event check / unresolved",
+          "Prior events",
+          "HTTP requests / failures",
+          "Upload / download",
+          "HTTP time",
+          "Timeline",
+          "Stages / error",
+        ],
+        users.map((u) => {
+          const timeline = el("div");
+          timeline.className = "timeline";
+          const bar = el("div", timeline);
+          bar.className = "bar " + u.outcome;
+          bar.style.marginLeft =
+            Math.max(
+              0,
+              (((u.started_at || u.scheduled_at) - start) /
+                Math.max(1, end - start)) *
+                100,
+            ) + "%";
+          bar.style.width =
+            Math.max(0.3, ((u.seconds || 0) / Math.max(1, end - start)) * 100) +
+            "%";
+          const detail = el("details");
+          el("summary", detail, "HTTP stages");
+          el(
+            "pre",
+            detail,
+            JSON.stringify(
+              { stages: u.stages, error: u.error, completion: u.completion },
+              null,
+              2,
+            ),
+          );
+          return [
+            `${u.id} / ${u.sample_index}`,
+            u.profile,
+            u.outcome,
+            secs((u.started_at || u.scheduled_at) - start),
+            secs(u.seconds),
+            `${u.events ?? "unknown"} / ${u.expected_events}`,
+            `${u.events_exact === true ? "Match" : u.events_exact === false ? "Mismatch" : "Unknown"} / ${u.unresolved_spends ?? "unknown"}`,
+            u.seeded_events ?? "unknown",
+            `${u.http_totals?.calls ?? 0} / ${u.http_totals?.failures ?? 0}`,
+            `${bytes(u.http_totals?.bytes_up || 0)} / ${bytes(u.http_totals?.bytes_down || 0)}`,
+            secs(u.http_totals?.seconds),
+            timeline,
+            detail,
+          ];
+        }),
+      );
+    }
+    table(
+      "wallet-aggregates",
+      [
+        "Sample",
+        "Profile",
+        "Scripts",
+        "Recoveries",
+        "Outcomes",
+        "Exact p50 / p95 / p99",
+        "Requests / failures",
+        "Upload / download",
+        "HTTP time",
+      ],
+      Object.entries(S.wallets || {}).map(([sample, w]) => [
+        sample,
+        w.profile,
+        w.script_count,
+        w.recoveries,
+        JSON.stringify(w.outcomes),
+        `${secs(w.exact_seconds.p50)} / ${secs(w.exact_seconds.p95)} / ${secs(w.exact_seconds.p99)}`,
+        `${w.http_totals.calls} / ${w.http_totals.failures}`,
+        `${bytes(w.http_totals.bytes_up)} / ${bytes(w.http_totals.bytes_down)}`,
+        secs(w.http_totals.seconds),
+      ]),
+    );
+    wallets();
+    $("profilefilter").onchange = wallets;
+    $("outcomefilter").onchange = wallets;
+    table(
+      "stages",
+      [
+        "Stage",
+        "Attempts",
+        "Upload",
+        "Download",
+        "HTTP seconds (sum)",
+        "503",
+        "409",
+        "Failures",
+      ],
+      Object.entries(S.stages || {}).map(([name, v]) => [
+        name,
+        v.calls,
+        bytes(v.bytes_up),
+        bytes(v.bytes_down),
+        secs(v.seconds),
+        v.http_503,
+        v.http_409,
+        v.failures,
+      ]),
+    );
+    __APM_SCRIPT__;
+    const targets = Object.keys(R.config.metrics_targets || {});
+    if (!targets.length)
+      el(
+        "p",
+        $("apm"),
+        "Unavailable: no worker metrics targets were configured.",
+      ).className = "notice";
+    for (const name of targets) {
+      el("h3", $("apm"), name);
+      const scrapes = R.metrics
+          .filter((m) => m.target === name && !m.processes)
+          .sort((a, b) => a.at - b.at),
+        failed = scrapes.filter((m) => m.error).length;
+      el(
+        "p",
+        $("apm"),
+        `${scrapes.length} scrapes · ${failed} unavailable · gaps or process/publication changes break rate and latency series.`,
+      );
+      if (!scrapes.some((s) => s.text)) {
+        el(
+          "p",
+          $("apm"),
+          "Unavailable: every scrape failed. See metrics.ndjson for the recorded errors.",
+        ).className = "notice";
+        continue;
+      }
+      const grid = el("div", $("apm"));
+      grid.className = "charts";
+      const points = (metric, rate = false, scale = 1) =>
+        metricPoints(scrapes, "transparent_shard_" + metric, rate, scale);
+      chart(
+        grid,
+        "Query throughput",
+        [
+          { name: "Answered/s", points: points("queries_total", true) },
+          { name: "Rejected/s", points: points("query_errors_total", true) },
+        ],
+        "queries/s",
+      );
+      chart(grid, "Queue and cache pressure", [
+        { name: "Waiting + running", points: points("query_queue_depth") },
+        { name: "Cache misses/s", points: points("cache_misses_total", true) },
+        {
+          name: "Queue rejections/s",
+          points: points("queue_rejections_total", true),
+        },
+      ]);
+      chart(
+        grid,
+        "Memory",
+        [
+          {
+            name: "Process RSS",
+            points: points("process_rss_bytes", false, 1048576),
+          },
+          {
+            name: "Cache reserved",
+            points: points("cache_resident_bytes", false, 1048576),
+          },
+          {
+            name: "Buffered bodies",
+            points: points("body_bytes_in_flight", false, 1048576),
+          },
+        ],
+        "MiB",
+      );
+      chart(
+        grid,
+        "Process CPU",
+        [{ name: "Cores", points: points("process_cpu_seconds_total", true) }],
+        "cores",
+      );
+      chart(
+        grid,
+        "p95 server timings",
+        [
+          {
+            name: "Successful query handler",
+            points: histogramPoints(
+              scrapes,
+              "transparent_shard_query_seconds",
+              "success",
+            ),
+          },
+          {
+            name: "Queue wait",
+            points: histogramPoints(
+              scrapes,
+              "transparent_shard_queue_wait_seconds",
+            ),
+          },
+          {
+            name: "Evaluation",
+            points: histogramPoints(
+              scrapes,
+              "transparent_shard_evaluation_seconds",
+            ),
+          },
+        ],
+        "seconds",
+      );
+      chart(grid, "Cache and builds", [
+        { name: "Hits/s", points: points("cache_hits_total", true) },
+        { name: "Builds/s", points: points("builds_total", true) },
+        { name: "Evictions/s", points: points("evictions_total", true) },
+      ]);
+      chart(grid, "Refusals and cancellation", [
+        { name: "Overloads/s", points: points("overloads_total", true) },
+        {
+          name: "Expired revision/s",
+          points: points("stale_revisions_total", true),
+        },
+        {
+          name: "Cancelled/s",
+          points: points("queries_cancelled_total", true),
+        },
+      ]);
+      chart(grid, "Warm state", [
+        { name: "Warm runtimes", points: points("warm_runtimes") },
+        { name: "Target runtimes", points: points("target_runtimes") },
+      ]);
+      chart(
+        grid,
+        "Cold build p95",
+        [
+          {
+            name: "Build",
+            points: histogramPoints(scrapes, "transparent_shard_build_seconds"),
+          },
+        ],
+        "seconds",
+      );
+    }
+    text(
+      $("provenance"),
+      JSON.stringify(
+        {
+          scenario: R.config,
+          publication: R.publication,
+          publication_stable: R.publication_stable,
+          sample_sha256: R.sample_sha256,
+          provenance: R.provenance,
+        },
+        null,
+        2,
+      ),
+    );
+  </script>
+</html>

@@ -8,7 +8,8 @@
 //! scrape time so a fleet's real headroom is on the dashboard beside the
 //! reservation, not inferred from it.
 //!
-//! Linux only; elsewhere every reading is `None` and the metrics are omitted.
+//! RSS and cgroup readings are Linux-only. CPU and process start time use
+//! sysinfo where available; unavailable readings are omitted.
 
 /// Resident set size of this process, in bytes.
 pub fn process_rss_bytes() -> Option<u64> {
@@ -70,4 +71,14 @@ pub fn cgroup_memory_bytes() -> Option<(u64, Option<u64>)> {
     {
         None
     }
+}
+
+/// Cumulative process CPU milliseconds and Unix process start time. Sampling a
+/// single process avoids treating a first-refresh CPU percentage as a real zero.
+pub fn process_cpu() -> Option<(u64, u64)> {
+    let pid = sysinfo::get_current_pid().ok()?;
+    let mut system = sysinfo::System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+    let process = system.process(pid)?;
+    Some((process.accumulated_cpu_time(), process.start_time()))
 }

@@ -1,0 +1,25 @@
+{
+  "schema": "transparent-scenario-v1",
+  "name": "20-user mixed recovery wave",
+  "mode": "wave",
+  "sample": "../../../docs/transparent-pir/evidence/workload-sample-2026-09-08/sample.json",
+  "shard_url": "https://transparent-pir.valargroup.dev",
+  "profiles": {
+    "unused": 2,
+    "small-active": 4,
+    "catch-up-1d": 2,
+    "catch-up-7d": 2,
+    "catch-up-30d": 2,
+    "restore-6m": 3,
+    "restore-old": 2,
+    "multi-script": 2,
+    "reused-tail": 1
+  },
+  "seed": 1,
+  "duration_seconds": 600,
+  "recovery_deadline_seconds": 600,
+  "request_timeout_seconds": 60,
+  "store": "sqlite",
+  "metrics_targets": {},
+  "notes": "Synthetic public-script workload, not population weights. Record target SKU, region, background traffic and observed cache state with the run. Add named full worker /metrics URLs or --metrics-target overrides."
+}

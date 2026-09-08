@@ -11,7 +11,8 @@ use crate::client::Table;
 pub use crate::init::parse_init;
 use crate::sync::ServiceGeometry;
 use crate::transport::{refusal, BoxError, FilterSource, ShardTransport};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// How the reference clients are built.
 #[derive(Clone, Debug)]
@@ -72,10 +73,91 @@ pub fn checked(
     .into())
 }
 
+/// One completed HTTP attempt. Contains no URL, query body, script or key.
+#[derive(Clone, Debug)]
+pub struct HttpObservation {
+    pub stage: &'static str,
+    pub status: Option<u16>,
+    pub elapsed: Duration,
+    /// Submitted request payload size; not a measurement of socket delivery.
+    pub bytes_up: u64,
+    /// Response payload bytes read, including error responses.
+    pub bytes_down: u64,
+    pub failed: bool,
+}
+
+/// Optional local observer. Called once per attempt, including transport errors.
+pub type HttpObserver = Arc<dyn Fn(HttpObservation) + Send + Sync>;
+
+fn execute(
+    request: reqwest::blocking::RequestBuilder,
+    stage: &'static str,
+    bytes_up: u64,
+    binding: Option<(u64, &str)>,
+    observer: &Option<HttpObserver>,
+) -> Result<Vec<u8>, BoxError> {
+    if observer.is_none() {
+        let response = request.send()?;
+        return match binding {
+            Some((shard, revision)) => checked(response, shard, revision),
+            None => Ok(response.error_for_status()?.bytes()?.to_vec()),
+        };
+    }
+    let started = Instant::now();
+    let mut status = None;
+    let mut bytes_down = 0;
+    let result = (|| {
+        let response = request.send()?;
+        let code = response.status();
+        status = Some(code.as_u16());
+        let public_error = response.error_for_status_ref().err();
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_owned);
+        let body = response.bytes()?.to_vec();
+        bytes_down = body.len() as u64;
+        if let Some((shard, revision)) = binding {
+            if !code.is_success() {
+                if let Some(error) = refusal(
+                    code.as_u16(),
+                    retry_after.as_deref(),
+                    &body,
+                    shard,
+                    revision,
+                ) {
+                    return Err(error);
+                }
+                return Err(format!(
+                    "shard {shard} revision {revision}: HTTP {code}: {}",
+                    String::from_utf8_lossy(&body)
+                )
+                .into());
+            }
+        } else if let Some(error) = public_error {
+            return Err(Box::new(error) as BoxError);
+        }
+        Ok(body)
+    })();
+    if let Some(observer) = observer {
+        observer(HttpObservation {
+            stage,
+            status,
+            elapsed: started.elapsed(),
+            bytes_up,
+            bytes_down,
+            failed: result.is_err(),
+        });
+    }
+    result
+}
+
 /// The private shard service over HTTP.
 pub struct HttpShardTransport {
     base: String,
     client: reqwest::blocking::Client,
+    observer: Option<HttpObserver>,
 }
 
 impl HttpShardTransport {
@@ -83,7 +165,14 @@ impl HttpShardTransport {
         Ok(Self {
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
+            observer: None,
         })
+    }
+
+    /// Attach an observer without changing request or retry behavior.
+    pub fn with_observer(mut self, observer: HttpObserver) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// Fetches and parses the init document.
@@ -95,26 +184,28 @@ impl HttpShardTransport {
 
 impl ShardTransport for HttpShardTransport {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
-        let bytes = self
-            .client
-            .get(format!("{}/v1/shards/init", self.base))
-            .send()?
-            .error_for_status()?
-            .bytes()?
-            .to_vec();
+        let bytes = execute(
+            self.client.get(format!("{}/v1/shards/init", self.base)),
+            "init",
+            0,
+            None,
+            &self.observer,
+        )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
     }
 
     fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
-        let response = self
-            .client
-            .get(format!(
+        let bytes = execute(
+            self.client.get(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/manifest",
                 self.base
-            ))
-            .send()?;
-        let bytes = checked(response, shard_id, revision)?;
+            )),
+            "manifest",
+            0,
+            Some((shard_id, revision)),
+            &self.observer,
+        )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
     }
@@ -126,15 +217,20 @@ impl ShardTransport for HttpShardTransport {
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
-        let response = self
-            .client
-            .get(format!(
+        let bytes = execute(
+            self.client.get(format!(
                 "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
                 table.as_str()
-            ))
-            .send()?;
-        let bytes = checked(response, shard_id, revision)?;
+            )),
+            match table {
+                Table::Directory => "setup_directory",
+                Table::Pages => "setup_pages",
+            },
+            0,
+            Some((shard_id, revision)),
+            &self.observer,
+        )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
     }
@@ -146,27 +242,30 @@ impl ShardTransport for HttpShardTransport {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError> {
-        let response = self
-            .client
-            .post(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
-                self.base,
-                table.as_str()
-            ))
-            .body(body.to_vec())
-            .send()?;
-        checked(response, shard_id, revision)
+        execute(
+            self.client
+                .post(format!(
+                    "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                    self.base,
+                    table.as_str()
+                ))
+                .body(body.to_vec()),
+            match table {
+                Table::Directory => "query_directory",
+                Table::Pages => "query_pages",
+            },
+            body.len() as u64,
+            Some((shard_id, revision)),
+            &self.observer,
+        )
     }
 }
 
 /// The public filter origin over HTTP: the map and each shard's filter.
-///
-/// Point it at the filter service or at the retrieval origin; both serve the
-/// same paths. A wallet that wants its public and private bytes on different
-/// network paths gives this a different base than the transport.
 pub struct HttpFilterSource {
     base: String,
     client: reqwest::blocking::Client,
+    observer: Option<HttpObserver>,
 }
 
 impl HttpFilterSource {
@@ -174,10 +273,17 @@ impl HttpFilterSource {
         Ok(Self {
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
+            observer: None,
         })
     }
 
-    /// Fetches and parses the map, returning it with its bytes' length.
+    /// Attach an observer without changing request or retry behavior.
+    pub fn with_observer(mut self, observer: HttpObserver) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    /// Fetches and validates the map, returning its payload length.
     pub fn map(&mut self) -> Result<(transparent_filter::ShardMap, u64), BoxError> {
         let (raw, len) = self.shard_map()?;
         let map: transparent_filter::ShardMap = serde_json::from_slice(&raw)?;
@@ -188,26 +294,68 @@ impl HttpFilterSource {
 
 impl FilterSource for HttpFilterSource {
     fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
-        let bytes = self
-            .client
-            .get(format!("{}/v1/filters/shards", self.base))
-            .send()?
-            .error_for_status()?
-            .bytes()?
-            .to_vec();
+        let bytes = execute(
+            self.client.get(format!("{}/v1/filters/shards", self.base)),
+            "map",
+            0,
+            None,
+            &self.observer,
+        )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
     }
 
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
-        let bytes = self
-            .client
-            .get(format!("{}/v1/filters/shards/{shard_id}/filter", self.base))
-            .send()?
-            .error_for_status()?
-            .bytes()?
-            .to_vec();
+        let bytes = execute(
+            self.client
+                .get(format!("{}/v1/filters/shards/{shard_id}/filter", self.base)),
+            "filters",
+            0,
+            None,
+            &self.observer,
+        )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::sync::Mutex;
+
+    #[test]
+    fn observes_success_refusal_payload_and_connection_failure_without_changing_results() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for (status, body) in [(200, "ok"), (503, "busy")] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 1024];
+                let _ = stream.read(&mut request).unwrap();
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed = events.clone();
+        let mut filters =
+            HttpFilterSource::new(format!("http://{address}"), &HttpOptions::default())
+                .unwrap()
+                .with_observer(Arc::new(move |o| observed.lock().unwrap().push(o)));
+        assert_eq!(filters.filter(0).unwrap().0, b"ok");
+        assert!(filters.filter(0).unwrap_err().to_string().contains("503"));
+        server.join().unwrap();
+        assert!(filters.filter(0).is_err());
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].status, Some(200));
+        assert_eq!(events[0].bytes_down, 2);
+        assert!(!events[0].failed);
+        assert_eq!(events[1].status, Some(503));
+        assert_eq!(events[1].bytes_down, 4);
+        assert!(events[1].failed);
+        assert_eq!(events[2].status, None);
+        assert!(events[2].failed);
     }
 }
