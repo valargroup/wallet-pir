@@ -267,11 +267,27 @@ jobs:
           [[ -n "$CENSUS_FROM" ]] && ARGS+=(--start-height "$CENSUS_FROM")
           [[ -n "$CENSUS_TO" ]] && ARGS+=(--end-height "$CENSUS_TO")
           [[ "$PER_SHARD" == "true" ]] && ARGS+=(--per-shard)
-          # Spilled under the runner temp so the job reclaims it, and away from
-          # the journal rather than inside it: the census must not write into
-          # the thing it was asked to measure.
+          # Spilled onto the volume that holds the journal, not under the
+          # runner temp, which is the coordinator's root disk. The spill is one
+          # fixed-width record per script-shard pair: archive-wide over the full
+          # journal wrote 23.9 million of them, about 1.1 GB, and a narrower
+          # geometry puts a script in far more shards -- 8,192 is roughly ten
+          # times that. Sizing the root disk against a number nobody has
+          # measured is how a census fills the disk of the host it is measuring.
+          #
+          # Beside the journal rather than inside it: the census must not write
+          # into the thing it was asked to measure. The tool removes its runs
+          # once merged; the trap removes the directory even if it does not get
+          # that far.
           if [[ "$SHARD_MATCHES" == "true" ]]; then
-            ARGS+=(--shard-matches "$RUNNER_TEMP/shard-matches")
+            spill="$(dirname "${DATA_DIR_INPUT:-$DATA_DIR}")/census-spill.$$"
+            sudo mkdir -p "$spill"
+            # ${spill:?} rather than $spill: this is a sudo rm -rf on the host
+            # that holds the journal, and an unset variable must abort it rather
+            # than expand to something with a root on it.
+            trap 'sudo rm -rf "${spill:?}"' EXIT
+            df -h "$spill" | tail -1 | awk '{print "spill volume: " $4 " available on " $6}'
+            ARGS+=(--shard-matches "$spill")
           fi
           if [[ -n "$POLICIES" ]]; then
             IFS=';' read -ra LIST <<<"$POLICIES"
