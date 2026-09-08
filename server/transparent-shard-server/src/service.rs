@@ -123,6 +123,9 @@ struct WarmState {
     mode: ReadinessMode,
     target: usize,
     finished: AtomicBool,
+    cancelled: AtomicBool,
+    count: std::sync::atomic::AtomicU64,
+    pins: std::sync::Mutex<Vec<(String, RuntimeHandle)>>,
 }
 
 impl ServiceConfig {
@@ -144,8 +147,8 @@ pub struct Inner {
     set: ShardSet,
     /// One parameter set per geometry the loaded set actually uses, per table.
     params: HashMap<ParamsKey, Arc<SharedParams>>,
-    cache: RuntimeCache,
-    admission: Admission,
+    cache: Arc<RuntimeCache>,
+    admission: Arc<Admission>,
     metrics: Arc<Metrics>,
     max_query_bytes: usize,
     warm: WarmState,
@@ -228,8 +231,19 @@ impl ServiceState {
         config: ServiceConfig,
         disk: Option<crate::runtime::disk::DiskCache>,
     ) -> Result<Self, String> {
+        Self::build_reusing(set, config, disk, None)
+    }
+
+    pub(crate) fn build_reusing(
+        set: ShardSet,
+        config: ServiceConfig,
+        disk: Option<crate::runtime::disk::DiskCache>,
+        previous: Option<&Self>,
+    ) -> Result<Self, String> {
         let _ = binary_digest();
-        let metrics = Arc::new(Metrics::default());
+        let metrics = previous
+            .map(|s| s.inner.metrics.clone())
+            .unwrap_or_else(|| Arc::new(Metrics::default()));
         // Every geometry the set names, held here or not: the init document
         // is set-wide and a wallet refuses a map it does not fully declare.
         // Not every registered geometry, which would publish parameters for
@@ -238,7 +252,11 @@ impl ServiceState {
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
             for table in [Table::Directory, Table::Pages] {
-                let shared = Arc::new(SharedParams::build(geometry, table)?);
+                let shared =
+                    match previous.and_then(|s| s.inner.params.get(&(geometry.name, table))) {
+                        Some(shared) => shared.clone(),
+                        None => Arc::new(SharedParams::build(geometry, table)?),
+                    };
                 max_query_bytes = max_query_bytes.max(shared.query_bytes());
                 params.insert((geometry.name, table), shared);
             }
@@ -263,21 +281,35 @@ impl ServiceState {
                 config.cache_bytes
             ));
         }
-        let target = set.warm_targets().len();
+        let target = set
+            .current()
+            .map(|s| (s.segments(Table::Directory) + s.segments(Table::Pages)) as usize)
+            .sum();
         Metrics::set(&metrics.target_runtimes, target as u64);
         Ok(Self {
             inner: Arc::new(Inner {
                 set,
                 params,
-                cache: RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
-                    .with_disk(disk),
-                admission: Admission::new(config.admission(), metrics.clone()),
+                cache: previous.map(|s| s.inner.cache.clone()).unwrap_or_else(|| {
+                    Arc::new(
+                        RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
+                            .with_disk(disk),
+                    )
+                }),
+                admission: previous
+                    .map(|s| s.inner.admission.clone())
+                    .unwrap_or_else(|| {
+                        Arc::new(Admission::new(config.admission(), metrics.clone()))
+                    }),
                 metrics,
                 max_query_bytes,
                 warm: WarmState {
                     mode: config.readiness,
                     target,
                     finished: AtomicBool::new(false),
+                    cancelled: AtomicBool::new(false),
+                    count: std::sync::atomic::AtomicU64::new(0),
+                    pins: std::sync::Mutex::new(Vec::new()),
                 },
                 build_slots: config.build_slots.max(1),
             }),
@@ -317,6 +349,7 @@ impl ServiceState {
                 workers.spawn(async move {
                     let inner = &state.inner;
                     loop {
+                        if inner.warm.cancelled.load(Ordering::Acquire) {break;}
                         let next = queue.lock().unwrap().pop_front();
                         let Some((digest, table, segment)) = next else {
                             break;
@@ -341,7 +374,13 @@ impl ServiceState {
                             .await
                         {
                             Ok(handle) => {
-                                drop(handle);
+                                if inner.warm.cancelled.load(Ordering::Acquire) {break;}
+                                if current.contains(&digest) {
+                                    inner.warm.count.fetch_add(1, Ordering::Release);
+                                    if inner.warm.mode == ReadinessMode::Warm {
+                                        inner.warm.pins.lock().unwrap().push((digest.clone(), handle));
+                                    }
+                                }
                                 Metrics::incr(&inner.metrics.warm_runtimes);
                             }
                             Err(error) => {
@@ -370,6 +409,44 @@ impl ServiceState {
 
     /// The worker's identity for reports: assignment digest, id and role when
     /// it loaded under an assignment.
+    pub(crate) fn has_other_holders(&self) -> bool {
+        Arc::strong_count(&self.inner) > 1
+    }
+    pub(crate) fn release_pins(&self) {
+        self.inner.warm.pins.lock().unwrap().clear();
+    }
+
+    pub(crate) fn release_invalidated(&self, digests: &std::collections::BTreeSet<String>) {
+        if self
+            .inner
+            .set
+            .current()
+            .any(|s| digests.contains(&s.digest))
+        {
+            self.inner.warm.cancelled.store(true, Ordering::Release);
+        }
+        self.inner
+            .warm
+            .pins
+            .lock()
+            .unwrap()
+            .retain(|(digest, _)| !digests.contains(digest));
+    }
+
+    pub(crate) fn set(&self) -> &ShardSet {
+        &self.inner.set
+    }
+
+    pub(crate) fn is_invalidated(&self) -> bool {
+        self.inner.warm.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn is_warm(&self) -> bool {
+        !self.inner.warm.cancelled.load(Ordering::Acquire)
+            && self.inner.warm.finished.load(Ordering::Acquire)
+            && self.inner.warm.count.load(Ordering::Acquire) as usize >= self.inner.warm.target
+    }
+
     fn identity(&self) -> serde_json::Value {
         match self.inner.set.scope() {
             Some(scope) => serde_json::json!({
@@ -709,7 +786,7 @@ fn binary_digest() -> &'static Option<String> {
 /// a deploy can assert which set and assignment a worker is actually running.
 async fn ready(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
-    let warm = Metrics::get(&inner.metrics.warm_runtimes);
+    let warm = inner.warm.count.load(Ordering::Acquire);
     let mut body = serde_json::json!({
         "mode": match inner.warm.mode {
             ReadinessMode::LoadedOnly => "loaded-only",
@@ -732,6 +809,14 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         }
     }
     let object = body.as_object_mut().expect("an object");
+    if state.is_invalidated() {
+        object.insert("ready".into(), serde_json::json!(false));
+        object.insert(
+            "reason".into(),
+            serde_json::json!("publication invalidated"),
+        );
+        return json(StatusCode::SERVICE_UNAVAILABLE, body);
+    }
     if inner.set.is_empty() {
         object.insert("ready".into(), serde_json::json!(false));
         object.insert("reason".into(), serde_json::json!("no shards loaded"));
@@ -774,6 +859,7 @@ async fn shard_map(State(state): State<ServiceState>) -> Response {
         [
             ("content-type", "application/json"),
             ("x-shard-map-sha256", state.inner.set.map_digest.as_str()),
+            ("cache-control", "no-cache"),
         ],
         state.inner.set.map_json.clone(),
     )

@@ -105,6 +105,12 @@ struct Cli {
     /// staged binary before it stops the running service.
     #[arg(long)]
     verify_only: bool,
+    /// Root-only publication control socket. Omit to retain static serving.
+    #[arg(long)]
+    control_socket: Option<PathBuf>,
+    /// Durable active publication record used on restart.
+    #[arg(long, requires = "control_socket")]
+    active_record: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -113,7 +119,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    let active_record = cli
+        .active_record
+        .clone()
+        .unwrap_or_else(|| cli.shard_dir.with_extension("active.json"));
+    if cli.control_socket.is_some() && active_record.exists() {
+        let active: transparent_shard_server::live::Publication =
+            serde_json::from_slice(&std::fs::read(&active_record)?)?;
+        cli.shard_dir = active.directory;
+        cli.assignment = active.assignment;
+    }
     let disk = cli
         .runtime_cache_dir
         .clone()
@@ -207,10 +223,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
         return Ok(());
     }
+    let map_sha256 = set.map_digest.clone();
     let state = ServiceState::build_with_disk(set, config, disk)
         .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
     let limit = state.max_query_bytes();
-    let app = router(state.clone()).layer(RequestBodyLimitLayer::new(limit));
+    let app = if let Some(socket) = cli.control_socket {
+        let live = transparent_shard_server::live::LiveService::new(
+            state.clone(),
+            transparent_shard_server::live::Publication {
+                directory: cli.shard_dir,
+                assignment: cli.assignment,
+                map_sha256,
+            },
+            config,
+            options,
+            active_record,
+        )?;
+        let app = live.router();
+        tokio::spawn(async move {
+            if let Err(error) = live.listen(&socket).await {
+                tracing::error!(%error, "control socket failed");
+                std::process::exit(1);
+            }
+        });
+        app
+    } else {
+        router(state.clone())
+    }
+    .layer(RequestBodyLimitLayer::new(limit));
 
     // Bound before the prewarm starts, so the operator routes answer while
     // the runtimes build and a router's health check sees "not ready" rather

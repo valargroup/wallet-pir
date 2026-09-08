@@ -90,6 +90,8 @@ jobs:
       # 2026-09-07 was in those three.
       - name: Check ops contracts
         run: ops/scripts/check-jq-contracts.sh
+      - name: Test continuous publication fleet failures
+        run: python3 ops/tests/test_transparent_publication.py
       - name: Validate example inventory
         env:
           ENHANCE_COORDINATOR_HOST: coordinator.example.net
@@ -160,6 +162,7 @@ jobs:
 
           # A continuation leaves an argument stranded on its own line, which
           # systemd reads as a second directive rather than as an error.
+          # shellcheck disable=SC1003
           printf '%s\n' 'ExecStart=/usr/local/bin/x \' '  --shard-dir TRANSPARENT_SHARD_SET_PATH' >"$unit"
           grep -qE '\\$' "$unit" || { echo "test fixture has no continuation" >&2; exit 1; }
           refuses "line continuation"

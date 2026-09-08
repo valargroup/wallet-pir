@@ -306,6 +306,7 @@ impl SegmentSource {
 
 /// One published shard revision: its manifest, its filter, and where its tables
 /// are.
+#[derive(Clone)]
 pub struct LoadedShard {
     pub manifest: ShardManifest,
     /// The manifest digest, which is also the directory name and the identity
@@ -538,6 +539,16 @@ impl ShardSet {
     /// verified only for assigned shards. Unassigned shards' table files may
     /// be absent; their manifests and filters may not.
     pub fn open_with(dir: &Path, options: &LoadOptions) -> Result<Self, LoadError> {
+        Self::open_reusing(dir, options, None)
+    }
+
+    /// Reuse verified table bytes only when the candidate hard-links the same
+    /// files. Merely claiming the same digest never skips verification.
+    pub fn open_reusing(
+        dir: &Path,
+        options: &LoadOptions,
+        previous: Option<&Self>,
+    ) -> Result<Self, LoadError> {
         let raw = read(&dir.join("shards.json"))?;
         let map: ShardMap = serde_json::from_slice(&raw).map_err(|source| LoadError::Json {
             path: dir.join("shards.json"),
@@ -655,7 +666,13 @@ impl ShardSet {
             parent_digest = meta.digest.clone();
             current_revision.insert(entry.shard_id, (manifest.revision, manifest.sealed));
             if assigned(entry.shard_id) {
-                let shard = LoadedShard::verify_tables(&path, meta)?;
+                let shard = match previous
+                    .and_then(|set| set.revision(&meta.digest))
+                    .and_then(|old| reuse_linked(old, &path))
+                {
+                    Some(shard) => shard,
+                    None => LoadedShard::verify_tables(&path, meta)?,
+                };
                 metadata.insert(
                     shard.digest.clone(),
                     RevisionMeta {
@@ -747,7 +764,13 @@ impl ShardSet {
                 if within {
                     kept += 1;
                     kept_bytes += bytes;
-                    let shard = LoadedShard::verify_tables(&path, meta)?;
+                    let shard = match previous
+                        .and_then(|set| set.revision(&meta.digest))
+                        .and_then(|old| reuse_linked(old, &path))
+                    {
+                        Some(shard) => shard,
+                        None => LoadedShard::verify_tables(&path, meta)?,
+                    };
                     revisions.push(shard);
                 } else if options.prune_excess {
                     prunable.push(PrunableRevision {
@@ -934,4 +957,21 @@ impl ShardSet {
         seen.sort_by_key(|geometry| geometry.name);
         seen
     }
+}
+
+/// New paths keep publication directories independently collectable; sharing
+/// an inode with verified immutable input is the only verification shortcut.
+fn reuse_linked(old: &LoadedShard, dir: &Path) -> Option<LoadedShard> {
+    use std::os::unix::fs::MetadataExt;
+    let mut shard = old.clone();
+    for source in shard.directory.iter_mut().chain(shard.pages.iter_mut()) {
+        let next = dir.join(source.path.file_name()?);
+        let a = std::fs::metadata(&source.path).ok()?;
+        let b = std::fs::metadata(&next).ok()?;
+        if a.dev() != b.dev() || a.ino() != b.ino() || a.len() != b.len() {
+            return None;
+        }
+        source.path = next;
+    }
+    Some(shard)
 }

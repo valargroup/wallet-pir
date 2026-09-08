@@ -79,6 +79,8 @@ pub struct EventStore {
     /// Covered blocks, ascending from `meta.start_height`.
     blocks: Vec<BlockEntry>,
     events_len: u64,
+    // Held for the lifetime of a writable journal, including backfills.
+    _writer_lock: Option<File>,
 }
 
 fn read_u64(bytes: &[u8]) -> u64 {
@@ -105,6 +107,15 @@ impl EventStore {
     ) -> Result<Self, EventStoreError> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(dir.join("writer.lock"))?;
+        lock.try_lock().map_err(|error| {
+            EventStoreError::Invariant(format!("journal already has a writer: {error}"))
+        })?;
         let wanted = Meta {
             version: STORE_VERSION,
             genesis_hash: genesis_hash.to_string(),
@@ -153,6 +164,14 @@ impl EventStore {
         } else {
             (0, 0)
         };
+        // set_len must never extend a damaged journal with plausible zeroes.
+        for (name, length) in [("events.bin", events_len), ("blocks.bin", blocks_len)] {
+            if std::fs::metadata(dir.join(name))?.len() < length {
+                return Err(EventStoreError::Invariant(format!(
+                    "{name} is shorter than its checkpoint"
+                )));
+            }
+        }
         truncate(&dir.join("events.bin"), events_len)?;
         truncate(&dir.join("blocks.bin"), blocks_len)?;
 
@@ -178,6 +197,7 @@ impl EventStore {
             meta: wanted,
             blocks,
             events_len,
+            _writer_lock: Some(lock),
         })
     }
 
@@ -250,6 +270,7 @@ impl EventStore {
             meta,
             blocks,
             events_len,
+            _writer_lock: None,
         })
     }
 
@@ -356,28 +377,25 @@ impl EventStore {
             return Ok(None);
         };
         let mut file = File::open(self.dir.join("events.bin"))?;
-        file.seek(SeekFrom::Start(entry.offset))?;
-        let mut reader = std::io::BufReader::new(file);
-        let mut events = Vec::with_capacity(entry.event_count as usize);
-        for _ in 0..entry.event_count {
-            let mut length = [0u8; 2];
-            reader.read_exact(&mut length)?;
-            let length = u16::from_le_bytes(length) as usize;
-            if length > MAX_SCRIPT_BYTES {
-                return Err(EventStoreError::Invariant(format!(
-                    "stored script claims {length} bytes"
-                )));
-            }
-            let mut script = vec![0u8; length];
-            reader.read_exact(&mut script)?;
-            let mut event = [0u8; EVENT_BYTES];
-            reader.read_exact(&mut event)?;
-            events.push((
-                ScriptBytes::new(script),
-                TransparentEvent::from_bytes(&event)?,
+        read_event_record(&mut file, entry)
+    }
+
+    /// Copies a committed suffix while the caller holds the journal lock.
+    /// An anonymous file bounds RAM even when a deep fork replaces archive
+    /// history; dropping the builder releases its temporary disk automatically.
+    pub(crate) fn snapshot_suffix(&self, first: u64) -> Result<(File, u64), EventStoreError> {
+        let offset = self.block_at(first).map_or(self.events_len, |b| b.offset);
+        let mut source = File::open(self.dir.join("events.bin"))?;
+        source.seek(SeekFrom::Start(offset))?;
+        let mut snapshot = tempfile::tempfile_in(&self.dir)?;
+        let length = self.events_len - offset;
+        let copied = std::io::copy(&mut source.take(length), &mut snapshot)?;
+        if copied != length {
+            return Err(EventStoreError::Invariant(
+                "journal shortened while taking snapshot".into(),
             ));
         }
-        Ok(Some(events))
+        Ok((snapshot, offset))
     }
 
     /// Drops coverage above `height`, or all coverage when `None`.
@@ -398,12 +416,16 @@ impl EventStore {
             None => self.events_len,
         };
         self.blocks.truncate(keep);
+        // Publish the shorter durable prefix first. A crash during truncation
+        // leaves extra bytes that open() safely discards, never missing bytes
+        // still named by the durable checkpoint.
+        self.commit()?;
         truncate(&self.dir.join("events.bin"), self.events_len)?;
         truncate(
             &self.dir.join("blocks.bin"),
             (keep * BLOCK_RECORD_BYTES) as u64,
         )?;
-        self.commit()
+        Ok(())
     }
 
     /// Makes everything written so far durable.
@@ -563,6 +585,7 @@ mod tests {
             Some(vec![spend(102, 9)])
         );
 
+        drop(store);
         let reopened = EventStore::open(dir.path(), GENESIS, START).unwrap();
         assert_eq!(reopened.covered_through(), Some(START + 2));
         assert_eq!(reopened.events_stored(), 3);
@@ -643,4 +666,109 @@ mod tests {
         assert_eq!(reader.covered_through(), Some(START));
         assert_eq!(reader.events_at(START + 1).unwrap(), None);
     }
+}
+
+#[cfg(test)]
+mod durability_tests {
+    use super::*;
+    #[test]
+    fn a_second_writer_is_refused_without_touching_the_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = "00".repeat(32);
+        let mut first = EventStore::open(dir.path(), &hash, 0).unwrap();
+        first
+            .append_block(0, BlockHash::from_internal_bytes([1; 32]), &[])
+            .unwrap();
+        first.commit().unwrap();
+        assert!(EventStore::open(dir.path(), &hash, 0).is_err());
+        assert_eq!(
+            EventStore::open_existing(dir.path())
+                .unwrap()
+                .covered_through(),
+            Some(0)
+        );
+        drop(first);
+        assert!(EventStore::open(dir.path(), &hash, 0).is_ok());
+    }
+    #[test]
+    fn crash_after_shorter_checkpoint_before_truncation_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = "00".repeat(32);
+        let mut store = EventStore::open(dir.path(), &hash, 0).unwrap();
+        for h in 0..3 {
+            store
+                .append_block(h, BlockHash::from_internal_bytes([h as u8; 32]), &[])
+                .unwrap();
+        }
+        store.commit().unwrap();
+        // The first durable step of rollback has completed, but neither file
+        // has been truncated when the process disappears.
+        store.blocks.truncate(1);
+        store.commit().unwrap();
+        drop(store);
+        let mut reopened = EventStore::open(dir.path(), &hash, 0).unwrap();
+        assert_eq!(reopened.covered_through(), Some(0));
+        assert_eq!(
+            std::fs::metadata(dir.path().join("blocks.bin"))
+                .unwrap()
+                .len(),
+            BLOCK_RECORD_BYTES as u64
+        );
+        reopened
+            .append_block(1, BlockHash::from_internal_bytes([9; 32]), &[])
+            .unwrap();
+        reopened.commit().unwrap();
+        assert_eq!(
+            reopened.block_at(1).unwrap().block_hash,
+            BlockHash::from_internal_bytes([9; 32])
+        );
+    }
+    #[test]
+    fn a_checkpoint_past_the_file_is_refused_not_zero_extended() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = "00".repeat(32);
+        let mut store = EventStore::open(dir.path(), &hash, 0).unwrap();
+        store
+            .append_block(0, BlockHash::from_internal_bytes([1; 32]), &[])
+            .unwrap();
+        store.commit().unwrap();
+        drop(store);
+        truncate(&dir.path().join("blocks.bin"), 0).unwrap();
+        assert!(EventStore::open(dir.path(), &hash, 0).is_err());
+        assert_eq!(
+            std::fs::metadata(dir.path().join("blocks.bin"))
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+}
+
+/// Decode one indexed record from a locked journal or immutable suffix snapshot.
+pub(crate) fn read_event_record(
+    file: &mut File,
+    entry: BlockEntry,
+) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
+    file.seek(SeekFrom::Start(entry.offset))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut events = Vec::with_capacity(entry.event_count as usize);
+    for _ in 0..entry.event_count {
+        let mut length = [0u8; 2];
+        reader.read_exact(&mut length)?;
+        let length = u16::from_le_bytes(length) as usize;
+        if length > MAX_SCRIPT_BYTES {
+            return Err(EventStoreError::Invariant(format!(
+                "stored script claims {length} bytes"
+            )));
+        }
+        let mut script = vec![0u8; length];
+        reader.read_exact(&mut script)?;
+        let mut event = [0u8; EVENT_BYTES];
+        reader.read_exact(&mut event)?;
+        events.push((
+            ScriptBytes::new(script),
+            TransparentEvent::from_bytes(&event)?,
+        ));
+    }
+    Ok(Some(events))
 }

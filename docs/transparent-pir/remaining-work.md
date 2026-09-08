@@ -145,3 +145,13 @@ Each completed gate links source commits, exact commands and evidence. Update st
   leave workers serving. Preserve decisions, phase timings and regression results.
 - [ ] Rehearse failed-batch and explicit transaction rollback with the cached
   previous release. Keep these gates open until host evidence exists.
+
+
+## Continuous publication release gate
+
+- [x] Implement single-writer journal locking and checkpoint-before-truncation rollback; snapshot the rebuilt suffix without retaining all events in RAM.
+- [x] Reuse unchanged sealed artifacts and prepared runtimes; prepare and activate live worker snapshots under shared memory/admission budgets.
+- [x] Follow RPC best height/hash, including empty blocks and same-height forks; rebuild affected sealed history in a separate publication directory.
+- [x] Add fleet quorum, invalidation, shared public-origin routing, durable activation records and bounded revision collection.
+- [ ] Deploy shadow and active operation from tested main; record real per-block latency, generation overlap RSS and both-origin consistency.
+- [ ] Observe at least 20 consecutive live blocks and verify wallet discovery through the new publication path. Record actual wallet-adapter findings separately from reference-library tests.

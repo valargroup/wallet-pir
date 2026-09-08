@@ -130,3 +130,48 @@ Historical reports mention Terraform state drift, unintended transparent-spend p
 Freeze the initial cutoff for the pilot. `shard-cutoff` derives it: the cutoff time is the anchor block's header time minus six calendar months, day clamped to the target month's last day, time of day kept; the cutoff height is one more than the highest height whose header time is before the cutoff time, which is well defined under non-monotone block times and is proved final by eleven consecutive blocks at or after it. The inventory action of the backfill workflow records the height, hashes and times in `cutoff.json`; a publish passes the recorded height back and the tool refuses a disagreement. Do not use approximate block counts as calendar time.
 
 Old recent shards keep their geometry forever within the publication lineage. They can move to archive ownership after verified copying and routing handoff. Budget their actual growth; the previous 6.5 GiB/year figure is an extrapolation, not a retention guarantee. Re-cutting into wider shards is deferred until epoch identity and wallet replay semantics are specified and tested.
+
+
+## Continuous publication
+
+The continuous publisher uses `deploy-transparent-publisher.yml`: deploy the
+same tested main SHA in `shadow`, then `activate`. `shadow` first aligns the
+static filter origin with the verified full-chain set, upgrades a recent canary,
+upgrades archive owners serially and then the remaining replicas, and builds a
+candidate without advancing public coverage. `activate` routes both public map
+origins through the coordinator's publication authority and enables the loop.
+Use `rollback` with the deployment SHA to restore the saved binaries, units and
+routing; rollback refuses an orphaned predecessor. Deep reorg recovery should
+normally be left to the controller rather than restoring historical artifacts.
+
+The service polls the node's best-chain height/hash every second, commits each
+block to the event journal and rebuilds only the affected publication suffix.
+Near-tip extraction uses raw-block RPC, because the RocksDB secondary cannot
+observe non-finalized blocks. Publication has a 30-second freshness target from
+node acceptance to warm public coverage. Rapid blocks may share a publication;
+coverage remains contiguous. Historical catch-up and deep reorg rebuilding are
+reported separately from steady-state freshness.
+
+Activation requires all archive owners and at least one warm recent replica.
+Lagging replicas leave current routing and are retried on later publications.
+Workers prepare through a root-only Unix control socket, keep current runtimes
+resident within their existing cache budgets, and swap snapshots without a
+restart. Both public map URLs, filters and initialization use the same active
+publication. The controller keeps three unused candidate directories; workers
+keep three retired serving snapshots and defer collection while requests hold
+them. Three superseded normal tail revisions may also accompany the current set.
+Immutable files are shared by hard link rather than copied per block.
+
+A reorg withdraws public coverage before rebuilding. Workers refuse orphaned
+revisions and discard affected preparation; the publisher preserves the valid
+sealed prefix and creates a new immutable suffix publication. Retry and restart
+must revalidate the candidate against the node before exposing it. Wallets still
+accept anchors against their own chain view and rederive affected ledger state.
+
+The coordinator exposes private `/v1/status` and `/metrics` on port 8094.
+Freshness, node/journal/public heights, lag, ready replicas, withdrawal and reorg
+depth are observable. The controller emits a structured stale-publication alert
+when a pending observed block exceeds 30 seconds. Prometheus alert rules are in
+`ops/infra/digitalocean/production/deploy/transparent-publication-alerts.yml`.
+The production deployment key is supplied by the GitHub Environment and stored
+only in the controller's root-readable runtime credential directory.

@@ -635,3 +635,144 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
     assert_eq!(cache.entries(), 1);
     assert!(cache.resident_bytes() <= budget);
 }
+
+/// Hot activation keeps the old revision usable, shares bounded runtime state,
+/// and refuses orphaned answers after a reorg without restarting the server.
+#[tokio::test(flavor = "multi_thread")]
+async fn live_prepare_activate_and_invalidate() {
+    use transparent_shard_server::live::{Command, LiveService, Publication};
+    use transparent_shard_server::service::ReadinessMode;
+    use transparent_shard_server::shardset::LoadOptions;
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("a");
+    let b = root.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (old, count) = write_revision(&a, FIRST + 1, 0, "");
+    write_map(&a, &old, FIRST + 1, 0, count);
+    let set = ShardSet::open(&a, 3).unwrap();
+    let old_map = set.map_digest.clone();
+    let config = ServiceConfig {
+        cache_bytes: 1 << 30,
+        readiness: ReadinessMode::Warm,
+        ..ServiceConfig::default()
+    };
+    let state = ServiceState::build(set, config).unwrap();
+    state.spawn_prewarm().await.unwrap();
+    let metrics = state.metrics().clone();
+    let live = LiveService::new(
+        state,
+        Publication {
+            directory: a.clone(),
+            assignment: None,
+            map_sha256: old_map.clone(),
+        },
+        config,
+        LoadOptions::whole(3),
+        root.path().join("active.json"),
+    )
+    .unwrap();
+    let (new, count) = write_revision(&b, FIRST + 2, 1, &old);
+    write_map(&b, &new, FIRST + 2, 1, count);
+    let new_map = ShardSet::open(&b, 3).unwrap().map_digest;
+    assert!(live
+        .command(Command::Activate {
+            expected: old_map.clone(),
+            map_sha256: new_map.clone()
+        })
+        .await
+        .is_err());
+    live.command(Command::Prepare {
+        expected: old_map.clone(),
+        publication: Publication {
+            directory: b,
+            assignment: None,
+            map_sha256: new_map.clone(),
+        },
+    })
+    .await
+    .unwrap();
+    let before = live
+        .router()
+        .oneshot(Request::get("/v1/shards").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(before.headers()["x-shard-map-sha256"], old_map);
+    live.command(Command::Activate {
+        expected: old_map.clone(),
+        map_sha256: new_map.clone(),
+    })
+    .await
+    .unwrap();
+    live.command(Command::Activate {
+        expected: old_map,
+        map_sha256: new_map.clone(),
+    })
+    .await
+    .unwrap();
+    let after = live
+        .router()
+        .oneshot(Request::get("/v1/shards").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(after.headers()["x-shard-map-sha256"], new_map);
+    assert_eq!(metrics.prewarm_failed.load(Ordering::Relaxed), 0);
+    live.command(Command::Invalidate {
+        expected: new_map.clone(),
+        from_height: FIRST + 2,
+        keep_digests: Default::default(),
+    })
+    .await
+    .unwrap();
+    let response = live
+        .router()
+        .oneshot(
+            Request::get(format!("/v1/shards/0/revisions/{new}/manifest"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        live.router()
+            .oneshot(Request::get("/v1/shards").body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let saved: Publication =
+        serde_json::from_slice(&std::fs::read(root.path().join("active.json")).unwrap()).unwrap();
+    assert_eq!(saved.map_sha256, new_map);
+    // A previously orphaned branch may become canonical again. Explicit
+    // endpoint revalidation permits a fresh warm snapshot, not resurrection
+    // of the invalidated active snapshot in place.
+    live.command(Command::Invalidate {
+        expected: new_map.clone(),
+        from_height: FIRST,
+        keep_digests: std::collections::BTreeSet::from([new.clone()]),
+    })
+    .await
+    .unwrap();
+    live.command(Command::Prepare {
+        expected: new_map.clone(),
+        publication: saved,
+    })
+    .await
+    .unwrap();
+    live.command(Command::Activate {
+        expected: new_map.clone(),
+        map_sha256: new_map,
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        live.router()
+            .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+}

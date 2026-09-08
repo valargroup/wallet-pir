@@ -12,3 +12,7 @@ pub mod shard_matches;
 pub mod state;
 pub mod store;
 pub mod zakura;
+
+pub mod publication;
+
+pub mod controller;

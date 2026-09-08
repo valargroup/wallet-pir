@@ -1,0 +1,17 @@
+groups:
+  - name: transparent-publication
+    rules:
+      - alert: TransparentPublicationStale
+        expr: transparent_publication_oldest_unpublished_seconds > 30
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Transparent block publication exceeded 30 seconds
+      - alert: TransparentPublicationUnavailable
+        expr: transparent_publication_ready_recent_replicas < 1 or transparent_publication_withdrawn == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Transparent publication has no ready serving generation

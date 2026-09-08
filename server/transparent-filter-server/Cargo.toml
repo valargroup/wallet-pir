@@ -44,6 +44,7 @@ name = "script-sample"
 path = "src/bin/script-sample.rs"
 
 [dependencies]
+tempfile = "3"
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "223626ffdd28bd1400dd0b62027a8f366665aa4f" }
 axum = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }

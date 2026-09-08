@@ -29,6 +29,7 @@ check: check-ops check-docs
 check-ops:
 	ops/scripts/check-jq-contracts.sh
 	python3 ops/tests/test_transparent_fleet.py
+	python3 ops/tests/test_transparent_publication.py
 
 # Every relative Markdown link must resolve. The transparent PIR documentation
 # rules delete superseded prose instead of leaving stubs, so a dangling link is

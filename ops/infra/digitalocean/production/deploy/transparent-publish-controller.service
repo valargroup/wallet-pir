@@ -1,0 +1,24 @@
+[Unit]
+Description=Continuous transparent PIR publication
+After=network-online.target zakurad.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/transparent-publisher
+ExecStart=/usr/local/bin/transparent-publish-controller --config /opt/transparent-publisher/controller.json
+Restart=on-failure
+RestartSec=3
+UMask=0077
+Nice=5
+MemoryMax=8G
+MemorySwapMax=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/zakura/transparent-event-data /srv/zakura/transparent-publications /opt/transparent-publisher/state
+ReadOnlyPaths=/opt/transparent-publisher/credentials
+
+[Install]
+WantedBy=multi-user.target
