@@ -60,7 +60,8 @@ After installation, admission stopped warming at 17/28 runtimes because cgroup
 charge included about 3.26 GB of file cache. A 5 GiB MemoryHigh let all 28 runtimes
 warm in 13.9 seconds. Sustained query/build overlap then exceeded that soft limit
 with anonymous memory alone and stalled prewarm for 89 seconds. The first soak
-was explicitly stopped; its samples do not establish acceptance. MemoryHigh was
+failed canary freshness after 86.347 seconds at block 3,476,719; the unit was
+then explicitly stopped. Its samples do not establish acceptance. MemoryHigh was
 raised to 5.5 GiB, with the 7 GiB MemoryMax and allocation guards unchanged. The
 second soak started at 23:03:30 UTC. It failed after 505.876 seconds: the public
 service remained timely (maximum 19.363 seconds), but canary catch-up exceeded
