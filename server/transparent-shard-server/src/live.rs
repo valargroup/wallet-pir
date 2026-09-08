@@ -6,10 +6,10 @@ use crate::{
     shardset::{LoadOptions, LoadScope, ShardSet},
 };
 use axum::{
+    Router,
     extract::{Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -286,13 +286,14 @@ impl LiveService {
                 Ok(serde_json::json!({"active":map_sha256}))
             }
             Command::Collect => {
-                let candidate_dir = self
-                    .0
-                    .candidate
-                    .lock()
-                    .await
+                let candidate = self.0.candidate.lock().await;
+                let candidate_dir = candidate.as_ref().map(|c| c.publication.directory.clone());
+                let mut runtime_digests: std::collections::HashSet<String> = candidate
                     .as_ref()
-                    .map(|c| c.publication.directory.clone());
+                    .into_iter()
+                    .flat_map(|c| c.state.set().revisions())
+                    .map(|s| s.digest.clone())
+                    .collect();
                 let mut retired = self.0.retired.write().unwrap();
                 // A long request may hold one old snapshot without preventing
                 // collection of every other unused generation behind it.
@@ -317,6 +318,13 @@ impl LiveService {
                 if let Some(directory) = candidate_dir {
                     keep.insert(directory);
                 }
+                runtime_digests.extend(
+                    std::iter::once(&*active)
+                        .chain(retired.iter())
+                        .flat_map(|a| a.state.set().revisions())
+                        .map(|s| s.digest.clone()),
+                );
+                let disk_freed_bytes = active.state.prune_disk(&runtime_digests)?;
                 // Only controller-created, digest-named generations are ours.
                 // Keep the newest three unused directories across restarts too.
                 let mut unused: Vec<_> = std::fs::read_dir(root)
@@ -335,7 +343,7 @@ impl LiveService {
                 for entry in unused.into_iter().skip(3) {
                     std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
                 }
-                Ok(serde_json::json!({"collected":true}))
+                Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes}))
             }
             Command::Discard { map_sha256 } => {
                 let mut candidate = self.0.candidate.lock().await;

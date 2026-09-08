@@ -18,20 +18,20 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tower::ServiceExt;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap};
+use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, filter_hash};
 use transparent_shard::build::build_shard;
 use transparent_shard::layout::{Geometry, RECENT_4K};
 use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
+    ManifestLayout, ManifestOccupancy, ManifestSeal, SCHEMA, ShardManifest, TableGeometry,
 };
 use transparent_shard_server::metrics::Metrics;
-use transparent_shard_server::runtime::{reserved_bytes, CacheError, RuntimeCache, SharedParams};
-use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
-use transparent_shard_server::shardset::{ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
+use transparent_shard_server::runtime::{CacheError, RuntimeCache, SharedParams, reserved_bytes};
+use transparent_shard_server::service::{ServiceConfig, ServiceState, router};
+use transparent_shard_server::shardset::{DEFAULT_RETAIN_REVISIONS, ShardSet, Table};
 
 /// The smallest registry geometry, so a runtime is cheap enough to build
 /// several times in a test.
@@ -662,7 +662,17 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
-    let state = ServiceState::build(set, config).unwrap();
+    let disk = transparent_shard_server::runtime::disk::DiskCache::new(
+        root.path().join("cache"),
+        pair * 16,
+    )
+    .unwrap();
+    let preflight = disk.check_set(&set).unwrap();
+    assert!(
+        preflight["assignment_bytes"].as_u64().unwrap() <= pair + 4096,
+        "preflight budgets current warm revisions only"
+    );
+    let state = ServiceState::build_with_disk(set, config, Some(disk)).unwrap();
     state.spawn_prewarm().await.unwrap();
     // A slow reader of the oldest snapshot must not pin every later one.
     let held_reader = state.clone();
@@ -724,6 +734,15 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     let status = live.command(Command::Status).await.unwrap();
     assert_eq!(status["retired_snapshots"], 3);
     assert_eq!(status["revisions"].as_array().unwrap().len(), 4);
+    let cached = std::fs::read_dir(root.path().join("cache"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
+        .count();
+    assert_eq!(
+        cached, 8,
+        "only the four live/retained revision pairs remain on disk"
+    );
 }
 
 /// Hot activation keeps the old revision usable, shares bounded runtime state,
@@ -765,13 +784,14 @@ async fn live_prepare_activate_and_invalidate() {
     let (new, count) = write_revision(&b, FIRST + 2, 1, &old);
     write_map(&b, &new, FIRST + 2, 1, count);
     let new_map = ShardSet::open(&b, 3).unwrap().map_digest;
-    assert!(live
-        .command(Command::Activate {
+    assert!(
+        live.command(Command::Activate {
             expected: old_map.clone(),
             map_sha256: new_map.clone()
         })
         .await
-        .is_err());
+        .is_err()
+    );
     live.command(Command::Prepare {
         expected: old_map.clone(),
         publication: Publication {
@@ -797,13 +817,14 @@ async fn live_prepare_activate_and_invalidate() {
     })
     .await
     .unwrap();
-    assert!(live
-        .command(Command::Activate {
+    assert!(
+        live.command(Command::Activate {
             expected: old_map.clone(),
             map_sha256: new_map.clone(),
         })
         .await
-        .is_err());
+        .is_err()
+    );
     live.command(Command::Prepare {
         expected: old_map.clone(),
         publication: Publication {

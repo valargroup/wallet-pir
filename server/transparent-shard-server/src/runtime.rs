@@ -607,6 +607,15 @@ impl RuntimeCache {
         );
     }
 
+    pub(crate) fn prune_disk(
+        &self,
+        keep: &std::collections::HashSet<String>,
+    ) -> Result<u64, String> {
+        self.disk
+            .as_ref()
+            .map_or(Ok(0), |disk| disk.prune(keep).map_err(|e| e.to_string()))
+    }
+
     /// Entries currently held, for health reporting and tests.
     pub fn entries(&self) -> usize {
         self.inner.lock().expect("runtime cache").entries.len()
