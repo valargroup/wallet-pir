@@ -244,6 +244,9 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
     } else {
         read_public(config.initial_publication.clone(), Vec::new())?
     };
+    if public.filters.map().genesis_hash != store.lock().await.genesis_hash() {
+        return Err("publication genesis does not match the journal".into());
+    }
     let authority = Authority(Arc::new(Inner {
         active: RwLock::new(Arc::new(public)),
         withdrawn: AtomicBool::new(true),
@@ -371,6 +374,26 @@ async fn ingest_once(
     }
     authority.0.status.write().unwrap()["node_height"] = tip.into();
     authority.0.status.write().unwrap()["node_hash"] = tip_hash.clone().into();
+    let public = authority.0.active.read().unwrap().clone();
+    let public_changed = public.publication.height > tip
+        || rpc.block_hash(public.publication.height).await? != public.publication.hash;
+    let acknowledged = || {
+        std::fs::read(config.publication_root.join("withdrawn.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .is_some_and(|v| v["acknowledged"] == true)
+    };
+    // A deep ancestor search can take many RPC calls. Once the advertised
+    // endpoint is known to be orphaned, withdraw before doing that search.
+    // The fleet independently keeps canonical revisions when given height 0.
+    let withdrew_early =
+        public_changed && (!authority.0.withdrawn.load(Ordering::Acquire) || !acknowledged());
+    if withdrew_early {
+        invalidate(config, authority, 0).await?;
+    }
+    if public_changed && rpc.genesis_hash().await? != store.lock().await.genesis_hash() {
+        return Err("node genesis changed; publication withdrawn and journal retained".into());
+    }
     let mut ancestor = store.lock().await.covered_through();
     while let Some(height) = ancestor {
         let hash = store
@@ -385,38 +408,18 @@ async fn ingest_once(
         ancestor = height.checked_sub(1);
     }
     let end = store.lock().await.covered_through();
-    let public = authority.0.active.read().unwrap().clone();
-    let mut invalid_from = if ancestor != end {
+    let invalid_from = if ancestor != end {
         Some(ancestor.map_or(0, |h| h + 1))
     } else {
         None
     };
-    let public_changed = public.publication.height > tip
-        || rpc.block_hash(public.publication.height).await? != public.publication.hash;
-    for entry in public
-        .filters
-        .map()
-        .shards
-        .iter()
-        .filter(|_| public_changed)
-    {
-        if entry.end_height > tip
-            || rpc.block_hash(entry.end_height).await? != entry.terminal_block_hash
-        {
-            invalid_from =
-                Some(invalid_from.map_or(entry.start_height, |h| h.min(entry.start_height)));
-            break;
-        }
-    }
     if let Some(from) = invalid_from {
         // Repeated calls are necessary if a previous remote invalidation failed.
         // Avoid changing the epoch again after the same fork was reconciled.
-        if ancestor != end
-            || !authority.0.withdrawn.load(Ordering::Acquire)
-            || !std::fs::read(config.publication_root.join("withdrawn.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                .is_some_and(|v| v["acknowledged"] == true)
+        if !withdrew_early
+            && (ancestor != end
+                || !authority.0.withdrawn.load(Ordering::Acquire)
+                || !acknowledged())
         {
             invalidate(config, authority, from).await?;
         }
@@ -834,6 +837,12 @@ mod tests {
     use axum::{routing::post, Json};
     use zakura_chain::serialization::ZcashDeserialize;
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
+    struct MockNode {
+        chain: Chain,
+        pause_ancestor: AtomicBool,
+        ancestor_started: tokio::sync::Notify,
+        resume: tokio::sync::Notify,
+    }
     fn raw_block(parent: [u8; 32], nonce: u8) -> Vec<u8> {
         // Syntactically valid headers and empty blocks are sufficient here:
         // the mock node represents consensus acceptance, which is not this
@@ -863,16 +872,23 @@ mod tests {
         }
     }
     async fn rpc(
-        State(chain): State<Chain>,
+        State(node): State<Arc<MockNode>>,
         Json(request): Json<serde_json::Value>,
     ) -> Json<serde_json::Value> {
-        let chain = chain.read().unwrap();
         let height = || {
             request["params"][0]
                 .as_u64()
                 .or_else(|| request["params"][0].as_str().and_then(|s| s.parse().ok()))
                 .unwrap() as usize
         };
+        if request["method"] == "getblockhash"
+            && height() == 3
+            && node.pause_ancestor.swap(false, Ordering::AcqRel)
+        {
+            node.ancestor_started.notify_one();
+            node.resume.notified().await;
+        }
+        let chain = node.chain.read().unwrap();
         let result = match request["method"].as_str().unwrap() {
             "getblockcount" => serde_json::json!(chain.len() - 1),
             "getblockhash" => serde_json::json!(hash(&chain[height()]).to_display_hex()),
@@ -887,11 +903,15 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 5, 1);
+        let node = Arc::new(MockNode {
+            chain: chain.clone(),
+            pause_ancestor: AtomicBool::new(false),
+            ancestor_started: tokio::sync::Notify::new(),
+            resume: tokio::sync::Notify::new(),
+        });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let app = Router::new()
-            .route("/", post(rpc))
-            .with_state(chain.clone());
+        let app = Router::new().route("/", post(rpc)).with_state(node.clone());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -979,21 +999,60 @@ mod tests {
             blocks.truncate(1);
             extend(&mut blocks, 4, 20);
         }
-        ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+        {
+            node.pause_ancestor.store(true, Ordering::Release);
+            let ingest = ingest_once(&config, &client, &store, &authority, &mut cache, &notify);
+            tokio::pin!(ingest);
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                tokio::select! {
+                    result = &mut ingest => panic!("ancestor lookup was not paused: {result:?}"),
+                    _ = node.ancestor_started.notified() => {}
+                }
+            })
             .await
             .unwrap();
+            let response = public_request(
+                State(authority.clone()),
+                Request::builder()
+                    .uri("/v1/shards")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "orphaned coverage must be withdrawn before a slow ancestor search"
+            );
+            node.resume.notify_one();
+            ingest.await.unwrap();
+        }
         assert!(authority.0.withdrawn.load(Ordering::Acquire));
         publish_once(&config, &client, &store, &authority)
             .await
             .unwrap();
         assert!(!authority.0.withdrawn.load(Ordering::Acquire));
-        let active = authority.0.active.read().unwrap();
-        assert_eq!(active.publication.height, 4);
-        assert_ne!(active.publication.map_sha256, old);
-        assert_eq!(
-            active.publication.hash,
-            hash(&chain.read().unwrap()[4]).to_display_hex()
-        );
+        {
+            let active = authority.0.active.read().unwrap();
+            assert_eq!(active.publication.height, 4);
+            assert_ne!(active.publication.map_sha256, old);
+            assert_eq!(
+                active.publication.hash,
+                hash(&chain.read().unwrap()[4]).to_display_hex()
+            );
+        }
+        let genesis = store.lock().await.block_at(0).unwrap().block_hash;
+        {
+            let mut blocks = chain.write().unwrap();
+            blocks.clear();
+            extend(&mut blocks, 5, 40);
+        }
+        let error = ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("node genesis changed"));
+        assert!(authority.0.withdrawn.load(Ordering::Acquire));
+        assert_eq!(store.lock().await.block_at(0).unwrap().block_hash, genesis);
         server.abort();
     }
 }
