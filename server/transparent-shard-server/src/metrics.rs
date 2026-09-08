@@ -30,6 +30,49 @@ use std::time::Duration;
 /// measured host; the top bucket is for a host that is worse than measured.
 const BUILD_BUCKETS: [f64; 9] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
 
+const REQUEST_BUCKETS: [f64; 16] = [
+    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 600.0,
+];
+
+/// Records the whole scope, including early returns and dropped futures.
+pub struct Timer<'a> {
+    histogram: &'a Histogram,
+    started: std::time::Instant,
+}
+
+impl Drop for Timer<'_> {
+    fn drop(&mut self) {
+        self.histogram.observe(self.started.elapsed());
+    }
+}
+
+/// Query handler duration is classified at response construction. A dropped
+/// handler records cancellation even when its detached evaluation finishes later.
+pub struct QueryTimer {
+    metrics: std::sync::Arc<Metrics>,
+    started: std::time::Instant,
+    outcome: usize,
+}
+
+impl QueryTimer {
+    pub fn new(metrics: std::sync::Arc<Metrics>) -> Self {
+        Self {
+            metrics,
+            started: std::time::Instant::now(),
+            outcome: 2,
+        }
+    }
+    pub fn finish(&mut self, success: bool) {
+        self.outcome = usize::from(!success);
+    }
+}
+
+impl Drop for QueryTimer {
+    fn drop(&mut self) {
+        self.metrics.query_seconds[self.outcome].observe(self.started.elapsed());
+    }
+}
+
 /// A fixed-bucket histogram in Prometheus's cumulative form.
 #[derive(Debug)]
 pub struct Histogram {
@@ -46,6 +89,13 @@ impl Histogram {
             counts: buckets.iter().map(|_| AtomicU64::new(0)).collect(),
             sum_micros: AtomicU64::new(0),
             count: AtomicU64::new(0),
+        }
+    }
+
+    pub fn timer(&self) -> Timer<'_> {
+        Timer {
+            histogram: self,
+            started: std::time::Instant::now(),
         }
     }
 
@@ -99,6 +149,9 @@ impl Histogram {
 /// self-consistent would be spending latency on a report.
 #[derive(Debug)]
 pub struct Metrics {
+    pub query_seconds: [Histogram; 3],
+    pub queue_wait_seconds: Histogram,
+    pub evaluation_seconds: Histogram,
     pub queries: AtomicU64,
     pub query_errors: AtomicU64,
     /// Queries refused because the cache had no room it could free.
@@ -123,6 +176,10 @@ pub struct Metrics {
     /// Bytes the cache currently has reserved.
     pub resident_bytes: AtomicU64,
     pub cache_entries: AtomicU64,
+    pub disk_hits: AtomicU64,
+    pub disk_misses: AtomicU64,
+    pub disk_load_micros: AtomicU64,
+    pub disk_write_failures: AtomicU64,
     pub cache_hits: AtomicU64,
     pub cache_misses: AtomicU64,
     /// Microseconds spent waiting for a query slot.
@@ -156,6 +213,9 @@ pub struct Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
+            query_seconds: std::array::from_fn(|_| Histogram::new(&REQUEST_BUCKETS)),
+            queue_wait_seconds: Histogram::new(&REQUEST_BUCKETS),
+            evaluation_seconds: Histogram::new(&REQUEST_BUCKETS),
             queries: AtomicU64::new(0),
             query_errors: AtomicU64::new(0),
             overloads: AtomicU64::new(0),
@@ -170,6 +230,10 @@ impl Default for Metrics {
             evictions: AtomicU64::new(0),
             resident_bytes: AtomicU64::new(0),
             cache_entries: AtomicU64::new(0),
+            disk_hits: AtomicU64::new(0),
+            disk_misses: AtomicU64::new(0),
+            disk_load_micros: AtomicU64::new(0),
+            disk_write_failures: AtomicU64::new(0),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             query_queue_micros: AtomicU64::new(0),
@@ -202,6 +266,7 @@ pub struct Snapshot {
     pub prunable_revisions: u64,
     pub cache_budget_bytes: u64,
     pub process_rss_bytes: Option<u64>,
+    pub process_cpu: Option<(u64, u64)>,
     pub cgroup_memory_bytes: Option<(u64, Option<u64>)>,
 }
 
@@ -286,6 +351,30 @@ impl Metrics {
             "gauge",
             "Prepared runtimes held.",
             Self::get(&self.cache_entries),
+        );
+        line(
+            "transparent_shard_disk_hits_total",
+            "counter",
+            "Runtimes restored from disk.",
+            Self::get(&self.disk_hits),
+        );
+        line(
+            "transparent_shard_disk_misses_total",
+            "counter",
+            "Absent or rejected disk runtime entries.",
+            Self::get(&self.disk_misses),
+        );
+        line(
+            "transparent_shard_disk_load_micros_total",
+            "counter",
+            "Microseconds spent restoring runtimes.",
+            Self::get(&self.disk_load_micros),
+        );
+        line(
+            "transparent_shard_disk_write_failures_total",
+            "counter",
+            "Runtime cache writes that failed.",
+            Self::get(&self.disk_write_failures),
         );
         line(
             "transparent_shard_cache_hits_total",
@@ -473,6 +562,47 @@ impl Metrics {
                 );
             }
         }
+        if let Some((millis, start)) = snapshot.process_cpu {
+            out.push_str(&format!("# TYPE transparent_shard_process_cpu_seconds_total counter\ntransparent_shard_process_cpu_seconds_total{braces} {}\n# TYPE transparent_shard_process_start_time_seconds gauge\ntransparent_shard_process_start_time_seconds{braces} {start}\n", millis as f64 / 1000.0));
+        }
+        for (histogram, outcome) in self
+            .query_seconds
+            .iter()
+            .zip(["success", "error", "cancelled"])
+        {
+            let scoped = if labels.is_empty() {
+                format!("outcome=\"{outcome}\"")
+            } else {
+                format!("{labels},outcome=\"{outcome}\"")
+            };
+            let mut rendered = String::new();
+            histogram.render(
+                "transparent_shard_query_seconds",
+                "Handler entry through response construction; excludes response transmission.",
+                &scoped,
+                &mut rendered,
+            );
+            if outcome == "success" {
+                out.push_str(&rendered);
+            } else {
+                for line in rendered.lines().filter(|line| !line.starts_with('#')) {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        self.queue_wait_seconds.render(
+            "transparent_shard_queue_wait_seconds",
+            "Evaluation semaphore wait, including failed and cancelled waits.",
+            &labels,
+            &mut out,
+        );
+        self.evaluation_seconds.render(
+            "transparent_shard_evaluation_seconds",
+            "All-segment evaluation inside the blocking task; excludes runtime acquisition.",
+            &labels,
+            &mut out,
+        );
         self.build_seconds.render(
             "transparent_shard_build_seconds",
             "Cold runtime build latency.",
@@ -486,6 +616,41 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timers_classify_success_error_and_dropped_handlers_once() {
+        let metrics = std::sync::Arc::new(Metrics::default());
+        {
+            let mut timer = QueryTimer::new(metrics.clone());
+            timer.finish(true);
+        }
+        {
+            let mut timer = QueryTimer::new(metrics.clone());
+            timer.finish(false);
+        }
+        {
+            let _timer = QueryTimer::new(metrics.clone());
+        }
+        {
+            let _timer = metrics.queue_wait_seconds.timer();
+        }
+        assert_eq!(
+            metrics
+                .query_seconds
+                .iter()
+                .map(Histogram::count)
+                .collect::<Vec<_>>(),
+            [1, 1, 1]
+        );
+        assert_eq!(metrics.queue_wait_seconds.count(), 1);
+        let rendered = metrics.render(&Snapshot::default());
+        assert_eq!(
+            rendered
+                .matches("# TYPE transparent_shard_query_seconds histogram")
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn labels_reach_every_series_and_the_histogram_is_cumulative() {
@@ -503,6 +668,7 @@ mod tests {
             prunable_revisions: 0,
             cache_budget_bytes: 1,
             process_rss_bytes: Some(2),
+            process_cpu: Some((1500, 123)),
             cgroup_memory_bytes: Some((3, None)),
         };
         let text = metrics.render(&snapshot);

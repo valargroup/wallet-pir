@@ -98,3 +98,15 @@ ledger. Pending work belongs to a target and revision; changing the target
 restarts unfinished retrieval. Coverage carries its accepted endpoint separately
 from its full publication endpoint. Explicit rollback takes an accepted ancestor
 hash as well as a height; it never puts a shard-end hash on a clipped range.
+
+## Concurrent recovery simulation
+
+The [scenario runner](../../server/transparent-loadtest/README.md) runs saved
+20-user mixed recovery waves and sustained concurrent load through the reference
+HTTP adapters, with independent SQLite stores, hard per-recovery deadlines, exact
+event verification, and saved HTML/JSON reports with worker APM and per-wallet
+upload/download totals. Windowed recoveries seed prior ledger events from a
+separately validated preparation phase, excluded from measured traffic and latency.
+Client filter/setup caches start cold; preparation can warm server caches. This
+complements the accepted-anchor regression suite. Local fixture tests are not
+full-chain deployed capacity evidence.

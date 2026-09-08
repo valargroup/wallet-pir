@@ -92,3 +92,61 @@ transparent-regression:
 		--filter-url "$(TRANSPARENT_REGRESSION_FILTER_URL)" \
 		--source-sha "$$(git rev-parse HEAD)" \
 		--out-dir "$(TRANSPARENT_REGRESSION_OUT)"
+
+# Mixed-wallet simulations. Leave URL overrides blank to use the scenario's
+# origins. Export options so the shell receives paths and labels as data.
+SIM_SCENARIO ?= server/transparent-loadtest/scenarios/mixed-20-wave.json
+SIM_URL ?=
+SIM_FILTER_URL ?=
+SIM_METRICS ?=
+SIM_OUT ?=
+SIM_RUN_ID ?=
+export SIM_SCENARIO SIM_URL SIM_FILTER_URL SIM_METRICS SIM_OUT SIM_RUN_ID
+
+.PHONY: transparent-sim transparent-sim-wave transparent-sim-sustained transparent-sim-help transparent-sim-open
+
+transparent-sim-wave: SIM_SCENARIO = server/transparent-loadtest/scenarios/mixed-20-wave.json
+
+transparent-sim-sustained: SIM_SCENARIO = server/transparent-loadtest/scenarios/mixed-20-sustained.json
+
+# Each invocation gets a fresh report directory unless SIM_OUT is supplied.
+# SIM_METRICS is a space-separated list of NAME=http(s)://host/metrics entries.
+transparent-sim transparent-sim-wave transparent-sim-sustained:
+	@set -eu; \
+	out="$${SIM_OUT:-$${TMPDIR:-/tmp}/transparent-sim-$$(date -u +%Y%m%dT%H%M%SZ)-$$$$}"; \
+	mkdir -p "$$(dirname "$$out")"; \
+	set -- --scenario "$$SIM_SCENARIO" --out-dir "$$out"; \
+	if [ -n "$$SIM_URL" ]; then set -- "$$@" --shard-url "$$SIM_URL"; fi; \
+	if [ -n "$$SIM_FILTER_URL" ]; then set -- "$$@" --filter-url "$$SIM_FILTER_URL"; fi; \
+	if [ -n "$$SIM_RUN_ID" ]; then set -- "$$@" --run-id "$$SIM_RUN_ID"; fi; \
+	set -f; \
+	for target in $$SIM_METRICS; do set -- "$$@" --metrics-target "$$target"; done; \
+	printf 'Scenario: %s\nReport directory: %s\n' "$$SIM_SCENARIO" "$$out"; \
+	sim_status=0; \
+	cargo run --locked --release -p transparent-loadtest -- "$$@" || sim_status=$$?; \
+	if [ -f "$$out/report.html" ]; then python3 server/transparent-loadtest/open_report.py --remember "$$out" || :; printf '\nOpen report: %s/report.html\n' "$$out"; fi; \
+	exit "$$sim_status"
+
+transparent-sim-open:
+	@python3 server/transparent-loadtest/open_report.py
+
+transparent-sim-help:
+	@printf '%s\n' \
+		'make transparent-sim             Run the default 20-wallet recovery wave' \
+		'make transparent-sim-wave        Run the 20-wallet recovery wave' \
+		'make transparent-sim-sustained   Maintain 20 recovery slots for 10 minutes' \
+		'make transparent-sim-open        Open the newest saved report in your browser' \
+		'' \
+		'Options (append NAME=value to the make command):' \
+		'  SIM_URL=URL              Override the private retrieval origin' \
+		'  SIM_FILTER_URL=URL       Override the public filter origin' \
+		'  SIM_METRICS="r1=URL r2=URL"  Named full worker /metrics URLs' \
+		'  SIM_OUT=PATH             New report directory (default: unique temp path)' \
+		'  SIM_RUN_ID=NAME          Optional report identifier' \
+		'  SIM_SCENARIO=PATH        Custom scenario JSON; controls profiles and duration' \
+		'' \
+		'URLs default to the selected scenario. Existing report directories are refused.' \
+		'Examples:' \
+		'  make transparent-sim SIM_OUT=/tmp/my-wave' \
+		'  make transparent-sim SIM_URL=http://localhost:8093 SIM_METRICS="local=http://localhost:8093/metrics"' \
+		'  make transparent-sim SIM_SCENARIO=/path/to/custom.json'

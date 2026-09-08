@@ -12,6 +12,9 @@
 //! as the wallet charges them; TLS and connection overhead are not measured
 //! and the report says so rather than estimating them.
 
+mod scenario;
+mod simulation_report;
+
 use anyhow::{bail, Context};
 use clap::Parser;
 use hdrhistogram::Histogram;
@@ -35,7 +38,8 @@ use transparent_wallet_store::SqliteStore;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "transparent-loadtest",
-    about = "Stepped-concurrency wallet syncs against a shard service"
+    about = "Stepped-concurrency wallet syncs against a shard service",
+    after_help = "For saved mixed-wallet scenarios: transparent-loadtest --scenario FILE --out-dir NEW_DIRECTORY. Add --scenario FILE --help for scenario options."
 )]
 struct Args {
     /// The private retrieval origin, e.g. https://transparent-pir.example.
@@ -97,7 +101,7 @@ struct Args {
     client_label: Option<String>,
 }
 
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SampleClient {
     class: String,
     scripts: Vec<String>,
@@ -536,8 +540,40 @@ fn scrape_all(urls: &[String]) -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Scenario children do blocking wallet work. Do not create a machine-sized
+    // Tokio thread pool in every simulated wallet process.
+    if std::env::args().any(|arg| arg == "--scenario-worker") {
+        return scenario::entry(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    }
+    if std::env::args().any(|arg| arg == "--scenario" || arg.starts_with("--scenario=")) {
+        let interrupted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signal = interrupted.clone();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        std::thread::spawn(move || {
+            runtime.block_on(async move {
+            #[cfg(unix)]
+            {
+                if let Ok(mut terminate) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+                } else { let _ = tokio::signal::ctrl_c().await; }
+            }
+            #[cfg(not(unix))]
+            { let _ = tokio::signal::ctrl_c().await; }
+            signal.store(true, Ordering::Relaxed);
+        })
+        });
+        return scenario::entry(interrupted);
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(legacy_main())
+}
+
+async fn legacy_main() -> anyhow::Result<()> {
     let args = Args::parse();
     let sample: Sample =
         serde_json::from_slice(&std::fs::read(&args.sample).context("reading the sample")?)?;

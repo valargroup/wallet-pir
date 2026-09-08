@@ -198,6 +198,7 @@ impl Admission {
 
     /// Waits for an evaluation slot, no longer than the request's deadline.
     pub async fn wait_slot(&self, pending: Pending) -> Result<Admitted, AdmissionError> {
+        let _timer = self.metrics.queue_wait_seconds.timer();
         let waited = Instant::now();
         let slot =
             match tokio::time::timeout(pending.remaining(), self.slots.clone().acquire_owned())
@@ -263,6 +264,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_dropped_wait_is_in_the_latency_histogram() {
+        let admission = admission(1, 1, 1 << 20);
+        let _held = admission.hold_slot().await;
+        let pending = admission.try_enter(None).unwrap();
+        let waiting = admission.wait_slot(pending);
+        assert!(tokio::time::timeout(Duration::from_millis(1), waiting)
+            .await
+            .is_err());
+        assert_eq!(admission.metrics.queue_wait_seconds.count(), 1);
+        assert_eq!(Metrics::get(&admission.metrics.queries_cancelled), 1);
+    }
+
+    #[tokio::test]
     async fn waiting_places_are_bounded_and_returned_on_drop() {
         let admission = admission(1, 1, 1 << 20);
         let first = admission.try_enter(None).unwrap();
@@ -312,5 +326,6 @@ mod tests {
         let admitted = admission.wait_slot(pending).await.unwrap();
         admitted.complete();
         assert_eq!(Metrics::get(&admission.metrics.deadline_exceeded), 1);
+        assert_eq!(admission.metrics.queue_wait_seconds.count(), 2);
     }
 }

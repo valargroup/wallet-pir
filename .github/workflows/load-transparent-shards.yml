@@ -24,6 +24,16 @@ on:
         required: false
         default: ""
         type: string
+      scenario_path:
+        description: Optional scenario JSON relative to checkout; when set, scenario values replace the legacy load options
+        required: false
+        default: ""
+        type: string
+      metrics_targets:
+        description: Scenario-only JSON object mapping worker names to full private /metrics URLs
+        required: false
+        default: "{}"
+        type: string
       sample_path:
         description: Workload sample, relative to the checkout
         required: false
@@ -101,6 +111,8 @@ jobs:
           SHARD_URL: ${{ inputs.shard_url }}
           FILTER_URL: ${{ inputs.filter_url }}
           SAMPLE: ${{ inputs.sample_path }}
+          SCENARIO: ${{ inputs.scenario_path }}
+          METRICS_TARGETS: ${{ inputs.metrics_targets }}
           STEPS: ${{ inputs.steps }}
           STEP_DURATION: ${{ inputs.step_duration }}
           MIN_COMPLETED: ${{ inputs.min_completed_per_class }}
@@ -119,6 +131,10 @@ jobs:
           [[ -z "$FILTER_URL" || "$FILTER_URL" =~ $url ]] || { echo "filter_url must be an http(s) origin or blank"; exit 1; }
           IFS=, read -ra metrics <<<"$METRICS_URLS"
           for m in "${metrics[@]}"; do [[ "$m" =~ $url ]] || { echo "metrics_urls must be http(s) origins"; exit 1; }; done
+          if [[ -n "$SCENARIO" ]]; then
+            [[ "$SCENARIO" =~ ^[A-Za-z0-9._/-]+\.json$ && "${SCENARIO:0:1}" != "/" && "$SCENARIO" != *".."* ]] || { echo "scenario_path must be a relative JSON path"; exit 1; }
+            jq -e 'type == "object" and all(to_entries[]; (.key | test("^[A-Za-z0-9._-]+$")) and (.value | type == "string" and test("^https?://[A-Za-z0-9.:_-]+(/[A-Za-z0-9._/-]*)?$")))' <<<"$METRICS_TARGETS" >/dev/null
+          fi
           sample_re='^[A-Za-z0-9._/-]+\.json$'
           if ! [[ "$SAMPLE" =~ $sample_re ]] || [[ "${SAMPLE:0:1}" == "/" ]] || [[ "$SAMPLE" == *".."* ]]; then
             echo "sample_path must be a relative .json path"; exit 1
@@ -148,6 +164,8 @@ jobs:
           SHARD_URL: ${{ inputs.shard_url }}
           FILTER_URL: ${{ inputs.filter_url }}
           SAMPLE: ${{ inputs.sample_path }}
+          SCENARIO: ${{ inputs.scenario_path }}
+          METRICS_TARGETS: ${{ inputs.metrics_targets }}
           STEPS: ${{ inputs.steps }}
           STEP_DURATION: ${{ inputs.step_duration }}
           MIN_COMPLETED: ${{ inputs.min_completed_per_class }}
@@ -162,6 +180,19 @@ jobs:
           set -euo pipefail
           cargo build --locked --release -p transparent-loadtest
           mkdir -p load
+          if [[ -n "$SCENARIO" ]]; then
+            ARGS=(--scenario "$SCENARIO" --out-dir load/scenario --shard-url "$SHARD_URL" --run-id "$RUN_ID")
+            [[ -n "$FILTER_URL" ]] && ARGS+=(--filter-url "$FILTER_URL")
+            while IFS= read -r target; do ARGS+=(--metrics-target "$target"); done < <(jq -r 'to_entries[] | "\(.key)=\(.value)"' <<<"$METRICS_TARGETS")
+            set +e
+            /usr/bin/time -v -o load/time.txt ./target/release/transparent-loadtest "${ARGS[@]}" 2>&1 | tee load/harness.log
+            status=${PIPESTATUS[0]}
+            set -e
+            if [[ -f load/scenario/report.json ]]; then
+              jq -r '"## Transparent scenario: \(.config.name)\n- Exact: \(.summary.outcomes.exact // 0) / \(.summary.started // 0)\n- Exact recoveries/s: \(.summary.exact_per_second // 0)\n- Success: \(.success)\n- Download the artifact and open scenario/report.html for timelines and APM."' load/scenario/report.json >>"$GITHUB_STEP_SUMMARY"
+            fi
+            exit "$status"
+          fi
           sha256sum "$SAMPLE" | tee load/sample-sha256.txt
           ARGS=(--shard-url "$SHARD_URL" --sample "$SAMPLE" --steps "$STEPS"
             --step-duration "$STEP_DURATION" --min-completed-per-class "$MIN_COMPLETED"
