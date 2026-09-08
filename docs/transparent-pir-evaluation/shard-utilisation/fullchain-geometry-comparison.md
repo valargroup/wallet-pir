@@ -101,6 +101,22 @@ more interesting one: the shipped geometry is itself 0.4% under the rule, which
 is why 48 of its shards close on scripts rather than page rows. It works, but
 it has no placement margin, and that is a property of what ships today.
 
+**Corrected: this holds only while the page limit binds.** The three censuses
+above all sealed on page rows, so scripts per shard were whatever a page-bound
+shard happened to accumulate, and against that a narrow directory does not fit.
+Seal on *scripts* first and the constraint disappears: shards close earlier,
+hold fewer scripts by construction, and a narrow directory under a wide page
+table becomes legal. That is exactly what the deployment plan's recent tier
+proposes — 4,096 directory rows over 8,192 page rows, sealing at
+`49152:57344,7936:8192`, where the script limit binds at 49,152 and the 57,344
+capacity is never approached.
+
+What it costs is shard count: sealing earlier means more shards over the same
+range, and `g` rises with shard count. So the trade is not "narrow directories
+are impossible" but "a narrow directory is bought with more shards", which is a
+different and much more interesting question. It has not been measured, because
+that pairing is not in the registry.
+
 ## The decision taken on this evidence
 
 `archive-wide` for the archive tier; `archive-32k` dominated and not to be

@@ -1,10 +1,14 @@
 # Transparent PIR deployment plan
 
-Date: 2026-09-07. Status: **committed architecture and geometry**. The
-residency, revision and profile work this rests on is implemented in the
-working tree (§2); the fleet is conditional on the six measurements in §7 and
-the six outstanding items listed at the end of §2. Two of the geometry
-figures here have never been censused and are labelled where they appear.
+Date: 2026-09-07. Status: **archive geometry decided and measured; the profile,
+residency and revision work is deployed in production.** Five of the six Gate 0
+measurements in §7 are taken and archived. What remains is the recent tier,
+which this plan wants at a shape the registry does not hold, and the two-tier
+partition, which has still never been scored as a *set*.
+
+The decision and its conditions are recorded separately in
+[transparent_pir_geometry_decision.md](transparent_pir_geometry_decision.md);
+§10 below is the current status and the path to a deployed prototype.
 
 This replaces the earlier draft of this file, which proposed four candidate
 profiles and left the archive geometry pending. It commits to a geometry per
@@ -60,9 +64,13 @@ costs about 2.2× the server memory bandwidth per restoration (§4.4).
 
 ## 2. What has already landed, and what has not
 
-Most of what an earlier draft listed as prerequisite work is **implemented in
-the working tree** (uncommitted at the time of writing). This section records
-the state so the plan is not read as asking for work that is done.
+Most of what an earlier draft listed as prerequisite work is **deployed in
+production**, not merely written: `transparent-shard-v7` has been serving on
+both `transparent-pir.valargroup.dev` and `enhance-pir.valargroup.dev` since
+2026-09-07, with byte-identical shard maps on the two origins. The set it serves
+is a like-for-like republication of the existing three-shard Ironwood range at
+`recent-8k` — the schema and the machinery are live; the coverage and the
+geometry are not yet what this plan asks for.
 
 Landed, in `server/transparent-shard-server/src/runtime.rs` and
 `shardset.rs`:
@@ -110,8 +118,22 @@ processes. The plan follows the implementation.
 5. **`--placement` has never been run over the full journal** (§3.4).
 6. **The router does not exist** (§6.4).
 
-Re-verify this section against the tree before acting on it; it describes
-uncommitted work by a concurrent session.
+**Resolved since this list was written:**
+
+- `archive-wide` **has been censused** over the complete journal, and
+  `--placement` **has been run** over it: 162 of 162 shards fit one directory
+  segment, fullest row 11 of 14 slots, busiest shard 284,221 scripts against
+  458,752 capacity. Items 4 and 5 are closed.
+- Item 2 is half closed. `shard-census` takes inclusive `--start-height` /
+  `--end-height` and records its anchor; `shard-publish` takes
+  `--archive-geometry` and `--recent-from`, which forces a shard boundary at
+  the cutoff and switches policy. So a two-tier set **can now be published**,
+  and either tier can be censused over its own range. What still cannot be done
+  is scoring the mixed set in one pass — see §10.
+- Item 6, the router, is not needed for a prototype. §10 explains why.
+
+Items 1 and 3 stand as written, and item 1 is now the main obstacle: the recent
+pairing this plan argues for is a shape the code cannot express.
 
 ## 3. Geometry
 
@@ -616,6 +638,37 @@ Each is one full-journal census pass, about three and a half minutes at
    shard count remains an extrapolation until it can. This is a prerequisite,
    not a convenience.
 
+### 7.1 Results, 2026-09-07
+
+Five of the six are taken. Raw output and provenance are under
+[`shard-utilisation/`](transparent-pir-evaluation/shard-utilisation/); the
+cross-geometry comparison is
+[fullchain-geometry-comparison.md](transparent-pir-evaluation/shard-utilisation/fullchain-geometry-comparison.md).
+
+| Gate | State | Result |
+|---|---|---|
+| 1. `--placement` | **Done** for both archive candidates | 162/162 and 314/314 in one directory segment; fullest row 11 of 14. **Not** run for the recent pairing, which does not exist yet. |
+| 2. `--per-shard` | **Done** | All 161 sealed `archive-wide` shards closed on page rows, none on scripts. At 8,192 the split is 1,042 page-row against 48 script, reproducing the archived figure. |
+| 3. Score both candidates | **Archive done, recent not** | `archive-wide` 162 shards / 57.1 GB; `archive-32k` 314 / 73.8 GB. The 4,096-over-8,192 recent pairing is unscored because it is not in the registry. |
+| 4. `--shard-matches` | **Done, and at all three** | `g` mean 6.55 → 3.48 → 2.58 over 9,264,547 distinct scripts. Spill was 1.1 GB, moved off the root disk onto `/srv/zakura`. |
+| 5. `shard-scaling` on a droplet | **Done** | **Saturation is at one thread, not two.** On a `c-8`, eight threads return 1.00x one thread at every geometry, bandwidth pinned near 26 GiB/s. Residency also measured: `reserved_bytes` is 2–5% *low* against Linux RSS. Cold start is 3.81 s per 8,192-row segment against the 0.67 s on record — **5.7x worse**. |
+| 6. Range-aware tooling | **Half done** | Census takes `--start-height`/`--end-height`; publish takes `--recent-from`. Neither scores the mixed set in one pass. |
+
+Two of the rejection rules below can now be evaluated. `--placement` shows **no**
+second directory segments at the archive pairing, so the fallback to
+65,536/65,536 is not triggered. The recent-directory rule is untested because
+the pairing does not exist.
+
+One correction the measurements force. This plan's §4.4 estimated the archive
+pairing at 2.17x the server memory bandwidth; measured, it is **2.14x**, which
+is close enough to treat the estimate as sound. But the *conclusion* drawn from
+it — that throughput per dollar is roughly flat, so widening buys only host
+count — understates the case. Since one thread saturates a droplet, cores are
+worth nothing at all for evaluation, and the archive tier turns out to be
+**RAM-limited rather than bandwidth-limited** at any plausible rate: nine hosts
+serve 219 full restorations a second before bandwidth binds. Below that
+crossover the 2.14x is already paid for.
+
 **Rejection rules, stated in advance.** If `--placement` shows second directory
 segments at the archive pairing, fall back to 65,536/65,536 — 162 shards,
 111 GiB of runtime, a 430 KB directory query. If the 4,096-row recent directory
@@ -864,3 +917,106 @@ traffic-pattern privacy remain separately measured follow-up work — with the
 note from §4.4 that key reuse would invert the archive geometry decision and
 that re-sharding is the only way to act on it.
 docs/transparent_pir_deploy_plan.md
+
+## 10. Status, and the path to a deployed prototype
+
+### 10.1 Where this actually is
+
+Deployed and serving: schema v7, per-shard named geometry, the bounded runtime
+cache, revision-addressed retrieval with `409` recovery on both sides, and
+byte-identical shard maps on the two origins. One worker, three shards,
+`recent-8k`, covering heights 3,428,143–3,473,474 — **1.3% of chain height**.
+
+Decided: `archive-wide` for the archive tier, `archive-32k` dominated and not
+to be published, on the evidence in §7.1.
+
+Not done: the recent pairing, the two-tier set, and coverage of the other 98.7%
+of the chain.
+
+### 10.2 A prototype does not need the fleet
+
+§6.1 prices nine to twenty-one hosts. **A functional full-chain prototype fits
+the worker that is already running**, because the bounded cache is exactly the
+mechanism that makes it fit:
+
+| | |
+|---|---|
+| Full-chain `archive-wide` set | 57.1 GB of plaintext |
+| Free on the worker | 191 GB |
+| All-resident runtime | 93.2 GiB |
+| Cache budget today | 8 GiB — holds ~14 of 162 shards warm |
+
+The rest are rebuilt on demand. That is not a workaround; it is the design §6.5
+already describes, and the only thing it costs is cold-start latency on a shard
+nobody has touched recently.
+
+**What that latency is, measured.** A restoration touching `g` shards, all
+cold, pays 14.1 s of runtime construction per shard:
+
+| | `g` | cold construction |
+|---|---:|---:|
+| Median script | 1 | 14 s |
+| Mean | 2.58 | 36 s |
+| p99 | 35 | **492 s** |
+
+The median is tolerable for a pilot. **The p99 is not**, and it is the honest
+limit of a single-worker prototype: a heavily reused script would spend eight
+minutes waiting for runtimes to be built before its bytes even start moving.
+That is an argument for more cache, not more hosts — and it is measurable
+before anyone provisions anything.
+
+### 10.3 The next steps, in order
+
+1. **Add the recent pairing to the registry.** 4,096 directory over 8,192
+   pages, which §3.2 argues for and none of the four current profiles is. This
+   is the item that blocks everything downstream, and it is small: the registry
+   varies row counts only, and both are legal multiples of `POLY_LEN`.
+
+   Note the constraint this plan already handles and the evidence archive got
+   wrong: a narrow directory under a wide page table is legal **provided the
+   seal policy closes on scripts first**, which `49152:57344,7936:8192` does. A
+   directory sized against page-bound sealing would need 16,384 rows.
+
+2. **Score it.** `--placement` and `--per-shard` over the recent range at the
+   new pairing, against `recent-8k` over the same range. This is the rejection
+   rule in §7 that has never been evaluated: if it seals on scripts in a way
+   that inflates shard count, fall back to 8,192.
+
+3. **Derive the cutoff from chain time.** The anchor's chain timestamp, not a
+   block count — a height standing in for six months drifts with the interval,
+   and re-deriving it later re-shards the chain. The event journal stores no
+   block timestamps, so this needs the node RPC that `shard-publish` already
+   calls once for shard zero's parent hash.
+
+4. **Score the mixed set.** `shard-census` has no two-tier mode although
+   `shard-publish` does, so what would be published cannot yet be measured.
+   Giving the census the same forced boundary and policy switch closes the one
+   gap the geometry decision still rests on: every figure behind it is for a
+   *uniform* deployment, and in a two-tier set an ordinary wallet may never
+   touch an archive directory at all.
+
+5. **Publish the full-chain two-tier set** into a directory of its own. Hours
+   on the coordinator, sharing it with the live ingester, and 57.1 GB against
+   448 GB free.
+
+6. **Deploy it to the existing worker** and raise `--cache-bytes` toward the
+   host's headroom, derated ~5% because `reserved_bytes` measures low. Then
+   sync a wallet from an old birthday over the public endpoint and compare the
+   ledger against an independent journal replay — the check §9.2 asks for, and
+   the first time any of this is exercised over real coverage.
+
+7. **Only then, the fleet.** Provisioning is justified by a measured working
+   set and a measured request rate, neither of which exists. Two prerequisites
+   are still open and neither is on the prototype path: whether separate
+   droplets receive independent memory bandwidth (§7 measured one host), and
+   the router (§6.4).
+
+### 10.4 What would make this not work
+
+- The recent pairing failing its rejection rule, which sends the recent tier
+  back to 8,192 and costs every ordinary wallet 17% more per sync.
+- The mixed-set census showing ordinary wallets pay archive-tier directory
+  costs, which reopens the archive decision.
+- p99 cold-start proving unacceptable even with a larger cache, which is an
+  argument for holding the archive tier resident and so for the fleet after all.
+

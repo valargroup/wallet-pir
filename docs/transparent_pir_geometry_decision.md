@@ -10,9 +10,13 @@ no wallet has synced from one.
 65,536-row page table.** The recent tier stays at `recent-8k`. `archive-32k` is
 dominated and should not be deployed.
 
-The recent tier is not reopened here. It is what ships today, it is what
-wallets synchronise against constantly, and nothing measured gives a reason to
-move it.
+**The recent tier is open, and this decision does not close it.** An earlier
+draft of this document said nothing measured gave a reason to move it. That was
+wrong: the median script's cost is exactly twice the directory query, so a
+narrower recent directory is worth 17% of what every ordinary wallet pays on
+every sync — which is the case the deployment plan's §3.2 makes for 4,096
+directory rows over 8,192 pages. That pairing is not in the registry and has
+never been scored. See §10.3 of the plan.
 
 ## What the decision rests on
 
