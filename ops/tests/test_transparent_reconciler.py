@@ -25,6 +25,7 @@ class ReconcilerTests(unittest.IsolatedAsyncioTestCase):
         self.assignment.write_text('{}')
         LIVE.atomic_json(self.root/'active.json', dict(map_sha256='a'*64, workers=['owner','fast'], assignment=str(self.assignment)))
         LIVE.atomic_json(self.root/'desired.json', dict(map_sha256='a'*64, directory=str(self.root)))
+        LIVE.atomic_json(self.root/('a'*64+'.request.json'), dict(map_sha256='a'*64, directory=str(self.root)))
         (self.root/'shards.json').write_text(json.dumps({'shards':[{'end_height':1,'terminal_block_hash':'canonical'}]}))
         self.fleet.canonical_hash = AsyncMock(return_value='canonical')
         self.fleet.stage = AsyncMock(return_value={'expected':'old'})
@@ -48,15 +49,25 @@ class ReconcilerTests(unittest.IsolatedAsyncioTestCase):
         self.fleet.control.assert_not_awaited()
         self.fleet.route.assert_not_awaited()
 
-    async def test_new_target_coalesces_and_rejects_late_completion(self):
+    async def test_new_candidate_does_not_starve_current_publication_catch_up(self):
         async def stage(*args):
             LIVE.atomic_json(self.root/'desired.json', {'map_sha256':'b'*64})
             return {'expected':'old'}
         self.fleet.stage.side_effect = stage
         await self.fleet.reconcile()
-        self.fleet.control.assert_not_awaited()
+        self.fleet.route.assert_awaited_once()
         await self.fleet.reconcile()
         self.assertEqual(self.fleet.stage.await_count, 1)
+
+    async def test_new_publication_rejects_late_completion(self):
+        async def stage(*args):
+            LIVE.atomic_json(self.root/'active.json', dict(map_sha256='b'*64, workers=['owner','fast'], assignment=str(self.assignment)))
+            LIVE.atomic_json(self.root/'desired.json', dict(map_sha256='b'*64, directory=str(self.root)))
+            return {'expected':'old'}
+        self.fleet.stage.side_effect = stage
+        await self.fleet.reconcile()
+        self.fleet.control.assert_not_awaited()
+        self.fleet.route.assert_not_awaited()
 
     async def test_nonwarm_worker_is_never_routed(self):
         self.fleet.control.return_value = {'active':{'map_sha256':'a'*64}, 'warm':False}

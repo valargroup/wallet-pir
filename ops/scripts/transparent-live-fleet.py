@@ -320,7 +320,12 @@ class Fleet:
             return None
         try:
             active = json.loads((self.root/'active.json').read_text())
-            desired = json.loads((self.root/'desired.json').read_text())
+            # A newer candidate does not supersede the public authority until
+            # activation. Catch up to what clients can read now, even while
+            # the next publication is being prepared. Otherwise short block
+            # intervals can starve a fully warmed replica indefinitely.
+            request = self.root/(active['map_sha256']+'.request.json')
+            desired = json.loads((request if request.exists() else self.root/'desired.json').read_text())
         except FileNotFoundError:
             return None
         return (active, desired) if active['map_sha256'] == desired['map_sha256'] else None
