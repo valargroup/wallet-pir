@@ -287,6 +287,13 @@ impl ShardTransport for DirectRows<'_> {
         Ok((Vec::new(), 0))
     }
 
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        // The stand-in serves rows straight off disk and publishes no
+        // manifests; a sync through it would stop at the manifest check.
+        let _ = (shard_id, revision);
+        Err("the direct-rows stand-in serves no manifests".into())
+    }
+
     fn setup(
         &mut self,
         shard_id: u64,

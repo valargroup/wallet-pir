@@ -373,6 +373,19 @@ impl ShardTransport for HttpShards {
         Ok((bytes, len))
     }
 
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        let response = self
+            .client
+            .get(format!(
+                "{}/v1/shards/{shard_id}/revisions/{revision}/manifest",
+                self.base
+            ))
+            .send()?;
+        let bytes = checked(response, shard_id, revision)?;
+        let len = bytes.len() as u64;
+        Ok((bytes, len))
+    }
+
     fn setup(
         &mut self,
         shard_id: u64,
@@ -877,6 +890,144 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
     );
 }
 
+/// Alters one byte of every manifest it relays: what a corrupted or
+/// substituted publication looks like from the wallet's side.
+struct AltersManifests {
+    inner: HttpShards,
+}
+
+impl ShardTransport for AltersManifests {
+    fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.init()
+    }
+
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        let (mut bytes, cost) = self.inner.manifest(shard_id, revision)?;
+        // Flip a digit inside the terminal block hash: still valid JSON, still
+        // a manifest, no longer the one the map named.
+        let key = b"\"terminal_block_hash\":\"";
+        let at = bytes
+            .windows(key.len())
+            .position(|window| window == key)
+            .expect("the manifest carries a terminal hash")
+            + key.len();
+        bytes[at] = if bytes[at] == b'0' { b'1' } else { b'0' };
+        Ok((bytes, cost))
+    }
+
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.setup(shard_id, revision, table, segment)
+    }
+
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
+        self.inner.query(shard_id, revision, table, body)
+    }
+}
+
+/// A manifest that does not digest to what the map names stops the sync
+/// before a single private request, and coverage stays where it was.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+
+    let filters = PublishedFilters::load(dir.path(), &map);
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let wallet = vec![script(1), script(2), script(3)];
+    let (error, queries) = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap();
+        let geometry = parse_init(&raw);
+        let mut transport = AltersManifests {
+            inner: HttpShards {
+                base: base.clone(),
+                client: client.clone(),
+            },
+        };
+        let mut filters = filters;
+        let error = sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+        )
+        .err()
+        .expect("an altered manifest must not be accepted");
+        // Nothing private was asked of the service.
+        let metrics = client
+            .get(format!("{base}/metrics"))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
+        let queries: u64 = metrics
+            .lines()
+            .find(|line| line.starts_with("transparent_shard_queries_total "))
+            .and_then(|line| line.split(' ').nth(1))
+            .and_then(|value| value.parse().ok())
+            .unwrap();
+        (error, queries)
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(
+            error,
+            transparent_wallet::SyncError::ManifestMismatch {
+                field: "digest",
+                ..
+            }
+        ),
+        "expected a digest mismatch, got: {error}"
+    );
+    assert_eq!(
+        queries, 0,
+        "no private query is made for an unverified shard"
+    );
+}
+
+/// Every matched shard's manifest is fetched and verified exactly once, and
+/// the manifests a sync reads agree with the map field by field: the genuine
+/// service passes the same checks the altered one fails.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_genuine_manifest_is_verified_once_per_matched_shard() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+    let wallet = vec![script(1), script(2), script(3)];
+    let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
+    assert_eq!(
+        outcome.charges.manifests_checked,
+        outcome.matched_shards.len() as u64
+    );
+    assert!(outcome.charges.manifest_bytes > 0);
+    compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
+}
+
 /// Returns only the first segment's body, as a service that quietly stopped
 /// serving a segment would.
 struct DropsTheLastSegment {
@@ -886,6 +1037,10 @@ struct DropsTheLastSegment {
 impl ShardTransport for DropsTheLastSegment {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         self.inner.init()
+    }
+
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.manifest(shard_id, revision)
     }
 
     fn setup(
@@ -1323,6 +1478,10 @@ struct OverloadedFor {
 impl ShardTransport for OverloadedFor {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         self.inner.init()
+    }
+
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.manifest(shard_id, revision)
     }
 
     fn setup(

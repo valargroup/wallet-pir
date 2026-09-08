@@ -7,6 +7,7 @@
 //! and private bytes to come from different origins still has that, and one
 //! that wants a single endpoint has that too.
 
+pub mod admission;
 pub mod metrics;
 pub mod runtime;
 pub mod service;

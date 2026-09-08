@@ -50,6 +50,23 @@ struct Cli {
     /// rather than told to start over; keeping them all means an unbounded set.
     #[arg(long, default_value_t = DEFAULT_RETAIN_REVISIONS)]
     retain_revisions: usize,
+    /// Requests that may wait for a slot or a runtime beyond those running.
+    ///
+    /// A full queue refuses with 503 and a retry delay. The queue is a buffer
+    /// against jitter, not a backlog: past this, a wallet is better told to
+    /// retry than kept waiting behind the rest.
+    #[arg(long, default_value_t = 64)]
+    query_waiters: usize,
+    /// Query body bytes that may be buffered at once across every waiting and
+    /// running query.
+    #[arg(long, default_value_t = 64 << 20)]
+    body_bytes: u64,
+    /// Seconds a client has to deliver a query body once admitted.
+    #[arg(long, default_value_t = 10)]
+    upload_deadline_secs: u64,
+    /// Seconds a request may wait in total before it is refused retryably.
+    #[arg(long, default_value_t = 30)]
+    query_deadline_secs: u64,
 }
 
 #[tokio::main]
@@ -77,6 +94,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         cache_bytes: cli.cache_bytes,
         build_slots: cli.build_slots,
         query_slots: cli.query_slots,
+        max_waiters: cli.query_waiters,
+        max_body_bytes: cli.body_bytes,
+        upload_deadline: std::time::Duration::from_secs(cli.upload_deadline_secs),
+        query_deadline: std::time::Duration::from_secs(cli.query_deadline_secs),
     };
     let state = ServiceState::build(set, config)
         .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;

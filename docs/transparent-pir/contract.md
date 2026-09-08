@@ -46,7 +46,10 @@ Wallet validation detects structural inconsistencies and implementation errors.
 It does not cryptographically establish event inclusion, completeness, or
 non-equivocation. Manifest digests, exact-script checks, range validation and
 revision binding are consistency checks against corruption, stale data and
-accidentally mixed generations. They are valuable as that, and they are not
+accidentally mixed generations. A manifest that digests to what the map names
+and agrees with it in every field was produced by the same indexer as the map;
+matching it proves the publication is internally consistent and unaltered in
+transit, not that the index is complete. They are valuable as that, and they are not
 evidence that the index matches the chain. A block hash accepted by the wallet
 identifies an anchor; it does not authenticate the entries or the omissions of a
 server-created index. Inclusion proofs for returned transactions would not prove

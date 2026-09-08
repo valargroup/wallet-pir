@@ -35,10 +35,11 @@
 //! paths on its own host, so two origins remain available to a wallet that
 //! wants them.
 
+use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::Metrics;
 use crate::runtime::{CacheError, RuntimeCache, RuntimeHandle, SharedParams};
 use crate::shardset::{LoadedShard, ShardSet, Table};
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -75,14 +76,39 @@ pub struct ServiceConfig {
     /// Admitting more would add queueing without adding throughput, and would
     /// hold more runtimes pinned against eviction while it did.
     pub query_slots: usize,
+    /// Requests that may wait beyond those running; see [`AdmissionConfig`].
+    pub max_waiters: usize,
+    /// Query body bytes that may be buffered at once.
+    pub max_body_bytes: u64,
+    /// How long a client has to deliver a query body once admitted.
+    pub upload_deadline: std::time::Duration,
+    /// How long a request may wait in total before a retryable refusal.
+    pub query_deadline: std::time::Duration,
 }
 
 impl Default for ServiceConfig {
     fn default() -> Self {
+        let admission = AdmissionConfig::default();
         Self {
             cache_bytes: 4 << 30,
             build_slots: 1,
-            query_slots: 2,
+            query_slots: admission.query_slots,
+            max_waiters: admission.max_waiters,
+            max_body_bytes: admission.max_body_bytes,
+            upload_deadline: admission.upload_deadline,
+            query_deadline: admission.query_deadline,
+        }
+    }
+}
+
+impl ServiceConfig {
+    fn admission(&self) -> AdmissionConfig {
+        AdmissionConfig {
+            query_slots: self.query_slots,
+            max_waiters: self.max_waiters,
+            max_body_bytes: self.max_body_bytes,
+            upload_deadline: self.upload_deadline,
+            query_deadline: self.query_deadline,
         }
     }
 }
@@ -95,7 +121,7 @@ pub struct Inner {
     /// One parameter set per geometry the loaded set actually uses, per table.
     params: HashMap<ParamsKey, Arc<SharedParams>>,
     cache: RuntimeCache,
-    query_slots: tokio::sync::Semaphore,
+    admission: Admission,
     metrics: Arc<Metrics>,
     max_query_bytes: usize,
 }
@@ -182,7 +208,7 @@ impl ServiceState {
                 set,
                 params,
                 cache: RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone()),
-                query_slots: tokio::sync::Semaphore::new(config.query_slots.max(1)),
+                admission: Admission::new(config.admission(), metrics.clone()),
                 metrics,
                 max_query_bytes,
             }),
@@ -199,6 +225,14 @@ impl ServiceState {
 
     pub fn metrics(&self) -> &Arc<Metrics> {
         &self.inner.metrics
+    }
+
+    /// Holds one evaluation slot until the permit is dropped.
+    ///
+    /// For tests that need the worker busy without answering anything, so the
+    /// bounds in front of the slot can be exercised.
+    pub async fn hold_query_slot(&self) -> crate::admission::HeldSlot {
+        self.inner.admission.hold_slot().await
     }
 
     fn shared(&self, shard: &LoadedShard, table: Table) -> Arc<SharedParams> {
@@ -268,6 +302,27 @@ enum RequestError {
     },
     /// No cache capacity could be freed. Retryable as-is.
     Overloaded,
+    /// A query arrived without saying how long it is.
+    LengthRequired,
+    /// The worker is at a bound it will not exceed. Retryable as-is; the body
+    /// names which bound.
+    Busy(&'static str),
+    /// The body did not arrive in time. The client is the slow party.
+    UploadTimeout,
+}
+
+impl From<AdmissionError> for RequestError {
+    fn from(error: AdmissionError) -> Self {
+        match error {
+            AdmissionError::QueueFull => RequestError::Busy("every waiting place is taken"),
+            AdmissionError::BodyBudget => RequestError::Busy("the body budget is full"),
+            AdmissionError::DeadlineExceeded => {
+                RequestError::Busy("the request waited its whole deadline without a slot")
+            }
+            AdmissionError::UploadTimeout => RequestError::UploadTimeout,
+            AdmissionError::ShuttingDown => RequestError::Bad("server is shutting down".into()),
+        }
+    }
 }
 
 impl RequestError {
@@ -277,6 +332,26 @@ impl RequestError {
                 StatusCode::BAD_REQUEST,
                 serde_json::json!({ "error": message }),
             ),
+            RequestError::LengthRequired => json(
+                StatusCode::LENGTH_REQUIRED,
+                serde_json::json!({ "error": "a query must declare its length" }),
+            ),
+            RequestError::UploadTimeout => json(
+                StatusCode::REQUEST_TIMEOUT,
+                serde_json::json!({ "error": "the query body did not arrive in time" }),
+            ),
+            // The same shape as the cache refusal: 503 with a delay, which is
+            // what the wallet keys its retry on. The body says which bound.
+            RequestError::Busy(reason) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("content-type", "application/json"), ("retry-after", "1")],
+                serde_json::json!({
+                    "error": reason,
+                    "retry": "retry shortly",
+                })
+                .to_string(),
+            )
+                .into_response(),
             // 409 rather than 404: the shard exists and the wallet's request is
             // well formed, but it is addressed to a publication that has been
             // replaced. The current map digest is included so the client can
@@ -325,6 +400,10 @@ pub fn router(state: ServiceState) -> Router {
         .route("/v1/filters/shards", get(shard_map))
         .route("/v1/filters/shards/:shard_id/filter", get(shard_filter))
         .route("/v1/shards/init", get(init))
+        .route(
+            "/v1/shards/:shard_id/revisions/:digest/manifest",
+            get(manifest),
+        )
         .route(
             "/v1/shards/:shard_id/revisions/:digest/setup/:table/:segment",
             get(setup),
@@ -472,6 +551,40 @@ async fn init(State(state): State<ServiceState>) -> Response {
     )
 }
 
+/// One revision's manifest, in the canonical bytes its digest is the hash of.
+///
+/// Immutable: a manifest is named by its own digest, so the bytes at this path
+/// can never change. A wallet recomputes the digest from what it receives and
+/// compares it with the map, then checks every field it relies on against the
+/// map entry and the registry. What that establishes is that the publication
+/// is internally consistent and unaltered in transit; it does not establish
+/// that the index is complete, because the same publisher produced both.
+///
+/// Superseded revisions still held are served too, so a wallet holding a
+/// revision the map has moved past can verify what it holds before deciding
+/// whether to refresh.
+async fn manifest(
+    State(state): State<ServiceState>,
+    AxumPath((shard_id, digest)): AxumPath<(u64, String)>,
+) -> Response {
+    let map_digest = state.inner.set.map_digest.clone();
+    let shard = match state.revision(shard_id, &digest) {
+        Ok(shard) => shard,
+        Err(error) => return error.into_response(&map_digest),
+    };
+    Metrics::incr(&state.inner.metrics.manifests);
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("cache-control", "public, max-age=31536000, immutable"),
+            ("x-manifest-sha256", shard.digest.as_str()),
+        ],
+        shard.canonical_manifest.clone(),
+    )
+        .into_response()
+}
+
 async fn setup(
     State(state): State<ServiceState>,
     AxumPath((shard_id, digest, table, segment)): AxumPath<(u64, String, String, u32)>,
@@ -480,6 +593,12 @@ async fn setup(
     let Some(table) = Table::parse(&table) else {
         return RequestError::Bad("unknown table".into()).into_response(&map_digest);
     };
+    // Counted as a waiter while the runtime is acquired or built, so a burst
+    // of setup requests for a cold shard is bounded the same way queries are.
+    let pending = match state.inner.admission.try_enter(None) {
+        Ok(pending) => pending,
+        Err(error) => return RequestError::from(error).into_response(&map_digest),
+    };
     let (segments, geometry, handle) = {
         let shard = match state.revision(shard_id, &digest) {
             Ok(shard) => shard,
@@ -487,11 +606,18 @@ async fn setup(
         };
         let segments = shard.segments(table);
         let geometry = shard.geometry.name.to_string();
-        match state.runtime(shard, table, segment).await {
-            Ok(handle) => (segments, geometry, handle),
-            Err(error) => return error.into_response(&map_digest),
+        match tokio::time::timeout(pending.remaining(), state.runtime(shard, table, segment)).await
+        {
+            Ok(Ok(handle)) => (segments, geometry, handle),
+            Ok(Err(error)) => return error.into_response(&map_digest),
+            Err(_) => {
+                Metrics::incr(&state.inner.metrics.deadline_exceeded);
+                return RequestError::from(AdmissionError::DeadlineExceeded)
+                    .into_response(&map_digest);
+            }
         }
     };
+    pending.complete();
     let runtime = handle.get();
     let body = SetupResponse {
         shard_id,
@@ -514,11 +640,12 @@ async fn setup(
 async fn query(
     State(state): State<ServiceState>,
     AxumPath((shard_id, digest, table)): AxumPath<(u64, String, String)>,
-    body: axum::body::Bytes,
+    request: Request,
 ) -> Response {
     let map_digest = state.inner.set.map_digest.clone();
+    let metrics = state.inner.metrics.clone();
     let Some(table) = Table::parse(&table) else {
-        Metrics::incr(&state.inner.metrics.query_errors);
+        Metrics::incr(&metrics.query_errors);
         return RequestError::Bad("unknown table".into()).into_response(&map_digest);
     };
     let (segments, shared) = {
@@ -529,21 +656,91 @@ async fn query(
         (shard.segments(table), state.shared(shard, table))
     };
 
+    // The exact length this table's query must have is known before a single
+    // body byte is read, so a body of any other length is refused here — before
+    // it is buffered, before it queues, before any runtime is built for it.
+    // The global body limit is the ceiling for the widest geometry; this is the
+    // check for the one actually addressed.
+    let expected = shared.query_bytes();
+    let declared = request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or_else(|| {
+            use http_body::Body as _;
+            request.body().size_hint().exact()
+        });
+    let Some(declared) = declared else {
+        Metrics::incr(&metrics.query_length_rejections);
+        return RequestError::LengthRequired.into_response(&map_digest);
+    };
+    if declared != expected as u64 {
+        Metrics::incr(&metrics.query_length_rejections);
+        return RequestError::Bad(format!(
+            "a {} query for geometry {} must be exactly {expected} bytes, not {declared}",
+            table.as_str(),
+            shared.geometry.name
+        ))
+        .into_response(&map_digest);
+    }
+
+    // Counted, and its bytes budgeted, before the body is read. A worker that
+    // buffered first and counted afterwards would be bounded only by how many
+    // clients chose to send at once.
+    let pending = match state.inner.admission.try_enter(Some(expected)) {
+        Ok(pending) => pending,
+        Err(error) => {
+            Metrics::incr(&metrics.query_errors);
+            return RequestError::from(error).into_response(&map_digest);
+        }
+    };
+    let upload_deadline = state.inner.admission.config().upload_deadline;
+    let body = match tokio::time::timeout(
+        upload_deadline,
+        axum::body::to_bytes(request.into_body(), expected),
+    )
+    .await
+    {
+        Ok(Ok(body)) => body,
+        Ok(Err(error)) => {
+            Metrics::incr(&metrics.query_errors);
+            return RequestError::Bad(format!("reading the query body: {error}"))
+                .into_response(&map_digest);
+        }
+        Err(_) => {
+            Metrics::incr(&metrics.upload_timeouts);
+            Metrics::incr(&metrics.query_errors);
+            return RequestError::UploadTimeout.into_response(&map_digest);
+        }
+    };
+    // A declared length is a claim; the bytes that arrived are the fact.
+    if body.len() != expected {
+        Metrics::incr(&metrics.query_length_rejections);
+        Metrics::incr(&metrics.query_errors);
+        return RequestError::Bad(format!(
+            "the query body is {} bytes where {expected} were declared",
+            body.len()
+        ))
+        .into_response(&map_digest);
+    }
+
     // The prefix names the revision and table, and the same bytes come back in
     // the response, so a query answered by the wrong runtime fails a check at
     // both ends rather than decoding into rows from a range nobody asked for.
     let binding = query_binding(&digest, table.as_str());
 
     // Admission before work: bounded evaluation is what keeps a burst from
-    // pinning every runtime in the cache against eviction at once.
-    let waited = std::time::Instant::now();
-    let Ok(_permit) = state.inner.query_slots.acquire().await else {
-        return RequestError::Bad("server is shutting down".into()).into_response(&map_digest);
+    // pinning every runtime in the cache against eviction at once. The wait is
+    // bounded by the request's deadline, and a request that outwaits it is
+    // refused retryably rather than kept.
+    let admitted = match state.inner.admission.wait_slot(pending).await {
+        Ok(admitted) => admitted,
+        Err(error) => {
+            Metrics::incr(&metrics.query_errors);
+            return RequestError::from(error).into_response(&map_digest);
+        }
     };
-    Metrics::add(
-        &state.inner.metrics.query_queue_micros,
-        waited.elapsed().as_micros() as u64,
-    );
 
     // Every segment answers the same query, and the results come back in
     // segment order. The client keeps the row whose contents it can identify
@@ -563,30 +760,56 @@ async fn query(
             Ok(shard) => shard,
             Err(error) => return error.into_response(&map_digest),
         };
-        match state.runtime(shard, table, segment).await {
-            Ok(handle) => handles.push(handle),
-            Err(error) => {
-                Metrics::incr(&state.inner.metrics.query_errors);
+        match tokio::time::timeout(admitted.remaining(), state.runtime(shard, table, segment)).await
+        {
+            Ok(Ok(handle)) => handles.push(handle),
+            Ok(Err(error)) => {
+                Metrics::incr(&metrics.query_errors);
                 return error.into_response(&map_digest);
+            }
+            Err(_) => {
+                Metrics::incr(&metrics.deadline_exceeded);
+                Metrics::incr(&metrics.query_errors);
+                return RequestError::from(AdmissionError::DeadlineExceeded)
+                    .into_response(&map_digest);
             }
         }
     }
 
-    let mut answer = Vec::new();
-    for handle in &handles {
-        match handle.get().evaluate(&shared, binding, &body) {
-            Ok(response) => answer.extend(response),
-            Err(error) => {
-                Metrics::incr(&state.inner.metrics.query_errors);
-                return RequestError::Bad(error).into_response(&map_digest);
+    // Evaluated off the async runtime, holding the slot and every handle for
+    // exactly as long as the work runs. The admission moves into the closure:
+    // if the client goes away meanwhile the evaluation still finishes and is
+    // discarded, but the slot is released when it does, not when the dropped
+    // future would have been polled.
+    let evaluated = tokio::task::spawn_blocking(move || {
+        let mut answer = Vec::new();
+        for handle in &handles {
+            match handle.get().evaluate(&shared, binding, &body) {
+                Ok(response) => answer.extend(response),
+                Err(error) => return Err(error),
             }
         }
+        admitted.complete();
+        Ok(answer)
+    })
+    .await;
+    match evaluated {
+        Ok(Ok(answer)) => {
+            Metrics::incr(&metrics.queries);
+            (
+                StatusCode::OK,
+                [("content-type", "application/octet-stream")],
+                answer,
+            )
+                .into_response()
+        }
+        Ok(Err(error)) => {
+            Metrics::incr(&metrics.query_errors);
+            RequestError::Bad(error).into_response(&map_digest)
+        }
+        Err(error) => {
+            Metrics::incr(&metrics.query_errors);
+            RequestError::Bad(format!("evaluation task failed: {error}")).into_response(&map_digest)
+        }
     }
-    Metrics::incr(&state.inner.metrics.queries);
-    (
-        StatusCode::OK,
-        [("content-type", "application/octet-stream")],
-        answer,
-    )
-        .into_response()
 }

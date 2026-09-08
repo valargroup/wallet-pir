@@ -3988,6 +3988,7 @@ dependencies = [
  "clap",
  "enhance-pir-server",
  "hex",
+ "http-body",
  "inspiring",
  "ipir-sp",
  "reqwest",

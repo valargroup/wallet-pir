@@ -246,6 +246,10 @@ pub struct LoadedShard {
     /// The manifest digest, which is also the directory name and the identity
     /// of this revision.
     pub digest: String,
+    /// The manifest in its canonical serialization: the bytes `digest` is the
+    /// hash of. Served as-is, so a wallet recomputing the digest from what it
+    /// received gets the digest the map names.
+    pub canonical_manifest: Vec<u8>,
     /// The geometry the manifest names, resolved against the registry.
     pub geometry: &'static Geometry,
     /// The shard's public range filter, as published.
@@ -371,9 +375,11 @@ impl LoadedShard {
             )));
         }
 
+        let canonical_manifest = manifest.canonical_bytes();
         Ok(Self {
             manifest,
             digest,
+            canonical_manifest,
             geometry,
             filter,
             directory,

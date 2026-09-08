@@ -226,6 +226,9 @@ pub struct ByteCharges {
     /// is republished with its content, so re-reading the shard means
     /// re-matching it, not just re-querying it.
     pub filters_checked: u64,
+    /// Manifests fetched and verified, one per matched shard revision.
+    pub manifest_bytes: u64,
+    pub manifests_checked: u64,
 }
 
 impl ByteCharges {
@@ -241,6 +244,11 @@ impl ByteCharges {
         charges.query_upload += upload;
         charges.query_download += download;
         charges.queries += 1;
+    }
+
+    pub fn add_manifest(&mut self, cost: u64) {
+        self.manifest_bytes += cost;
+        self.manifests_checked += 1;
     }
 
     pub fn add_setup(&mut self, table: Table, cost: u64) {
@@ -274,7 +282,11 @@ impl ByteCharges {
     }
 
     pub fn total(&self) -> u64 {
-        self.map_bytes + self.filter_bytes + self.directory.total() + self.pages.total()
+        self.map_bytes
+            + self.filter_bytes
+            + self.manifest_bytes
+            + self.directory.total()
+            + self.pages.total()
     }
 
     /// What a wallet pays before issuing a single private query.
@@ -322,6 +334,13 @@ pub trait FilterSource {
 pub trait ShardTransport {
     /// The service's init document, as JSON, with the bytes it cost.
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError>;
+
+    /// One shard revision's manifest, in canonical bytes, with its cost.
+    ///
+    /// The wallet recomputes the digest of what comes back and compares it
+    /// with the map before using anything the manifest says, so a transport
+    /// need not verify anything itself. Refusals are recognised as for setup.
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError>;
 
     /// One segment's published setup for one table, as JSON, with its cost.
     ///

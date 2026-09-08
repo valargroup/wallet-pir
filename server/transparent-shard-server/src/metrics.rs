@@ -48,6 +48,25 @@ pub struct Metrics {
     pub cache_misses: AtomicU64,
     /// Microseconds spent waiting for a query slot.
     pub query_queue_micros: AtomicU64,
+    /// Manifests served.
+    pub manifests: AtomicU64,
+    /// Queries refused before any work because their declared length was not
+    /// the one their table demands.
+    pub query_length_rejections: AtomicU64,
+    /// Requests refused because every waiting place was taken.
+    pub queue_rejections: AtomicU64,
+    /// Queries refused because the body budget could not hold them.
+    pub body_budget_rejections: AtomicU64,
+    /// Queries whose body did not arrive within the upload deadline.
+    pub upload_timeouts: AtomicU64,
+    /// Requests that waited their whole deadline without a slot.
+    pub deadline_exceeded: AtomicU64,
+    /// Requests dropped by their client before they were answered.
+    pub queries_cancelled: AtomicU64,
+    /// Requests currently counted as waiting or running.
+    pub query_queue_depth: AtomicU64,
+    /// Query body bytes currently buffered.
+    pub body_bytes_in_flight: AtomicU64,
 }
 
 impl Metrics {
@@ -63,7 +82,11 @@ impl Metrics {
         gauge.store(to, Ordering::Relaxed);
     }
 
-    fn get(counter: &AtomicU64) -> u64 {
+    pub fn sub(gauge: &AtomicU64, by: u64) {
+        gauge.fetch_sub(by, Ordering::Relaxed);
+    }
+
+    pub fn get(counter: &AtomicU64) -> u64 {
         counter.load(Ordering::Relaxed)
     }
 
@@ -182,6 +205,60 @@ impl Metrics {
             "counter",
             "Time queries spent waiting for an evaluation slot.",
             Self::get(&self.query_queue_micros),
+        );
+        line(
+            "transparent_shard_manifests_total",
+            "counter",
+            "Manifests served.",
+            Self::get(&self.manifests),
+        );
+        line(
+            "transparent_shard_query_length_rejections_total",
+            "counter",
+            "Queries refused before any work for declaring the wrong length.",
+            Self::get(&self.query_length_rejections),
+        );
+        line(
+            "transparent_shard_queue_rejections_total",
+            "counter",
+            "Requests refused because every waiting place was taken.",
+            Self::get(&self.queue_rejections),
+        );
+        line(
+            "transparent_shard_body_budget_rejections_total",
+            "counter",
+            "Queries refused because the body budget could not hold them.",
+            Self::get(&self.body_budget_rejections),
+        );
+        line(
+            "transparent_shard_upload_timeouts_total",
+            "counter",
+            "Queries whose body did not arrive within the upload deadline.",
+            Self::get(&self.upload_timeouts),
+        );
+        line(
+            "transparent_shard_deadline_exceeded_total",
+            "counter",
+            "Requests that waited their whole deadline without a slot.",
+            Self::get(&self.deadline_exceeded),
+        );
+        line(
+            "transparent_shard_queries_cancelled_total",
+            "counter",
+            "Requests dropped by their client before they were answered.",
+            Self::get(&self.queries_cancelled),
+        );
+        line(
+            "transparent_shard_query_queue_depth",
+            "gauge",
+            "Requests currently waiting or running.",
+            Self::get(&self.query_queue_depth),
+        );
+        line(
+            "transparent_shard_body_bytes_in_flight",
+            "gauge",
+            "Query body bytes currently buffered.",
+            Self::get(&self.body_bytes_in_flight),
         );
         out
     }

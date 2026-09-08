@@ -243,6 +243,7 @@ async fn post(state: &ServiceState, path: &str, body: Vec<u8>) -> (StatusCode, V
             Request::builder()
                 .method("POST")
                 .uri(path)
+                .header("content-length", body.len().to_string())
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -433,6 +434,282 @@ async fn a_truncated_query_is_refused_rather_than_padded() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// An oversized body is refused from its declared length, before it is
+/// buffered, queued or built for: the check the global body limit cannot make,
+/// because that limit is the ceiling for the widest geometry served.
+#[tokio::test]
+async fn an_oversized_query_is_refused_before_any_work() {
+    let f = fixture();
+    let revision = revision_of(&f, 0);
+    let mut body = padded_body(&revision, Table::Directory);
+    body.push(0);
+    let (status, raw) = post(
+        &f.state,
+        &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&raw).contains("must be exactly"));
+    let metrics = f.state.metrics();
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.query_length_rejections),
+        1
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.cache_misses),
+        0,
+        "no runtime was built for a query that was never going to be evaluated"
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.query_queue_depth),
+        0
+    );
+}
+
+/// A body stream that never yields and never ends: what a stalled upload looks
+/// like from the server's side.
+struct NeverEnds;
+
+impl http_body::Body for NeverEnds {
+    type Data = axum::body::Bytes;
+    type Error = std::convert::Infallible;
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        std::task::Poll::Pending
+    }
+}
+
+fn streaming_request(path: &str, content_length: Option<usize>) -> Request<Body> {
+    let mut builder = Request::builder().method("POST").uri(path);
+    if let Some(length) = content_length {
+        builder = builder.header("content-length", length.to_string());
+    }
+    builder.body(Body::new(NeverEnds)).unwrap()
+}
+
+/// A query whose length is unknown cannot be checked before it is read, so it
+/// is not read at all.
+#[tokio::test]
+async fn a_query_without_a_declared_length_is_refused() {
+    let f = fixture();
+    let revision = revision_of(&f, 0);
+    let response = router(f.state.clone())
+        .oneshot(streaming_request(
+            &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::LENGTH_REQUIRED);
+}
+
+/// A client that declares the right length and then stalls does not hold the
+/// worker: the upload deadline ends it, and its waiting place comes back.
+#[tokio::test]
+async fn a_slow_upload_times_out_without_holding_a_place() {
+    let dir = tempfile::tempdir().unwrap();
+    publish(dir.path());
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
+    let state = ServiceState::build(
+        set,
+        ServiceConfig {
+            upload_deadline: std::time::Duration::from_millis(100),
+            ..ServiceConfig::default()
+        },
+    )
+    .expect("state");
+    let revision = state_revision(&state, dir.path(), 0);
+    let expected = padded_body(&revision, Table::Directory).len();
+    let response = router(state.clone())
+        .oneshot(streaming_request(
+            &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+            Some(expected),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    let metrics = state.metrics();
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.upload_timeouts),
+        1
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.query_queue_depth),
+        0,
+        "the timed-out request no longer counts as waiting"
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.body_bytes_in_flight),
+        0
+    );
+}
+
+/// The digest the map names for `shard_id`, read from the published map on
+/// disk, for states built outside `fixture()`.
+fn state_revision(_: &ServiceState, dir: &Path, shard_id: u64) -> String {
+    let map: ShardMap =
+        serde_json::from_slice(&std::fs::read(dir.join("shards.json")).unwrap()).unwrap();
+    map.shards
+        .iter()
+        .find(|entry| entry.shard_id == shard_id)
+        .unwrap()
+        .manifest_digest
+        .clone()
+}
+
+/// With every slot busy and every waiting place taken, the next query is
+/// refused retryably rather than queued without bound — and a waiter that gives
+/// up hands its place back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_full_queue_refuses_retryably_and_a_cancelled_waiter_frees_its_place() {
+    let dir = tempfile::tempdir().unwrap();
+    publish(dir.path());
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
+    let state = ServiceState::build(
+        set,
+        ServiceConfig {
+            query_slots: 1,
+            max_waiters: 1,
+            query_deadline: std::time::Duration::from_secs(30),
+            ..ServiceConfig::default()
+        },
+    )
+    .expect("state");
+    let revision = state_revision(&state, dir.path(), 0);
+    let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
+    let body = padded_body(&revision, Table::Directory);
+
+    // The only slot is busy.
+    let held = state.hold_query_slot().await;
+    // One waiter takes the one waiting place.
+    let waiting = {
+        let state = state.clone();
+        let path = path.clone();
+        let body = body.clone();
+        tokio::spawn(async move { post(&state, &path, body).await })
+    };
+    let metrics = state.metrics().clone();
+    let depth = || transparent_shard_server::metrics::Metrics::get(&metrics.query_queue_depth);
+    while depth() < 1 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // The next is refused, with a delay the wallet keys its retry on.
+    let response = router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&path)
+                .header("content-length", body.len().to_string())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response
+            .headers()
+            .get("retry-after")
+            .map(|v| v.to_str().unwrap()),
+        Some("1")
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.queue_rejections),
+        1
+    );
+
+    // The waiter gives up: its place is freed and the cancellation counted.
+    waiting.abort();
+    let _ = waiting.await;
+    while depth() > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.queries_cancelled),
+        1
+    );
+    // With the slot released, the same request is admitted and evaluated: a
+    // zero-padded body is a well-formed query that selects nothing, so it is
+    // answered rather than refused, and a runtime was built to answer it.
+    drop(held);
+    let (status, raw) = post(&state, &path, body).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&raw));
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.cache_misses),
+        1,
+        "a runtime was built for the admitted query"
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.queries),
+        1
+    );
+    assert_eq!(depth(), 0);
+}
+
+/// A request that waits its whole deadline for a slot is refused retryably
+/// rather than kept waiting.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_that_outwaits_its_deadline_is_refused_retryably() {
+    let dir = tempfile::tempdir().unwrap();
+    publish(dir.path());
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
+    let state = ServiceState::build(
+        set,
+        ServiceConfig {
+            query_slots: 1,
+            query_deadline: std::time::Duration::from_millis(100),
+            ..ServiceConfig::default()
+        },
+    )
+    .expect("state");
+    let revision = state_revision(&state, dir.path(), 0);
+    let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
+    let body = padded_body(&revision, Table::Directory);
+    let _held = state.hold_query_slot().await;
+    let (status, _) = post(&state, &path, body).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&state.metrics().deadline_exceeded),
+        1
+    );
+}
+
+/// The manifest route serves the canonical bytes the digest names, so a wallet
+/// recomputing the digest from what it received reproduces the map's.
+#[tokio::test]
+async fn the_manifest_route_serves_canonical_bytes_that_digest_to_the_path() {
+    let f = fixture();
+    for shard_id in 0..SHARDS {
+        let revision = revision_of(&f, shard_id);
+        let (status, raw) = get(
+            &f.state,
+            &format!("/v1/shards/{shard_id}/revisions/{revision}/manifest"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let manifest: ShardManifest = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(manifest.digest(), revision);
+        assert_eq!(raw, manifest.canonical_bytes());
+        assert_eq!(manifest.shard_id, shard_id);
+    }
+    // A revision of another shard is a routing error; an unknown digest is a
+    // stale client, exactly as for setup and query.
+    let zero = revision_of(&f, 0);
+    let (status, _) = get(&f.state, &format!("/v1/shards/1/revisions/{zero}/manifest")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, raw) = get(
+        &f.state,
+        &format!("/v1/shards/0/revisions/{}/manifest", "bb".repeat(32)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let refused: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    assert_eq!(refused["map_sha256"], f.set.map_digest);
 }
 
 #[tokio::test]

@@ -54,6 +54,7 @@ use transparent_filter::{
     validate_filter, BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap,
 };
 use transparent_shard::build::candidate_rows;
+use transparent_shard::manifest::ShardManifest;
 use transparent_shard::page_row::decode_page_row;
 use transparent_shard::records::{decode_directory_row, DirectoryEntry};
 
@@ -104,6 +105,15 @@ pub enum SyncError {
     /// The service stayed at its capacity limit for the whole retry budget.
     #[error("shard {shard_id}: the service had no free cache capacity after {attempts} attempts")]
     Overloaded { shard_id: u64, attempts: u32 },
+    /// A shard's manifest does not describe the shard the map named.
+    ///
+    /// Terminal for the sync, and coverage stops where it was. Every field a
+    /// retrieval relies on — geometry, range, segment shape, chain link — is
+    /// checked against the map before a single private request, so a
+    /// publication that is internally inconsistent is refused rather than read
+    /// under whichever of its two stories the wallet happened to see first.
+    #[error("shard {shard_id}: manifest {field} does not agree with the map")]
+    ManifestMismatch { shard_id: u64, field: &'static str },
     /// A refreshed map is not the same shard set, continued.
     ///
     /// The caller validated the map this sync started from against the wallet's
@@ -347,9 +357,14 @@ pub fn sync(
         // it. An entry is a handful of short strings; the filter download it
         // gates dwarfs the copy.
         let entry = active.shards[index].clone();
+        let previous_digest = index
+            .checked_sub(1)
+            .map(|before| active.shards[before].manifest_digest.clone())
+            .unwrap_or_default();
         let read = read_shard(
             &entry,
-            &active.profile,
+            &previous_digest,
+            &active,
             genesis,
             scripts,
             geometry,
@@ -478,7 +493,8 @@ pub fn sync(
 #[allow(clippy::too_many_arguments)]
 fn read_shard(
     entry: &transparent_filter::ShardMapEntry,
-    profile: &str,
+    previous_digest: &str,
+    map: &ShardMap,
     genesis: BlockHash,
     scripts: &[ScriptBytes],
     geometry: &ServiceGeometry,
@@ -487,6 +503,7 @@ fn read_shard(
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
 ) -> Result<Option<Recovered>, SyncError> {
+    let profile = map.profile.as_str();
     // Every filter in range is downloaded, matched or not.
     let (bytes, cost) = filters
         .filter(entry.shard_id)
@@ -516,12 +533,53 @@ fn read_shard(
         return Ok(None);
     }
 
+    // A geometry this build does not know is fatal the moment there is
+    // something to fetch, whatever the manifest would say about it.
+    if transparent_shard::layout::by_name(&entry.geometry).is_none() {
+        return Err(SyncError::UnknownGeometry(entry.geometry.clone()));
+    }
+
     // Retried here, one level inside the map-refresh loop, because an overload
     // says nothing about the map: refetching it would be pure cost, and the
     // same revision is still the right one to ask for.
+    //
+    // The manifest is fetched and checked before any private request, once
+    // per revision this sync touches. What it establishes is that the map,
+    // the manifest and the registry tell one story about this shard; it does
+    // not establish that the story is complete, because the same publisher
+    // told all of it. Its fetch meets the same two refusals a private request
+    // can, and they are lifted the same way.
     let mut attempt = 1u32;
+    let mut manifest: Option<ShardManifest> = None;
     loop {
-        let prepared = clients.prepare(&entry.geometry, &geometry.geometries)?;
+        let verified = match &manifest {
+            Some(verified) => verified,
+            None => match fetch_manifest(entry, previous_digest, map, transport, charges) {
+                Ok(verified) => manifest.insert(verified),
+                Err(SyncError::Client(ClientError::Stale(stale))) => {
+                    return Err(SyncError::StaleRevision {
+                        shard_id: entry.shard_id,
+                        stale,
+                        refreshes: 0,
+                    })
+                }
+                Err(SyncError::Client(ClientError::Overloaded(overloaded))) => {
+                    if attempt >= MAX_OVERLOAD_ATTEMPTS {
+                        return Err(SyncError::Overloaded {
+                            shard_id: entry.shard_id,
+                            attempts: attempt,
+                        });
+                    }
+                    std::thread::sleep(overload_backoff(attempt, overloaded.retry_after));
+                    attempt += 1;
+                    continue;
+                }
+                Err(other) => return Err(other),
+            },
+        };
+        // The geometry is the verified manifest's, which `verify_manifest`
+        // has shown to be the map's as well.
+        let prepared = clients.prepare(&verified.geometry, &geometry.geometries)?;
         match retrieve_shard(entry, &matches, scripts, prepared, transport, charges) {
             Ok(recovered) => return Ok(Some(recovered)),
             // Both refusals reach here wrapped as client errors, because setup
@@ -551,6 +609,120 @@ fn read_shard(
             Err(other) => return Err(other),
         }
     }
+}
+
+/// Fetches a matched shard's manifest and verifies it against the map.
+fn fetch_manifest(
+    entry: &transparent_filter::ShardMapEntry,
+    previous_digest: &str,
+    map: &ShardMap,
+    transport: &mut impl ShardTransport,
+    charges: &mut ByteCharges,
+) -> Result<ShardManifest, SyncError> {
+    let (raw, cost) = transport
+        .manifest(entry.shard_id, &entry.manifest_digest)
+        .map_err(|error| SyncError::from(classify_transport(error)))?;
+    charges.add_manifest(cost);
+    verify_manifest(&raw, entry, previous_digest, map)
+}
+
+/// Checks a manifest against the map entry that named it, the entry before
+/// it, and this build's registry.
+///
+/// The digest first: the bytes must hash to the digest the map names, or
+/// nothing else in them is worth reading. Then every field a retrieval relies
+/// on. The parent link ties the manifest to the map's previous entry, so a
+/// manifest that is individually well formed but belongs to a different
+/// sequence of shards is refused too. Segment shapes are checked against the
+/// registry entry the manifest names, which is what makes the geometry a
+/// property of the verified manifest rather than of the map alone.
+///
+/// None of this is an independence proof. The map, the manifest and the
+/// tables come from one publisher; agreement among them rules out corruption,
+/// stale data and mixed publications, not omission.
+fn verify_manifest(
+    raw: &[u8],
+    entry: &transparent_filter::ShardMapEntry,
+    previous_digest: &str,
+    map: &ShardMap,
+) -> Result<ShardManifest, SyncError> {
+    let shard_id = entry.shard_id;
+    let mismatch = |field: &'static str| SyncError::ManifestMismatch { shard_id, field };
+    let manifest: ShardManifest = serde_json::from_slice(raw)
+        .map_err(|error| SyncError::Invalid(format!("shard {shard_id} manifest: {error}")))?;
+    if manifest.digest() != entry.manifest_digest {
+        return Err(mismatch("digest"));
+    }
+    if manifest.schema != transparent_shard::SCHEMA {
+        return Err(SyncError::Schema {
+            served: manifest.schema.clone(),
+            expected: transparent_shard::SCHEMA,
+        });
+    }
+    if manifest.network != map.network {
+        return Err(mismatch("network"));
+    }
+    if manifest.genesis_hash != map.genesis_hash {
+        return Err(mismatch("genesis_hash"));
+    }
+    if manifest.profile != map.profile {
+        return Err(mismatch("profile"));
+    }
+    if manifest.shard_id != entry.shard_id {
+        return Err(mismatch("shard_id"));
+    }
+    if manifest.geometry != entry.geometry {
+        return Err(mismatch("geometry"));
+    }
+    if manifest.start_height != entry.start_height || manifest.end_height != entry.end_height {
+        return Err(mismatch("range"));
+    }
+    if manifest.parent_block_hash != entry.parent_block_hash {
+        return Err(mismatch("parent_block_hash"));
+    }
+    if manifest.terminal_block_hash != entry.terminal_block_hash {
+        return Err(mismatch("terminal_block_hash"));
+    }
+    if manifest.filter_hash != entry.filter_hash {
+        return Err(mismatch("filter_hash"));
+    }
+    if manifest.sealed != entry.sealed {
+        return Err(mismatch("sealed"));
+    }
+    if manifest.revision != entry.revision {
+        return Err(mismatch("revision"));
+    }
+    if manifest.parent_manifest_digest != previous_digest {
+        return Err(mismatch("parent_manifest_digest"));
+    }
+    if manifest.directory_segments.len() as u32 != entry.directory_segments
+        || manifest.page_segments.len() as u32 != entry.page_segments
+    {
+        return Err(mismatch("segment_count"));
+    }
+    let geometry = transparent_shard::layout::by_name(&manifest.geometry)
+        .ok_or_else(|| SyncError::UnknownGeometry(manifest.geometry.clone()))?;
+    for segment in &manifest.directory_segments {
+        if segment.rows != geometry.directory_rows
+            || segment.row_bytes != geometry.directory_row_bytes as u32
+        {
+            return Err(mismatch("directory_segment_shape"));
+        }
+    }
+    for segment in &manifest.page_segments {
+        if segment.rows != geometry.page_rows || segment.row_bytes != geometry.page_row_bytes as u32
+        {
+            return Err(mismatch("page_segment_shape"));
+        }
+    }
+    if let Some(seal) = map.seal.get(&manifest.geometry) {
+        if manifest.seal.scripts_target != seal.max_scripts
+            || manifest.seal.page_rows_target != seal.max_page_rows
+        {
+            return Err(mismatch("seal"));
+        }
+    }
+    Ok(manifest)
 }
 
 /// How long to wait before re-asking an overloaded service.
@@ -1030,6 +1202,178 @@ mod tests {
             },
         );
         assert!(check_continuation(&before, &widened, 199).is_ok());
+    }
+
+    fn manifest_for(entry: &ShardMapEntry, parent: &str, map: &ShardMap) -> ShardManifest {
+        use transparent_shard::manifest::{
+            ManifestLayout, ManifestOccupancy, ManifestSeal, TableGeometry,
+        };
+        let geometry = transparent_shard::layout::by_name(&entry.geometry).unwrap();
+        let seal = &map.seal[&entry.geometry];
+        ShardManifest {
+            schema: transparent_shard::SCHEMA.to_string(),
+            profile: map.profile.clone(),
+            geometry: entry.geometry.clone(),
+            network: map.network.clone(),
+            genesis_hash: map.genesis_hash.clone(),
+            shard_id: entry.shard_id,
+            start_height: entry.start_height,
+            end_height: entry.end_height,
+            parent_block_hash: entry.parent_block_hash.clone(),
+            terminal_block_hash: entry.terminal_block_hash.clone(),
+            parent_manifest_digest: parent.to_string(),
+            sealed: entry.sealed,
+            revision: entry.revision,
+            supersedes: String::new(),
+            seal: ManifestSeal {
+                scripts_target: seal.max_scripts,
+                scripts_capacity: seal.max_scripts * 2,
+                page_rows_target: seal.max_page_rows,
+                page_rows_capacity: geometry.page_rows,
+            },
+            layout: ManifestLayout {
+                max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
+                inline_events: transparent_shard::INLINE_EVENTS,
+                events_per_page: transparent_shard::EVENTS_PER_PAGE,
+                page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
+                page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
+                directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
+            },
+            filter_hash: entry.filter_hash.clone(),
+            directory_segments: (0..entry.directory_segments)
+                .map(|i| TableGeometry {
+                    rows: geometry.directory_rows,
+                    row_bytes: geometry.directory_row_bytes as u32,
+                    sha256: format!("{:064x}", 1000 + i),
+                })
+                .collect(),
+            page_segments: (0..entry.page_segments)
+                .map(|i| TableGeometry {
+                    rows: geometry.page_rows,
+                    row_bytes: geometry.page_row_bytes as u32,
+                    sha256: format!("{:064x}", 2000 + i),
+                })
+                .collect(),
+            occupancy: ManifestOccupancy {
+                scripts: 1,
+                page_rows: 1,
+                fragments: 1,
+                events: 1,
+                blocks: 100,
+                txids: 1,
+                excluded_scripts: 0,
+            },
+        }
+    }
+
+    /// The manifest that digests to what the map names, and agrees with it in
+    /// every field, is accepted; every single-field departure is refused with
+    /// the field named, and a changed body without a changed digest is caught
+    /// by the digest first.
+    #[test]
+    fn a_manifest_is_accepted_only_when_it_agrees_with_the_map_in_every_field() {
+        let mut first = entry(0, 100, 199, true);
+        let mut second = entry(1, 200, 249, false);
+        let map = map(vec![first.clone(), second.clone()]);
+        let genuine_first = manifest_for(&first, "", &map);
+        first.manifest_digest = genuine_first.digest();
+        let genuine_second = manifest_for(&second, &first.manifest_digest, &map);
+        second.manifest_digest = genuine_second.digest();
+        let map = self::map(vec![first.clone(), second.clone()]);
+
+        verify_manifest(&genuine_first.canonical_bytes(), &first, "", &map).expect("genuine");
+        verify_manifest(
+            &genuine_second.canonical_bytes(),
+            &second,
+            &first.manifest_digest,
+            &map,
+        )
+        .expect("genuine, chained");
+
+        // Any change to the bytes changes the digest, so the first refusal is
+        // always the digest's.
+        let mut altered = genuine_second.clone();
+        altered.end_height += 1;
+        let error = verify_manifest(
+            &altered.canonical_bytes(),
+            &second,
+            &first.manifest_digest,
+            &map,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                SyncError::ManifestMismatch {
+                    field: "digest",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+
+        // A map entry that disagrees with a genuine manifest names the field.
+        type Mutation = Box<dyn Fn(&mut ShardMapEntry)>;
+        let cases: Vec<(&str, Mutation)> = vec![
+            ("geometry", Box::new(|e| e.geometry = "recent-4k".into())),
+            ("range", Box::new(|e| e.end_height = 250)),
+            (
+                "parent_block_hash",
+                Box::new(|e| e.parent_block_hash = "ff".repeat(32)),
+            ),
+            (
+                "terminal_block_hash",
+                Box::new(|e| e.terminal_block_hash = "ee".repeat(32)),
+            ),
+            ("filter_hash", Box::new(|e| e.filter_hash = "dd".repeat(32))),
+            ("sealed", Box::new(|e| e.sealed = true)),
+            ("revision", Box::new(|e| e.revision = 1)),
+            ("segment_count", Box::new(|e| e.page_segments = 2)),
+        ];
+        for (field, mutate) in cases {
+            let mut disagreeing = second.clone();
+            mutate(&mut disagreeing);
+            // The digest still matches the bytes; only the map entry changed.
+            disagreeing.manifest_digest = genuine_second.digest();
+            let error = verify_manifest(
+                &genuine_second.canonical_bytes(),
+                &disagreeing,
+                &first.manifest_digest,
+                &map,
+            )
+            .unwrap_err();
+            match error {
+                SyncError::ManifestMismatch { field: found, .. } => assert_eq!(found, field),
+                other => panic!("{field}: {other}"),
+            }
+        }
+        // A broken chain is a different sequence of shards.
+        let error =
+            verify_manifest(&genuine_second.canonical_bytes(), &second, "", &map).unwrap_err();
+        assert!(matches!(
+            error,
+            SyncError::ManifestMismatch {
+                field: "parent_manifest_digest",
+                ..
+            }
+        ));
+        // A map naming another set is refused before any field comparison.
+        let mut other_set = map.clone();
+        other_set.genesis_hash = "cc".repeat(32);
+        let error = verify_manifest(
+            &genuine_second.canonical_bytes(),
+            &second,
+            &first.manifest_digest,
+            &other_set,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            SyncError::ManifestMismatch {
+                field: "genesis_hash",
+                ..
+            }
+        ));
     }
 
     #[test]

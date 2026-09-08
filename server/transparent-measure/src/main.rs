@@ -110,6 +110,19 @@ impl ShardTransport for HttpShards {
         Ok((bytes, len))
     }
 
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        let response = self
+            .client
+            .get(format!(
+                "{}/v1/shards/{shard_id}/revisions/{revision}/manifest",
+                self.base
+            ))
+            .send()?;
+        let bytes = checked(response, shard_id, revision)?;
+        let len = bytes.len() as u64;
+        Ok((bytes, len))
+    }
+
     fn setup(
         &mut self,
         shard_id: u64,

@@ -15,11 +15,11 @@ Source inspection: 2026-09-07, commit `8514863`. This documentation change does 
 | Loading/cache | Whole-set loader verifies manifest/table identity; bounded runtime cache and file-backed plaintext sources exist |
 | Revision handling | Revision-addressed setup/query, 409 refresh, retryable cache pressure, bounded wallet refresh exist |
 | Retention | Three superseded revisions per shard in addition to current; disk pruning and warm retention require explicit operational policy |
-| Query validation | Runtime checks exact body length against the selected table/profile; global HTTP cap is the maximum. Earlier claims that oversized recent bodies are accepted as valid queries are incorrect. Reject earlier for resource efficiency |
-| Admission | Evaluation semaphore exists; it is not a bound on all waiting HTTP bodies/connections |
+| Query validation | The query route refuses a body whose declared length is not the selected table's exact length before buffering, queueing or building; a missing length is 411; the runtime re-checks length and binding as defence in depth; the global HTTP cap remains the ceiling for the widest geometry |
+| Admission | `admission.rs` bounds waiting requests (`--query-waiters`), buffered body bytes (`--body-bytes`), upload time (`--upload-deadline-secs`) and total wait (`--query-deadline-secs`); a full queue, exhausted body budget or expired deadline is 503 with `retry-after`, a stalled upload 408; a dropped connection releases its place and is counted |
 | Readiness | Nonempty loaded set; does not establish warm assigned runtimes |
 | Fleet assignment/router | Not implemented as the target pool architecture |
-| Wallet manifest binding | Retrieval still chooses geometry from the map's registry name; complete verified manifest consumption remains |
+| Wallet manifest binding | `GET /v1/shards/:id/revisions/:digest/manifest` serves canonical manifest bytes; before any private request on a matched shard the wallet recomputes the digest, checks every field against the map entry, the previous entry's digest and the registry, and takes the geometry from the verified manifest |
 | Persisted continuation | `sync()` builds a ledger for a sync; caller-side continuation, rollback and provisional replacement remain |
 
 Relevant sources: [publisher](../../server/transparent-filter-server/src/bin/shard-publish.rs), [census](../../server/transparent-filter-server/src/bin/shard-census.rs), [service](../../server/transparent-shard-server/src/service.rs), [runtime](../../server/transparent-shard-server/src/runtime.rs), [loader](../../server/transparent-shard-server/src/shardset.rs), [wallet](../../pir/transparent-wallet/src/sync.rs).
