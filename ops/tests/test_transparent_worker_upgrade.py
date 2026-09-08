@@ -24,7 +24,7 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
                 await M.install_worker(fleet, worker, artifacts, '/rollback')
         uploaded = next(call.args[2].decode() for call in fleet.ssh.await_args_list if call.args[1].startswith('cat >'))
         self.assertEqual(uploaded.count('RuntimeDirectory=transparent-pir'), 1)
-        self.assertEqual(uploaded.count('MemoryHigh=5G'), 1)
+        self.assertEqual(uploaded.count('MemoryHigh=5905580032'), 1)
         verify = next(call for call in fleet.ssh.await_args_list if '--verify-only' in call.args[1])
         self.assertFalse(verify.kwargs['multiplex'])
         fleet.control.assert_awaited_once()

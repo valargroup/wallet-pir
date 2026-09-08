@@ -134,10 +134,10 @@ async def install_worker(fleet,worker,artifacts,rollback):
         new_unit=new_unit.replace('[Service]','[Service]\nRuntimeDirectory=transparent-pir',1)
     if worker['role'] == 'recent-replica':
         # Reclaim file cache before transient admission reaches the 7 GiB
-        # hard limit. The four-replica target is measured with a 5 GiB high
+        # hard limit. The four-replica target is measured with a 5.5 GiB high
         # threshold; anonymous allocations still obey the work/cache guards.
         new_unit='\n'.join(line for line in new_unit.splitlines() if not line.startswith('MemoryHigh='))+'\n'
-        new_unit=new_unit.replace('[Service]','[Service]\nMemoryHigh=5G',1)
+        new_unit=new_unit.replace('[Service]','[Service]\nMemoryHigh=5905580032',1)
     remote='/opt/transparent-publisher/staged'
     await fleet.ssh(host,'mkdir -p '+remote+' '+shlex.quote(rollback))
     for name in ['transparent-shard-server','shard-control']:
