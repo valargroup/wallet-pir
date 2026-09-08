@@ -196,9 +196,15 @@ async fn main() -> Result<(), BoxError> {
 
     // Shard zero's parent is the block before coverage begins, which the
     // journal does not hold. One RPC call, and the only reason this needs a
-    // node at all.
-    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
-    let base_parent = BlockHash::from_display_hex(&zakura.block_hash(first - 1).await?)?;
+    // node at all. Genesis has no predecessor: its parent is the all-zero
+    // hash the block header itself carries, so a set from height 0 asks the
+    // node nothing rather than asking for a block at height -1.
+    let base_parent = if first == 0 {
+        BlockHash::from_internal_bytes([0u8; 32])
+    } else {
+        let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+        BlockHash::from_display_hex(&zakura.block_hash(first - 1).await?)?
+    };
 
     std::fs::create_dir_all(&cli.output)?;
     match cutoff {
