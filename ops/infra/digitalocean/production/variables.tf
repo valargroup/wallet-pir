@@ -173,3 +173,19 @@ variable "transparent_router_size" {
   type        = string
   default     = "s-2vcpu-4gb"
 }
+
+variable "transparent_public_dns_target" {
+  description = <<-EOT
+    Which host transparent-pir.valargroup.dev points at: "worker" keeps the
+    pilot worker serving while the fleet is provisioned and staged; "router"
+    is the activation, switched by the operator after fleet-deploy has the
+    router answering.
+  EOT
+  type        = string
+  default     = "worker"
+
+  validation {
+    condition     = contains(["worker", "router"], var.transparent_public_dns_target)
+    error_message = "Must be \"worker\" or \"router\"."
+  }
+}

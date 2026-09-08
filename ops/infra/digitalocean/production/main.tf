@@ -449,18 +449,26 @@ resource "cloudflare_dns_record" "enhance" {
 # rebuilt worker cannot leave the record pointing at an address nothing answers
 # on. The Enhance record predates this and still carries a hardcoded IP.
 #
-# The record follows the router once one exists, and the pilot worker until
-# then; the switch is the fleet's activation from the wallet's point of view.
+# The record moves to the router only when the operator says so: a router
+# that exists but has no Caddyfile yet must not take the public name from
+# the pilot that is serving it.
 resource "cloudflare_dns_record" "transparent" {
   count   = var.transparent_router_count + var.transparent_worker_count > 0 ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = local.transparent_public_hostname
   type    = "A"
-  content = var.transparent_router_count > 0 ? digitalocean_droplet.transparent_router[0].ipv4_address : digitalocean_droplet.transparent_worker[0].ipv4_address
+  content = var.transparent_public_dns_target == "router" && var.transparent_router_count > 0 ? digitalocean_droplet.transparent_router[0].ipv4_address : digitalocean_droplet.transparent_worker[0].ipv4_address
   ttl     = 300
   # Unproxied, so Caddy can answer the ACME challenge directly.
   proxied = false
-  comment = var.transparent_router_count > 0 ? "Transparent PIR router; managed by Terraform" : "Transparent PIR shard worker; managed by Terraform"
+  comment = var.transparent_public_dns_target == "router" && var.transparent_router_count > 0 ? "Transparent PIR router; managed by Terraform" : "Transparent PIR shard worker; managed by Terraform"
+
+  lifecycle {
+    precondition {
+      condition     = var.transparent_public_dns_target != "router" || var.transparent_router_count > 0
+      error_message = "transparent_public_dns_target is \"router\" but no router is provisioned."
+    }
+  }
 }
 
 # Keep the existing production resources while renaming Terraform addresses.
