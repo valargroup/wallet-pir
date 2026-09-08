@@ -1703,7 +1703,7 @@ fn retrieve_shard_into<S: WalletStore>(
         // landed, which is a function of the script. Candidates are taken over
         // the shard's whole logical row space; each names one row within a
         // segment, and every segment answers it.
-        let mut found: Option<DirectoryEntry> = None;
+        let mut found: Option<(u64, DirectoryEntry)> = None;
         let rows = geometry.directory_rows * entry.directory_segments as u64;
         for row in candidate_rows(shard_id, script, rows) {
             let (_, within) = transparent_shard::layout::split_row(row, geometry.directory_rows);
@@ -1721,16 +1721,25 @@ fn retrieve_shard_into<S: WalletStore>(
                     // be misplaced; the segment is not named at all. The exact
                     // script bytes are what settle both.
                     if candidate.script == *script {
-                        if found.is_some() {
-                            return Err(SyncError::Invalid(format!(
-                                "shard {shard_id} holds a script twice"
-                            )));
+                        match &found {
+                            // The two candidate hashes can name the same row
+                            // (one script in 8,192 at recent-8k). The row is
+                            // still fetched twice, so the query count does not
+                            // depend on the script, and the second sighting is
+                            // the same entry, not a second one.
+                            Some((seen_row, _)) if *seen_row == row => {}
+                            Some(_) => {
+                                return Err(SyncError::Invalid(format!(
+                                    "shard {shard_id} holds a script twice"
+                                )));
+                            }
+                            None => found = Some((row, candidate)),
                         }
-                        found = Some(candidate);
                     }
                 }
             }
         }
+        let found = found.map(|(_, entry)| entry);
         match found {
             // A filter match with no directory entry is either a false positive
             // or a script outside the private tables' coverage. Both are
