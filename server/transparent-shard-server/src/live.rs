@@ -200,6 +200,7 @@ impl LiveService {
                 let digest = publication.map_sha256.clone();
                 let config = self.0.config;
                 let next = tokio::task::spawn_blocking(move || {
+                    old.evict_unpinned();
                     let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
                         .map_err(|e| e.to_string())?;
                     if set.map_digest != digest {

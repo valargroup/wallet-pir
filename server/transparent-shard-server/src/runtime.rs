@@ -564,6 +564,18 @@ impl RuntimeCache {
         self.inner.lock().expect("runtime cache").resident
     }
 
+    /// Reclaim idle revisions before a publication build needs scratch memory.
+    /// Current residency pins, in-flight queries and builds remain accounted.
+    pub fn evict_unpinned(&self) {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        while let Some(key) = Self::least_recently_used_unpinned(&inner) {
+            let entry = inner.entries.remove(&key).expect("victim exists");
+            inner.resident -= entry.reserved;
+            Metrics::incr(&self.metrics.evictions);
+        }
+        self.publish(&inner);
+    }
+
     /// Entries currently held, for health reporting and tests.
     pub fn entries(&self) -> usize {
         self.inner.lock().expect("runtime cache").entries.len()

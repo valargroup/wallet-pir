@@ -320,8 +320,8 @@ impl ServiceState {
     /// Builds every runtime this worker should hold, in the order the set
     /// prescribes, and marks the worker warm when done.
     ///
-    /// Current assigned revisions always; retained superseded revisions only
-    /// while the budget has room without evicting anything already warm. A
+    /// Only current assigned revisions are warmed. Retained revisions remain
+    /// available on demand without consuming the next build's headroom. A
     /// request arriving during the prewarm for a runtime it has not reached
     /// yet is served the ordinary way, and the prewarm finds that runtime
     /// resident when it gets there.
@@ -338,7 +338,12 @@ impl ServiceState {
             // Keep enough jobs active to use the restore slots. Cache misses
             // still queue behind the independent, smaller cold-build limit.
             let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
-                inner.set.warm_targets(),
+                inner
+                    .set
+                    .warm_targets()
+                    .into_iter()
+                    .filter(|(digest, _, _)| current.contains(digest))
+                    .collect::<Vec<_>>(),
             )));
             let current = Arc::new(current);
             let mut workers = tokio::task::JoinSet::new();
@@ -361,13 +366,6 @@ impl ServiceState {
                         let Some(source) = shard.segment(table, segment).cloned() else {
                             continue;
                         };
-                        // A superseded revision is warmed only into free budget.
-                        if !current.contains(&digest)
-                            && inner.cache.resident_bytes() + shared.reserved_bytes()
-                                > inner.cache.budget()
-                        {
-                            continue;
-                        }
                         match inner
                             .cache
                             .get((digest.clone(), table, segment), shared, source)
@@ -414,6 +412,10 @@ impl ServiceState {
     }
     pub(crate) fn release_pins(&self) {
         self.inner.warm.pins.lock().unwrap().clear();
+    }
+
+    pub(crate) fn evict_unpinned(&self) {
+        self.inner.cache.evict_unpinned();
     }
 
     pub(crate) fn release_invalidated(&self, digests: &std::collections::BTreeSet<String>) {

@@ -620,6 +620,12 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
     assert_eq!(metrics.evictions.load(Ordering::Relaxed), 0);
     assert_eq!(cache.entries(), 1);
     assert_eq!(cache.resident_bytes(), budget);
+    cache.evict_unpinned();
+    assert_eq!(
+        cache.resident_bytes(),
+        budget,
+        "trimming preserves live handles"
+    );
 
     // Once nothing is holding it, the same request succeeds by evicting it.
     drop(held);
@@ -634,6 +640,79 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
     assert_eq!(metrics.evictions.load(Ordering::Relaxed), 1);
     assert_eq!(cache.entries(), 1);
     assert!(cache.resident_bytes() <= budget);
+    cache.evict_unpinned();
+    assert_eq!(cache.resident_bytes(), 0);
+    assert_eq!(cache.entries(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revision_churn_reserves_only_current_and_preparing_runtimes() {
+    use transparent_shard_server::live::{Command, LiveService, Publication};
+    use transparent_shard_server::service::ReadinessMode;
+    use transparent_shard_server::shardset::LoadOptions;
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("initial");
+    std::fs::create_dir(&a).unwrap();
+    let (_, mut previous) = two_revisions(&a);
+    let set = ShardSet::open(&a, 3).unwrap();
+    let mut expected = set.map_digest.clone();
+    let pair = one_runtime(Table::Directory) + one_runtime(Table::Pages);
+    let config = ServiceConfig {
+        cache_bytes: pair * 8,
+        readiness: ReadinessMode::Warm,
+        ..ServiceConfig::default()
+    };
+    let state = ServiceState::build(set, config).unwrap();
+    state.spawn_prewarm().await.unwrap();
+    let metrics = state.metrics().clone();
+    assert_eq!(
+        metrics.builds.load(Ordering::Relaxed),
+        2,
+        "retained tails are not prewarmed"
+    );
+    let live = LiveService::new(
+        state,
+        Publication {
+            directory: a,
+            assignment: None,
+            map_sha256: expected.clone(),
+        },
+        config,
+        LoadOptions::whole(3),
+        root.path().join("active.json"),
+    )
+    .unwrap();
+    for revision in 2..8 {
+        let directory = root.path().join(format!("generation-{revision}"));
+        std::fs::create_dir(&directory).unwrap();
+        let height = FIRST + 80 + revision as u64;
+        let (digest, scripts) = write_revision(&directory, height, revision, &previous);
+        write_map(&directory, &digest, height, revision, scripts);
+        let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
+        live.command(Command::Prepare {
+            expected: expected.clone(),
+            publication: Publication {
+                directory,
+                assignment: None,
+                map_sha256: map_sha256.clone(),
+            },
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            metrics.resident_bytes.load(Ordering::Relaxed),
+            pair * 2,
+            "only the current and preparing pair remain resident, even with spare cache capacity"
+        );
+        live.command(Command::Activate {
+            expected,
+            map_sha256: map_sha256.clone(),
+        })
+        .await
+        .unwrap();
+        expected = map_sha256;
+        previous = digest;
+    }
 }
 
 /// Hot activation keeps the old revision usable, shares bounded runtime state,
