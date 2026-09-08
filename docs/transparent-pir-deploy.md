@@ -295,9 +295,10 @@ on every incremental sync, which is the traffic every wallet pays constantly.
   [fullchain-archive-wide-notes.md](transparent-pir-evaluation/shard-utilisation/fullchain-archive-wide-notes.md)
   and [fullchain-8192-matches.txt](transparent-pir-evaluation/shard-utilisation/fullchain-8192-matches.txt).
 - **Several figures quoted in this repo come from the partial `genesis-*`
-  census covering 9.4% of chain height.** The 27.4/3.75 MB pair above was one;
-  `layout.rs`'s "27 shards on average and 2,794 at the worst" is likely
-  another. The `shard-utilisation` README was written to warn about exactly
+  census covering 9.4% of chain height.** The 27.4/3.75 MB pair above was one.
+  `layout.rs` is another, and confirmed rather than suspected: it cites
+  `genesis-geometry-notes.md` directly, and its "511 shards" is the exact
+  figure the README identifies as the partial result against a real 1,091. The `shard-utilisation` README was written to warn about exactly
   this after it caused a 55% error in shard count, and it has now happened
   twice. Re-measure before quoting.
 - **No two-tier set has been published or served, and nothing has been measured
