@@ -11,4 +11,3 @@ archive-wide pages build=2.029312333s restore=1.092555125s bytes=369066048
 test runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 15.98s
-

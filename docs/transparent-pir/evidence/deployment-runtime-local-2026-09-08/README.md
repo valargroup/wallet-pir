@@ -6,7 +6,7 @@ The [manifest](manifest.json) records the tested revision, commands, host and
 limitations. `make check` passed, followed by strict Clippy, the cache tests and
 six offline rollout test groups. Raw logs: [full checks](make-check.txt),
 [cache tests](runtime-tests.txt), [rollout tests](rollout-tests.txt),
-[Clippy](clippy.txt).
+[Clippy](clippy.txt). Captured logs normalize trailing blank lines.
 
 | Geometry/table | Cold build | Disk restore | Cache bytes |
 |---|---:|---:|---:|
