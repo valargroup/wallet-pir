@@ -18,6 +18,14 @@
 set -euo pipefail
 
 MODE="${1:-deploy}"
+ACTIVATED_WORKERS=()
+ROUTER_ACTIVATED=0
+DEPLOY_PLAN=""
+TRANSACTION_ID=""
+TRANSACTION_FILE=""
+EXPECTED_BINARY_SHA256=""
+# shellcheck source=ops/scripts/transparent-fleet-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/transparent-fleet-state.sh"
 
 # ------------------------------------------------------------- jq programs
 #
@@ -68,6 +76,8 @@ readonly JQ_READY_OK='.ready == true'
 readonly JQ_READY_MAP='.map_sha256'
 readonly JQ_READY_ASSIGNMENT='.assignment_sha256 // ""'
 readonly JQ_READY_WARM='"\(.warm_runtimes)/\(.target_runtimes) runtimes warm, mode \(.mode)"'
+readonly JQ_READY_BINARY='.binary_sha256'
+readonly JQ_READY_WORKER_ASSIGNMENT='.worker_assignment_sha256 // ""'
 readonly JQ_READY_REASON='.reason // "ready"'
 
 # /v1/shards/init. InitResponse and GeometryInit in the same file.
@@ -91,7 +101,7 @@ jq_programs() {
   local name
   for name in JQ_MAP_SHARD_COUNT JQ_MAP_DIGESTS JQ_MAP_FIRST_DIGEST JQ_MAP_GEOMETRIES \
     JQ_HEALTH_SERVING JQ_HEALTH_SHARDS JQ_HEALTH_ASSIGNED \
-    JQ_READY_OK JQ_READY_MAP JQ_READY_ASSIGNMENT JQ_READY_WARM JQ_READY_REASON \
+    JQ_READY_OK JQ_READY_MAP JQ_READY_ASSIGNMENT JQ_READY_WARM JQ_READY_REASON JQ_READY_BINARY JQ_READY_WORKER_ASSIGNMENT \
     JQ_INIT_COMPLETE JQ_INIT_GEOMETRY_NAMES JQ_INIT_SHARDS JQ_INIT_HAS_GEOMETRIES \
     JQ_INIT_MAP JQ_INIT_ASSIGNED \
     JQ_INIT_GEOMETRY_COMPLETE JQ_INIT_SUMMARY; do
@@ -218,6 +228,7 @@ for tool in curl jq sha256sum systemctl rsync caddy; do
 done
 systemctl is-enabled caddy >/dev/null 2>&1 || { echo "caddy is not enabled" >&2; exit 1; }
 sudo -n true || { echo "passwordless sudo is required" >&2; exit 1; }
+[[ -z "$(systemctl show transparent-shard-server.service -p DropInPaths --value)" ]] || { echo "unmanaged service drop-ins require reconciliation" >&2; exit 1; }
 free -g | awk '/^Mem:/ {print "memory: " $2 " GiB total, " $7 " GiB available"}'
 REMOTE
 }
@@ -369,6 +380,7 @@ ship_shards() {
   local -a opts
   mapfile -t opts < <(ssh_opts)
   local dest
+  [[ "$action" == restart ]] || return 0
   dest="$(shard_set_path)"
   echo "== ship shard set ($TRANSPARENT_SHARD_SOURCE -> $dest)"
   worker_ssh "sudo mkdir -p $(printf %q "$dest") && sudo chown $(printf %q "$TRANSPARENT_DEPLOY_USER") $(printf %q "$dest")"
@@ -592,6 +604,10 @@ verify_public() {
 fleet_json() { printf '%s' "$TRANSPARENT_FLEET_JSON"; }
 
 validate_fleet_inputs() {
+  [[ "${TRANSPARENT_REPLICA_ACTIVATION:-paired}" =~ ^(paired|serial)$ ]] || fail "replica activation must be paired or serial"
+  [[ "${TRANSPARENT_OWNER_ACTIVATION:-serial}" =~ ^(parallel|serial)$ ]] || fail "owner activation must be parallel or serial"
+  [[ "${TRANSPARENT_FORCE_REDEPLOY:-false}" =~ ^(true|false)$ ]] || fail "force redeploy must be true or false"
+
   require_env TRANSPARENT_FLEET_JSON TRANSPARENT_ASSIGNMENT TRANSPARENT_DEPLOY_USER \
     TRANSPARENT_RELEASE_SHA TRANSPARENT_ARTIFACT_DIR TRANSPARENT_SHARD_DIR \
     TRANSPARENT_PUBLIC_URL TRANSPARENT_SHARD_SOURCE
@@ -603,6 +619,13 @@ validate_fleet_inputs() {
   [[ -f "$TRANSPARENT_ASSIGNMENT" ]] || fail "assignment $TRANSPARENT_ASSIGNMENT does not exist"
   jq -e 'type == "array" and length > 0' <<<"$(fleet_json)" >/dev/null \
     || fail "TRANSPARENT_FLEET_JSON must be a nonempty array"
+  if [[ -n "${TRANSPARENT_CANARY_WORKER_IDS:-}" ]]; then
+    [[ "$TRANSPARENT_CANARY_WORKER_IDS" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]] || fail "canary IDs must be comma-separated worker IDs"
+    local canary
+    for canary in ${TRANSPARENT_CANARY_WORKER_IDS//,/ }; do
+      jq -e --arg id "$canary" 'any(.[]; .id == $id)' <<<"$(fleet_json)" >/dev/null || fail "unknown canary worker $canary"
+    done
+  fi
   local id host
   while IFS=$'\t' read -r id host; do
     [[ "$id" =~ ^[A-Za-z0-9_-]+$ ]] || fail "worker id $id is not a plain name"
@@ -664,6 +687,7 @@ fleet_preflight() {
   local id host
   for id in $(worker_ids); do
     host="$(worker_field "$id" ssh_host)"
+    [[ "$(worker_action "$id")" == restart ]] || continue
     echo "== preflight $id ($host)"
     host_ssh "$host" bash -s <<'REMOTE'
 set -euo pipefail
@@ -672,6 +696,7 @@ for tool in curl jq sha256sum systemctl rsync; do
   command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }
 done
 sudo -n true || { echo "passwordless sudo is required" >&2; exit 1; }
+[[ -z "$(systemctl show transparent-shard-server.service -p DropInPaths --value)" ]] || { echo "unmanaged service drop-ins require reconciliation" >&2; exit 1; }
 free -g | awk '/^Mem:/ {print "memory: " $2 " GiB total, " $7 " GiB available"}'
 REMOTE
     # Capacity against this worker's own file list, not the whole set.
@@ -707,16 +732,12 @@ fleet_prepare() {
   # copies are independent and the coordinator's disk and NIC, not any one
   # worker, bound the total.
   prepare_worker() {
-    local id="$1" host cache memory extra dest slots
+    local id="$1" host dest
   host="$(worker_field "$id" ssh_host)"
-  cache="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .cache_bytes' "$TRANSPARENT_ASSIGNMENT")"
-  memory="$(worker_field "$id" memory_max)"
-  [[ -n "$memory" && "$memory" != "null" ]] || fail "roster entry $id has no memory_max"
-  extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess"
-  slots="$(worker_field "$id" build_slots)"
-  [[ -n "$slots" && "$slots" != "null" ]] || slots=1
-  render_unit "$cache" "$memory" "$extra" ".$id" "$slots"
-  local unit="$RENDERED_UNIT"
+  local action
+  action="$(worker_action "$id")"
+  [[ "$action" == restart || "$action" == tools ]] || return 0
+  local unit="$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service.$id.rendered"
   echo "== stage $id ($host): binary, tools, unit, assignment"
   host_ssh "$host" "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
@@ -787,8 +808,12 @@ fleet_stage_router() {
     echo "== stage router ($TRANSPARENT_ROUTER_HOST): Caddyfile"
     host_ssh "$TRANSPARENT_ROUTER_HOST" "mkdir -p $(printf %q "$staged")"
     scp "${opts[@]}" "$caddyfile" "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_ROUTER_HOST:$staged/Caddyfile"
-    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" <<'REMOTE'
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "${TRANSPARENT_CANARY_WORKER_IDS:-}" <<'REMOTE'
 set -euo pipefail
+if [[ -n "$2" ]]; then
+  diff -q <(sudo sed '/^[[:space:]]*#/d' /etc/caddy/Caddyfile) <(sed '/^[[:space:]]*#/d' "$1/Caddyfile") >/dev/null \
+    || { echo "canary rollout requires unchanged routing" >&2; exit 1; }
+fi
 sudo caddy validate --config "$1/Caddyfile" --adapter caddyfile
 if sudo test -r /etc/caddy/Caddyfile; then
   echo "router config changes (live -> staged):"
@@ -807,6 +832,7 @@ fleet_verify_prepared() {
   verify_worker() {
     local id="$1" host
     host="$(worker_field "$id" ssh_host)"
+    [[ "$(worker_action "$id")" == restart ]] || return 0
     echo "== verify prepared $id ($host)"
     host_ssh "$host" bash -s -- "$staged" <<'REMOTE'
 set -euo pipefail
@@ -817,7 +843,13 @@ exec_line="$(sed -n 's/^ExecStart=//p' "$staged/unit.rendered")"
 args="${exec_line#* }"
 args="${args//\/opt\/transparent-pir\/assignments\//$staged/}"
 # shellcheck disable=SC2086
-"$staged/transparent-shard-server" $args --verify-only
+report="$("$staged/transparent-shard-server" $args --verify-only)"
+echo "$report"
+if jq -e '.runtime_cache != null' <<<"$report" >/dev/null; then
+  need="$(jq -r '.runtime_cache | .missing_bytes + .temporary_bytes' <<<"$report")"
+  read -r total available < <(df -PB1 /srv/transparent-pir/runtime-cache | awk 'NR==2 {print $2, $4}')
+  (( available - need >= total / 5 )) || { echo "runtime cache would violate 20% filesystem headroom" >&2; exit 1; }
+fi
 REMOTE
   }
   # Every worker verifies at once; each reads its own disk.
@@ -854,8 +886,12 @@ wait_ready() {
         assignment="$(echo "$ready" | jq -er "$JQ_READY_ASSIGNMENT")"
         [[ "$map" == "$EXPECTED_MAP_SHA256" ]] \
           || fail "$id is ready under map $map, expected $EXPECTED_MAP_SHA256"
-        [[ "$assignment" == "$expect_assignment" ]] \
-          || fail "$id is ready under assignment $assignment, expected $expect_assignment"
+        local effective binary
+        effective="$(echo "$ready" | jq -er "$JQ_READY_WORKER_ASSIGNMENT")"
+        binary="$(echo "$ready" | jq -er "$JQ_READY_BINARY")"
+        [[ "$effective" == "$(worker_digest "$id")" && "$binary" == "$EXPECTED_BINARY_SHA256" ]] \
+          || fail "$id is ready under an unexpected worker assignment or binary"
+        echo "$id assignment document $assignment (candidate $expect_assignment)"
         echo "$id ready: $(echo "$ready" | jq -r "$JQ_READY_WARM")"
         return 0
       fi
@@ -870,82 +906,108 @@ wait_ready() {
 }
 
 fleet_activate_workers() {
-  local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
-  local assignment_sha
+  local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA" assignment_sha
   assignment_sha="$(assignment_digest)"
   activate_worker() {
-    local id="$1" host upstream
+    local id="$1" host upstream action unit_sha started=$SECONDS
     host="$(worker_field "$id" ssh_host)"
-    upstream="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .upstream' "$TRANSPARENT_ASSIGNMENT")"
-    echo "== activate $id ($host)"
-    host_ssh "$host" bash -s -- "$staged" "$TRANSPARENT_RELEASE_SHA" "$assignment_sha" <<'REMOTE'
+    upstream="$(worker_field "$id" upstream)"
+    action="$(worker_action "$id")"
+    unit_sha="$(jq -r --arg id "$id" '.workers[$id].desired.unit' "$DEPLOY_PLAN")"
+    echo "== activate $id ($host): $action"
+    host_ssh "$host" bash -s -- "$staged" "$TRANSPARENT_RELEASE_SHA" "$assignment_sha" "$TRANSACTION_ID" "$action" "$unit_sha" <<'REMOTE'
 set -euo pipefail
-staged="$1"; sha="$2"; assignment_sha="$3"
+staged="$1"; sha="$2"; assignment_sha="$3"; transaction="$4"; action="$5"; unit_sha="$6"
 release="/opt/transparent-pir/releases/$sha"
-sudo mkdir -p "$release" /opt/transparent-pir/rollback /opt/transparent-pir/assignments
-sudo install -m 0755 "$staged/transparent-shard-server" "$release/"
+backup="/opt/transparent-pir/transactions/$transaction"
+sudo mkdir -p "$release" "$backup" /opt/transparent-pir/assignments
+# Complete the snapshot before the first mutation; a failed snapshot is never
+# interpreted as an empty previous installation during rollback.
+for path in /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
+  /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
+  if sudo test -f "$path"; then sudo cp -p "$path" "$backup/$(basename "$path")"; fi
+done
+systemctl is-active transparent-shard-server.service >"$staged/previous-active" || true
+systemctl is-enabled transparent-shard-server.service >"$staged/previous-enabled" || true
+sudo cp "$staged/previous-active" "$staged/previous-enabled" "$backup/"
+printf '%s\n' "$action" | sudo tee "$backup/action" >/dev/null
+sudo touch "$backup/touched"
 sudo install -m 0755 "$staged/shard-prune" "$release/"
+sudo install -m 0755 "$release/shard-prune" /usr/local/bin/shard-prune
+if [[ "$action" == tools ]]; then exit 0; fi
+sudo install -m 0755 "$staged/transparent-shard-server" "$release/"
 sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
 sudo install -m 0644 "$staged/$assignment_sha.json" "/opt/transparent-pir/assignments/$assignment_sha.json"
-if [[ -x /usr/local/bin/transparent-shard-server ]]; then
-  sudo cp -f /usr/local/bin/transparent-shard-server /opt/transparent-pir/rollback/
-fi
-if [[ -f /etc/systemd/system/transparent-shard-server.service ]]; then
-  sudo cp -f /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/rollback/
-fi
 sudo systemctl stop transparent-shard-server.service 2>/dev/null || true
 sudo install -m 0755 "$release/transparent-shard-server" /usr/local/bin/transparent-shard-server.next
 sudo mv -f /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server
-sudo install -m 0755 "$release/shard-prune" /usr/local/bin/shard-prune
-sudo install -m 0644 "$release/transparent-shard-server.service" \
-  /etc/systemd/system/transparent-shard-server.service
+sudo install -m 0644 "$release/transparent-shard-server.service" /etc/systemd/system/transparent-shard-server.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now transparent-shard-server.service
 printf '%s\n' "$sha" | sudo tee /opt/transparent-pir/current-release >/dev/null
+printf '%s\n' "$unit_sha" | sudo tee /opt/transparent-pir/current-unit-digest >/dev/null
 REMOTE
     wait_ready "$id" "$upstream" "$assignment_sha"
     host_ssh "$host" "rm -rf $(printf %q "$staged")"
+    printf 'worker:%s\t%s\n' "$id" "$((SECONDS - started))" >>"$TRANSPARENT_ARTIFACT_DIR/deploy-timings.tsv"
   }
-  local id host
-  # Archive owners hold disjoint ranges, so activating them together makes
-  # the whole archive unavailable at once instead of half at a time. That is
-  # acceptable on a first activation or when the operator says so
-  # (TRANSPARENT_OWNER_ACTIVATION=parallel), and halves a cold start whose
-  # length is the owners' warm-up; the default keeps one owner serving.
-  local -a owners=() replicas=()
-  for id in $(worker_ids_in_activation_order); do
-    if [[ "$(worker_field "$id" role)" == "archive-owner" ]]; then owners+=("$id"); else replicas+=("$id"); fi
-  done
-  if [[ "${TRANSPARENT_OWNER_ACTIVATION:-serial}" == "parallel" && "${#owners[@]}" -gt 1 ]]; then
-    echo "== activating ${#owners[@]} archive owners together"
+  run_batch() {
+    local id host log i failed=0
     local -a pids=() logs=()
-    local log
-    for id in "${owners[@]}"; do
+    for id in "$@"; do
       host="$(worker_field "$id" ssh_host)"
-      ACTIVATED_WORKERS+=("$host")
+      transaction_worker "$host" "$id" "$(worker_action "$id")"
       log="$(mktemp)"
-      activate_worker "$id" >"$log" 2>&1 &
+      (trap - EXIT; activate_worker "$id") >"$log" 2>&1 &
       pids+=($!); logs+=("$log")
     done
-    local i failed=0
     for i in "${!pids[@]}"; do
       if ! wait "${pids[$i]}"; then failed=1; fi
       cat "${logs[$i]}"; rm -f "${logs[$i]}"
     done
-    [[ "$failed" -eq 0 ]] || fail "an archive owner failed to activate; see above"
+    [[ "$failed" -eq 0 ]] || fail "activation batch failed"
+  }
+  local id group ready healthy total limit fresh action
+  local -a owners=() pending=() batch=()
+  for id in $(worker_ids_in_activation_order); do
+    action="$(worker_action "$id")"
+    [[ "$action" == restart || "$action" == tools ]] || continue
+    if [[ "$action" == tools ]]; then run_batch "$id"
+    elif [[ "$(worker_field "$id" role)" == archive-owner ]]; then owners+=("$id")
+    fi
+  done
+  if [[ "${TRANSPARENT_OWNER_ACTIVATION:-serial}" == parallel ]]; then
+    run_batch "${owners[@]}"
   else
-    for id in "${owners[@]}"; do
-      host="$(worker_field "$id" ssh_host)"
-      ACTIVATED_WORKERS+=("$host")
-      activate_worker "$id"
-    done
+    for id in "${owners[@]}"; do run_batch "$id"; done
   fi
-  # Replicas one at a time: a replica out of rotation is one the router's
-  # health check already sees as down; two at once halves the pool.
-  for id in "${replicas[@]}"; do
-    host="$(worker_field "$id" ssh_host)"
-    ACTIVATED_WORKERS+=("$host")
-    activate_worker "$id"
+  for group in $(jq -r '[.workers[] | select(.role == "recent-replica") | .replica_group] | unique[]' "$TRANSPARENT_ASSIGNMENT"); do
+    pending=(); total=0; fresh=true
+    for id in $(jq -r --arg group "$group" '.workers[] | select(.replica_group == $group) | .id' "$TRANSPARENT_ASSIGNMENT"); do
+      total=$((total + 1))
+      [[ "$(worker_action "$id")" != restart ]] || pending+=("$id")
+      # First activation is established by the absence of an installed binary,
+      # never by an unhealthy fleet being mistaken for a fresh one.
+      if host_ssh "$(worker_field "$id" ssh_host)" test -x /usr/local/bin/transparent-shard-server; then fresh=false; fi
+    done
+    while [[ "${#pending[@]}" -gt 0 ]]; do
+      healthy=0
+      for id in $(jq -r --arg group "$group" '.workers[] | select(.replica_group == $group) | .id' "$TRANSPARENT_ASSIGNMENT"); do
+        ready="$(curl --silent --max-time 10 "http://$(worker_field "$id" upstream)/v1/ready" || true)"
+        if jq -e '.ready == true and .mode == "warm" and .warm_runtimes == .target_runtimes' <<<"$ready" >/dev/null 2>&1; then healthy=$((healthy + 1)); fi
+      done
+      limit="$(replica_batch_limit "$total" "$healthy" "$fresh")"
+      [[ "$limit" -gt 0 ]] || fail "replica group $group has $healthy/$total healthy; cannot preserve its serving floor"
+      batch=("${pending[@]:0:limit}")
+      run_batch "${batch[@]}"
+      pending=("${pending[@]:limit}")
+      # Caddy probes every 5 s and remembers passive failures for 30 s. Allow
+      # both to settle before retiring another pair; also probe its public route.
+      sleep "${TRANSPARENT_ROUTER_SETTLE_SECONDS:-35}"
+      if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
+        curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/init" >/dev/null
+      fi
+    done
   done
 }
 
@@ -953,12 +1015,27 @@ fleet_activate_router() {
   [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]] || { echo "no router host; skipping"; return 0; }
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   echo "== activate router ($TRANSPARENT_ROUTER_HOST)"
+  if host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" <<'REMOTE'
+set -euo pipefail
+# The renderer emits only whole-line audit comments; directives stay exact.
+diff -q <(sudo sed '/^[[:space:]]*#/d' /etc/caddy/Caddyfile) <(sed '/^[[:space:]]*#/d' "$1/Caddyfile") >/dev/null
+REMOTE
+  then
+    echo "router unchanged; skipping reload"
+    return 0
+  fi
+  [[ -n "$TRANSACTION_ID" ]] || transaction_begin
+  jq --arg host "$TRANSPARENT_ROUTER_HOST" '.router = $host' "$TRANSACTION_FILE" >"$TRANSACTION_FILE.next"
+  mv "$TRANSACTION_FILE.next" "$TRANSACTION_FILE"
+  transaction_publish
   ROUTER_ACTIVATED=1
-  host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" <<'REMOTE'
+  host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "$TRANSACTION_ID" <<'REMOTE'
 set -euo pipefail
 staged="$1"
-sudo mkdir -p /opt/transparent-pir/rollback
-sudo cp -f /etc/caddy/Caddyfile /opt/transparent-pir/rollback/Caddyfile 2>/dev/null || true
+backup="/opt/transparent-pir/transactions/$2"
+sudo mkdir -p "$backup"
+if sudo test -f /etc/caddy/Caddyfile; then sudo cp -p /etc/caddy/Caddyfile "$backup/Caddyfile"; fi
+sudo touch "$backup/router-touched"
 sudo caddy validate --config "$staged/Caddyfile" --adapter caddyfile
 sudo install -m 0644 "$staged/Caddyfile" /etc/caddy/Caddyfile
 sudo systemctl reload caddy || sudo systemctl restart caddy
@@ -1049,64 +1126,112 @@ fleet_prune() {
   local id host
   for id in $(worker_ids); do
     host="$(worker_field "$id" ssh_host)"
+    [[ "$(worker_action "$id")" == restart ]] || continue
     echo "== prune $id ($host)"
-    host_ssh "$host" bash -s -- "$(shard_set_path)" "$id" <<'REMOTE'
+    host_ssh "$host" bash -s -- "$(shard_set_path)" "$id" "$TRANSACTION_ID" <<'REMOTE'
 set -euo pipefail
 set_path="$1"; id="$2"
 # From the ExecStart line only: the unit's comments mention the flag too.
 assignment="$(sed -n '/^ExecStart=/s/.*--assignment \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
 [[ -n "$assignment" && "$assignment" != *$'\n'* ]] || { echo "could not read the assignment path from the unit" >&2; exit 1; }
+# Keep every retained revision in the current and rollback publication.
+old_unit="/opt/transparent-pir/transactions/$3/transparent-shard-server.service"
+keep=(--runtime-cache-prune-set "$set_path")
+if sudo test -f "$old_unit"; then
+  old_set="$(sudo sed -n '/^ExecStart=/s/.*--shard-dir \([^ ]*\).*/\1/p' "$old_unit")"
+  [[ -n "$old_set" ]] || { echo "rollback unit has no shard set" >&2; exit 1; }
+  keep+=(--runtime-cache-prune-set "$old_set")
+fi
+# A shared physical set may still be needed under the previous assignment.
+# Defer plaintext pruning in that case rather than weakening rollback retention.
+if [[ "${old_set:-}" != "$set_path" ]]; then
 sudo /usr/local/bin/shard-prune --shard-dir "$set_path" --assignment "$assignment" --worker-id "$id" --apply \
   | jq -r '"\(.deleted | length) removed, \(.bytes_freed) bytes freed"'
+fi
+sudo /usr/local/bin/transparent-shard-server --runtime-cache-dir /srv/transparent-pir/runtime-cache "${keep[@]}"
 REMOTE
   done
 }
 
 rollback_fleet() {
-  echo "== rollback fleet" >&2
+  echo "== rollback transaction $TRANSACTION_ID" >&2
+  local host failed=0
   if [[ "$ROUTER_ACTIVATED" -eq 1 && -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
-    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s <<'REMOTE' || true
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$TRANSACTION_ID" <<'REMOTE' || failed=1
 set -euo pipefail
-if sudo test -r /opt/transparent-pir/rollback/Caddyfile; then
-  sudo install -m 0644 /opt/transparent-pir/rollback/Caddyfile /etc/caddy/Caddyfile
-  sudo systemctl reload caddy || sudo systemctl restart caddy
+backup="/opt/transparent-pir/transactions/$1"
+sudo test -f "$backup/router-touched" || exit 0
+if sudo test -f "$backup/Caddyfile"; then
+  sudo install -m 0644 "$backup/Caddyfile" /etc/caddy/Caddyfile
+  sudo systemctl reload caddy
+else
+  sudo rm -f /etc/caddy/Caddyfile
 fi
 REMOTE
   fi
-  local host
   for host in "${ACTIVATED_WORKERS[@]}"; do
-    host_ssh "$host" bash -s <<'REMOTE' || true
+    host_ssh "$host" bash -s -- "$TRANSACTION_ID" <<'REMOTE' || failed=1
 set -euo pipefail
-if [[ -x /opt/transparent-pir/rollback/transparent-shard-server ]]; then
-  sudo install -m 0755 /opt/transparent-pir/rollback/transparent-shard-server /usr/local/bin/transparent-shard-server
-  if [[ -f /opt/transparent-pir/rollback/transparent-shard-server.service ]]; then
-    sudo install -m 0644 /opt/transparent-pir/rollback/transparent-shard-server.service /etc/systemd/system/transparent-shard-server.service
-  fi
+backup="/opt/transparent-pir/transactions/$1"
+sudo test -f "$backup/touched" || exit 0
+action="$(sudo cat "$backup/action")"
+if [[ "$action" != tools ]]; then sudo systemctl stop transparent-shard-server.service || true; fi
+for path in /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
+  /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
+  [[ "$action" != tools || "$path" == /usr/local/bin/shard-prune ]] || continue
+  name="$(basename "$path")"
+  if sudo test -f "$backup/$name"; then sudo cp -p "$backup/$name" "$path"; else sudo rm -f "$path"; fi
+done
+if [[ "$action" != tools ]]; then
   sudo systemctl daemon-reload
-  sudo systemctl restart transparent-shard-server.service || true
-else
-  sudo systemctl disable --now transparent-shard-server.service || true
+  if [[ "$(sudo cat "$backup/previous-enabled")" == enabled ]]; then
+    sudo systemctl enable transparent-shard-server.service
+  else
+    sudo systemctl disable transparent-shard-server.service || true
+  fi
+  if [[ "$(sudo cat "$backup/previous-active")" == active ]]; then
+    sudo systemctl start transparent-shard-server.service
+  fi
 fi
-sudo journalctl -u transparent-shard-server.service -n 40 --no-pager || true
 REMOTE
   done
+  # A rollback is not complete merely because systemctl returned successfully.
+  local id upstream expected ready attempt restored
+  for host in "${ACTIVATED_WORKERS[@]}"; do
+    id="$(jq -r --arg host "$host" '.workers[] | select(.host == $host) | .id' "$TRANSACTION_FILE")"
+    expected="$(jq -c --arg id "$id" '.before[$id] // {}' "$TRANSACTION_FILE")"
+    if ! jq -e '.ready == true' <<<"$expected" >/dev/null; then continue; fi
+    upstream="$(jq -r --arg id "$id" '.upstreams[$id]' "$TRANSACTION_FILE")"
+    restored=0
+    for attempt in $(seq 1 720); do
+      ready="$(curl --silent --max-time 10 "http://$upstream/v1/ready" || true)"
+      if jq -e --argjson old "$expected" '.ready == true and .map_sha256 == $old.map_sha256 and .assignment_sha256 == $old.assignment_sha256 and (.binary_sha256 == $old.binary_sha256)' <<<"$ready" >/dev/null 2>&1; then restored=1; break; fi
+      sleep 10
+    done
+    [[ "$restored" -eq 1 ]] || { echo "rollback readiness failed for $id" >&2; failed=1; }
+  done
+  if [[ -n "$TRANSACTION_FILE" ]]; then
+    jq --arg status "$([[ "$failed" == 0 ]] && echo rolled-back || echo rollback-failed)" '.status = $status' "$TRANSACTION_FILE" >"$TRANSACTION_FILE.next"
+    mv "$TRANSACTION_FILE.next" "$TRANSACTION_FILE"
+  fi
+  [[ "$failed" -eq 0 ]]
 }
 
-# An explicit rollback of every roster host and the router, for an operator
-# who has decided the activated release must go back.
 fleet_rollback_all() {
-  ROUTER_ACTIVATED=1
-  ACTIVATED_WORKERS=()
-  local id
-  for id in $(worker_ids); do
-    ACTIVATED_WORKERS+=("$(worker_field "$id" ssh_host)")
-  done
+  local root="${TRANSPARENT_TRANSACTION_DIR:-$HOME/.local/state/transparent-pir-deploy}"
+  TRANSACTION_FILE="$(cat "$root/latest")"
+  TRANSACTION_ID="$(jq -er '.id' "$TRANSACTION_FILE")"
+  [[ "$(jq -r '.status' "$TRANSACTION_FILE")" != rolled-back ]] || fail "latest deployment is already rolled back"
+  TRANSPARENT_ROUTER_HOST="$(jq -r '.router // ""' "$TRANSACTION_FILE")"
+  [[ -z "$TRANSPARENT_ROUTER_HOST" ]] || ROUTER_ACTIVATED=1
+  mapfile -t ACTIVATED_WORKERS < <(jq -r '.workers[].host' "$TRANSACTION_FILE")
   rollback_fleet
 }
 
 # ----------------------------------------------------------------------- main
 
 case "$MODE" in
+  library) ;;
   jq-programs)
     # For ops/scripts/check-jq-contracts.sh. Prints and exits without reading
     # any input, so it is safe to call with no environment set.
@@ -1161,25 +1286,31 @@ case "$MODE" in
   fleet-preflight)
     validate_fleet_inputs
     validate_shard_set "$TRANSPARENT_SHARD_SOURCE"
-    fleet_preflight
-    fleet_prepare
-    fleet_verify_prepared
+    timed_phase fleet_diff fleet_diff
+    timed_phase fleet_preflight fleet_preflight
+    timed_phase fleet_prepare fleet_prepare
+    timed_phase fleet_verify_prepared fleet_verify_prepared
     echo "fleet preflight complete; every subset verified with the staged binary; nothing was activated"
     ;;
   fleet-deploy)
     validate_fleet_inputs
     validate_shard_set "$TRANSPARENT_SHARD_SOURCE"
-    fleet_preflight
-    fleet_prepare
-    fleet_verify_prepared
+    timed_phase fleet_diff fleet_diff
+    timed_phase fleet_preflight fleet_preflight
+    timed_phase fleet_prepare fleet_prepare
+    timed_phase fleet_verify_prepared fleet_verify_prepared
     set -E
-    trap 'rollback_fleet' ERR
-    fleet_activate_workers
-    fleet_activate_router
-    fleet_verify_internal
-    fleet_verify_public
-    trap - ERR
-    fleet_prune
+    transaction_begin
+    trap 'rc=$?; if (( rc != 0 )); then trap - EXIT; rollback_fleet; fi' EXIT
+    timed_phase fleet_activate_workers fleet_activate_workers
+    timed_phase fleet_activate_router fleet_activate_router
+    timed_phase fleet_verify_internal fleet_verify_internal
+    timed_phase fleet_verify_public fleet_verify_public
+    timed_phase fleet_verify_workers fleet_verify_workers
+    jq '.status = "complete"' "$TRANSACTION_FILE" >"$TRANSACTION_FILE.next"
+    mv "$TRANSACTION_FILE.next" "$TRANSACTION_FILE"
+    trap - EXIT
+    timed_phase fleet_prune fleet_prune
     echo "deployed $TRANSPARENT_RELEASE_SHA to the fleet under assignment $(assignment_digest)"
     ;;
   fleet-router)
@@ -1190,10 +1321,14 @@ case "$MODE" in
     [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]] || fail "fleet-router needs TRANSPARENT_ROUTER_HOST"
     fleet_stage_router
     set -E
-    trap 'rollback_fleet' ERR
-    fleet_activate_router
-    fleet_verify_internal
-    trap - ERR
+    trap 'rc=$?; if (( rc != 0 )); then trap - EXIT; rollback_fleet; fi' EXIT
+    timed_phase fleet_activate_router fleet_activate_router
+    timed_phase fleet_verify_internal fleet_verify_internal
+    if [[ -n "$TRANSACTION_FILE" ]]; then
+      jq '.status = "complete"' "$TRANSACTION_FILE" >"$TRANSACTION_FILE.next"
+      mv "$TRANSACTION_FILE.next" "$TRANSACTION_FILE"
+    fi
+    trap - EXIT
     echo "router configured for assignment $(assignment_digest)"
     ;;
   fleet-rollback)

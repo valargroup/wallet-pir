@@ -1,0 +1,13 @@
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/server/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 22.56s
+     Running unittests src/lib.rs (/Users/roman/projects/spendability-pir/target/release/deps/transparent_shard_server-d647d54a03667401)
+
+running 2 tests
+recent-8k directory build=1.122378167s restore=393.886583ms bytes=134185024
+test runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget ... ok
+recent-8k pages build=745.433917ms restore=339.270333ms bytes=134185024
+archive-wide directory build=1.599535666s restore=661.341291ms bytes=234848320
+archive-wide pages build=2.029312333s restore=1.092555125s bytes=369066048
+test runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 15.98s

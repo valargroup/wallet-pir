@@ -130,3 +130,18 @@ Each completed gate links source commits, exact commands and evidence. Update st
 ## Accepted-anchor regression rollout
 
 - [ ] Record the first complete deployed run of the [accepted-anchor regression suite](testing.md) against its frozen full-chain fixture after fleet activation. Local conformance and source implementation do not establish this live gate. The [2026-09-08 preflight](evidence/regression-2026-09-08/README.md) refused the still-served three-shard pilot before any private queries.
+
+## Deployment-time improvements — 2026-09-08
+
+- [x] Complete offline checks for persistent runtime restore, stable per-worker
+  deploy identity, healthy replica pairs and transaction-scoped rollback.
+  [Local validation evidence](evidence/deployment-runtime-local-2026-09-08/README.md);
+  `make check`, strict Clippy and follow-up cache/rollback tests passed.
+- [ ] After the current load measurement finishes, activate a cache-enabled
+  replica and owner canary; verify cache population, compatible restart, memory,
+  disk headroom and correct wallet recovery.
+- [ ] Measure a compatible-binary fleet deployment below ten minutes, excluding
+  build/CI; verify unchanged rollouts cause zero restarts and router-only changes
+  leave workers serving. Preserve decisions, phase timings and regression results.
+- [ ] Rehearse failed-batch and explicit transaction rollback with the cached
+  previous release. Keep these gates open until host evidence exists.

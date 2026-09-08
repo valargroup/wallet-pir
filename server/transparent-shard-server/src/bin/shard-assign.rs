@@ -33,6 +33,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Stable serving identity of one worker, excluding deployment provenance.
+    WorkerDigest {
+        #[arg(long)]
+        assignment: PathBuf,
+        #[arg(long)]
+        worker_id: String,
+    },
     /// Plan an assignment over a roster and render its router.
     Plan {
         #[arg(long)]
@@ -103,6 +110,15 @@ fn read_map(shard_dir: &std::path::Path) -> Result<(ShardMap, String), BoxError>
 
 fn main() -> Result<(), BoxError> {
     match Cli::parse().command {
+        Command::WorkerDigest {
+            assignment,
+            worker_id,
+        } => {
+            println!(
+                "{}",
+                Assignment::load(&assignment)?.worker_digest(&worker_id)?
+            );
+        }
         Command::Plan {
             shard_dir,
             roster,

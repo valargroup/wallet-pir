@@ -128,6 +128,22 @@ impl Assignment {
         hex::encode(Sha256::digest(self.canonical_bytes()))
     }
 
+    /// Serving identity of one worker, independent of audit metadata and peers.
+    /// The complete publication identity remains included: workers retain the map.
+    pub fn worker_digest(&self, id: &str) -> Result<String, AssignmentError> {
+        let worker = self.worker(id).ok_or_else(|| {
+            AssignmentError::Invalid(format!("the assignment names no worker {id}"))
+        })?;
+        let bytes = serde_json::to_vec(&(
+            "transparent-worker-assignment-v1",
+            &self.schema,
+            &self.set,
+            worker,
+        ))
+        .expect("worker assignment serializes");
+        Ok(hex::encode(Sha256::digest(bytes)))
+    }
+
     pub fn canonical_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("an assignment serializes")
     }
@@ -308,6 +324,7 @@ pub struct WorkerScope {
     pub role: WorkerRole,
     pub replica_group: Option<String>,
     pub assignment_sha256: String,
+    pub worker_assignment_sha256: String,
     pub assigned: BTreeSet<u64>,
 }
 
@@ -321,6 +338,7 @@ impl Assignment {
             role: worker.role,
             replica_group: worker.replica_group.clone(),
             assignment_sha256: self.digest(),
+            worker_assignment_sha256: self.worker_digest(worker_id)?,
             assigned: worker.shards.iter().copied().collect(),
         })
     }
@@ -329,6 +347,35 @@ impl Assignment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_identity_ignores_provenance_and_peers_but_binds_serving_state() {
+        let mut a = assignment(
+            vec![
+                worker("owner", WorkerRole::ArchiveOwner, None, vec![0, 1]),
+                worker("peer", WorkerRole::ArchiveOwner, None, vec![2, 3]),
+            ],
+            vec![4, 5],
+        );
+        let digest = a.worker_digest("owner").unwrap();
+        let audit = a.digest();
+        a.generated_by.generated_at.push('Z');
+        a.generated_by.source_sha = Some("12".repeat(20));
+        a.workers[1].upstream = "other:8093".into();
+        assert_eq!(digest, a.worker_digest("owner").unwrap());
+        assert_ne!(audit, a.digest());
+        for change in 0..4 {
+            let mut changed = a.clone();
+            match change {
+                0 => changed.set.map_sha256 = "34".repeat(32),
+                1 => changed.workers[0].cache_bytes += 1,
+                2 => changed.workers[0].shards.push(4),
+                _ => changed.workers[0].upstream = "new:8093".into(),
+            }
+            assert_ne!(digest, changed.worker_digest("owner").unwrap());
+        }
+        assert!(a.worker_digest("missing").is_err());
+    }
 
     fn worker(
         id: &str,

@@ -49,7 +49,7 @@ for script in ops/scripts/*.sh; do
     bad "$script" "does not parse"
     continue
   fi
-  if ! shellcheck "$script"; then
+  if ! shellcheck -x "$script"; then
     bad "$script" "shellcheck"
     continue
   fi

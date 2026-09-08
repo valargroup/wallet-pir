@@ -368,10 +368,48 @@ async fn the_operator_payloads_match_what_ops_parses() {
     golden("health.json", &health);
     // The prewarm timing is a measurement, not a contract.
     let mut ready_fixture = ready.clone();
+    let binary = ready["binary_sha256"]
+        .as_str()
+        .expect("binary identity is present");
+    assert_eq!(binary.len(), 64);
+    assert!(binary.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    ready_fixture["binary_sha256"] = serde_json::json!("0".repeat(64));
     ready_fixture["prewarm_seconds"] = serde_json::json!(0.0);
     golden("ready.json", &ready_fixture);
     golden(
         "shards.json",
         &serde_json::from_slice(&std::fs::read(dir.path().join("shards.json")).unwrap()).unwrap(),
+    );
+}
+
+#[test]
+fn verify_only_stdout_is_machine_readable_and_checks_cache_capacity() {
+    let dir = tempfile::tempdir().unwrap();
+    publish(dir.path());
+    let cache = tempfile::tempdir().unwrap();
+    let run = |limit: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_transparent-shard-server"))
+            .arg("--shard-dir")
+            .arg(dir.path())
+            .arg("--verify-only")
+            .arg("--runtime-cache-dir")
+            .arg(cache.path())
+            .args(["--runtime-cache-max-bytes", limit])
+            .output()
+            .unwrap()
+    };
+    let output = run("17179869184");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON report");
+    assert_eq!(report["verified"], true);
+    assert!(report["runtime_cache"]["missing_bytes"].as_u64().unwrap() > 0);
+    assert!(
+        !run("1").status.success(),
+        "insufficient cache capacity fails before activation"
     );
 }

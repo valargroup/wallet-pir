@@ -1,0 +1,61 @@
+{
+  "run_id": "deployment-runtime-local-2026-09-08",
+  "recorded_at_utc": "2026-09-08T10:01:38.163455+00:00",
+  "source_revision": "ff9b041f5668b96c15af500e6347c6f74abea8bc",
+  "validation": "make check passed; follow-up strict clippy, cache and rollback tests passed; then rebased over documentation-only main updates",
+  "commands": [
+    "CARGO_TARGET_DIR=/Users/roman/projects/spendability-pir/target make check",
+    "cargo clippy -p transparent-shard-server --all-targets --all-features -- -D warnings",
+    "cargo test --release -p transparent-shard-server --lib runtime::disk -- --nocapture",
+    "python3 ops/tests/test_transparent_fleet.py"
+  ],
+  "host": {
+    "cpu": "Apple M4 Max",
+    "ram_bytes": 137438953472,
+    "os": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "storage": "local SSD; immediate post-write reads; no page-cache flush",
+    "cloud_sku": null,
+    "region": null
+  },
+  "rust": "1.91.0",
+  "profile": "release",
+  "runtime_format": "transparent-runtime-v1/ipir-223626f/spiral-6f5b66c",
+  "workload": {
+    "kind": "synthetic deterministic row bytes and real encrypted row queries",
+    "geometries": [
+      "recent-8k",
+      "archive-wide"
+    ],
+    "row_bytes": 3584,
+    "directory_rows": [
+      8192,
+      32768
+    ],
+    "page_rows": [
+      8192,
+      65536
+    ],
+    "segments": "segment index 1 plus wrong-segment cache miss",
+    "repetitions": 1,
+    "concurrency": "Rust test defaults; cache integration test runs alongside geometry test; machine shared with other work",
+    "rayon_num_threads": null
+  },
+  "chain": {
+    "network": null,
+    "genesis": null,
+    "anchor": null,
+    "journal": null,
+    "note": "synthetic data, not a chain recovery or fleet capacity measurement"
+  },
+  "acceptance": {
+    "offline_checks": "passed",
+    "live_canary": "pending",
+    "fleet_under_ten_minutes": "unmeasured"
+  },
+  "limitations": [
+    "Local warm-filesystem reads do not predict Linux host cache load times.",
+    "Timed disk.load excludes source-table re-verification, process startup, staging and readiness polling.",
+    "No peak RSS or cold filesystem cache measurements in this local test."
+  ]
+}

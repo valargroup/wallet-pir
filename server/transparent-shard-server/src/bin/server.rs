@@ -33,6 +33,14 @@ struct Cli {
     /// `MemoryMax=12G`, 8 GiB leaves 4 GiB of that slack.
     #[arg(long, default_value_t = 8 << 30)]
     cache_bytes: u64,
+    /// Local disposable cache of prepared public runtimes; disabled if omitted.
+    #[arg(long)]
+    runtime_cache_dir: Option<PathBuf>,
+    #[arg(long, requires = "runtime_cache_dir")]
+    runtime_cache_max_bytes: Option<u64>,
+    /// Prune only cache revisions absent from all named active/rollback sets.
+    #[arg(long, requires = "runtime_cache_dir")]
+    runtime_cache_prune_set: Vec<PathBuf>,
     /// Runtime builds that may run at once.
     ///
     /// Build latency and transient allocation depend on geometry and hardware.
@@ -102,9 +110,35 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
+    let disk = cli
+        .runtime_cache_dir
+        .clone()
+        .map(|dir| {
+            transparent_shard_server::runtime::disk::DiskCache::new(
+                dir,
+                cli.runtime_cache_max_bytes
+                    .unwrap_or(cli.cache_bytes.saturating_mul(2)),
+            )
+        })
+        .transpose()?;
+    if !cli.runtime_cache_prune_set.is_empty() {
+        let mut keep = std::collections::HashSet::new();
+        for set in &cli.runtime_cache_prune_set {
+            keep.extend(transparent_shard_server::runtime::disk::retained_digests(
+                set,
+            )?);
+        }
+        let freed = disk
+            .as_ref()
+            .expect("clap requires cache directory")
+            .prune(&keep)?;
+        println!("runtime cache pruned: {freed} bytes freed");
+        return Ok(());
+    }
 
     let scope = match (&cli.assignment, &cli.worker_id) {
         (Some(path), Some(worker_id)) => LoadScope::Assigned {
@@ -162,14 +196,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         readiness,
     };
     if cli.verify_only {
+        let report = disk.as_ref().map(|disk| disk.check_set(&set)).transpose()?;
         // Everything the service would check before listening has been
         // checked, including that the assignment fits the cache in warm mode.
         ServiceState::build(set, config)
             .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
-        println!("verified: the set loads and the configuration is servable");
+        println!(
+            "{}",
+            serde_json::json!({"verified":true,"runtime_cache":report})
+        );
         return Ok(());
     }
-    let state = ServiceState::build(set, config)
+    let state = ServiceState::build_with_disk(set, config, disk)
         .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
     let limit = state.max_query_bytes();
     let app = router(state.clone()).layer(RequestBodyLimitLayer::new(limit));
