@@ -65,8 +65,18 @@ proxy in the evidence README is superseded by this set for sizing.
 
 ## What this does not establish
 
-The census predicts boundaries from the same sealer the publisher uses; the
-publication's emitted `shards.json` is compared to it with
-`shard-census --compare-map` once it exists. Recent catch-up and old-birthday
-restoration costs across the mixed set are measured under Gate 6 with real
-syncs, not projected from these per-script counts.
+## Comparison with the publication
+
+`census-compare.txt` is the same census re-run at `308aa4e` with
+`--compare-map` against the [published](../publication-2026-09-08/README.md)
+`shards.json` ([run 34188513034](https://github.com/valargroup/enhance-pir/actions/runs/34188513034),
+4 min 47 s, 715 MiB): the map agrees with the census on every shard's id,
+range, geometry, script count, page rows and seal state. Two shards (0 and
+169) each hold one script longer than a directory row can name; the builder
+excludes it and records it in the manifest's `excluded_scripts`, the sealer
+counts it, and the comparison reconciles the two. Those two scripts are
+findable by no wallet through this service, which the manifest states.
+
+Recent catch-up and old-birthday restoration costs across the mixed set are
+measured under Gate 6 with real syncs, not projected from these per-script
+counts.
