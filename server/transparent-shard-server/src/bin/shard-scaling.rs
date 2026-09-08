@@ -46,6 +46,15 @@ struct Cli {
     /// sweeps row counts directly.
     #[arg(long, default_value = "recent-8k")]
     geometry: String,
+
+    /// Which of the geometry's tables to scan.
+    ///
+    /// It matters once a geometry's tables differ. `archive-wide` pairs a
+    /// 32,768-row directory with a 65,536-row page table, so scanning only the
+    /// directory would measure something it shares with `archive-32k` and miss
+    /// the half that distinguishes it.
+    #[arg(long, default_value = "directory")]
+    table: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -86,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let geometry = geometry_by_name(&cli.geometry)
         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
-    let table = Table::Directory;
+    let table = Table::parse(&cli.table).ok_or_else(|| format!("unknown table {:?}", cli.table))?;
     let (rlwe, scheme) = ipir_sp::params_for_simplepir(
         table.rows(geometry),
         u64::from(table.row_bytes(geometry)) * 8,
@@ -106,6 +115,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "one shard's encoded database: {encoded_mib:.1} MiB ({} x {} u16)",
         scheme.db_rows, scheme.db_cols
+    );
+    println!(
+        "geometry {} table {} ({} rows x {} B)",
+        geometry.name,
+        table.as_str(),
+        table.rows(geometry),
+        table.row_bytes(geometry)
     );
     println!("each thread scans its own copy, so this is independent shards on one host\n");
 
