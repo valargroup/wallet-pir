@@ -350,7 +350,14 @@ async fn supervisor_interrupt_finalizes_and_worker_crash_is_counted() {
             system
                 .processes()
                 .values()
-                .find(|p| p.parent() == Some(sysinfo::Pid::from_u32(child.id())))
+                // Linux also exposes threads with their process as parent.
+                // SIGKILL to a supervisor thread would kill the supervisor,
+                // not simulate the loss of its wallet child.
+                .find(|p| {
+                    p.parent() == Some(sysinfo::Pid::from_u32(child.id()))
+                        && p.thread_kind().is_none()
+                        && p.cmd().iter().any(|arg| arg == "--scenario-worker")
+                })
                 .unwrap()
                 .pid()
                 .as_u32()
@@ -365,13 +372,17 @@ async fn supervisor_interrupt_finalizes_and_worker_crash_is_counted() {
             .status()
             .unwrap()
             .success());
-        loop {
-            if child.try_wait().unwrap().is_some() {
-                break;
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
             }
             assert!(started.elapsed() < Duration::from_secs(20));
             tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        };
+        assert!(
+            status.code().is_some(),
+            "{name}: supervisor died from a signal: {status}"
+        );
         let r: Value = serde_json::from_slice(&fs::read(out.join("report.json")).unwrap()).unwrap();
         assert_eq!(r["success"], false);
         assert_eq!(
