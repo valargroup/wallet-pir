@@ -13,6 +13,7 @@ import re
 import shlex
 import sys
 import tempfile
+import time
 
 
 def atomic_json(path, value):
@@ -32,6 +33,7 @@ def atomic_json(path, value):
 
 
 async def run(args, data=None, timeout=25):
+    started = time.monotonic()
     proc = await asyncio.create_subprocess_exec(*map(str, args), stdin=asyncio.subprocess.PIPE,
                                               stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
@@ -40,6 +42,8 @@ async def run(args, data=None, timeout=25):
         proc.kill()
         await proc.wait()
         raise
+    print(json.dumps({'event':'fleet_command','tool':Path(str(args[0])).name,
+                      'seconds':round(time.monotonic()-started,6),'exit_code':proc.returncode}),file=sys.stderr)
     if proc.returncode:
         raise RuntimeError(f'{args[0]} failed: {err.decode(errors="replace")[-2000:]}')
     if err:
@@ -53,10 +57,15 @@ class Fleet:
         self.roster = json.loads(Path(config['roster']).read_text())
         self.root = Path(config['state_dir'])
         self.root.mkdir(parents=True, exist_ok=True)
+        control_dir = self.root / 'ssh'
+        control_dir.mkdir(mode=0o700, exist_ok=True)
+        control_dir.chmod(0o700)
         self.canonical = {}
         self.rpc_slots = asyncio.Semaphore(8)
         self.ssh_args = ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes',
-                         '-o', 'UserKnownHostsFile=' + config['known_hosts'], '-i', config['ssh_key']]
+                         '-o', 'UserKnownHostsFile=' + config['known_hosts'], '-i', config['ssh_key'],
+                         '-oControlMaster=auto', '-oControlPersist=60',
+                         '-o', 'ControlPath=' + str(control_dir / '%C')]
         for worker in self.roster:
             for field in ['id', 'ssh_host', 'upstream']:
                 if not re.fullmatch(r'[A-Za-z0-9_.:-]+', worker[field]):
@@ -229,8 +238,9 @@ class Fleet:
         text = '\n'.join(site+' {\n'+'\n'.join(body)+'\n}\n' for site in sites)
         target = self.c.get('router_file','/etc/caddy/Caddyfile')
         quoted = shlex.quote(target)
-        # Durable candidate before validate/rename; Caddy reload is atomic.
-        command = f'set -eu\ncat > {quoted}.live-next\ncaddy validate --config {quoted}.live-next --adapter caddyfile >&2\ncp {quoted} {quoted}.live-previous\nmv {quoted}.live-next {quoted}\nif ! systemctl reload caddy; then cp {quoted}.live-previous {quoted}; systemctl reload caddy; exit 1; fi'
+        # Record successful application separately: a crash after rename but before
+        # reload must not turn a retry into a false no-op. Caddy reload is atomic.
+        command = f'set -eu\ncat > {quoted}.live-next\nif cmp -s {quoted}.live-next {quoted} && sha256sum {quoted} | cmp -s - {quoted}.live-applied.sha256; then rm {quoted}.live-next; exit 0; fi\ncaddy validate --config {quoted}.live-next --adapter caddyfile >&2\ncp {quoted} {quoted}.live-previous\nmv {quoted}.live-next {quoted}\nif ! systemctl reload caddy; then cp {quoted}.live-previous {quoted}; systemctl reload caddy; exit 1; fi\nsha256sum {quoted} > {quoted}.live-applied.sha256.next\nmv {quoted}.live-applied.sha256.next {quoted}.live-applied.sha256'
         await self.ssh(self.c['router_host'], command, text.encode())
 
     async def activate(self, req):

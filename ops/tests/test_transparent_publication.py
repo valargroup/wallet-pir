@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -137,6 +138,40 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError,'activation quorum'):
             await self.fleet.activate({'map_sha256':'new','prepared':{'workers':{w['id']:{'expected':'old'} for w in self.roster}}})
         self.assertEqual(routed,[[]])
+
+    def test_ssh_reuse_socket_directory_is_private(self):
+        self.assertEqual((self.root/'ssh').stat().st_mode & 0o777, 0o700)
+
+    async def test_unchanged_route_skips_reload_but_withdrawal_still_reloads(self):
+        target = self.root/'Caddyfile'
+        target.write_text('previous route')
+        self.fleet.c['router_file'] = str(target)
+        binaries = self.root/'bin'
+        binaries.mkdir()
+        calls = self.root/'calls'
+        for name in ['caddy', 'systemctl']:
+            binary = binaries/name
+            binary.write_text('#!/bin/sh\nprintf "%s\\n" "'+name+'" >> "$CALLS"\n')
+            binary.chmod(0o700)
+        async def local_ssh(host, command, data=None, timeout=25):
+            return await module.run(['sh', '-c', command], data)
+        self.fleet.ssh = local_ssh
+        assignment = {'workers':[dict(id=w['id'],shards=[i]) for i,w in enumerate(self.roster)]}
+        with patch.dict(os.environ, PATH=str(binaries)+os.pathsep+os.environ['PATH'], CALLS=str(calls)):
+            await self.fleet.route(self.roster, assignment)
+            published = target.read_bytes()
+            await self.fleet.route(self.roster, assignment)
+            self.assertEqual(calls.read_text().splitlines(), ['caddy', 'systemctl'])
+            self.assertEqual(Path(str(target)+'.live-previous').read_text(), 'previous route')
+            # Simulate interrupted activation: the intended file is already in
+            # place, but successful reload was never acknowledged.
+            Path(str(target)+'.live-applied.sha256').unlink()
+            await self.fleet.route(self.roster, assignment)
+            self.assertEqual(calls.read_text().splitlines(), ['caddy', 'systemctl']*2)
+            await self.fleet.route([])
+        self.assertEqual(calls.read_text().splitlines(), ['caddy', 'systemctl']*3)
+        self.assertIn('503', target.read_text())
+        self.assertEqual(Path(str(target)+'.live-previous').read_bytes(), published)
 
     async def test_routes_exclude_lagging_replicas_and_share_public_authority(self):
         captured=[]
