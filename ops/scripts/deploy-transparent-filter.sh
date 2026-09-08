@@ -229,11 +229,17 @@ verify() {
     [[ "$attempt" -lt 12 ]] || fail "the public filter origin serves $public_map, loopback $loopback_map"
     sleep 5
   done
-  local status path
-  for path in /v1/health /metrics; do
-    status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$ENHANCE_PUBLIC_URL$path")"
-    [[ "$status" == "404" ]] || fail "$path is reachable publicly (HTTP $status)"
-  done
+  # The filter service's operator routes must not be reachable through the
+  # edge. /metrics is a 404 there. /v1/health is Enhance PIR's own public
+  # health document on this origin, so what is asserted is that the body is
+  # not the filter service's: its phase is a string, Enhance's an object.
+  local status body
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$ENHANCE_PUBLIC_URL/metrics")"
+  [[ "$status" == "404" ]] || fail "/metrics is reachable publicly (HTTP $status)"
+  body="$(curl --silent --max-time 15 "$ENHANCE_PUBLIC_URL/v1/health" || true)"
+  if [[ -n "$body" ]] && echo "$body" | jq -e "$JQ_FILTER_HEALTH_SERVING" >/dev/null 2>&1; then
+    fail "the filter service's /v1/health is reachable publicly"
+  fi
   if [[ -n "${TRANSPARENT_PUBLIC_URL:-}" ]]; then
     local retrieval_map
     retrieval_map="$(curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards" | sha256sum | cut -d' ' -f1)" \
