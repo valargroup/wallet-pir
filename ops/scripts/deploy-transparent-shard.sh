@@ -718,11 +718,14 @@ fleet_prepare() {
       "$TRANSPARENT_ASSIGNMENT" \
       "$TRANSPARENT_DEPLOY_USER@$host:$staged/"
     scp "${opts[@]}" "$unit" "$TRANSPARENT_DEPLOY_USER@$host:$staged/unit.rendered"
-    host_ssh "$host" bash -s -- "$staged" <<'REMOTE'
+    # The unit names the assignment by its digest; the staged copy carries
+    # that name too, so the verify-only run below and the install find it.
+    host_ssh "$host" bash -s -- "$staged" "$assignment_sha" <<'REMOTE'
 set -euo pipefail
 cd "$1"
 sha256sum -c SHA256SUMS --ignore-missing
 chmod 0755 transparent-shard-server shard-prune
+cp -f assignment.json "$2.json"
 REMOTE
     dest="$(shard_set_path)"
     echo "== ship $id subset ($TRANSPARENT_SHARD_SOURCE -> $host:$dest)"
@@ -829,7 +832,7 @@ sudo mkdir -p "$release" /opt/transparent-pir/rollback /opt/transparent-pir/assi
 sudo install -m 0755 "$staged/transparent-shard-server" "$release/"
 sudo install -m 0755 "$staged/shard-prune" "$release/"
 sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
-sudo install -m 0644 "$staged/$(basename "$(ls "$staged"/*.json | head -1)")" "/opt/transparent-pir/assignments/$assignment_sha.json"
+sudo install -m 0644 "$staged/$assignment_sha.json" "/opt/transparent-pir/assignments/$assignment_sha.json"
 if [[ -x /usr/local/bin/transparent-shard-server ]]; then
   sudo cp -f /usr/local/bin/transparent-shard-server /opt/transparent-pir/rollback/
 fi
