@@ -646,7 +646,7 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn revision_churn_reserves_only_current_and_preparing_runtimes() {
+async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     use transparent_shard_server::live::{Command, LiveService, Publication};
     use transparent_shard_server::service::ReadinessMode;
     use transparent_shard_server::shardset::LoadOptions;
@@ -664,6 +664,8 @@ async fn revision_churn_reserves_only_current_and_preparing_runtimes() {
     };
     let state = ServiceState::build(set, config).unwrap();
     state.spawn_prewarm().await.unwrap();
+    // A slow reader of the oldest snapshot must not pin every later one.
+    let held_reader = state.clone();
     let metrics = state.metrics().clone();
     assert_eq!(
         metrics.builds.load(Ordering::Relaxed),
@@ -710,9 +712,18 @@ async fn revision_churn_reserves_only_current_and_preparing_runtimes() {
         })
         .await
         .unwrap();
+        live.command(Command::Collect).await.unwrap();
+        let status = live.command(Command::Status).await.unwrap();
+        assert!(status["retired_snapshots"].as_u64().unwrap() <= 4);
+        assert!(status["revisions"].as_array().unwrap().len() <= 6);
         expected = map_sha256;
         previous = digest;
     }
+    drop(held_reader);
+    live.command(Command::Collect).await.unwrap();
+    let status = live.command(Command::Status).await.unwrap();
+    assert_eq!(status["retired_snapshots"], 3);
+    assert_eq!(status["revisions"].as_array().unwrap().len(), 4);
 }
 
 /// Hot activation keeps the old revision usable, shares bounded runtime state,

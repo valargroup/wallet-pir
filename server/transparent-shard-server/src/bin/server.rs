@@ -263,6 +263,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
     tracing::info!(listen = %cli.listen, max_query_bytes = limit, ?readiness, "serving");
     let _prewarm = state.spawn_prewarm();
+    // The live service owns the initial snapshot. Keeping this startup clone
+    // across serve() would pin the oldest retired generation forever.
+    drop(state);
     axum::serve(listener, app).await?;
     Ok(())
 }

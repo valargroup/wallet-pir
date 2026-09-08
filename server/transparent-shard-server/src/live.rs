@@ -152,7 +152,7 @@ impl LiveService {
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":!self.0.invalid.read().unwrap().is_empty(),"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":!self.0.invalid.read().unwrap().is_empty(),"retired_snapshots":retired.len(),"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.lock().await;
@@ -291,12 +291,15 @@ impl LiveService {
                     .as_ref()
                     .map(|c| c.publication.directory.clone());
                 let mut retired = self.0.retired.write().unwrap();
-                while retired.len() > 3 {
-                    if retired[0].state.has_other_holders() {
-                        break;
-                    }
-                    retired.remove(0);
-                }
+                // A long request may hold one old snapshot without preventing
+                // collection of every other unused generation behind it.
+                let recent_from = retired.len().saturating_sub(3);
+                let mut index = 0;
+                retired.retain(|old| {
+                    let keep = index >= recent_from || old.state.has_other_holders();
+                    index += 1;
+                    keep
+                });
                 let active = self.0.active.read().unwrap();
                 let root = active
                     .publication
