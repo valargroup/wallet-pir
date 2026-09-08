@@ -123,6 +123,10 @@ pub struct Metrics {
     /// Bytes the cache currently has reserved.
     pub resident_bytes: AtomicU64,
     pub cache_entries: AtomicU64,
+    pub disk_hits: AtomicU64,
+    pub disk_misses: AtomicU64,
+    pub disk_load_micros: AtomicU64,
+    pub disk_write_failures: AtomicU64,
     pub cache_hits: AtomicU64,
     pub cache_misses: AtomicU64,
     /// Microseconds spent waiting for a query slot.
@@ -170,6 +174,10 @@ impl Default for Metrics {
             evictions: AtomicU64::new(0),
             resident_bytes: AtomicU64::new(0),
             cache_entries: AtomicU64::new(0),
+            disk_hits: AtomicU64::new(0),
+            disk_misses: AtomicU64::new(0),
+            disk_load_micros: AtomicU64::new(0),
+            disk_write_failures: AtomicU64::new(0),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             query_queue_micros: AtomicU64::new(0),
@@ -286,6 +294,30 @@ impl Metrics {
             "gauge",
             "Prepared runtimes held.",
             Self::get(&self.cache_entries),
+        );
+        line(
+            "transparent_shard_disk_hits_total",
+            "counter",
+            "Runtimes restored from disk.",
+            Self::get(&self.disk_hits),
+        );
+        line(
+            "transparent_shard_disk_misses_total",
+            "counter",
+            "Absent or rejected disk runtime entries.",
+            Self::get(&self.disk_misses),
+        );
+        line(
+            "transparent_shard_disk_load_micros_total",
+            "counter",
+            "Microseconds spent restoring runtimes.",
+            Self::get(&self.disk_load_micros),
+        );
+        line(
+            "transparent_shard_disk_write_failures_total",
+            "counter",
+            "Runtime cache writes that failed.",
+            Self::get(&self.disk_write_failures),
         );
         line(
             "transparent_shard_cache_hits_total",

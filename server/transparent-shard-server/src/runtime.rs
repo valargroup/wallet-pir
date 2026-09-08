@@ -37,6 +37,8 @@
 //! the accounting for a runtime a request is still evaluating against would
 //! free budget that is not free.
 
+pub mod disk;
+
 use crate::metrics::Metrics;
 use crate::shardset::{SegmentSource, Table};
 use enhance_pir_server::ipir::RowPlaintextIter;
@@ -302,6 +304,7 @@ pub struct RuntimeCache {
     budget: u64,
     build_slots: tokio::sync::Semaphore,
     metrics: Arc<Metrics>,
+    disk: Option<disk::DiskCache>,
 }
 
 impl RuntimeCache {
@@ -315,7 +318,20 @@ impl RuntimeCache {
             budget,
             build_slots: tokio::sync::Semaphore::new(build_slots.max(1)),
             metrics,
+            disk: None,
         }
+    }
+
+    pub fn with_disk(mut self, disk: Option<disk::DiskCache>) -> Self {
+        self.disk = disk;
+        self
+    }
+
+    pub fn disk_status(&self) -> serde_json::Value {
+        self.disk.as_ref().map_or(serde_json::Value::Null, |disk|
+            serde_json::json!({"bytes":disk.used_bytes().ok(),"limit_bytes":disk.max_bytes,
+                "hits":Metrics::get(&self.metrics.disk_hits),"misses":Metrics::get(&self.metrics.disk_misses),
+                "write_failures":Metrics::get(&self.metrics.disk_write_failures)}))
     }
 
     pub fn budget(&self) -> u64 {
@@ -357,18 +373,48 @@ impl RuntimeCache {
                     .await
                     .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
                 let started = std::time::Instant::now();
+                let disk = self.disk.clone();
+                let disk_key = key.clone();
+                let metrics = self.metrics.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     // Read and re-verify here rather than at startup only: a
                     // file replaced or truncated since must fail the build, not
                     // be packed into a runtime and served.
+                    if let Some(disk) = &disk {
+                        let restore = std::time::Instant::now();
+                        match disk.load(&disk_key, &shared, &source.sha256) {
+                            Ok(runtime) => {
+                                source.verify().map_err(|error| error.to_string())?;
+                                Metrics::incr(&metrics.disk_hits);
+                                Metrics::add(&metrics.disk_load_micros, restore.elapsed().as_micros() as u64);
+                                tracing::info!(seconds = restore.elapsed().as_secs_f64(), "restored runtime cache");
+                                return Ok((runtime, true));
+                            }
+                            Err(error) => {
+                                Metrics::incr(&metrics.disk_misses);
+                                if error.kind() != std::io::ErrorKind::NotFound {
+                                    tracing::warn!(%error, "runtime cache rejected; rebuilding");
+                                }
+                            }
+                        }
+                    }
                     let bytes = source.load().map_err(|error| error.to_string())?;
-                    TableRuntime::build(&shared, &bytes)
+                    let runtime = TableRuntime::build(&shared, &bytes)?;
+                    drop(bytes);
+                    if let Some(disk) = &disk {
+                        if let Err(error) = disk.save(&disk_key, &shared, &source.sha256, &runtime) {
+                            Metrics::incr(&metrics.disk_write_failures);
+                            tracing::warn!(%error, "runtime cache write failed; serving built runtime");
+                        }
+                    }
+                    Ok((runtime, false))
                 })
                 .await
                 .map_err(|error| CacheError::Failed(error.to_string()))?
                 .map_err(CacheError::Failed);
                 match &result {
-                    Ok(_) => {
+                    Ok((_, true)) => {}
+                    Ok((_, false)) => {
                         Metrics::incr(&self.metrics.builds);
                         Metrics::add(
                             &self.metrics.build_micros,
@@ -378,7 +424,7 @@ impl RuntimeCache {
                     }
                     Err(_) => Metrics::incr(&self.metrics.build_failures),
                 }
-                result
+                result.map(|(runtime, _)| runtime)
             })
             .await;
 

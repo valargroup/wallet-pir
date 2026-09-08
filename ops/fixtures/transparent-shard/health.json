@@ -18,5 +18,6 @@
   "shards": 2,
   "target_runtimes": 4,
   "warm_runtimes": 0,
+  "worker_assignment_sha256": null,
   "worker_id": null
 }

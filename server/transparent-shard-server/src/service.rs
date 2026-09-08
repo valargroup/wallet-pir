@@ -220,6 +220,15 @@ pub struct SetupResponse {
 
 impl ServiceState {
     pub fn build(set: ShardSet, config: ServiceConfig) -> Result<Self, String> {
+        Self::build_with_disk(set, config, None)
+    }
+
+    pub fn build_with_disk(
+        set: ShardSet,
+        config: ServiceConfig,
+        disk: Option<crate::runtime::disk::DiskCache>,
+    ) -> Result<Self, String> {
+        let _ = binary_digest();
         let metrics = Arc::new(Metrics::default());
         // Every geometry the set names, held here or not: the init document
         // is set-wide and a wallet refuses a map it does not fully declare.
@@ -260,7 +269,8 @@ impl ServiceState {
             inner: Arc::new(Inner {
                 set,
                 params,
-                cache: RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone()),
+                cache: RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
+                    .with_disk(disk),
                 admission: Admission::new(config.admission(), metrics.clone()),
                 metrics,
                 max_query_bytes,
@@ -367,12 +377,14 @@ impl ServiceState {
                 "role": scope.role.as_str(),
                 "replica_group": scope.replica_group,
                 "assignment_sha256": scope.assignment_sha256,
+                "worker_assignment_sha256": scope.worker_assignment_sha256,
             }),
             None => serde_json::json!({
                 "worker_id": null,
                 "role": null,
                 "replica_group": null,
                 "assignment_sha256": null,
+                "worker_assignment_sha256": null,
             }),
         }
     }
@@ -662,6 +674,28 @@ async fn health(State(state): State<ServiceState>) -> Response {
     json(StatusCode::OK, body)
 }
 
+fn binary_digest() -> &'static Option<String> {
+    static DIGEST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    DIGEST.get_or_init(|| {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        #[cfg(target_os = "linux")]
+        let mut file = std::fs::File::open("/proc/self/exe").ok()?;
+        #[cfg(not(target_os = "linux"))]
+        let mut file = std::fs::File::open(std::env::current_exe().ok()?).ok()?;
+        let mut hash = Sha256::new();
+        let mut bytes = [0u8; 65536];
+        loop {
+            let n = file.read(&mut bytes).ok()?;
+            if n == 0 {
+                break;
+            }
+            hash.update(&bytes[..n]);
+        }
+        Some(hex::encode(hash.finalize()))
+    })
+}
+
 /// What readiness attests depends on the mode.
 ///
 /// Loaded-only: a set is loaded, which is the only precondition for serving
@@ -685,6 +719,8 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         "assigned_shards": inner.set.assigned_len(),
         "warm_runtimes": warm,
         "target_runtimes": inner.warm.target,
+        "binary_sha256": binary_digest(),
+        "runtime_cache": inner.cache.disk_status(),
         "prewarm_failed": Metrics::get(&inner.metrics.prewarm_failed),
         "prewarm_finished": inner.warm.finished.load(Ordering::Acquire),
         "prewarm_seconds": Metrics::get(&inner.metrics.prewarm_micros) as f64 / 1e6,

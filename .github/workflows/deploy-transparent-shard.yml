@@ -60,6 +60,22 @@ on:
         default: serial
         type: choice
         options: [serial, parallel]
+      replica_activation:
+        description: Recent replicas in healthy pairs, or one at a time
+        required: false
+        default: paired
+        type: choice
+        options: [paired, serial]
+      force_redeploy:
+        description: Stage, verify and restart even matching healthy workers
+        required: false
+        default: false
+        type: boolean
+      canary_worker_ids:
+        description: Optional comma-separated worker IDs; requires unchanged publication and routing
+        required: false
+        default: ""
+        type: string
       tested_locally:
         description: >-
           Skip the requirement for a successful CI run of the ref. Only when
@@ -226,8 +242,21 @@ jobs:
           TRANSPARENT_ROUTER_HOST: ${{ vars.TRANSPARENT_ROUTER_HOST }}
           TRANSPARENT_ROUTER_INTERNAL_PORT: "8080"
           TRANSPARENT_OWNER_ACTIVATION: ${{ inputs.owner_activation }}
+          TRANSPARENT_REPLICA_ACTIVATION: ${{ inputs.replica_activation }}
+          TRANSPARENT_FORCE_REDEPLOY: ${{ inputs.force_redeploy }}
+          TRANSPARENT_CANARY_WORKER_IDS: ${{ inputs.canary_worker_ids }}
           TRANSPARENT_ASSIGNMENT: ${{ github.workspace }}/artifact/assignment.json
         run: ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
+
+      - name: Preserve deployment decisions and timing
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transparent-deploy-report-${{ github.run_id }}
+          path: |
+            artifact/deploy-plan.json
+            artifact/deploy-timings.tsv
+          if-no-files-found: ignore
 
       - name: Remove SSH material
         if: always()
