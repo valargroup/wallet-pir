@@ -35,6 +35,10 @@ path = "src/bin/journal-inventory.rs"
 name = "event-spotcheck"
 path = "src/bin/event-spotcheck.rs"
 
+[[bin]]
+name = "shard-verify"
+path = "src/bin/shard-verify.rs"
+
 [dependencies]
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "223626ffdd28bd1400dd0b62027a8f366665aa4f" }
 axum = "0.7"
@@ -54,6 +58,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-events = { path = "../../pir/transparent-events" }
 transparent-filter = { path = "../../pir/transparent-filter" }
 transparent-shard = { path = "../../pir/transparent-shard" }
+transparent-shard-server = { path = "../transparent-shard-server" }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
 # Pinned to the same revision as `zakura-chain`, and it must stay that way: this
 # opens the deployed node's RocksDB directly, so the on-disk format the code

@@ -284,7 +284,10 @@ jobs:
       - name: Build the ingest binary
         if: inputs.action == 'start'
         env:
-          RUSTFLAGS: -C target-cpu=x86-64-v3
+          # +pclmulqdq: these binaries link the node's RocksDB, whose CRC code
+          # takes the PCLMUL path once SSE4.2 is on, and x86-64-v3 turns SSE4.2
+          # on without PCLMUL. The coordinator's CPU has both.
+          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin transparent-event-ingest

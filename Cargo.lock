@@ -3903,6 +3903,7 @@ dependencies = [
  "transparent-events",
  "transparent-filter",
  "transparent-shard",
+ "transparent-shard-server",
  "zakura-chain",
  "zakura-state",
 ]
