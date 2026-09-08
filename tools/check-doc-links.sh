@@ -18,7 +18,7 @@ while IFS= read -r f; do files+=("$f"); done < <(
 
 slug() {
   # GitHub-style heading anchor: lowercase, drop punctuation, spaces to dashes.
-  printf '%s' "$1" \
+  printf '%s\n' "$1" \
     | tr '[:upper:]' '[:lower:]' \
     | sed -E 's/`//g; s/[^a-z0-9 _-]//g; s/ /-/g'
 }
@@ -50,7 +50,9 @@ for file in "${files[@]}"; do
       continue
     fi
     if [ -n "$frag" ] && [[ "$resolved" == *.md ]]; then
-      if ! heading_anchors "$resolved" | grep -qx "$frag"; then
+      # -x to a discarded stdout rather than -q: under pipefail, -q stops reading
+      # at the first match and the anchor producer's SIGPIPE fails the pipeline.
+      if ! heading_anchors "$resolved" | grep -x "$frag" >/dev/null; then
         echo "$file: no heading '#$frag' in '$path'"
         broken=$((broken + 1))
       fi
