@@ -105,7 +105,8 @@ A `transparent-scenario-v1` JSON file contains:
 | `preparation_concurrency` | Total preparation workers across all profiles, default 2; measured concurrency is unchanged |
 | `seed` | Deterministic class shuffle, default 1 |
 | `duration_seconds` | Sustained admission window, default 600 |
-| `recovery_deadline_seconds` | Hard deadline from dispatch, default 600 |
+| `recovery_deadline_seconds` | Measured recovery hard deadline from dispatch, default 600 |
+| `preparation_deadline_seconds` | Full-history preparation deadline per wallet, default 3600; independent of the measured deadline |
 | `request_timeout_seconds` | Individual HTTP timeout, default 60 |
 | `store` | `sqlite` (default) or `memory`, independent per recovery with prior ledger events seeded for windowed profiles |
 | `max_queries` | Optional per-sync private-query budget; default unlimited |
@@ -217,8 +218,11 @@ no measured-window events or coverage are imported. Seed import time is included
 in the measured recovery duration. This models prior ledger state, not a fully
 warm persistent wallet cache.
 
-Preparation uses killable workers and the recovery deadline, without the measured
-query budget or latency SLO. It prepares only selected wallets for a wave and the
+Preparation uses killable workers and its own `preparation_deadline_seconds`
+(default 3600 per wallet), without the measured query budget or latency SLO.
+Full-history preparation can be much slower than the subsequent recent-window
+recovery; `recovery_deadline_seconds` still limits measured recoveries.
+A deadline expiry records `timed_out` and an explicit explanation in the report. It prepares only selected wallets for a wave and the
 entire replacement pool for sustained mode, in batches bounded by both `preparation_concurrency` (default 2 total workers)
 and the configured profile concurrency. Large pools can take substantial preparation time. No measured
 load starts if preparation fails. The same Make commands handle preparation.

@@ -153,11 +153,13 @@ async fn run_config(dir: &Path, name: &str, config: Value) -> Value {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(out.join("report.html").exists());
-    assert!(report["metrics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|m| m["target"] == "missing-worker" && !m["error"].is_null()));
+    if !report["config"]["metrics_targets"]["missing-worker"].is_null() {
+        assert!(report["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["target"] == "missing-worker" && !m["error"].is_null()));
+    }
     assert!(report["users"]
         .as_array()
         .unwrap()
@@ -290,6 +292,10 @@ async fn hard_deadline_refusal_and_publication_failure_remain_unsuccessful() {
     let report = run(dir.path(), &base, "timeout", "wave", 2, 1, false).await;
     assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(report["summary"]["outcomes"]["timed_out"], 2);
+    assert!(report["users"][0]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Measured recovery exceeded its 1 second deadline"));
     let (base, _) = service(dir.path(), Fault::RefuseFilter).await;
     let report = run(dir.path(), &base, "refusal", "wave", 2, 10, false).await;
     assert_eq!(report["summary"]["outcomes"]["failed"], 2);
@@ -555,12 +561,34 @@ async fn preparation_cap_does_not_reduce_measured_wave_concurrency() {
     assert_eq!(batches.len(), 2);
     assert_eq!(batches[0]["summary"]["started"], 2);
     assert_eq!(batches[1]["summary"]["started"], 1);
+    assert_eq!(report["config"]["recovery_deadline_seconds"], 120);
     for batch in batches {
+        let child: Value = serde_json::from_slice(
+            &fs::read(
+                dir.path()
+                    .join("bounded-prep")
+                    .join(batch["report"].as_str().unwrap())
+                    .with_extension("json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(child["config"]["recovery_deadline_seconds"], 3600);
         assert_eq!(batch["status"], "complete");
         for user in batch["users"].as_array().unwrap() {
             assert!(user["finished_at"].as_f64().unwrap() < report["started_at"].as_f64().unwrap());
         }
     }
+    let (base, _) = service(dir.path(), Fault::SlowFilter).await;
+    let config = json!({"schema":"transparent-scenario-v1","name":"prep-timeout","mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"recovery_deadline_seconds":120,"preparation_deadline_seconds":1});
+    let report = run_config(dir.path(), "prep-timeout", config).await;
+    assert_eq!(report["phase"], "preparation_failed");
+    assert!(report["started_at"].is_null());
+    assert_eq!(report["preparation"][0]["users"][0]["outcome"], "timed_out");
+    assert!(report["preparation"][0]["users"][0]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Full-history wallet preparation exceeded its 1 second deadline"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

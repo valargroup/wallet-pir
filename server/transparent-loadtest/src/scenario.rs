@@ -70,6 +70,8 @@ pub struct Config {
     pub seed: u64,
     #[serde(default = "preparation_concurrency")]
     pub preparation_concurrency: usize,
+    #[serde(default = "preparation_deadline")]
+    pub preparation_deadline_seconds: u64,
     #[serde(default = "ten_minutes")]
     pub duration_seconds: u64,
     #[serde(default = "ten_minutes")]
@@ -89,6 +91,10 @@ pub struct Config {
 }
 fn preparation_concurrency() -> usize {
     2
+}
+
+fn preparation_deadline() -> u64 {
+    3600
 }
 
 fn default_seed() -> u64 {
@@ -133,7 +139,8 @@ impl Config {
         {
             bail!("profiles must contain 1–512 total slots and no zero counts");
         }
-        if self.duration_seconds == 0
+        if self.preparation_deadline_seconds == 0
+            || self.duration_seconds == 0
             || self.recovery_deadline_seconds == 0
             || self.request_timeout_seconds == 0
         {
@@ -772,6 +779,7 @@ fn prepare(
         let mut prep = config.clone();
         prep.name = format!("{}: wallet preparation batch {batch}", config.name);
         prep.mode = Mode::Wave;
+        prep.recovery_deadline_seconds = config.preparation_deadline_seconds;
         prep.profiles = pools.iter().map(|(c, p)| (c.clone(), p.len())).collect();
         prep.max_queries = None;
         prep.max_p99_exact_seconds = None;
@@ -950,7 +958,14 @@ fn run(
                         slot.process = None;
                         slot.ready = false;
                         slot.active = None;
-                        let value = json!({"type":"outcome","id":id,"at":now(),"outcome":if cancelled {"cancelled"} else {"timed_out"}});
+                        let error = if cancelled {
+                            "Recovery cancelled by operator".to_owned()
+                        } else {
+                            format!("{} exceeded its {} second deadline; the worker was stopped before completion. See request stages for completed work.",
+                                if preparing { "Full-history wallet preparation" } else { "Measured recovery" },
+                                config.recovery_deadline_seconds)
+                        };
+                        let value = json!({"type":"outcome","id":id,"at":now(),"outcome":if cancelled {"cancelled"} else {"timed_out"},"error":error});
                         write_line(&mut events, &value)?;
                         report.event(&value);
                     }
@@ -1142,6 +1157,9 @@ mod tests {
         assert!(c.validate().is_err());
         let mut c = config();
         c.shard_url = "http://user:password@localhost".into();
+        assert!(c.validate().is_err());
+        let mut c = config();
+        c.preparation_deadline_seconds = 0;
         assert!(c.validate().is_err());
         let mut c = config();
         c.recovery_deadline_seconds = 0;
