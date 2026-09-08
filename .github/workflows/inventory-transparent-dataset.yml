@@ -95,6 +95,11 @@ jobs:
           # takes the PCLMUL path once SSE4.2 is on, and x86-64-v3 turns SSE4.2
           # on without PCLMUL. The coordinator's CPU has both.
           RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
           SHA: ${{ inputs.ref }}
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
           ANCHOR: ${{ inputs.anchor_height }}

@@ -125,6 +125,10 @@ jobs:
           SHA: ${{ inputs.ref }}
         run: |
           set -euo pipefail
+          # The runner's checkout is owned by another uid than the shell that
+          # runs this step; git refuses it as dubious outside the checkout
+          # action unless the directory is named safe.
+          git config --global --add safe.directory "$PWD"
           git fetch --quiet --depth=200 origin main
           git merge-base --is-ancestor "$SHA" FETCH_HEAD || { echo "$SHA is not on main"; exit 1; }
 
@@ -138,6 +142,11 @@ jobs:
           # takes the PCLMUL path once SSE4.2 is on, and x86-64-v3 turns SSE4.2
           # on without PCLMUL. The coordinator's CPU has both.
           RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
         run: |
           set -euo pipefail
           # Yield to the ingester and the live services on this host.

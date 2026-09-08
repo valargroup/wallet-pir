@@ -288,6 +288,11 @@ jobs:
           # takes the PCLMUL path once SSE4.2 is on, and x86-64-v3 turns SSE4.2
           # on without PCLMUL. The coordinator's CPU has both.
           RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
         run: |
           set -euo pipefail
           cargo build --locked --release -p transparent-filter-server --bin transparent-event-ingest
@@ -296,7 +301,12 @@ jobs:
       - name: Build and run the shard census
         if: inputs.action == 'census'
         env:
-          RUSTFLAGS: -C target-cpu=x86-64-v3
+          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
           UNPACKED: ${{ inputs.unpacked }}
           PAGE_ROWS: ${{ inputs.page_rows_per_segment }}
@@ -402,7 +412,12 @@ jobs:
       - name: Build and run the shard publisher
         if: inputs.action == 'publish'
         env:
-          RUSTFLAGS: -C target-cpu=x86-64-v3
+          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
           SHARD_DIR_INPUT: ${{ inputs.shard_dir }}
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
@@ -439,7 +454,12 @@ jobs:
       - name: Build and run the measurement
         if: inputs.action == 'measure'
         env:
-          RUSTFLAGS: -C target-cpu=x86-64-v3
+          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
           SHARD_DIR_INPUT: ${{ inputs.shard_dir }}
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
