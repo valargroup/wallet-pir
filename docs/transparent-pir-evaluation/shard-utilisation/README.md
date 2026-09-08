@@ -89,6 +89,18 @@ Note that a census is a function of the seal parameters compiled into the
 binary at the time it ran; `census-baseline.txt` cannot be regenerated from
 current `main` without reverting the geometry.
 
+## Cross-geometry comparison, added 2026-09-07
+
+**[fullchain-geometry-comparison.md](fullchain-geometry-comparison.md) is the
+authoritative cross-geometry restoration comparison** and supersedes every such
+figure quoted elsewhere in this repository, including in `layout.rs` and the
+deploy notes. Three geometries, one tool, one journal, one anchor.
+
+Reading it first will save re-learning what this README already says about
+scope: the full-chain 8,192 restoration figures measured there differ
+substantially from the ones the deploy notes carried, which appear to have come
+from the `genesis-*` census covering 9.4% of chain height.
+
 ## `archive-wide`, added 2026-09-07
 
 [`fullchain-archive-wide.txt`](fullchain-archive-wide.txt) and

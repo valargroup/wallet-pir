@@ -284,16 +284,22 @@ on every incremental sync, which is the traffic every wallet pays constantly.
 
 - ~~**`g` is unmeasured at wide geometry.**~~ **Measured 2026-09-07** over the
   complete journal at `archive-wide`: mean 2.58, p50 1, p90 3, p95 9, p99 35,
-  max 156, across 9,264,547 distinct indexable scripts. Mean restoration falls
-  to 2.07 MB from 3.75 MB at 8,192, despite each directory query growing from
-  128,008 to 258,056 bytes, because it is asked a tenth as often. Evidence and
-  provenance in
-  [fullchain-archive-wide-notes.md](transparent-pir-evaluation/shard-utilisation/fullchain-archive-wide-notes.md).
-  The 8,192 side of that comparison is still **quoted rather than re-measured
-  with the same tool over the same journal**, which is what the acceptance
-  rule's "coverage-matched" wording asks for. That run needs roughly 12 GB of
-  spill under the runner temp, which is the coordinator's root disk rather than
-  the 1 TB `/srv/zakura` volume.
+  max 156, across 9,264,547 distinct indexable scripts. The coverage-matched
+  8,192 baseline is now measured too, and it **contradicts the figure this doc
+  used to carry**: real full-chain 8,192 is mean `g` 6.55 and mean restoration
+  2.03 MB, not 27.4 and 3.75 MB. So `archive-wide` cuts `g` 2.54-fold, not
+  10.6-fold, and on restoration bytes it is a **trade rather than a win** —
+  p50 0.52 MB against 0.26, p90 2.41 against 1.54, but p99 33.46 against 44.42.
+  The cause is the page query, 430,088 bytes at 65,536 page rows against
+  128,008 at 8,192; directory bytes do favour the wider shape. Evidence in
+  [fullchain-archive-wide-notes.md](transparent-pir-evaluation/shard-utilisation/fullchain-archive-wide-notes.md)
+  and [fullchain-8192-matches.txt](transparent-pir-evaluation/shard-utilisation/fullchain-8192-matches.txt).
+- **Several figures quoted in this repo come from the partial `genesis-*`
+  census covering 9.4% of chain height.** The 27.4/3.75 MB pair above was one;
+  `layout.rs`'s "27 shards on average and 2,794 at the worst" is likely
+  another. The `shard-utilisation` README was written to warn about exactly
+  this after it caused a 55% error in shard count, and it has now happened
+  twice. Re-measure before quoting.
 - **No two-tier set has been published or served, and nothing has been measured
   on a droplet at archive geometry.** The registry, the mixed publisher, the
   bounded cache and the revision routes are implemented, tested, and now live at

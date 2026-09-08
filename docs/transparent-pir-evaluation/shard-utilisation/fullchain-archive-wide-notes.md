@@ -64,11 +64,46 @@ script-shard pairs:
 | directory queries (`2g`) | 5.16 | 2 | 6 | 18 | 70 | 312 |
 | restoration MB | 2.07 | 0.52 | 2.41 | 7.14 | 33.46 | 40,176.58 |
 
-Against the 8,192 figures the deploy notes carry — mean `g` 27.4, p99 563,
-max 2,794 — mean `g` falls 10.6-fold, more than the 6.7-fold fall in shard
-count would predict. Mean restoration falls from 3.75 MB to 2.07 MB *despite*
-each directory query growing from 128,008 to 258,056 bytes, because the query
-is asked a tenth as often.
+**Corrected 2026-09-07, after measuring the baseline.** This section first
+compared against the 8,192 figures the deploy notes carried — mean `g` 27.4,
+mean restoration 3.75 MB — and claimed a 10.6-fold fall in `g` and a fall in
+restoration bytes. Those figures are not full-chain. Measured with this tool
+over this journal at this anchor
+([fullchain-8192-matches.txt](fullchain-8192-matches.txt)), 8,192 gives mean
+`g` 6.55 and mean restoration 2.03 MB, and the real comparison is:
+
+| | 8,192 | `archive-wide` | |
+|---|---:|---:|---|
+| mean `g` | 6.55 | 2.58 | 2.54x fewer |
+| mean `2g` queries | 13.09 | 5.16 | 2.54x fewer |
+| mean restoration MB | 2.03 | 2.07 | **1.02x worse** |
+| p50 restoration MB | 0.26 | 0.52 | **2.00x worse** |
+| p90 restoration MB | 1.54 | 2.41 | **1.56x worse** |
+| p95 restoration MB | 7.30 | 7.14 | 0.98x better |
+| p99 restoration MB | 44.42 | 33.46 | 0.75x better |
+| max restoration MB | 12,046 | 40,177 | **3.34x worse** |
+
+So `archive-wide` is a trade, not a win. The ordinary wallet pays about double
+the restoration bytes; the fleet holds 91.1 GiB of prepared runtime instead of
+273 GiB.
+
+The mechanism is the **page** table, not the directory. Directory bytes do
+favour `archive-wide` — 1.33 MB mean against 1.68 MB — because `g` falls faster
+than the 128,008-to-258,056-byte query grows. But a page query costs 430,088
+bytes at 65,536 page rows against 128,008 at 8,192, a 3.36-fold rise, and the
+median script has `g` = 1 with a handful of fragments, so page queries are most
+of what it actually pays. Widening the page table is what hurts the ordinary
+wallet, and it is the half of `archive-wide` that buys the shard-count fall.
+
+That points at [`archive-32k`](fullchain-archive-32k-notes.md) — the same
+32,768-row directory with a 32,768-row page table — as the shape that might
+keep the fleet-RAM win without doubling the median wallet's bytes.
+
+Against the deploy plan's acceptance rule — *reject if it introduces ordinary
+multi-segment shards, or increases **both** median restore bytes and prepared
+memory* — `archive-wide` is not rejected: it increases median restore bytes and
+decreases prepared memory. That is a decision about who pays, not a passing
+grade, and it is not one this census can make.
 
 The 40 GB maximum is one script, and it is not a wallet. This is a
 chain-script distribution: exchanges and heavily reused addresses dominate its
