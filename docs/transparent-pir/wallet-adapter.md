@@ -24,6 +24,11 @@ the tip for the wallet to validate; `sync_once(SyncRequest)` performs one
 bounded sync and returns `SyncStatus`; `status`, `snapshot` and
 `rollback_to` read or adjust the store without network work.
 
+A wallet that brings its own store proves it with the contract suite:
+`transparent_wallet::testing::suite` (feature `testing`) is the same suite the
+two reference stores pass. The init document is parsed by
+`transparent_wallet::parse_init` whichever transport fetched it.
+
 ## What the wallet gets back
 
 `SyncStatus.completion` is `complete` or the reason the sync stopped:
