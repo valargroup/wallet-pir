@@ -144,31 +144,10 @@ impl TransparentSync {
             .transport
             .init()
             .map_err(|error| FacadeError::Transport(error.to_string()))?;
-        let init: serde_json::Value = serde_json::from_slice(&init)
-            .map_err(|error| FacadeError::Transport(error.to_string()))?;
-        let mut geometries = Vec::new();
-        for entry in init["geometries"].as_array().into_iter().flatten() {
-            let params = (|| -> Option<crate::sync::GeometryParams> {
-                Some(crate::sync::GeometryParams {
-                    name: entry["name"].as_str()?.to_string(),
-                    directory_rows: entry["directory_rows"].as_u64()?,
-                    directory_row_bytes: entry["directory_row_bytes"].as_u64()? as u32,
-                    directory_scheme: serde_json::from_value(entry["directory_scheme"].clone())
-                        .ok()?,
-                    directory_setup_seed: entry["directory_setup_seed"].as_u64()?,
-                    page_rows: entry["page_rows"].as_u64()?,
-                    page_row_bytes: entry["page_row_bytes"].as_u64()? as u32,
-                    pages_scheme: serde_json::from_value(entry["pages_scheme"].clone()).ok()?,
-                    pages_setup_seed: entry["pages_setup_seed"].as_u64()?,
-                })
-            })()
-            .ok_or_else(|| FacadeError::Transport("init geometry is malformed".into()))?;
-            geometries.push(params);
-        }
-        self.geometry = Some(ServiceGeometry {
-            schema: init["schema"].as_str().unwrap_or_default().to_string(),
-            geometries,
-        });
+        self.geometry = Some(
+            crate::init::parse_init(&init)
+                .map_err(|error| FacadeError::Transport(error.to_string()))?,
+        );
         let tip = map
             .shards
             .last()

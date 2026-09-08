@@ -23,6 +23,8 @@ transparent-shard = { path = "../transparent-shard" }
 [features]
 # Reference HTTP adapters for the shard service and filter origin.
 reqwest = ["dep:reqwest"]
+# The store conformance suite, for a wallet that brings its own storage.
+testing = []
 
 [dev-dependencies]
 serde_json = "1"

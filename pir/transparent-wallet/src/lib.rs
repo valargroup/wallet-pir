@@ -19,14 +19,18 @@ pub mod client;
 pub mod facade;
 #[cfg(feature = "reqwest")]
 pub mod http;
+pub mod init;
 pub mod ledger;
 pub mod memory_store;
 pub mod store;
 pub mod sync;
+#[cfg(feature = "testing")]
+pub mod testing;
 pub mod transport;
 
 pub use adapters::{Acceptance, ChainView, ScriptProvider, StaticChain, StaticScripts};
 pub use facade::{FacadeError, LedgerSnapshot, SyncRequest, SyncStatus, TransparentSync};
+pub use init::parse_init;
 pub use ledger::{ConfirmedSpend, Ledger, LedgerError, TransactionSummary, UnresolvedSpend, Utxo};
 pub use memory_store::MemoryStore;
 pub use store::{

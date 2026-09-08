@@ -86,7 +86,7 @@ trait GeometryOf {
 impl<T: ShardTransport> GeometryOf for T {
     fn geometry(&mut self) -> Result<transparent_wallet::ServiceGeometry, BoxError> {
         let (raw, _) = self.init()?;
-        transparent_wallet::http::parse_init(&raw)
+        transparent_wallet::parse_init(&raw)
     }
 }
 

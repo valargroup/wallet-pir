@@ -17,4 +17,4 @@ transparent-wallet = { path = "../transparent-wallet" }
 
 [dev-dependencies]
 tempfile = "3"
-transparent-filter = { path = "../transparent-filter" }
+transparent-wallet = { path = "../transparent-wallet", features = ["testing"] }
