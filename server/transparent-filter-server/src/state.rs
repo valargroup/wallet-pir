@@ -120,6 +120,19 @@ impl StateReader {
             .ok_or(StateError::MissingBlock(u64::from(height.0)))
     }
 
+    /// The header time of a finalized block, as the miner stamped it.
+    ///
+    /// Block times are not monotone — consensus only requires each to exceed
+    /// the median of the eleven before it — so a caller deriving a calendar
+    /// boundary must search a window, not a single crossing.
+    pub fn block_time(&self, height: u64) -> Result<chrono::DateTime<chrono::Utc>, StateError> {
+        let block_height = to_height(height)?;
+        self.db
+            .block_header(HashOrHeight::Height(block_height))
+            .map(|header| header.time)
+            .ok_or(StateError::MissingBlock(height))
+    }
+
     /// Extracts one block's events, resolving previous outputs from the same
     /// database.
     ///

@@ -11,7 +11,7 @@ Source inspection: 2026-09-07, commit `8514863`. This documentation change does 
 | Desired optional recent pairing | 4096/8192 absent; add a new name, never reinterpret `recent-4k` |
 | Census ranges | `--start-height`, `--end-height`, geometry overrides, `--placement`, `--per-shard`, exact script matches exist in `shard-census.rs` |
 | Two-tier publisher | `--recent-geometry`, `--archive-geometry`, `--recent-from` exist in `shard-publish.rs` |
-| Workflow exposure | Publish workflow does not expose the complete two-tier CLI controls; reconcile before automated publication |
+| Workflow exposure | `publish-transparent-shards.yml` exposes commit, journal, output directory, anchor, `recent_from` (re-derived and checked) and both geometries; the backfill workflow's `inventory` action records journal identity, cutoff and an independent event spot-check |
 | Loading/cache | Whole-set loader verifies manifest/table identity; bounded runtime cache and file-backed plaintext sources exist |
 | Revision handling | Revision-addressed setup/query, 409 refresh, retryable cache pressure, bounded wallet refresh exist |
 | Retention | Three superseded revisions per shard in addition to current; disk pruning and warm retention require explicit operational policy |

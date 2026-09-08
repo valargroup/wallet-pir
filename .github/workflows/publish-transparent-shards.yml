@@ -1,0 +1,220 @@
+name: Publish transparent shards
+
+# Publishes a shard set from the event journal on the coordinator, where the
+# journal and the node both live. Every input that decides what gets published
+# is explicit and validated: the commit, the journal, a fresh output directory,
+# the anchor height, the tier boundary and both geometries. The boundary is
+# re-derived from the anchor's chain time and must equal the height given, so
+# a publish cannot proceed under a cutoff the anchor no longer justifies.
+#
+# Read-only against the journal and the node. Writes only the named output
+# directory, and refuses one that already holds a set unless `republish` says
+# this is a tail republication into the same lineage. It installs nothing and
+# restarts nothing: shipping a set to workers is the deploy workflow's job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full commit SHA on main to build the publisher from
+        required: true
+        type: string
+      data_dir:
+        description: The event journal to publish from
+        required: true
+        default: /srv/zakura/transparent-event-data
+        type: string
+      output_dir:
+        description: >-
+          Where the set is written. A new publication needs a directory that
+          does not exist yet; never the directory a running service reads.
+        required: true
+        type: string
+      anchor_height:
+        description: >-
+          Last height to publish, inclusive. Must be committed in the journal.
+          This pins the set; the journal may already have grown past it.
+        required: true
+        type: string
+      recent_from:
+        description: >-
+          First height of the recent tier, as recorded by the inventory's
+          cutoff derivation. Re-derived here and must agree. Blank publishes a
+          single-geometry set under recent_geometry.
+        required: false
+        default: ""
+        type: string
+      recent_geometry:
+        description: Registry geometry for the recent tier
+        required: false
+        default: recent-8k
+        type: string
+      archive_geometry:
+        description: Registry geometry for the archive tier (used with recent_from)
+        required: false
+        default: archive-wide
+        type: string
+      months:
+        description: Calendar months between the cutoff and the anchor
+        required: false
+        default: "6"
+        type: string
+      republish:
+        description: >-
+          Allow output_dir to exist already. Only for republishing a grown tail
+          into the same lineage; the publisher verifies every existing shard
+          byte-for-byte and refuses a different schema.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transparent-shard-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish ${{ inputs.output_dir }} through ${{ inputs.anchor_height }}
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 720
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          SHA: ${{ inputs.ref }}
+          DATA_DIR: ${{ inputs.data_dir }}
+          OUT: ${{ inputs.output_dir }}
+          ANCHOR: ${{ inputs.anchor_height }}
+          RECENT_FROM: ${{ inputs.recent_from }}
+          RECENT: ${{ inputs.recent_geometry }}
+          ARCHIVE: ${{ inputs.archive_geometry }}
+          MONTHS: ${{ inputs.months }}
+          REPUBLISH: ${{ inputs.republish }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a full commit SHA"; exit 1; }
+          [[ "$DATA_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "data_dir must be an absolute path"; exit 1; }
+          [[ "$OUT" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "output_dir must be an absolute path"; exit 1; }
+          [[ "$OUT" != "$DATA_DIR" && "$OUT" != "$DATA_DIR"/* ]] || { echo "output_dir must not be inside the journal"; exit 1; }
+          [[ "$ANCHOR" =~ ^[0-9]+$ ]] || { echo "anchor_height must be a number"; exit 1; }
+          [[ -z "$RECENT_FROM" || "$RECENT_FROM" =~ ^[0-9]+$ ]] || { echo "recent_from must be a number or blank"; exit 1; }
+          [[ "$RECENT" =~ ^[a-z0-9-]+$ && "$ARCHIVE" =~ ^[a-z0-9-]+$ ]] || { echo "geometries must be registry names"; exit 1; }
+          [[ "$MONTHS" =~ ^[0-9]+$ && "$MONTHS" -ge 1 ]] || { echo "months must be a positive number"; exit 1; }
+          if [[ -n "$RECENT_FROM" && "$RECENT" == "$ARCHIVE" ]]; then
+            echo "a two-tier set needs two different geometries"; exit 1
+          fi
+          if [[ -n "$RECENT_FROM" && "$RECENT_FROM" -ge "$ANCHOR" ]]; then
+            echo "recent_from must lie below anchor_height"; exit 1
+          fi
+          if sudo test -e "$OUT" && [[ "$REPUBLISH" != "true" ]]; then
+            echo "$OUT already exists; a new publication takes a fresh directory, a tail republication sets republish"; exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Confirm the commit is on main
+        env:
+          SHA: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --depth=200 origin main
+          git merge-base --is-ancestor "$SHA" FETCH_HEAD || { echo "$SHA is not on main"; exit 1; }
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Build the publisher and the dataset tools
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: |
+          set -euo pipefail
+          # Yield to the ingester and the live services on this host.
+          NICE=(nice -n 19)
+          if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
+          "${NICE[@]}" cargo build --locked --release -p transparent-filter-server \
+            --bin shard-publish --bin shard-cutoff --bin journal-inventory
+          sha256sum target/release/shard-publish
+
+      - name: Pin the dataset
+        env:
+          SHA: ${{ inputs.ref }}
+          DATA_DIR: ${{ inputs.data_dir }}
+          ANCHOR: ${{ inputs.anchor_height }}
+          RECENT_FROM: ${{ inputs.recent_from }}
+          MONTHS: ${{ inputs.months }}
+        run: |
+          set -euo pipefail
+          mkdir -p publication
+          # The anchor must be a committed journal block whose hash the node
+          # agrees with; the inventory tool fails otherwise.
+          sudo ./target/release/journal-inventory --data-dir "$DATA_DIR" --anchor-height "$ANCHOR" \
+            --state-dir /root/.cache/zakura --source-sha "$SHA" --out publication/journal.json
+          if [[ -n "$RECENT_FROM" ]]; then
+            # Re-derive the boundary and refuse a disagreement. The recorded
+            # height is the durable input; the derivation is its proof.
+            sudo ./target/release/shard-cutoff --data-dir "$DATA_DIR" --anchor-height "$ANCHOR" \
+              --months "$MONTHS" --expect-cutoff "$RECENT_FROM" --state-dir /root/.cache/zakura \
+              --source-sha "$SHA" --out publication/cutoff.json
+          fi
+          sudo chown -R "$(id -u)" publication
+
+      - name: Publish
+        env:
+          SHA: ${{ inputs.ref }}
+          DATA_DIR: ${{ inputs.data_dir }}
+          OUT: ${{ inputs.output_dir }}
+          ANCHOR: ${{ inputs.anchor_height }}
+          RECENT_FROM: ${{ inputs.recent_from }}
+          RECENT: ${{ inputs.recent_geometry }}
+          ARCHIVE: ${{ inputs.archive_geometry }}
+        run: |
+          set -euo pipefail
+          NICE=(nice -n 19)
+          if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
+          ARGS=(--data-dir "$DATA_DIR" --output "$OUT" --through "$ANCHOR"
+                --recent-geometry "$RECENT" --source-sha "$SHA"
+                --record "$PWD/publication/publication.json"
+                --zakura-cookie /root/.cache/zakura/.cookie)
+          if [[ -n "$RECENT_FROM" ]]; then
+            ARGS+=(--archive-geometry "$ARCHIVE" --recent-from "$RECENT_FROM")
+          fi
+          echo "## disk before"; df -h "$(dirname "$OUT")" | tee publication/disk-before.txt
+          TIMED=()
+          if [[ -x /usr/bin/time ]]; then TIMED=(/usr/bin/time -v -o publication/time.txt); fi
+          # Read-only against the journal; writes only $OUT and the record.
+          # Peak resident memory and wall time are reported figures, so they
+          # are measured rather than asserted.
+          sudo "${TIMED[@]}" "${NICE[@]}" ./target/release/shard-publish "${ARGS[@]}" 2>&1 | tee publication/publish.log
+          sudo chown -R "$(id -u)" publication
+          echo "## disk after"; df -h "$(dirname "$OUT")" | tee publication/disk-after.txt
+          sudo du -sh "$OUT" | tee publication/set-size.txt
+          sudo sha256sum "$OUT/shards.json" | tee publication/map-sha256.txt
+          grep -E 'Maximum resident|Elapsed \(wall' publication/time.txt || echo 'no resource accounting'
+          # Keep the record beside the set too, so the directory says what it is.
+          sudo cp publication/publication.json "$OUT/publication.json"
+          [[ -f publication/cutoff.json ]] && sudo cp publication/cutoff.json "$OUT/cutoff.json"
+          {
+            echo '## Transparent shard publication'
+            echo '```'
+            jq -r '"\(.published.shards) shards \(.published.start_height)-\(.published.through) (archive \(.published.archive_shards // "n/a"), recent \(.published.recent_shards)); map sha256 \(.published.map_sha256); multi-segment \(.published.multi_segment_shards); \(.elapsed_seconds|floor)s"' publication/publication.json
+            grep -E 'Maximum resident|Elapsed \(wall' publication/time.txt || true
+            cat publication/set-size.txt
+            echo '```'
+            echo '### Log tail'; echo '```'; tail -30 publication/publish.log; echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transparent-publication-${{ inputs.anchor_height }}
+          path: publication/
+          if-no-files-found: error

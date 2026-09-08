@@ -70,6 +70,21 @@ struct Cli {
     zakura_rpc_url: String,
     #[arg(long)]
     zakura_cookie: PathBuf,
+    /// Last height to publish, inclusive. Defaults to the journal's end.
+    ///
+    /// The anchor a publication is pinned to. A journal keeps growing under
+    /// ingest, and a publish that silently took whatever it found would move
+    /// the anchor every run; naming it keeps the published range the one the
+    /// cutoff record and the correctness pilot were computed for.
+    #[arg(long)]
+    through: Option<u64>,
+    /// Where to write a JSON record of this publication: inputs, journal
+    /// identity, range, geometries, map digest, shard count and elapsed time.
+    #[arg(long)]
+    record: Option<PathBuf>,
+    /// Source commit of this tool, recorded verbatim.
+    #[arg(long)]
+    source_sha: Option<String>,
 }
 
 /// Writes `bytes` to `path` so that a reader sees either all of them or none.
@@ -121,10 +136,24 @@ fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError>
 async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
     let store = EventStore::open_existing(&cli.data_dir)?;
-    let Some(covered) = store.covered_through() else {
+    let started = std::time::Instant::now();
+    let Some(journal_end) = store.covered_through() else {
         return Err("the journal is empty".into());
     };
     let first = store.start_height();
+    let covered = match cli.through {
+        Some(through) if through > journal_end => {
+            return Err(format!(
+                "--through {through} is past the journal's committed end {journal_end}"
+            )
+            .into())
+        }
+        Some(through) if through < first => {
+            return Err(format!("--through {through} is before the journal's start {first}").into())
+        }
+        Some(through) => through,
+        None => journal_end,
+    };
 
     let recent: &'static Geometry = geometry_by_name(&cli.recent_geometry)
         .ok_or_else(|| format!("unknown geometry {:?}", cli.recent_geometry))?;
@@ -534,10 +563,57 @@ async fn main() -> Result<(), BoxError> {
     // Written last, and atomically. The map is what names every shard, so a
     // truncated one is a set that cannot be loaded at all; and until it names
     // them, the shard directories beside it are simply not part of any set.
-    write_atomic(
-        &cli.output.join("shards.json"),
-        &serde_json::to_vec_pretty(&map)?,
-    )?;
+    let map_bytes = serde_json::to_vec_pretty(&map)?;
+    write_atomic(&cli.output.join("shards.json"), &map_bytes)?;
+
+    if let Some(path) = &cli.record {
+        let by_geometry = |name: &str| {
+            map.shards
+                .iter()
+                .filter(|entry| entry.geometry == name)
+                .count()
+        };
+        let record = serde_json::json!({
+            "schema": "transparent-publication-v1",
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+            "tool_sha": cli.source_sha,
+            "data_dir": cli.data_dir,
+            "output": cli.output,
+            "network": transparent_filter::NETWORK,
+            "genesis_hash": store.genesis_hash(),
+            "shard_schema": SCHEMA,
+            "journal": {
+                "start_height": first,
+                "covered_through": journal_end,
+                "events_stored": store.events_stored(),
+            },
+            "published": {
+                "start_height": first,
+                "through": covered,
+                "anchor_hash": store
+                    .block_at(covered)
+                    .map(|entry| entry.block_hash.to_display_hex()),
+                "recent_from": cutoff,
+                "recent_geometry": recent.name,
+                "archive_geometry": cutoff.map(|_| archive.name),
+                "recent_policy": format!("{recent_policy:?}"),
+                "archive_policy": cutoff.map(|_| format!("{archive_policy:?}")),
+                "shards": map.shards.len(),
+                "recent_shards": by_geometry(recent.name),
+                "archive_shards": cutoff.map(|_| by_geometry(archive.name)),
+                "multi_segment_shards": map
+                    .shards
+                    .iter()
+                    .filter(|entry| entry.directory_segments > 1 || entry.page_segments > 1)
+                    .count(),
+                "tail_revision": map.shards.last().map(|entry| entry.revision),
+                "map_sha256": hex::encode(Sha256::digest(&map_bytes)),
+                "map_bytes": map_bytes.len(),
+            },
+            "elapsed_seconds": started.elapsed().as_secs_f64(),
+        });
+        write_atomic(path, &serde_json::to_vec_pretty(&record)?)?;
+    }
 
     let filter_bytes: u64 = map.shards.iter().map(|s| s.scripts * 5 / 2).sum();
     eprintln!(

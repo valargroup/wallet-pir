@@ -224,6 +224,70 @@ impl ZakuraClient {
         Ok(out)
     }
 
+    /// One JSON-RPC call whose result is returned as raw JSON.
+    ///
+    /// For tools that deliberately avoid this crate's block parser — the
+    /// independent event spot-check reads the node's *verbose* JSON so that
+    /// its extraction shares no code with the ingester's.
+    pub async fn call_value(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ZakuraError> {
+        self.call(method, params).await
+    }
+
+    /// Several JSON-RPC calls in one batch, results positional and raw.
+    ///
+    /// JSON-RPC 2.0, as `transactions` explains. A call whose result is an
+    /// RPC error is returned as `Err` for the whole batch, since a positional
+    /// hole would be indistinguishable from a null result.
+    pub async fn call_batch_values(
+        &self,
+        calls: &[(&str, serde_json::Value)],
+    ) -> Result<Vec<serde_json::Value>, ZakuraError> {
+        if calls.is_empty() {
+            return Ok(Vec::new());
+        }
+        let requests: Vec<serde_json::Value> = calls
+            .iter()
+            .enumerate()
+            .map(|(index, (method, params))| {
+                json!({"jsonrpc": "2.0", "id": index, "method": method, "params": params})
+            })
+            .collect();
+        let response = self
+            .http
+            .post(&self.rpc_url)
+            .basic_auth(&self.username, Some(&self.password))
+            .json(&requests)
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ZakuraError::InvalidCookie);
+        }
+        let responses: Vec<RpcResponse<serde_json::Value>> =
+            response.error_for_status()?.json().await?;
+        if responses.len() != calls.len() {
+            return Err(ZakuraError::Rpc(
+                0,
+                format!(
+                    "batch of {} returned {} responses",
+                    calls.len(),
+                    responses.len()
+                ),
+            ));
+        }
+        let mut results = Vec::with_capacity(calls.len());
+        for one in responses {
+            if let Some(error) = one.error {
+                return Err(ZakuraError::Rpc(error.code, error.message));
+            }
+            results.push(one.result.ok_or(ZakuraError::MissingResult)?);
+        }
+        Ok(results)
+    }
+
     async fn call<T: DeserializeOwned>(
         &self,
         method: &str,

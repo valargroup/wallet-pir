@@ -23,9 +23,22 @@ path = "src/bin/event-ingest.rs"
 name = "transparent-filter-server"
 path = "src/bin/server.rs"
 
+[[bin]]
+name = "shard-cutoff"
+path = "src/bin/shard-cutoff.rs"
+
+[[bin]]
+name = "journal-inventory"
+path = "src/bin/journal-inventory.rs"
+
+[[bin]]
+name = "event-spotcheck"
+path = "src/bin/event-spotcheck.rs"
+
 [dependencies]
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "223626ffdd28bd1400dd0b62027a8f366665aa4f" }
 axum = "0.7"
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 prometheus = { version = "0.13", default-features = false, features = ["process"] }

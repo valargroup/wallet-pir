@@ -48,7 +48,7 @@ This excludes existing node/indexer/publisher, CDN/object storage, backups, taxe
 ## Publication and rollout procedure
 
 1. Verify live state and journal identity. Pin source SHA, schema, anchor hash/time, explicit cutoff height and cutoff derivation algorithm in candidate metadata.
-2. Use a new publication directory; never overwrite the rollback set or switch an existing schema in place. Publisher CLI supports both tiers, but expose and validate those inputs in CI before relying on the workflow.
+2. Use a new publication directory; never overwrite the rollback set or switch an existing schema in place. Publish through `.github/workflows/publish-transparent-shards.yml`, which takes the commit, journal, fresh output directory, anchor height, recorded `recent_from` and both geometries, re-derives the cutoff with `shard-cutoff --expect-cutoff` and refuses a disagreement, publishes `--through` the anchor, and stores `publication.json` and `cutoff.json` beside `shards.json`.
 3. Validate complete coverage, manifests, tables, filters, true directory placement and exact replay before touching running services. Stage verified bytes at assigned owners.
 4. Run retrieval deployment `preflight` with the tested full main SHA and explicit shard directory. Current workflow lives at `.github/workflows/deploy-transparent-shard.yml`; inspect its inputs at execution time.
 5. Prepare required runtimes, then activate consistent map/routing/revision state. A loaded-only readiness response is insufficient for the warm fleet.
@@ -70,6 +70,6 @@ meaning. Resume a genesis journal with `start_height=0` and `state_dir` set.
 
 Historical reports mention Terraform state drift, unintended transparent-spend provisioning, SSH firewall drift, volume lookup mismatch and stale SSH host keys. Re-verify these as preflight findings rather than blindly following archived repair commands. Inspect the saved plan and protect the shared node/volume and Enhance services.
 
-Freeze the initial cutoff for the pilot. Derive six calendar months from the pinned UTC anchor timestamp with a documented month-end rule and a deterministic height selection; record the chosen height instead of recalculating it each publish. Enforce a forced shard boundary there. Do not use approximate block counts as calendar time.
+Freeze the initial cutoff for the pilot. `shard-cutoff` derives it: the cutoff time is the anchor block's header time minus six calendar months, day clamped to the target month's last day, time of day kept; the cutoff height is one more than the highest height whose header time is before the cutoff time, which is well defined under non-monotone block times and is proved final by eleven consecutive blocks at or after it. The inventory action of the backfill workflow records the height, hashes and times in `cutoff.json`; a publish passes the recorded height back and the tool refuses a disagreement. Do not use approximate block counts as calendar time.
 
 Old recent shards keep their geometry forever within the publication lineage. They can move to archive ownership after verified copying and routing handoff. Budget their actual growth; the previous 6.5 GiB/year figure is an extrapolation, not a retention guarantee. Re-cutting into wider shards is deferred until epoch identity and wallet replay semantics are specified and tested.
