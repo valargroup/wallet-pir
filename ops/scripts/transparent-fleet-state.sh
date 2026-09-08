@@ -90,6 +90,12 @@ REMOTE
     if [[ "$control" == true ]]; then
       awk '{print; if ($0 == "[Service]") print "RuntimeDirectory=transparent-pir"}' "$RENDERED_UNIT" >"$RENDERED_UNIT.next"
       mv "$RENDERED_UNIT.next" "$RENDERED_UNIT"
+      if [[ "$(worker_field "$id" role)" == recent-replica ]]; then
+        # Match continuous-publication upgrades: reclaim file cache while
+        # leaving space for a loaded tail build and concurrent private work.
+        awk '{print; if ($0 == "[Service]") print "MemoryHigh=5905580032"}' "$RENDERED_UNIT" >"$RENDERED_UNIT.next"
+        mv "$RENDERED_UNIT.next" "$RENDERED_UNIT"
+      fi
     fi
     unit="$(unit_digest "$RENDERED_UNIT")"
     wanted="$(jq -cn --arg binary "$binary" --arg unit "$unit" --arg assignment "$(worker_digest "$id")" --arg map "$EXPECTED_MAP_SHA256" '{binary:$binary,unit:$unit,assignment:$assignment,map:$map}')"
