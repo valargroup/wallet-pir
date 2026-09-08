@@ -27,7 +27,8 @@ use transparent_wallet::http::{HttpFilterSource, HttpOptions, HttpShardTransport
 use transparent_wallet::store::{ScriptEntry, ScriptOrigin, WalletStore};
 use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
 use transparent_wallet::{
-    sync_into, Completion, MemoryStore, ServiceGeometry, StaticChain, StaticScripts, WorkLimits,
+    sync_into, Completion, IncompleteReason, MemoryStore, ServiceGeometry, StaticChain,
+    StaticScripts, WorkLimits,
 };
 use transparent_wallet_store::SqliteStore;
 
@@ -264,6 +265,8 @@ struct Outcome {
     class: String,
     total: Duration,
     completed: bool,
+    /// Why a sync stopped short, in the facade's words; None when complete.
+    incomplete: Option<String>,
     exact: bool,
     failed: Option<String>,
     stages: BTreeMap<&'static str, StageTotals>,
@@ -331,7 +334,7 @@ fn run_client(
         max_queries: args.max_queries,
         max_private_bytes: None,
     };
-    let attempt = || -> anyhow::Result<(bool, String, u64)> {
+    let attempt = || -> anyhow::Result<(Option<String>, String, u64)> {
         let mut transport = Counting {
             inner: HttpShardTransport::new(&args.shard_url, &options)
                 .map_err(|e| anyhow::anyhow!(e))?,
@@ -365,7 +368,7 @@ fn run_client(
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 let _ = std::fs::remove_file(&path);
-                (report.completion == Completion::Complete, digest, events)
+                (incomplete_reason(&report.completion), digest, events)
             }
             None => {
                 let mut store = MemoryStore::new();
@@ -385,7 +388,7 @@ fn run_client(
                     },
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
-                (report.completion == Completion::Complete, digest, events)
+                (incomplete_reason(&report.completion), digest, events)
             }
         };
         Ok(report)
@@ -393,11 +396,14 @@ fn run_client(
     let result = attempt();
     let snapshot = stages.lock().unwrap().clone();
     match result {
-        Ok((completed, digest, events)) => Outcome {
+        Ok((incomplete, digest, events)) => Outcome {
             class: spec.class.clone(),
             total: started.elapsed(),
-            completed,
-            exact: completed && digest == spec.expected_digest && events == spec.journal_events,
+            completed: incomplete.is_none(),
+            exact: incomplete.is_none()
+                && digest == spec.expected_digest
+                && events == spec.journal_events,
+            incomplete,
             failed: None,
             stages: snapshot,
             events,
@@ -406,6 +412,7 @@ fn run_client(
             class: spec.class.clone(),
             total: started.elapsed(),
             completed: false,
+            incomplete: None,
             exact: false,
             failed: Some(error.to_string()),
             stages: snapshot,
@@ -426,6 +433,8 @@ struct ClassStats {
     /// Distinct failure messages and how often each occurred, capped so a
     /// report stays readable; the count is exact, the message set is not.
     failures_by_message: BTreeMap<String, u64>,
+    /// Syncs that stopped short, by the reason the wallet gave.
+    incomplete_by_reason: BTreeMap<String, u64>,
 }
 
 impl ClassStats {
@@ -436,6 +445,9 @@ impl ClassStats {
         }
         if outcome.exact {
             self.exact += 1;
+        }
+        if let Some(reason) = &outcome.incomplete {
+            *self.incomplete_by_reason.entry(reason.clone()).or_default() += 1;
         }
         if let Some(message) = &outcome.failed {
             self.failed += 1;
@@ -482,6 +494,7 @@ impl ClassStats {
             "http_503": refused_503,
             "events_recovered": self.events,
             "failures_by_message": self.failures_by_message,
+            "incomplete_by_reason": self.incomplete_by_reason,
             "stages": self.stages.iter().map(|(stage, t)| (stage.to_string(), serde_json::json!({
                 "calls": t.calls, "bytes_up": t.up, "bytes_down": t.down,
                 "seconds": t.micros as f64 / 1e6, "http_409": t.http_409, "http_503": t.http_503, "failures": t.failures,
@@ -818,4 +831,23 @@ fn write_report(
         None => {}
     }
     Ok(())
+}
+
+/// The facade's wording for an incomplete sync, or None when complete.
+fn incomplete_reason(completion: &Completion) -> Option<String> {
+    match completion {
+        Completion::Complete => None,
+        Completion::Incomplete { reason, .. } => Some(match reason {
+            IncompleteReason::QueryBudget => "query-budget".into(),
+            IncompleteReason::ByteBudget => "byte-budget".into(),
+            IncompleteReason::PendingLimit => "pending-limit".into(),
+            IncompleteReason::Overloaded { shard_id } => format!("overloaded:{shard_id}"),
+            IncompleteReason::ChainUnknown { height } => format!("chain-unknown:{height}"),
+            IncompleteReason::PublicationBehind { height } => {
+                format!("publication-behind:{height}")
+            }
+            IncompleteReason::UnresolvedSpends => "unresolved-spends".into(),
+            IncompleteReason::DiscoveryUnbounded => "discovery-unbounded".into(),
+        }),
+    }
 }
