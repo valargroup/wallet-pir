@@ -64,9 +64,11 @@ jobs:
           cache-on-failure: true
           shared-key: transparent-test
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev
-      # Release: the full-shard cryptographic tests need it.
+      # release-fast: the full-shard cryptographic tests need optimized code,
+      # not the fat-LTO single-codegen-unit link the deploy profile pays for,
+      # which on a two-vCPU runner is most of the wall time.
       - run: >-
-          cargo test --release
+          cargo test --profile release-fast
           -p transparent-events -p transparent-filter -p transparent-shard
           -p transparent-wallet -p transparent-wallet-store
           -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
