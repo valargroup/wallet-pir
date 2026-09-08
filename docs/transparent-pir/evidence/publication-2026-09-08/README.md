@@ -22,8 +22,20 @@ before publishing; `publish.log` is the per-shard log; `time.txt` is
 The emitted boundaries match the [census](../census-2026-09-08/README.md)
 shard for shard (same sealer, same policies); the machine comparison is the
 census run with `--compare-map` against this map, recorded when it lands.
-Verification of every digest, the parent chain and rebuilt shards is the
-`shard-verify` run recorded beside this directory.
+## Verification
+
+`verify.json`, `verify.log` and `verify-time.txt` are the
+[Verify transparent shards run 34187641156](https://github.com/valargroup/enhance-pir/actions/runs/34187641156)
+at `a8e85bfef9b2e6c308ca9aef1cd380f32ee11937`: 13 checks, 0 failures.
+Every one of the 174 manifests, table segments and filters verified against
+its digest and the parent chain in 168.6 s; coverage is contiguous 0–3,473,686
+from the expected start to the expected anchor hash; 160 `archive-wide`
+shards lie below 3,262,749 and 14 `recent-8k` from it; `shards.json` digests
+to the recorded value. Six shards chosen by seed 1 (0, 21, 22, 57, 113, 173)
+were rebuilt from the journal and matched filter, directory and pages byte
+for byte, 3–5 s each for an archive shard. The run took 3 min 8 s wall and
+1,940,424 KiB peak RSS. The full-set rebuild (`rebuild_all`) has not been
+run; the sampled reconstruction is what this record establishes.
 
 Two earlier attempts of this run failed before writing anything: the
 publisher asked the node for the block at height −1 for a set starting at

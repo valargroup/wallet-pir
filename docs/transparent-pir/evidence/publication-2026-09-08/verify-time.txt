@@ -1,0 +1,23 @@
+	Command being timed: "nice -n 19 ionice -c3 ./target/release/shard-verify --shard-dir /srv/zakura/transparent-shards-v7-full --seed 1 --source-sha a8e85bfef9b2e6c308ca9aef1cd380f32ee11937 --out verify/verify.json --publication /srv/zakura/transparent-shards-v7-full/publication.json --data-dir /srv/zakura/transparent-event-data --rebuild 6"
+	User time (seconds): 170.78
+	System time (seconds): 12.95
+	Percent of CPU this job got: 97%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:08.09
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1940424
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1335744
+	Voluntary context switches: 9355
+	Involuntary context switches: 1835
+	Swaps: 0
+	File system inputs: 111453064
+	File system outputs: 16
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
