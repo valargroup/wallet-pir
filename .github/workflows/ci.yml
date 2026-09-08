@@ -16,6 +16,12 @@ jobs:
     name: Enhance PIR
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      # librocksdb-sys turns on SSE4.2 for its CRC32C code from the host's
+      # features and cc-rs never adds -mpclmul, so the intrinsic that path
+      # uses fails to compile without it. Same fix as the coordinator builds.
+      CXXFLAGS: -mpclmul
+      CFLAGS: -mpclmul
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
