@@ -1,0 +1,36 @@
+generated_at: 2026-09-08T03:01:19Z
+host: transparent-pir-worker-01
+cpus: 4
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       1.3Gi        13Gi       4.0Mi       1.2Gi        14Gi
+Swap:             0B          0B          0B
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1       193G  2.4G  191G   2% /
+/dev/vda1       193G  2.4G  191G   2% /
+
+## unit: active
+ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir /srv/transparent-pir/shards --cache-bytes 8589934592 --build-slots 1 --query-slots 2
+MemoryMax=12G
+MemorySwapMax=0
+
+## release
+d1f86c3df4f4c56e2c1cb0e0355a7679b134900c
+b95baba2f89e6642aa9df62f9a4dfe29c2a17e8ff709d32d118ce546477478c9  /usr/local/bin/transparent-shard-server
+
+## rollback
+total 3188
+-rw-r--r-- 1 root root    1998 Sep  7 22:31 Caddyfile
+-rwxr-xr-x 1 root root 3255256 Sep  7 22:31 transparent-shard-server
+-rw-r--r-- 1 root root    1162 Sep  7 22:31 transparent-shard-server.service
+
+## sets
+/srv/transparent-pir/shards  shards.json sha256 654beb8d7ddafc460e0de31ba2f427c3feb40a9f28cfe2a9cc71c825d3b8fcde  169M
+
+## service (loopback)
+{"cache_budget_bytes":8589934592,"cache_resident_bytes":268435456,"geometries":["recent-8k"],"map_sha256":"581cb0f5fc2791dabd78b2021e8f862daf89b59218dbcf8a3155461baf70e525","phase":"serving","revisions_held":3,"runtimes_built":2,"shards":3}
+{"ready":true}
+map sha256 (loopback): 581cb0f5fc2791dabd78b2021e8f862daf89b59218dbcf8a3155461baf70e525
+init: {"covered_through":3473474,"genesis_hash":"00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08","geometries":[{"directory_row_bytes":3584,"directory_rows":8192,"directory_scheme":{"db_cols":2048,"db_dim_1":2,"db_dim_2":1,"db_rows":8192,"instances":1,"item_size_bits":28672,"num_items":8192,"p":16384,"poly_len":2048,"q2_bits":28,"q_prime_1":1048576,"q_prime_2":268369921,"query_bits":41,
+## public origins
+retrieval origin https://transparent-pir.valargroup.dev/v1/shards sha256: 581cb0f5fc2791dabd78b2021e8f862daf89b59218dbcf8a3155461baf70e525
+filter origin https://enhance-pir.valargroup.dev/v1/filters/shards sha256: 581cb0f5fc2791dabd78b2021e8f862daf89b59218dbcf8a3155461baf70e525

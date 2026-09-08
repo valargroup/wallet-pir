@@ -1,6 +1,6 @@
 # Transparent PIR status
 
-Source inspection: 2026-09-07, commit `8514863`. This documentation change does not deploy or measure a service.
+Source inspection: 2026-09-08, commit `6ff2bfe`. Live state is observed separately below.
 
 ## Source-verified implementation
 
@@ -24,20 +24,21 @@ Source inspection: 2026-09-07, commit `8514863`. This documentation change does 
 
 Relevant sources: [publisher](../../server/transparent-filter-server/src/bin/shard-publish.rs), [census](../../server/transparent-filter-server/src/bin/shard-census.rs), [service](../../server/transparent-shard-server/src/service.rs), [runtime](../../server/transparent-shard-server/src/runtime.rs), [loader](../../server/transparent-shard-server/src/shardset.rs), [wallet](../../pir/transparent-wallet/src/sync.rs).
 
-## Live deployment: unverified
+## Live deployment: observed 2026-09-08
 
-Historical documents conflict: one says a v6 pilot is live; another says v7 with bounded cache is deployed. They also contain incompatible ingest progress snapshots. No live endpoint, SSH, workflow or provider inventory was queried for this consolidation. Do not treat either narrative as current operational truth.
+Recorded by [inventory-transparent-dataset.yml run 34181566124](https://github.com/valargroup/enhance-pir/actions/runs/34181566124); raw files and findings in [evidence/inventory-2026-09-08](evidence/inventory-2026-09-08/README.md). This is the pilot, not the accepted fleet.
 
-Before deployment, attach a dated observation containing:
+| Field | Observed |
+|---|---|
+| Journal | `/srv/zakura/transparent-event-data`, mainnet, start 0, committed through 3,473,686, 352,873,356 events, hashes agree with the node |
+| Anchor / cutoff | 3,473,686 (`0000000000755137…be1d`, 2026-09-06T07:39:01Z); cutoff 3,262,749 (`0000000000b300ab…e8d9`); archive `[0, 3262748]`, recent `[3262749, 3473686]` |
+| Spot-check | 11 blocks re-derived from verbose RPC, 0 disagree |
+| Coordinator | `enhance-pir-coordinator-01`, 8 vCPU, 62 GiB, `/srv/zakura` 447 GB free; filter service unit reads `/srv/zakura/transparent-shards-v7`, binary `ddac2cde…` |
+| Pilot worker | `transparent-pir-worker-01`, 4 vCPU, 15 GiB, release `d1f86c3`, binary `b95baba2…`, unit `--shard-dir /srv/transparent-pir/shards --cache-bytes 8589934592 --build-slots 1 --query-slots 2`, `MemoryMax=12G`, 3 `recent-8k` shards through 3,473,474, 3 revisions held, rollback binary/unit/Caddyfile present |
+| Public map | Served digest `581cb0f5…` identical at worker loopback, `https://transparent-pir.valargroup.dev/v1/shards` and `https://enhance-pir.valargroup.dev/v1/filters/shards` |
+| Not yet observed | A revision-bound query result on the public path; the full-chain publication (does not exist yet) |
 
-- Binary commit/checksum and unit arguments for retrieval and filter services.
-- Schema, set/map digest, exact height coverage, anchor hash, profile counts, revision retention and publication directories.
-- Host identifiers, region, actual RAM/disk, memory limits and available storage.
-- Both public map bytes/digests, readiness, and a real revision-bound query result.
-- Journal metadata: network/genesis, pinned start height, committed coverage and anchor.
-- Last successful workflow run and rollback binary/set/config identities.
-
-Record observations without secrets. Keep public hostnames/IPs in this operational record only after verification; do not copy stale addresses from the archive.
+Record later observations the same way: a dated evidence directory from the workflow's artifact, and this table updated to the newest run. Keep secrets out; keep hostnames only after verification.
 
 ## Decision and evidence state
 

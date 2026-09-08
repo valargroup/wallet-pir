@@ -1,0 +1,45 @@
+generated_at: 2026-09-08T03:01:17Z
+host: enhance-pir-coordinator-01
+kernel: 6.8.0-124-generic
+cpus: 8
+cpu: INTEL(R) XEON(R) GOLD 6548N
+
+               total        used        free      shared  buff/cache   available
+Mem:            62Gi        12Gi       2.7Gi        56Mi        48Gi        50Gi
+Swap:             0B          0B          0B
+
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda        1.0T  577G  447G  57% /srv/zakura
+/dev/vda1       193G  9.7G  183G   6% /
+
+## journal on disk
+41G	/srv/zakura/transparent-event-data
+
+## published sets on this host
+/srv/zakura/transparent-shards  shards.json sha256 08a32bc10431a0ab05e9597403d160729ead975fcdb5afac58619a84935dd7b1  1.6G
+/srv/zakura/transparent-shards-v2  shards.json sha256 61bb99e8f5e047268255565811bae1ccde986c49f1ae2b9c84131708860f888f  1.6G
+/srv/zakura/transparent-shards-v3  shards.json sha256 94207729441565e1a44ecf6678aec2fb708921d70501288638ac0eecbbbb5005  274M
+/srv/zakura/transparent-shards-v4  shards.json sha256 7134e06f43018613d7cc24ed990f55234e3778beb3b77c4e4c9a8401aae5f013  225M
+/srv/zakura/transparent-shards-v5  shards.json sha256 4fd3d6c7557e6f73daec1241af8f98a822d8f3e1426b3733ae546bd3f752d938  127M
+/srv/zakura/transparent-shards-v6  shards.json sha256 d3df9c9e3b1792e5c2935c4762a8106d31b26b6acfb2c9b3ac6b845e59d4d717  169M
+/srv/zakura/transparent-shards-v7  shards.json sha256 654beb8d7ddafc460e0de31ba2f427c3feb40a9f28cfe2a9cc71c825d3b8fcde  169M
+
+## units
+### transparent-filter-server: active
+ExecStart=/usr/local/bin/transparent-filter-server --listen 127.0.0.1:8090 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-filter-data --start-height 3428143 --shard-dir /srv/zakura/transparent-shards-v7
+### transparent-event-ingest: inactive
+(no persistent unit)
+### zakurad: active
+ExecStart=/usr/local/bin/zakurad --config /etc/zakura/zakura.toml start
+
+## binaries
+ddac2cde9dad564d9dd0af538ea39007e0f1f92a86c5cbff44096bea5c122201  /usr/local/bin/transparent-filter-server
+6d14d16242ee579cf542dfdef634ef2d38a28427f3dd73773bee571b06dcbc7c  /usr/local/bin/transparent-event-ingest
+
+## filter service (loopback)
+{"covered_through":3475763,"detail":null,"filters_stored":47628,"phase":"serving","tip_height":3475763}
+filters map sha256 (loopback): 581cb0f5fc2791dabd78b2021e8f862daf89b59218dbcf8a3155461baf70e525
+
+## zakura
+(no answer)
+

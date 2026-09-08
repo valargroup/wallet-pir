@@ -1,6 +1,6 @@
 # Remaining work to deploy transparent PIR
 
-Updated 2026-09-07 against source `8514863`. The user accepted the [deployment target](deployment.md). This is the authoritative execution checklist, not a claim that unchecked work is absent in every future commit. Update each item with its implementing commit and verification artifact when it closes.
+Updated 2026-09-08 against source `6ff2bfe`. The user accepted the [deployment target](deployment.md). This is the authoritative execution checklist, not a claim that unchecked work is absent in every future commit. Update each item with its implementing commit and verification artifact when it closes.
 
 ## Sequence and critical path
 
@@ -9,7 +9,7 @@ Deliver documentation first, then verified inventory and dataset, mixed census, 
 Suggested reviewable changes:
 
 1. Documentation consolidation: `fe72ecc`; link validation `make check-docs`.
-2. Inventory/provenance report and workflow input reconciliation.
+2. Inventory/provenance report and workflow input reconciliation: `3969f96`, `2a3c5d3`, `b574681`, `113b22d`, `abe297b`; Gate 0 closed.
 3. Mixed-tier measurement and publication tooling parity.
 4. Wallet manifest validation and early request admission.
 5. Assignment-aware loading, router, prewarm/readiness and activation.
@@ -22,14 +22,14 @@ Some implementation work can proceed independently after the dataset is pinned, 
 
 ## Gate 0 — Verified inventory and dataset
 
-- [ ] Record the live-state fields in [status](status.md), checking both retrieval and filter services rather than resolving v6/v7 conflicts from prose.
-- [ ] Record the journal's actual network/genesis, pinned start height, committed end height, anchor hash and timestamp, event count, source and tool SHA, and read-only open behavior.
-- [ ] Resolve the historical output-count discrepancy with independent block extraction: sample dense early-chain blocks, recent blocks and spend-heavy blocks; compare output/input event identities and previous-output scripts. A live UTXO count is not cumulative history. Preserve the independent extraction report.
-- [ ] Derive the six-calendar-month cutoff from the pinned UTC anchor timestamp. Specify month-end clamping and deterministic block timestamp selection, accounting for non-monotone block timestamps; record the resulting height and hashes. Verify coverage is `[genesis, cutoff-1]` plus `[cutoff, anchor]` with no gap or overlap.
-- [ ] Capture disk/RAM headroom on publisher and pilot worker. Preserve rollback binary, set, schema and map/config identifiers.
-- [ ] Inspect CI inputs and deployed units: publish CLI supports tiers but the workflow does not yet expose them. Add validated explicit source, anchor/cutoff and geometry controls with a durable input record.
+- [x] Record the live-state fields in [status](status.md), checking both retrieval and filter services rather than resolving v6/v7 conflicts from prose. Observed by run 34181566124; [evidence](evidence/inventory-2026-09-08/README.md).
+- [x] Record the journal's actual network/genesis, pinned start height, committed end height, anchor hash and timestamp, event count, source and tool SHA, and read-only open behavior. `journal-inventory` (`3969f96`), record in the same evidence directory; ingest tool is the state-backed path landed in `71e60c9`.
+- [x] Resolve the historical output-count discrepancy with independent block extraction: sample dense early-chain blocks, recent blocks and spend-heavy blocks; compare output/input event identities and previous-output scripts. A live UTXO count is not cumulative history. Preserve the independent extraction report. `event-spotcheck` (`3969f96`, `113b22d`, `abe297b`): 11 blocks including the three densest agree exactly; `spotcheck.json`.
+- [x] Derive the six-calendar-month cutoff from the pinned UTC anchor timestamp. Specify month-end clamping and deterministic block timestamp selection, accounting for non-monotone block timestamps; record the resulting height and hashes. Verify coverage is `[genesis, cutoff-1]` plus `[cutoff, anchor]` with no gap or overlap. `shard-cutoff` (`3969f96`); rule in [deployment](deployment.md); cutoff 3,262,749 recorded in `cutoff.json`.
+- [x] Capture disk/RAM headroom on publisher and pilot worker. Preserve rollback binary, set, schema and map/config identifiers. `coordinator.txt`, `worker.txt`.
+- [x] Inspect CI inputs and deployed units: publish CLI supports tiers but the workflow does not yet expose them. Add validated explicit source, anchor/cutoff and geometry controls with a durable input record. `publish-transparent-shards.yml` and `--through`/`--record` (`3969f96`); `inventory-transparent-dataset.yml` (`2a3c5d3`).
 
-Deliverable: dated nonsecret inventory and dataset manifest, reproducible cutoff calculation, independent event spot-check report. Exit: a reviewer can identify exactly which chain data and running state subsequent work uses. A discrepancy in event extraction blocks publication, not merely the benchmark report.
+Deliverable: dated nonsecret inventory and dataset manifest, reproducible cutoff calculation, independent event spot-check report. Exit: a reviewer can identify exactly which chain data and running state subsequent work uses. A discrepancy in event extraction blocks publication, not merely the benchmark report. **Closed 2026-09-08**: dataset pinned at anchor 3,473,686, cutoff 3,262,749, tools on main, evidence linked above.
 
 ## Gate 1 — Mixed-tier census and geometry validation
 

@@ -1,0 +1,56 @@
+{
+  "blocks_covered": 3473687,
+  "confirmations": [
+    {
+      "agrees": true,
+      "height": 0,
+      "journal_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+      "label": "start",
+      "node_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08"
+    },
+    {
+      "agrees": true,
+      "height": 3473686,
+      "journal_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+      "label": "covered_through",
+      "node_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d"
+    },
+    {
+      "agrees": true,
+      "height": 3473686,
+      "journal_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+      "label": "anchor",
+      "node_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d"
+    }
+  ],
+  "covered_through": 3473686,
+  "data_dir": "/srv/zakura/transparent-event-data",
+  "events_stored": 352873356,
+  "files": {
+    "blocks_bin_bytes": 166736976,
+    "checkpoint": {
+      "blocks_bytes": 166736976,
+      "events_bytes": 43367545916
+    },
+    "events_bin_bytes": 43367545916,
+    "uncommitted_block_bytes": 0,
+    "uncommitted_event_bytes": 0
+  },
+  "generated_at": "2026-09-08T02:57:50.549313322+00:00",
+  "genesis_agrees_with_node": true,
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "mismatches": 0,
+  "network": "main",
+  "next_height": 3473687,
+  "node": {
+    "source": "state",
+    "tip_height": 3474759
+  },
+  "open": "EventStore::open_existing (read-only; the uncommitted tail is ignored)",
+  "schema": "transparent-journal-inventory-v1",
+  "start_height": 0,
+  "superseded_directories": [
+    "superseded-v1"
+  ],
+  "tool_sha": "6ff2bfee96b7ab205410bdcb1e63030bce8bd027"
+}
