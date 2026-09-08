@@ -1,0 +1,4 @@
+offline-receive-spend: continue through 163548
+offline-receive-spend: continue through 163726
+offline-receive-spend: continue through 3439126
+Error: transport: HTTP status server error (502 Bad Gateway) for url (https://transparent-pir.valargroup.dev/v1/filters/shards/90/filter)

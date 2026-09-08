@@ -173,7 +173,7 @@ impl WalletStore for MemoryStore {
                     let key = spend_key(spend);
                     let outpoint = (spend.spent_txid, spend.spent_output_index);
                     if let Some(existing) = self.state.spends.get(&key) {
-                        if existing.event != stored.event {
+                        if existing.event != stored.event || existing.script != stored.script {
                             return Err(LedgerError::DoubleSpend(
                                 spend.spent_txid.to_display_hex(),
                                 spend.spent_output_index,
@@ -223,6 +223,7 @@ impl WalletStore for MemoryStore {
         for script in &commit.covered_scripts {
             let ranges = self.state.coverage.entry(script.clone()).or_default();
             let range = CoverageRange {
+                source_anchor: commit.source_anchor.clone(),
                 script: script.clone(),
                 start_height: commit.start_height,
                 end_height: commit.end_height,
@@ -231,6 +232,11 @@ impl WalletStore for MemoryStore {
                 revision_digest: commit.revision_digest.clone(),
                 terminal_block_hash: commit.terminal_block_hash.clone(),
             };
+            ranges.retain(|old| {
+                !(old.shard_id == range.shard_id
+                    && old.start_height == range.start_height
+                    && old.end_height <= range.end_height)
+            });
             if !ranges.contains(&range) {
                 ranges.push(range);
             }
@@ -268,7 +274,8 @@ impl WalletStore for MemoryStore {
         Ok(self.state.commits)
     }
 
-    fn rollback_above(&mut self, height: u64, _reason: &str) -> Result<u64, StoreError> {
+    fn rollback_above(&mut self, accepted: &Anchor, _reason: &str) -> Result<u64, StoreError> {
+        let height = accepted.height;
         self.state
             .receives
             .retain(|_, stored| Self::height_of(&stored.event) <= height);
@@ -293,27 +300,17 @@ impl WalletStore for MemoryStore {
                     // the identity it carried no longer describes the whole
                     // range, but it still names the shard the part came from.
                     range.end_height = height;
+                    range.terminal_block_hash = accepted.hash.clone();
                 }
                 true
             });
         }
-        self.state.pending.retain(|_, pending| {
-            // Pending work belongs to a revision; a revision above the
-            // rollback is gone with it.
-            self.state
-                .coverage
-                .get(&pending.script)
-                .is_some_and(|ranges| {
-                    ranges
-                        .iter()
-                        .any(|range| range.revision_digest == pending.revision_digest)
-                })
-                || pending.first_page == u32::MAX
-        });
+        // All pending retrievals are inexpensive to re-plan and may contain old-branch data.
+        self.state.pending.clear();
         if let Some(anchor) = &mut self.state.anchor {
             if anchor.height > height {
                 anchor.height = height;
-                anchor.hash = String::new();
+                anchor.hash = accepted.hash.clone();
             }
         }
         if let Some(settled) = &mut self.state.settled_through {

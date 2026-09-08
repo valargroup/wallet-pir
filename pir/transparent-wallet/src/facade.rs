@@ -26,6 +26,7 @@ use transparent_filter::ShardMap;
 /// What a host passes to one sync call.
 #[derive(Clone, Debug, Default)]
 pub struct SyncRequest {
+    pub target_anchor: Anchor,
     /// Every script the host is responsible for right now.
     pub scripts: Vec<ScriptEntry>,
     /// Block hashes the host's chain accepts, by height. Coverage resting on a
@@ -78,6 +79,9 @@ pub enum FacadeError {
 struct AcceptedHeaders(BTreeMap<u64, String>);
 
 impl ChainView for AcceptedHeaders {
+    fn hash_at(&self, height: u64) -> Option<String> {
+        self.0.get(&height).cloned()
+    }
     fn is_accepted(&self, height: u64, hash: &str) -> Acceptance {
         match self.0.get(&height) {
             Some(known) if known == hash => Acceptance::Accepted,
@@ -176,6 +180,7 @@ impl TransparentSync {
             &mut self.filters,
             &mut self.transport,
             &request.limits,
+            &request.target_anchor,
         )?;
         let completion = match report.completion {
             Completion::Complete => "complete".to_string(),
@@ -185,6 +190,10 @@ impl TransparentSync {
                 IncompleteReason::PendingLimit => "pending-limit".into(),
                 IncompleteReason::Overloaded { shard_id } => format!("overloaded:{shard_id}"),
                 IncompleteReason::ChainUnknown { height } => format!("chain-unknown:{height}"),
+                IncompleteReason::PublicationBehind { height } => {
+                    format!("publication-behind:{height}")
+                }
+                IncompleteReason::UnresolvedSpends => "unresolved-spends".into(),
                 IncompleteReason::DiscoveryUnbounded => "discovery-unbounded".into(),
             },
         };
@@ -234,8 +243,8 @@ impl TransparentSync {
     }
 
     /// A host-driven rollback, for a reorg the host learned of itself.
-    pub fn rollback_to(&mut self, height: u64) -> Result<SyncStatus, FacadeError> {
-        self.store.rollback_above(height, "host rollback")?;
+    pub fn rollback_to(&mut self, anchor: Anchor) -> Result<SyncStatus, FacadeError> {
+        self.store.rollback_above(&anchor, "host rollback")?;
         self.status()
     }
 }

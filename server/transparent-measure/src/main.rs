@@ -448,6 +448,11 @@ async fn main() -> Result<(), BoxError> {
                 &mut transport,
                 &scripts,
                 birthday,
+                &transparent_wallet::StaticChain::from_map(&map),
+                &transparent_wallet::Anchor {
+                    height: map.shards.last().unwrap().end_height,
+                    hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+                },
             )
             .map_err(|error| error.to_string())
         })

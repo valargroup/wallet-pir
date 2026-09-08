@@ -26,10 +26,17 @@ use transparent_wallet::store::{
 
 /// Bumped when the schema changes incompatibly; an older file is refused
 /// rather than misread.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Default bound on pending page retrievals a commit may leave.
 pub const DEFAULT_PENDING_LIMIT: usize = 4_096;
+
+struct SpendRow {
+    spending_txid: Vec<u8>,
+    input_index: i64,
+    event: Vec<u8>,
+    script: Vec<u8>,
+}
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS wallet_meta (
@@ -49,6 +56,7 @@ CREATE TABLE IF NOT EXISTS coverage (
     shard_id INTEGER NOT NULL,
     revision_digest TEXT NOT NULL,
     terminal_block_hash TEXT NOT NULL,
+    source_anchor TEXT,
     PRIMARY KEY (script, start_height)
 );
 CREATE TABLE IF NOT EXISTS receives (
@@ -84,6 +92,8 @@ CREATE TABLE IF NOT EXISTS pending_work (
     total_events INTEGER NOT NULL,
     inline BLOB NOT NULL,
     next_ordinal INTEGER NOT NULL,
+    validated_events INTEGER NOT NULL DEFAULT 0,
+    target_anchor TEXT,
     attempts INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS setup_cache (
@@ -163,6 +173,16 @@ impl SqliteStore {
         match self.meta("schema_version")? {
             None => self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?,
             Some(found) if found == SCHEMA_VERSION.to_string() => {}
+            Some(found) if found == "1" => {
+                let tx = self.conn.transaction().map_err(io)?;
+                tx.execute_batch("ALTER TABLE coverage ADD COLUMN source_anchor TEXT;
+                    ALTER TABLE pending_work ADD COLUMN validated_events INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE pending_work ADD COLUMN target_anchor TEXT;
+                    DELETE FROM coverage; DELETE FROM pending_work;
+                    DELETE FROM wallet_meta WHERE key IN ('anchor', 'settled_through', 'covered_through');
+                    UPDATE wallet_meta SET value = '2' WHERE key = 'schema_version';").map_err(io)?;
+                tx.commit().map_err(io)?;
+            }
             Some(found) => {
                 return Err(StoreError::Corrupt(format!(
                     "store schema {found}, this build reads {SCHEMA_VERSION}"
@@ -205,13 +225,14 @@ impl SqliteStore {
     fn coverage_of(conn: &Connection, script: &[u8]) -> Result<Vec<CoverageRange>, StoreError> {
         let mut statement = conn
             .prepare(
-                "SELECT start_height, end_height, kind, shard_id, revision_digest, terminal_block_hash \
+                "SELECT start_height, end_height, kind, shard_id, revision_digest, terminal_block_hash, source_anchor \
                  FROM coverage WHERE script = ?1 ORDER BY start_height",
             )
             .map_err(io)?;
         let rows = statement
             .query_map(params![script], |row| {
                 Ok(CoverageRange {
+                    source_anchor: decode_anchor(row.get(6)?)?,
                     script: script.to_vec(),
                     start_height: row.get::<_, i64>(0)? as u64,
                     end_height: row.get::<_, i64>(1)? as u64,
@@ -238,8 +259,8 @@ impl SqliteStore {
             .map_err(io)?;
         for range in ranges {
             conn.execute(
-                "INSERT INTO coverage (script, start_height, end_height, kind, shard_id, revision_digest, terminal_block_hash) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO coverage (script, start_height, end_height, kind, shard_id, revision_digest, terminal_block_hash, source_anchor) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     script,
                     range.start_height as i64,
@@ -248,6 +269,7 @@ impl SqliteStore {
                     range.shard_id as i64,
                     range.revision_digest,
                     range.terminal_block_hash,
+                    range.source_anchor.as_ref().map(|a| serde_json::to_string(a).unwrap()),
                 ],
             )
             .map_err(io)?;
@@ -390,13 +412,14 @@ impl WalletStore for SqliteStore {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT script, start_height, end_height, shard_id, revision_digest, terminal_block_hash \
+                "SELECT script, start_height, end_height, shard_id, revision_digest, terminal_block_hash, source_anchor \
                  FROM coverage WHERE kind = 'provisional' ORDER BY script, start_height",
             )
             .map_err(io)?;
         let rows = statement
             .query_map([], |row| {
                 Ok(CoverageRange {
+                    source_anchor: decode_anchor(row.get(6)?)?,
                     script: row.get(0)?,
                     start_height: row.get::<_, i64>(1)? as u64,
                     end_height: row.get::<_, i64>(2)? as u64,
@@ -491,18 +514,19 @@ impl WalletStore for SqliteStore {
                     }
                 }
                 TransparentEvent::Spend(spend) => {
-                    let existing: Option<(Vec<u8>, i64, Vec<u8>)> = tx
+                    let existing: Option<SpendRow> = tx
                         .query_row(
-                            "SELECT spending_txid, input_index, event FROM spends WHERE spent_txid = ?1 AND spent_output_index = ?2",
+                            "SELECT spending_txid, input_index, event, script FROM spends WHERE spent_txid = ?1 AND spent_output_index = ?2",
                             params![spend.spent_txid.0.as_slice(), spend.spent_output_index as i64],
-                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                            |row| Ok(SpendRow { spending_txid: row.get(0)?, input_index: row.get(1)?, event: row.get(2)?, script: row.get(3)? }),
                         )
                         .optional()
                         .map_err(io)?;
-                    if let Some((spending, input_index, raw)) = existing {
-                        if spending != spend.spending_txid.0.as_slice()
-                            || input_index as u32 != spend.input_index
-                            || raw != stored.event.to_bytes()
+                    if let Some(existing) = existing {
+                        if existing.spending_txid != spend.spending_txid.0.as_slice()
+                            || existing.input_index as u32 != spend.input_index
+                            || existing.event != stored.event.to_bytes()
+                            || existing.script != stored.script
                         {
                             return Err(LedgerError::DoubleSpend(
                                 spend.spent_txid.to_display_hex(),
@@ -575,6 +599,7 @@ impl WalletStore for SqliteStore {
         for script in &commit.covered_scripts {
             let mut ranges = Self::coverage_of(&tx, script)?;
             let range = CoverageRange {
+                source_anchor: commit.source_anchor.clone(),
                 script: script.clone(),
                 start_height: commit.start_height,
                 end_height: commit.end_height,
@@ -583,6 +608,11 @@ impl WalletStore for SqliteStore {
                 revision_digest: commit.revision_digest.clone(),
                 terminal_block_hash: commit.terminal_block_hash.clone(),
             };
+            ranges.retain(|old| {
+                !(old.shard_id == range.shard_id
+                    && old.start_height == range.start_height
+                    && old.end_height <= range.end_height)
+            });
             if !ranges.contains(&range) {
                 ranges.push(range);
             }
@@ -600,19 +630,20 @@ impl WalletStore for SqliteStore {
             match pending.id {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE pending_work SET next_ordinal = ?2, attempts = ?3 WHERE id = ?1",
+                        "UPDATE pending_work SET next_ordinal = ?2, attempts = ?3, validated_events = ?4 WHERE id = ?1",
                         params![
                             id as i64,
                             pending.next_ordinal as i64,
-                            pending.attempts as i64
+                            pending.attempts as i64,
+                            pending.validated_events as i64
                         ],
                     )
                     .map_err(io)?;
                 }
                 None => {
                     tx.execute(
-                        "INSERT INTO pending_work (shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        "INSERT INTO pending_work (shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts, validated_events, target_anchor) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                         params![
                             pending.shard_id as i64,
                             pending.revision_digest,
@@ -623,6 +654,8 @@ impl WalletStore for SqliteStore {
                             encode_inline(&pending.inline),
                             pending.next_ordinal as i64,
                             pending.attempts as i64,
+                            pending.validated_events as i64,
+                            pending.target_anchor.as_ref().map(|a| serde_json::to_string(a).unwrap()),
                         ],
                     )
                     .map_err(io)?;
@@ -666,7 +699,8 @@ impl WalletStore for SqliteStore {
         Ok(id)
     }
 
-    fn rollback_above(&mut self, height: u64, reason: &str) -> Result<u64, StoreError> {
+    fn rollback_above(&mut self, accepted: &Anchor, reason: &str) -> Result<u64, StoreError> {
+        let height = accepted.height;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -679,17 +713,13 @@ impl WalletStore for SqliteStore {
         tx.execute("DELETE FROM coverage WHERE start_height > ?1", params![h])
             .map_err(io)?;
         tx.execute(
-            "UPDATE coverage SET end_height = ?1 WHERE end_height > ?1",
-            params![h],
+            "UPDATE coverage SET end_height = ?1, terminal_block_hash = ?2 WHERE end_height > ?1",
+            params![h, accepted.hash],
         )
         .map_err(io)?;
         // Pending work belongs to a revision; one whose coverage is gone is
         // gone with it.
-        tx.execute(
-            "DELETE FROM pending_work WHERE revision_digest NOT IN (SELECT revision_digest FROM coverage)",
-            [],
-        )
-        .map_err(io)?;
+        tx.execute("DELETE FROM pending_work", []).map_err(io)?;
         let anchor: Option<String> = tx
             .query_row(
                 "SELECT value FROM wallet_meta WHERE key = 'anchor'",
@@ -703,7 +733,7 @@ impl WalletStore for SqliteStore {
                 .map_err(|error| StoreError::Corrupt(error.to_string()))?;
             if anchor.height > height {
                 anchor.height = height;
-                anchor.hash = String::new();
+                anchor.hash = accepted.hash.clone();
                 tx.execute(
                     "UPDATE wallet_meta SET value = ?1 WHERE key = 'anchor'",
                     params![serde_json::to_string(&anchor).unwrap()],
@@ -772,7 +802,7 @@ impl WalletStore for SqliteStore {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT id, shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts \
+                "SELECT id, shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts, validated_events, target_anchor \
                  FROM pending_work ORDER BY id",
             )
             .map_err(io)?;
@@ -789,6 +819,8 @@ impl WalletStore for SqliteStore {
                     row.get::<_, Vec<u8>>(7)?,
                     row.get::<_, i64>(8)? as u32,
                     row.get::<_, i64>(9)? as u32,
+                    row.get::<_, i64>(10)? as u32,
+                    decode_anchor(row.get(11)?)?,
                 ))
             })
             .map_err(io)?;
@@ -805,8 +837,12 @@ impl WalletStore for SqliteStore {
                 inline,
                 next_ordinal,
                 attempts,
+                validated_events,
+                target_anchor,
             ) = row.map_err(io)?;
             pending.push(PendingPages {
+                validated_events,
+                target_anchor,
                 id: Some(id),
                 shard_id,
                 revision_digest,
@@ -917,3 +953,12 @@ fn table_str(table: Table) -> &'static str {
 // Keep the event types referenced for readers of this file.
 #[allow(dead_code)]
 fn _types(_: &ReceiveEvent, _: &SpendEvent, _: &Txid) {}
+
+fn decode_anchor(raw: Option<String>) -> rusqlite::Result<Option<Anchor>> {
+    raw.map(|s| {
+        serde_json::from_str(&s).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })
+    })
+    .transpose()
+}

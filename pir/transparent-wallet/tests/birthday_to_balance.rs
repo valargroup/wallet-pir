@@ -556,5 +556,16 @@ fn sync_signature_is_usable(
         &mut rows,
         scripts,
         FIRST,
+        &transparent_wallet::StaticChain::from_map(&published.map),
+        &transparent_wallet::Anchor {
+            height: published.map.shards.last().unwrap().end_height,
+            hash: published
+                .map
+                .shards
+                .last()
+                .unwrap()
+                .terminal_block_hash
+                .clone(),
+        },
     );
 }

@@ -1,6 +1,6 @@
 # Transparent PIR architecture
 
-Source baseline: `8514863`, inspected 2026-09-07. See [status](status.md) for implementation limits and [deployment](deployment.md) for target parameters.
+See [status](status.md) for source and live implementation evidence and [deployment](deployment.md) for target parameters.
 
 ## Data and recovery
 
@@ -41,7 +41,7 @@ The router, assignment pools, external artifact origin and atomic fleet activati
 
 The source schema is `transparent-shard-v7`. A shard declares a named geometry from the compiled registry. A manifest commits layout and table digests; the public map names manifest revisions. Sealed contents remain immutable and manifests chain through parent digests. A tier boundary must be a shard boundary. Profile names must never be reused with different row shapes.
 
-Revision identity must be preserved through setup, query, response, runtime cache and wallet coverage. The server verifies manifests when opening a set. The wallet still needs the explicit manifest retrieval/digest/geometry validation work in the plan. Hash consistency does not prove completeness or authenticate a malicious publisher's index merely because its terminal block hash is accepted.
+Revision identity must be preserved through setup, query, response, runtime cache and wallet coverage. The server verifies manifests when opening a set. The wallet retrieves and verifies revision manifests, their map fields, parent digests and registry geometry before private requests. Hash consistency does not prove completeness or authenticate a malicious publisher's index merely because its terminal block hash is accepted.
 
 The publisher supports recent/archive geometry and a forced `--recent-from` height. Census supports bounded inclusive ranges. A combined mixed-tier cost report must use the same boundaries and aggregate exact scripts across tiers; separate tier percentile summaries cannot be added.
 
@@ -55,6 +55,6 @@ Prepare and verify artifacts at owners before publishing routing/map state. The 
 
 ## Wallet state and aging
 
-A returning wallet must retain old outputs while applying new spends. Moving the birthday forward is not ledger continuation. Ledger changes, discovery scope, chain checkpoint and provisional coverage need one durable commit. Replacing a provisional revision replaces its covered range; reorg recovery rolls back to the accepted ancestor.
+A returning wallet must retain old outputs while applying new spends. Moving the birthday forward is not ledger continuation. Every sync takes an explicit wallet-accepted height and hash, independently of the publication tip. A shard crossing that height is retrieved and validated in full; only its accepted prefix enters the ledger and discovery. Coverage retains both the full source revision endpoint and the accepted prefix endpoint. Ledger changes and coverage commit together; the completion anchor advances only after all required work succeeds. Replacing a provisional revision replaces its covered range; reorg recovery rolls back to the accepted ancestor.
 
 Freeze the initial geometry cutoff. Aging may change worker ownership after verified copying, but it does not change shard geometry, ids or history. Re-cutting into wider archive geometry is a future epoch transition requiring explicit identity and coverage recovery; do not implement a rolling cutoff that silently rebuilds old shards.

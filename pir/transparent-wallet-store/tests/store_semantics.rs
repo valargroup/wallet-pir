@@ -61,3 +61,57 @@ fn the_sqlite_store_meets_the_contract_on_disk_and_survives_reopening() {
     assert_eq!(store.coverage(&script(1)).unwrap().len(), 1);
     assert_eq!(store.last_commit().unwrap(), 2);
 }
+
+#[test]
+fn migration_preserves_events_but_invalidates_unbound_legacy_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.sqlite");
+    let mut store = SqliteStore::open(&path).unwrap();
+    store.bind_set(&identity()).unwrap();
+    store
+        .add_scripts(&[transparent_wallet::ScriptEntry {
+            script: script(1),
+            origin: transparent_wallet::ScriptOrigin::Derived,
+            required_from: 0,
+        }])
+        .unwrap();
+    store
+        .commit_shard(commit(
+            0,
+            "r0",
+            true,
+            (0, 99),
+            vec![receive(1, 0, 123, 10)],
+            vec![script(1)],
+        ))
+        .unwrap();
+    store
+        .commit_anchor(
+            &Anchor {
+                height: 99,
+                hash: "legacy".into(),
+            },
+            99,
+            99,
+        )
+        .unwrap();
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "ALTER TABLE coverage DROP COLUMN source_anchor;
+        ALTER TABLE pending_work DROP COLUMN target_anchor;
+        ALTER TABLE pending_work DROP COLUMN validated_events;
+        UPDATE wallet_meta SET value = '1' WHERE key = 'schema_version';",
+    )
+    .unwrap();
+    drop(db);
+    let store = SqliteStore::open(&path).unwrap();
+    assert_eq!(store.events().unwrap().len(), 1);
+    assert_eq!(store.scripts().unwrap().len(), 1);
+    assert_eq!(store.ledger().unwrap().confirmed_balance(), 123);
+    assert!(store.anchor().unwrap().is_none());
+    assert!(store.coverage(&script(1)).unwrap().is_empty());
+    assert!(store.pending().unwrap().is_empty());
+    drop(store);
+    SqliteStore::open(&path).unwrap();
+}

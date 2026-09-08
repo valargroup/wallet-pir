@@ -72,6 +72,10 @@ where
             &mut filters,
             &mut transport,
             &limits,
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         );
         (store, result)
     })
@@ -385,8 +389,8 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
     ) -> Result<u64, StoreError> {
         self.inner.commit_anchor(anchor, settled, covered)
     }
-    fn rollback_above(&mut self, height: u64, reason: &str) -> Result<u64, StoreError> {
-        self.inner.rollback_above(height, reason)
+    fn rollback_above(&mut self, anchor: &Anchor, reason: &str) -> Result<u64, StoreError> {
+        self.inner.rollback_above(anchor, reason)
     }
     fn promote_provisional(&mut self, shard_id: u64, digest: &str) -> Result<(), StoreError> {
         self.inner.promote_provisional(shard_id, digest)

@@ -15,6 +15,7 @@ members = [
     "server/transparent-filter-server",
     "server/transparent-history-server",
     "server/transparent-loadtest",
+    "server/transparent-regression",
     "server/transparent-measure",
     "server/transparent-shard-server",
 ]

@@ -1,0 +1,21 @@
+cargo run --locked --release -p transparent-regression --bin transparent-regression -- \
+		--fixture "server/transparent-regression/fixtures/mainnet.json" \
+		--shard-url "https://transparent-pir.valargroup.dev" \
+		--filter-url "https://transparent-pir.valargroup.dev" \
+		--source-sha "$(git rev-parse HEAD)" \
+		--out-dir "/tmp/transparent-regression-full-deployed-20260908"
+    Finished `release` profile [optimized] target(s) in 0.82s
+     Running `target/release/transparent-regression --fixture server/transparent-regression/fixtures/mainnet.json --shard-url 'https://transparent-pir.valargroup.dev' --filter-url 'https://transparent-pir.valargroup.dev' --source-sha 16631a135cad2ef7a4886b9572e481e2a470361f --out-dir /tmp/transparent-regression-full-deployed-20260908`
+checking unused-p2pkh (unused)
+checking unused-p2sh (unused-p2sh)
+checking small-active (small-active)
+checking zero-balance (zero-balance)
+checking old-receive-recent-spend (cross-tier)
+checking offline-receive-spend (offline)
+checking active-p2sh (p2sh)
+checking reused-pages (reused-script)
+checking multi-script-self-transfer (multi-script)
+checking recent-birthday (recent-restore)
+checking coinbase (coinbase)
+Error: 6 regression cases failed; see /tmp/transparent-regression-full-deployed-20260908
+make: *** [transparent-regression] Error 1

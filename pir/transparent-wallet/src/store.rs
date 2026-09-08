@@ -93,7 +93,7 @@ impl SetIdentity {
 }
 
 /// The chain block a wallet has accepted as the end of its coverage.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Anchor {
     pub height: u64,
     /// Display hex.
@@ -138,6 +138,8 @@ pub struct CoverageRange {
     pub shard_id: u64,
     pub revision_digest: String,
     pub terminal_block_hash: String,
+    /// Full published endpoint, distinct from the covered endpoint.
+    pub source_anchor: Option<Anchor>,
 }
 
 /// One event the wallet keeps, with where it came from.
@@ -169,11 +171,16 @@ pub struct PendingPages {
     /// The next page ordinal to fetch; pages below it are committed.
     pub next_ordinal: u32,
     pub attempts: u32,
+    /// Number of validated records, including records above the accepted target.
+    pub validated_events: u32,
+    pub target_anchor: Option<Anchor>,
 }
 
 /// What one shard's retrieval commits, all at once.
 #[derive(Clone, Debug, Default)]
 pub struct ShardCommit {
+    /// Original publication endpoint when coverage is clipped to a wallet anchor.
+    pub source_anchor: Option<Anchor>,
     pub shard_id: u64,
     pub revision_digest: String,
     pub sealed: bool,
@@ -268,7 +275,7 @@ pub trait WalletStore {
     ) -> Result<u64, StoreError>;
     /// Removes every event, coverage range and pending item above `height`
     /// and lowers the anchor to it. A reorg or a replaced provisional tail.
-    fn rollback_above(&mut self, height: u64, reason: &str) -> Result<u64, StoreError>;
+    fn rollback_above(&mut self, anchor: &Anchor, reason: &str) -> Result<u64, StoreError>;
     /// Provisional coverage under `revision_digest` becomes settled: the same
     /// bytes were sealed.
     fn promote_provisional(
@@ -336,8 +343,8 @@ impl<T: WalletStore + ?Sized> WalletStore for Box<T> {
     ) -> Result<u64, StoreError> {
         (**self).commit_anchor(anchor, settled_through, covered_through)
     }
-    fn rollback_above(&mut self, height: u64, reason: &str) -> Result<u64, StoreError> {
-        (**self).rollback_above(height, reason)
+    fn rollback_above(&mut self, anchor: &Anchor, reason: &str) -> Result<u64, StoreError> {
+        (**self).rollback_above(anchor, reason)
     }
     fn promote_provisional(
         &mut self,
@@ -441,6 +448,7 @@ mod tests {
 
     fn range(start: u64, end: u64, kind: CoverageKind) -> CoverageRange {
         CoverageRange {
+            source_anchor: None,
             script: vec![1],
             start_height: start,
             end_height: end,

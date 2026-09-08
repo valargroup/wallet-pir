@@ -1,0 +1,47 @@
+name: Transparent PIR regression
+on:
+  workflow_dispatch:
+    inputs:
+      fixture:
+        description: Repository path to a frozen regression fixture
+        default: server/transparent-regression/fixtures/mainnet.json
+        required: true
+        type: string
+      shard_url:
+        default: https://transparent-pir.valargroup.dev
+        required: true
+        type: string
+      filter_url:
+        default: https://enhance-pir.valargroup.dev
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: transparent-regression
+  cancel-in-progress: false
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Run every frozen case
+        env:
+          FIXTURE: ${{ inputs.fixture }}
+          SHARD_URL: ${{ inputs.shard_url }}
+          FILTER_URL: ${{ inputs.filter_url }}
+        run: |
+          cargo run --locked --release -p transparent-regression --bin transparent-regression -- \
+            --fixture "$FIXTURE" --shard-url "$SHARD_URL" --filter-url "$FILTER_URL" \
+            --source-sha "$GITHUB_SHA" --out-dir regression-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transparent-regression
+          path: regression-results/
+          if-no-files-found: error

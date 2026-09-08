@@ -16,6 +16,8 @@ Do not infer live state from a plan, source code, a workflow default or an old h
 
 The contract governs intended behavior; code establishes implementation; deployment governs target configuration; dated operational evidence establishes live state. If these disagree, report the gap and update the owning document with the implementation change. Do not silently weaken the contract.
 
+8. [Regression and conformance tests](testing.md): accepted-anchor recovery, fixed fixtures, and manual release validation.
+
 ## Product boundaries
 
 Active transparent recovery uses `pir/transparent-events`, `pir/transparent-filter`, `pir/transparent-shard`, `pir/transparent-wallet`, `pir/transparent-wallet-store`, `server/transparent-filter-server`, and `server/transparent-shard-server`.

@@ -88,6 +88,7 @@ pub fn commit(
     covered: Vec<Vec<u8>>,
 ) -> ShardCommit {
     ShardCommit {
+        source_anchor: None,
         shard_id,
         revision_digest: revision.into(),
         sealed,
@@ -110,6 +111,8 @@ pub fn commit(
 
 pub fn pending(script_tag: u8, revision: &str) -> PendingPages {
     PendingPages {
+        validated_events: 0,
+        target_anchor: None,
         id: None,
         shard_id: 1,
         revision_digest: revision.into(),
@@ -132,6 +135,7 @@ pub fn suite<S: WalletStore>(make: impl Fn() -> S) {
     a_commit_is_idempotent_and_a_differing_repeat_is_refused_whole(&make);
     coverage_merges_settled_ranges_and_keeps_provisional_ones_apart(&make);
     rollback_removes_only_the_suffix(&make);
+    a_retried_spend_cannot_change_its_script(&make);
     setup_is_keyed_by_set_revision_table_and_segment(&make);
     a_commit_past_the_pending_bound_is_refused_whole(&make);
     required_from_is_never_raised_and_the_set_is_bound_once(&make);
@@ -270,7 +274,15 @@ fn rollback_removes_only_the_suffix<S: WalletStore>(make: &impl Fn() -> S) {
     assert_eq!(store.pending().unwrap().len(), 1);
     assert_eq!(store.ledger().unwrap().confirmed_balance(), 3_000);
 
-    store.rollback_above(199, "tail replaced").unwrap();
+    store
+        .rollback_above(
+            &Anchor {
+                height: 199,
+                hash: "h199".into(),
+            },
+            "tail replaced",
+        )
+        .unwrap();
     let events = store.events().unwrap();
     assert_eq!(events.len(), 2, "the spend above the cut is gone");
     assert_eq!(store.ledger().unwrap().confirmed_balance(), 8_000);
@@ -437,4 +449,33 @@ fn promotion_settles_a_provisional_revision_in_place<S: WalletStore>(make: &impl
         .iter()
         .all(|range| range.kind == CoverageKind::Settled));
     assert!(store.provisional().unwrap().is_empty());
+}
+
+fn a_retried_spend_cannot_change_its_script<S: WalletStore>(make: &impl Fn() -> S) {
+    let mut store = make();
+    store.bind_set(&identity()).unwrap();
+    store
+        .commit_shard(commit(
+            0,
+            "r0",
+            true,
+            (0, 99),
+            vec![receive(1, 0, 123, 10), spend(1, 1, 0, 3, 20)],
+            vec![script(1)],
+        ))
+        .unwrap();
+    let before = store.events().unwrap();
+    let id = store.last_commit().unwrap();
+    assert!(store
+        .commit_shard(commit(
+            0,
+            "r0",
+            true,
+            (0, 99),
+            vec![spend(2, 1, 0, 3, 20)],
+            vec![script(2)]
+        ))
+        .is_err());
+    assert_eq!(store.events().unwrap(), before);
+    assert_eq!(store.last_commit().unwrap(), id);
 }

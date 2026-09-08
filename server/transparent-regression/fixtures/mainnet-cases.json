@@ -1,0 +1,209 @@
+[
+  {
+    "id": "unused-p2pkh",
+    "profile": "unused",
+    "scripts": [
+      "76a914534bcc5930c2f4d5ef574a6898070834bbb9348588ac",
+      "76a914f1bb1b4c5b44d0a521f2b151f34de13c8b42cdf788ac",
+      "76a91428a8ab3d12bdf6711ca8f21d1df72d737522facf88ac",
+      "76a9148d06f732556988c8c77b59626252defcaf6dd53788ac"
+    ],
+    "required_from": 0,
+    "heights": [
+      0,
+      3262748,
+      3262750,
+      3473686
+    ]
+  },
+  {
+    "id": "unused-p2sh",
+    "profile": "unused-p2sh",
+    "scripts": [
+      "a9141d6f0ba160fffe63d3f2c12de6b32da64e13423087"
+    ],
+    "required_from": 0,
+    "heights": [
+      0,
+      3262750,
+      3473686
+    ]
+  },
+  {
+    "id": "small-active",
+    "profile": "small-active",
+    "scripts": [
+      "76a91403ca5d7d8a472e4758cea27de363cfa19077b63188ac"
+    ],
+    "required_from": 0,
+    "heights": [
+      3423034,
+      3423035,
+      3423036,
+      3473686
+    ]
+  },
+  {
+    "id": "zero-balance",
+    "profile": "zero-balance",
+    "scripts": [
+      "76a91470cb447b1e54ec1cf281a74b514f711faa8d60cc88ac"
+    ],
+    "required_from": 0,
+    "heights": [
+      2981966,
+      2981967,
+      3423637,
+      3473686
+    ]
+  },
+  {
+    "id": "old-receive-recent-spend",
+    "profile": "cross-tier",
+    "scripts": [
+      "76a9142a40fb117ac7f820854448616201f2ee30a4aab988ac"
+    ],
+    "required_from": 0,
+    "heights": [
+      1080215,
+      3262748,
+      3262749,
+      3332159,
+      3332160,
+      3473686
+    ]
+  },
+  {
+    "id": "offline-receive-spend",
+    "profile": "offline",
+    "scripts": [
+      "76a914016fd9ff7c7237071e5d7241381b2ccf3788572288ac"
+    ],
+    "required_from": 0,
+    "heights": [
+      163548,
+      163726,
+      3439126,
+      3465622,
+      3472534,
+      3473686
+    ]
+  },
+  {
+    "id": "active-p2sh",
+    "profile": "p2sh",
+    "scripts": [
+      "a9149f1aaaed113c53607bdced4c3ea012d5e0cc858887"
+    ],
+    "required_from": 0,
+    "heights": [
+      3460734,
+      3460735,
+      3460736,
+      3473686
+    ]
+  },
+  {
+    "id": "reused-pages",
+    "profile": "reused-script",
+    "scripts": [
+      "76a914390811f165e5a41fd428c966dd48fe03b2f8c06088ac"
+    ],
+    "required_from": 3463930,
+    "heights": [
+      3463930,
+      3469904,
+      3469905,
+      3473686
+    ]
+  },
+  {
+    "id": "multi-script-self-transfer",
+    "profile": "multi-script",
+    "scripts": [
+      "76a914300f64ebaaec5152b02fae7aa24ddb12fcd2808f88ac",
+      "76a91419f301a298e901bc2ab49f8265b6cec9ccc8e5bd88ac",
+      "76a9145d7648a6133f54bfd0e934186edeab41e89a2d0388ac",
+      "76a914c88f2b46fad428a4d327d80c686c608eaa91b29488ac",
+      "76a9142b4d8a74d3f0a56d03c1269688ffde28927b75f588ac",
+      "76a9147d89428c782466128bd7aec10e5c7ce817363f8388ac",
+      "76a9144235f609c9c68234c2a16f4f6efec6598f36e71988ac",
+      "76a9142449bd55ad9a4aaecce1f3ce719bc4a1a72292f688ac",
+      "76a914bf0bfe586672672fba54fc10c44561dbf8695b9288ac",
+      "76a914de75b12aa844a51bd78594e5d47e201d0c631d4888ac",
+      "76a91471b264c0a5a4606ce3a8a9d597516d4243ec2b7d88ac",
+      "a9144534a900760b4ace82d8974eb751b5718687c23487",
+      "76a914475e1b95cc5c1fb83102a74397b52e00f49d5ca588ac",
+      "76a91477dff67d8dfed1f97c6a711ea890cd4b385c124e88ac",
+      "76a914f291d328de8d44d03487cc2b2864ec4e429205af88ac",
+      "76a914c977aed32b839cef02d5525409a4345cd7fe171c88ac",
+      "76a9148d5222f9511194bedb0c4cc82c0fdec0380254f788ac",
+      "76a914b4cb3cdcfb96b1e770544d15b8be058d56fd9b1f88ac",
+      "76a914752b5492fd25dd724daa8d2cfc2f8471eadbad0588ac",
+      "76a914e57640095890a44b3af88a56f513585d3802be1888ac",
+      "76a9149ea2f69ac050e53c0fc2c507b3b5f6d03687671488ac",
+      "76a91418ffa73ae57dc0e04d5740ad12736462b477e99a88ac",
+      "76a9142a40fb117ac7f820854448616201f2ee30a4aab988ac",
+      "76a914499e0b2cf5292801b5c24d79f10cfaddd9ee7c7888ac",
+      "76a914e91f98365e1c1e863273d65d2395e3a98d32c16e88ac",
+      "76a914bdec46c5821cb72aa4c0f71488449608dd6df38588ac",
+      "76a91427a800c3b311b2083b5fa8588b701baaf81f799c88ac",
+      "76a914a4a00c85cdf0c0be310832643931e87f29f22a4988ac",
+      "a9149652dfa4bf1446a34a023faa71886a4147ca625f87",
+      "76a914e3fe754457183f40f0e8a0e9b02db101aef6843888ac",
+      "76a9149087c8b8e10acb5e7506b5253f442100227b3f8688ac",
+      "a9143f21b1227b34fee8c963c4578697c41ec6518ad087",
+      "76a9144fb860233770eeea85898f25b3cb095a74214dfb88ac",
+      "a914a7787fa14570ddae67a2c0655a36a912cd35bd7387",
+      "76a91410bf06c229ce78c1cdfce8d00342e067a14d6b0388ac",
+      "76a9142f6e17c99d96b77706d175d2c4ae43797b2a540f88ac",
+      "76a91472ba31aa204c0b214ed9a2fe8f9e9e97642bb83e88ac",
+      "76a91475c45d0bf06b95009ac401bd8b1d0def7f73ed9388ac",
+      "76a914132e4b19b08d67055cd167209e339fddbd0a3e4988ac",
+      "76a9143c431d66e6864824c7109b741c2d8992d9cc90ad88ac"
+    ],
+    "required_from": 0,
+    "heights": [
+      3262748,
+      3262749,
+      3262750,
+      3473686
+    ]
+  },
+  {
+    "id": "recent-birthday",
+    "profile": "recent-restore",
+    "scripts": [
+      "a914c62556b5f5ea5ee5a8e34082a01a32e166c9937587",
+      "76a9140a880b551169a0c43b1b4f92812451f1ee71143b88ac",
+      "76a91428463caab78cf0d91ebd10abd3ec27fe218da0a988ac",
+      "76a9143aa37f16a2773164450f24507dbac3d189260cb388ac",
+      "76a914b7b53697b9415a8b787c2e5adef28a771a0ea55e88ac",
+      "76a914b69e35ef95d93bda6d6945d5c7cc1181b46a23a988ac",
+      "76a9144c0f47c02f74126006b660cc02dcd66e5b55605888ac",
+      "76a914d276b3c62efecb99c1956ddde348a543750e48a688ac",
+      "76a9145e45728910340896048a372038ddf2a1b72b763b88ac",
+      "76a914105ac93adcbb358f3c82d056584ef750e1a7cd6888ac"
+    ],
+    "required_from": 3262749,
+    "heights": [
+      3262749,
+      3262750,
+      3473685,
+      3473686
+    ]
+  },
+  {
+    "id": "coinbase",
+    "profile": "coinbase",
+    "scripts": [
+      "76a9149b534fd43f6154ce0988dbd065163cc23c4dec1488ac"
+    ],
+    "required_from": 0,
+    "heights": [
+      3473678,
+      3473679,
+      3473686
+    ]
+  }
+]

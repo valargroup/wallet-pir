@@ -4054,6 +4054,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "transparent-regression"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "transparent-events",
+ "transparent-filter",
+ "transparent-shard",
+ "transparent-shard-server",
+ "transparent-wallet",
+ "transparent-wallet-store",
+]
+
+[[package]]
 name = "transparent-shard"
 version = "0.1.0"
 dependencies = [

@@ -337,7 +337,7 @@ impl PublishedFilters {
         }
         Self {
             filters,
-            map: serde_json::to_vec(map).unwrap(),
+            map: serde_json::to_vec(&map).unwrap(),
         }
     }
 }
@@ -572,6 +572,11 @@ async fn run_sync(
             &mut transport,
             &wallet,
             birthday,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .expect("sync")
     })
@@ -684,6 +689,11 @@ async fn a_service_serving_another_schema_is_refused() {
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .err()
         .expect("a foreign schema must be refused")
@@ -877,6 +887,11 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .err()
         .expect("a short answer must not be accepted")
@@ -972,6 +987,11 @@ async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .err()
         .expect("an altered manifest must not be accepted");
@@ -1073,7 +1093,7 @@ impl ShardTransport for DropsTheLastSegment {
 /// match a traversal that skips the same events — including the unresolved
 /// spend of an output received before the birthday.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_later_birthday_recovers_only_history_from_that_shard_forward() {
+async fn a_birthday_that_omits_a_receive_cannot_report_complete() {
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -1081,7 +1101,56 @@ async fn a_later_birthday_recovers_only_history_from_that_shard_forward() {
 
     let wallet = vec![script(1), script(2)];
     let birthday = map.shards[2].start_height;
-    let outcome = run_sync(dir.path(), base, wallet.clone(), birthday, map).await;
+    let filters = PublishedFilters::load(dir.path(), &map);
+    let outcome = tokio::task::spawn_blocking(move || {
+        use transparent_wallet::{
+            Anchor, MemoryStore, ScriptEntry, ScriptOrigin, StaticChain, StaticScripts,
+            WalletStore, WorkLimits,
+        };
+        let mut store = MemoryStore::new();
+        let mut transport =
+            transparent_wallet::http::HttpShardTransport::new(base, &Default::default()).unwrap();
+        let geometry = transport.geometry().unwrap();
+        let mut filters = filters;
+        let mut provider = StaticScripts(
+            [script(1), script(2)]
+                .iter()
+                .map(|s| ScriptEntry {
+                    script: s.as_slice().to_vec(),
+                    origin: ScriptOrigin::Derived,
+                    required_from: birthday,
+                })
+                .collect(),
+        );
+        let tip = map.shards.last().unwrap();
+        let result = transparent_wallet::sync_into(
+            &mut store,
+            &map,
+            0,
+            &geometry,
+            &StaticChain::from_map(&map),
+            &mut provider,
+            &mut filters,
+            &mut transport,
+            &WorkLimits::UNLIMITED,
+            &Anchor {
+                height: tip.end_height,
+                hash: tip.terminal_block_hash.clone(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            result.completion,
+            transparent_wallet::Completion::Incomplete {
+                reason: transparent_wallet::IncompleteReason::UnresolvedSpends,
+                ..
+            }
+        ));
+        assert!(store.anchor().unwrap().is_none());
+        result
+    })
+    .await
+    .unwrap();
 
     let expected = traverse(&per_shard, &wallet, 2);
     compare(&outcome.ledger, &expected);
@@ -1293,6 +1362,11 @@ async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .err()
         .expect("an unknown geometry must stop the sync")
@@ -1418,6 +1492,16 @@ async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_ma
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map_before),
+            &transparent_wallet::Anchor {
+                height: map_before.shards.last().unwrap().end_height,
+                hash: map_before
+                    .shards
+                    .last()
+                    .unwrap()
+                    .terminal_block_hash
+                    .clone(),
+            },
         )
         .expect("the sync must recover, not fail")
     })
@@ -1562,6 +1646,11 @@ async fn an_overloaded_service_is_retried_and_the_sync_still_reconstructs_exactl
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .expect("an overload is a wait, not a failure")
     })
@@ -1614,6 +1703,11 @@ async fn an_unrelenting_overload_stops_the_sync_without_advancing_coverage() {
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .err()
         .expect("an unrelenting overload must not be reported as a completed sync")
@@ -1669,6 +1763,11 @@ async fn a_503_that_names_no_delay_is_not_retried() {
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
         )
         .err()
         .expect("an unrecognised 503 must not be silently retried into success")
@@ -1752,6 +1851,16 @@ async fn a_refresh_that_cannot_help_stops_the_sync_rather_than_looping() {
             &mut transport,
             &wallet,
             FIRST,
+            &transparent_wallet::StaticChain::from_map(&map_before),
+            &transparent_wallet::Anchor {
+                height: map_before.shards.last().unwrap().end_height,
+                hash: map_before
+                    .shards
+                    .last()
+                    .unwrap()
+                    .terminal_block_hash
+                    .clone(),
+            },
         )
         .err()
         .expect("a withdrawn revision no refresh can replace must not read as success")

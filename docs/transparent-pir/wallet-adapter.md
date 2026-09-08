@@ -13,6 +13,7 @@ boundary as a callback, so a binding generator can take the facade as it is.
 
 | The wallet supplies | Reference type | Rule |
 |---|---|---|
+| Target | `Anchor { height, hash }` in every `SyncRequest` | The wallet accepts this block independently; publication coverage must reach it. |
 | Persistence | `WalletStore` (`SqliteStore` or any implementation) | One atomic mutating boundary, `commit_shard`; a retry of a committed shard is idempotent and a differing retry is refused. |
 | Scripts | `ScriptEntry { script, origin, required_from }` | Exact script bytes, not address text. `required_from` is the first height the wallet needs; it is never raised for a known script. |
 | Chain view | accepted headers `(height, hash)` | A height listed with another hash is a reorg and coverage above it is rolled back; a height not listed is unknown and the sync stops short rather than guessing. |
@@ -22,7 +23,7 @@ The facade `TransparentSync` in `pir/transparent-wallet/src/facade.rs` binds
 these: `refresh_map` fetches the map and the service parameters and returns
 the tip for the wallet to validate; `sync_once(SyncRequest)` performs one
 bounded sync and returns `SyncStatus`; `status`, `snapshot` and
-`rollback_to` read or adjust the store without network work.
+`rollback_to(Anchor)` read or adjust the store without network work. The caller supplies an accepted common ancestor for rollback, including inside a shard.
 
 A wallet that brings its own store proves it with the contract suite:
 `transparent_wallet::testing::suite` (feature `testing`) is the same suite the
@@ -34,7 +35,7 @@ two reference stores pass. The init document is parsed by
 `SyncStatus.completion` is `complete` or the reason the sync stopped:
 `query-budget`, `byte-budget`, `pending-limit`, `overloaded:<shard>`,
 `chain-unknown:<height>`, `discovery-unbounded`. The anchor commits only on a
-complete sync whose tip the chain view accepted. `unresolved` counts spends
+complete sync to the explicit target the chain view accepted. Events above that target never enter the ledger or advance discovery. A subsequent target inside the same shard re-queries it and deduplicates retained events. `unresolved` counts spends
 whose receive the ledger has never seen; `pending` counts page retrievals
 still owed.
 
@@ -70,3 +71,11 @@ Bytes and time are accounted per stage in `SyncReport`; the integration
 measures its own transport, TLS and storage costs on top, which the
 reference figures exclude. The load harness `server/transparent-loadtest`
 reports the same split for the reference adapters.
+
+## Persistence compatibility
+
+SQLite schema 2 separates source-publication identity from covered endpoints and
+records target-bound pagination validation progress. Migration preserves scripts
+and event records but clears legacy coverage, pending work and completion
+metadata; the next sync must re-establish coverage. A lower target requires an
+explicit accepted-anchor rollback. See [testing](testing.md) for regression checks.

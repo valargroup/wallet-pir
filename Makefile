@@ -78,3 +78,17 @@ demo-check:
 fmt:
 	cargo fmt --all
 	cargo fmt --manifest-path demos/legacy-spendability/Cargo.toml --all
+
+# Correctness at wallet-accepted anchors; each run preserves its SQLite stores
+# and exact mismatch evidence in a new output directory.
+TRANSPARENT_REGRESSION_FIXTURE ?= server/transparent-regression/fixtures/mainnet.json
+TRANSPARENT_REGRESSION_OUT ?= transparent-regression-results
+TRANSPARENT_REGRESSION_FILTER_URL ?= https://enhance-pir.valargroup.dev
+.PHONY: transparent-regression
+transparent-regression:
+	cargo run --locked --release -p transparent-regression --bin transparent-regression -- \
+		--fixture "$(TRANSPARENT_REGRESSION_FIXTURE)" \
+		--shard-url "$(TRANSPARENT_LOAD_URL)" \
+		--filter-url "$(TRANSPARENT_REGRESSION_FILTER_URL)" \
+		--source-sha "$$(git rev-parse HEAD)" \
+		--out-dir "$(TRANSPARENT_REGRESSION_OUT)"

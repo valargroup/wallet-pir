@@ -22,6 +22,10 @@ pub enum Acceptance {
 pub trait ChainView {
     fn is_accepted(&self, height: u64, hash_display_hex: &str) -> Acceptance;
     fn tip(&self) -> Option<Anchor>;
+    /// An independently accepted hash, needed for rollback inside a shard.
+    fn hash_at(&self, height: u64) -> Option<String> {
+        self.tip().filter(|a| a.height == height).map(|a| a.hash)
+    }
 }
 
 /// The wallet's script set and its rule for extending it.
@@ -56,7 +60,8 @@ pub struct StaticChain {
 }
 
 impl StaticChain {
-    /// Accepts every block the map names.
+    /// Accepts every block the map names. For synthetic fixtures and benchmarks;
+    /// a production wallet must construct its view from independently accepted headers.
     pub fn from_map(map: &transparent_filter::ShardMap) -> Self {
         let mut hashes = BTreeMap::new();
         for entry in &map.shards {
@@ -70,6 +75,9 @@ impl StaticChain {
 }
 
 impl ChainView for StaticChain {
+    fn hash_at(&self, height: u64) -> Option<String> {
+        self.hashes.get(&height).cloned()
+    }
     fn is_accepted(&self, height: u64, hash: &str) -> Acceptance {
         match self.hashes.get(&height) {
             Some(known) if known == hash => Acceptance::Accepted,

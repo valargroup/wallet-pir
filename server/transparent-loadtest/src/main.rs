@@ -357,6 +357,10 @@ fn run_client(
                     &mut filters,
                     &mut transport,
                     &limits,
+                    &transparent_wallet::Anchor {
+                        height: map.shards.last().unwrap().end_height,
+                        hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+                    },
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 let _ = std::fs::remove_file(&path);
@@ -374,6 +378,10 @@ fn run_client(
                     &mut filters,
                     &mut transport,
                     &limits,
+                    &transparent_wallet::Anchor {
+                        height: map.shards.last().unwrap().end_height,
+                        hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+                    },
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 (report.completion == Completion::Complete, digest, events)

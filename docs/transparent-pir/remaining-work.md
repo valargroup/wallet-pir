@@ -126,3 +126,7 @@ Exit: deployed inventory matches verified state, real wallet recovery passes on 
 ## Documentation completion rules
 
 Each completed gate links source commits, exact commands and evidence. Update status from observation and deployment only when the selected target changes. Delete superseded prose and update inbound links instead of retaining duplicate documents or appending a contradictory correction below an active recommendation. Preserve raw evidence and its scope. Run repository-required checks and documentation link validation before submitting changes.
+
+## Accepted-anchor regression rollout
+
+- [ ] Record the first complete deployed run of the [accepted-anchor regression suite](testing.md) against its frozen full-chain fixture after fleet activation. Local conformance and source implementation do not establish this live gate. The [2026-09-08 preflight](evidence/regression-2026-09-08/README.md) refused the still-served three-shard pilot before any private queries.

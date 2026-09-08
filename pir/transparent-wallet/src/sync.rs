@@ -43,7 +43,7 @@
 //! periods than quiet ones. This code does not hide it and must not be
 //! described as if it did.
 
-use crate::adapters::{Acceptance, ChainView, ScriptProvider, StaticChain, StaticScripts};
+use crate::adapters::{Acceptance, ChainView, ScriptProvider, StaticScripts};
 use crate::client::{classify_transport, ClientError, Table, TableClient};
 use crate::ledger::{Ledger, LedgerError};
 use crate::memory_store::MemoryStore;
@@ -349,6 +349,10 @@ pub enum IncompleteReason {
     },
     /// The wallet's rules kept adding scripts past the pass bound.
     DiscoveryUnbounded,
+    PublicationBehind {
+        height: u64,
+    },
+    UnresolvedSpends,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -388,14 +392,15 @@ pub struct SyncReport {
     pub commits: u64,
 }
 
-/// Runs one sync from `birthday` to the end of the published map.
+/// Runs one sync from `birthday` to the explicit wallet-accepted target.
 ///
 /// `scripts` is the wallet's derived script set. It never leaves the machine:
 /// matching is local, and a private query names a row, not a script.
 ///
 /// One-shot: a fresh in-memory store, every script required from `birthday`,
-/// no work limits, and the map's own blocks accepted as the chain. A returning
+/// no work limits, using the caller's accepted chain view. A returning
 /// wallet uses [`sync_into`] with its own store.
+#[allow(clippy::too_many_arguments)]
 pub fn sync(
     map: &ShardMap,
     map_bytes: u64,
@@ -404,6 +409,8 @@ pub fn sync(
     transport: &mut impl ShardTransport,
     scripts: &[ScriptBytes],
     birthday: u64,
+    chain: &impl ChainView,
+    target_anchor: &Anchor,
 ) -> Result<SyncOutcome, SyncError> {
     let mut store = MemoryStore::new();
     let mut provider = StaticScripts(
@@ -416,17 +423,17 @@ pub fn sync(
             })
             .collect(),
     );
-    let chain = StaticChain::from_map(map);
     let report = sync_into(
         &mut store,
         map,
         map_bytes,
         geometry,
-        &chain,
+        chain,
         &mut provider,
         filters,
         transport,
         &WorkLimits::UNLIMITED,
+        target_anchor,
     )?;
     match report.completion {
         Completion::Complete => Ok(SyncOutcome {
@@ -453,7 +460,7 @@ pub fn sync(
     }
 }
 
-/// Syncs a wallet's store to the end of the published map.
+/// Syncs a wallet's store to its accepted target, independently of publication tip.
 ///
 /// See the module documentation for the shape of a sync. The store is the
 /// wallet's memory: what it holds decides what is fetched, and what is
@@ -470,6 +477,7 @@ pub fn sync_into<S: WalletStore>(
     filters: &mut impl FilterSource,
     transport: &mut impl ShardTransport,
     limits: &WorkLimits,
+    target_anchor: &Anchor,
 ) -> Result<SyncReport, SyncError> {
     if geometry.schema != transparent_shard::SCHEMA {
         return Err(SyncError::Schema {
@@ -480,6 +488,62 @@ pub fn sync_into<S: WalletStore>(
     map.check_shape()
         .map_err(|error| SyncError::Invalid(format!("shard map is malformed: {error}")))?;
     let genesis = BlockHash::from_display_hex(&map.genesis_hash)?;
+    BlockHash::from_display_hex(&target_anchor.hash)?;
+    if target_anchor.height < map.start_height {
+        return Err(SyncError::Invalid(
+            "target precedes publication start".into(),
+        ));
+    }
+    match chain.is_accepted(target_anchor.height, &target_anchor.hash) {
+        Acceptance::Rejected => {
+            return Err(SyncError::Invalid(
+                "target anchor rejected by wallet chain".into(),
+            ))
+        }
+        Acceptance::Unknown => {
+            return incomplete_at(
+                store,
+                IncompleteReason::ChainUnknown {
+                    height: target_anchor.height,
+                },
+            )
+        }
+        Acceptance::Accepted => {}
+    }
+    if map
+        .shards
+        .last()
+        .is_none_or(|s| s.end_height < target_anchor.height)
+    {
+        return incomplete_at(
+            store,
+            IncompleteReason::PublicationBehind {
+                height: target_anchor.height,
+            },
+        );
+    }
+    check_target_hash(map, target_anchor)?;
+    let retained = store
+        .events()?
+        .iter()
+        .map(|e| event_height(&e.event))
+        .max()
+        .unwrap_or(0);
+    if let Some(a) = store.anchor()? {
+        if a.height > target_anchor.height
+            && chain.is_accepted(a.height, &a.hash) == Acceptance::Accepted
+        {
+            return Err(SyncError::AnchorRegressed {
+                stored: a.height,
+                offered: target_anchor.height,
+            });
+        }
+    }
+    if retained > target_anchor.height {
+        return Err(SyncError::Invalid(
+            "target below retained events; explicitly roll back to an accepted anchor first".into(),
+        ));
+    }
 
     // The store is bound to a publication lineage. A map from another
     // lineage is refused before anything is read from it.
@@ -495,7 +559,8 @@ pub fn sync_into<S: WalletStore>(
     let Some(tip_entry) = map.shards.last() else {
         return Err(SyncError::Invalid("the map names no shards".into()));
     };
-    let through = tip_entry.end_height;
+    let through = target_anchor.height;
+    let _ = tip_entry;
 
     // A map that ends below the anchor the wallet accepted is not a newer
     // publication; if the wallet's chain still accepts that anchor, the
@@ -532,9 +597,16 @@ pub fn sync_into<S: WalletStore>(
             if range.kind == CoverageKind::Settled {
                 if let Some(published) = map.shards.get(range.shard_id as usize) {
                     if published.sealed
+                        && range
+                            .source_anchor
+                            .as_ref()
+                            .is_none_or(|source| range.end_height == source.height)
                         && published.start_height == range.start_height
-                        && (published.end_height != range.end_height
-                            || published.terminal_block_hash != range.terminal_block_hash)
+                        && (published.manifest_digest != range.revision_digest
+                            || range.source_anchor.as_ref().is_some_and(|source| {
+                                published.end_height != source.height
+                                    || published.terminal_block_hash != source.hash
+                            }))
                     {
                         // Sealed content is immutable; a different sealed
                         // shard at the same place is another chain.
@@ -572,14 +644,14 @@ pub fn sync_into<S: WalletStore>(
         }
     }
     if let Some(height) = ancestor {
-        store.rollback_above(height, "reorg")?;
+        store.rollback_above(&accepted_at(chain, map, height)?, "reorg")?;
         rolled_back_to = Some(height);
     } else if let Some(height) = unknown {
         if ancestor.is_none() && !rests_on.is_empty() {
             // Nothing could be confirmed. Reading on would either accept a
             // branch the wallet has not seen or roll back on a guess.
             let ledger = store.ledger()?;
-            let (covered, settled) = coverage_summary(store, map)?;
+            let (covered, settled) = coverage_summary(store, map, target_anchor.height)?;
             return Ok(SyncReport {
                 ledger,
                 charges,
@@ -605,6 +677,24 @@ pub fn sync_into<S: WalletStore>(
     // truncated and re-derived; one the map has sealed is promoted.
     let mut truncate_from: Option<u64> = None;
     let mut promote: Vec<(u64, String)> = Vec::new();
+    // A partially retrieved revision may have events and pending pages but no
+    // completed coverage yet. Replacing it must rewind those events too.
+    for pending in store.pending()? {
+        let published = map.shards.get(pending.shard_id as usize).ok_or_else(|| {
+            SyncError::MapDiverged(format!(
+                "publication withdraws pending shard {}",
+                pending.shard_id
+            ))
+        })?;
+        if published.manifest_digest != pending.revision_digest {
+            truncate_from = Some(
+                truncate_from.map_or(published.start_height, |h| h.min(published.start_height)),
+            );
+            if !replaced_revisions.contains(&pending.revision_digest) {
+                replaced_revisions.push(pending.revision_digest);
+            }
+        }
+    }
     for range in store.provisional()? {
         match map.shards.get(range.shard_id as usize) {
             Some(published) if published.manifest_digest == range.revision_digest => {
@@ -626,12 +716,28 @@ pub fn sync_into<S: WalletStore>(
     if let Some(start) = truncate_from {
         let below = start.saturating_sub(1);
         if rolled_back_to.is_none_or(|held| held > below) {
-            store.rollback_above(below, "provisional tail replaced")?;
+            store.rollback_above(
+                &accepted_at(chain, map, below)?,
+                "provisional tail replaced",
+            )?;
             rolled_back_to = Some(below);
         }
     }
     for (shard_id, digest) in promote {
         store.promote_provisional(shard_id, &digest)?;
+    }
+
+    let discard: Vec<u64> = store
+        .pending()?
+        .iter()
+        .filter(|p| p.target_anchor.as_ref() != Some(target_anchor))
+        .filter_map(|p| p.id)
+        .collect();
+    if !discard.is_empty() {
+        store.commit_shard(ShardCommit {
+            pending_complete: discard,
+            ..Default::default()
+        })?;
     }
 
     // The wallet's script set, with its own required heights.
@@ -690,7 +796,17 @@ pub fn sync_into<S: WalletStore>(
                 &mut charges,
                 limits,
                 |store, prepared, transport, charges| {
-                    finish_pages(store, &entry, &items, prepared, transport, charges, limits)
+                    finish_pages(
+                        store,
+                        &entry,
+                        &items,
+                        prepared,
+                        transport,
+                        charges,
+                        limits,
+                        target_anchor,
+                        chain,
+                    )
                 },
             );
             match outcome {
@@ -703,7 +819,12 @@ pub fn sync_into<S: WalletStore>(
                         matched_shards.push(shard_id);
                     }
                     for item in &items {
-                        if !active_scripts.contains(&item.script) {
+                        if store.events()?.iter().any(|e| {
+                            e.script == item.script
+                                && e.shard_id == shard_id
+                                && event_height(&e.event) <= target_anchor.height
+                        }) && !active_scripts.contains(&item.script)
+                        {
                             active_scripts.push(item.script.clone());
                         }
                     }
@@ -716,11 +837,7 @@ pub fn sync_into<S: WalletStore>(
         }
 
         // Plan: which shards each script still needs.
-        let through = active
-            .shards
-            .last()
-            .map(|e| e.end_height)
-            .unwrap_or(through);
+        let through = target_anchor.height;
         let mut work: BTreeMap<usize, Vec<Vec<u8>>> = BTreeMap::new();
         for entry in &entries {
             let from = entry.required_from.max(active.start_height);
@@ -766,6 +883,8 @@ pub fn sync_into<S: WalletStore>(
                 transport,
                 &mut charges,
                 limits,
+                target_anchor,
+                chain,
             );
             match result {
                 Ok(ShardRead::Done { matched }) => {
@@ -804,8 +923,23 @@ pub fn sync_into<S: WalletStore>(
                             refreshes,
                         });
                     }
-                    let (covered, _) = coverage_summary(store, &active)?;
+                    let (covered, _) = coverage_summary(store, &active, target_anchor.height)?;
                     let (fresh, digest) = refresh_map(&active, covered, filters, &mut charges)?;
+                    check_target_hash(&fresh, target_anchor)?;
+                    if fresh
+                        .shards
+                        .last()
+                        .is_none_or(|s| s.end_height < target_anchor.height)
+                    {
+                        completion = Completion::Incomplete {
+                            reason: IncompleteReason::PublicationBehind {
+                                height: target_anchor.height,
+                            },
+                            pending: store.pending()?.len(),
+                        };
+                        active = Cow::Owned(fresh);
+                        break 'passes;
+                    }
                     refreshes += 1;
                     held_map_digest = Some(digest);
                     let Some(resume) = fresh
@@ -826,7 +960,10 @@ pub fn sync_into<S: WalletStore>(
                     }
                     let resume_start = fresh.shards[resume].start_height;
                     let below = resume_start.saturating_sub(1);
-                    store.rollback_above(below, "revision withdrawn mid-sync")?;
+                    store.rollback_above(
+                        &accepted_at(chain, &active, below)?,
+                        "revision withdrawn mid-sync",
+                    )?;
                     if rolled_back_to.is_none_or(|held| held > below) {
                         rolled_back_to = Some(below);
                     }
@@ -835,7 +972,9 @@ pub fn sync_into<S: WalletStore>(
                     }
                     active = Cow::Owned(fresh);
                     // Re-plan against the new map from this shard on.
-                    let mut rest: Vec<usize> = (resume..active.shards.len()).collect();
+                    let mut rest: Vec<usize> = (resume..active.shards.len())
+                        .take_while(|i| active.shards[*i].start_height <= through)
+                        .collect();
                     index_iter.truncate(position);
                     index_iter.append(&mut rest);
                     for later in resume..active.shards.len() {
@@ -853,24 +992,26 @@ pub fn sync_into<S: WalletStore>(
         scripts_added += store.add_scripts(&added)?;
     }
 
-    let (covered_through, settled_through) = coverage_summary(store, &active)?;
+    let (covered_through, settled_through) =
+        coverage_summary(store, &active, target_anchor.height)?;
     if completion == Completion::Complete {
-        if !store.pending()?.is_empty() {
+        if covered_through < target_anchor.height {
+            completion = Completion::Incomplete {
+                reason: IncompleteReason::DiscoveryUnbounded,
+                pending: store.pending()?.len(),
+            };
+        } else if !store.pending()?.is_empty() {
             completion = Completion::Incomplete {
                 reason: IncompleteReason::PendingLimit,
                 pending: store.pending()?.len(),
             };
-        } else if let Some(tip) = active.shards.last() {
-            if chain.is_accepted(tip.end_height, &tip.terminal_block_hash) != Acceptance::Rejected {
-                store.commit_anchor(
-                    &Anchor {
-                        height: tip.end_height,
-                        hash: tip.terminal_block_hash.clone(),
-                    },
-                    settled_through,
-                    covered_through,
-                )?;
-            }
+        } else if !store.ledger()?.unresolved().is_empty() {
+            completion = Completion::Incomplete {
+                reason: IncompleteReason::UnresolvedSpends,
+                pending: 0,
+            };
+        } else {
+            store.commit_anchor(target_anchor, settled_through, covered_through)?;
         }
     }
     matched_shards.sort_unstable();
@@ -902,8 +1043,11 @@ fn previous_digest_of(map: &ShardMap, shard_id: u64) -> String {
 /// Heights through which every script is covered from its required height:
 /// provisional coverage included, then settled only. The minimum over
 /// scripts, so one script's gap holds the whole wallet's figure down.
-fn coverage_summary<S: WalletStore>(store: &S, map: &ShardMap) -> Result<(u64, u64), SyncError> {
-    let through = map.shards.last().map(|e| e.end_height).unwrap_or(0);
+fn coverage_summary<S: WalletStore>(
+    store: &S,
+    map: &ShardMap,
+    through: u64,
+) -> Result<(u64, u64), SyncError> {
     let floor = map.start_height.saturating_sub(1);
     let mut covered = through;
     let mut settled = through;
@@ -987,7 +1131,33 @@ fn read_shard_into<S: WalletStore>(
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
     limits: &WorkLimits,
+    target_anchor: &Anchor,
+    chain: &impl ChainView,
 ) -> Result<ShardRead, SyncError> {
+    let endpoint = if entry.end_height > target_anchor.height {
+        target_anchor.clone()
+    } else {
+        Anchor {
+            height: entry.end_height,
+            hash: entry.terminal_block_hash.clone(),
+        }
+    };
+    match chain.is_accepted(endpoint.height, &endpoint.hash) {
+        Acceptance::Accepted => {}
+        Acceptance::Unknown => {
+            return Ok(ShardRead::Stopped(Completion::Incomplete {
+                reason: IncompleteReason::ChainUnknown {
+                    height: endpoint.height,
+                },
+                pending: store.pending()?.len(),
+            }))
+        }
+        Acceptance::Rejected => {
+            return Err(SyncError::Invalid(
+                "published coverage endpoint rejected by wallet chain".into(),
+            ))
+        }
+    }
     // Every filter in range is downloaded, matched or not; a filter the store
     // already holds under this revision and digest is reused.
     let bytes = match store.filter(&entry.manifest_digest, &entry.filter_hash)? {
@@ -1032,18 +1202,23 @@ fn read_shard_into<S: WalletStore>(
     if matches.is_empty() {
         // A genuinely empty range for every script here: coverage advances
         // with no private request.
-        store.commit_shard(ShardCommit {
-            shard_id: entry.shard_id,
-            revision_digest: entry.manifest_digest.clone(),
-            sealed: entry.sealed,
-            start_height: entry.start_height,
-            end_height: entry.end_height,
-            terminal_block_hash: entry.terminal_block_hash.clone(),
-            events: Vec::new(),
-            covered_scripts: scripts.to_vec(),
-            pending_upsert: Vec::new(),
-            pending_complete: Vec::new(),
-        })?;
+        commit_bounded(
+            store,
+            target_anchor,
+            ShardCommit {
+                source_anchor: None,
+                shard_id: entry.shard_id,
+                revision_digest: entry.manifest_digest.clone(),
+                sealed: entry.sealed,
+                start_height: entry.start_height,
+                end_height: entry.end_height,
+                terminal_block_hash: entry.terminal_block_hash.clone(),
+                events: Vec::new(),
+                covered_scripts: scripts.to_vec(),
+                pending_upsert: Vec::new(),
+                pending_complete: Vec::new(),
+            },
+        )?;
         return Ok(ShardRead::Done {
             matched: Vec::new(),
         });
@@ -1080,6 +1255,8 @@ fn read_shard_into<S: WalletStore>(
                 transport,
                 charges,
                 limits,
+                target_anchor,
+                chain,
             )
         },
     )?;
@@ -1453,6 +1630,8 @@ fn retrieve_shard_into<S: WalletStore>(
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
     limits: &WorkLimits,
+    target_anchor: &Anchor,
+    chain: &impl ChainView,
 ) -> Result<Option<Completion>, SyncError> {
     let shard_id = entry.shard_id;
     let geometry = transparent_shard::layout::by_name(&entry.geometry)
@@ -1526,6 +1705,13 @@ fn retrieve_shard_into<S: WalletStore>(
             // wasted work rather than errors; coverage still advances.
             None => covered.push(script.clone()),
             Some(found) => {
+                if found.total_events < found.inline.len() as u32
+                    || (found.page_count == 0 && found.total_events != found.inline.len() as u32)
+                {
+                    return Err(SyncError::Invalid(
+                        "inline directory total disagrees with records".into(),
+                    ));
+                }
                 for event in &found.inline {
                     events.push(StoredEvent {
                         script: found.script.clone(),
@@ -1536,6 +1722,8 @@ fn retrieve_shard_into<S: WalletStore>(
                 }
                 if found.page_count > 0 {
                     pending_upsert.push(PendingPages {
+                        validated_events: found.inline.len() as u32,
+                        target_anchor: Some(target_anchor.clone()),
                         id: None,
                         shard_id,
                         revision_digest: revision.to_string(),
@@ -1560,18 +1748,23 @@ fn retrieve_shard_into<S: WalletStore>(
     // this call survives.
     let pending_ids_before: std::collections::BTreeSet<u64> =
         store.pending()?.iter().filter_map(|p| p.id).collect();
-    store.commit_shard(ShardCommit {
-        shard_id,
-        revision_digest: revision.to_string(),
-        sealed: entry.sealed,
-        start_height: entry.start_height,
-        end_height: entry.end_height,
-        terminal_block_hash: entry.terminal_block_hash.clone(),
-        events,
-        covered_scripts: covered,
-        pending_upsert,
-        pending_complete: Vec::new(),
-    })?;
+    commit_bounded(
+        store,
+        target_anchor,
+        ShardCommit {
+            source_anchor: None,
+            shard_id,
+            revision_digest: revision.to_string(),
+            sealed: entry.sealed,
+            start_height: entry.start_height,
+            end_height: entry.end_height,
+            terminal_block_hash: entry.terminal_block_hash.clone(),
+            events,
+            covered_scripts: covered,
+            pending_upsert,
+            pending_complete: Vec::new(),
+        },
+    )?;
     let owed: Vec<PendingPages> = store
         .pending()?
         .into_iter()
@@ -1585,7 +1778,17 @@ fn retrieve_shard_into<S: WalletStore>(
         return Ok(None);
     }
     let _ = pages;
-    finish_pages(store, entry, &owed, clients, transport, charges, limits)
+    finish_pages(
+        store,
+        entry,
+        &owed,
+        clients,
+        transport,
+        charges,
+        limits,
+        target_anchor,
+        chain,
+    )
 }
 
 /// Fetches the pages still owed for one shard revision, committing each
@@ -1600,7 +1803,27 @@ fn finish_pages<S: WalletStore>(
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
     limits: &WorkLimits,
+    target_anchor: &Anchor,
+    chain: &impl ChainView,
 ) -> Result<Option<Completion>, SyncError> {
+    if entry.end_height < target_anchor.height {
+        match chain.is_accepted(entry.end_height, &entry.terminal_block_hash) {
+            Acceptance::Accepted => {}
+            Acceptance::Unknown => {
+                return Ok(Some(Completion::Incomplete {
+                    reason: IncompleteReason::ChainUnknown {
+                        height: entry.end_height,
+                    },
+                    pending: store.pending()?.len(),
+                }))
+            }
+            Acceptance::Rejected => {
+                return Err(SyncError::Invalid(
+                    "pending shard endpoint rejected by wallet chain".into(),
+                ))
+            }
+        }
+    }
     let shard_id = entry.shard_id;
     let geometry = transparent_shard::layout::by_name(&entry.geometry)
         .ok_or_else(|| SyncError::UnknownGeometry(entry.geometry.clone()))?;
@@ -1622,17 +1845,12 @@ fn finish_pages<S: WalletStore>(
         charges,
     )?;
     for item in owed {
-        let mut recovered = item.inline.len() as u32
-            + store
-                .events()?
-                .iter()
-                .filter(|stored| {
-                    stored.script == item.script
-                        && stored.shard_id == shard_id
-                        && stored.revision_digest == revision
-                        && !item.inline.contains(&stored.event)
-                })
-                .count() as u32;
+        let mut recovered = item.validated_events;
+        if recovered > item.total_events {
+            return Err(SyncError::Invalid(
+                "pending validation count exceeds directory total".into(),
+            ));
+        }
         for ordinal in item.next_ordinal..item.page_count {
             if let Some(reason) = budget_stopped(charges, limits) {
                 return Ok(Some(Completion::Incomplete {
@@ -1692,7 +1910,14 @@ fn finish_pages<S: WalletStore>(
                     "shard {shard_id} page {row} does not belong to the entry that located it"
                 ))
             })?;
-            recovered += fragment.events.len() as u32;
+            recovered = recovered
+                .checked_add(fragment.events.len() as u32)
+                .ok_or_else(|| SyncError::Invalid("page event count overflow".into()))?;
+            if recovered > item.total_events {
+                return Err(SyncError::Invalid(
+                    "pages exceed the directory event total".into(),
+                ));
+            }
             let events: Vec<StoredEvent> = fragment
                 .events
                 .iter()
@@ -1714,27 +1939,33 @@ fn finish_pages<S: WalletStore>(
             }
             let mut progressed = item.clone();
             progressed.next_ordinal = ordinal + 1;
+            progressed.validated_events = recovered;
             progressed.attempts += 1;
-            store.commit_shard(ShardCommit {
-                shard_id,
-                revision_digest: revision.to_string(),
-                sealed: entry.sealed,
-                start_height: entry.start_height,
-                end_height: entry.end_height,
-                terminal_block_hash: entry.terminal_block_hash.clone(),
-                events,
-                covered_scripts: if last {
-                    vec![item.script.clone()]
-                } else {
-                    Vec::new()
+            commit_bounded(
+                store,
+                target_anchor,
+                ShardCommit {
+                    source_anchor: None,
+                    shard_id,
+                    revision_digest: revision.to_string(),
+                    sealed: entry.sealed,
+                    start_height: entry.start_height,
+                    end_height: entry.end_height,
+                    terminal_block_hash: entry.terminal_block_hash.clone(),
+                    events,
+                    covered_scripts: if last {
+                        vec![item.script.clone()]
+                    } else {
+                        Vec::new()
+                    },
+                    pending_upsert: if last { Vec::new() } else { vec![progressed] },
+                    pending_complete: if last {
+                        item.id.into_iter().collect()
+                    } else {
+                        Vec::new()
+                    },
                 },
-                pending_upsert: if last { Vec::new() } else { vec![progressed] },
-                pending_complete: if last {
-                    item.id.into_iter().collect()
-                } else {
-                    Vec::new()
-                },
-            })?;
+            )?;
         }
     }
     Ok(None)
@@ -1804,6 +2035,108 @@ fn open_table<S: WalletStore>(
         )?;
     }
     Ok(())
+}
+
+fn check_target_hash(map: &ShardMap, target: &Anchor) -> Result<(), SyncError> {
+    if map
+        .shard_for_height(target.height)
+        .is_some_and(|s| s.end_height == target.height && s.terminal_block_hash != target.hash)
+    {
+        return Err(SyncError::Invalid(
+            "publication endpoint disagrees with wallet-accepted target hash".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Commits only the wallet-accepted prefix while retaining the publication identity.
+fn commit_bounded<S: WalletStore>(
+    store: &mut S,
+    target: &Anchor,
+    mut commit: ShardCommit,
+) -> Result<u64, SyncError> {
+    let source = Anchor {
+        height: commit.end_height,
+        hash: commit.terminal_block_hash.clone(),
+    };
+    for event in commit
+        .events
+        .iter()
+        .map(|e| &e.event)
+        .chain(commit.pending_upsert.iter().flat_map(|p| p.inline.iter()))
+    {
+        let height = event_height(event);
+        if height < commit.start_height || height > source.height {
+            return Err(SyncError::Invalid(
+                "event lies outside its published shard".into(),
+            ));
+        }
+    }
+    commit.source_anchor = Some(source);
+    if commit.end_height >= target.height {
+        commit.end_height = target.height;
+        commit.terminal_block_hash = target.hash.clone();
+    }
+    commit
+        .events
+        .retain(|e| event_height(&e.event) <= target.height);
+    for pending in &mut commit.pending_upsert {
+        pending.inline.retain(|e| event_height(e) <= target.height);
+    }
+    Ok(store.commit_shard(commit)?)
+}
+
+pub(crate) fn event_height(event: &transparent_events::TransparentEvent) -> u64 {
+    match event {
+        transparent_events::TransparentEvent::Receive(e) => u64::from(e.height),
+        transparent_events::TransparentEvent::Spend(e) => u64::from(e.height),
+    }
+}
+
+fn accepted_at(chain: &impl ChainView, map: &ShardMap, height: u64) -> Result<Anchor, SyncError> {
+    let hash = chain.hash_at(height).or_else(|| {
+        map.shards.iter().find_map(|s| {
+            if s.end_height == height {
+                Some(s.terminal_block_hash.clone())
+            } else if s.start_height.checked_sub(1) == Some(height) {
+                Some(s.parent_block_hash.clone())
+            } else {
+                None
+            }
+        })
+    });
+    match hash {
+        Some(hash) if chain.is_accepted(height, &hash) == Acceptance::Accepted => {
+            Ok(Anchor { height, hash })
+        }
+        _ => Err(SyncError::Invalid(format!(
+            "wallet has no accepted rollback hash at {height}"
+        ))),
+    }
+}
+
+fn incomplete_at<S: WalletStore>(
+    store: &S,
+    reason: IncompleteReason,
+) -> Result<SyncReport, SyncError> {
+    Ok(SyncReport {
+        ledger: store.ledger()?,
+        charges: ByteCharges::default(),
+        matched_shards: vec![],
+        unproductive_matches: 0,
+        covered_through: 0,
+        settled_through: 0,
+        provisional: vec![],
+        map_refreshes: 0,
+        completion: Completion::Incomplete {
+            reason,
+            pending: store.pending()?.len(),
+        },
+        rolled_back_to: None,
+        replaced_revisions: vec![],
+        scripts_added: 0,
+        commits: 0,
+    })
 }
 
 #[cfg(test)]

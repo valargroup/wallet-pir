@@ -1,0 +1,44 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling futures-sink v0.3.32
+   Compiling tokio v1.51.1
+   Compiling serde_json v1.0.149
+   Compiling regex-automata v0.4.14
+   Compiling transparent-events v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-events)
+   Compiling transparent-filter v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-filter)
+   Compiling rusqlite v0.32.1
+   Compiling futures-util v0.3.32
+   Compiling futures-channel v0.3.32
+   Compiling valar-spiral-rs v0.5.2 (https://github.com/valargroup/spiral-rs.git?rev=6f5b66c6a5a639827c6486c59d31c7ec2d4399a8#6f5b66c6)
+   Compiling transparent-shard v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-shard)
+   Compiling inspiring v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=223626ffdd28bd1400dd0b62027a8f366665aa4f#223626ff)
+   Compiling simplepir-kernel v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=223626ffdd28bd1400dd0b62027a8f366665aa4f#223626ff)
+   Compiling regex v1.12.3
+   Compiling env_filter v1.0.1
+   Compiling env_logger v0.11.10
+   Compiling ipir-sp v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=223626ffdd28bd1400dd0b62027a8f366665aa4f#223626ff)
+   Compiling hyper v1.9.0
+   Compiling tower v0.5.3
+   Compiling tokio-rustls v0.26.4
+   Compiling tower-http v0.6.8
+   Compiling hyper-util v0.1.20
+   Compiling hyper-rustls v0.27.7
+   Compiling reqwest v0.12.28
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet-store)
+   Compiling transparent-regression v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-regression)
+    Finished `release` profile [optimized] target(s) in 46.31s
+     Running `target/release/transparent-regression --fixture server/transparent-regression/fixtures/mainnet.json --shard-url 'https://transparent-pir.valargroup.dev' --filter-url 'https://enhance-pir.valargroup.dev' --source-sha working-tree-based-on-290dc62 --out-dir /tmp/transparent-regression-live-20260908`
+checking unused-p2pkh (unused)
+checking unused-p2sh (unused-p2sh)
+checking small-active (small-active)
+checking zero-balance (zero-balance)
+checking old-receive-recent-spend (cross-tier)
+checking offline-receive-spend (offline)
+checking active-p2sh (p2sh)
+checking reused-pages (reused-script)
+checking multi-script-self-transfer (multi-script)
+checking recent-birthday (recent-restore)
+checking coinbase (coinbase)
+Error: 11 regression cases failed; see /tmp/transparent-regression-live-20260908
