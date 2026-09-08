@@ -282,27 +282,39 @@ on every incremental sync, which is the traffic every wallet pays constantly.
 
 ## What is not settled
 
-- **`g`, the shards a script appears in, is unmeasured at wide geometry.**
-  Restoration cost at 32,768 is extrapolated from the 0–330,000 census, and the
-  same extrapolation was already 55% wrong for shard count. `census
-  --shard-matches` computes it directly over the full journal; run it before
-  provisioning eleven hosts. `shard-census` now takes `--geometry`,
-  `--start-height` and `--end-height` (inclusive) and prints its anchor, so the
-  archive tier and the recent window can be scored as the separate questions
-  they are.
-- **No two-tier set has been published or served.** The registry, the mixed
-  publisher, the bounded cache and the revision routes are implemented and
-  tested; the geometry decision itself still rests on the census.
-- **Which limit binds is not uniform along the chain.** At 8,192 over the full
-  journal, 1,042 shards close on page rows and 48 on scripts. `census
-  --per-shard` emits heights and the closing limit per shard, so the mid-range
-  behaviour can be checked rather than assumed — a geometry chosen on the
-  aggregate is chosen on a mixture.
-- **The directory is slack at wide geometry and could be narrowed.** Observed max
-  scripts per shard against directory capacity: 86% at 8,192, 49% at 32,768, 31%
-  at 65,536. A 65,536-page table with a 32,768 directory would hold at 62% and
-  cut fleet RAM to ~91 GiB while dropping directory queries from 430 KB to
-  258 KB. Do **not** pair a 16,384 directory with 32,768 pages: 223,711 observed
+- ~~**`g` is unmeasured at wide geometry.**~~ **Measured 2026-09-07** over the
+  complete journal at `archive-wide`: mean 2.58, p50 1, p90 3, p95 9, p99 35,
+  max 156, across 9,264,547 distinct indexable scripts. Mean restoration falls
+  to 2.07 MB from 3.75 MB at 8,192, despite each directory query growing from
+  128,008 to 258,056 bytes, because it is asked a tenth as often. Evidence and
+  provenance in
+  [fullchain-archive-wide-notes.md](transparent-pir-evaluation/shard-utilisation/fullchain-archive-wide-notes.md).
+  The 8,192 side of that comparison is still **quoted rather than re-measured
+  with the same tool over the same journal**, which is what the acceptance
+  rule's "coverage-matched" wording asks for. That run needs roughly 12 GB of
+  spill under the runner temp, which is the coordinator's root disk rather than
+  the 1 TB `/srv/zakura` volume.
+- **No two-tier set has been published or served, and nothing has been measured
+  on a droplet at archive geometry.** The registry, the mixed publisher, the
+  bounded cache and the revision routes are implemented, tested, and now live at
+  `recent-8k`. But the 91.1 GiB fleet-RAM figure is `reserved_bytes` arithmetic
+  rather than RSS; `shard-residency` and `shard-scaling` have never run at
+  32,768/65,536; and the "saturates at two threads" result behind
+  `--query-slots 2` came from a 16-core Apple Silicon machine. The census
+  settles what a geometry *contains*, not what it costs to serve.
+- ~~**Which limit binds is not uniform along the chain.**~~ **At `archive-wide`
+  it is uniform**: all 161 sealed shards closed on page rows and not one reached
+  the 393,216-script target. The non-uniformity is a property of 8,192, where
+  the directory is tight enough to bind sometimes; a directory that is never the
+  constraint cannot vary in whether it constrains. Still true at 8,192, where
+  1,042 shards close on page rows and 48 on scripts.
+- ~~**The directory is slack at wide geometry and could be narrowed.**~~
+  **Confirmed by the real placer**: 162 of 162 shards fit one directory segment,
+  fullest row 11 of 14 slots, busiest shard 284,221 scripts against 458,752
+  capacity — 62.0%, exactly what this section predicted. Fleet plaintext came in
+  at 57.1 GB against the 76.1 GB projected for 65,536/65,536, because shard
+  count is set by the page table and a narrower directory pins half the bytes
+  for free. Do **not** pair a 16,384 directory with 32,768 pages: 223,711 observed
   against 229,376 capacity is 2.5% headroom, and one shard overflowing into a
   second segment costs every wallet an extra directory query.
 - **Concurrency under restoration load is untested.** Cold shards are packed

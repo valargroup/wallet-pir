@@ -89,6 +89,18 @@ Note that a census is a function of the seal parameters compiled into the
 binary at the time it ran; `census-baseline.txt` cannot be regenerated from
 current `main` without reverting the geometry.
 
+## `archive-wide`, added 2026-09-07
+
+[`fullchain-archive-wide.txt`](fullchain-archive-wide.txt) and
+[`fullchain-archive-wide-matches.txt`](fullchain-archive-wide-matches.txt) are
+`fullchain-*` in scope — the complete genesis-to-tip journal — and are the
+first census of a geometry whose directory and page tables have *different* row
+counts, and the first direct measurement of `g` at anything other than the
+pinned 8,192. Unlike everything above them they were produced by a binary that
+takes the geometry as an argument, so they can be regenerated from `main`:
+the run inputs, anchor and build SHA are in
+[fullchain-archive-wide-notes.md](fullchain-archive-wide-notes.md).
+
 The `genesis-*` files are the exception to all of the above. They read a
 different journal — genesis through ~330,000, not Ironwood onward — and so
 compare with each other and with nothing else here. See
