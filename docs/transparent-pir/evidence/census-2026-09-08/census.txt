@@ -1,0 +1,1183 @@
+journal: heights 0-3473686, 3473687 blocks, 352873356 events
+genesis: 00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08
+census:  heights 0-3473686 inclusive, anchor 0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d
+
+two tiers: archive-wide 0-3262748 at SealPolicy { scripts: Limit { target: 393216, capacity: 458752 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k 3262749-3473686 at SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+counting shard matches per script across both tiers, spilling under /srv/zakura/census-spill.807448
+
+=== density across the chain (4096 blocks per bucket) ===
+         0-4095        69.0 events/block
+      4096-8191       174.3 events/block
+      8192-12287      311.3 events/block
+     12288-16383      393.2 events/block
+     16384-20479      305.5 events/block
+     20480-24575      327.0 events/block
+     24576-28671      250.6 events/block
+     28672-32767      230.9 events/block
+     32768-36863      245.9 events/block
+     36864-40959      220.0 events/block
+     40960-45055      206.7 events/block
+     45056-49151      220.5 events/block
+     49152-53247      209.2 events/block
+     53248-57343      200.3 events/block
+     57344-61439      252.7 events/block
+     61440-65535      197.7 events/block
+     65536-69631      196.5 events/block
+     69632-73727      232.8 events/block
+     73728-77823      235.4 events/block
+     77824-81919      243.8 events/block
+     81920-86015      234.7 events/block
+     86016-90111      225.2 events/block
+     90112-94207      228.1 events/block
+     94208-98303      232.9 events/block
+     98304-102399     257.0 events/block
+    102400-106495     571.9 events/block
+    106496-110591    2171.1 events/block
+    110592-114687     257.2 events/block
+    114688-118783     248.0 events/block
+    118784-122879     283.7 events/block
+    122880-126975     303.3 events/block
+    126976-131071     362.8 events/block
+    131072-135167     367.5 events/block
+    135168-139263     365.9 events/block
+    139264-143359     361.9 events/block
+    143360-147455     383.6 events/block
+    147456-151551     345.7 events/block
+    151552-155647     366.0 events/block
+    155648-159743     375.0 events/block
+    159744-163839     398.4 events/block
+    163840-167935     474.6 events/block
+    167936-172031     531.3 events/block
+    172032-176127     435.1 events/block
+    176128-180223     402.2 events/block
+    180224-184319     436.4 events/block
+    184320-188415     471.8 events/block
+    188416-192511     576.3 events/block
+    192512-196607     566.0 events/block
+    196608-200703     478.8 events/block
+    200704-204799     524.8 events/block
+    204800-208895     524.4 events/block
+    208896-212991     604.7 events/block
+    212992-217087     423.0 events/block
+    217088-221183     525.7 events/block
+    221184-225279     506.2 events/block
+    225280-229375     619.9 events/block
+    229376-233471     550.7 events/block
+    233472-237567     716.3 events/block
+    237568-241663     719.8 events/block
+    241664-245759     859.4 events/block
+    245760-249855     633.3 events/block
+    249856-253951     680.5 events/block
+    253952-258047     650.9 events/block
+    258048-262143     617.7 events/block
+    262144-266239     627.5 events/block
+    266240-270335     673.1 events/block
+    270336-274431     616.0 events/block
+    274432-278527     553.9 events/block
+    278528-282623     669.0 events/block
+    282624-286719     544.4 events/block
+    286720-290815     453.6 events/block
+    290816-294911     553.3 events/block
+    294912-299007     647.3 events/block
+    299008-303103     517.1 events/block
+    303104-307199     499.3 events/block
+    307200-311295     503.5 events/block
+    311296-315391     507.3 events/block
+    315392-319487     736.5 events/block
+    319488-323583     811.3 events/block
+    323584-327679    1022.1 events/block
+    327680-331775     958.2 events/block
+    331776-335871     849.0 events/block
+    335872-339967     914.4 events/block
+    339968-344063     838.8 events/block
+    344064-348159     695.3 events/block
+    348160-352255     296.1 events/block
+    352256-356351     310.2 events/block
+    356352-360447     723.0 events/block
+    360448-364543     457.4 events/block
+    364544-368639     264.8 events/block
+    368640-372735     199.4 events/block
+    372736-376831     193.9 events/block
+    376832-380927     162.4 events/block
+    380928-385023     166.1 events/block
+    385024-389119     166.6 events/block
+    389120-393215     161.0 events/block
+    393216-397311     159.0 events/block
+    397312-401407     140.2 events/block
+    401408-405503     146.1 events/block
+    405504-409599     131.1 events/block
+    409600-413695     127.5 events/block
+    413696-417791     121.2 events/block
+    417792-421887     108.6 events/block
+    421888-425983     125.0 events/block
+    425984-430079     140.1 events/block
+    430080-434175     129.3 events/block
+    434176-438271     125.6 events/block
+    438272-442367     109.1 events/block
+    442368-446463     110.3 events/block
+    446464-450559      99.8 events/block
+    450560-454655     139.1 events/block
+    454656-458751     120.4 events/block
+    458752-462847     111.1 events/block
+    462848-466943     104.7 events/block
+    466944-471039     111.6 events/block
+    471040-475135     319.8 events/block
+    475136-479231      98.8 events/block
+    479232-483327     100.2 events/block
+    483328-487423     104.9 events/block
+    487424-491519     101.4 events/block
+    491520-495615     106.9 events/block
+    495616-499711      91.1 events/block
+    499712-503807      93.4 events/block
+    503808-507903     102.1 events/block
+    507904-511999     112.7 events/block
+    512000-516095      91.6 events/block
+    516096-520191     102.1 events/block
+    520192-524287      90.3 events/block
+    524288-528383      90.9 events/block
+    528384-532479     106.5 events/block
+    532480-536575     109.6 events/block
+    536576-540671     107.1 events/block
+    540672-544767     100.6 events/block
+    544768-548863      84.3 events/block
+    548864-552959     102.1 events/block
+    552960-557055     114.2 events/block
+    557056-561151     104.7 events/block
+    561152-565247     116.8 events/block
+    565248-569343     106.9 events/block
+    569344-573439      98.7 events/block
+    573440-577535     105.4 events/block
+    577536-581631     121.8 events/block
+    581632-585727     146.0 events/block
+    585728-589823     229.2 events/block
+    589824-593919     109.2 events/block
+    593920-598015     169.2 events/block
+    598016-602111     484.0 events/block
+    602112-606207     484.1 events/block
+    606208-610303     267.2 events/block
+    610304-614399      84.5 events/block
+    614400-618495      94.2 events/block
+    618496-622591     123.1 events/block
+    622592-626687     115.9 events/block
+    626688-630783     102.3 events/block
+    630784-634879      95.0 events/block
+    634880-638975      71.1 events/block
+    638976-643071      60.5 events/block
+    643072-647167      66.8 events/block
+    647168-651263      66.2 events/block
+    651264-655359      50.3 events/block
+    655360-659455      30.9 events/block
+    659456-663551      36.2 events/block
+    663552-667647      31.7 events/block
+    667648-671743      31.3 events/block
+    671744-675839      33.7 events/block
+    675840-679935      30.7 events/block
+    679936-684031      33.1 events/block
+    684032-688127      32.3 events/block
+    688128-692223      42.5 events/block
+    692224-696319      65.2 events/block
+    696320-700415      40.0 events/block
+    700416-704511      46.3 events/block
+    704512-708607      44.7 events/block
+    708608-712703      43.7 events/block
+    712704-716799      36.7 events/block
+    716800-720895      39.9 events/block
+    720896-724991      50.7 events/block
+    724992-729087      41.9 events/block
+    729088-733183      38.3 events/block
+    733184-737279      33.9 events/block
+    737280-741375      37.8 events/block
+    741376-745471      34.2 events/block
+    745472-749567      36.2 events/block
+    749568-753663      38.0 events/block
+    753664-757759      47.4 events/block
+    757760-761855      71.5 events/block
+    761856-765951      54.0 events/block
+    765952-770047      44.5 events/block
+    770048-774143      32.8 events/block
+    774144-778239      33.2 events/block
+    778240-782335      35.9 events/block
+    782336-786431      31.0 events/block
+    786432-790527      35.7 events/block
+    790528-794623      35.7 events/block
+    794624-798719      31.6 events/block
+    798720-802815      36.3 events/block
+    802816-806911      93.6 events/block
+    806912-811007      73.4 events/block
+    811008-815103      52.7 events/block
+    815104-819199      53.4 events/block
+    819200-823295      40.8 events/block
+    823296-827391      45.1 events/block
+    827392-831487      49.1 events/block
+    831488-835583      50.4 events/block
+    835584-839679      42.3 events/block
+    839680-843775      39.3 events/block
+    843776-847871      41.1 events/block
+    847872-851967      43.8 events/block
+    851968-856063      49.3 events/block
+    856064-860159      47.6 events/block
+    860160-864255      52.3 events/block
+    864256-868351      37.1 events/block
+    868352-872447      45.5 events/block
+    872448-876543      34.0 events/block
+    876544-880639      39.2 events/block
+    880640-884735      32.0 events/block
+    884736-888831      34.0 events/block
+    888832-892927      32.6 events/block
+    892928-897023      34.3 events/block
+    897024-901119      36.1 events/block
+    901120-905215      32.4 events/block
+    905216-909311      38.3 events/block
+    909312-913407      42.5 events/block
+    913408-917503      49.9 events/block
+    917504-921599      49.3 events/block
+    921600-925695      60.7 events/block
+    925696-929791      76.0 events/block
+    929792-933887      59.4 events/block
+    933888-937983      59.2 events/block
+    937984-942079      63.8 events/block
+    942080-946175      62.6 events/block
+    946176-950271      65.5 events/block
+    950272-954367      63.6 events/block
+    954368-958463      67.9 events/block
+    958464-962559      85.2 events/block
+    962560-966655      72.7 events/block
+    966656-970751      70.7 events/block
+    970752-974847      66.0 events/block
+    974848-978943      71.1 events/block
+    978944-983039     100.7 events/block
+    983040-987135      69.4 events/block
+    987136-991231      72.4 events/block
+    991232-995327      73.0 events/block
+    995328-999423      73.4 events/block
+    999424-1003519     83.1 events/block
+   1003520-1007615     83.1 events/block
+   1007616-1011711     79.5 events/block
+   1011712-1015807     77.5 events/block
+   1015808-1019903     75.3 events/block
+   1019904-1023999     71.1 events/block
+   1024000-1028095     70.3 events/block
+   1028096-1032191     75.5 events/block
+   1032192-1036287     72.6 events/block
+   1036288-1040383     77.4 events/block
+   1040384-1044479     72.4 events/block
+   1044480-1048575     82.2 events/block
+   1048576-1052671     85.6 events/block
+   1052672-1056767     77.9 events/block
+   1056768-1060863     64.6 events/block
+   1060864-1064959     74.8 events/block
+   1064960-1069055     77.1 events/block
+   1069056-1073151     68.8 events/block
+   1073152-1077247     64.7 events/block
+   1077248-1081343     81.5 events/block
+   1081344-1085439    130.9 events/block
+   1085440-1089535     68.6 events/block
+   1089536-1093631     70.5 events/block
+   1093632-1097727     63.3 events/block
+   1097728-1101823    105.0 events/block
+   1101824-1105919     89.3 events/block
+   1105920-1110015    135.6 events/block
+   1110016-1114111    104.5 events/block
+   1114112-1118207     91.7 events/block
+   1118208-1122303     89.9 events/block
+   1122304-1126399     84.5 events/block
+   1126400-1130495    157.6 events/block
+   1130496-1134591    153.8 events/block
+   1134592-1138687     98.9 events/block
+   1138688-1142783    100.2 events/block
+   1142784-1146879    116.5 events/block
+   1146880-1150975     99.1 events/block
+   1150976-1155071    102.6 events/block
+   1155072-1159167    101.2 events/block
+   1159168-1163263     94.8 events/block
+   1163264-1167359     98.2 events/block
+   1167360-1171455     95.0 events/block
+   1171456-1175551     85.0 events/block
+   1175552-1179647     96.1 events/block
+   1179648-1183743    101.8 events/block
+   1183744-1187839     90.1 events/block
+   1187840-1191935    103.0 events/block
+   1191936-1196031     98.0 events/block
+   1196032-1200127    101.9 events/block
+   1200128-1204223    110.2 events/block
+   1204224-1208319    111.6 events/block
+   1208320-1212415    112.2 events/block
+   1212416-1216511    204.8 events/block
+   1216512-1220607    128.4 events/block
+   1220608-1224703    117.1 events/block
+   1224704-1228799     97.4 events/block
+   1228800-1232895     99.3 events/block
+   1232896-1236991    102.8 events/block
+   1236992-1241087    117.7 events/block
+   1241088-1245183    114.4 events/block
+   1245184-1249279    108.9 events/block
+   1249280-1253375     74.9 events/block
+   1253376-1257471    102.5 events/block
+   1257472-1261567     92.2 events/block
+   1261568-1265663     86.7 events/block
+   1265664-1269759     90.1 events/block
+   1269760-1273855     93.9 events/block
+   1273856-1277951     92.9 events/block
+   1277952-1282047     92.6 events/block
+   1282048-1286143     94.2 events/block
+   1286144-1290239     65.8 events/block
+   1290240-1294335     84.7 events/block
+   1294336-1298431     80.6 events/block
+   1298432-1302527     80.9 events/block
+   1302528-1306623     90.0 events/block
+   1306624-1310719    120.4 events/block
+   1310720-1314815     97.0 events/block
+   1314816-1318911    108.2 events/block
+   1318912-1323007     81.5 events/block
+   1323008-1327103     91.1 events/block
+   1327104-1331199     76.4 events/block
+   1331200-1335295     95.7 events/block
+   1335296-1339391     77.1 events/block
+   1339392-1343487     96.0 events/block
+   1343488-1347583     76.4 events/block
+   1347584-1351679     95.8 events/block
+   1351680-1355775     78.5 events/block
+   1355776-1359871     95.3 events/block
+   1359872-1363967     88.7 events/block
+   1363968-1368063     96.7 events/block
+   1368064-1372159     78.7 events/block
+   1372160-1376255     93.7 events/block
+   1376256-1380351     81.0 events/block
+   1380352-1384447     95.3 events/block
+   1384448-1388543     78.2 events/block
+   1388544-1392639     89.8 events/block
+   1392640-1396735     85.9 events/block
+   1396736-1400831     76.1 events/block
+   1400832-1404927     67.4 events/block
+   1404928-1409023     80.7 events/block
+   1409024-1413119     58.6 events/block
+   1413120-1417215     50.4 events/block
+   1417216-1421311     50.1 events/block
+   1421312-1425407     51.0 events/block
+   1425408-1429503     66.4 events/block
+   1429504-1433599     54.9 events/block
+   1433600-1437695     69.8 events/block
+   1437696-1441791     74.6 events/block
+   1441792-1445887     68.9 events/block
+   1445888-1449983     53.7 events/block
+   1449984-1454079     66.9 events/block
+   1454080-1458175     62.5 events/block
+   1458176-1462271     66.9 events/block
+   1462272-1466367     60.5 events/block
+   1466368-1470463     71.4 events/block
+   1470464-1474559     67.4 events/block
+   1474560-1478655     68.9 events/block
+   1478656-1482751     53.6 events/block
+   1482752-1486847     67.6 events/block
+   1486848-1490943     65.1 events/block
+   1490944-1495039     96.1 events/block
+   1495040-1499135     54.5 events/block
+   1499136-1503231     64.7 events/block
+   1503232-1507327     53.0 events/block
+   1507328-1511423     67.1 events/block
+   1511424-1515519     54.5 events/block
+   1515520-1519615     58.8 events/block
+   1519616-1523711     53.7 events/block
+   1523712-1527807     49.3 events/block
+   1527808-1531903     49.3 events/block
+   1531904-1535999     48.8 events/block
+   1536000-1540095     56.4 events/block
+   1540096-1544191     77.8 events/block
+   1544192-1548287     48.1 events/block
+   1548288-1552383     63.9 events/block
+   1552384-1556479     50.9 events/block
+   1556480-1560575     57.3 events/block
+   1560576-1564671     50.3 events/block
+   1564672-1568767     63.9 events/block
+   1568768-1572863     49.7 events/block
+   1572864-1576959     57.0 events/block
+   1576960-1581055     55.0 events/block
+   1581056-1585151     55.3 events/block
+   1585152-1589247     49.6 events/block
+   1589248-1593343    217.2 events/block
+   1593344-1597439    410.2 events/block
+   1597440-1601535     55.7 events/block
+   1601536-1605631     54.3 events/block
+   1605632-1609727     58.0 events/block
+   1609728-1613823     57.0 events/block
+   1613824-1617919     57.6 events/block
+   1617920-1622015     59.0 events/block
+   1622016-1626111     56.7 events/block
+   1626112-1630207     62.6 events/block
+   1630208-1634303     44.5 events/block
+   1634304-1638399     51.4 events/block
+   1638400-1642495     46.2 events/block
+   1642496-1646591     58.9 events/block
+   1646592-1650687     49.4 events/block
+   1650688-1654783     62.9 events/block
+   1654784-1658879     49.5 events/block
+   1658880-1662975     63.6 events/block
+   1662976-1667071     44.4 events/block
+   1667072-1671167     48.8 events/block
+   1671168-1675263     55.1 events/block
+   1675264-1679359     85.9 events/block
+   1679360-1683455     70.1 events/block
+   1683456-1687551     69.3 events/block
+   1687552-1691647     38.2 events/block
+   1691648-1695743     57.8 events/block
+   1695744-1699839     54.8 events/block
+   1699840-1703935     57.9 events/block
+   1703936-1708031     43.2 events/block
+   1708032-1712127     48.5 events/block
+   1712128-1716223     34.2 events/block
+   1716224-1720319     43.4 events/block
+   1720320-1724415     38.4 events/block
+   1724416-1728511     43.7 events/block
+   1728512-1732607     28.4 events/block
+   1732608-1736703     36.6 events/block
+   1736704-1740799     31.6 events/block
+   1740800-1744895     42.5 events/block
+   1744896-1748991     31.6 events/block
+   1748992-1753087     50.0 events/block
+   1753088-1757183     29.4 events/block
+   1757184-1761279     46.3 events/block
+   1761280-1765375     41.0 events/block
+   1765376-1769471     56.5 events/block
+   1769472-1773567     36.6 events/block
+   1773568-1777663     48.0 events/block
+   1777664-1781759     35.2 events/block
+   1781760-1785855     94.0 events/block
+   1785856-1789951    398.1 events/block
+   1789952-1794047     39.7 events/block
+   1794048-1798143     45.4 events/block
+   1798144-1802239     39.3 events/block
+   1802240-1806335     29.0 events/block
+   1806336-1810431     42.3 events/block
+   1810432-1814527     26.8 events/block
+   1814528-1818623     35.8 events/block
+   1818624-1822719     38.9 events/block
+   1822720-1826815     35.7 events/block
+   1826816-1830911     38.0 events/block
+   1830912-1835007     42.3 events/block
+   1835008-1839103     51.9 events/block
+   1839104-1843199     44.5 events/block
+   1843200-1847295     45.1 events/block
+   1847296-1851391     39.4 events/block
+   1851392-1855487     43.5 events/block
+   1855488-1859583     45.9 events/block
+   1859584-1863679    130.4 events/block
+   1863680-1867775    476.8 events/block
+   1867776-1871871    452.8 events/block
+   1871872-1875967    405.2 events/block
+   1875968-1880063    147.0 events/block
+   1880064-1884159     78.2 events/block
+   1884160-1888255     38.7 events/block
+   1888256-1892351     33.8 events/block
+   1892352-1896447     42.5 events/block
+   1896448-1900543     35.8 events/block
+   1900544-1904639     66.5 events/block
+   1904640-1908735     35.2 events/block
+   1908736-1912831     47.8 events/block
+   1912832-1916927     39.4 events/block
+   1916928-1921023     43.6 events/block
+   1921024-1925119     32.2 events/block
+   1925120-1929215     41.8 events/block
+   1929216-1933311     42.6 events/block
+   1933312-1937407     49.9 events/block
+   1937408-1941503     34.7 events/block
+   1941504-1945599     43.5 events/block
+   1945600-1949695     35.5 events/block
+   1949696-1953791     45.0 events/block
+   1953792-1957887     32.1 events/block
+   1957888-1961983     28.2 events/block
+   1961984-1966079     29.8 events/block
+   1966080-1970175     44.3 events/block
+   1970176-1974271     39.4 events/block
+   1974272-1978367     33.2 events/block
+   1978368-1982463     39.6 events/block
+   1982464-1986559     41.5 events/block
+   1986560-1990655     36.0 events/block
+   1990656-1994751     36.4 events/block
+   1994752-1998847     50.9 events/block
+   1998848-2002943     41.1 events/block
+   2002944-2007039     51.4 events/block
+   2007040-2011135     37.9 events/block
+   2011136-2015231     38.0 events/block
+   2015232-2019327     38.4 events/block
+   2019328-2023423     47.5 events/block
+   2023424-2027519     42.4 events/block
+   2027520-2031615     45.9 events/block
+   2031616-2035711     40.0 events/block
+   2035712-2039807     43.8 events/block
+   2039808-2043903     43.3 events/block
+   2043904-2047999     47.7 events/block
+   2048000-2052095     49.7 events/block
+   2052096-2056191     37.1 events/block
+   2056192-2060287     42.4 events/block
+   2060288-2064383     47.1 events/block
+   2064384-2068479     39.5 events/block
+   2068480-2072575     41.8 events/block
+   2072576-2076671     42.2 events/block
+   2076672-2080767     44.7 events/block
+   2080768-2084863     37.4 events/block
+   2084864-2088959     43.2 events/block
+   2088960-2093055     36.0 events/block
+   2093056-2097151     38.3 events/block
+   2097152-2101247     45.0 events/block
+   2101248-2105343     34.8 events/block
+   2105344-2109439     30.4 events/block
+   2109440-2113535     45.2 events/block
+   2113536-2117631     31.8 events/block
+   2117632-2121727     27.6 events/block
+   2121728-2125823     27.1 events/block
+   2125824-2129919     40.3 events/block
+   2129920-2134015     24.5 events/block
+   2134016-2138111     17.3 events/block
+   2138112-2142207     34.0 events/block
+   2142208-2146303     25.7 events/block
+   2146304-2150399     16.1 events/block
+   2150400-2154495     18.7 events/block
+   2154496-2158591     20.4 events/block
+   2158592-2162687     26.1 events/block
+   2162688-2166783     27.5 events/block
+   2166784-2170879     27.2 events/block
+   2170880-2174975     27.3 events/block
+   2174976-2179071     62.2 events/block
+   2179072-2183167     64.5 events/block
+   2183168-2187263     82.5 events/block
+   2187264-2191359     71.3 events/block
+   2191360-2195455     84.2 events/block
+   2195456-2199551     76.1 events/block
+   2199552-2203647     79.6 events/block
+   2203648-2207743     90.4 events/block
+   2207744-2211839     73.5 events/block
+   2211840-2215935     61.3 events/block
+   2215936-2220031     82.2 events/block
+   2220032-2224127     75.6 events/block
+   2224128-2228223     82.4 events/block
+   2228224-2232319     69.0 events/block
+   2232320-2236415     93.7 events/block
+   2236416-2240511     81.0 events/block
+   2240512-2244607     88.9 events/block
+   2244608-2248703     75.5 events/block
+   2248704-2252799     79.6 events/block
+   2252800-2256895     70.2 events/block
+   2256896-2260991     81.5 events/block
+   2260992-2265087     66.6 events/block
+   2265088-2269183     73.5 events/block
+   2269184-2273279     69.0 events/block
+   2273280-2277375     77.4 events/block
+   2277376-2281471     70.4 events/block
+   2281472-2285567     69.5 events/block
+   2285568-2289663     70.6 events/block
+   2289664-2293759     68.8 events/block
+   2293760-2297855     60.5 events/block
+   2297856-2301951     25.1 events/block
+   2301952-2306047     17.2 events/block
+   2306048-2310143     17.2 events/block
+   2310144-2314239     15.8 events/block
+   2314240-2318335     27.2 events/block
+   2318336-2322431     21.1 events/block
+   2322432-2326527     30.5 events/block
+   2326528-2330623     26.2 events/block
+   2330624-2334719     24.2 events/block
+   2334720-2338815     19.5 events/block
+   2338816-2342911     26.0 events/block
+   2342912-2347007     17.7 events/block
+   2347008-2351103     18.6 events/block
+   2351104-2355199     20.3 events/block
+   2355200-2359295     30.6 events/block
+   2359296-2363391     26.6 events/block
+   2363392-2367487     27.9 events/block
+   2367488-2371583     22.6 events/block
+   2371584-2375679     23.2 events/block
+   2375680-2379775     24.6 events/block
+   2379776-2383871     27.9 events/block
+   2383872-2387967     17.0 events/block
+   2387968-2392063     13.3 events/block
+   2392064-2396159     19.1 events/block
+   2396160-2400255     15.3 events/block
+   2400256-2404351     25.5 events/block
+   2404352-2408447     25.5 events/block
+   2408448-2412543     27.3 events/block
+   2412544-2416639     21.2 events/block
+   2416640-2420735     33.2 events/block
+   2420736-2424831     28.5 events/block
+   2424832-2428927     83.5 events/block
+   2428928-2433023     20.0 events/block
+   2433024-2437119     19.1 events/block
+   2437120-2441215     17.3 events/block
+   2441216-2445311     27.7 events/block
+   2445312-2449407     25.5 events/block
+   2449408-2453503     26.5 events/block
+   2453504-2457599     24.9 events/block
+   2457600-2461695     27.1 events/block
+   2461696-2465791     23.0 events/block
+   2465792-2469887     24.0 events/block
+   2469888-2473983     22.0 events/block
+   2473984-2478079     24.1 events/block
+   2478080-2482175     24.5 events/block
+   2482176-2486271     34.2 events/block
+   2486272-2490367     27.7 events/block
+   2490368-2494463     30.4 events/block
+   2494464-2498559     32.0 events/block
+   2498560-2502655     40.9 events/block
+   2502656-2506751     27.8 events/block
+   2506752-2510847     31.4 events/block
+   2510848-2514943     29.8 events/block
+   2514944-2519039     28.5 events/block
+   2519040-2523135     33.2 events/block
+   2523136-2527231     30.6 events/block
+   2527232-2531327     28.5 events/block
+   2531328-2535423     32.7 events/block
+   2535424-2539519     68.4 events/block
+   2539520-2543615     71.0 events/block
+   2543616-2547711     67.2 events/block
+   2547712-2551807     69.1 events/block
+   2551808-2555903     65.9 events/block
+   2555904-2559999     68.9 events/block
+   2560000-2564095     66.5 events/block
+   2564096-2568191     70.5 events/block
+   2568192-2572287     67.0 events/block
+   2572288-2576383     57.7 events/block
+   2576384-2580479     84.4 events/block
+   2580480-2584575     69.8 events/block
+   2584576-2588671     72.5 events/block
+   2588672-2592767     69.0 events/block
+   2592768-2596863     82.4 events/block
+   2596864-2600959     67.9 events/block
+   2600960-2605055     73.2 events/block
+   2605056-2609151     59.5 events/block
+   2609152-2613247     64.2 events/block
+   2613248-2617343     59.3 events/block
+   2617344-2621439     64.3 events/block
+   2621440-2625535     59.4 events/block
+   2625536-2629631     66.3 events/block
+   2629632-2633727     62.4 events/block
+   2633728-2637823     61.9 events/block
+   2637824-2641919     45.0 events/block
+   2641920-2646015     56.4 events/block
+   2646016-2650111     65.6 events/block
+   2650112-2654207     61.2 events/block
+   2654208-2658303     57.6 events/block
+   2658304-2662399     68.7 events/block
+   2662400-2666495     58.3 events/block
+   2666496-2670591     60.6 events/block
+   2670592-2674687     57.6 events/block
+   2674688-2678783     61.6 events/block
+   2678784-2682879     57.3 events/block
+   2682880-2686975     52.6 events/block
+   2686976-2691071     47.2 events/block
+   2691072-2695167     47.8 events/block
+   2695168-2699263     50.9 events/block
+   2699264-2703359     47.1 events/block
+   2703360-2707455     37.7 events/block
+   2707456-2711551     17.1 events/block
+   2711552-2715647     14.4 events/block
+   2715648-2719743     23.0 events/block
+   2719744-2723839     13.2 events/block
+   2723840-2727935     17.0 events/block
+   2727936-2732031     18.7 events/block
+   2732032-2736127     10.1 events/block
+   2736128-2740223     16.3 events/block
+   2740224-2744319     11.5 events/block
+   2744320-2748415     11.0 events/block
+   2748416-2752511      8.2 events/block
+   2752512-2756607     10.4 events/block
+   2756608-2760703      8.8 events/block
+   2760704-2764799     10.6 events/block
+   2764800-2768895      8.3 events/block
+   2768896-2772991      8.2 events/block
+   2772992-2777087     12.3 events/block
+   2777088-2781183     12.3 events/block
+   2781184-2785279      8.8 events/block
+   2785280-2789375     12.1 events/block
+   2789376-2793471     13.9 events/block
+   2793472-2797567      9.3 events/block
+   2797568-2801663      7.9 events/block
+   2801664-2805759     10.7 events/block
+   2805760-2809855      9.4 events/block
+   2809856-2813951      9.9 events/block
+   2813952-2818047      8.3 events/block
+   2818048-2822143      9.2 events/block
+   2822144-2826239      8.2 events/block
+   2826240-2830335      9.4 events/block
+   2830336-2834431      8.1 events/block
+   2834432-2838527     10.4 events/block
+   2838528-2842623      8.4 events/block
+   2842624-2846719      9.5 events/block
+   2846720-2850815      8.5 events/block
+   2850816-2854911      9.2 events/block
+   2854912-2859007      8.0 events/block
+   2859008-2863103      9.4 events/block
+   2863104-2867199      7.5 events/block
+   2867200-2871295      8.8 events/block
+   2871296-2875391      8.3 events/block
+   2875392-2879487      9.0 events/block
+   2879488-2883583     11.2 events/block
+   2883584-2887679      9.8 events/block
+   2887680-2891775      7.7 events/block
+   2891776-2895871      8.6 events/block
+   2895872-2899967      7.4 events/block
+   2899968-2904063     10.8 events/block
+   2904064-2908159      6.8 events/block
+   2908160-2912255      9.3 events/block
+   2912256-2916351      9.3 events/block
+   2916352-2920447      9.2 events/block
+   2920448-2924543      7.2 events/block
+   2924544-2928639      9.1 events/block
+   2928640-2932735      7.3 events/block
+   2932736-2936831     10.1 events/block
+   2936832-2940927      8.4 events/block
+   2940928-2945023      9.2 events/block
+   2945024-2949119      7.8 events/block
+   2949120-2953215      8.4 events/block
+   2953216-2957311      8.4 events/block
+   2957312-2961407      6.2 events/block
+   2961408-2965503      6.4 events/block
+   2965504-2969599      5.8 events/block
+   2969600-2973695      8.9 events/block
+   2973696-2977791      6.1 events/block
+   2977792-2981887     10.4 events/block
+   2981888-2985983      6.5 events/block
+   2985984-2990079      8.7 events/block
+   2990080-2994175      7.1 events/block
+   2994176-2998271      9.4 events/block
+   2998272-3002367      6.9 events/block
+   3002368-3006463      8.8 events/block
+   3006464-3010559      6.5 events/block
+   3010560-3014655      8.2 events/block
+   3014656-3018751      6.7 events/block
+   3018752-3022847      9.1 events/block
+   3022848-3026943      7.9 events/block
+   3026944-3031039      9.7 events/block
+   3031040-3035135      7.3 events/block
+   3035136-3039231      9.3 events/block
+   3039232-3043327      7.1 events/block
+   3043328-3047423      9.4 events/block
+   3047424-3051519      7.1 events/block
+   3051520-3055615     10.3 events/block
+   3055616-3059711      8.2 events/block
+   3059712-3063807      9.8 events/block
+   3063808-3067903      9.6 events/block
+   3067904-3071999     10.3 events/block
+   3072000-3076095      8.0 events/block
+   3076096-3080191     11.6 events/block
+   3080192-3084287     15.6 events/block
+   3084288-3088383     40.1 events/block
+   3088384-3092479     23.4 events/block
+   3092480-3096575     46.1 events/block
+   3096576-3100671     27.7 events/block
+   3100672-3104767     21.9 events/block
+   3104768-3108863     21.2 events/block
+   3108864-3112959     24.8 events/block
+   3112960-3117055     30.1 events/block
+   3117056-3121151     33.1 events/block
+   3121152-3125247     40.2 events/block
+   3125248-3129343     54.6 events/block
+   3129344-3133439     57.0 events/block
+   3133440-3137535    197.6 events/block
+   3137536-3141631     87.2 events/block
+   3141632-3145727     86.4 events/block
+   3145728-3149823     29.1 events/block
+   3149824-3153919     23.6 events/block
+   3153920-3158015     23.9 events/block
+   3158016-3162111     16.7 events/block
+   3162112-3166207     29.2 events/block
+   3166208-3170303     22.5 events/block
+   3170304-3174399     24.2 events/block
+   3174400-3178495     18.7 events/block
+   3178496-3182591     18.3 events/block
+   3182592-3186687     23.8 events/block
+   3186688-3190783     23.8 events/block
+   3190784-3194879     22.9 events/block
+   3194880-3198975     29.4 events/block
+   3198976-3203071     23.8 events/block
+   3203072-3207167     24.1 events/block
+   3207168-3211263     19.0 events/block
+   3211264-3215359     21.4 events/block
+   3215360-3219455     18.5 events/block
+   3219456-3223551     22.8 events/block
+   3223552-3227647     21.6 events/block
+   3227648-3231743     24.9 events/block
+   3231744-3235839     15.5 events/block
+   3235840-3239935     21.9 events/block
+   3239936-3244031     18.3 events/block
+   3244032-3248127     18.1 events/block
+   3248128-3252223     15.3 events/block
+   3252224-3256319     21.1 events/block
+   3256320-3260415     15.6 events/block
+   3260416-3264511     20.2 events/block
+   3264512-3268607     18.7 events/block
+   3268608-3272703     23.1 events/block
+   3272704-3276799     24.7 events/block
+   3276800-3280895     20.4 events/block
+   3280896-3284991     16.0 events/block
+   3284992-3289087     16.0 events/block
+   3289088-3293183     19.4 events/block
+   3293184-3297279     17.3 events/block
+   3297280-3301375     20.3 events/block
+   3301376-3305471     26.4 events/block
+   3305472-3309567     21.1 events/block
+   3309568-3313663     15.4 events/block
+   3313664-3317759     14.5 events/block
+   3317760-3321855     16.1 events/block
+   3321856-3325951     15.5 events/block
+   3325952-3330047     18.7 events/block
+   3330048-3334143     33.8 events/block
+   3334144-3338239     25.6 events/block
+   3338240-3342335     22.0 events/block
+   3342336-3346431     67.3 events/block
+   3346432-3350527     38.7 events/block
+   3350528-3354623     25.1 events/block
+   3354624-3358719     24.2 events/block
+   3358720-3362815     17.8 events/block
+   3362816-3366911     14.9 events/block
+   3366912-3371007     18.7 events/block
+   3371008-3375103     16.3 events/block
+   3375104-3379199     15.8 events/block
+   3379200-3383295     15.9 events/block
+   3383296-3387391     14.6 events/block
+   3387392-3391487     16.8 events/block
+   3391488-3395583     12.3 events/block
+   3395584-3399679     16.4 events/block
+   3399680-3403775     11.5 events/block
+   3403776-3407871     15.7 events/block
+   3407872-3411967     13.8 events/block
+   3411968-3416063     18.2 events/block
+   3416064-3420159     11.4 events/block
+   3420160-3424255     17.7 events/block
+   3424256-3428351     11.7 events/block
+   3428352-3432447     13.1 events/block
+   3432448-3436543     21.1 events/block
+   3436544-3440639     14.1 events/block
+   3440640-3444735     11.8 events/block
+   3444736-3448831     12.2 events/block
+   3448832-3452927     14.6 events/block
+   3452928-3457023     25.4 events/block
+   3457024-3461119     22.2 events/block
+   3461120-3465215     18.1 events/block
+   3465216-3469311     20.1 events/block
+   3469312-3473407     38.7 events/block
+   3473408-3473686     42.0 events/block
+
+=== archive tier: archive-wide 0-3262748 ===
+  shards 160 (160 sealed, 0 tail)
+  sealed by geometry change          1
+  sealed by target: page rows        159
+  per_shard	shard_id	start	end	blocks	scripts	page_rows	fragments	events	reason
+  per_shard	0	0	11931	11932	86498	63577	73179	2180116	target:page_rows
+  per_shard	1	11932	17678	5747	42446	63490	72280	2135640	target:page_rows
+  per_shard	2	17679	24485	6807	36294	63489	70816	2135396	target:page_rows
+  per_shard	3	24486	33309	8824	38767	63502	70873	2127540	target:page_rows
+  per_shard	4	33310	42657	9348	39874	63494	70651	2130279	target:page_rows
+  per_shard	5	42658	52679	10022	39336	63491	70596	2141431	target:page_rows
+  per_shard	6	52680	62334	9655	40343	63489	70267	2151220	target:page_rows
+  per_shard	7	62335	72677	10343	40973	63522	70392	2166454	target:page_rows
+  per_shard	8	72678	81864	9187	47173	63495	71351	2158943	target:page_rows
+  per_shard	9	81865	91263	9399	51405	63499	72068	2155143	target:page_rows
+  per_shard	10	91264	100089	8826	50791	63510	72086	2150660	target:page_rows
+  per_shard	11	100090	106284	6195	46890	63573	73831	2144595	target:page_rows
+  per_shard	12	106285	106766	482	32188	63669	69954	2161471	target:page_rows
+  per_shard	13	106767	107314	548	29842	63675	69752	2185846	target:page_rows
+  per_shard	14	107315	107778	464	23672	63566	69091	2200383	target:page_rows
+  per_shard	15	107779	108480	702	31207	63507	71734	2206354	target:page_rows
+  per_shard	16	108481	115584	7104	57218	63514	76476	2140941	target:page_rows
+  per_shard	17	115585	123420	7836	80307	63491	79950	2138042	target:page_rows
+  per_shard	18	123421	129878	6458	84625	63491	84068	2106057	target:page_rows
+  per_shard	19	129879	135634	5756	105643	63506	90965	2115548	target:page_rows
+  per_shard	20	135635	141302	5668	112758	63577	97386	2074562	target:page_rows
+  per_shard	21	141303	146871	5569	111709	63551	98557	2062626	target:page_rows
+  per_shard	22	146872	152532	5661	118044	63491	97047	2066169	target:page_rows
+  per_shard	23	152533	158258	5726	107908	63522	96361	2066522	target:page_rows
+  per_shard	24	158259	163664	5406	118367	63547	99663	2111366	target:page_rows
+  per_shard	25	163665	168081	4417	128051	63508	101013	2090875	target:page_rows
+  per_shard	26	168082	171995	3914	115434	63504	100136	2112823	target:page_rows
+  per_shard	27	171996	176898	4903	133520	63493	103705	2097127	target:page_rows
+  per_shard	28	176899	182066	5168	127887	63488	101706	2079046	target:page_rows
+  per_shard	29	182067	186668	4602	128015	63491	101348	2061055	target:page_rows
+  per_shard	30	186669	190681	4013	125730	63501	102202	2070806	target:page_rows
+  per_shard	31	190682	193626	2945	156579	63504	110577	2145235	target:page_rows
+  per_shard	32	193627	198096	4470	135270	63523	106602	2089743	target:page_rows
+  per_shard	33	198097	202284	4188	129100	63514	104747	2090901	target:page_rows
+  per_shard	34	202285	206404	4120	131531	63502	103594	2075366	target:page_rows
+  per_shard	35	206405	209813	3409	127312	63520	103678	2105760	target:page_rows
+  per_shard	36	209814	213776	3963	136758	63537	104157	2105625	target:page_rows
+  per_shard	37	213777	218634	4858	135949	63512	102109	2085114	target:page_rows
+  per_shard	38	218635	222511	3877	136342	63521	103058	2110235	target:page_rows
+  per_shard	39	222512	226523	4012	152748	63562	107398	2123405	target:page_rows
+  per_shard	40	226524	229877	3354	143625	63517	107545	2136912	target:page_rows
+  per_shard	41	229878	233727	3850	171811	63556	114045	2122358	target:page_rows
+  per_shard	42	233728	236753	3026	185519	63575	118088	2146079	target:page_rows
+  per_shard	43	236754	239793	3040	201064	63508	122461	2178098	target:page_rows
+  per_shard	44	239794	242709	2916	215296	63495	127260	2170245	target:page_rows
+  per_shard	45	242710	245107	2398	182174	63614	119739	2183075	target:page_rows
+  per_shard	46	245108	248183	3076	199028	63497	121129	2159740	target:page_rows
+  per_shard	47	248184	251667	3484	212836	63517	121454	2186395	target:page_rows
+  per_shard	48	251668	254845	3178	209745	63504	126775	2176434	target:page_rows
+  per_shard	49	254846	258160	3315	202013	63490	124736	2157351	target:page_rows
+  per_shard	50	258161	261601	3441	187326	63557	122673	2137200	target:page_rows
+  per_shard	51	261602	265044	3443	187393	63495	121969	2134261	target:page_rows
+  per_shard	52	265045	268429	3385	195111	63541	123420	2154343	target:page_rows
+  per_shard	53	268430	271633	3204	193077	63491	123209	2133824	target:page_rows
+  per_shard	54	271634	275087	3454	183888	63504	122306	2132061	target:page_rows
+  per_shard	55	275088	278930	3843	179663	63752	123306	2132775	target:page_rows
+  per_shard	56	278931	282230	3300	185720	63501	124326	2135424	target:page_rows
+  per_shard	57	282231	285692	3462	177949	63488	122753	2143051	target:page_rows
+  per_shard	58	285693	290373	4681	170120	63508	120028	2104204	target:page_rows
+  per_shard	59	290374	294115	3742	166601	63490	119378	2119670	target:page_rows
+  per_shard	60	294116	297748	3633	157920	63489	118535	2119901	target:page_rows
+  per_shard	61	297749	301422	3674	157883	63492	119060	2129315	target:page_rows
+  per_shard	62	301423	305457	4035	160606	63494	116180	2098619	target:page_rows
+  per_shard	63	305458	309815	4358	163252	63500	115830	2099626	target:page_rows
+  per_shard	64	309816	313832	4017	162599	63495	117158	2104066	target:page_rows
+  per_shard	65	313833	316977	3145	158644	63507	116167	2128925	target:page_rows
+  per_shard	66	316978	320270	3293	151965	63500	113599	2098545	target:page_rows
+  per_shard	67	320271	322794	2524	140445	63518	111009	2169132	target:page_rows
+  per_shard	68	322795	324510	1716	176209	63682	114942	2236945	target:page_rows
+  per_shard	69	324511	326897	2387	176689	63510	118603	2175867	target:page_rows
+  per_shard	70	326898	328708	1811	160693	63636	117188	2134977	target:page_rows
+  per_shard	71	328709	331538	2830	159995	63490	116253	2124941	target:page_rows
+  per_shard	72	331539	334240	2702	160063	63535	117425	2096786	target:page_rows
+  per_shard	73	334241	336380	2140	151888	63493	114077	2102703	target:page_rows
+  per_shard	74	336381	338785	2405	146261	63542	112873	2112833	target:page_rows
+  per_shard	75	338786	341059	2274	137360	63550	108927	2132006	target:page_rows
+  per_shard	76	341060	343807	2748	136766	63527	109749	2144408	target:page_rows
+  per_shard	77	343808	346430	2623	125639	63503	103984	2145228	target:page_rows
+  per_shard	78	346431	352172	5742	141371	63517	108388	2088204	target:page_rows
+  per_shard	79	352173	357440	5268	128916	63610	104457	2110540	target:page_rows
+  per_shard	80	357441	360516	3076	123298	63534	99960	2192978	target:page_rows
+  per_shard	81	360517	365899	5383	142521	63488	103283	2168617	target:page_rows
+  per_shard	82	365900	375740	9841	144542	63497	99998	2135719	target:page_rows
+  per_shard	83	375741	388102	12362	137938	63495	93959	2085038	target:page_rows
+  per_shard	84	388103	402087	13985	149492	63560	94511	2151378	target:page_rows
+  per_shard	85	402088	419480	17393	157498	63540	89919	2237134	target:page_rows
+  per_shard	86	419481	437023	17543	142747	63503	88459	2225417	target:page_rows
+  per_shard	87	437024	455975	18952	135378	63492	85195	2233819	target:page_rows
+  per_shard	88	455976	472839	16864	112470	63507	80362	2216787	target:page_rows
+  per_shard	89	472840	489611	16772	113308	63488	79566	2185550	target:page_rows
+  per_shard	90	489612	511642	22031	142822	63514	81389	2236007	target:page_rows
+  per_shard	91	511643	534285	22643	189287	63501	83461	2243287	target:page_rows
+  per_shard	92	534286	556617	22332	172512	64018	83199	2244046	target:page_rows
+  per_shard	93	556618	578595	21978	211222	63574	82721	2373205	target:page_rows
+  per_shard	94	578596	596441	17846	284221	63489	79392	2558957	target:page_rows
+  per_shard	95	596442	601587	5146	69912	63615	77956	2219850	target:page_rows
+  per_shard	96	601588	606096	4509	65600	63687	77580	2174582	target:page_rows
+  per_shard	97	606097	620799	14703	131142	63510	81214	2119618	target:page_rows
+  per_shard	98	620800	645146	24347	129842	63489	77080	2219198	target:page_rows
+  per_shard	99	645147	701551	56405	159479	63489	77160	2332869	target:page_rows
+  per_shard	100	701552	759041	57490	152478	63492	76625	2338441	target:page_rows
+  per_shard	101	759042	809794	50753	198705	63488	76996	2385378	target:page_rows
+  per_shard	102	809795	862054	52260	234248	63489	84023	2419428	target:page_rows
+  per_shard	103	862055	924134	62080	230804	63488	88414	2472622	target:page_rows
+  per_shard	104	924135	958083	33949	192745	63492	92624	2200201	target:page_rows
+  per_shard	105	958084	984825	26742	174204	63495	93483	2065826	target:page_rows
+  per_shard	106	984826	1011436	26611	157755	63556	94163	2033124	target:page_rows
+  per_shard	107	1011437	1039485	28049	170820	63490	98112	2078810	target:page_rows
+  per_shard	108	1039486	1067580	28095	196564	63496	101090	2149749	target:page_rows
+  per_shard	109	1067581	1094358	26778	169402	63502	98565	2146711	target:page_rows
+  per_shard	110	1094359	1116956	22598	214640	63516	106693	2246989	target:page_rows
+  per_shard	111	1116957	1134793	17837	166067	63498	101488	2132363	target:page_rows
+  per_shard	112	1134794	1156907	22114	237039	63503	107138	2263130	target:page_rows
+  per_shard	113	1156908	1179554	22647	197600	63514	104964	2157060	target:page_rows
+  per_shard	114	1179555	1201489	21935	206191	63508	110588	2182556	target:page_rows
+  per_shard	115	1201490	1217309	15820	222833	63492	118561	2184027	target:page_rows
+  per_shard	116	1217310	1237761	20452	222177	63488	117072	2182455	target:page_rows
+  per_shard	117	1237762	1259474	21713	238979	63498	119453	2223589	target:page_rows
+  per_shard	118	1259475	1282591	23117	206000	63501	113077	2122457	target:page_rows
+  per_shard	119	1282592	1307517	24926	197126	63504	113668	2114351	target:page_rows
+  per_shard	120	1307518	1330506	22989	179779	63490	116218	2170411	target:page_rows
+  per_shard	121	1330507	1356086	25580	197414	63495	121673	2201948	target:page_rows
+  per_shard	122	1356087	1380549	24463	201034	63494	120771	2189437	target:page_rows
+  per_shard	123	1380550	1406292	25743	204128	63592	121871	2145787	target:page_rows
+  per_shard	124	1406293	1444683	38391	234086	63488	117890	2286593	target:page_rows
+  per_shard	125	1444684	1479848	35165	257245	63489	126356	2314245	target:page_rows
+  per_shard	126	1479849	1514471	34623	225829	63499	117149	2239584	target:page_rows
+  per_shard	127	1514472	1555112	40641	216764	63502	119138	2267027	target:page_rows
+  per_shard	128	1555113	1592668	37556	219184	63860	114731	2268055	target:page_rows
+  per_shard	129	1592669	1596721	4053	106633	63488	89938	2124601	target:page_rows
+  per_shard	130	1596722	1637650	40929	210919	63490	115861	2277992	target:page_rows
+  per_shard	131	1637651	1679030	41380	243214	63556	112125	2320501	target:page_rows
+  per_shard	132	1679031	1726382	47352	281850	63526	106428	2402650	target:page_rows
+  per_shard	133	1726383	1781657	55275	167844	63501	105323	2180997	target:page_rows
+  per_shard	134	1781658	1795996	14339	109885	63490	98976	2247146	target:page_rows
+  per_shard	135	1795997	1851477	55481	190775	63491	99438	2214770	target:page_rows
+  per_shard	136	1851478	1866206	14729	129662	63496	99412	2123931	target:page_rows
+  per_shard	137	1866207	1870860	4654	110411	63498	86423	2130054	target:page_rows
+  per_shard	138	1870861	1875961	5101	95617	63490	84685	2107891	target:page_rows
+  per_shard	139	1875962	1912135	36174	157470	63490	103606	2128558	target:page_rows
+  per_shard	140	1912136	1969430	57295	182630	63488	94543	2221199	target:page_rows
+  per_shard	141	1969431	2026930	57500	231256	63491	95849	2359561	target:page_rows
+  per_shard	142	2026931	2078403	51473	171918	63507	91610	2219451	target:page_rows
+  per_shard	143	2078404	2142974	64571	158758	63488	91477	2236368	target:page_rows
+  per_shard	144	2142975	2195998	53024	109640	63502	74323	2281171	target:page_rows
+  per_shard	145	2195999	2225569	29571	60837	63490	75793	2284616	target:page_rows
+  per_shard	146	2225570	2253623	28054	64365	63489	75882	2271083	target:page_rows
+  per_shard	147	2253624	2285221	31598	59262	63531	77545	2294879	target:page_rows
+  per_shard	148	2285222	2360754	75533	119625	63488	78358	2263009	target:page_rows
+  per_shard	149	2360755	2446167	85413	133613	63489	79297	2215409	target:page_rows
+  per_shard	150	2446168	2525113	78946	134827	63488	79126	2237343	target:page_rows
+  per_shard	151	2525114	2562864	37751	66378	63495	75457	2194595	target:page_rows
+  per_shard	152	2562865	2594372	31508	59800	63488	77434	2239718	target:page_rows
+  per_shard	153	2594373	2630139	35767	64251	63505	83413	2327312	target:page_rows
+  per_shard	154	2630140	2668750	38611	38572	63520	70523	2311356	target:page_rows
+  per_shard	155	2668751	2729678	60928	85702	63488	71885	2353563	target:page_rows
+  per_shard	156	2729679	2997090	267412	168033	63488	80982	2460189	target:page_rows
+  per_shard	157	2997091	3133539	136449	270070	63496	96047	2586103	target:page_rows
+  per_shard	158	3133540	3186262	52723	176200	63488	98022	2370453	target:page_rows
+  per_shard	159	3186263	3262748	76486	152352	40556	89185	1611290	geometry-change
+  blocks         min      464  p50     8826  p95    60928  max   267412  mean    20392
+  scripts        min    23672  p50   152352  p95   234086  max   284221  mean   147056
+  fragments      min    69091  p50   100136  p95   122753  max   127260  mean    98652
+  txids          min    10512  p50    55811  p95   239537  max   552936  mean    98270
+  events         min  1611290  p50  2151378  p95  2370453  max  2586103  mean  2179297
+  all filters ~58.82 MB across 160 shards
+  utilisation
+    directory   rows  32.1%  slots  32.1%  (4.5 of 14 per row, 160 segments)
+    pages       rows  75.3%  slots  54.1%  (19.5 of 36 per row, 320 segments)
+    live bytes  36330.2 MB of 93952.4 MB pinned = 38.67%   (587.2 MB per shard)
+    pinned split  directory 18790.5 MB (20.0%), pages 75161.9 MB (80.0%)
+  placement (the real two-choice placer, not scripts / slots)
+    segments     160 placed against 160 modelled; 0 of 160 shards need more than one
+    fullest row  11 of 14 in shard 157, p50 7, p95 10 (over the 160 shards that fit one segment)
+
+  === Packed rows: what the builder lays out. The block above says what
+      the same content would cost with a row per fragment, which is what
+      the layout did before this. Row demand here comes from the packing
+      rule, and the builder asserts it emits exactly this many. ===
+  proj_classes (p = paged events; a class of one script still costs a row)
+    p  1  scripts    986790  rows    44928  22 per row  tail slack    1626
+    p  2  scripts   1213515  rows    93424  13 per row  tail slack     997
+    p  3  scripts    578388  rows    57907  10 per row  tail slack     682
+    p  4  scripts    756408  rows   108125   7 per row  tail slack     467
+    p  5  scripts    420106  rows    70082   6 per row  tail slack     386
+    p  6  scripts    523132  rows   104693   5 per row  tail slack     333
+    p  7  scripts    313849  rows    78525   4 per row  tail slack     251
+    p  8  scripts    416630  rows   104212   4 per row  tail slack     218
+    p  9  scripts    251356  rows    83836   3 per row  tail slack     152
+    p 10  scripts    324246  rows   108133   3 per row  tail slack     153
+    p 11  scripts    207249  rows    69138   3 per row  tail slack     165
+    p 12  scripts    268446  rows   134267   2 per row  tail slack      88
+    p 13  scripts    180475  rows    90280   2 per row  tail slack      85
+    p 14  scripts    229239  rows   114658   2 per row  tail slack      77
+    p 15  scripts    151576  rows    75833   2 per row  tail slack      90
+    p 16  scripts    192493  rows    96289   2 per row  tail slack      85
+    p 17  scripts    128631  rows    64355   2 per row  tail slack      79
+    p 18  scripts    163227  rows   163227   1 per row  tail slack       0
+    p 19  scripts    105057  rows   105057   1 per row  tail slack       0
+    p 20  scripts    133534  rows   133534   1 per row  tail slack       0
+    p 21  scripts     90549  rows    90549   1 per row  tail slack       0
+    p 22  scripts    114876  rows   114876   1 per row  tail slack       0
+    p 23  scripts     78372  rows    78372   1 per row  tail slack       0
+    p 24  scripts     99185  rows    99185   1 per row  tail slack       0
+    p 25  scripts     68434  rows    68434   1 per row  tail slack       0
+    p 26  scripts     88487  rows    88487   1 per row  tail slack       0
+    p 27  scripts     64453  rows    64453   1 per row  tail slack       0
+    p 28  scripts     82534  rows    82534   1 per row  tail slack       0
+    p 29  scripts     58899  rows    58899   1 per row  tail slack       0
+    p 30  scripts     70720  rows    70720   1 per row  tail slack       0
+    p 31  scripts     51820  rows    51820   1 per row  tail slack       0
+    p 32  scripts     63112  rows    63112   1 per row  tail slack       0
+    p 33  scripts     45088  rows    45088   1 per row  tail slack       0
+    p 34  scripts     59171  rows    59171   1 per row  tail slack       0
+    p 35  scripts     39854  rows    39854   1 per row  tail slack       0
+    p 36  scripts     54715  rows    54715   1 per row  tail slack       0
+    short  scripts   8674616  rows  3030772   long  scripts 1488295  rows  7109736
+  proj_rows      min    40556  p50    63501  p95    63615  max    64018  mean    63378
+  proj_R 10140508 rows against 15784352 unpacked fragments = 1.56x fewer rows
+  proj_utilisation  page rows  96.7%  row bytes  84.0%  (160 page segments)
+  proj_segments  160 directory, 160 page, across 160 shards; 0 generations need more than one page segment
+  proj_live bytes  36370.8 MB of 56371.4 MB pinned = 64.52%   (fleet ~56.37 GB)
+  proj_binding  159 of 160 shards would still reach the page-row target 63488; 0 reach the script target 393216
+  observed maxima: scripts 284221, fragments 127260, txids 552936
+  pinned plaintext per shard ~352 MB, fleet ~56.4 GB
+
+=== recent tier: recent-8k 3262749-3473686 ===
+  shards 14 (13 sealed, 1 tail)
+  sealed by target: page rows        13
+  per_shard	shard_id	start	end	blocks	scripts	page_rows	fragments	events	reason
+  per_shard	160	3262749	3277023	14275	33494	7936	17203	309824	target:page_rows
+  per_shard	161	3277024	3294352	17329	31237	7978	16966	311972	target:page_rows
+  per_shard	162	3294353	3308481	14129	32348	7936	17660	310304	target:page_rows
+  per_shard	163	3308482	3328286	19805	32037	7936	14775	314385	target:page_rows
+  per_shard	164	3328287	3340256	11970	38200	7965	16898	317552	target:page_rows
+  per_shard	165	3340257	3347334	7078	45454	7941	13103	340021	target:page_rows
+  per_shard	166	3347335	3358000	10666	34509	7938	16666	317050	target:page_rows
+  per_shard	167	3358001	3377463	19463	45265	7936	14627	335495	target:page_rows
+  per_shard	168	3377464	3398661	21198	35820	8079	12789	327050	target:page_rows
+  per_shard	169	3398662	3420737	22076	34388	7936	12393	311955	target:page_rows
+  per_shard	170	3420738	3441530	20793	38739	7936	13443	320164	target:page_rows
+  per_shard	171	3441531	3460167	18637	39376	7936	13263	323372	target:page_rows
+  per_shard	172	3460168	3473054	12887	45389	7936	14655	326808	target:page_rows
+  blocks         min      632  p50    14275  p95    22076  max    22076  mean    15067
+  scripts        min     5203  p50    34509  p95    45454  max    45454  mean    35104
+  fragments      min      804  p50    14627  p95    17660  max    17660  mean    13946
+  txids          min     4278  p50    79310  p95    84845  max    84845  mean    72866
+  events         min    19748  p50   317050  p95   340021  max   340021  mean   298978
+  all filters ~1.23 MB across 14 shards
+  utilisation
+    directory   rows  30.6%  slots  30.6%  (4.3 of 14 per row, 14 segments)
+    pages       rows  74.5%  slots  47.1%  (17.0 of 36 per row, 32 segments)
+    live bytes  452.1 MB of 1350.6 MB pinned = 33.48%   (96.5 MB per shard)
+    pinned split  directory 411.0 MB (30.4%), pages 939.5 MB (69.6%)
+  placement (the real two-choice placer, not scripts / slots)
+    segments     14 placed against 14 modelled; 0 of 14 shards need more than one
+    fullest row  8 of 14 in shard 172, p50 7, p95 8 (over the 14 shards that fit one segment)
+
+  === Packed rows: what the builder lays out. The block above says what
+      the same content would cost with a row per fragment, which is what
+      the layout did before this. Row demand here comes from the packing
+      rule, and the builder asserts it emits exactly this many. ===
+  proj_classes (p = paged events; a class of one script still costs a row)
+    p  1  scripts     26629  rows     1217  22 per row  tail slack     145
+    p  2  scripts     31169  rows     2403  13 per row  tail slack      70
+    p  3  scripts      6965  rows      704  10 per row  tail slack      75
+    p  4  scripts     10962  rows     1572   7 per row  tail slack      42
+    p  5  scripts      3734  rows      628   6 per row  tail slack      34
+    p  6  scripts      6286  rows     1263   5 per row  tail slack      29
+    p  7  scripts      2345  rows      593   4 per row  tail slack      27
+    p  8  scripts      4366  rows     1096   4 per row  tail slack      18
+    p  9  scripts      1739  rows      586   3 per row  tail slack      19
+    p 10  scripts      3383  rows     1132   3 per row  tail slack      13
+    p 11  scripts      1430  rows      482   3 per row  tail slack      16
+    p 12  scripts      1992  rows      999   2 per row  tail slack       6
+    p 13  scripts      1120  rows      565   2 per row  tail slack      10
+    p 14  scripts      1785  rows      896   2 per row  tail slack       7
+    p 15  scripts       988  rows      499   2 per row  tail slack      10
+    p 16  scripts      1584  rows      796   2 per row  tail slack       8
+    p 17  scripts       870  rows      438   2 per row  tail slack       6
+    p 18  scripts      1661  rows     1661   1 per row  tail slack       0
+    p 19  scripts       578  rows      578   1 per row  tail slack       0
+    p 20  scripts      1441  rows     1441   1 per row  tail slack       0
+    p 21  scripts       524  rows      524   1 per row  tail slack       0
+    p 22  scripts       994  rows      994   1 per row  tail slack       0
+    p 23  scripts       736  rows      736   1 per row  tail slack       0
+    p 24  scripts       810  rows      810   1 per row  tail slack       0
+    p 25  scripts       394  rows      394   1 per row  tail slack       0
+    p 26  scripts       561  rows      561   1 per row  tail slack       0
+    p 27  scripts       399  rows      399   1 per row  tail slack       0
+    p 28  scripts       980  rows      980   1 per row  tail slack       0
+    p 29  scripts       442  rows      442   1 per row  tail slack       0
+    p 30  scripts       763  rows      763   1 per row  tail slack       0
+    p 31  scripts       554  rows      554   1 per row  tail slack       0
+    p 32  scripts       711  rows      711   1 per row  tail slack       0
+    p 33  scripts       470  rows      470   1 per row  tail slack       0
+    p 34  scripts       681  rows      681   1 per row  tail slack       0
+    p 35  scripts       387  rows      387   1 per row  tail slack       0
+    p 36  scripts       300  rows      300   1 per row  tail slack       0
+    short  scripts    120733  rows    29255   long  scripts    7694  rows    74512
+  proj_rows      min      378  p50     7936  p95     8079  max     8079  mean     7411
+  proj_R 103767 rows against 195245 unpacked fragments = 1.88x fewer rows
+  proj_utilisation  page rows  90.5%  row bytes  88.9%  (14 page segments)
+  proj_segments  14 directory, 14 page, across 14 shards; 0 generations need more than one page segment
+  proj_live bytes  452.6 MB of 822.1 MB pinned = 55.05%   (fleet ~0.82 GB)
+  proj_binding  13 of 14 shards would still reach the page-row target 7936; 0 reach the script target 98304
+  observed maxima: scripts 45454, fragments 17660, txids 84845
+  pinned plaintext per shard ~59 MB, fleet ~0.8 GB
+
+=== whole set ===
+  shards 174 (160 archive, 14 recent), ids 0-173
+  shard matches per script (over 9264547 distinct indexable scripts)
+    g            mean    2.59  p50     1  p90     3  p95     9  p99    35  max    160
+    2g queries   mean    5.19  p50     2  p90     6  p95    18  p99    70  max    320
+    occurrences  24020524 script-shard pairs across the journal
+    tiers        archive only 8886201, recent only 312041, both 66305
+    archive      23529066 script-shard pairs, 15784352 fragments; recent 491458 pairs, 195245 fragments
+  restoration cost per active script (queries only, archive 258056 B directory / 430088 B page, recent 128008 B directory / 128008 B page)
+    MB           mean    2.06  p50    0.52  p90    2.41  p95    7.14  p99    33.46  max  40176.58
+    fragments    15979597 across all scripts, against 24020524 script-shard pairs

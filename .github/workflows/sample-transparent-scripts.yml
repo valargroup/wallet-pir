@@ -1,0 +1,134 @@
+name: Sample transparent load workload
+
+# Draws the load-test workload from the journal on the coordinator, read-only:
+# seeded wallet classes of public chain scripts, each with the digest of the
+# events an exact recovery over its range must hold. The artifact is the input
+# every transparent load run cites, so a run proves correct recoveries rather
+# than counting requests.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full commit SHA on main to build the sampler from; recorded in the sample
+        required: true
+        type: string
+      data_dir:
+        description: The event journal to sample
+        required: false
+        default: /srv/zakura/transparent-event-data
+        type: string
+      anchor_height:
+        description: The pinned anchor height the journal is committed through
+        required: true
+        type: string
+      cutoff_height:
+        description: The recorded cutoff height (first height of the recent tier)
+        required: true
+        type: string
+      start_height:
+        description: The set's first height
+        required: false
+        default: "0"
+        type: string
+      seed:
+        required: false
+        default: "1"
+        type: string
+      per_class:
+        description: Wallets per class
+        required: false
+        default: "100"
+        type: string
+      multi_scripts:
+        description: Scripts per multi-script wallet
+        required: false
+        default: "40"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transparent-dataset-inventory
+  cancel-in-progress: false
+
+jobs:
+  sample:
+    name: sample transparent scripts
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 240
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          SHA: ${{ inputs.ref }}
+          DATA_DIR: ${{ inputs.data_dir }}
+          ANCHOR: ${{ inputs.anchor_height }}
+          CUTOFF: ${{ inputs.cutoff_height }}
+          START: ${{ inputs.start_height }}
+          SEED: ${{ inputs.seed }}
+          PER_CLASS: ${{ inputs.per_class }}
+          MULTI: ${{ inputs.multi_scripts }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a full commit SHA"; exit 1; }
+          [[ "$DATA_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "data_dir must be an absolute path"; exit 1; }
+          for v in ANCHOR CUTOFF START SEED PER_CLASS MULTI; do
+            [[ "${!v}" =~ ^[0-9]+$ ]] || { echo "$v must be a number"; exit 1; }
+          done
+          (( CUTOFF > START && CUTOFF <= ANCHOR )) || { echo "start < cutoff <= anchor required"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Build and run the sampler
+        env:
+          # +pclmulqdq: these binaries link the node's RocksDB, whose CRC code
+          # takes the PCLMUL path once SSE4.2 is on, and x86-64-v3 turns SSE4.2
+          # on without PCLMUL. The coordinator's CPU has both.
+          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+          # cc-rs does not translate +pclmulqdq into a C++ flag, so RocksDB's
+          # CRC32C file, which uses the intrinsic once SSE4.2 is on, needs it
+          # spelled out for the C++ compiler as well.
+          CXXFLAGS: -mpclmul
+          CFLAGS: -mpclmul
+          SHA: ${{ inputs.ref }}
+          DATA_DIR: ${{ inputs.data_dir }}
+          ANCHOR: ${{ inputs.anchor_height }}
+          CUTOFF: ${{ inputs.cutoff_height }}
+          START: ${{ inputs.start_height }}
+          SEED: ${{ inputs.seed }}
+          PER_CLASS: ${{ inputs.per_class }}
+          MULTI: ${{ inputs.multi_scripts }}
+        run: |
+          set -euo pipefail
+          NICE=(nice -n 19)
+          if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
+          "${NICE[@]}" cargo build --locked --release -p transparent-filter-server --bin script-sample
+          mkdir -p sample
+          # Read-only over the journal, through its read-only opener; the
+          # journal lives under the ingest unit's user, hence sudo.
+          sudo /usr/bin/time -v ./target/release/script-sample \
+            --data-dir "$DATA_DIR" --anchor-height "$ANCHOR" --cutoff-height "$CUTOFF" \
+            --start-height "$START" --seed "$SEED" --per-class "$PER_CLASS" \
+            --multi-scripts "$MULTI" --source-sha "$SHA" --out sample/sample.json \
+            2> >(tee sample/time.txt >&2)
+          sudo chown "$(id -u)" sample/sample.json
+          jq -c '{schema, tool_sha, genesis_hash, start_height, cutoff_height, anchor_height, anchor_hash, seed, per_class, classes, clients: (.clients | length)}' sample/sample.json
+          sha256sum sample/sample.json | tee sample/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transparent-script-sample
+          path: sample/
+          if-no-files-found: error

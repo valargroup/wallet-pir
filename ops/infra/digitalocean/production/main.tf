@@ -53,6 +53,14 @@ resource "digitalocean_tag" "transparent_worker" {
   }
 }
 
+resource "digitalocean_tag" "transparent_router" {
+  name = "transparent-pir-router"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "digitalocean_droplet" "coordinator" {
   name       = local.coordinator_name
   image      = var.image
@@ -114,6 +122,82 @@ resource "digitalocean_droplet" "transparent_worker" {
     packages          = jsonencode(concat(local.common_packages, ["caddy"]))
     deploy_public_key = var.transparent_worker_deploy_public_key
   })
+}
+
+# The transparent two-tier fleet. Same VPC, tag and firewall as the pilot
+# worker above, so the deploy reaches every worker the same way; roles differ
+# only in size and in the roster the outputs render. Names carry the role so
+# an assignment and a `/v1/ready` body read the same as the droplet list.
+resource "digitalocean_droplet" "transparent_recent" {
+  count      = var.transparent_recent_count
+  name       = format("transparent-pir-recent-%02d", count.index + 1)
+  image      = var.image
+  region     = var.region
+  size       = var.transparent_recent_size
+  ssh_keys   = var.ssh_key_ids
+  vpc_uuid   = digitalocean_vpc.enhance.id
+  tags       = [digitalocean_tag.transparent_worker.name]
+  monitoring = true
+  backups    = var.enable_backups
+  ipv6       = true
+
+  user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
+    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+    deploy_public_key = var.transparent_worker_deploy_public_key
+  })
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
+}
+
+resource "digitalocean_droplet" "transparent_archive" {
+  count      = var.transparent_archive_count
+  name       = format("transparent-pir-archive-%02d", count.index + 1)
+  image      = var.image
+  region     = var.region
+  size       = var.transparent_archive_size
+  ssh_keys   = var.ssh_key_ids
+  vpc_uuid   = digitalocean_vpc.enhance.id
+  tags       = [digitalocean_tag.transparent_worker.name]
+  monitoring = true
+  backups    = var.enable_backups
+  ipv6       = true
+
+  user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
+    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+    deploy_public_key = var.transparent_worker_deploy_public_key
+  })
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
+}
+
+# The router: the only public host of the fleet. It terminates TLS and routes
+# each shard id to its owner or the replica pool from a Caddyfile the deploy
+# renders out of the assignment.
+resource "digitalocean_droplet" "transparent_router" {
+  count      = var.transparent_router_count
+  name       = format("transparent-pir-router-%02d", count.index + 1)
+  image      = var.image
+  region     = var.region
+  size       = var.transparent_router_size
+  ssh_keys   = var.ssh_key_ids
+  vpc_uuid   = digitalocean_vpc.enhance.id
+  tags       = [digitalocean_tag.transparent_router.name]
+  monitoring = true
+  backups    = var.enable_backups
+  ipv6       = true
+
+  user_data = templatefile("${path.module}/cloud-init-transparent-router.yaml.tftpl", {
+    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+    deploy_public_key = var.transparent_worker_deploy_public_key
+  })
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 resource "digitalocean_volume" "zakura" {
@@ -247,16 +331,65 @@ resource "digitalocean_firewall" "transparent_worker" {
   }
 
   # The shard retrieval port itself stays private. The only things that reach
-  # 8093 are the coordinator, for deploy verification, and Caddy on this host
-  # over loopback, which a firewall does not govern.
+  # 8093 are the coordinator, for deploy verification, the router, which
+  # proxies wallets to it, and Caddy on the pilot host over loopback, which a
+  # firewall does not govern.
   inbound_rule {
     protocol    = "tcp"
     port_range  = "8093"
-    source_tags = [digitalocean_tag.coordinator.name]
+    source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name]
   }
 
   # Public TLS for transparent-pir.valargroup.dev. Port 80 is needed for the
   # ACME HTTP challenge and the redirect to 443; Caddy serves nothing else on it.
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "80"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+}
+
+# The router: SSH from the coordinator and operators, public TLS, nothing else
+# inbound. Its egress to the workers' 8093 is governed by their firewall.
+resource "digitalocean_firewall" "transparent_router" {
+  name = "transparent-pir-router"
+  tags = [digitalocean_tag.transparent_router.name]
+
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "22"
+    source_tags = [digitalocean_tag.coordinator.name]
+  }
+
+  dynamic "inbound_rule" {
+    for_each = var.allowed_ssh_cidrs
+    content {
+      protocol         = "tcp"
+      port_range       = "22"
+      source_addresses = [inbound_rule.value]
+    }
+  }
+
   inbound_rule {
     protocol         = "tcp"
     port_range       = "80"
@@ -290,6 +423,9 @@ resource "digitalocean_project_resources" "enhance" {
     [digitalocean_droplet.coordinator.urn, digitalocean_volume.zakura.urn],
     [for worker in digitalocean_droplet.worker : worker.urn],
     [for worker in digitalocean_droplet.transparent_worker : worker.urn],
+    [for worker in digitalocean_droplet.transparent_recent : worker.urn],
+    [for worker in digitalocean_droplet.transparent_archive : worker.urn],
+    [for router in digitalocean_droplet.transparent_router : router.urn],
   )
 }
 
@@ -306,16 +442,19 @@ resource "cloudflare_dns_record" "enhance" {
 # Taken from the droplet attribute rather than a hand-maintained variable, so a
 # rebuilt worker cannot leave the record pointing at an address nothing answers
 # on. The Enhance record predates this and still carries a hardcoded IP.
+#
+# The record follows the router once one exists, and the pilot worker until
+# then; the switch is the fleet's activation from the wallet's point of view.
 resource "cloudflare_dns_record" "transparent" {
-  count   = var.transparent_worker_count > 0 ? 1 : 0
+  count   = var.transparent_router_count + var.transparent_worker_count > 0 ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = local.transparent_public_hostname
   type    = "A"
-  content = digitalocean_droplet.transparent_worker[0].ipv4_address
+  content = var.transparent_router_count > 0 ? digitalocean_droplet.transparent_router[0].ipv4_address : digitalocean_droplet.transparent_worker[0].ipv4_address
   ttl     = 300
   # Unproxied, so Caddy can answer the ACME challenge directly.
   proxied = false
-  comment = "Transparent PIR shard worker; managed by Terraform"
+  comment = var.transparent_router_count > 0 ? "Transparent PIR router; managed by Terraform" : "Transparent PIR shard worker; managed by Terraform"
 }
 
 # Keep the existing production resources while renaming Terraform addresses.

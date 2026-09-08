@@ -122,15 +122,18 @@ jobs:
 
       - name: Confirm the commit is on main
         env:
+          GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          # The runner's checkout is owned by another uid than the shell that
-          # runs this step; git refuses it as dubious outside the checkout
-          # action unless the directory is named safe.
-          git config --global --add safe.directory "$PWD"
-          git fetch --quiet --depth=200 origin main
-          git merge-base --is-ancestor "$SHA" FETCH_HEAD || { echo "$SHA is not on main"; exit 1; }
+          # Through the API rather than a fetch: the checkout keeps no
+          # credentials, so git cannot talk to the remote from this step, and
+          # the coordinator has curl but not gh.
+          status="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/compare/main...$SHA" | jq -r .status)"
+          [[ "$status" == "identical" || "$status" == "behind" ]] \
+            || { echo "$SHA is not on main (compare status: $status)"; exit 1; }
 
       - uses: dtolnay/rust-toolchain@stable
         with:

@@ -1,0 +1,4 @@
+generated_at: 2026-09-08T03:56:56Z
+source_sha: 742b91a414acecbfce22a3af733e340cc095dc8e
+host: enhance-pir-coordinator-01, 8 cpus
+command: shard-census --data-dir /srv/zakura/transparent-event-data --recent-from 3262749 --archive-geometry archive-wide --placement --geometry recent-8k --end-height 3473686 --per-shard --shard-matches /srv/zakura/census-spill.807448

@@ -14,6 +14,7 @@ members = [
     "server/pir-apm",
     "server/transparent-filter-server",
     "server/transparent-history-server",
+    "server/transparent-loadtest",
     "server/transparent-measure",
     "server/transparent-shard-server",
 ]

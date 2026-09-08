@@ -103,3 +103,73 @@ variable "enable_backups" {
   type    = bool
   default = false
 }
+
+# The transparent two-tier fleet accepted in docs/transparent-pir/deployment.md:
+# recent replicas serving the tier from the cutoff, archive owners each holding
+# a contiguous half of the archive tier, and one router in front of both. All
+# counts default to zero so a checkout that has not adopted the fleet plans no
+# change; the counts are raised through TF_VAR_* when the hosts are provisioned.
+variable "transparent_recent_count" {
+  description = "Recent-tier replicas. Every replica holds the whole recent tier."
+  type        = number
+  default     = 0
+}
+
+variable "transparent_recent_size" {
+  description = "Recent replica size: the accepted 4 vCPU / 8 GiB regular Basic host (5 GiB runtime cache, 7 GiB MemoryMax)."
+  type        = string
+  default     = "s-4vcpu-8gb"
+}
+
+variable "transparent_recent_cache_bytes" {
+  description = "Runtime cache reservation per recent replica, bytes. Deployment accepts 5 GiB."
+  type        = number
+  default     = 5368709120
+}
+
+variable "transparent_recent_memory_max" {
+  description = "systemd MemoryMax for the recent replica unit. Deployment accepts 7 GiB."
+  type        = string
+  default     = "7G"
+}
+
+variable "transparent_archive_count" {
+  description = "Archive-tier owners. Each owns a disjoint contiguous range of archive shards; losing one makes its range unavailable until rebuilt."
+  type        = number
+  default     = 0
+}
+
+variable "transparent_archive_size" {
+  description = "Archive owner size: the accepted 8 vCPU / 64 GiB regular memory-optimized host (48 GiB runtime cache, 56 GiB MemoryMax)."
+  type        = string
+  default     = "m-8vcpu-64gb"
+}
+
+variable "transparent_archive_cache_bytes" {
+  description = "Runtime cache reservation per archive owner, bytes. Deployment accepts 48 GiB."
+  type        = number
+  default     = 51539607552
+}
+
+variable "transparent_archive_memory_max" {
+  description = "systemd MemoryMax for the archive owner unit. Deployment accepts 56 GiB."
+  type        = string
+  default     = "56G"
+}
+
+variable "transparent_router_count" {
+  description = "Routers in front of the fleet: zero or one. The public DNS record follows the router when it exists, else the pilot worker."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.transparent_router_count >= 0 && var.transparent_router_count <= 1
+    error_message = "The router is a single host; the deployment accepts it as a single point of failure."
+  }
+}
+
+variable "transparent_router_size" {
+  description = "Router size: a 4 GiB Basic host; it proxies and terminates TLS only."
+  type        = string
+  default     = "s-2vcpu-4gb"
+}

@@ -1,0 +1,12 @@
+#cloud-config
+package_update: true
+packages: ${packages}
+%{ if deploy_public_key != "" ~}
+# The deploy workflow authenticates as root with the fleet key, the same key
+# the workers accept, so the router is deployable the moment it boots.
+ssh_authorized_keys:
+  - ${deploy_public_key}
+%{ endif ~}
+runcmd:
+  # Where the deploy stages a rendered Caddyfile and keeps the one it replaced.
+  - mkdir -p /opt/transparent-pir/staging /opt/transparent-pir/rollback

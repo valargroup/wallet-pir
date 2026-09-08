@@ -1,0 +1,24 @@
+[package]
+name = "transparent-loadtest"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "transparent-loadtest"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+hdrhistogram = "7"
+hex = "0.4"
+humantime = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+transparent-events = { path = "../../pir/transparent-events" }
+transparent-filter = { path = "../../pir/transparent-filter" }
+transparent-wallet = { path = "../../pir/transparent-wallet", features = ["reqwest"] }
+transparent-wallet-store = { path = "../../pir/transparent-wallet-store" }
