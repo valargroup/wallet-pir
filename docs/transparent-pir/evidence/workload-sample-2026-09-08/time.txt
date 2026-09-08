@@ -1,0 +1,33 @@
+drawing candidates
+7180 candidates; one pass over 0-3473686
+  500000 (89s)
+  1000000 (108s)
+  1500000 (136s)
+  2000000 (158s)
+  2500000 (164s)
+  3000000 (167s)
+pass done in 170s
+1080 clients written to sample/sample.json
+	Command being timed: "./target/release/script-sample --data-dir /srv/zakura/transparent-event-data --anchor-height 3473686 --cutoff-height 3262749 --start-height 0 --seed 1 --per-class 120 --multi-scripts 40 --source-sha 6d9ac786b88172c96b0f75df09fe2ba80b819f6f --out sample/sample.json"
+	User time (seconds): 59.76
+	System time (seconds): 24.86
+	Percent of CPU this job got: 35%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:55.73
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 933008
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 356373
+	Voluntary context switches: 410403
+	Involuntary context switches: 313
+	Swaps: 0
+	File system inputs: 51701464
+	File system outputs: 1640
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
