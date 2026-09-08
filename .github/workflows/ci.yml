@@ -12,13 +12,15 @@ env:
   RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
 
 jobs:
-  lint-and-test:
-    name: Enhance PIR
+  # The deploy gate. deploy-transparent-shard.yml and deploy-transparent-
+  # filter.yml refuse a ref without a successful run of this workflow, so it
+  # is kept to what those deploys ship: the transparent crates, linted and
+  # tested in two parallel jobs. The whole workspace, Enhance and the research
+  # crates included, runs in ci-full.yml, which the Enhance deploy gates on.
+  transparent-lint:
+    name: Transparent lint
     runs-on: ubuntu-latest
-    # The workspace builds RocksDB from source since the state-backed ingest;
-    # a cold build plus the release test suite no longer fits in 25 minutes
-    # on a hosted runner, and every cancelled run left no cache behind.
-    timeout-minutes: 90
+    timeout-minutes: 60
     env:
       # librocksdb-sys turns on SSE4.2 for its CRC32C code from the host's
       # features and cc-rs never adds -mpclmul, so the intrinsic that path
@@ -34,12 +36,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          shared-key: transparent-lint
       # transparent-filter-server links the node's RocksDB through
       # librocksdb-sys, whose build generates bindings with libclang.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --release
+      - run: >-
+          cargo clippy --all-targets --all-features -- -D warnings
+          -p transparent-events -p transparent-filter -p transparent-shard
+          -p transparent-wallet -p transparent-wallet-store
+          -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
+
+  transparent-test:
+    name: Transparent tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CXXFLAGS: -mpclmul
+      CFLAGS: -mpclmul
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: transparent-test
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev
+      # Release: the full-shard cryptographic tests need it.
+      - run: >-
+          cargo test --release
+          -p transparent-events -p transparent-filter -p transparent-shard
+          -p transparent-wallet -p transparent-wallet-store
+          -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
 
   validate-ops:
     name: Validate Enhance operations
