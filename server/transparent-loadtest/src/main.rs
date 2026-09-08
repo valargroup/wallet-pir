@@ -78,9 +78,10 @@ struct Args {
     /// memory; measures the SQLite cost a real wallet pays.
     #[arg(long)]
     store_dir: Option<PathBuf>,
-    /// Scrape this URL's /metrics at each step boundary.
-    #[arg(long)]
-    metrics_url: Option<String>,
+    /// Scrape these origins' /metrics at each step boundary: the workers
+    /// over the VPC, since the router routes no operator path. Repeatable.
+    #[arg(long = "metrics-url")]
+    metrics_urls: Vec<String>,
     #[arg(long)]
     json_out: Option<PathBuf>,
     #[arg(long)]
@@ -489,17 +490,30 @@ impl ClassStats {
     }
 }
 
-fn scrape(url: &Option<String>) -> Option<String> {
-    let url = url.as_ref()?;
-    reqwest::blocking::Client::builder()
+/// Every origin's `/metrics` text, keyed by origin; an origin that does not
+/// answer is recorded as null rather than failing the run.
+fn scrape_all(urls: &[String]) -> serde_json::Value {
+    let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-        .ok()?
-        .get(format!("{}/metrics", url.trim_end_matches('/')))
-        .send()
-        .ok()?
-        .text()
-        .ok()
+        .ok();
+    let mut out = serde_json::Map::new();
+    for url in urls {
+        let text = client.as_ref().and_then(|client| {
+            client
+                .get(format!("{}/metrics", url.trim_end_matches('/')))
+                .send()
+                .ok()?
+                .text()
+                .ok()
+        });
+        out.insert(
+            url.clone(),
+            text.map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    serde_json::Value::Object(out)
 }
 
 #[tokio::main]
@@ -571,7 +585,7 @@ async fn main() -> anyhow::Result<()> {
             "== step: {concurrency} concurrent clients for {}",
             args.step_duration
         );
-        let metrics_before = scrape(&args.metrics_url);
+        let metrics_before = scrape_all(&args.metrics_urls);
         let next = Arc::new(AtomicUsize::new(0));
         let deadline = Instant::now() + *args.step_duration;
         let stats: Arc<Mutex<BTreeMap<String, ClassStats>>> = Arc::new(Mutex::new(BTreeMap::new()));
@@ -626,7 +640,7 @@ async fn main() -> anyhow::Result<()> {
             let _ = worker.await;
         }
         let elapsed = step_started.elapsed();
-        let metrics_after = scrape(&args.metrics_url);
+        let metrics_after = scrape_all(&args.metrics_urls);
         let stats = stats.lock().unwrap();
         let total: u64 = stats.values().map(|s| s.n).sum();
         let completed: u64 = stats.values().map(|s| s.completed).sum();

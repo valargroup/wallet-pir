@@ -58,8 +58,8 @@ on:
         required: false
         default: "1500"
         type: string
-      metrics_url:
-        description: Scrape this origin's /metrics at step boundaries; blank skips
+      metrics_urls:
+        description: Origins whose /metrics to scrape at step boundaries, comma separated (the workers over the VPC); blank skips
         required: false
         default: ""
         type: string
@@ -107,7 +107,7 @@ jobs:
           CLASSES: ${{ inputs.classes }}
           MAX_P99: ${{ inputs.max_p99_sync_s }}
           MAX_QUERIES: ${{ inputs.max_queries }}
-          METRICS_URL: ${{ inputs.metrics_url }}
+          METRICS_URLS: ${{ inputs.metrics_urls }}
           RUN_ID: ${{ inputs.run_id }}
           HOST_SKU: ${{ inputs.host_sku }}
         run: |
@@ -117,7 +117,8 @@ jobs:
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a full commit SHA"; exit 1; }
           [[ "$SHARD_URL" =~ $url ]] || { echo "shard_url must be an http(s) origin"; exit 1; }
           [[ -z "$FILTER_URL" || "$FILTER_URL" =~ $url ]] || { echo "filter_url must be an http(s) origin or blank"; exit 1; }
-          [[ -z "$METRICS_URL" || "$METRICS_URL" =~ $url ]] || { echo "metrics_url must be an http(s) origin or blank"; exit 1; }
+          IFS=, read -ra metrics <<<"$METRICS_URLS"
+          for m in "${metrics[@]}"; do [[ "$m" =~ $url ]] || { echo "metrics_urls must be http(s) origins"; exit 1; }; done
           sample_re='^[A-Za-z0-9._/-]+\.json$'
           if ! [[ "$SAMPLE" =~ $sample_re ]] || [[ "${SAMPLE:0:1}" == "/" ]] || [[ "$SAMPLE" == *".."* ]]; then
             echo "sample_path must be a relative .json path"; exit 1
@@ -153,7 +154,7 @@ jobs:
           CLASSES: ${{ inputs.classes }}
           MAX_P99: ${{ inputs.max_p99_sync_s }}
           MAX_QUERIES: ${{ inputs.max_queries }}
-          METRICS_URL: ${{ inputs.metrics_url }}
+          METRICS_URLS: ${{ inputs.metrics_urls }}
           STORE: ${{ inputs.store }}
           RUN_ID: ${{ inputs.run_id }}
           HOST_SKU: ${{ inputs.host_sku }}
@@ -171,7 +172,8 @@ jobs:
           [[ -n "$CLASSES" ]] && ARGS+=(--classes "$CLASSES")
           [[ -n "$MAX_P99" ]] && ARGS+=(--max-p99-sync-s "$MAX_P99")
           [[ -n "$MAX_QUERIES" ]] && ARGS+=(--max-queries "$MAX_QUERIES")
-          [[ -n "$METRICS_URL" ]] && ARGS+=(--metrics-url "$METRICS_URL")
+          IFS=, read -ra metrics <<<"$METRICS_URLS"
+          for m in "${metrics[@]}"; do ARGS+=(--metrics-url "$m"); done
           [[ -n "$HOST_SKU" ]] && ARGS+=(--host-sku "$HOST_SKU")
           if [[ "$STORE" == "sqlite" ]]; then mkdir -p load/stores; ARGS+=(--store-dir load/stores); fi
           # Client-side resource use is part of the record: the harness runs
