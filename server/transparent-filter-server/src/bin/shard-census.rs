@@ -145,6 +145,28 @@ struct Cli {
     /// re-shards the chain.
     #[arg(long)]
     end_height: Option<u64>,
+    /// Geometry for history before `--recent-from`, which turns the census
+    /// into a two-tier one.
+    ///
+    /// The run then reproduces the publisher exactly: the archive sealer is
+    /// closed at the boundary, the recent sealer resumes with the next shard
+    /// id, each tier seals at its own derived policy, and one match counter
+    /// spans both so a script's cost is summed across tiers before any
+    /// percentile is taken. Policy sweeps and geometry overrides do not apply;
+    /// this mode scores the set that would be published.
+    #[arg(long)]
+    archive_geometry: Option<String>,
+    /// First height of the recent tier. Needs `--archive-geometry`.
+    #[arg(long)]
+    recent_from: Option<u64>,
+    /// A published `shards.json` to compare the predicted boundaries with.
+    ///
+    /// Every shard's id, range, geometry, script count and page rows must
+    /// agree with what the census sealed; a disagreement is reported and fails
+    /// the run, because it means the census is not describing the published
+    /// set.
+    #[arg(long)]
+    compare_map: Option<PathBuf>,
 }
 
 /// Bytes one private row query uploads at this table shape.
@@ -770,6 +792,19 @@ fn main() -> Result<(), BoxError> {
         anchor.block_hash.to_display_hex()
     );
 
+    match (&cli.archive_geometry, cli.recent_from) {
+        (Some(_), None) | (None, Some(_)) => {
+            return Err("--archive-geometry and --recent-from go together".into())
+        }
+        (Some(archive), Some(recent_from)) => {
+            return tiers(&cli, &store, first, covered, archive, recent_from);
+        }
+        (None, None) => {}
+    }
+    if cli.compare_map.is_some() {
+        return Err("--compare-map applies to the two-tier census".into());
+    }
+
     let compiled = *geometry_by_name(&cli.geometry)
         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
     let geometry = Geometry {
@@ -975,6 +1010,256 @@ choose parameters for a set that will be published"
     Ok(())
 }
 
+/// The two-tier census: the publisher's own sealing, scored.
+///
+/// Archive geometry from the journal's first height to `recent_from - 1`,
+/// recent geometry from there to the end, ids continuing across the change,
+/// each tier at `SealPolicy::for_geometry`. Reports each tier's shards under
+/// its own geometry, then the merged per-script distribution priced at each
+/// tier's query sizes.
+fn tiers(
+    cli: &Cli,
+    store: &EventStore,
+    first: u64,
+    covered: u64,
+    archive_name: &str,
+    recent_from: u64,
+) -> Result<(), BoxError> {
+    if cli.unpacked
+        || cli.page_rows_per_segment.is_some()
+        || cli.directory_rows_per_segment.is_some()
+        || cli.directory_row_bytes.is_some()
+        || cli.inline_events.is_some()
+        || !cli.policies.is_empty()
+    {
+        return Err(
+            "the two-tier census scores the publishable set; overrides and policy \
+sweeps do not apply to it"
+                .into(),
+        );
+    }
+    let recent = *geometry_by_name(&cli.geometry)
+        .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
+    let archive = *geometry_by_name(archive_name)
+        .ok_or_else(|| format!("unknown geometry {archive_name:?}"))?;
+    if archive.name == recent.name {
+        return Err("the two tiers need two different geometries".into());
+    }
+    if recent_from <= first || recent_from > covered {
+        return Err(format!("--recent-from {recent_from} is outside {first}-{covered}").into());
+    }
+    let archive_policy = SealPolicy::for_geometry(&archive);
+    let recent_policy = SealPolicy::for_geometry(&recent);
+    let basis = PageBasis::Packed;
+    println!(
+        "\ntwo tiers: {} {first}-{} at {archive_policy:?}, {} {recent_from}-{covered} at \
+{recent_policy:?}",
+        archive.name,
+        recent_from - 1,
+        recent.name
+    );
+
+    let spill = cli.shard_matches.as_deref();
+    if let Some(dir) = spill {
+        std::fs::create_dir_all(dir)?;
+        println!(
+            "counting shard matches per script across both tiers, spilling under {}",
+            dir.display()
+        );
+    }
+    let mut matches = spill.map(|dir| MatchCounter::new(dir, "tiers"));
+    let mut sealer = Sealer::with_geometry(archive_policy, first, basis, archive);
+    sealer.measure_placement(cli.placement);
+    sealer.retain_scripts(spill.is_some());
+    let mut archive_shards: Vec<SealedShard> = Vec::new();
+    let mut recent_shards: Vec<SealedShard> = Vec::new();
+    let mut tier = 0usize;
+
+    println!(
+        "\n=== density across the chain ({} blocks per bucket) ===",
+        cli.density_bucket
+    );
+    let mut bucket_start = first;
+    let mut bucket_events = 0u64;
+    let mut bucket_blocks = 0u64;
+    for height in first..=covered {
+        if height == recent_from {
+            // Exactly what the publisher does at the boundary: close the
+            // archive sealer, resume the recent one with the next id.
+            let sealed: Vec<SealedShard> = sealer.seal_at_geometry_change().into_iter().collect();
+            drain_scripts_in_tier(&mut matches, sealed, &mut archive_shards, tier)?;
+            let next_shard_id = sealer.next_shard_id();
+            sealer = Sealer::resume(recent_policy, height, basis, recent, next_shard_id);
+            sealer.measure_placement(cli.placement);
+            sealer.retain_scripts(spill.is_some());
+            tier = 1;
+        }
+        let events = store
+            .events_at(height)?
+            .ok_or_else(|| format!("height {height} is missing from the journal"))?;
+        bucket_events += events.len() as u64;
+        bucket_blocks += 1;
+        if bucket_blocks == cli.density_bucket || height == covered {
+            println!(
+                "  {bucket_start:>8}-{height:<8} {:>7.1} events/block",
+                bucket_events as f64 / bucket_blocks as f64
+            );
+            bucket_start = height + 1;
+            bucket_events = 0;
+            bucket_blocks = 0;
+        }
+        let sealed = sealer.push_block(height, &events)?;
+        let into = if tier == 0 {
+            &mut archive_shards
+        } else {
+            &mut recent_shards
+        };
+        drain_scripts_in_tier(&mut matches, sealed, into, tier)?;
+    }
+    let sealed: Vec<SealedShard> = sealer.finish().into_iter().collect();
+    drain_scripts_in_tier(&mut matches, sealed, &mut recent_shards, tier)?;
+
+    report(
+        &format!("archive tier: {} {first}-{}", archive.name, recent_from - 1),
+        &archive_shards,
+        &archive_policy,
+        &archive,
+        basis,
+        cli.per_shard,
+    );
+    report(
+        &format!("recent tier: {} {recent_from}-{covered}", recent.name),
+        &recent_shards,
+        &recent_policy,
+        &recent,
+        basis,
+        cli.per_shard,
+    );
+    println!(
+        "\n=== whole set ===\n  shards {} ({} archive, {} recent), ids {}-{}",
+        archive_shards.len() + recent_shards.len(),
+        archive_shards.len(),
+        recent_shards.len(),
+        archive_shards
+            .first()
+            .map(|shard| shard.shard_id)
+            .unwrap_or(0),
+        recent_shards
+            .last()
+            .or(archive_shards.last())
+            .map(|shard| shard.shard_id)
+            .unwrap_or(0),
+    );
+
+    if let Some(counter) = matches.take() {
+        let distribution = counter.finish()?;
+        distribution.report();
+        let [archive_only, recent_only, both] = distribution.tier_membership();
+        println!(
+            "    tiers        archive only {archive_only}, recent only {recent_only}, both {both}"
+        );
+        let totals = distribution.tier_totals();
+        println!(
+            "    archive      {} script-shard pairs, {} fragments; recent {} pairs, {} fragments",
+            totals[0].shards, totals[0].fragments, totals[1].shards, totals[1].fragments
+        );
+        let archive_queries = (
+            query_bytes(archive.directory_rows, archive.directory_row_bytes),
+            query_bytes(archive.page_rows, PAGE_ROW_BYTES),
+        );
+        let recent_queries = (
+            query_bytes(recent.directory_rows, recent.directory_row_bytes),
+            query_bytes(recent.page_rows, PAGE_ROW_BYTES),
+        );
+        // Each tier at its own query sizes, summed per script before the
+        // percentiles: the mixed-set figure that no pair of single-tier runs
+        // can produce.
+        distribution.report_cost_by_tier(
+            [archive_queries, recent_queries],
+            &format!(
+                "archive {} B directory / {} B page, recent {} B directory / {} B page",
+                archive_queries.0, archive_queries.1, recent_queries.0, recent_queries.1
+            ),
+        );
+    }
+
+    if let Some(path) = &cli.compare_map {
+        let raw = std::fs::read(path)?;
+        let map: transparent_filter::ShardMap = serde_json::from_slice(&raw)?;
+        let predicted: Vec<&SealedShard> =
+            archive_shards.iter().chain(recent_shards.iter()).collect();
+        let mut disagreements = 0usize;
+        if map.shards.len() != predicted.len() {
+            println!(
+                "\ncompare: the map holds {} shards, the census sealed {}",
+                map.shards.len(),
+                predicted.len()
+            );
+            disagreements += 1;
+        }
+        for (entry, shard) in map.shards.iter().zip(predicted.iter()) {
+            let geometry = if shard.start_height < recent_from {
+                archive.name
+            } else {
+                recent.name
+            };
+            let mut differences = Vec::new();
+            if entry.shard_id != shard.shard_id {
+                differences.push(format!("id {} vs {}", entry.shard_id, shard.shard_id));
+            }
+            if entry.start_height != shard.start_height || entry.end_height != shard.end_height {
+                differences.push(format!(
+                    "range {}-{} vs {}-{}",
+                    entry.start_height, entry.end_height, shard.start_height, shard.end_height
+                ));
+            }
+            if entry.geometry != geometry {
+                differences.push(format!("geometry {} vs {geometry}", entry.geometry));
+            }
+            if entry.scripts != shard.occupancy.scripts {
+                differences.push(format!(
+                    "scripts {} vs {}",
+                    entry.scripts, shard.occupancy.scripts
+                ));
+            }
+            if entry.page_rows != shard.occupancy.page_rows {
+                differences.push(format!(
+                    "page rows {} vs {}",
+                    entry.page_rows, shard.occupancy.page_rows
+                ));
+            }
+            if entry.sealed != shard.reason.is_some() {
+                differences.push(format!(
+                    "sealed {} vs {}",
+                    entry.sealed,
+                    shard.reason.is_some()
+                ));
+            }
+            if !differences.is_empty() {
+                disagreements += 1;
+                println!(
+                    "compare: shard {} published vs predicted: {}",
+                    entry.shard_id,
+                    differences.join(", ")
+                );
+            }
+        }
+        if disagreements > 0 {
+            return Err(format!(
+                "{disagreements} disagreement(s) between {} and the census",
+                path.display()
+            )
+            .into());
+        }
+        println!(
+            "\ncompare: {} agrees with the census on every shard's id, range, geometry, \
+scripts, page rows and seal state",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Feeds each sealed shard's scripts to the counter and drops them.
 ///
 /// The dropping is the point. [`SealedShard::scripts`] is one shard's set,
@@ -986,10 +1271,20 @@ fn drain_scripts(
     sealed: Vec<SealedShard>,
     into: &mut Vec<SealedShard>,
 ) -> Result<(), BoxError> {
+    drain_scripts_in_tier(matches, sealed, into, 0)
+}
+
+/// [`drain_scripts`], tagging each occurrence with the tier it came from.
+fn drain_scripts_in_tier(
+    matches: &mut Option<MatchCounter>,
+    sealed: Vec<SealedShard>,
+    into: &mut Vec<SealedShard>,
+    tier: usize,
+) -> Result<(), BoxError> {
     for mut shard in sealed {
         if let (Some(scripts), Some(counter)) = (shard.scripts.take(), matches.as_mut()) {
             for (script, fragments) in scripts {
-                counter.record(&script, fragments)?;
+                counter.record_in_tier(&script, fragments, tier)?;
             }
         }
         into.push(shard);

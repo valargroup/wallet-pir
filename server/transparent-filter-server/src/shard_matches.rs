@@ -29,13 +29,19 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 const SCRIPT_BYTES: usize = 40;
 
 /// One occurrence: padded script, then length, then the fragments that script's
-/// history costs in this shard.
+/// history costs in this shard, then the tier the shard belongs to.
 ///
 /// The sort key is the leading script and length, so a plain byte comparison
 /// still groups a script's occurrences and still keeps two scripts with a
-/// common padded prefix apart. The fragment count rides along in the tail,
-/// where it does not disturb that order.
-const RECORD: usize = SCRIPT_BYTES + 2 + 4;
+/// common padded prefix apart. The fragment count and tier ride along in the
+/// tail, where they do not disturb that order.
+const RECORD: usize = SCRIPT_BYTES + 2 + 4 + 1;
+
+/// Tiers a shard can belong to. A single-geometry census puts everything in
+/// tier zero; the two-tier census tags archive shards zero and recent one, so
+/// one script's occurrences can be priced at each tier's own query size and
+/// still be summed per script.
+pub const TIERS: usize = 2;
 
 /// Bytes of a record that participate in the sort, which is the script key.
 const KEY: usize = SCRIPT_BYTES + 2;
@@ -84,13 +90,25 @@ impl MatchCounter {
     /// Scripts too long for a directory entry are dropped, because they are
     /// never placed and so never cost a directory query.
     pub fn record(&mut self, script: &[u8], fragments: u32) -> Result<(), BoxError> {
+        self.record_in_tier(script, fragments, 0)
+    }
+
+    /// Records an occurrence in a named tier; see [`TIERS`].
+    pub fn record_in_tier(
+        &mut self,
+        script: &[u8],
+        fragments: u32,
+        tier: usize,
+    ) -> Result<(), BoxError> {
         if script.len() > SCRIPT_BYTES {
             return Ok(());
         }
+        assert!(tier < TIERS, "tier {tier} is not one of {TIERS}");
         let mut record = [0u8; RECORD];
         record[..script.len()].copy_from_slice(script);
         record[SCRIPT_BYTES..KEY].copy_from_slice(&(script.len() as u16).to_le_bytes());
-        record[KEY..].copy_from_slice(&fragments.to_le_bytes());
+        record[KEY..KEY + 4].copy_from_slice(&fragments.to_le_bytes());
+        record[KEY + 4] = tier as u8;
         self.buffered.push(record);
         self.occurrences += 1;
         if self.buffered.len() >= self.run_records {
@@ -148,22 +166,31 @@ impl MatchCounter {
         while let Some(std::cmp::Reverse((record, index))) = heap.pop() {
             let key: [u8; KEY] = record[..KEY].try_into().expect("the key is a prefix");
             let fragments =
-                u32::from_le_bytes(record[KEY..].try_into().expect("four trailing bytes")) as u64;
+                u32::from_le_bytes(record[KEY..KEY + 4].try_into().expect("four bytes")) as u64;
+            let tier = usize::from(record[KEY + 4]).min(TIERS - 1);
             match &mut current {
                 Some((held, run)) if *held == key => {
                     run.shards += 1;
                     run.fragments += fragments;
+                    run.tiers[tier].shards += 1;
+                    run.tiers[tier].fragments += fragments;
                 }
                 other => {
                     if let Some((_, run)) = other.take() {
                         *counts.entry(run.shards).or_default() += 1;
                         scripts.push(run);
                     }
+                    let mut tiers = [TierShare::default(); TIERS];
+                    tiers[tier] = TierShare {
+                        shards: 1,
+                        fragments,
+                    };
                     *other = Some((
                         key,
                         Script {
                             shards: 1,
                             fragments,
+                            tiers,
                         },
                     ));
                 }
@@ -209,6 +236,13 @@ impl RunReader {
     }
 }
 
+/// A script's share of one tier: shards matched there and fragments paid there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TierShare {
+    pub shards: u64,
+    pub fragments: u64,
+}
+
 /// What one script costs a wallet to restore.
 #[derive(Clone, Copy, Debug)]
 pub struct Script {
@@ -216,6 +250,8 @@ pub struct Script {
     pub shards: u64,
     /// Page fragments across those shards. One query each.
     pub fragments: u64,
+    /// The same, split by tier. Sums to the totals above.
+    pub tiers: [TierShare; TIERS],
 }
 
 /// How many shards scripts appear in, and what retrieving them costs.
@@ -270,13 +306,63 @@ impl Distribution {
     /// comparison a geometry has to win, because the inactive ones cost the
     /// same under every geometry.
     pub fn cost_bytes(&self, directory_query: u64, page_query: u64) -> Vec<u64> {
+        self.cost_bytes_by_tier([(directory_query, page_query); TIERS])
+    }
+
+    /// [`cost_bytes`](Self::cost_bytes) with each tier priced at its own query
+    /// sizes, summed per script before anything is sorted.
+    ///
+    /// This is the only correct way to cost a mixed set: a script active in
+    /// both tiers pays archive-sized queries for its archive shards and
+    /// recent-sized ones for its recent shards, and its percentile position
+    /// is decided by that sum. Adding two tiers' separate percentiles would
+    /// describe a script that sits at the same rank in both, which nobody is.
+    pub fn cost_bytes_by_tier(&self, queries: [(u64, u64); TIERS]) -> Vec<u64> {
         let mut costs: Vec<u64> = self
             .scripts
             .iter()
-            .map(|script| script.shards * 2 * directory_query + script.fragments * page_query)
+            .map(|script| {
+                script
+                    .tiers
+                    .iter()
+                    .zip(queries.iter())
+                    .map(|(share, (directory, page))| {
+                        share.shards * 2 * directory + share.fragments * page
+                    })
+                    .sum()
+            })
             .collect();
         costs.sort_unstable();
         costs
+    }
+
+    /// Scripts by which tiers they appear in: `[archive only, recent only, both]`
+    /// for a two-tier census.
+    pub fn tier_membership(&self) -> [u64; 3] {
+        let mut membership = [0u64; 3];
+        for script in &self.scripts {
+            let in_first = script.tiers[0].shards > 0;
+            let in_second = script.tiers[1].shards > 0;
+            match (in_first, in_second) {
+                (true, false) => membership[0] += 1,
+                (false, true) => membership[1] += 1,
+                (true, true) => membership[2] += 1,
+                (false, false) => {}
+            }
+        }
+        membership
+    }
+
+    /// Per-tier totals of shard matches and fragments across every script.
+    pub fn tier_totals(&self) -> [TierShare; TIERS] {
+        let mut totals = [TierShare::default(); TIERS];
+        for script in &self.scripts {
+            for (total, share) in totals.iter_mut().zip(script.tiers.iter()) {
+                total.shards += share.shards;
+                total.fragments += share.fragments;
+            }
+        }
+        totals
     }
 
     /// Fragments across every script, which is the page-query total.
@@ -324,7 +410,16 @@ impl Distribution {
 
     /// Prints what an active script pays to restore, at these query sizes.
     pub fn report_cost(&self, directory_query: u64, page_query: u64) {
-        let costs = self.cost_bytes(directory_query, page_query);
+        self.report_cost_by_tier(
+            [(directory_query, page_query); TIERS],
+            &format!("{directory_query} B directory, {page_query} B page"),
+        );
+    }
+
+    /// [`report_cost`](Self::report_cost) for a mixed set, each tier at its own
+    /// query sizes; `pricing` names them for the heading.
+    pub fn report_cost_by_tier(&self, queries: [(u64, u64); TIERS], pricing: &str) {
+        let costs = self.cost_bytes_by_tier(queries);
         if costs.is_empty() {
             return;
         }
@@ -334,10 +429,7 @@ impl Distribution {
             costs[index.min(costs.len() - 1)]
         };
         let total: u128 = costs.iter().map(|c| *c as u128).sum();
-        println!(
-            "  restoration cost per active script (queries only, {directory_query} B directory, \
-{page_query} B page)"
-        );
+        println!("  restoration cost per active script (queries only, {pricing})");
         println!(
             "    MB           mean {:7.2}  p50 {:7.2}  p90 {:7.2}  p95 {:7.2}  p99 {:8.2}  max {:9.2}",
             total as f64 / costs.len() as f64 / 1e6,
@@ -415,6 +507,34 @@ mod tests {
             assert_eq!(d.percentile(50.0), 2);
             assert_eq!(d.percentile(100.0), 3);
         }
+    }
+
+    /// A script active in both tiers pays each tier's own query size, and its
+    /// cost is one sum. Two single-tier percentiles cannot say this.
+    #[test]
+    fn a_script_in_both_tiers_is_priced_at_each_tiers_query_size_and_summed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut counter = MatchCounter::with_run_records(dir.path(), "tiers", 2);
+        // a: two archive shards (3 fragments), one recent shard (1 fragment).
+        counter.record_in_tier(&script(0xa, 25), 2, 0).unwrap();
+        counter.record_in_tier(&script(0xa, 25), 1, 0).unwrap();
+        counter.record_in_tier(&script(0xa, 25), 1, 1).unwrap();
+        // b: recent only.
+        counter.record_in_tier(&script(0xb, 25), 0, 1).unwrap();
+        // c: archive only.
+        counter.record_in_tier(&script(0xc, 25), 5, 0).unwrap();
+        let d = counter.finish().unwrap();
+        assert_eq!(d.scripts(), 3);
+        assert_eq!(d.tier_membership(), [1, 1, 1]);
+        let totals = d.tier_totals();
+        assert_eq!((totals[0].shards, totals[0].fragments), (3, 8));
+        assert_eq!((totals[1].shards, totals[1].fragments), (2, 1));
+        // Archive queries cost 100/10, recent 1/1.
+        let costs = d.cost_bytes_by_tier([(100, 10), (1, 1)]);
+        // a: 2*2*100 + 3*10 + 1*2*1 + 1*1 = 433; b: 2; c: 2*100 + 50 = 250.
+        assert_eq!(costs, vec![2, 250, 433]);
+        // The single-tier pricing is the tiered one with equal prices.
+        assert_eq!(d.cost_bytes(7, 3), d.cost_bytes_by_tier([(7, 3); TIERS]));
     }
 
     /// Two scripts that pad to the same bytes are two scripts. Without the

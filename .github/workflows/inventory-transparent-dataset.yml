@@ -1,0 +1,237 @@
+name: Inventory transparent dataset
+
+# Records what the transparent PIR dataset is, read-only, on the coordinator
+# where the journal and the node live: the journal's chain identity and
+# committed end, the tier cutoff derived from the anchor block's header time,
+# an independent spot-check of sampled blocks against the node's verbose RPC,
+# and the observed state of the coordinator, the retrieval worker and both
+# public origins. The artifact is the dated evidence a publication and a
+# status record cite. Nothing is installed, restarted or written outside the
+# runner's working directory.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full commit SHA on main to build the tools from; recorded in every file
+        required: true
+        type: string
+      data_dir:
+        description: The event journal to inventory
+        required: false
+        default: /srv/zakura/transparent-event-data
+        type: string
+      anchor_height:
+        description: >-
+          The height the dataset is pinned to; blank uses the journal's
+          committed end. The cutoff is derived from this block's header time
+          and its hash is confirmed against the node.
+        required: false
+        default: ""
+        type: string
+      expect_cutoff:
+        description: >-
+          A previously recorded cutoff height; the run fails if the rule no
+          longer derives it from the anchor.
+        required: false
+        default: ""
+        type: string
+      spotcheck_heights:
+        description: >-
+          Extra heights, comma separated, to compare against the independent
+          extraction beside the densest, random and last blocks the tool
+          samples on its own.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transparent-dataset-inventory
+  cancel-in-progress: false
+
+env:
+  DATA_DIR: /srv/zakura/transparent-event-data
+
+jobs:
+  inventory:
+    name: inventory transparent dataset
+    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    timeout-minutes: 120
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          SHA: ${{ inputs.ref }}
+          ANCHOR: ${{ inputs.anchor_height }}
+          EXPECT_CUTOFF: ${{ inputs.expect_cutoff }}
+          SPOTCHECK: ${{ inputs.spotcheck_heights }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
+        run: |
+          set -euo pipefail
+          # The record names the tool commit, so the commit has to be named.
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a full commit SHA"; exit 1; }
+          [[ -z "$DATA_DIR_INPUT" || "$DATA_DIR_INPUT" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "data_dir must be an absolute path or blank"; exit 1; }
+          [[ -z "$ANCHOR" || "$ANCHOR" =~ ^[0-9]+$ ]] || { echo "anchor_height must be a number or blank"; exit 1; }
+          [[ -z "$EXPECT_CUTOFF" || "$EXPECT_CUTOFF" =~ ^[0-9]+$ ]] || { echo "expect_cutoff must be a number or blank"; exit 1; }
+          [[ -z "$SPOTCHECK" || "$SPOTCHECK" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "spotcheck_heights must be comma-separated numbers or blank"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Build and run the dataset inventory
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+          SHA: ${{ inputs.ref }}
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
+          ANCHOR: ${{ inputs.anchor_height }}
+          EXPECT_CUTOFF: ${{ inputs.expect_cutoff }}
+          SPOTCHECK: ${{ inputs.spotcheck_heights }}
+        run: |
+          set -euo pipefail
+          NICE=(nice -n 19)
+          if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
+          "${NICE[@]}" cargo build --locked --release -p transparent-filter-server \
+            --bin journal-inventory --bin shard-cutoff --bin event-spotcheck
+          DATA="${DATA_DIR_INPUT:-$DATA_DIR}"
+          mkdir -p inventory
+          ANCHOR_ARGS=()
+          [[ -n "$ANCHOR" ]] && ANCHOR_ARGS=(--anchor-height "$ANCHOR")
+
+          # Everything below is read-only: the journal through its read-only
+          # opener, the node through a RocksDB secondary instance or its RPC.
+          echo "::group::journal"
+          sudo ./target/release/journal-inventory --data-dir "$DATA" "${ANCHOR_ARGS[@]}" \
+            --state-dir /root/.cache/zakura --source-sha "$SHA" --out inventory/journal.json
+          sudo chown "$(id -u)" inventory/journal.json
+          cat inventory/journal.json
+          echo "::endgroup::"
+
+          echo "::group::cutoff"
+          CUTOFF_ARGS=()
+          [[ -n "$EXPECT_CUTOFF" ]] && CUTOFF_ARGS=(--expect-cutoff "$EXPECT_CUTOFF")
+          sudo ./target/release/shard-cutoff --data-dir "$DATA" "${ANCHOR_ARGS[@]}" "${CUTOFF_ARGS[@]}" \
+            --months 6 --state-dir /root/.cache/zakura --source-sha "$SHA" --out inventory/cutoff.json
+          sudo chown "$(id -u)" inventory/cutoff.json
+          cat inventory/cutoff.json
+          echo "::endgroup::"
+
+          echo "::group::spot-check"
+          SPOT_ARGS=()
+          [[ -n "$SPOTCHECK" ]] && SPOT_ARGS=(--heights "$SPOTCHECK")
+          [[ -n "$ANCHOR" ]] && SPOT_ARGS+=(--through "$ANCHOR")
+          # A disagreement fails the step; publication must not proceed on a
+          # journal the independent extraction contradicts.
+          sudo ./target/release/event-spotcheck --data-dir "$DATA" "${SPOT_ARGS[@]}" \
+            --zakura-cookie /root/.cache/zakura/.cookie --source-sha "$SHA" \
+            --out inventory/spotcheck.json
+          sudo chown "$(id -u)" inventory/spotcheck.json
+          echo "::endgroup::"
+
+          echo "::group::host"
+          {
+            echo "generated_at: $(date -u +%FT%TZ)"
+            echo "host: $(hostname)"; echo "kernel: $(uname -r)"
+            echo "cpus: $(nproc)"; echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
+            echo; free -h; echo; df -h /srv/zakura / 2>/dev/null
+            echo; echo "## journal on disk"; sudo du -sh "$DATA" "$DATA"/superseded* 2>/dev/null || true
+            echo; echo "## published sets on this host"
+            for dir in /srv/zakura/transparent-shards*; do
+              [[ -f "$dir/shards.json" ]] || continue
+              printf '%s  shards.json sha256 %s  %s\n' "$dir" "$(sudo sha256sum "$dir/shards.json" | cut -d' ' -f1)" "$(sudo du -sh "$dir" | cut -f1)"
+            done
+            echo; echo "## units"
+            for unit in transparent-filter-server transparent-event-ingest zakurad; do
+              echo "### $unit: $(systemctl is-active "$unit" 2>/dev/null || true)"
+              systemctl cat "$unit" 2>/dev/null | grep -E '^(ExecStart|MemoryMax)' || echo "(no persistent unit)"
+            done
+            echo; echo "## binaries"
+            sudo sha256sum /usr/local/bin/transparent-filter-server /usr/local/bin/transparent-event-ingest 2>/dev/null || true
+            echo; echo "## filter service (loopback)"
+            curl -fsS --max-time 10 http://127.0.0.1:8090/v1/health || echo "(no answer)"
+            echo; printf 'filters map sha256 (loopback): '; curl -fsS --max-time 10 http://127.0.0.1:8090/v1/filters/shards | sha256sum | cut -d' ' -f1 || echo "(no answer)"
+            echo; echo "## zakura"
+            curl -fsS --max-time 10 --user "$(sudo cat /root/.cache/zakura/.cookie)" --data-binary '{"jsonrpc":"1.0","id":"inv","method":"getblockchaininfo","params":[]}' http://127.0.0.1:8232 | head -c 600 || echo "(no answer)"
+            echo
+          } | tee inventory/coordinator.txt
+          echo "::endgroup::"
+
+      - name: Inventory the retrieval worker
+        env:
+          WORKER: ${{ vars.TRANSPARENT_WORKER_HOST }}
+          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          KNOWN_HOSTS: ${{ vars.TRANSPARENT_SSH_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
+          PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
+          ENHANCE_URL: ${{ vars.ENHANCE_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$WORKER" ]]; then
+            echo "TRANSPARENT_WORKER_HOST is unset; no worker to inventory" | tee inventory/worker.txt
+            exit 0
+          fi
+          install -m 0700 -d "$RUNNER_TEMP/inventory-ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$RUNNER_TEMP/inventory-ssh/key"
+          printf '%s\n' "$KNOWN_HOSTS" >"$RUNNER_TEMP/inventory-ssh/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/inventory-ssh/key" "$RUNNER_TEMP/inventory-ssh/known_hosts"
+          SSH=(ssh -i "$RUNNER_TEMP/inventory-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/inventory-ssh/known_hosts"
+            -o ConnectTimeout=10)
+          "${SSH[@]}" "$USER_NAME@$WORKER" bash -s <<'REMOTE' | tee inventory/worker.txt
+          set -uo pipefail
+          echo "generated_at: $(date -u +%FT%TZ)"
+          echo "host: $(hostname)"; echo "cpus: $(nproc)"; free -h; df -h / /srv/transparent-pir 2>/dev/null
+          echo; echo "## unit: $(systemctl is-active transparent-shard-server 2>/dev/null)"
+          systemctl cat transparent-shard-server 2>/dev/null | grep -E '^(ExecStart|MemoryMax|MemorySwapMax)'
+          echo; echo "## release"; cat /opt/transparent-pir/current-release 2>/dev/null || echo "(none)"
+          sudo sha256sum /usr/local/bin/transparent-shard-server 2>/dev/null
+          echo; echo "## rollback"; ls -l /opt/transparent-pir/rollback 2>/dev/null || echo "(none)"
+          echo; echo "## sets"
+          for dir in /srv/transparent-pir/sets/* /srv/transparent-pir/shards; do
+            [[ -f "$dir/shards.json" ]] || continue
+            printf '%s  shards.json sha256 %s  %s\n' "$dir" "$(sha256sum "$dir/shards.json" | cut -d' ' -f1)" "$(du -sh "$dir" | cut -f1)"
+          done
+          echo; echo "## service (loopback)"
+          curl -fsS --max-time 10 http://127.0.0.1:8093/v1/health || echo "(no answer)"; echo
+          curl -fsS --max-time 10 http://127.0.0.1:8093/v1/ready || echo "(not ready)"; echo
+          printf 'map sha256 (loopback): '; curl -fsS --max-time 10 http://127.0.0.1:8093/v1/shards | sha256sum | cut -d' ' -f1
+          printf 'init: '; curl -fsS --max-time 10 http://127.0.0.1:8093/v1/shards/init | head -c 400; echo
+          REMOTE
+          {
+            echo "## public origins"
+            printf 'retrieval origin %s/v1/shards sha256: ' "$PUBLIC_URL"
+            curl -fsS --max-time 15 "$PUBLIC_URL/v1/shards" | sha256sum | cut -d' ' -f1 || echo "(no answer)"
+            printf 'filter origin %s/v1/filters/shards sha256: ' "$ENHANCE_URL"
+            curl -fsS --max-time 15 "$ENHANCE_URL/v1/filters/shards" | sha256sum | cut -d' ' -f1 || echo "(no answer)"
+          } | tee -a inventory/worker.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transparent-inventory
+          path: inventory/
+          if-no-files-found: error
+
+      - name: Summarise the inventory
+        run: |
+          set -euo pipefail
+          {
+            echo '## Transparent dataset inventory'
+            echo '```'
+            jq -r '"journal \(.start_height)-\(.covered_through // "empty"), \(.events_stored) events, node tip \(.node.tip_height), mismatches \(.mismatches)"' inventory/journal.json
+            jq -r '"anchor \(.anchor.height) \(.anchor.time); cutoff \(.cutoff.height) at \(.cutoff.time); archive \(.tiers.archive|join("-")), recent \(.tiers.recent|join("-"))"' inventory/cutoff.json
+            jq -r '"spot-check: \(.blocks_compared) blocks compared, \(.blocks_disagreeing) disagree"' inventory/spotcheck.json
+            echo '```'
+            echo '### Coordinator'; echo '```'; cat inventory/coordinator.txt; echo '```'
+            echo '### Worker'; echo '```'; cat inventory/worker.txt; echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
