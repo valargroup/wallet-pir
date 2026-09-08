@@ -552,18 +552,29 @@ fn main() -> anyhow::Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+        // Register before admitting work: a supervisor can otherwise receive
+        // SIGTERM before the signal thread installs its handler and lose its
+        // final report instead of recording cancellation.
+        #[cfg(unix)]
+        let (mut terminate, mut interrupt) = {
+            let _context = runtime.enter();
+            (
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?,
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?,
+            )
+        };
         std::thread::spawn(move || {
             runtime.block_on(async move {
-            #[cfg(unix)]
-            {
-                if let Ok(mut terminate) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                    tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
-                } else { let _ = tokio::signal::ctrl_c().await; }
-            }
-            #[cfg(not(unix))]
-            { let _ = tokio::signal::ctrl_c().await; }
-            signal.store(true, Ordering::Relaxed);
-        })
+                #[cfg(unix)]
+                {
+                    tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+                signal.store(true, Ordering::Relaxed);
+            })
         });
         return scenario::entry(interrupted);
     }

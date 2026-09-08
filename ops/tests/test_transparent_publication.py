@@ -2,10 +2,13 @@
 """Offline failure tests for continuous publication's fleet activation boundary."""
 import asyncio
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import urllib.error
 
 spec = importlib.util.spec_from_file_location('live_fleet', Path(__file__).parents[1]/'scripts'/'transparent-live-fleet.py')
 module = importlib.util.module_from_spec(spec)
@@ -30,6 +33,27 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.fleet.quorum({'a1','a2','r2'}))
         self.assertFalse(self.fleet.quorum({'a1','r1','r2'}))
         self.assertFalse(self.fleet.quorum({'a1','a2'}))
+
+    async def test_regressed_tip_errors_are_absent_canonical_endpoints(self):
+        cookie=self.root/'test-cookie'
+        cookie.write_text('synthetic:fixture')
+        self.fleet.c['rpc_cookie']=str(cookie)
+        body=json.dumps({'error':{'code':-1,'message':'Provided index is greater than the current tip'}}).encode()
+        with patch('urllib.request.urlopen',return_value=io.BytesIO(body)):
+            self.assertIsNone(await self.fleet.canonical_hash(101))
+        body=json.dumps({'error':{'code':-8,'message':'Block height out of range'}}).encode()
+        error=urllib.error.HTTPError('http://fixture',500,'RPC error',{},io.BytesIO(body))
+        with patch('urllib.request.urlopen',side_effect=error):
+            self.assertIsNone(await self.fleet.canonical_hash(102))
+
+    async def test_cancelled_replica_preserves_shared_canonical_lookup(self):
+        pending=asyncio.create_task(asyncio.sleep(.05,result='canonical'))
+        self.fleet.canonical[100]=pending
+        replica=asyncio.create_task(self.fleet.canonical_hash(100))
+        await asyncio.sleep(0)
+        replica.cancel()
+        await asyncio.gather(replica,return_exceptions=True)
+        self.assertEqual(await self.fleet.canonical_hash(100),'canonical')
 
     async def test_slow_replica_does_not_hold_quorum(self):
         async def prepare(worker):

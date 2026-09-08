@@ -66,17 +66,24 @@ class Fleet:
         if height not in self.canonical:
             async def fetch():
                 import urllib.request
+                import urllib.error
                 import base64
                 async with self.rpc_slots:
                     def request():
                         cookie = Path(self.c.get('rpc_cookie','/root/.cache/zakura/.cookie')).read_text().strip()
                         data = json.dumps({'jsonrpc':'2.0','id':1,'method':'getblockhash','params':[height]}).encode()
                         req = urllib.request.Request(self.c.get('rpc_url','http://127.0.0.1:8232'),data,{'Content-Type':'application/json','Authorization':'Basic '+base64.b64encode(cookie.encode()).decode()})
-                        with urllib.request.urlopen(req,timeout=5) as response:
-                            body=json.load(response)
+                        try:
+                            with urllib.request.urlopen(req,timeout=5) as response:
+                                body=json.load(response)
+                        except urllib.error.HTTPError as error:
+                            if error.code != 500:
+                                raise
+                            body=json.load(error)
                         if body.get('error'):
                             # A height above a regressed tip is not canonical.
-                            if body['error'].get('code') == -8:
+                            error = body['error']
+                            if error.get('code') == -8 or (error.get('code') == -1 and error.get('message') == 'Provided index is greater than the current tip'):
                                 return None
                             raise RuntimeError('node refused canonical endpoint lookup')
                         return body['result']
