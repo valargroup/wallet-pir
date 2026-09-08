@@ -33,12 +33,42 @@ def read_json(url):
 
 
 def secret_file(path, value):
+    # GitHub secret values may omit the final LF required by OpenSSH's parser.
+    if not value.endswith('\n'):
+        value += '\n'
     fd = os.open(path, os.O_WRONLY|os.O_CREAT|os.O_TRUNC, 0o600)
     with os.fdopen(fd,'w') as stream:
         stream.write(value)
         stream.flush()
         os.fsync(stream.fileno())
     os.chmod(path,0o600)
+
+
+async def save_baseline(fleet, saved, coordinator=Path('/etc/caddy/Caddyfile')):
+    saved.mkdir(exist_ok=True)
+    # Each file is independent: a failed SSH connection after the first copy
+    # must not make the next attempt skip the unfinished backup.
+    if not (saved/'Caddyfile.coordinator').exists():
+        atomic_bytes(saved/'Caddyfile.coordinator',coordinator.read_bytes())
+    if not (saved/'Caddyfile.router').exists():
+        data=await fleet.ssh(fleet.c['router_host'],'cat /etc/caddy/Caddyfile')
+        atomic_bytes(saved/'Caddyfile.router',data)
+    if not (saved/'controller.json').exists():
+        atomic_bytes(saved/'controller.json',(ROOT/'controller.json').read_bytes())
+
+
+def atomic_bytes(path, data):
+    temporary=path.with_suffix('.tmp')
+    with temporary.open('wb') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary,path)
+    directory=os.open(path.parent,os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def align_filter_origin(initial):
@@ -199,11 +229,7 @@ async def main():
     if args.mode=='shadow':
         subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         align_filter_origin(args.initial_publication)
-        saved.mkdir(exist_ok=True)
-        if not (saved/'Caddyfile.coordinator').exists():
-            shutil.copy2('/etc/caddy/Caddyfile',saved/'Caddyfile.coordinator')
-            (saved/'Caddyfile.router').write_bytes(await fleet.ssh(fleet.c['router_host'],'cat /etc/caddy/Caddyfile'))
-            shutil.copy2(ROOT/'controller.json',saved/'controller.json')
+        await save_baseline(fleet,saved)
         for name in ['transparent-publish-controller','shard-assign']:
             shutil.copy2(args.artifacts/name,'/usr/local/bin/'+name+'.next')
             os.chmod('/usr/local/bin/'+name+'.next',0o755)

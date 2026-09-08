@@ -4,6 +4,8 @@ import asyncio
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +15,9 @@ import urllib.error
 spec = importlib.util.spec_from_file_location('live_fleet', Path(__file__).parents[1]/'scripts'/'transparent-live-fleet.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+deploy_spec = importlib.util.spec_from_file_location('publisher_deploy', Path(__file__).parents[1]/'scripts'/'deploy-transparent-publisher.py')
+deploy = importlib.util.module_from_spec(deploy_spec)
+deploy_spec.loader.exec_module(deploy)
 
 
 class FleetTests(unittest.IsolatedAsyncioTestCase):
@@ -54,6 +59,35 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         replica.cancel()
         await asyncio.gather(replica,return_exceptions=True)
         self.assertEqual(await self.fleet.canonical_hash(100),'canonical')
+
+    @unittest.skipUnless(shutil.which('ssh-keygen'),'requires OpenSSH parser')
+    def test_secret_without_final_newline_is_an_openssh_key_file(self):
+        source=self.root/'generated-key'
+        subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(source)],check=True)
+        target=self.root/'installed-key'
+        deploy.secret_file(target,source.read_text().rstrip('\n'))
+        subprocess.run(['ssh-keygen','-y','-f',str(target)],check=True,stdout=subprocess.DEVNULL)
+        self.assertEqual(target.stat().st_mode & 0o777,0o600)
+
+    async def test_failed_router_backup_is_completed_on_retry(self):
+        saved=self.root/'backup'
+        coordinator=self.root/'Caddyfile'
+        coordinator.write_text('original coordinator')
+        (self.root/'controller.json').write_text('{}')
+        async def fail(*args,**kwargs):
+            raise RuntimeError('SSH unavailable')
+        self.fleet.ssh=fail
+        with patch.object(deploy,'ROOT',self.root):
+            with self.assertRaisesRegex(RuntimeError,'SSH unavailable'):
+                await deploy.save_baseline(self.fleet,saved,coordinator)
+            coordinator.write_text('later coordinator')
+            async def succeed(*args,**kwargs):
+                return b'original router'
+            self.fleet.ssh=succeed
+            await deploy.save_baseline(self.fleet,saved,coordinator)
+        self.assertEqual((saved/'Caddyfile.coordinator').read_text(),'original coordinator')
+        self.assertEqual((saved/'Caddyfile.router').read_bytes(),b'original router')
+        self.assertEqual((saved/'controller.json').read_text(),'{}')
 
     async def test_slow_replica_does_not_hold_quorum(self):
         async def prepare(worker):
