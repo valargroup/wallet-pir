@@ -18,6 +18,7 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | Process MemoryMax | 7 GiB | 56 GiB |
 | Swap | Disabled for service | Disabled for service |
 | Build/query slots initially | 1 / 2 | 1 / 2 |
+| Disk restore slots | 4 | 4 |
 | Revision retention | 3 superseded plus current, bounded disk policy | Same where revisions apply |
 | Local SSD target | Included disk (160 GiB price baseline) | 200 GiB each |
 | Warm state | All assigned tables and advertised tail; budget retained tail runtimes | Entire current assignment before fleet readiness |
@@ -73,7 +74,10 @@ setup derivation require a compatibility-version change and a cold-cache rehears
 
 The first cache-enabled activation builds and writes its runtimes. Later
 compatible restarts restore them, while still verifying source tables. Cache
-restoration consumes the existing RAM reservation and build-slot budget. Missing,
+restoration consumes the existing RAM reservation and a separate bounded pool
+(`--runtime-restore-slots`, default 4). Cold fallbacks still use the configured
+build slots. Prewarm schedules enough jobs for both pools; blocking jobs retain
+their slot and reservation even when the caller is cancelled. Missing,
 corrupt or incompatible entries rebuild; a failed cache write is counted and
 logged but does not prevent serving a successfully built runtime. This reduces
 warm-up work; it does not provide interruption-free archive handover.

@@ -302,7 +302,9 @@ struct Inner {
 pub struct RuntimeCache {
     inner: Mutex<Inner>,
     budget: u64,
-    build_slots: tokio::sync::Semaphore,
+    build_slots: Arc<tokio::sync::Semaphore>,
+    restore_slots: Arc<tokio::sync::Semaphore>,
+    prewarm_concurrency: usize,
     metrics: Arc<Metrics>,
     disk: Option<disk::DiskCache>,
 }
@@ -316,22 +318,32 @@ impl RuntimeCache {
                 clock: 0,
             }),
             budget,
-            build_slots: tokio::sync::Semaphore::new(build_slots.max(1)),
+            build_slots: Arc::new(tokio::sync::Semaphore::new(build_slots.max(1))),
+            restore_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            prewarm_concurrency: build_slots.max(1),
             metrics,
             disk: None,
         }
     }
 
     pub fn with_disk(mut self, disk: Option<disk::DiskCache>) -> Self {
+        let restores = disk.as_ref().map_or(1, |disk| disk.restore_slots.max(1));
+        self.restore_slots = Arc::new(tokio::sync::Semaphore::new(restores));
+        self.prewarm_concurrency = self.prewarm_concurrency.max(restores);
         self.disk = disk;
         self
+    }
+
+    pub fn prewarm_concurrency(&self) -> usize {
+        self.prewarm_concurrency
     }
 
     pub fn disk_status(&self) -> serde_json::Value {
         self.disk.as_ref().map_or(serde_json::Value::Null, |disk|
             serde_json::json!({"bytes":disk.used_bytes().ok(),"limit_bytes":disk.max_bytes,
                 "hits":Metrics::get(&self.metrics.disk_hits),"misses":Metrics::get(&self.metrics.disk_misses),
-                "write_failures":Metrics::get(&self.metrics.disk_write_failures)}))
+                "write_failures":Metrics::get(&self.metrics.disk_write_failures),
+                "restore_slots":disk.restore_slots.max(1)}))
     }
 
     pub fn budget(&self) -> u64 {
@@ -367,64 +379,13 @@ impl RuntimeCache {
         let built = slot
             .runtime
             .get_or_try_init(|| async {
-                let _permit = self
-                    .build_slots
-                    .acquire()
-                    .await
-                    .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
-                let started = std::time::Instant::now();
-                let disk = self.disk.clone();
-                let disk_key = key.clone();
-                let metrics = self.metrics.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    // Read and re-verify here rather than at startup only: a
-                    // file replaced or truncated since must fail the build, not
-                    // be packed into a runtime and served.
-                    if let Some(disk) = &disk {
-                        let restore = std::time::Instant::now();
-                        match disk.load(&disk_key, &shared, &source.sha256) {
-                            Ok(runtime) => {
-                                source.verify().map_err(|error| error.to_string())?;
-                                Metrics::incr(&metrics.disk_hits);
-                                Metrics::add(&metrics.disk_load_micros, restore.elapsed().as_micros() as u64);
-                                tracing::info!(seconds = restore.elapsed().as_secs_f64(), "restored runtime cache");
-                                return Ok((runtime, true));
-                            }
-                            Err(error) => {
-                                Metrics::incr(&metrics.disk_misses);
-                                if error.kind() != std::io::ErrorKind::NotFound {
-                                    tracing::warn!(%error, "runtime cache rejected; rebuilding");
-                                }
-                            }
-                        }
-                    }
-                    let bytes = source.load().map_err(|error| error.to_string())?;
-                    let runtime = TableRuntime::build(&shared, &bytes)?;
-                    drop(bytes);
-                    if let Some(disk) = &disk {
-                        if let Err(error) = disk.save(&disk_key, &shared, &source.sha256, &runtime) {
-                            Metrics::incr(&metrics.disk_write_failures);
-                            tracing::warn!(%error, "runtime cache write failed; serving built runtime");
-                        }
-                    }
-                    Ok((runtime, false))
-                })
-                .await
-                .map_err(|error| CacheError::Failed(error.to_string()))?
-                .map_err(CacheError::Failed);
-                match &result {
-                    Ok((_, true)) => {}
-                    Ok((_, false)) => {
-                        Metrics::incr(&self.metrics.builds);
-                        Metrics::add(
-                            &self.metrics.build_micros,
-                            started.elapsed().as_micros() as u64,
-                        );
-                        self.metrics.build_seconds.observe(started.elapsed());
-                    }
-                    Err(_) => Metrics::incr(&self.metrics.build_failures),
+                let result = self
+                    .load_or_build(key.clone(), shared, source, slot.clone())
+                    .await;
+                if result.is_err() {
+                    Metrics::incr(&self.metrics.build_failures);
                 }
-                result.map(|(runtime, _)| runtime)
+                result
             })
             .await;
 
@@ -435,6 +396,97 @@ impl RuntimeCache {
             self.forget(&key);
         }
         built.map(|_| handle)
+    }
+
+    /// Restores use streaming buffers and their own concurrency bound. A miss
+    /// releases that slot before waiting for a cold-build slot. Owned permits
+    /// stay with blocking work even if its asynchronous caller is cancelled.
+    async fn load_or_build(
+        &self,
+        key: RuntimeKey,
+        shared: Arc<SharedParams>,
+        source: SegmentSource,
+        pin: Arc<Slot>,
+    ) -> Result<TableRuntime, CacheError> {
+        if let Some(disk) = self.disk.clone() {
+            let permit = self
+                .restore_slots
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
+            let restore_pin = pin.clone();
+            let restore_key = key.clone();
+            let restore_shared = shared.clone();
+            let restore_source = source.clone();
+            let metrics = self.metrics.clone();
+            let restored =
+                tokio::task::spawn_blocking(move || -> Result<Option<TableRuntime>, CacheError> {
+                    let _permit = permit;
+                    let _pin = restore_pin;
+                    let started = std::time::Instant::now();
+                    match disk.load(&restore_key, &restore_shared, &restore_source.sha256) {
+                        Ok(runtime) => {
+                            // A cache hit must not conceal a source changed since startup.
+                            restore_source
+                                .verify()
+                                .map_err(|error| CacheError::Failed(error.to_string()))?;
+                            Metrics::incr(&metrics.disk_hits);
+                            Metrics::add(
+                                &metrics.disk_load_micros,
+                                started.elapsed().as_micros() as u64,
+                            );
+                            tracing::info!(
+                                seconds = started.elapsed().as_secs_f64(),
+                                "restored runtime cache"
+                            );
+                            Ok(Some(runtime))
+                        }
+                        Err(error) => {
+                            Metrics::incr(&metrics.disk_misses);
+                            if error.kind() != std::io::ErrorKind::NotFound {
+                                tracing::warn!(%error, "runtime cache rejected; rebuilding");
+                            }
+                            Ok(None)
+                        }
+                    }
+                })
+                .await
+                .map_err(|error| CacheError::Failed(error.to_string()))??;
+            if let Some(runtime) = restored {
+                return Ok(runtime);
+            }
+        }
+        let permit = self
+            .build_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
+        let disk = self.disk.clone();
+        let metrics = self.metrics.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let _pin = pin;
+            let started = std::time::Instant::now();
+            let bytes = source
+                .load()
+                .map_err(|error| CacheError::Failed(error.to_string()))?;
+            let runtime = TableRuntime::build(&shared, &bytes).map_err(CacheError::Failed)?;
+            drop(bytes);
+            if let Some(disk) = disk {
+                if let Err(error) = disk.save(&key, &shared, &source.sha256, &runtime) {
+                    Metrics::incr(&metrics.disk_write_failures);
+                    tracing::warn!(%error, "runtime cache write failed; serving built runtime");
+                }
+            }
+            Metrics::incr(&metrics.builds);
+            Metrics::add(&metrics.build_micros, started.elapsed().as_micros() as u64);
+            metrics.build_seconds.observe(started.elapsed());
+            Ok(runtime)
+        })
+        .await
+        .map_err(|error| CacheError::Failed(error.to_string()))?
     }
 
     /// Finds or creates the slot for `key`, reserving `need` bytes if it is new.

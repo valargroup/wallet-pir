@@ -17,6 +17,8 @@ const FORMAT: &[u8] = b"transparent-runtime-v1/ipir-223626f/spiral-6f5b66c";
 pub struct DiskCache {
     pub directory: PathBuf,
     pub max_bytes: u64,
+    /// Independent restore concurrency; cold fallbacks still use build slots.
+    pub restore_slots: usize,
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -32,6 +34,7 @@ impl DiskCache {
         Ok(Self {
             directory,
             max_bytes,
+            restore_slots: 4,
         })
     }
 
@@ -538,15 +541,24 @@ mod cache_integration_tests {
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(shared.reserved_bytes(), 2, metrics.clone())
             .with_disk(Some(disk.clone()));
-        let (a, b) = tokio::join!(
-            cache.get(key.clone(), shared.clone(), source.clone()),
-            cache.get(key.clone(), shared.clone(), source.clone())
-        );
+        // Occupied cold-build slots must not delay a valid disk restore.
+        let builds = cache.build_slots.acquire_many(2).await.unwrap();
+        let (a, b) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tokio::join!(
+                cache.get(key.clone(), shared.clone(), source.clone()),
+                cache.get(key.clone(), shared.clone(), source.clone())
+            )
+        })
+        .await
+        .expect("disk restore was blocked by occupied build slots");
         assert_eq!(a.unwrap().get().public_params_sha256, expected);
         assert_eq!(b.unwrap().get().public_params_sha256, expected);
         assert_eq!(Metrics::get(&metrics.builds), 0);
         assert_eq!(Metrics::get(&metrics.disk_hits), 1);
+        drop(builds);
         drop(cache);
+        #[cfg(unix)]
+        cancelled_restore_keeps_its_reservation(&disk, &key, &shared, &source).await;
         fs::write(disk.path(&key, &shared, &source.sha256), b"corrupt").unwrap();
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
@@ -585,5 +597,75 @@ mod cache_integration_tests {
             .with_disk(Some(disk));
         assert!(cache.get(key, shared, source).await.is_err());
         assert_eq!(cache.resident_bytes(), 0);
+    }
+
+    #[cfg(unix)]
+    async fn cancelled_restore_keeps_its_reservation(
+        disk: &DiskCache,
+        key: &RuntimeKey,
+        shared: &Arc<SharedParams>,
+        source: &SegmentSource,
+    ) {
+        use super::super::{CacheError, Metrics, RuntimeCache};
+        // A FIFO holds source verification after the cached runtime has been
+        // allocated. Cancelling its caller must not release the slot or its
+        // reservation while this blocking verification is still alive.
+        let rows = fs::read(&source.path).unwrap();
+        fs::remove_file(&source.path).unwrap();
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&source.path)
+            .status()
+            .unwrap()
+            .success());
+        let (opened_tx, opened_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let path = source.path.clone();
+        let writer = std::thread::spawn(move || {
+            let mut file = File::create(path).unwrap();
+            let _ = opened_tx.send(());
+            if release_rx.recv().is_ok() {
+                file.write_all(&rows).unwrap();
+            }
+            rows
+        });
+        let cache = Arc::new(
+            RuntimeCache::new(shared.reserved_bytes(), 1, Arc::new(Metrics::default()))
+                .with_disk(Some(disk.clone())),
+        );
+        let request = {
+            let (cache, key, shared, source) =
+                (cache.clone(), key.clone(), shared.clone(), source.clone());
+            tokio::spawn(async move { cache.get(key, shared, source).await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), opened_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        request.abort();
+        assert!(matches!(request.await, Err(error) if error.is_cancelled()));
+        assert_eq!(
+            cache.restore_slots.available_permits(),
+            disk.restore_slots - 1
+        );
+        let mut other = key.clone();
+        other.2 += 1;
+        assert!(matches!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                cache.get(other, shared.clone(), source.clone())
+            )
+            .await
+            .expect("cancelled restore released its memory reservation"),
+            Err(CacheError::Overloaded)
+        ));
+        release_tx.send(()).unwrap();
+        let rows = writer.join().unwrap();
+        let _restores = cache
+            .restore_slots
+            .acquire_many(disk.restore_slots as u32)
+            .await
+            .unwrap();
+        fs::remove_file(&source.path).unwrap();
+        fs::write(&source.path, rows).unwrap();
     }
 }

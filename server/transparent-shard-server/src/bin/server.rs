@@ -38,6 +38,9 @@ struct Cli {
     runtime_cache_dir: Option<PathBuf>,
     #[arg(long, requires = "runtime_cache_dir")]
     runtime_cache_max_bytes: Option<u64>,
+    /// Streaming disk restores that may run at once, independently of builds.
+    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u16).range(1..=16))]
+    runtime_restore_slots: u16,
     /// Prune only cache revisions absent from all named active/rollback sets.
     #[arg(long, requires = "runtime_cache_dir")]
     runtime_cache_prune_set: Vec<PathBuf>,
@@ -134,11 +137,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .runtime_cache_dir
         .clone()
         .map(|dir| {
-            transparent_shard_server::runtime::disk::DiskCache::new(
+            let mut disk = transparent_shard_server::runtime::disk::DiskCache::new(
                 dir,
                 cli.runtime_cache_max_bytes
                     .unwrap_or(cli.cache_bytes.saturating_mul(2)),
-            )
+            )?;
+            disk.restore_slots = usize::from(cli.runtime_restore_slots);
+            Ok::<_, std::io::Error>(disk)
         })
         .transpose()?;
     if !cli.runtime_cache_prune_set.is_empty() {

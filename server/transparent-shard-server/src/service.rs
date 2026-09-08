@@ -152,9 +152,8 @@ pub struct Inner {
     metrics: Arc<Metrics>,
     max_query_bytes: usize,
     warm: WarmState,
-    /// Builds the prewarm runs at once; the cache's own build slots bound
-    /// what any request can add on top.
-    build_slots: usize,
+    /// Prewarm jobs; the cache separately bounds cold builds and disk restores.
+    prewarm_slots: usize,
 }
 
 #[derive(Clone)]
@@ -286,16 +285,18 @@ impl ServiceState {
             .map(|s| (s.segments(Table::Directory) + s.segments(Table::Pages)) as usize)
             .sum();
         Metrics::set(&metrics.target_runtimes, target as u64);
+        let cache = previous.map(|s| s.inner.cache.clone()).unwrap_or_else(|| {
+            Arc::new(
+                RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
+                    .with_disk(disk),
+            )
+        });
+        let prewarm_slots = cache.prewarm_concurrency();
         Ok(Self {
             inner: Arc::new(Inner {
                 set,
                 params,
-                cache: previous.map(|s| s.inner.cache.clone()).unwrap_or_else(|| {
-                    Arc::new(
-                        RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
-                            .with_disk(disk),
-                    )
-                }),
+                cache,
                 admission: previous
                     .map(|s| s.inner.admission.clone())
                     .unwrap_or_else(|| {
@@ -311,7 +312,7 @@ impl ServiceState {
                     count: std::sync::atomic::AtomicU64::new(0),
                     pins: std::sync::Mutex::new(Vec::new()),
                 },
-                build_slots: config.build_slots.max(1),
+                prewarm_slots,
             }),
         })
     }
@@ -334,15 +335,14 @@ impl ServiceState {
                 .current()
                 .map(|shard| shard.digest.clone())
                 .collect();
-            // `build_slots` builds at once, in warm-target order. On a host
-            // with one slot this is the sequential prewarm; on an archive
-            // owner with more, the cold start divides by the slot count.
+            // Keep enough jobs active to use the restore slots. Cache misses
+            // still queue behind the independent, smaller cold-build limit.
             let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
                 inner.set.warm_targets(),
             )));
             let current = Arc::new(current);
             let mut workers = tokio::task::JoinSet::new();
-            for _ in 0..inner.build_slots {
+            for _ in 0..inner.prewarm_slots {
                 let state = state.clone();
                 let queue = queue.clone();
                 let current = current.clone();
