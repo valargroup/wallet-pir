@@ -10,13 +10,21 @@ Type=simple
 # reach this is the coordinator. It is deliberately not published: the
 # wallet-facing API is not designed yet, and the upstream default is loopback
 # for exactly that reason.
+# TRANSPARENT_SHARD_SET_PATH is substituted by deploy-transparent-shard.sh with
+# the versioned directory the set was shipped to, the same way the Caddyfile's
+# host is substituted. It is a path per published set rather than one directory
+# rewritten in place, so a rollback that restores this unit also restores the
+# set the restored binary was built to read. A set of another schema is refused
+# at load, so pointing an old binary at a new set is an outage, and pointing it
+# at the set it came with is not.
+#
 # One line on purpose. systemd honours backslash continuations, but nothing
 # validates this file before `systemctl enable --now` runs it -- unlike the
 # Caddyfile, which is validated while the old config is still serving -- so a
 # mis-parse here is a failed start, and a failed start is a rollback onto a
 # shard set the restored binary may not be able to read. The line is long; the
 # alternative is a parsing surface with no check in front of it.
-ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir /srv/transparent-pir/shards --cache-bytes 8589934592 --build-slots 1 --query-slots 2
+ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir TRANSPARENT_SHARD_SET_PATH --cache-bytes 8589934592 --build-slots 1 --query-slots 2
 Restart=on-failure
 RestartSec=10
 User=root

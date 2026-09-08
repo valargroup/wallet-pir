@@ -157,11 +157,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         mib(marginal as u64)
     );
 
-    // A shard holds one segment of each table in the ordinary case, and the two
-    // tables share a geometry, so a shard costs two of these.
-    let per_shard = mib(marginal as u64) * 2.0;
-    println!("per shard, one segment of each table: {per_shard:.2} MiB");
-    for (label, shards) in [("pilot set", 21u64), ("genesis journal", 511)] {
+    // A shard holds one segment of each table. Doubling the measured one was
+    // right only while every geometry had square tables: at archive-wide the
+    // directory is 32,768 rows and the pages 65,536, so doubling the pages
+    // overstates a shard by about 20% -- in the direction that makes a fleet
+    // look more expensive than it is, which is still a wrong number to size on.
+    //
+    // The other table is charged at its reservation rather than measured, since
+    // measuring it means a second run. That is honest here because this tool is
+    // what established the reservation is accurate: within 0.3% at 32,768 rows
+    // and 3.4% at 65,536.
+    let other = match table {
+        Table::Directory => Table::Pages,
+        Table::Pages => Table::Directory,
+    };
+    let other_shared = SharedParams::build(geometry, other)?;
+    let other_reserved = reserved_bytes(other_shared.rlwe, &other_shared.scheme);
+    let per_shard = mib(marginal as u64) + mib(other_reserved);
+    println!(
+        "per shard: {:.2} MiB measured {} + {:.2} MiB reserved {} = {per_shard:.2} MiB",
+        mib(marginal as u64),
+        table.as_str(),
+        mib(other_reserved),
+        other.as_str(),
+    );
+    // Shard counts measured over the complete genesis-to-tip journal, per
+    // geometry, in `docs/transparent-pir-evaluation/shard-utilisation/`. The
+    // extrapolation used to read "genesis journal, 511 shards" at every
+    // geometry: 511 is the partial census covering 9.4% of chain height, and
+    // the whole chain is 1,091 at this geometry. Extrapolating held memory from
+    // it understated the fleet by more than half, which is the opposite of what
+    // a sizing tool is for.
+    let full_chain = match geometry.name {
+        "recent-8k" => 1_091u64,
+        "archive-32k" => 314,
+        "archive-wide" => 162,
+        // Not censused. Say so rather than borrowing another geometry's count.
+        _ => 0,
+    };
+    let mut fleets = vec![("pilot set", 3u64)];
+    if full_chain > 0 {
+        fleets.push(("full chain", full_chain));
+    } else {
+        println!("  full chain      not censused at {}", geometry.name);
+    }
+    for (label, shards) in fleets {
         println!(
             "  {:<16} {:>4} shards -> {:>8.2} GiB if all are held",
             label,

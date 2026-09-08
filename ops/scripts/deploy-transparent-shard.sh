@@ -115,6 +115,10 @@ validate_inputs() {
   # remote shell's home happens to be.
   [[ "$TRANSPARENT_SHARD_DIR" = /* ]] \
     || fail "TRANSPARENT_SHARD_DIR must be absolute"
+  local set_name
+  set_name="$(basename "$TRANSPARENT_SHARD_SOURCE")"
+  [[ -n "$set_name" && "$set_name" != "/" && "$set_name" != "." && "$set_name" != ".." ]] \
+    || fail "cannot derive a set directory name from $TRANSPARENT_SHARD_SOURCE"
   # rsync's -e takes one string, so the ssh invocation is flattened into it and
   # a path containing a space would split into two arguments and fail somewhere
   # far from the cause. The runner never produces such a path; say so here
@@ -216,6 +220,56 @@ preflight_capacity() {
 
 # -------------------------------------------------------------------- staging
 
+# Where this publication's set lives on the worker.
+#
+# A directory per published set, named for the set it came from, rather than one
+# directory rewritten in place. That is what makes a rollback coherent: the unit
+# names its own set, so restoring the unit restores the pairing. Replacing the
+# set in place meant a restored binary met a set of a schema it could not read,
+# which is an outage rather than a rollback.
+# Pure: it is used in command substitution, and `fail` inside `$(...)` exits
+# only the subshell -- the caller would carry on with an empty string. The name
+# is checked in validate_inputs, where an exit actually stops the deploy.
+shard_set_path() {
+  printf '%s/%s\n' "$TRANSPARENT_SHARD_DIR" "$(basename "$TRANSPARENT_SHARD_SOURCE")"
+}
+
+# Renders the unit for this publication and checks it, printing the path.
+#
+# Local, so `validate` runs it without a host. Nothing validated this file
+# before `systemctl enable --now` executed it, which is the gap the Caddyfile
+# has never had: a malformed ExecStart is a failed start, and a failed start is
+# a rollback. `systemd-analyze verify` is deliberately not the gate -- at stage
+# time the binary is not yet at the path the unit names, so it would fail every
+# first deploy for a reason that is not a fault.
+# Sets RENDERED_UNIT rather than printing it, because every check below calls
+# `fail`, and a `fail` inside `$(render_unit)` would exit the subshell while the
+# caller carried on with an empty path -- which is how a broken unit reached the
+# end of a validate run reporting success.
+RENDERED_UNIT=""
+render_unit() {
+  local set_path unit execstarts exec_line
+  set_path="$(shard_set_path)"
+  unit="$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service.rendered"
+  sed "s|TRANSPARENT_SHARD_SET_PATH|$set_path|" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" >"$unit"
+  grep -q "TRANSPARENT_SHARD_SET_PATH" "$unit" \
+    && fail "unit still carries an unsubstituted shard-set token"
+  execstarts="$(grep -c '^ExecStart=' "$unit" || true)"
+  [[ "$execstarts" -eq 1 ]] \
+    || fail "rendered unit has $execstarts ExecStart lines, expected exactly 1"
+  exec_line="$(sed -n 's/^ExecStart=//p' "$unit")"
+  [[ "$exec_line" == /* ]] \
+    || fail "unit ExecStart does not begin with an absolute path: $exec_line"
+  grep -q -- "--shard-dir $set_path" "$unit" \
+    || fail "unit does not name the shard set it is being deployed with"
+  # A continuation that did not join leaves an argument stranded on its own
+  # line, which systemd reads as a second directive rather than as an error.
+  grep -qE '\\$' "$unit" \
+    && fail "unit uses line continuations; keep ExecStart on one line"
+  RENDERED_UNIT="$unit"
+}
+
 stage() {
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   local -a opts
@@ -232,14 +286,18 @@ stage() {
     && fail "Caddyfile still carries an unsubstituted token"
   grep -q "^$host {" "$rendered" || fail "rendered Caddyfile does not name $host"
 
+  render_unit
+  local unit="$RENDERED_UNIT"
+
   worker_ssh "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
     "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" \
     "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
     "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/"
   scp "${opts[@]}" "$rendered" \
     "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/Caddyfile"
+  scp "${opts[@]}" "$unit" \
+    "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/unit.rendered"
 
   # Verified on the far side: a truncated copy that still looked like an ELF
   # binary would otherwise be installed and only fail at start. Caddy validates
@@ -254,19 +312,36 @@ sudo caddy validate --config Caddyfile --adapter caddyfile
 REMOTE
 }
 
-# The set is immutable once published, so this is a plain mirror. --delete keeps
-# a superseded set from accumulating beside the current one; the source is the
-# authority, and anything on the worker that the map does not name would be
-# refused at load anyway.
+# The set is immutable once published, so this is a plain mirror into a
+# directory of its own.
+#
+# It used to mirror into one fixed directory with --delete, which deleted the
+# running set before the new binary had proved it could serve the new one. That
+# was survivable while every set shared a schema. It stopped being survivable
+# when a set could be refused at load: the rollback restores the binary and the
+# unit, so it would have restored a binary onto a set of a schema it cannot
+# read, and left the service down rather than back.
+#
+# --delete still applies *within* this set's directory, so a re-run repairs a
+# partial copy rather than accumulating strays. The previous set stays where it
+# is, which is what the previous unit points at, which is what makes the
+# rollback a rollback.
 ship_shards() {
   local -a opts
   mapfile -t opts < <(ssh_opts)
-  echo "== ship shard set ($TRANSPARENT_SHARD_SOURCE -> $TRANSPARENT_SHARD_DIR)"
-  worker_ssh "sudo mkdir -p $(printf %q "$TRANSPARENT_SHARD_DIR") && sudo chown $(printf %q "$TRANSPARENT_DEPLOY_USER") $(printf %q "$TRANSPARENT_SHARD_DIR")"
+  local dest
+  dest="$(shard_set_path)"
+  echo "== ship shard set ($TRANSPARENT_SHARD_SOURCE -> $dest)"
+  worker_ssh "sudo mkdir -p $(printf %q "$dest") && sudo chown $(printf %q "$TRANSPARENT_DEPLOY_USER") $(printf %q "$dest")"
   rsync -a --delete --info=stats1 \
     -e "ssh $(ssh_opts | tr '\n' ' ')" \
     "$TRANSPARENT_SHARD_SOURCE/" \
-    "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$TRANSPARENT_SHARD_DIR/"
+    "$TRANSPARENT_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$dest/"
+
+  # Sets are kept, so say what is accumulating. Nothing prunes them: deciding
+  # which set is still someone's rollback target is not a decision this script
+  # can make while it is the thing doing the rolling.
+  worker_ssh "du -sh $(printf %q "$TRANSPARENT_SHARD_DIR")/* 2>/dev/null; df -h $(printf %q "$TRANSPARENT_SHARD_DIR") | tail -1"
 }
 
 # ------------------------------------------------------------------- activate
@@ -281,7 +356,7 @@ staged="$1"; sha="$2"
 release="/opt/transparent-pir/releases/$sha"
 sudo mkdir -p "$release" /opt/transparent-pir/rollback
 sudo install -m 0755 "$staged/transparent-shard-server" "$release/"
-sudo install -m 0644 "$staged/transparent-shard-server.service" "$release/"
+sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
 
 # Keep whatever is running now, so a failed start has something to go back to.
 if [[ -x /usr/local/bin/transparent-shard-server ]]; then
@@ -473,6 +548,14 @@ case "$MODE" in
     # Offline, for CI. Exercises the input checks without touching a host.
     validate_inputs
     validate_shard_set "$TRANSPARENT_SHARD_SOURCE"
+    # The unit is rendered and checked here too, so CI catches a malformed one
+    # rather than the worker catching it after the running service has stopped.
+    if [[ -r "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" ]]; then
+      render_unit
+      echo "unit renders to $RENDERED_UNIT, naming $(shard_set_path)"
+    else
+      echo "no unit in $TRANSPARENT_ARTIFACT_DIR; skipping the unit check"
+    fi
     echo "inputs and shard set are valid"
     ;;
   preflight)
@@ -490,6 +573,12 @@ case "$MODE" in
     preflight_capacity
     stage
     ship_shards
+    # -E, without which the ERR trap below is not inherited by shell functions
+    # and so never fires -- and every failure that matters happens inside
+    # activate() or verify(). This is only safe now that ship_shards leaves the
+    # previous set in place: arming a rollback that restores a binary onto a set
+    # it cannot read would have been worse than not arming it.
+    set -E
     trap 'rollback' ERR
     activate
     verify

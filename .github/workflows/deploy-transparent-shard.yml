@@ -128,7 +128,13 @@ jobs:
           TRANSPARENT_RELEASE_SHA: ${{ inputs.ref }}
           TRANSPARENT_ARTIFACT_DIR: ${{ github.workspace }}/artifact
           TRANSPARENT_SHARD_SOURCE: ${{ inputs.shard_dir }}
-          TRANSPARENT_SHARD_DIR: /srv/transparent-pir/shards
+          # The parent of the per-publication set directories, not a set
+          # itself. Deliberately not /srv/transparent-pir/shards: that is the
+          # flat directory the pre-versioning deploys wrote into and the
+          # currently running service still reads, and nesting a new set inside
+          # it would make ShardSet::open trip over the nested directory on the
+          # next restart of the old binary.
+          TRANSPARENT_SHARD_DIR: /srv/transparent-pir/sets
           TRANSPARENT_PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
           TRANSPARENT_SSH_KEY_PATH: ${{ runner.temp }}/transparent-ssh/key
           TRANSPARENT_KNOWN_HOSTS_PATH: ${{ runner.temp }}/transparent-ssh/known_hosts
