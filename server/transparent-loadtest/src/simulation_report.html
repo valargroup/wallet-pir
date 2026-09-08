@@ -289,19 +289,47 @@
     } else if ((R.preparation || []).length) {
       el("h2", $("preparation"), "Wallet preparation");
     }
+    if (R.preparation_status?.required) {
+      const p = R.preparation_status;
+      el(
+        "p",
+        $("preparation"),
+        `${p.cached + p.complete} / ${p.required} ready · ${p.cached} cached · ${p.active} active · ${p.queued} queued · ${p.failed} failed · ${secs(p.seconds)} elapsed`,
+      );
+    }
     for (const batch of R.preparation || []) {
       const detail = el("details", $("preparation"));
-      detail.open = batch.status !== "complete";
+      detail.open = batch.status !== "complete" && batch.status !== "cached";
       const summary = batch.summary || {};
       el(
         "summary",
         detail,
-        `Batch ${batch.batch}: ${batch.status} · ${summary.outcomes?.exact || 0} / ${summary.started ?? batch.wallets ?? 0} prepared`,
+        `Preparation ${batch.batch}: ${batch.status} · ${batch.profile || ""} ${batch.sample_index ?? ""} · ${batch.status === "cached" ? 1 : summary.outcomes?.exact || 0} / ${summary.started ?? batch.wallets ?? 0} ready`,
       );
-      const link = el("a", detail, "Open preparation report");
       // Reports contain only generated relative artifact links, never URLs from errors.
-      if (/^preparation\/batch-\d+\/report\.html$/.test(batch.report))
-        link.href = batch.report;
+      if (/^preparation\/batch-\d+\/report\.html$/.test(batch.report || "")) {
+        el("a", detail, "Open preparation report").href = batch.report;
+      }
+      if (batch.cache) el("pre", detail, JSON.stringify(batch.cache, null, 2));
+      if (batch.status === "cached") {
+        el(
+          "p",
+          detail,
+          "Validated prior history reused. No preparation traffic in this run.",
+        );
+        continue;
+      }
+      for (const u of batch.users || []) {
+        if (u.outcome !== "running") continue;
+        const latest = Object.entries(u.stages || {}).sort(
+          (a, b) => (b[1].last_at || 0) - (a[1].last_at || 0),
+        )[0];
+        el(
+          "p",
+          detail,
+          `Wallet ${u.sample_index} · ${secs((R.finished_at || Date.now() / 1000) - (u.started_at || u.scheduled_at))} elapsed · last completed stage: ${latest?.[0] || "starting"} · ${secs(Date.now() / 1000 - (latest?.[1].last_at || u.started_at || u.scheduled_at))} since progress`,
+        );
+      }
       for (const error of batch.errors || [])
         el("p", detail, error).className = "notice";
       const scroll = el("div", detail);
@@ -320,8 +348,20 @@
           `${u.id} / ${u.sample_index}`,
           u.profile,
           u.outcome,
-          bytes(u.http_totals?.bytes_up || 0),
-          bytes(u.http_totals?.bytes_down || 0),
+          bytes(
+            u.http_totals?.bytes_up ??
+              Object.values(u.stages || {}).reduce(
+                (n, s) => n + (s.bytes_up || 0),
+                0,
+              ),
+          ),
+          bytes(
+            u.http_totals?.bytes_down ??
+              Object.values(u.stages || {}).reduce(
+                (n, s) => n + (s.bytes_down || 0),
+                0,
+              ),
+          ),
           u.error || u.completion || "",
         ]),
       );
@@ -336,6 +376,7 @@
       ).className = "notice";
     for (const [label, value] of [
       ["Exact recoveries", `${S.outcomes?.exact || 0} / ${S.started || 0}`],
+      ["Exact after HTTP retry", `${S.exact_after_retry || 0}`],
       ["Exact recoveries / second", fmt(S.exact_per_second)],
       ["Load / drain", `${secs(S.load_seconds)} / ${secs(S.drain_seconds)}`],
       [
@@ -631,7 +672,12 @@
             "pre",
             detail,
             JSON.stringify(
-              { stages: u.stages, error: u.error, completion: u.completion },
+              {
+                stages: u.stages,
+                error: u.error,
+                completion: u.completion,
+                exact_after_retry: u.exact_after_retry,
+              },
               null,
               2,
             ),
@@ -646,7 +692,7 @@
             `${u.events_exact === true ? "Match" : u.events_exact === false ? "Mismatch" : "Unknown"} / ${u.unresolved_spends ?? "unknown"}`,
             u.seeded_events ?? "unknown",
             `${u.http_totals?.calls ?? 0} / ${u.http_totals?.failures ?? 0}`,
-            `${bytes(u.http_totals?.bytes_up || 0)} / ${bytes(u.http_totals?.bytes_down || 0)}`,
+            `${bytes(u.http_totals?.bytes_up ?? Object.values(u.stages || {}).reduce((n, s) => n + (s.bytes_up || 0), 0))} / ${bytes(u.http_totals?.bytes_down ?? Object.values(u.stages || {}).reduce((n, s) => n + (s.bytes_down || 0), 0))}`,
             secs(u.http_totals?.seconds),
             timeline,
             detail,

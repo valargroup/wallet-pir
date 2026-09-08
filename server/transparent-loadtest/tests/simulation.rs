@@ -42,6 +42,8 @@ enum Fault {
     RetryMap,
     RetryPageSetup,
     Advance,
+    SlowFirstFilter,
+    UploadTimeout,
 }
 async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
     let set = ShardSet::open(&dir.join("shards"), DEFAULT_RETAIN_REVISIONS).unwrap();
@@ -66,8 +68,21 @@ async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
                     tip["terminal_block_hash"] = json!(common::hash_at(height).to_display_hex());
                     return axum::Json(advanced_map).into_response();
                 }
+                if matches!(fault, Fault::UploadTimeout)
+                    && path.contains("/query/")
+                    && calls.fetch_add(1, Ordering::SeqCst) == 0
+                {
+                    return (
+                        StatusCode::REQUEST_TIMEOUT,
+                        "query body did not arrive in time",
+                    )
+                        .into_response();
+                }
                 if path.ends_with("/filter") {
                     match fault {
+                        Fault::SlowFirstFilter if calls.fetch_add(1, Ordering::SeqCst) == 0 => {
+                            tokio::time::sleep(Duration::from_secs(5)).await
+                        }
                         Fault::SlowFilter => tokio::time::sleep(Duration::from_secs(30)).await,
                         Fault::RefuseFilter => {
                             return (StatusCode::SERVICE_UNAVAILABLE, "test refusal")
@@ -136,7 +151,10 @@ async fn run(
     run_config(dir, name, config).await
 }
 
-async fn run_config(dir: &Path, name: &str, config: Value) -> Value {
+async fn run_config(dir: &Path, name: &str, mut config: Value) -> Value {
+    if config["preparation_cache"].is_null() {
+        config["preparation_cache"] = json!("off");
+    }
     let path = dir.join(format!("{name}.json"));
     fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
     let out = dir.join(name);
@@ -480,18 +498,15 @@ async fn catch_up_seeds_prior_history_and_keeps_measurement_separate() {
     let retry = run(dir.path(), &retry_base, "retry-map", "wave", 1, 120, false).await;
     assert_eq!(retry["success"], true);
     assert_eq!(retry["preparation"][0]["status"], "complete");
-    let requests = fs::read_to_string(
-        dir.path()
-            .join("retry-map/preparation/batch-0/preflight.ndjson"),
-    )
-    .unwrap();
+    let requests =
+        fs::read_to_string(dir.path().join("retry-map/preparation-preflight.ndjson")).unwrap();
     assert!(requests
         .lines()
         .any(|line| serde_json::from_str::<Value>(line).unwrap()["status"] == 502));
     // A bad oracle must stop preparation, never bless the measured wave.
     sample["clients"][0]["expected_digest"] = json!("incorrect");
     fs::write(&path, serde_json::to_vec(&sample).unwrap()).unwrap();
-    let config = json!({"schema":"transparent-scenario-v1","name":"bad-seed","mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"recovery_deadline_seconds":120});
+    let config = json!({"schema":"transparent-scenario-v1","name":"bad-seed","preparation_cache":"off","mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"recovery_deadline_seconds":120});
     let path = dir.path().join("bad-seed.json");
     fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
     let out = dir.path().join("bad-seed");
@@ -573,8 +588,8 @@ async fn preparation_cap_does_not_reduce_measured_wave_concurrency() {
     assert_eq!(report["phase"], "complete");
     assert_eq!(report["summary"]["started"], 3);
     let batches = report["preparation"].as_array().unwrap();
-    assert_eq!(batches.len(), 2);
-    assert_eq!(batches[0]["summary"]["started"], 2);
+    assert_eq!(batches.len(), 3);
+    assert_eq!(batches[0]["summary"]["started"], 1);
     assert_eq!(batches[1]["summary"]["started"], 1);
     assert_eq!(report["config"]["recovery_deadline_seconds"], 120);
     for batch in batches {
@@ -660,10 +675,18 @@ async fn historical_sample_keeps_its_target_on_a_newer_publication() {
     let (base, _) = service(dir.path(), Fault::Advance).await;
     for advancing in [false, true] {
         let name = if advancing { "historical" } else { "strict" };
-        let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":2},"recovery_deadline_seconds":120,"allow_advancing_publication":advancing});
-        let report = run_config(dir.path(), name, config).await;
+        let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":2},"recovery_deadline_seconds":120,"allow_advancing_publication":advancing,"preparation_cache":if advancing {"reuse"} else {"off"},"preparation_cache_dir":dir.path().join("historical-cache")});
+        let report = run_config(dir.path(), name, config.clone()).await;
         assert_eq!(report["success"], advancing, "{report}");
         if advancing {
+            let warm = run_config(dir.path(), "historical-warm", config).await;
+            assert_eq!(warm["success"], true, "{warm}");
+            assert_eq!(warm["preparation_status"]["cached"], 2);
+            assert!(warm["users"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|u| u["seeded_events"] == 1));
             assert_eq!(report["publication_stable"], false);
             assert_eq!(report["publication_compatible"], true);
             assert_eq!(report["publication"]["anchor_height"], target);
@@ -683,6 +706,87 @@ async fn historical_sample_keeps_its_target_on_a_newer_publication() {
                 .as_str()
                 .unwrap()
                 .contains("sample target"));
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn preparation_cache_and_queue_preserve_exact_recoveries() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[9999, 10000, 10001]);
+    let path = dir.path().join("sample.json");
+    let mut data: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for c in data["clients"].as_array_mut().unwrap() {
+        c["required_from"] = json!(common::FIRST + 1);
+    }
+    fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+    let (base, _) = service(dir.path(), Fault::SlowFirstFilter).await;
+    let mut config = json!({"schema":"transparent-scenario-v1","name":"cache","mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":3},"recovery_deadline_seconds":120,"preparation_cache":"reuse","preparation_cache_dir":dir.path().join("cache")});
+    let cold = run_config(dir.path(), "cold", config.clone()).await;
+    assert_eq!(cold["success"], true, "{cold}");
+    assert_eq!(cold["preparation_status"]["cached"], 0);
+    assert_eq!(cold["preparation_status"]["complete"], 3);
+    let batches = cold["preparation"].as_array().unwrap();
+    let third = &batches[2]["users"][0];
+    assert!(
+        third["started_at"].as_f64().unwrap()
+            < batches[..2]
+                .iter()
+                .map(|b| b["users"][0]["finished_at"].as_f64().unwrap())
+                .fold(0.0, f64::max),
+        "next wallet must start before the slow wallet finishes"
+    );
+    let warm = run_config(dir.path(), "warm", config.clone()).await;
+    assert_eq!(warm["success"], true, "{warm}");
+    assert_eq!(warm["preparation_status"]["cached"], 3);
+    assert_eq!(warm["preparation_status"]["complete"], 0);
+    assert!(!dir.path().join("warm/preparation").exists());
+    let entries: Vec<_> = fs::read_dir(dir.path().join("cache"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    fs::write(&entries[0], "interrupted JSON").unwrap();
+    let repaired = run_config(dir.path(), "repaired", config.clone()).await;
+    assert_eq!(repaired["success"], true);
+    assert_eq!(repaired["preparation_status"]["cached"], 2);
+    assert_eq!(repaired["preparation_status"]["complete"], 1);
+    config["preparation_cache"] = json!("refresh");
+    let refreshed = run_config(dir.path(), "refreshed", config.clone()).await;
+    assert_eq!(refreshed["success"], true);
+    assert_eq!(refreshed["preparation_status"]["cached"], 0);
+    config["preparation_cache"] = json!("off");
+    let off = run_config(dir.path(), "off", config).await;
+    assert_eq!(off["success"], true);
+    assert_eq!(off["preparation_status"]["cached"], 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn measured_upload_retry_is_exact_and_fully_accounted() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[3]);
+    for attempts in [1, 3] {
+        let (base, _) = service(dir.path(), Fault::UploadTimeout).await;
+        let name = format!("attempts-{attempts}");
+        let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"recovery_deadline_seconds":120,"measured_http_attempts":attempts});
+        let report = run_config(dir.path(), &name, config).await;
+        assert_eq!(report["success"], attempts == 3, "{report}");
+        if attempts == 3 {
+            assert_eq!(report["summary"]["exact_after_retry"], 1);
+            assert_eq!(report["users"][0]["http_totals"]["retry_attempts"], 1.0);
+            assert_eq!(
+                report["users"][0]["http_totals"]["http_status_counts"]["408"],
+                1.0
+            );
+            let lines: Vec<Value> =
+                fs::read_to_string(dir.path().join(&name).join("requests.ndjson"))
+                    .unwrap()
+                    .lines()
+                    .map(|s| serde_json::from_str(s).unwrap())
+                    .collect();
+            let failed = lines.iter().find(|e| e["status"] == 408).unwrap();
+            assert!(lines.iter().any(|e| e["request_id"] == failed["request_id"]
+                && e["attempt"] == 2
+                && e["status"] == 200));
         }
     }
 }

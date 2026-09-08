@@ -102,7 +102,10 @@ A `transparent-scenario-v1` JSON file contains:
 | `sample` | Journal sample path relative to the scenario file |
 | `shard_url`, `filter_url` | Retrieval origin; filters default to retrieval |
 | `profiles` | Class name → positive concurrent slot count; 1–512 total |
-| `preparation_concurrency` | Total preparation workers across all profiles, default 2; measured concurrency is unchanged |
+| `preparation_concurrency` | Total preparation workers across all profiles, default 2; idle slots immediately take the next eligible wallet |
+| `preparation_cache` | `reuse` (default), `refresh`, or `off` |
+| `preparation_cache_dir` | Optional persistent cache directory override |
+| `measured_http_attempts` | 1–3 attempts per HTTP call; custom scenarios default to 1, supplied scenarios use 3 |
 | `seed` | Deterministic class shuffle, default 1 |
 | `duration_seconds` | Sustained admission window, default 600 |
 | `recovery_deadline_seconds` | Measured recovery hard deadline from dispatch, default 600 |
@@ -228,20 +231,48 @@ no measured-window events or coverage are imported. Seed import time is included
 in the measured recovery duration. This models prior ledger state, not a fully
 warm persistent wallet cache.
 
-Preparation uses killable workers and its own `preparation_deadline_seconds`
-(default 3600 per wallet), without the measured query budget or latency SLO.
-Full-history preparation can be much slower than the subsequent recent-window
-recovery; `recovery_deadline_seconds` still limits measured recoveries.
-A deadline expiry records `timed_out` and an explicit explanation in the report. It prepares only selected wallets for a wave and the
-entire replacement pool for sustained mode, in batches bounded by both `preparation_concurrency` (default 2 total workers)
-and the configured profile concurrency. Large pools can take substantial preparation time. No measured
-load starts if preparation fails. The same Make commands handle preparation.
+Preparation uses a finite queue of killable workers and its own
+`preparation_deadline_seconds` (default 3600 per wallet). As soon as a wallet
+finishes, the next eligible wallet starts, respecting the global worker count
+and each profile's limit. A wave prepares its selected wallets; sustained runs
+prepare their replacement pool. Measurement starts only after every required
+wallet is ready. A terminal preparation failure stops admission, drains active
+workers, and preserves successful seeds for the next run.
 
-`preparation/batch-N/report.html` and `report.json` preserve preparation traffic,
-durations, failures and APM separately. `seeds/sample-N.json` retains prior events.
-The main report contains only measured recovery traffic and latency; preparation
-can warm server caches, so these are not cold-server benchmarks. Publication
-changes between preparation and measurement abort the affected recoveries in strict mode.
+Validated preparation is cached by default under
+`$XDG_CACHE_HOME/transparent-loadtest/preparation`, or
+`$HOME/.cache/transparent-loadtest/preparation`. Keys include the workload sample,
+wallet scripts/window, accepted historical target, chain and service identity,
+seed format and an implementation fingerprint computed from Rust sources,
+manifests, build scripts and dependency pins. Strict mode also binds the map
+digest. Advancing mode retains the historical anchor compatibility checks.
+Only complete, exact recoveries with no unresolved spends are stored. Entries
+are checksummed and atomically published; invalid entries are reported as misses
+and rebuilt. A 5 GiB LRU budget bounds persistent storage. Oversized entries
+remain in the run directory but are not persisted. Cache errors do not turn
+otherwise correct recovery into failure.
+
+Each run copies accepted seeds into its own `seeds/` directory. Measured stores
+remain independent, with cold filter/setup caches and no imported coverage or
+measured-window events. Cache hits contribute no historical preparation traffic
+to the current run. Cached source-run provenance remains visible separately.
+Changing relevant source bytes invalidates the cache even before a commit;
+changing only documentation does not. Legacy report seeds are not auto-imported.
+
+```sh
+make transparent-sim-wave                         # reuse preparation by default
+make transparent-sim-wave SIM_PREP_CACHE=refresh  # fresh preparation; replace successful entries
+make transparent-sim-wave SIM_PREP_CACHE=off      # no persistent cache reads or writes
+make transparent-sim-wave SIM_PREP_CONCURRENCY=2 SIM_HTTP_ATTEMPTS=3
+```
+
+`SIM_PREP_CACHE_DIR=PATH` selects another cache. The same options are available
+as `--preparation-cache`, `--preparation-cache-dir`,
+`--preparation-concurrency`, and `--measured-http-attempts` CLI overrides.
+Preparation reports retain the legacy `preparation/batch-N/` artifact naming,
+but each uncached entry is one independently scheduled wallet. The root report
+shows required/cached/queued/active/completed/failed totals, phase elapsed time,
+active wallet stages and time since progress. Earlier batch reports still open.
 
 The recovery table includes event correctness, unresolved spends, seeded event
 count, HTTP requests/failures, upload/download totals and cumulative HTTP time.
@@ -250,14 +281,22 @@ aggregate table and `summary.wallets` group repeated recoveries by sample index,
 with outcome counts, exact/unsuccessful latency distributions and HTTP totals.
 HTTP time sums request durations and should not be interpreted as wall-clock time.
 
-Preparation adapters retry temporary connection/time-out failures and retryable
-408/502/503/504 responses up to three HTTP attempts per call, preserving completed
-store work and counting every attempt in preparation traffic. They honor server
-retry delays; the worker's original hard deadline still bounds the entire recovery.
-The wallet's own overload retries may follow. Publication preflight/postflight
-checks also get up to three HTTP attempts. Measured wallet requests retain their
-existing retry policy. Invalid data, event mismatches and incompatible publications
-are never converted into successful results by retries.
+Preparation adapters retain their bounded transient/overload retry policy.
+Measured adapters retry HTTP 408/502/504 and connection/request timeouts when
+`measured_http_attempts` exceeds one, waiting one second before the second
+attempt and two before the third. Typed overloads remain in the wallet's
+existing refusal policy, without an extra measured HTTP retry layer.
+All attempts and backoff remain inside the original recovery deadline. Ordinary
+client defaults remain one HTTP attempt. Server upload deadlines are unchanged.
+
+Request logs include process-local `request_id` and `attempt` (identify a call
+with wallet run ID plus request ID). Reports retain every response status and
+attempt's submitted/received payload bytes, including failed attempts.
+`retry_attempts`, `retried_requests`, `http_status_counts`, and
+`exact_after_retry` make retries visible alongside ordinary success rates.
+End-to-end latency includes backoff; HTTP stage time sums attempts only.
+Only a complete recovery matching the original event count and digest is exact,
+even after retries. Exhausted retries remain unsuccessful.
 
 The main HTML/JSON report now includes preparation batch summaries, failed-wallet
 errors, upload/download totals and relative links to each detailed batch report.

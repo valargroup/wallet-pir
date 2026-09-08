@@ -30,3 +30,6 @@ tempfile = "3"
 axum = "0.7"
 transparent-shard = { path = "../../pir/transparent-shard" }
 transparent-shard-server = { path = "../transparent-shard-server" }
+
+[build-dependencies]
+sha2 = "0.10"

@@ -43,6 +43,14 @@ struct Cli {
     metrics_target: Vec<(String, String)>,
     #[arg(long, hide = true)]
     scenario_worker: bool,
+    #[arg(long)]
+    preparation_cache: Option<crate::preparation_cache::Mode>,
+    #[arg(long)]
+    preparation_cache_dir: Option<PathBuf>,
+    #[arg(long)]
+    preparation_concurrency: Option<usize>,
+    #[arg(long)]
+    measured_http_attempts: Option<usize>,
 }
 
 fn parse_target(value: &str) -> Result<(String, String), String> {
@@ -72,6 +80,12 @@ pub struct Config {
     pub preparation_concurrency: usize,
     #[serde(default)]
     pub allow_advancing_publication: bool,
+    #[serde(default)]
+    pub preparation_cache: crate::preparation_cache::Mode,
+    #[serde(default)]
+    pub preparation_cache_dir: Option<PathBuf>,
+    #[serde(default = "one_attempt")]
+    pub measured_http_attempts: usize,
     #[serde(default = "preparation_deadline")]
     pub preparation_deadline_seconds: u64,
     #[serde(default = "ten_minutes")]
@@ -93,6 +107,10 @@ pub struct Config {
 }
 fn preparation_concurrency() -> usize {
     2
+}
+
+fn one_attempt() -> usize {
+    1
 }
 
 fn preparation_deadline() -> u64 {
@@ -125,6 +143,9 @@ pub enum Store {
 
 impl Config {
     fn validate(&self) -> Result<()> {
+        if !(1..=3).contains(&self.measured_http_attempts) {
+            bail!("measured_http_attempts must be between 1 and 3");
+        }
         if self.schema != "transparent-scenario-v1" {
             bail!("unsupported scenario schema");
         }
@@ -303,14 +324,13 @@ fn seed_store(
         &fs::read(path)
             .with_context(|| format!("missing prepared wallet history: {}", path.display()))?,
     )?;
-    if seed.genesis_hash != map.genesis_hash || seed.anchor != job.anchor {
-        bail!("prepared history belongs to a different chain or workload anchor");
-    }
-    if !job.config.allow_advancing_publication
-        && seed.map_sha256 != digest(&serde_json::to_vec(map)?)
-    {
-        bail!("publication changed since wallet preparation");
-    }
+    validate_seed(
+        &seed,
+        map,
+        &job.anchor,
+        wallet,
+        job.config.allow_advancing_publication,
+    )?;
     store.bind_set(&SetIdentity::of(map))?;
     let mut by_shard: BTreeMap<usize, Vec<StoredEvent>> = BTreeMap::new();
     for entry in seed.events {
@@ -346,6 +366,50 @@ fn seed_store(
     }
     if !store.ledger()?.unresolved().is_empty() {
         bail!("prepared history contains unresolved spends");
+    }
+    Ok(())
+}
+
+fn validate_seed(
+    seed: &Seed,
+    map: &transparent_filter::ShardMap,
+    anchor: &Anchor,
+    wallet: &SampleClient,
+    advancing: bool,
+) -> Result<()> {
+    if seed.genesis_hash != map.genesis_hash || seed.anchor != *anchor {
+        bail!("prepared history belongs to a different chain or workload anchor");
+    }
+    if !advancing && seed.map_sha256 != digest(&serde_json::to_vec(map)?) {
+        bail!("publication changed since wallet preparation");
+    }
+    let mut ledger = MemoryStore::new();
+    let events = seed
+        .events
+        .iter()
+        .map(|entry| {
+            let event =
+                transparent_events::TransparentEvent::from_bytes(&hex::decode(&entry.event)?)?;
+            if u64::from(event.height()) >= wallet.required_from
+                || u64::from(event.height()) < map.start_height
+                || !wallet.scripts.contains(&entry.script)
+            {
+                bail!("cached seed contains an event outside prior history");
+            }
+            Ok(StoredEvent {
+                script: hex::decode(&entry.script)?,
+                event,
+                shard_id: 0,
+                revision_digest: String::new(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ledger.commit_shard(ShardCommit {
+        events,
+        ..Default::default()
+    })?;
+    if !ledger.ledger()?.unresolved().is_empty() {
+        bail!("cached history contains unresolved spends");
     }
     Ok(())
 }
@@ -391,7 +455,7 @@ fn recover(job: &Job) -> Result<Value> {
         // work after the supervisor is gone would violate the concurrency bound.
         if emit(
             &json!({"type":"request", "id":id, "at":now(), "stage":o.stage,
-            "status":o.status, "seconds":o.elapsed.as_secs_f64(), "bytes_up":o.bytes_up,
+            "request_id":o.request_id,"attempt":o.attempt,"status":o.status, "seconds":o.elapsed.as_secs_f64(), "bytes_up":o.bytes_up,
             "bytes_down":o.bytes_down, "failed":o.failed}),
         )
         .is_err()
@@ -402,12 +466,20 @@ fn recover(job: &Job) -> Result<Value> {
     let options = job.config.options();
     let mut filters = HttpFilterSource::new(job.config.filter_origin(), &options)
         .map_err(io_error)?
-        .with_observer(observer.clone())
-        .with_retry_attempts(if job.preparing { 3 } else { 1 });
+        .with_observer(observer.clone());
+    filters = if job.preparing {
+        filters.with_retry_attempts(3)
+    } else {
+        filters.with_transient_retry_attempts(job.config.measured_http_attempts)
+    };
     let mut transport = HttpShardTransport::new(&job.config.shard_url, &options)
         .map_err(io_error)?
-        .with_observer(observer)
-        .with_retry_attempts(if job.preparing { 3 } else { 1 });
+        .with_observer(observer);
+    transport = if job.preparing {
+        transport.with_retry_attempts(3)
+    } else {
+        transport.with_transient_retry_attempts(job.config.measured_http_attempts)
+    };
     let (map, map_bytes) = filters.map().map_err(io_error)?;
     validate_publication(
         &map,
@@ -643,6 +715,18 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
     for (name, url) in cli.metrics_target {
         config.metrics_targets.insert(name, url);
     }
+    if let Some(mode) = cli.preparation_cache {
+        config.preparation_cache = mode;
+    }
+    if let Some(path) = cli.preparation_cache_dir {
+        config.preparation_cache_dir = Some(path);
+    }
+    if let Some(n) = cli.preparation_concurrency {
+        config.preparation_concurrency = n;
+    }
+    if let Some(n) = cli.measured_http_attempts {
+        config.measured_http_attempts = n;
+    }
     config.validate()?;
     // Paths in saved scenarios are relative to the scenario, not the shell cwd.
     config.sample = fs::canonicalize(path.parent().unwrap_or(Path::new(".")).join(&config.sample))?;
@@ -753,8 +837,8 @@ fn preflight(
     Ok((map, hash, geometry.schema))
 }
 
-/// Prepare only the wave's selected wallets, or the entire replacement pool for
-/// sustained runs. Batch sizes never exceed the configured per-profile slots.
+/// Prepare a finite queue with independent killable supervisors. Completed
+/// wallets immediately release capacity; measured work waits for the whole queue.
 #[allow(clippy::too_many_arguments)]
 fn prepare(
     config: &Config,
@@ -765,92 +849,268 @@ fn prepare(
     interrupted: &AtomicBool,
     parent: &mut Report,
 ) -> Result<()> {
-    let mut remaining: BTreeMap<String, Vec<usize>> = selector
+    use crate::preparation_cache as cache;
+    let started = Instant::now();
+    let root = config
+        .preparation_cache_dir
+        .clone()
+        .unwrap_or_else(cache::default_dir);
+    let selected: Vec<usize> = selector
         .pools
         .iter()
-        .map(|(class, pool)| {
-            let count = if config.mode == Mode::Wave {
+        .flat_map(|(class, pool)| {
+            let n = if config.mode == Mode::Wave {
                 config.profiles[class]
             } else {
                 pool.len()
             };
-            (
-                class.clone(),
-                pool[..count]
-                    .iter()
-                    .copied()
-                    .filter(|i| sample.clients[*i].required_from > sample.start_height)
-                    .collect(),
-            )
+            pool[..n]
+                .iter()
+                .copied()
+                .filter(|i| sample.clients[*i].required_from > sample.start_height)
+                .collect::<Vec<_>>()
         })
         .collect();
-    let mut batch = 0;
-    while remaining.values().any(|p| !p.is_empty()) {
-        if interrupted.load(Ordering::Relaxed) {
-            bail!("wallet preparation interrupted");
-        }
-        let mut pools = BTreeMap::new();
-        let mut capacity = config.preparation_concurrency;
-        for (class, pool) in &mut remaining {
-            let n = pool.len().min(config.profiles[class]).min(capacity);
-            capacity -= n;
-            if n > 0 {
-                pools.insert(class.clone(), pool.drain(..n).collect::<Vec<_>>());
+    if selected.is_empty() {
+        return Ok(());
+    }
+    let (map, map_digest, schema) = preflight(config, out, "preparation-preflight.ndjson")?;
+    let anchor = Anchor {
+        height: sample.anchor_height,
+        hash: sample
+            .anchor_hash
+            .clone()
+            .context("sample anchor missing")?,
+    };
+    let compatible = validate_publication(
+        &map,
+        &sample.genesis_hash,
+        sample.start_height,
+        &anchor,
+        config.allow_advancing_publication,
+    );
+    // Child preflight still writes a detailed failure report when incompatible.
+    let sample_digest = digest(&fs::read(&config.sample)?);
+    let identities: BTreeMap<usize,Value> = selected.iter().map(|i| (*i,json!({
+        "version":1,"implementation":env!("SIMULATION_PREPARATION_FINGERPRINT"),
+        "sample_sha256":sample_digest,"wallet":i,"scripts":sample.clients[*i].scripts,
+        "required_from":sample.clients[*i].required_from,"anchor":anchor,"genesis":sample.genesis_hash,
+        "start_height":sample.start_height,"network":map.network,"profile":map.profile,"schema":schema,
+        "shard_url":config.shard_url.trim_end_matches('/'),"filter_url":config.filter_origin().trim_end_matches('/'),
+        "strict_map":if config.allow_advancing_publication { None } else { Some(&map_digest) }
+    }))).collect();
+    let mut queue = std::collections::VecDeque::new();
+    let mut cached = 0;
+    for i in &selected {
+        let mut miss = match config.preparation_cache {
+            cache::Mode::Off => "disabled".to_owned(),
+            cache::Mode::Refresh => "refresh requested".to_owned(),
+            _ => "not found".to_owned(),
+        };
+        if config.preparation_cache == cache::Mode::Reuse && compatible.is_ok() {
+            match cache::read(&root, &identities[i]) {
+                Ok(Some(entry)) => {
+                    let validation = (|| -> Result<()> {
+                        let seed: Seed = serde_json::from_value(entry["seed"].clone())?;
+                        validate_seed(
+                            &seed,
+                            &map,
+                            &anchor,
+                            &sample.clients[*i],
+                            config.allow_advancing_publication,
+                        )?;
+                        if entry["validation"]["actual_digest"]
+                            != sample.clients[*i].expected_digest
+                            || entry["validation"]["events"] != sample.clients[*i].journal_events
+                        {
+                            bail!("cached oracle validation mismatch");
+                        }
+                        fs::write(
+                            seeds.join(format!("sample-{i}.json")),
+                            serde_json::to_vec(&seed)?,
+                        )?;
+                        Ok(())
+                    })();
+                    match validation {
+                        Ok(()) => {
+                            cached += 1;
+                            parent.preparation.push(json!({"batch":parent.preparation.len(),"status":"cached","wallets":1,"sample_index":i,"profile":sample.clients[*i].class,"cache":{"key":cache::key(&identities[i]),"provenance":entry["provenance"]}}));
+                            continue;
+                        }
+                        Err(e) => miss = e.to_string(),
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => miss = e.to_string(),
             }
         }
-        let mut prep = config.clone();
-        prep.name = format!("{}: wallet preparation batch {batch}", config.name);
-        prep.mode = Mode::Wave;
-        prep.recovery_deadline_seconds = config.preparation_deadline_seconds;
-        prep.profiles = pools.iter().map(|(c, p)| (c.clone(), p.len())).collect();
-        prep.max_queries = None;
-        prep.max_p99_exact_seconds = None;
-        let directory = out.join("preparation").join(format!("batch-{batch}"));
-        fs::create_dir_all(directory.join("stores"))?;
-        fs::create_dir(directory.join("logs"))?;
-        let mut report = Report::new(&prep, digest(&fs::read(&config.sample)?));
-        let link = format!("preparation/batch-{batch}/report.html");
-        parent.preparation.push(json!({"batch":batch,"status":"running","report":link,"wallets":prep.profiles.values().sum::<usize>()}));
-        simulation_report::write(&directory, &report)?;
-        simulation_report::write(out, parent)?;
-        eprintln!("{} (excluded from measured load)", prep.name);
-        let result = run(
-            &prep,
-            sample,
-            Selector {
-                pools,
-                cursors: BTreeMap::new(),
-            },
-            &directory,
-            interrupted,
-            &mut report,
-            seeds,
-            true,
+        queue.push_back((*i, miss));
+    }
+    let (tx, rx) = mpsc::channel();
+    let mut active = BTreeMap::<usize, (usize, String)>::new();
+    let mut completed = 0;
+    let mut failed = 0;
+    let mut last_checkpoint = Instant::now() - Duration::from_secs(5);
+    std::thread::scope(|scope| -> Result<()> {
+        loop {
+            if interrupted.load(Ordering::Relaxed) {
+                failed = failed.max(1);
+            }
+            while failed == 0 && active.len() < config.preparation_concurrency {
+                let Some(position) = queue.iter().position(|(i, _)| {
+                    active
+                        .values()
+                        .filter(|(_, class)| *class == sample.clients[*i].class)
+                        .count()
+                        < config.profiles[&sample.clients[*i].class]
+                }) else {
+                    break;
+                };
+                let (i, miss) = queue.remove(position).unwrap();
+                let batch = parent.preparation.len();
+                let link = format!("preparation/batch-{batch}/report.html");
+                let directory = out.join("preparation").join(format!("batch-{batch}"));
+                fs::create_dir_all(directory.join("stores"))?;
+                fs::create_dir_all(directory.join("logs"))?;
+                let mut prep = config.clone();
+                prep.name = format!(
+                    "{}: preparing wallet {i} ({})",
+                    config.name, sample.clients[i].class
+                );
+                prep.mode = Mode::Wave;
+                prep.recovery_deadline_seconds = config.preparation_deadline_seconds;
+                prep.profiles = BTreeMap::from([(sample.clients[i].class.clone(), 1)]);
+                prep.max_queries = None;
+                prep.max_p99_exact_seconds = None;
+                parent.preparation.push(json!({"batch":batch,"status":"running","report":link,"wallets":1,"sample_index":i,"profile":sample.clients[i].class,"cache":{"miss":miss}}));
+                active.insert(batch, (i, sample.clients[i].class.clone()));
+                let tx = tx.clone();
+                let sample_digest = sample_digest.clone();
+                scope.spawn(move || {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || -> Result<Report> {
+                            let mut report = Report::new(&prep, sample_digest);
+                            simulation_report::write(&directory, &report)?;
+                            let result = run(
+                                &prep,
+                                sample,
+                                Selector {
+                                    pools: BTreeMap::from([(
+                                        sample.clients[i].class.clone(),
+                                        vec![i],
+                                    )]),
+                                    cursors: BTreeMap::new(),
+                                },
+                                &directory,
+                                interrupted,
+                                &mut report,
+                                seeds,
+                                true,
+                            );
+                            if let Err(e) = result {
+                                report.errors.push(e.to_string());
+                            }
+                            report.finished_at = Some(now());
+                            report.interrupted = interrupted.load(Ordering::Relaxed);
+                            report.finalize();
+                            report.phase = if report.success {
+                                "complete"
+                            } else {
+                                "preparation_failed"
+                            }
+                            .into();
+                            simulation_report::write(&directory, &report)?;
+                            Ok(report)
+                        },
+                    ))
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("preparation supervisor panicked")));
+                    let _ = tx.send((batch, result));
+                });
+            }
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok((batch, result)) => {
+                    let (i, _) = active.remove(&batch).unwrap();
+                    match result {
+                        Ok(report) => {
+                            let entry = &mut parent.preparation[batch];
+                            entry["status"] =
+                                json!(if report.success { "complete" } else { "failed" });
+                            entry["users"] = json!(report.users);
+                            entry["summary"] = report.summary;
+                            entry["errors"] = json!(report.errors);
+                            if report.success {
+                                completed += 1;
+                                if config.preparation_cache != cache::Mode::Off {
+                                    let result = (|| -> Result<bool> {
+                                        let seed: Value = serde_json::from_slice(&fs::read(
+                                            seeds.join(format!("sample-{i}.json")),
+                                        )?)?;
+                                        cache::write(
+                                            &root,
+                                            &identities[&i],
+                                            &seed,
+                                            &report.users[0],
+                                            &json!({"run_id":parent.run_id,"report":out.join(entry["report"].as_str().unwrap()),"created_at":report.created_at,"finished_at":report.finished_at,"build":report.provenance}),
+                                        )
+                                    })();
+                                    entry["cache"]["stored"] =
+                                        json!(result.as_ref().is_ok_and(|stored| *stored));
+                                    if let Err(e) = result {
+                                        entry["cache"]["warning"] = json!(e.to_string());
+                                    }
+                                }
+                            } else {
+                                failed += 1;
+                            }
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            parent.preparation[batch]["status"] = json!("failed");
+                            parent.preparation[batch]["errors"] = json!([e.to_string()]);
+                        }
+                    }
+                    last_checkpoint = Instant::now() - Duration::from_secs(5);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(e) => return Err(e.into()),
+            }
+            if last_checkpoint.elapsed() >= Duration::from_secs(5) {
+                for batch in active.keys() {
+                    let path = out
+                        .join(parent.preparation[*batch]["report"].as_str().unwrap())
+                        .with_extension("json");
+                    if let Ok(bytes) = fs::read(path) {
+                        if let Ok(child) = serde_json::from_slice::<Value>(&bytes) {
+                            parent.preparation[*batch]["users"] = child["users"].clone();
+                        }
+                    }
+                }
+                parent.preparation_status = json!({"required":selected.len(),"cached":cached,"queued":queue.len(),"active":active.len(),"complete":completed,"failed":failed,"seconds":started.elapsed().as_secs_f64(),"cache_dir":root});
+                simulation_report::write(out, parent)?;
+                eprintln!("{}: preparation {}/{} ready ({} cached), {} active, {} queued, {} failed; {:.0}s elapsed",config.name,cached+completed,selected.len(),cached,active.len(),queue.len(),failed,started.elapsed().as_secs_f64());
+                last_checkpoint = Instant::now();
+            }
+            if active.is_empty() && (queue.is_empty() || failed > 0) {
+                break;
+            }
+        }
+        Ok(())
+    })?;
+    if failed > 0 {
+        let reason = parent
+            .preparation
+            .iter()
+            .filter(|b| b["status"] == "failed")
+            .find_map(|b| {
+                b["errors"][0]
+                    .as_str()
+                    .or_else(|| b["users"][0]["error"].as_str())
+            })
+            .unwrap_or("a required wallet did not complete exactly");
+        bail!(
+            "wallet preparation unsuccessful: {reason}; see {}",
+            out.join("report.html").display()
         );
-        if let Err(error) = &result {
-            report.errors.push(error.to_string());
-        }
-        report.finished_at = Some(now());
-        report.interrupted = interrupted.load(Ordering::Relaxed);
-        report.finalize();
-        report.phase = if report.success {
-            "complete"
-        } else {
-            "preparation_failed"
-        }
-        .into();
-        simulation_report::write(&directory, &report)?;
-        parent.preparation[batch] = json!({"batch":batch,"status":if report.success {"complete"} else {"failed"},"report":link,
-            "summary":report.summary,"errors":report.errors,"users":report.users});
-        simulation_report::write(out, parent)?;
-        result?;
-        if !report.success {
-            bail!(
-                "wallet preparation unsuccessful; see {}",
-                directory.join("report.html").display()
-            );
-        }
-        batch += 1;
     }
     Ok(())
 }

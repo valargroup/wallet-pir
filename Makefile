@@ -103,6 +103,11 @@ SIM_FILTER_URL ?=
 SIM_METRICS ?=
 SIM_OUT ?=
 SIM_RUN_ID ?=
+SIM_PREP_CACHE ?=
+SIM_PREP_CACHE_DIR ?=
+SIM_PREP_CONCURRENCY ?=
+SIM_HTTP_ATTEMPTS ?=
+export SIM_PREP_CACHE SIM_PREP_CACHE_DIR SIM_PREP_CONCURRENCY SIM_HTTP_ATTEMPTS
 export SIM_SCENARIO SIM_URL SIM_FILTER_URL SIM_METRICS SIM_OUT SIM_RUN_ID
 
 .PHONY: transparent-sim transparent-sim-wave transparent-sim-sustained transparent-sim-help transparent-sim-open
@@ -121,6 +126,10 @@ transparent-sim transparent-sim-wave transparent-sim-sustained:
 	if [ -n "$$SIM_URL" ]; then set -- "$$@" --shard-url "$$SIM_URL"; fi; \
 	if [ -n "$$SIM_FILTER_URL" ]; then set -- "$$@" --filter-url "$$SIM_FILTER_URL"; fi; \
 	if [ -n "$$SIM_RUN_ID" ]; then set -- "$$@" --run-id "$$SIM_RUN_ID"; fi; \
+	if [ -n "$$SIM_PREP_CACHE" ]; then set -- "$$@" --preparation-cache "$$SIM_PREP_CACHE"; fi; \
+	if [ -n "$$SIM_PREP_CACHE_DIR" ]; then set -- "$$@" --preparation-cache-dir "$$SIM_PREP_CACHE_DIR"; fi; \
+	if [ -n "$$SIM_PREP_CONCURRENCY" ]; then set -- "$$@" --preparation-concurrency "$$SIM_PREP_CONCURRENCY"; fi; \
+	if [ -n "$$SIM_HTTP_ATTEMPTS" ]; then set -- "$$@" --measured-http-attempts "$$SIM_HTTP_ATTEMPTS"; fi; \
 	set -f; \
 	for target in $$SIM_METRICS; do set -- "$$@" --metrics-target "$$target"; done; \
 	printf 'Scenario: %s\nReport directory: %s\n' "$$SIM_SCENARIO" "$$out"; \
@@ -143,6 +152,10 @@ transparent-sim-help:
 		'  SIM_URL=URL              Override the private retrieval origin' \
 		'  SIM_FILTER_URL=URL       Override the public filter origin' \
 		'  SIM_METRICS="r1=URL r2=URL"  Named full worker /metrics URLs' \
+		'  SIM_PREP_CACHE=reuse|refresh|off  Preparation cache mode (default reuse)' \
+		'  SIM_PREP_CACHE_DIR=PATH   Override the persistent preparation cache' \
+		'  SIM_PREP_CONCURRENCY=N   Preparation workers (default 2)' \
+		'  SIM_HTTP_ATTEMPTS=1..3   Measured HTTP attempts' \
 		'  SIM_OUT=PATH             New report directory (default: unique temp path)' \
 		'  SIM_RUN_ID=NAME          Optional report identifier' \
 		'  SIM_SCENARIO=PATH        Custom scenario JSON; controls profiles and duration' \

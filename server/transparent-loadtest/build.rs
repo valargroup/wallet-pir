@@ -1,5 +1,30 @@
 //! Pin provenance to the built executable rather than the invocation directory.
+use sha2::{Digest, Sha256};
+use std::path::Path;
 use std::process::Command;
+
+fn fingerprint_files(path: &Path, hash: &mut Sha256) {
+    if path.is_dir() {
+        let mut files: Vec<_> = std::fs::read_dir(path)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        files.sort();
+        for file in files {
+            if file.file_name().unwrap() != "target" {
+                fingerprint_files(&file, hash);
+            }
+        }
+    } else if matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("rs" | "toml" | "lock")
+    ) {
+        let bytes = std::fs::read(path).unwrap();
+        hash.update(path.to_string_lossy().as_bytes());
+        hash.update((bytes.len() as u64).to_le_bytes());
+        hash.update(bytes);
+    }
+}
 
 fn git(args: &[&str]) -> Option<String> {
     Command::new("git")
@@ -11,6 +36,21 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    let mut hash = Sha256::new();
+    for path in [
+        "src",
+        "build.rs",
+        "Cargo.toml",
+        "../../pir",
+        "../../Cargo.toml",
+        "../../Cargo.lock",
+    ] {
+        fingerprint_files(Path::new(path), &mut hash);
+    }
+    println!(
+        "cargo:rustc-env=SIMULATION_PREPARATION_FINGERPRINT={:x}",
+        hash.finalize()
+    );
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");

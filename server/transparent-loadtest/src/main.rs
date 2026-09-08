@@ -12,6 +12,7 @@
 //! as the wallet charges them; TLS and connection overhead are not measured
 //! and the report says so rather than estimating them.
 
+mod preparation_cache;
 mod scenario;
 mod simulation_report;
 

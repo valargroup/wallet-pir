@@ -42,11 +42,14 @@ fn build(options: &HttpOptions) -> Result<reqwest::blocking::Client, BoxError> {
 struct HttpStatusError {
     status: u16,
     message: String,
+    #[source]
+    cause: Option<BoxError>,
 }
 
 fn status_error(status: reqwest::StatusCode, shard: u64, revision: &str, body: &[u8]) -> BoxError {
     Box::new(HttpStatusError {
         status: status.as_u16(),
+        cause: None,
         message: format!(
             "shard {shard} revision {revision}: HTTP {status}: {}",
             String::from_utf8_lossy(body)
@@ -81,7 +84,11 @@ pub fn checked(
         shard_id,
         revision,
     ) {
-        return Err(refused);
+        return Err(Box::new(HttpStatusError {
+            status: status.as_u16(),
+            message: refused.to_string(),
+            cause: Some(refused),
+        }));
     }
     Err(status_error(status, shard_id, revision, &body))
 }
@@ -90,6 +97,9 @@ pub fn checked(
 #[derive(Clone, Debug)]
 pub struct HttpObservation {
     pub stage: &'static str,
+    /// Process-local identifier shared by all attempts of one HTTP call.
+    pub request_id: u64,
+    pub attempt: usize,
     pub status: Option<u16>,
     pub elapsed: Duration,
     /// Submitted request payload size; not a measurement of socket delivery.
@@ -111,32 +121,56 @@ fn execute(
     binding: Option<(u64, &str)>,
     observer: &Option<HttpObserver>,
     attempts: usize,
+    retry_overload: bool,
 ) -> Result<Vec<u8>, BoxError> {
-    if attempts <= 1 {
-        return execute_once(request, stage, bytes_up, binding, observer);
-    }
+    static REQUEST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let request_id = REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let attempts = attempts.max(1);
     for attempt in 0..attempts {
+        let observed = observer.as_ref().map(|observer| {
+            let observer = observer.clone();
+            Arc::new(move |mut event: HttpObservation| {
+                event.request_id = request_id;
+                event.attempt = attempt + 1;
+                observer(event);
+            }) as HttpObserver
+        });
         let copy = request
             .try_clone()
             .ok_or("HTTP request cannot be retried")?;
-        let result = execute_once(copy, stage, bytes_up, binding, observer);
+        let result = execute_once(copy, stage, bytes_up, binding, &observed);
         let delay = result.as_ref().err().and_then(|error| {
+            if !retry_overload
+                && error
+                    .downcast_ref::<HttpStatusError>()
+                    .is_some_and(|e| matches!(e.status, 502 | 504))
+            {
+                return Some(Duration::from_secs(attempt as u64 + 1));
+            }
             if let Some(overloaded) = crate::transport::Overloaded::found_in(error) {
-                return overloaded.retry_after;
+                return if retry_overload {
+                    overloaded.retry_after
+                } else {
+                    None
+                };
             }
             if error
                 .downcast_ref::<HttpStatusError>()
-                .is_some_and(|error| matches!(error.status, 408 | 502..=504))
+                .is_some_and(|error| {
+                    matches!(error.status, 408 | 502 | 504)
+                        || (retry_overload && error.status == 503)
+                })
             {
-                return Some(Duration::from_secs(1));
+                return Some(Duration::from_secs(attempt as u64 + 1));
             }
             error.downcast_ref::<reqwest::Error>().and_then(|error| {
                 (error.is_timeout()
                     || error.is_connect()
-                    || error
-                        .status()
-                        .is_some_and(|s| matches!(s.as_u16(), 408 | 502..=504)))
-                .then_some(Duration::from_secs(1))
+                    || error.status().is_some_and(|s| {
+                        matches!(s.as_u16(), 408 | 502 | 504)
+                            || (retry_overload && s.as_u16() == 503)
+                    }))
+                .then_some(Duration::from_secs(attempt as u64 + 1))
             })
         });
         if attempt + 1 == attempts || delay.is_none() {
@@ -164,7 +198,7 @@ fn execute_once(
     let started = Instant::now();
     let mut status = None;
     let mut bytes_down = 0;
-    let result = (|| {
+    let result = (|| -> Result<Vec<u8>, BoxError> {
         let response = request.send()?;
         let code = response.status();
         status = Some(code.as_u16());
@@ -185,7 +219,11 @@ fn execute_once(
                     shard,
                     revision,
                 ) {
-                    return Err(error);
+                    return Err(Box::new(HttpStatusError {
+                        status: code.as_u16(),
+                        message: error.to_string(),
+                        cause: Some(error),
+                    }));
                 }
                 return Err(status_error(code, shard, revision, &body));
             }
@@ -196,6 +234,8 @@ fn execute_once(
     })();
     if let Some(observer) = observer {
         observer(HttpObservation {
+            request_id: 0,
+            attempt: 1,
             stage,
             status,
             elapsed: started.elapsed(),
@@ -213,6 +253,7 @@ pub struct HttpShardTransport {
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
     attempts: usize,
+    retry_overload: bool,
 }
 
 impl HttpShardTransport {
@@ -222,6 +263,7 @@ impl HttpShardTransport {
             client: build(options)?,
             observer: None,
             attempts: 1,
+            retry_overload: true,
         })
     }
 
@@ -229,6 +271,14 @@ impl HttpShardTransport {
     /// separate from wallet-level overload retries and defaults to one attempt.
     pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
         self.attempts = attempts.clamp(1, 3);
+        self
+    }
+
+    /// Retry transient gateway/upload/connection failures without layering
+    /// additional overload retries on the wallet's refusal policy.
+    pub fn with_transient_retry_attempts(mut self, attempts: usize) -> Self {
+        self.attempts = attempts.clamp(1, 3);
+        self.retry_overload = false;
         self
     }
 
@@ -254,6 +304,7 @@ impl ShardTransport for HttpShardTransport {
             None,
             &self.observer,
             self.attempts,
+            self.retry_overload,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -270,6 +321,7 @@ impl ShardTransport for HttpShardTransport {
             Some((shard_id, revision)),
             &self.observer,
             self.attempts,
+            self.retry_overload,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -296,6 +348,7 @@ impl ShardTransport for HttpShardTransport {
             Some((shard_id, revision)),
             &self.observer,
             self.attempts,
+            self.retry_overload,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -324,6 +377,7 @@ impl ShardTransport for HttpShardTransport {
             Some((shard_id, revision)),
             &self.observer,
             self.attempts,
+            self.retry_overload,
         )
     }
 }
@@ -334,6 +388,7 @@ pub struct HttpFilterSource {
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
     attempts: usize,
+    retry_overload: bool,
 }
 
 impl HttpFilterSource {
@@ -343,6 +398,7 @@ impl HttpFilterSource {
             client: build(options)?,
             observer: None,
             attempts: 1,
+            retry_overload: true,
         })
     }
 
@@ -350,6 +406,14 @@ impl HttpFilterSource {
     /// separate from wallet-level overload retries and defaults to one attempt.
     pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
         self.attempts = attempts.clamp(1, 3);
+        self
+    }
+
+    /// Retry transient gateway/upload/connection failures without layering
+    /// additional overload retries on the wallet's refusal policy.
+    pub fn with_transient_retry_attempts(mut self, attempts: usize) -> Self {
+        self.attempts = attempts.clamp(1, 3);
+        self.retry_overload = false;
         self
     }
 
@@ -377,6 +441,7 @@ impl FilterSource for HttpFilterSource {
             None,
             &self.observer,
             self.attempts,
+            self.retry_overload,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -391,6 +456,7 @@ impl FilterSource for HttpFilterSource {
             None,
             &self.observer,
             self.attempts,
+            self.retry_overload,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -405,11 +471,16 @@ mod observation_tests {
 
     #[test]
     fn opt_in_retries_are_bounded_and_account_for_every_response() {
-        for statuses in [
-            vec![502, 200],
-            vec![502, 502, 502],
-            vec![408, 200],
-            vec![404],
+        for (retry_overload, statuses) in [
+            (true, vec![502, 200]),
+            (true, vec![502, 502, 502]),
+            (false, vec![502, 200]),
+            (false, vec![504, 200]),
+            (false, vec![408, 200]),
+            (false, vec![408, 408, 408]),
+            (true, vec![503, 200]),
+            (false, vec![503]),
+            (false, vec![404]),
         ] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
@@ -439,11 +510,19 @@ mod observation_tests {
                 Some((1, "revision")),
                 &Some(observer),
                 3,
+                retry_overload,
             );
             assert_eq!(result.is_ok(), success);
             server.join().unwrap();
             let observations = observations.lock().unwrap();
             assert_eq!(observations.len(), expected);
+            assert!(observations
+                .iter()
+                .all(|o| o.request_id == observations[0].request_id));
+            assert_eq!(
+                observations.iter().map(|o| o.attempt).collect::<Vec<_>>(),
+                (1..=expected).collect::<Vec<_>>()
+            );
             assert_eq!(
                 observations.iter().map(|o| o.bytes_down).sum::<u64>(),
                 expected as u64 * 2

@@ -31,6 +31,8 @@ pub struct Report {
     #[serde(default)]
     pub preparation: Vec<Value>,
     #[serde(default)]
+    pub preparation_status: Value,
+    #[serde(default)]
     pub phase: String,
     pub metrics: Vec<Value>,
     pub seconds: BTreeMap<u64, Value>,
@@ -51,6 +53,21 @@ fn add(value: &mut Value, key: &str, n: f64) {
 fn number(value: &Value, key: &str) -> f64 {
     value[key].as_f64().unwrap_or(0.0)
 }
+fn add_statuses(target: &mut Value, source: &Value) {
+    if let Some(statuses) = source["http_status_counts"].as_object() {
+        if !target["http_status_counts"].is_object() {
+            target["http_status_counts"] = json!({});
+        }
+        for (status, n) in statuses {
+            add(
+                &mut target["http_status_counts"],
+                status,
+                n.as_f64().unwrap_or(0.0),
+            );
+        }
+    }
+}
+
 fn distribution(mut seconds: Vec<f64>) -> Value {
     seconds.sort_by(f64::total_cmp);
     let percentile = |p: f64| {
@@ -88,6 +105,7 @@ impl Report {
             errors: Vec::new(),
             users: Vec::new(),
             preparation: Vec::new(),
+            preparation_status: Value::Null,
             phase: "preparing".into(),
             metrics: Vec::new(),
             seconds: BTreeMap::new(),
@@ -156,6 +174,18 @@ impl Report {
         if event["status"] == 409 {
             add(totals, "http_409", 1.0);
         }
+        if let Some(status) = event["status"].as_u64() {
+            if !totals["http_status_counts"].is_object() {
+                totals["http_status_counts"] = json!({});
+            }
+            add(&mut totals["http_status_counts"], &status.to_string(), 1.0);
+        }
+        if event["attempt"].as_u64().unwrap_or(1) > 1 {
+            add(totals, "retry_attempts", 1.0);
+        }
+        if event["attempt"] == 2 {
+            add(totals, "retried_requests", 1.0);
+        }
         let end = number(event, "at");
         if totals["first_at"].is_null() {
             totals["first_at"] = json!(end - number(event, "seconds"));
@@ -201,11 +231,20 @@ impl Report {
                         "failures",
                         "http_503",
                         "http_409",
+                        "retry_attempts",
+                        "retried_requests",
                     ] {
                         add(&mut totals, key, number(stage, key));
                     }
                 }
             }
+            if let Some(stages) = user["stages"].as_object() {
+                for stage in stages.values() {
+                    add_statuses(&mut totals, stage);
+                }
+            }
+            user["exact_after_retry"] =
+                json!(user["outcome"] == "exact" && number(&totals, "retry_attempts") > 0.0);
             user["http_totals"] = totals;
         }
         let started = self.started_at.unwrap_or(self.created_at);
@@ -232,6 +271,7 @@ impl Report {
                     if !stages[stage].is_object() {
                         stages[stage] = json!({});
                     }
+                    add_statuses(&mut stages[stage], totals);
                     for key in [
                         "calls",
                         "bytes_up",
@@ -240,6 +280,8 @@ impl Report {
                         "failures",
                         "http_503",
                         "http_409",
+                        "retry_attempts",
+                        "retried_requests",
                     ] {
                         add(&mut stages[stage], key, number(totals, key));
                     }
@@ -269,6 +311,7 @@ impl Report {
                         if !profile_stages[stage].is_object() {
                             profile_stages[stage] = json!({});
                         }
+                        add_statuses(&mut profile_stages[stage], totals);
                         for key in [
                             "calls",
                             "bytes_up",
@@ -277,6 +320,8 @@ impl Report {
                             "failures",
                             "http_503",
                             "http_409",
+                            "retry_attempts",
+                            "retried_requests",
                         ] {
                             add(&mut profile_stages[stage], key, number(totals, key));
                         }
@@ -291,7 +336,7 @@ impl Report {
             .iter()
             .filter(|u| u["outcome"] == "exact" && number(u, "finished_at") <= load_end)
             .count();
-        self.summary = json!({"started":self.users.len(),"outcomes":outcomes,"execution_seconds":duration,"load_seconds":load_seconds,"drain_seconds":(duration-load_seconds).max(0.0),"exact_per_second":exact as f64/duration,"exact_during_load":exact_during_load,"exact_during_drain":exact-exact_during_load as u64,"exact_per_load_second":exact_during_load as f64/load_seconds.max(0.001),"profiles":profiles,"stages":stages});
+        self.summary = json!({"started":self.users.len(),"outcomes":outcomes,"exact_after_retry":self.users.iter().filter(|u|u["exact_after_retry"]==true).count(),"execution_seconds":duration,"load_seconds":load_seconds,"drain_seconds":(duration-load_seconds).max(0.0),"exact_per_second":exact as f64/duration,"exact_during_load":exact_during_load,"exact_during_drain":exact-exact_during_load as u64,"exact_per_load_second":exact_during_load as f64/load_seconds.max(0.001),"profiles":profiles,"stages":stages});
         let mut wallets: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
         for user in &self.users {
             wallets
@@ -303,13 +348,14 @@ impl Report {
             let mut totals = json!({});
             let mut outcomes: BTreeMap<String, usize> = BTreeMap::new();
             for user in &users {
+                add_statuses(&mut totals,&user["http_totals"]);
                 *outcomes.entry(user["outcome"].as_str().unwrap_or("unknown").to_owned()).or_default() += 1;
-                for key in ["calls", "bytes_up", "bytes_down", "seconds", "failures", "http_503", "http_409"] {
+                for key in ["calls", "bytes_up", "bytes_down", "seconds", "failures", "http_503", "http_409", "retry_attempts", "retried_requests"] {
                     add(&mut totals, key, number(&user["http_totals"], key));
                 }
             }
             (sample, json!({"profile":users[0]["profile"], "script_count":users[0]["script_count"],
-                "recoveries":users.len(), "outcomes":outcomes, "http_totals":totals,
+                "recoveries":users.len(), "outcomes":outcomes,"exact_after_retry":users.iter().filter(|u|u["exact_after_retry"]==true).count(), "http_totals":totals,
                 "exact_seconds":distribution(users.iter().filter(|u|u["outcome"] == "exact").map(|u|number(u,"seconds")).collect()),
                 "unsuccessful_seconds":distribution(users.iter().filter(|u|u["outcome"] != "exact").map(|u|number(u,"seconds")).collect())}))
         }).collect::<BTreeMap<_,_>>());
