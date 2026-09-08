@@ -59,7 +59,10 @@ struct Cli {
     #[arg(long)]
     through: Option<u64>,
     /// Verbose transactions fetched per RPC batch.
-    #[arg(long, default_value_t = 500)]
+    ///
+    /// The ingester's own batch size against this node. Larger batches have
+    /// been refused as a whole.
+    #[arg(long, default_value_t = transparent_filter_server::prevout::PREVOUT_BATCH)]
     batch: usize,
     #[arg(long)]
     out: Option<PathBuf>,

@@ -266,8 +266,29 @@ impl ZakuraClient {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ZakuraError::InvalidCookie);
         }
-        let responses: Vec<RpcResponse<serde_json::Value>> =
-            response.error_for_status()?.json().await?;
+        // A batch is answered with an array. A node that refuses the batch as
+        // a whole — too large, malformed — answers with one error object
+        // instead, and that has to be reported as what it is rather than as a
+        // decoding failure.
+        let raw: serde_json::Value = response.error_for_status()?.json().await?;
+        let responses: Vec<RpcResponse<serde_json::Value>> = match raw {
+            serde_json::Value::Array(items) => items
+                .into_iter()
+                .map(serde_json::from_value)
+                .collect::<Result<_, _>>()
+                .map_err(|error| ZakuraError::Batch(error.to_string()))?,
+            other => {
+                let message = other
+                    .pointer("/error/message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("the node answered the batch with a single object");
+                let code = other
+                    .pointer("/error/code")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0);
+                return Err(ZakuraError::Rpc(code, message.to_string()));
+            }
+        };
         if responses.len() != calls.len() {
             return Err(ZakuraError::Rpc(
                 0,
