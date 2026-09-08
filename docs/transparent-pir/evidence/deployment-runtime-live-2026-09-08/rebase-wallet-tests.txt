@@ -1,0 +1,61 @@
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/pir/transparent-wallet)
+    Finished `release` profile [optimized] target(s) in 18.06s
+     Running unittests src/lib.rs (/Users/roman/projects/spendability-pir/target/release/deps/transparent_wallet-c61f6eef528faecc)
+
+running 38 tests
+test ledger::tests::a_fully_spent_wallet_has_no_balance_but_keeps_its_history ... ok
+test ledger::tests::a_conflicting_receive_for_one_outpoint_is_an_error ... ok
+test ledger::tests::a_receive_and_its_spend_in_one_block_resolve_by_transaction_index ... ok
+test ledger::tests::a_receive_becomes_a_utxo_and_a_balance ... ok
+test ledger::tests::a_repeated_unresolved_spend_is_recorded_once ... ok
+test ledger::tests::a_spend_extended_later_resolves_against_a_kept_receive ... ok
+test ledger::tests::a_spend_of_an_unknown_output_is_recorded_as_unresolved ... ok
+test ledger::tests::a_spend_removes_its_output_and_is_recorded ... ok
+test ledger::tests::an_unresolved_spend_is_resolved_by_a_receive_extended_later ... ok
+test ledger::tests::coinbase_status_survives_replay_without_being_applied ... ok
+test ledger::tests::duplicate_events_are_idempotent ... ok
+test ledger::tests::events_are_replayed_in_chain_order_whatever_order_they_arrive_in ... ok
+test ledger::tests::history_reports_net_value_per_transaction ... ok
+test ledger::tests::several_outputs_of_one_transaction_are_distinct ... ok
+test ledger::tests::the_identical_spend_twice_is_idempotent ... ok
+test ledger::tests::the_same_outpoint_spent_by_two_transactions_is_an_error ... ok
+test ledger::tests::truncating_above_a_height_restores_outputs_spent_above_it ... ok
+test store::tests::ranges_are_kept_per_shard_in_order_without_repeats ... ok
+test store::tests::uncovered_reports_the_gaps_and_nothing_else ... ok
+test sync::tests::a_different_set_identity_is_not_a_continuation ... ok
+test sync::tests::a_re_cut_covered_shard_is_not_a_continuation ... ok
+test sync::tests::a_replaced_tail_over_an_agreeing_prefix_continues_the_set ... ok
+test sync::tests::appended_shards_continue_the_set ... ok
+test sync::tests::backoff_prefers_the_services_figure_and_caps_it ... ok
+test sync::tests::a_manifest_is_accepted_only_when_it_agrees_with_the_map_in_every_field ... ok
+test sync::tests::coverage_ending_below_what_was_read_is_not_a_continuation ... ok
+test sync::tests::reseal_is_refused_but_a_new_geometry_is_not ... ok
+test sync::tests::withdrawing_a_covered_shard_is_not_a_continuation ... ok
+test transport::tests::a_refusal_is_found_through_a_wrapping_error ... ok
+test transport::tests::a_stale_refusal_carries_the_map_digest_the_service_reported ... ok
+test transport::tests::a_stale_refusal_survives_a_body_it_cannot_parse ... ok
+test transport::tests::an_ordinary_failure_is_neither_refusal ... ok
+test transport::tests::an_overload_is_recognised_by_its_delay_not_its_status ... ok
+test transport::tests::an_unparsable_delay_is_still_an_overload ... ok
+test transport::tests::only_a_conflict_is_a_stale_refusal ... ok
+test transport::tests::refusal_dispatches_on_what_the_reply_says ... ok
+test http::observation_tests::observes_success_refusal_payload_and_connection_failure_without_changing_results ... ok
+test http::observation_tests::opt_in_retries_are_bounded_and_account_for_every_response ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
+     Running tests/birthday_to_balance.rs (/Users/roman/projects/spendability-pir/target/release/deps/birthday_to_balance-d4cf159aaec420d9)
+
+running 4 tests
+test an_unused_wallet_matches_nothing_and_issues_no_queries ... ok
+test the_ledger_replays_identically_from_shards_and_from_a_direct_traversal ... ok
+test byte_accounting_separates_the_unconditional_floor_from_the_gated_work ... ok
+test a_later_birthday_recovers_exactly_the_history_from_that_shard_forward ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+   Doc-tests transparent_wallet
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

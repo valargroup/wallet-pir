@@ -132,6 +132,15 @@ worker can therefore retain its older audit document. New publications still
 restart workers because map metadata is held in memory. Unmanaged systemd drop-ins
 must be reconciled before deployment. `force_redeploy=true` disables worker skips.
 
+After the continuous-publisher workflow enables worker control sockets, binary
+rollouts preserve its canonical control socket, active-record path and runtime
+directory. This fixed-publication workflow requires the publisher to remain in
+shadow and every controlled worker to serve the planned map and logical assignment. It refuses active
+continuous publication and routing changes; publication advancement belongs to
+the publisher. Binary rollouts leave controlled workers' prepared and retired
+publication files and runtime cache entries intact. Coordinate a shadow-mode
+validation window before activation of the publisher.
+
 The runner retains transaction JSON under
 `~/.local/state/transparent-pir-deploy` (override with
 `TRANSPARENT_TRANSACTION_DIR`); each touched host retains its previous files under

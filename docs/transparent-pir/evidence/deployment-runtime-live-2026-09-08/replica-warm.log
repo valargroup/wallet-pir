@@ -1,0 +1,96 @@
+fleet-deploy transparent shard worker	Deploy and verify	﻿2026-09-08T11:08:39.8892754Z ##[group]Run ops/scripts/deploy-transparent-shard.sh 'fleet-deploy'
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8893253Z ^[[36;1mops/scripts/deploy-transparent-shard.sh 'fleet-deploy'^[[0m
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8906680Z shell: /usr/bin/bash -e {0}
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8906927Z env:
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8907127Z   CARGO_HOME: /root/.cargo
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8907368Z   CARGO_INCREMENTAL: 0
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8907605Z   CARGO_TERM_COLOR: always
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8907848Z   TRANSPARENT_WORKER_HOST: 10.142.0.4
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8908229Z   TRANSPARENT_DEPLOY_USER: root
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8908813Z   TRANSPARENT_RELEASE_SHA: cc2023f5555098ae5cf73a1174f7348d2afb3425
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8909538Z   TRANSPARENT_ARTIFACT_DIR: /opt/actions-runner/_work/enhance-pir/enhance-pir/artifact
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8910193Z   TRANSPARENT_SHARD_SOURCE: /srv/zakura/transparent-shards-v7-full
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8910691Z   TRANSPARENT_SHARD_DIR: /srv/transparent-pir/sets
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8911252Z   TRANSPARENT_PUBLIC_URL: https://transparent-pir.valargroup.dev
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8911958Z   TRANSPARENT_SSH_KEY_PATH: /opt/actions-runner/_work/_temp/transparent-ssh/key
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8912604Z   TRANSPARENT_KNOWN_HOSTS_PATH: /opt/actions-runner/_work/_temp/transparent-ssh/known_hosts
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8915956Z   TRANSPARENT_FLEET_JSON: [{"cache_bytes":5368709120,"id":"transparent-pir-recent-01","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.10","upstream":"10.142.0.10:8093","build_slots":1},{"cache_bytes":5368709120,"id":"transparent-pir-recent-02","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.8","upstream":"10.142.0.8:8093","build_slots":1},{"cache_bytes":5368709120,"id":"transparent-pir-recent-03","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.7","upstream":"10.142.0.7:8093","build_slots":1},{"cache_bytes":5368709120,"id":"transparent-pir-recent-04","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.12","upstream":"10.142.0.12:8093","build_slots":1},{"cache_bytes":51539607552,"id":"transparent-pir-archive-01","memory_max":"56G","replica_group":null,"role":"archive-owner","ssh_host":"10.142.0.6","upstream":"10.142.0.6:8093","build_slots":1},{"cache_bytes":51539607552,"id":"transparent-pir-archive-02","memory_max":"56G","replica_group":null,"role":"archive-owner","ssh_host":"10.142.0.9","upstream":"10.142.0.9:8093","build_slots":1}]
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8919566Z   TRANSPARENT_ROUTER_HOST: 10.142.0.11
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8920181Z   TRANSPARENT_ROUTER_INTERNAL_PORT: 8080
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8928572Z   TRANSPARENT_OWNER_ACTIVATION: serial
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8928970Z   TRANSPARENT_REPLICA_ACTIVATION: paired
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8929400Z   TRANSPARENT_FORCE_REDEPLOY: false
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8929827Z   TRANSPARENT_CANARY_WORKER_IDS: transparent-pir-recent-01
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8930341Z   TRANSPARENT_ASSIGNMENT: /opt/actions-runner/_work/enhance-pir/enhance-pir/artifact/assignment.json
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.8930786Z ##[endgroup]
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.9314414Z b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b describes the set at /srv/zakura/transparent-shards-v7-full (174 shards, map 7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.9361214Z assignment file 532b94ab07ac605b3268e56125c4358408084b313f9c991a45fa60d1d1631f07 for map 7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:39.9548186Z shard set /srv/zakura/transparent-shards-v7-full: 174 shards, 0 superseded revisions retained
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:41.5514635Z == diff transparent-pir-recent-01: restart (binary, effective assignment, unit and warm readiness compared)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:43.2222938Z == diff transparent-pir-recent-02: defer (binary, effective assignment, unit and warm readiness compared)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:45.0942559Z == diff transparent-pir-recent-03: defer (binary, effective assignment, unit and warm readiness compared)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:46.4315941Z == diff transparent-pir-recent-04: defer (binary, effective assignment, unit and warm readiness compared)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:47.2168176Z == diff transparent-pir-archive-01: defer (binary, effective assignment, unit and warm readiness compared)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:48.7082421Z == diff transparent-pir-archive-02: defer (binary, effective assignment, unit and warm readiness compared)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:48.7121292Z == timing fleet_diff: 9s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:48.7220712Z == preflight transparent-pir-recent-01 (10.142.0.10)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:49.0925632Z memory: 7 GiB total, 2 GiB available
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:50.1100723Z transparent-pir-recent-01 needs 1147 MiB; has 150908 MiB free
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:50.1430772Z == preflight router (10.142.0.11)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:52.5358011Z == timing fleet_preflight: 4s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1264756Z == stage transparent-pir-recent-01 (10.142.0.10): binary, tools, unit, assignment
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1265268Z ./assignment.json: OK
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1265502Z ./shard-prune: OK
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1265749Z ./transparent-shard-server: OK
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1266358Z == ship transparent-pir-recent-01 subset (/srv/zakura/transparent-shards-v7-full -> 10.142.0.10:/srv/transparent-pir/sets/transparent-shards-v7-full)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1267155Z
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1267308Z sent 35,962 bytes  received 186 bytes  24,098.67 bytes/sec
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1267646Z total size is 886,950,014  speedup is 24,536.63
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:55.1430497Z == stage router (10.142.0.11): Caddyfile
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.7507294Z {"level":"info","ts":1788865736.748274,"msg":"using provided configuration","config_file":"/tmp/transparent-pir-cc2023f5555098ae5cf73a1174f7348d2afb3425/Caddyfile","config_adapter":"caddyfile"}
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.7912518Z {"level":"info","ts":1788865736.7885842,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.7913482Z {"level":"info","ts":1788865736.7886512,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8058626Z {"level":"info","ts":1788865736.798876,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc000198460"}
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8068451Z {"level":"info","ts":1788865736.8039052,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc000198460"}
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8068991Z Valid configuration
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8443209Z router config changes (live -> staged):
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8666756Z --- /etc/caddy/Caddyfile	2026-09-08 09:16:33.884664324 +0000
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8667318Z +++ /tmp/transparent-pir-cc2023f5555098ae5cf73a1174f7348d2afb3425/Caddyfile	2026-09-08 11:08:56.123052472 +0000
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8667774Z @@ -1,4 +1,4 @@
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8668182Z -# Rendered by shard-assign for assignment 1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0.
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8668788Z +# Rendered by shard-assign for assignment b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b.
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8669414Z  # Do not edit: the assignment is the source, and every worker reports
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8669762Z  # the assignment digest it runs under.
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8670048Z  transparent-pir.valargroup.dev {
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:08:56.8730477Z == timing fleet_prepare: 4s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:09:05.2579627Z == verify prepared transparent-pir-recent-01 (10.142.0.10)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:09:05.2582047Z ^[[2m2026-09-08T11:09:04.225850Z^[[0m ^[[32m INFO^[[0m ^[[2mtransparent_shard_server^[[0m^[[2m:^[[0m loaded shard set ^[[3mshards^[[0m^[[2m=^[[0m174 ^[[3massigned^[[0m^[[2m=^[[0m14 ^[[3mrevisions^[[0m^[[2m=^[[0m14 ^[[3mprunable^[[0m^[[2m=^[[0m0 ^[[3mgeometries^[[0m^[[2m=^[[0m["archive-wide", "recent-8k"] ^[[3mmap_sha256^[[0m^[[2m=^[[0m"7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba" ^[[3mworker_id^[[0m^[[2m=^[[0m"transparent-pir-recent-01" ^[[3massignment_sha256^[[0m^[[2m=^[[0m"b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b" ^[[3mstart^[[0m^[[2m=^[[0m0 ^[[3mcovered_through^[[0m^[[2m=^[[0m3473686
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:09:05.2584189Z {"runtime_cache":{"assignment_bytes":3757180672,"limit_bytes":10737418240,"missing_bytes":0,"temporary_bytes":134185024,"used_bytes":3757180672},"verified":true}
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:09:05.2683277Z == timing fleet_verify_prepared: 9s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:12.8184012Z == activate transparent-pir-recent-01 (10.142.0.10): restart
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:12.8184692Z transparent-pir-recent-01: prewarming, 26/28 runtimes warm, mode warm
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:12.8185565Z transparent-pir-recent-01 assignment document b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b (candidate b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:12.8186378Z transparent-pir-recent-01 ready: 28/28 runtimes warm, mode warm
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:47.8575214Z == timing fleet_activate_workers: 102s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:47.8577085Z == activate router (10.142.0.11)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:49.9482819Z router unchanged; skipping reload
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:49.9483355Z == timing fleet_activate_router: 2s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:49.9483817Z == verify internal listener at http://10.142.0.11:8080
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:49.9703042Z internal listener serving map 7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:49.9704098Z == timing fleet_verify_internal: 0s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:49.9704501Z == verify public edge at https://transparent-pir.valargroup.dev
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:58.6872353Z transparent-pir-recent-01: shard 160 served through the edge; unassigned shard refused directly
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:58.8084063Z transparent-pir-recent-02: shard 160 served through the edge; unassigned shard refused directly
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:58.9162723Z transparent-pir-recent-03: shard 160 served through the edge; unassigned shard refused directly
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:10:59.0180292Z transparent-pir-recent-04: shard 160 served through the edge; unassigned shard refused directly
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:08.7880123Z transparent-pir-archive-01: shard 0 served through the edge; unassigned shard refused directly
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:21.6651033Z transparent-pir-archive-02: shard 80 served through the edge; unassigned shard refused directly
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:21.6652022Z public edge serves map 7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba; operator routes 404
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:21.6652694Z == timing fleet_verify_public: 32s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:21.7039802Z transparent-pir-recent-01 assignment document b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b (candidate b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:21.7065119Z transparent-pir-recent-01 ready: 28/28 runtimes warm, mode warm
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:21.8268735Z == timing fleet_verify_workers: 0s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:21.8408791Z == prune transparent-pir-recent-01 (10.142.0.10)
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:23.2287065Z runtime cache pruned: 0 bytes freed
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:23.2676594Z == timing fleet_prune: 2s
+fleet-deploy transparent shard worker	Deploy and verify	2026-09-08T11:11:23.2706004Z deployed cc2023f5555098ae5cf73a1174f7348d2afb3425 to the fleet under assignment b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b

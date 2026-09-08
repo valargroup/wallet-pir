@@ -137,14 +137,19 @@ Each completed gate links source commits, exact commands and evidence. Update st
   deploy identity, healthy replica pairs and transaction-scoped rollback.
   [Local validation evidence](evidence/deployment-runtime-local-2026-09-08/README.md);
   `make check`, strict Clippy and follow-up cache/rollback tests passed.
-- [ ] After the current load measurement finishes, activate a cache-enabled
-  replica and owner canary; verify cache population, compatible restart, memory,
-  disk headroom and correct wallet recovery.
+- [x] Activate initial cache-enabled replica and owner canaries; verify cache
+  population, compatible restart, memory and disk headroom. All eleven baseline
+  wallet cases passed; the final nine overlapped publisher upgrades.
+  [Live evidence](evidence/deployment-runtime-live-2026-09-08/README.md).
+- [ ] Validate four-slot restores on live canaries. The single-slot archive
+  warm deployment took 746 seconds; continuous publication is now active,
+  preventing the fixed-publication rollout from safely continuing.
 - [ ] Measure a compatible-binary fleet deployment below ten minutes, excluding
   build/CI; verify unchanged rollouts cause zero restarts and router-only changes
   leave workers serving. Preserve decisions, phase timings and regression results.
 - [ ] Rehearse failed-batch and explicit transaction rollback with the cached
-  previous release. Keep these gates open until host evidence exists.
+  previous release. Explicit replica rollback passed and preserved all five
+  deferred worker PIDs; failed-batch live rehearsal remains open.
 
 
 ## Continuous publication release gate

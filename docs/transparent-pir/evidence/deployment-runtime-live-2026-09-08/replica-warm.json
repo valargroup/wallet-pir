@@ -1,0 +1,240 @@
+{
+  "transparent-pir-recent-01": {
+    "observed_at": "2026-09-08T11:11:46.801981+00:00",
+    "ready": {
+      "assigned_shards": 14,
+      "assignment_sha256": "b188d7152b7a92906f60aa9276f1aa81928a2373f13f07fda8bae12bb247758b",
+      "binary_sha256": "fcea2d492fd20910c1cd316f11245eef0429fe1109e2af5c1fffc8fd1bda3a02",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 47.092662,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 3757180672,
+        "hits": 28,
+        "limit_bytes": 10737418240,
+        "misses": 0,
+        "write_failures": 0
+      },
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_assignment_sha256": "706c25dd8e3d2b5b140121b5ea81e2d84614020f6299b5223f3cb8f5fcf096ca",
+      "worker_id": "transparent-pir-recent-01"
+    },
+    "systemd": {
+      "MainPID": "39782",
+      "ExecMainStartTimestamp": "Tue 2026-09-08 11:09:10 UTC",
+      "ControlGroup": "/system.slice/transparent-shard-server.service",
+      "MemoryCurrent": "6641123328",
+      "MemoryPeak": "6642491392",
+      "ActiveState": "active",
+      "SubState": "running",
+      "InvocationID": "0bf2f7b2ec0f42d49cc3b93ac4de99f1"
+    },
+    "memory.current": "6641123328",
+    "memory.peak": "6642491392",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.swap.current": "0",
+    "filesystem": {
+      "bytes": 165295407104,
+      "available_bytes": 158232965120
+    },
+    "current-release": "cc2023f5555098ae5cf73a1174f7348d2afb3425",
+    "current-unit-digest": "c6c5ff99de572e6f4331de5c10e492d81630228a24cd1986ddb20dff8bf2c038"
+  },
+  "transparent-pir-recent-02": {
+    "observed_at": "2026-09-08T11:11:47.780929+00:00",
+    "ready": {
+      "assigned_shards": 14,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 203.864254,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_id": "transparent-pir-recent-02"
+    },
+    "systemd": {
+      "MainPID": "35220",
+      "ExecMainStartTimestamp": "Tue 2026-09-08 09:06:20 UTC",
+      "ControlGroup": "/system.slice/transparent-shard-server.service",
+      "MemoryCurrent": "4894072832",
+      "MemoryPeak": "4898119680",
+      "ActiveState": "active",
+      "SubState": "running",
+      "InvocationID": "c34aeb5a58014f099a9f01b7330123e5"
+    },
+    "memory.current": "4894072832",
+    "memory.peak": "4898119680",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.swap.current": "0",
+    "filesystem": {
+      "bytes": 165295407104,
+      "available_bytes": 162011373568
+    },
+    "current-release": "8802cd0ffea09dc8151d3bd60dc83fcd5d80737f"
+  },
+  "transparent-pir-recent-03": {
+    "observed_at": "2026-09-08T11:11:47.591691+00:00",
+    "ready": {
+      "assigned_shards": 14,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 202.060833,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_id": "transparent-pir-recent-03"
+    },
+    "systemd": {
+      "MainPID": "35147",
+      "ExecMainStartTimestamp": "Tue 2026-09-08 09:10:06 UTC",
+      "ControlGroup": "/system.slice/transparent-shard-server.service",
+      "MemoryCurrent": "4648091648",
+      "MemoryPeak": "4651433984",
+      "ActiveState": "active",
+      "SubState": "running",
+      "InvocationID": "f43729c98de34e379426fae1b11f1e60"
+    },
+    "memory.current": "4648091648",
+    "memory.peak": "4651433984",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.swap.current": "0",
+    "filesystem": {
+      "bytes": 165295407104,
+      "available_bytes": 162011455488
+    },
+    "current-release": "8802cd0ffea09dc8151d3bd60dc83fcd5d80737f"
+  },
+  "transparent-pir-recent-04": {
+    "observed_at": "2026-09-08T11:11:47.383629+00:00",
+    "ready": {
+      "assigned_shards": 14,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 160.117629,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "shards": 174,
+      "target_runtimes": 28,
+      "warm_runtimes": 28,
+      "worker_id": "transparent-pir-recent-04"
+    },
+    "systemd": {
+      "MainPID": "34734",
+      "ExecMainStartTimestamp": "Tue 2026-09-08 09:13:40 UTC",
+      "ControlGroup": "/system.slice/transparent-shard-server.service",
+      "MemoryCurrent": "4895223808",
+      "MemoryPeak": "4920029184",
+      "ActiveState": "active",
+      "SubState": "running",
+      "InvocationID": "0bc13689c77d4bb98d77f84f1bc2ebb5"
+    },
+    "memory.current": "4895223808",
+    "memory.peak": "4920029184",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.swap.current": "0",
+    "filesystem": {
+      "bytes": 165295407104,
+      "available_bytes": 162015780864
+    },
+    "current-release": "8802cd0ffea09dc8151d3bd60dc83fcd5d80737f"
+  },
+  "transparent-pir-archive-01": {
+    "observed_at": "2026-09-08T11:11:46.782482+00:00",
+    "ready": {
+      "assigned_shards": 80,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 419.138726,
+      "ready": true,
+      "replica_group": null,
+      "role": "archive-owner",
+      "shards": 174,
+      "target_runtimes": 160,
+      "warm_runtimes": 160,
+      "worker_id": "transparent-pir-archive-01"
+    },
+    "systemd": {
+      "MainPID": "35979",
+      "ExecMainStartTimestamp": "Tue 2026-09-08 08:48:17 UTC",
+      "ControlGroup": "/system.slice/transparent-shard-server.service",
+      "MemoryCurrent": "51695865856",
+      "MemoryPeak": "58646568960",
+      "ActiveState": "active",
+      "SubState": "running",
+      "InvocationID": "0753e94d43ba4719a283eb32db3babfd"
+    },
+    "memory.current": "51695894528",
+    "memory.peak": "58646568960",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.swap.current": "0",
+    "filesystem": {
+      "bytes": 206900281344,
+      "available_bytes": 176252563456
+    },
+    "current-release": "8802cd0ffea09dc8151d3bd60dc83fcd5d80737f"
+  },
+  "transparent-pir-archive-02": {
+    "observed_at": "2026-09-08T11:11:48.492426+00:00",
+    "ready": {
+      "assigned_shards": 80,
+      "assignment_sha256": "1573782a15dbb1e11dc4f0a21265ee3e29115911fad5d6801ea698efce4cdcb0",
+      "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 750.782763,
+      "ready": true,
+      "replica_group": null,
+      "role": "archive-owner",
+      "shards": 174,
+      "target_runtimes": 160,
+      "warm_runtimes": 160,
+      "worker_id": "transparent-pir-archive-02"
+    },
+    "systemd": {
+      "MainPID": "35563",
+      "ExecMainStartTimestamp": "Tue 2026-09-08 08:48:19 UTC",
+      "ControlGroup": "/system.slice/transparent-shard-server.service",
+      "MemoryCurrent": "51877318656",
+      "MemoryPeak": "60129542144",
+      "ActiveState": "active",
+      "SubState": "running",
+      "InvocationID": "1db466ed4dc54cc089b7b2d460fc817e"
+    },
+    "memory.current": "51877318656",
+    "memory.peak": "60129542144",
+    "memory.events": "low 0\nhigh 0\nmax 33\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.swap.current": "0",
+    "filesystem": {
+      "bytes": 206900281344,
+      "available_bytes": 176247320576
+    },
+    "current-release": "8802cd0ffea09dc8151d3bd60dc83fcd5d80737f"
+  }
+}

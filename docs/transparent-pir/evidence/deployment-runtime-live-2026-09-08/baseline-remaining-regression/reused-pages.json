@@ -1,0 +1,466 @@
+{
+  "checkpoints": [
+    {
+      "anchor": {
+        "hash": "0000000000328037a36ca8b981aa4715cec6772a3673501772555b388f124857",
+        "height": 3463930
+      },
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "requests": {
+        "filters": {
+          "calls": 1,
+          "down": 119442,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1413765,
+          "routes": [
+            "/v1/filters/shards/172/filter"
+          ],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1818,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 715469,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 1,
+          "down": 1288,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 237242,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 2,
+          "down": 10272,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 3810400,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory"
+          ],
+          "up": 256016
+        },
+        "query_pages": {
+          "calls": 3,
+          "down": 15408,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 2896067,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages"
+          ],
+          "up": 384024
+        },
+        "setup_directory": {
+          "calls": 1,
+          "down": 19435,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 472681,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 19431,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 471642,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/setup/pages/0"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 10.085156208
+    },
+    {
+      "anchor": {
+        "hash": "0000000000600a07e74fb47c161292cb067ec00f18d1ac47999835494f352c0e",
+        "height": 3469904
+      },
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "requests": {
+        "init": {
+          "calls": 1,
+          "down": 1818,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 722713,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 1,
+          "down": 1288,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 241583,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 2,
+          "down": 10272,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1471053,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory"
+          ],
+          "up": 256016
+        },
+        "query_pages": {
+          "calls": 3,
+          "down": 15408,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 785360,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages"
+          ],
+          "up": 384024
+        }
+      },
+      "seconds": 3.279097292
+    },
+    {
+      "anchor": {
+        "hash": "000000000023888dbae1c00fad971cf7ef1b437507fd4363f04c3e6a5f657a8d",
+        "height": 3469905
+      },
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "requests": {
+        "init": {
+          "calls": 1,
+          "down": 1818,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 707805,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 1,
+          "down": 1288,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 236452,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 2,
+          "down": 10272,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1440222,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory"
+          ],
+          "up": 256016
+        },
+        "query_pages": {
+          "calls": 3,
+          "down": 15408,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 766358,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages"
+          ],
+          "up": 384024
+        }
+      },
+      "seconds": 3.242495375
+    },
+    {
+      "anchor": {
+        "hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+        "height": 3473686
+      },
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "requests": {
+        "filters": {
+          "calls": 1,
+          "down": 13694,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 954678,
+          "routes": [
+            "/v1/filters/shards/173/filter"
+          ],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1818,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 722520,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 2,
+          "down": 2569,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 475629,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/manifest",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 4,
+          "down": 20544,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1978487,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/query/directory",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/query/directory"
+          ],
+          "up": 512032
+        },
+        "query_pages": {
+          "calls": 4,
+          "down": 20544,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1059540,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/query/pages"
+          ],
+          "up": 512032
+        },
+        "setup_directory": {
+          "calls": 1,
+          "down": 19435,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 479010,
+          "routes": [
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 19431,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 241353,
+          "routes": [
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/setup/pages/0"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 6.049291917
+    },
+    {
+      "anchor": {
+        "hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+        "height": 3473686
+      },
+      "completion": "Complete",
+      "error": null,
+      "phase": "repeat",
+      "requests": {
+        "init": {
+          "calls": 1,
+          "down": 1818,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 726602,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.728684709
+    },
+    {
+      "anchor": {
+        "hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+        "height": 3473686
+      },
+      "completion": "Complete",
+      "error": null,
+      "phase": "fresh-final",
+      "requests": {
+        "filters": {
+          "calls": 2,
+          "down": 133136,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1920588,
+          "routes": [
+            "/v1/filters/shards/172/filter",
+            "/v1/filters/shards/173/filter"
+          ],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1818,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 717403,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 2,
+          "down": 2569,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 474028,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/manifest",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 4,
+          "down": 20544,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1988550,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/directory",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/query/directory",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/query/directory"
+          ],
+          "up": 512032
+        },
+        "query_pages": {
+          "calls": 4,
+          "down": 20544,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1040960,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/query/pages",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/query/pages"
+          ],
+          "up": 512032
+        },
+        "setup_directory": {
+          "calls": 2,
+          "down": 38870,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 961212,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/setup/directory/0",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 2,
+          "down": 38862,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 714640,
+          "routes": [
+            "/v1/shards/172/revisions/1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4/setup/pages/0",
+            "/v1/shards/173/revisions/1b74f82c1705d0a6cf7e6355851dd8be57a94d992abe42f37cb9f3f4fdae4cd5/setup/pages/0"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 8.028665833
+    }
+  ],
+  "error": null,
+  "id": "reused-pages",
+  "passed": true,
+  "profile": "reused-script"
+}

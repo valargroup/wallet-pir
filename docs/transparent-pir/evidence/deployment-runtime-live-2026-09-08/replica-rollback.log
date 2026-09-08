@@ -1,0 +1,29 @@
+fleet-rollback transparent shard worker	Deploy and verify	﻿2026-09-08T11:02:39.0752150Z ##[group]Run ops/scripts/deploy-transparent-shard.sh 'fleet-rollback'
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0752609Z ^[[36;1mops/scripts/deploy-transparent-shard.sh 'fleet-rollback'^[[0m
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0764959Z shell: /usr/bin/bash -e {0}
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0765217Z env:
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0765424Z   CARGO_HOME: /root/.cargo
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0765662Z   CARGO_INCREMENTAL: 0
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0765885Z   CARGO_TERM_COLOR: always
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0766125Z   TRANSPARENT_WORKER_HOST: 10.142.0.4
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0766394Z   TRANSPARENT_DEPLOY_USER: root
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0766718Z   TRANSPARENT_RELEASE_SHA: cc2023f5555098ae5cf73a1174f7348d2afb3425
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0767174Z   TRANSPARENT_ARTIFACT_DIR: /opt/actions-runner/_work/enhance-pir/enhance-pir/artifact
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0767633Z   TRANSPARENT_SHARD_SOURCE: /srv/zakura/transparent-shards-v7-full
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0768027Z   TRANSPARENT_SHARD_DIR: /srv/transparent-pir/sets
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0768400Z   TRANSPARENT_PUBLIC_URL: https://transparent-pir.valargroup.dev
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0768853Z   TRANSPARENT_SSH_KEY_PATH: /opt/actions-runner/_work/_temp/transparent-ssh/key
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0769480Z   TRANSPARENT_KNOWN_HOSTS_PATH: /opt/actions-runner/_work/_temp/transparent-ssh/known_hosts
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0772624Z   TRANSPARENT_FLEET_JSON: [{"cache_bytes":5368709120,"id":"transparent-pir-recent-01","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.10","upstream":"10.142.0.10:8093","build_slots":1},{"cache_bytes":5368709120,"id":"transparent-pir-recent-02","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.8","upstream":"10.142.0.8:8093","build_slots":1},{"cache_bytes":5368709120,"id":"transparent-pir-recent-03","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.7","upstream":"10.142.0.7:8093","build_slots":1},{"cache_bytes":5368709120,"id":"transparent-pir-recent-04","memory_max":"7G","replica_group":"recent","role":"recent-replica","ssh_host":"10.142.0.12","upstream":"10.142.0.12:8093","build_slots":1},{"cache_bytes":51539607552,"id":"transparent-pir-archive-01","memory_max":"56G","replica_group":null,"role":"archive-owner","ssh_host":"10.142.0.6","upstream":"10.142.0.6:8093","build_slots":1},{"cache_bytes":51539607552,"id":"transparent-pir-archive-02","memory_max":"56G","replica_group":null,"role":"archive-owner","ssh_host":"10.142.0.9","upstream":"10.142.0.9:8093","build_slots":1}]
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0775789Z   TRANSPARENT_ROUTER_HOST: 10.142.0.11
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0776070Z   TRANSPARENT_ROUTER_INTERNAL_PORT: 8080
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0776359Z   TRANSPARENT_OWNER_ACTIVATION: serial
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0776642Z   TRANSPARENT_REPLICA_ACTIVATION: paired
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0776921Z   TRANSPARENT_FORCE_REDEPLOY: false
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0777242Z   TRANSPARENT_CANARY_WORKER_IDS: transparent-pir-recent-01
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0777739Z   TRANSPARENT_ASSIGNMENT: /opt/actions-runner/_work/enhance-pir/enhance-pir/artifact/assignment.json
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.0778169Z ##[endgroup]
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.1145189Z dac8f01d3d5d922e003c4391ae3c651404b78a8a8677834d674db40922eee6d6 describes the set at /srv/zakura/transparent-shards-v7-full (174 shards, map 7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba)
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.1191353Z assignment file 83c378034fd77218406e1d85cd6014d4fbb9fe65264c7b4a752262e64aa9f19b for map 7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:02:39.1300505Z == rollback transaction cc2023f5555098ae5cf73a1174f7348d2afb3425-1788864832-990888
+fleet-rollback transparent shard worker	Deploy and verify	2026-09-08T11:06:02.7860500Z fleet rolled back to the previously activated release
