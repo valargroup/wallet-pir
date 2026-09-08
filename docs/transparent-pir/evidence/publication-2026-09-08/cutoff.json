@@ -1,0 +1,48 @@
+{
+  "anchor": {
+    "hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "height": 3473686,
+    "time": "2026-09-06T07:39:01+00:00"
+  },
+  "cutoff": {
+    "block_time": "2026-03-06T07:39:16+00:00",
+    "first_height_at_or_after_cutoff_time": 3262749,
+    "hash": "0000000000b300ab318a0589588cbfd3fa889c38b3dc68c67519f5d05151e8d9",
+    "height": 3262749,
+    "last_height_before_cutoff_time": 3262748,
+    "previous_block_time": "2026-03-06T07:37:02+00:00",
+    "previous_hash": "0000000000b5d4b73a0544dd9d9bab7850e88a8ab5069148c53e6f1899b4176a",
+    "previous_height": 3262748,
+    "scanned": [
+      3262749,
+      3264749
+    ],
+    "time": "2026-03-06T07:39:01+00:00"
+  },
+  "generated_at": "2026-09-08T04:18:00.846478651+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3473686,
+    "data_dir": "/srv/zakura/transparent-event-data",
+    "start_height": 0
+  },
+  "network": "main",
+  "rule": {
+    "description": "cutoff_time = anchor header time minus the calendar months, day clamped to the target month's last day, time of day kept; cutoff_height = 1 + the highest height whose header time is before cutoff_time; proved final by eleven consecutive blocks at or after cutoff_time from cutoff_height",
+    "months": 6,
+    "window": 2000
+  },
+  "schema": "transparent-cutoff-v1",
+  "source": "state",
+  "tiers": {
+    "archive": [
+      0,
+      3262748
+    ],
+    "recent": [
+      3262749,
+      3473686
+    ]
+  },
+  "tool_sha": "c069b7d21f763f2522a6bbab609a0c6620a7c5ef"
+}

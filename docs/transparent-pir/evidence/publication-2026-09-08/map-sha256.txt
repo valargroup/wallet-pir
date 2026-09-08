@@ -1,0 +1,1 @@
+06e5fa2bd2547f55d4e17959994820d0bd109f3f7011d4a1105f2e50048ac909  /srv/zakura/transparent-shards-v7-full/shards.json
