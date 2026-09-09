@@ -1933,7 +1933,7 @@ dependencies = [
 [[package]]
 name = "inspiring"
 version = "0.1.0"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=223626ffdd28bd1400dd0b62027a8f366665aa4f#223626ffdd28bd1400dd0b62027a8f366665aa4f"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=61dc83e7410ff13ccfdd9ad1e830b711bd9080ed#61dc83e7410ff13ccfdd9ad1e830b711bd9080ed"
 dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -1945,7 +1945,7 @@ dependencies = [
 [[package]]
 name = "ipir-sp"
 version = "0.1.0"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=223626ffdd28bd1400dd0b62027a8f366665aa4f#223626ffdd28bd1400dd0b62027a8f366665aa4f"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=61dc83e7410ff13ccfdd9ad1e830b711bd9080ed#61dc83e7410ff13ccfdd9ad1e830b711bd9080ed"
 dependencies = [
  "clap",
  "env_logger",
@@ -3491,7 +3491,7 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 [[package]]
 name = "simplepir-kernel"
 version = "0.1.0"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=223626ffdd28bd1400dd0b62027a8f366665aa4f#223626ffdd28bd1400dd0b62027a8f366665aa4f"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=61dc83e7410ff13ccfdd9ad1e830b711bd9080ed#61dc83e7410ff13ccfdd9ad1e830b711bd9080ed"
 dependencies = [
  "inspiring",
  "rayon",
@@ -4214,6 +4214,7 @@ dependencies = [
  "inspiring",
  "ipir-sp",
  "reqwest",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",

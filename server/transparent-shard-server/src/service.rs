@@ -1166,6 +1166,7 @@ async fn query_inner(
     // pinning every runtime in the cache against eviction at once. The wait is
     // bounded by the request's deadline, and a request that outwaits it is
     // refused retryably rather than kept.
+    let query_stage = std::time::Instant::now();
     let admitted = match state.inner.admission.wait_slot(pending).await {
         Ok(admitted) => admitted,
         Err(error) => {
@@ -1173,6 +1174,9 @@ async fn query_inner(
             return RequestError::from(error).into_response(&map_digest);
         }
     };
+
+    tracing::debug!(revision = %digest, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_admission", "query stage");
+    let query_stage = std::time::Instant::now();
 
     // Every segment answers the same query, and the results come back in
     // segment order. The client keeps the row whose contents it can identify
@@ -1208,6 +1212,8 @@ async fn query_inner(
         }
     }
 
+    tracing::debug!(revision = %digest, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_runtime", "query stage");
+
     // Evaluated off the async runtime, holding the slot and every handle for
     // exactly as long as the work runs. The admission moves into the closure:
     // if the client goes away meanwhile the evaluation still finishes and is
@@ -1226,8 +1232,12 @@ async fn query_inner(
         }
     };
     let evaluation_metrics = metrics.clone();
+    let query_stage = std::time::Instant::now();
+    let query_revision = digest.clone();
     let evaluated = tokio::task::spawn_blocking(move || {
         let _memory = memory;
+        tracing::debug!(revision = %query_revision, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
+        let query_stage = std::time::Instant::now();
         let _timer = evaluation_metrics.evaluation_seconds.timer();
         let mut answer = Vec::new();
         for handle in &handles {
@@ -1236,6 +1246,7 @@ async fn query_inner(
                 Err(error) => return Err(error),
             }
         }
+        tracing::debug!(revision = %query_revision, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_evaluate", "query stage");
         admitted.complete();
         Ok(answer)
     })

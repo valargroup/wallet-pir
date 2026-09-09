@@ -31,6 +31,7 @@ check-ops:
 	python3 ops/tests/test_transparent_parents.py
 	python3 ops/tests/test_transparent_fleet.py
 	python3 ops/tests/test_transparent_publication.py
+	python3 ops/tests/test_transparent_burst.py
 
 .PHONY: check-reports
 check-reports:
@@ -211,3 +212,21 @@ transparent-sim-compare:
 	status=0; python3 server/transparent-loadtest/compare.py "$$@" || status=$$?; \
 	if [ -f "$$out/report.html" ]; then python3 server/transparent-loadtest/open_report.py --remember "$$out"; fi; \
 	exit "$$status"
+
+# Local-only worker-stage burst comparison; no fleet endpoints or live state.
+TRANSPARENT_BURST_REPETITIONS ?= 2
+TRANSPARENT_BURST_BUILD_SLOTS ?= 1 2
+TRANSPARENT_BURST_SYSTEMD ?= 0
+TRANSPARENT_BURST_EXTERNAL_CLIENTS ?= 0
+.PHONY: transparent-burst
+transparent-burst:
+	python3 ops/scripts/run-transparent-burst.py \
+		--repetitions "$(TRANSPARENT_BURST_REPETITIONS)" \
+		--build-slots $(TRANSPARENT_BURST_BUILD_SLOTS) \
+		$(if $(strip $(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)),--worker-budget-seconds "$(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)") \
+		$(if $(strip $(TRANSPARENT_BURST_FIXTURE)),--fixture "$(TRANSPARENT_BURST_FIXTURE)") \
+		$(if $(strip $(TRANSPARENT_BURST_BINARY)),--test-binary "$(TRANSPARENT_BURST_BINARY)" --source-sha "$(or $(TRANSPARENT_BURST_SOURCE_SHA),$(shell git rev-parse HEAD))") \
+		$(if $(filter 1,$(TRANSPARENT_BURST_SYSTEMD)),--systemd) \
+		$(if $(filter 1,$(TRANSPARENT_BURST_EXTERNAL_CLIENTS)),--external-clients) \
+		$(if $(strip $(TRANSPARENT_BURST_HOST_OVERHEAD_BYTES)),--host-overhead-bytes "$(TRANSPARENT_BURST_HOST_OVERHEAD_BYTES)") \
+		$(if $(strip $(TRANSPARENT_BURST_OUT)),--out "$(TRANSPARENT_BURST_OUT)")

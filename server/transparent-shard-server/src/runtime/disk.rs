@@ -11,7 +11,15 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+// 61dc83e reuses the same fixed public masks; its coefficient-for-coefficient
+// regression tests preserve the 223626f representation and setup derivation.
+// Keep existing public snapshots compatible across that construction change.
 const FORMAT: &[u8] = b"transparent-runtime-v1/ipir-223626f/spiral-6f5b66c";
+
+/// The writer uses a 1 MiB buffer, 8 KiB word staging and small hash/metadata
+/// state. Runtime coefficients remain owned/accounted separately. Keep margin
+/// above those allocations; queued writers also retain this reservation.
+pub(super) const SAVE_SCRATCH_BYTES: u64 = 2 << 20;
 
 #[derive(Clone, Debug)]
 pub struct DiskCache {
@@ -112,18 +120,23 @@ impl DiskCache {
         // The constructor consumes exactly n logical column-major coefficients
         // and recreates padding and the locally selected CPU kernel. I/O failures
         // yield placeholders to satisfy its iterator contract, then fail below.
-        let coefficients = (0..n).map(|_| match reader.bytes::<2>() {
-            Ok(bytes) => {
-                let value = u16::from_le_bytes(bytes);
-                if value as u64 >= shared.scheme.p {
-                    error = Some(invalid("noncanonical database coefficient"));
+        let mut buffer = [0u8; 8192];
+        let coefficients = (0..n).map(|index| {
+            let offset = index % (buffer.len() / 2);
+            if offset == 0 && error.is_none() {
+                let count = (n - index).min(buffer.len() / 2);
+                if let Err(e) = reader.input.read_exact(&mut buffer[..count * 2]) {
+                    error = Some(e);
                 }
-                value
             }
-            Err(e) => {
-                error = Some(e);
-                0
+            if error.is_some() {
+                return 0;
             }
+            let value = u16::from_le_bytes([buffer[offset * 2], buffer[offset * 2 + 1]]);
+            if value as u64 >= shared.scheme.p {
+                error = Some(invalid("noncanonical database coefficient"));
+            }
+            value
         });
         let server =
             IPIRServer::<u16>::new_auto_kernel(shared.scheme.clone(), coefficients, true, true);
@@ -143,7 +156,9 @@ impl DiskCache {
                 digits_ntt,
             });
         }
-        if reader.input.into_inner().hash.finalize().as_slice() != expected {
+        let reader = reader.input.into_inner();
+        crate::filecache::consumed(reader.input.get_ref());
+        if reader.hash.finalize().as_slice() != expected {
             return Err(invalid("runtime cache checksum mismatch"));
         }
         let public_params = published_c1_rows(&preprocessed, shared.rlwe.q);
@@ -203,9 +218,10 @@ impl DiskCache {
             let rows = shared.scheme.db_rows;
             let padded = runtime.server.db_rows_padded();
             for column in 0..shared.scheme.db_cols {
-                for value in &runtime.server.db()[column * padded..column * padded + rows] {
-                    writer.bytes(&value.to_le_bytes())?;
-                }
+                writer.words(
+                    &runtime.server.db()[column * padded..column * padded + rows],
+                    u16::to_le_bytes,
+                )?;
             }
             for pre in &runtime.preprocessed {
                 writer.matrix(&pre.collapse_a_final_ntt)?;
@@ -217,6 +233,7 @@ impl DiskCache {
             let checksum = writer.output.get_ref().hash.clone().finalize();
             writer.output.get_mut().output.write_all(&checksum)?;
             writer.output.get_ref().output.sync_all()?;
+            crate::filecache::consumed(&writer.output.get_ref().output);
             if writer.output.get_ref().output.metadata()?.len() != Self::entry_bytes(shared) {
                 return Err(invalid(
                     "runtime export layout changed; bump the cache format",
@@ -350,13 +367,24 @@ impl<R: Read> CheckedReader<R> {
         cols: usize,
     ) -> io::Result<PolyMatrixNTT<'static>> {
         let mut matrix = PolyMatrixNTT::zero(&shared.rlwe.spiral, rows, cols);
-        for value in matrix.as_mut_slice() {
-            *value = u64::from_le_bytes(self.bytes()?);
-            if *value >= shared.rlwe.q {
-                return Err(invalid("noncanonical NTT coefficient"));
+        self.words(matrix.as_mut_slice(), shared.rlwe.q)?;
+        Ok(matrix)
+    }
+    /// Decode bounded batches in the existing little-endian format. Validate
+    /// every coefficient before exposing the restored runtime to a caller.
+    fn words(&mut self, values: &mut [u64], modulus: u64) -> io::Result<()> {
+        let mut buffer = [0u8; 8192];
+        for chunk in values.chunks_mut(buffer.len() / 8) {
+            let bytes = &mut buffer[..chunk.len() * 8];
+            self.input.read_exact(bytes)?;
+            for (value, input) in chunk.iter_mut().zip(bytes.chunks_exact(8)) {
+                *value = u64::from_le_bytes(input.try_into().expect("eight-byte word"));
+                if *value >= modulus {
+                    return Err(invalid("noncanonical NTT coefficient"));
+                }
             }
         }
-        Ok(matrix)
+        Ok(())
     }
 }
 struct HashWriter<W> {
@@ -381,8 +409,23 @@ impl<W: Write> CheckedWriter<W> {
         self.output.write_all(bytes)
     }
     fn matrix(&mut self, matrix: &PolyMatrixNTT<'_>) -> io::Result<()> {
-        for value in matrix.as_slice() {
-            self.bytes(&value.to_le_bytes())?;
+        self.words(matrix.as_slice(), u64::to_le_bytes)
+    }
+    /// Batch the same little-endian words into bounded stack storage. This
+    /// avoids a buffered I/O call per coefficient without changing the format,
+    /// checksum input, atomic rename, or durability barrier.
+    fn words<T: Copy, const N: usize>(
+        &mut self,
+        values: &[T],
+        encode: impl Fn(T) -> [u8; N],
+    ) -> io::Result<()> {
+        let mut buffer = [0u8; 8192];
+        for chunk in values.chunks(buffer.len() / N) {
+            let bytes = &mut buffer[..chunk.len() * N];
+            for (value, output) in chunk.iter().zip(bytes.chunks_exact_mut(N)) {
+                output.copy_from_slice(&encode(*value));
+            }
+            self.bytes(bytes)?;
         }
         Ok(())
     }
@@ -409,6 +452,72 @@ mod tests {
     use super::*;
     use crate::shardset::Table;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
+
+    #[test]
+    fn batched_words_preserve_legacy_bytes_across_buffer_boundaries() {
+        for count in [0, 1, 1023, 1024, 1025, 4095, 4096, 4097] {
+            let values: Vec<u64> = (0..count).map(|i| u64::MAX.wrapping_mul(i)).collect();
+            let mut writer = CheckedWriter { output: Vec::new() };
+            writer.words(&values, u64::to_le_bytes).unwrap();
+            assert_eq!(
+                writer.output,
+                values
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect::<Vec<_>>()
+            );
+            let values: Vec<u16> = values.iter().map(|v| *v as u16).collect();
+            let mut writer = CheckedWriter { output: Vec::new() };
+            writer.words(&values, u16::to_le_bytes).unwrap();
+            assert_eq!(
+                writer.output,
+                values
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect::<Vec<_>>()
+            );
+        }
+        let mut short = [0u8; 8];
+        let mut writer = CheckedWriter {
+            output: &mut short[..],
+        };
+        assert!(writer.words(&[1u64, 2], u64::to_le_bytes).is_err());
+    }
+
+    #[test]
+    fn batched_reader_checks_boundaries_truncation_and_canonical_words() {
+        for count in [0, 1, 1023, 1024, 1025, 4097] {
+            let expected: Vec<u64> = (0..count).map(|i| i * 97).collect();
+            let bytes: Vec<u8> = expected.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let mut reader = CheckedReader {
+                input: bytes.as_slice(),
+            };
+            let mut actual = vec![0; expected.len()];
+            reader.words(&mut actual, u64::MAX).unwrap();
+            assert_eq!(actual, expected);
+            if !bytes.is_empty() {
+                let mut reader = CheckedReader {
+                    input: &bytes[..bytes.len() - 1],
+                };
+                assert_eq!(
+                    reader.words(&mut actual, u64::MAX).unwrap_err().kind(),
+                    io::ErrorKind::UnexpectedEof
+                );
+            }
+        }
+        for index in [0, 1023, 1024, 1025] {
+            let mut values = vec![0u64; 1026];
+            values[index] = 17;
+            let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let mut reader = CheckedReader {
+                input: bytes.as_slice(),
+            };
+            assert_eq!(
+                reader.words(&mut values, 17).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
 
     #[test]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
@@ -507,6 +616,77 @@ mod cache_integration_tests {
     use crate::shardset::{SegmentSource, Table};
     use std::sync::Arc;
     use transparent_shard::layout::RECENT_4K;
+
+    #[tokio::test]
+    async fn blocked_snapshot_releases_build_slot_but_cancel_keeps_runtime_accounted() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = Arc::new(SharedParams::build(&RECENT_4K, Table::Directory).unwrap());
+        let rows = vec![
+            7u8;
+            (Table::Directory.rows(&RECENT_4K) * Table::Directory.row_bytes(&RECENT_4K) as u64)
+                as usize
+        ];
+        let source = SegmentSource {
+            path: dir.path().join("table.bin"),
+            rows: Table::Directory.rows(&RECENT_4K),
+            row_bytes: Table::Directory.row_bytes(&RECENT_4K),
+            sha256: hex::encode(Sha256::digest(&rows)),
+        };
+        fs::write(&source.path, &rows).unwrap();
+        drop(rows);
+        let disk = DiskCache::new(dir.path().join("cache"), shared.reserved_bytes() * 2).unwrap();
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(disk.directory.join(".lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        let metrics = Arc::new(Metrics::default());
+        let cache = Arc::new(
+            RuntimeCache::new(shared.reserved_bytes(), 1, metrics.clone())
+                .with_disk(Some(disk.clone())),
+        );
+        let key = ("ab".repeat(32), Table::Directory, 0);
+        let request = {
+            let (cache, shared, source, key) =
+                (cache.clone(), shared.clone(), source.clone(), key.clone());
+            tokio::spawn(async move { cache.get(key, shared, source).await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while cache.work_memory.reserved_bytes() != shared.reserved_bytes() + SAVE_SCRATCH_BYTES
+                || cache.build_slots.available_permits() != 1
+            {
+                assert!(
+                    !request.is_finished(),
+                    "build ended before reaching blocked writer"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("construction reservation did not transition to serialization");
+        request.abort();
+        assert!(matches!(request.await, Err(error) if error.is_cancelled()));
+        assert_eq!(
+            cache.work_memory.reserved_bytes(),
+            shared.reserved_bytes() + SAVE_SCRATCH_BYTES
+        );
+        assert_eq!(cache.resident_bytes(), shared.reserved_bytes());
+        assert_eq!(Metrics::get(&metrics.builds), 0);
+        // RAII unlock also prevents a test failure from leaving a blocking task
+        // stuck during runtime shutdown.
+        drop(lock);
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while cache.work_memory.reserved_bytes() != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(Metrics::get(&metrics.builds), 1);
+        assert!(disk.load(&key, &shared, &source.sha256).is_ok());
+    }
 
     #[tokio::test]
     async fn restart_coalesces_restore_and_corruption_falls_back_without_losing_budget() {

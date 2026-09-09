@@ -46,7 +46,7 @@ use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
 use ipir_sp::serialize::serialized_packing_keys_len;
 use ipir_sp::server::IPIRServer;
 use ipir_sp::server::{
-    build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows,
+    build_pack_preprocessed_blocks_with_top, pack_intermediate_blocks, published_c1_rows,
 };
 use ipir_sp::{IPIRClient, YpirSchemeParams};
 use sha2::{Digest, Sha256};
@@ -148,6 +148,7 @@ impl TableRuntime {
     /// plaintext beside it would double the resident cost of every shard for no
     /// benefit.
     pub fn build(shared: &SharedParams, rows: &[u8]) -> Result<Self, String> {
+        let mut phase = std::time::Instant::now();
         let coefficients = RowPlaintextIter::new(
             rows,
             shared.table.row_bytes(shared.geometry) as usize,
@@ -158,22 +159,65 @@ impl TableRuntime {
         let server =
             IPIRServer::<u16>::new_auto_kernel(shared.scheme.clone(), coefficients, false, true);
 
+        tracing::debug!(
+            geometry = shared.geometry.name,
+            table = shared.table.as_str(),
+            seconds = phase.elapsed().as_secs_f64(),
+            stage = "encode_database",
+            "construction stage"
+        );
+        phase = std::time::Instant::now();
         // The setup is derived from a published seed, so a client reproduces it
         // exactly. It is public: it carries no secret and no selection.
         let mut seed = [0u8; 32];
         seed[..8].copy_from_slice(&shared.setup_seed.to_le_bytes());
         let setup = IPIRClient::new(shared.rlwe, &shared.scheme)
             .generate_public_query_setup_simplepir_from_seed(seed);
+        tracing::debug!(
+            geometry = shared.geometry.name,
+            table = shared.table.as_str(),
+            seconds = phase.elapsed().as_secs_f64(),
+            stage = "public_setup",
+            "construction stage"
+        );
+        phase = std::time::Instant::now();
         let crs_blocks = server
             .perform_offline_precomputation_simplepir(shared.rlwe, &setup)
             .crs_blocks;
-        let preprocessed =
-            build_pack_preprocessed_blocks(shared.rlwe, &crs_blocks).map_err(|e| e.to_string())?;
+        tracing::debug!(
+            geometry = shared.geometry.name,
+            table = shared.table.as_str(),
+            seconds = phase.elapsed().as_secs_f64(),
+            stage = "hint_columns",
+            "construction stage"
+        );
+        phase = std::time::Instant::now();
+        let preprocessed = build_pack_preprocessed_blocks_with_top(
+            shared.rlwe,
+            &crs_blocks,
+            &shared.top_key_images,
+        )
+        .map_err(|e| e.to_string())?;
+        tracing::debug!(
+            geometry = shared.geometry.name,
+            table = shared.table.as_str(),
+            seconds = phase.elapsed().as_secs_f64(),
+            stage = "pack_preprocessing",
+            "construction stage"
+        );
+        phase = std::time::Instant::now();
         let public_params = published_c1_rows(&preprocessed, shared.rlwe.q);
         let digest = Sha256::digest(&public_params);
         let mut epoch = [0u8; 8];
         epoch.copy_from_slice(&digest[..8]);
 
+        tracing::debug!(
+            geometry = shared.geometry.name,
+            table = shared.table.as_str(),
+            seconds = phase.elapsed().as_secs_f64(),
+            stage = "publish_parameters",
+            "construction stage"
+        );
         Ok(Self {
             preprocessed,
             server,
@@ -412,6 +456,7 @@ impl RuntimeCache {
         source: SegmentSource,
         pin: Arc<Slot>,
     ) -> Result<TableRuntime, CacheError> {
+        let attempt = std::time::Instant::now();
         if let Some(disk) = self.disk.clone() {
             let permit = self
                 .restore_slots
@@ -419,10 +464,14 @@ impl RuntimeCache {
                 .acquire_owned()
                 .await
                 .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
+            tracing::debug!(key = ?key, seconds = attempt.elapsed().as_secs_f64(), stage = "restore_slot", "runtime stage");
             let memory = self
                 .work_memory
                 .reserve(shared.reserved_bytes().saturating_mul(2))
-                .ok_or(CacheError::Overloaded)?;
+                .ok_or_else(|| {
+                    tracing::debug!(key = ?key, stage = "restore_admission", "runtime admission denied");
+                    CacheError::Overloaded
+                })?;
             let restore_pin = pin.clone();
             let restore_key = key.clone();
             let restore_shared = shared.clone();
@@ -434,12 +483,16 @@ impl RuntimeCache {
                     let _permit = permit;
                     let _pin = restore_pin;
                     let started = std::time::Instant::now();
-                    match disk.load(&restore_key, &restore_shared, &restore_source.sha256) {
+                    let restored = disk.load(&restore_key, &restore_shared, &restore_source.sha256);
+                    tracing::debug!(key = ?restore_key, seconds = started.elapsed().as_secs_f64(), hit = restored.is_ok(), stage = "disk_restore", "runtime stage");
+                    match restored {
                         Ok(runtime) => {
                             // A cache hit must not conceal a source changed since startup.
+                            let verify_started = std::time::Instant::now();
                             restore_source
                                 .verify()
                                 .map_err(|error| CacheError::Failed(error.to_string()))?;
+                            tracing::debug!(key = ?restore_key, seconds = verify_started.elapsed().as_secs_f64(), stage = "source_verify", "runtime stage");
                             Metrics::incr(&metrics.disk_hits);
                             Metrics::add(
                                 &metrics.disk_load_micros,
@@ -466,35 +519,53 @@ impl RuntimeCache {
                 return Ok(runtime);
             }
         }
+        let slot_started = std::time::Instant::now();
         let permit = self
             .build_slots
             .clone()
             .acquire_owned()
             .await
             .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
+        tracing::debug!(key = ?key, seconds = slot_started.elapsed().as_secs_f64(), stage = "build_slot", "runtime stage");
         // Includes the new runtime and conservative scratch space for encoding,
         // setup/preprocessing and disk serialization. Calibrate in residency tests.
         let memory = self
             .work_memory
-            .reserve(shared.reserved_bytes().saturating_mul(4))
-            .ok_or(CacheError::Overloaded)?;
+            .reserve_build(shared.reserved_bytes().saturating_mul(4))
+            .await
+            .ok_or_else(|| {
+                tracing::debug!(key = ?key, stage = "build_admission", "runtime admission denied");
+                CacheError::Overloaded
+            })?;
         let disk = self.disk.clone();
         let metrics = self.metrics.clone();
         tokio::task::spawn_blocking(move || {
-            let _memory = memory;
-            let _permit = permit;
+            let mut memory = memory;
             let _pin = pin;
             let started = std::time::Instant::now();
             let bytes = source
                 .load()
                 .map_err(|error| CacheError::Failed(error.to_string()))?;
+            tracing::debug!(key = ?key, seconds = started.elapsed().as_secs_f64(), stage = "source_load", "runtime stage");
+            let compute_started = std::time::Instant::now();
             let runtime = TableRuntime::build(&shared, &bytes).map_err(CacheError::Failed)?;
+            tracing::debug!(key = ?key, seconds = compute_started.elapsed().as_secs_f64(), stage = "runtime_build", "runtime stage");
             drop(bytes);
+            // Construction's plaintext and preprocessing temporaries are gone.
+            // Keep the built runtime and bounded writer scratch charged while
+            // waiting for the disk lock and durability barriers. The closure
+            // retains this guard and the cache pin even if its caller cancels.
+            memory.shrink_to(shared.reserved_bytes() + disk::SAVE_SCRATCH_BYTES);
+            drop(permit);
+            tracing::debug!(key = ?key, reserved_bytes = shared.reserved_bytes() + disk::SAVE_SCRATCH_BYTES,
+                stage = "serialization_handoff", "runtime stage");
             if let Some(disk) = disk {
+                let save_started = std::time::Instant::now();
                 if let Err(error) = disk.save(&key, &shared, &source.sha256, &runtime) {
                     Metrics::incr(&metrics.disk_write_failures);
                     tracing::warn!(%error, "runtime cache write failed; serving built runtime");
                 }
+                tracing::debug!(key = ?key, seconds = save_started.elapsed().as_secs_f64(), stage = "disk_save", "runtime stage");
             }
             Metrics::incr(&metrics.builds);
             Metrics::add(&metrics.build_micros, started.elapsed().as_micros() as u64);

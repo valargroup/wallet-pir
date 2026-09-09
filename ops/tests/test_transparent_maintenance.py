@@ -19,19 +19,19 @@ RUN_SPEC.loader.exec_module(R)
 
 class GateTests(unittest.TestCase):
     def setUp(self):
-        self.gate = dict(passed=True, binary_sha256='binary', fleet_script_sha256='script', fleet_config_sha256='config',
+        self.gate = dict(passed=True, binary_sha256='binary', fleet_script_sha256='script', fleet_config_sha256='config', roster_sha256='roster',
                          worker='transparent-pir-recent-01', seconds=21600, blocks=300, replica_blocks=300,
                          exact_queries=[1000, 1000], public_budget_seconds=30, replica_budget_seconds=60,
                          maximum_visibility_seconds=29, maximum_canary_visibility_seconds=59)
 
     def test_gate_requires_both_duration_and_blocks_with_matching_provenance(self):
-        M.validate_gate(self.gate, 'binary', 'script', 'config')
+        M.validate_gate(self.gate, 'binary', 'script', 'config', 'roster')
         for changed in [dict(seconds=21599), dict(blocks=299), dict(replica_blocks=299), dict(passed=False),
-                        dict(binary_sha256='old'), dict(fleet_script_sha256='old'), dict(fleet_config_sha256='old'),
+                        dict(roster_sha256='old'), dict(binary_sha256='old'), dict(fleet_script_sha256='old'), dict(fleet_config_sha256='old'),
                         dict(exact_queries=[1000]), dict(exact_queries=[1000, 999]), dict(public_budget_seconds=60),
                         dict(maximum_visibility_seconds=31), dict(maximum_canary_visibility_seconds=61)]:
             with self.subTest(changed=changed), self.assertRaises(ValueError):
-                M.validate_gate({**self.gate, **changed}, 'binary', 'script', 'config')
+                M.validate_gate({**self.gate, **changed}, 'binary', 'script', 'config', 'roster')
 
     def test_guard_preserves_other_services_and_withdraws_parent_artifacts(self):
         config = '''example.test {

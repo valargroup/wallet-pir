@@ -81,6 +81,16 @@ fn events_through(last: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
 
 /// Writes one revision of shard zero and returns its manifest digest.
 fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (String, u64) {
+    write_revision_geometry(dir, end, revision, supersedes, &GEOMETRY)
+}
+
+fn write_revision_geometry(
+    dir: &Path,
+    end: u64,
+    revision: u32,
+    supersedes: &str,
+    geometry: &'static Geometry,
+) -> (String, u64) {
     let events = events_through(end);
     let built = build_shard(
         0,
@@ -89,7 +99,7 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
         genesis(),
         hash_at(end),
         transparent_filter::RANGE_PROFILE,
-        &GEOMETRY,
+        geometry,
         &events,
     )
     .expect("build");
@@ -97,7 +107,7 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
     let manifest = ShardManifest {
         schema: SCHEMA.to_string(),
         profile: transparent_filter::RANGE_PROFILE.to_string(),
-        geometry: GEOMETRY.name.to_string(),
+        geometry: geometry.name.to_string(),
         network: transparent_filter::NETWORK.to_string(),
         genesis_hash: GENESIS.to_string(),
         shard_id: 0,
@@ -130,8 +140,8 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
             .directory
             .iter()
             .map(|segment| TableGeometry {
-                rows: GEOMETRY.directory_rows,
-                row_bytes: GEOMETRY.directory_row_bytes as u32,
+                rows: geometry.directory_rows,
+                row_bytes: geometry.directory_row_bytes as u32,
                 sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
             })
             .collect(),
@@ -139,8 +149,8 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
             .pages
             .iter()
             .map(|segment| TableGeometry {
-                rows: GEOMETRY.page_rows,
-                row_bytes: GEOMETRY.page_row_bytes as u32,
+                rows: geometry.page_rows,
+                row_bytes: geometry.page_row_bytes as u32,
                 sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
             })
             .collect(),
@@ -171,6 +181,17 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
 
 /// Writes a map naming `digest` as the current revision of shard zero.
 fn write_map(dir: &Path, digest: &str, end: u64, revision: u32, scripts: u64) -> ShardMap {
+    write_map_geometry(dir, digest, end, revision, scripts, &GEOMETRY)
+}
+
+fn write_map_geometry(
+    dir: &Path,
+    digest: &str,
+    end: u64,
+    revision: u32,
+    scripts: u64,
+    geometry: &'static Geometry,
+) -> ShardMap {
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
         network: transparent_filter::NETWORK.to_string(),
@@ -178,7 +199,7 @@ fn write_map(dir: &Path, digest: &str, end: u64, revision: u32, scripts: u64) ->
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: std::collections::BTreeMap::from([(
-            GEOMETRY.name.to_string(),
+            geometry.name.to_string(),
             SealParameters {
                 max_scripts: 8_192,
                 max_page_rows: 2_048,
@@ -187,7 +208,7 @@ fn write_map(dir: &Path, digest: &str, end: u64, revision: u32, scripts: u64) ->
         )]),
         shards: vec![transparent_filter::ShardMapEntry {
             shard_id: 0,
-            geometry: GEOMETRY.name.to_string(),
+            geometry: geometry.name.to_string(),
             start_height: FIRST,
             end_height: end,
             parent_block_hash: hash_at(FIRST - 1).to_display_hex(),
@@ -942,3 +963,8 @@ async fn live_prepare_activate_and_invalidate() {
         StatusCode::CONFLICT
     );
 }
+
+#[path = "support/burst.rs"]
+mod burst;
+#[path = "../examples/support/query.rs"]
+mod burst_query;

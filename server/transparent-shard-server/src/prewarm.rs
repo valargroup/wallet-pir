@@ -22,6 +22,7 @@ where
         }
         match get().await {
             Err(CacheError::Overloaded) if tokio::time::Instant::now() < deadline => {
+                tracing::debug!("prewarm admission retry; sleeping 100ms");
                 // Other restores may have materialized their reservations in
                 // memory.current. Let those operations release the extra charge
                 // before retrying; never discard an assigned warm target.

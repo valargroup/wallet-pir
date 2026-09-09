@@ -69,6 +69,7 @@ async def observe(args):
     provenance = dict(worker=args.worker, binary_sha256=args.binary_sha256,
                       fleet_script_sha256=hashlib.sha256(Path(args.fleet_script).read_bytes()).hexdigest(),
                       fleet_config_sha256=hashlib.sha256(Path(args.fleet_config).read_bytes()).hexdigest(),
+                      roster_sha256=hashlib.sha256(Path(fleet.c['roster']).read_bytes()).hexdigest(),
                       public_budget_seconds=args.freshness_seconds,
                       replica_budget_seconds=args.replica_freshness_seconds)
     worker = next(w for w in fleet.roster if w['id'] == args.worker)

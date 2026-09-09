@@ -221,6 +221,7 @@ impl LiveService {
                 let directory = publication.directory.clone();
                 let digest = publication.map_sha256.clone();
                 let config = self.0.config;
+                let loading_started = std::time::Instant::now();
                 let next = tokio::task::spawn_blocking(move || {
                     old.evict_unpinned();
                     let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
@@ -238,8 +239,12 @@ impl LiveService {
                 })
                 .await
                 .map_err(|e| e.to_string())??;
+                let loading_seconds = loading_started.elapsed().as_secs_f64();
+                let warming_started = std::time::Instant::now();
                 self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
                 next.spawn_prewarm().await.map_err(|e| e.to_string())?;
+                let warming_seconds = warming_started.elapsed().as_secs_f64();
+                tracing::debug!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
                 if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
                     return Err("reorg invalidated preparation".into());
                 }
@@ -254,7 +259,9 @@ impl LiveService {
                     publication: publication.clone(),
                     epoch,
                 });
-                Ok(serde_json::json!({"prepared":publication.map_sha256}))
+                Ok(
+                    serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds}),
+                )
             }
             Command::Activate {
                 expected,

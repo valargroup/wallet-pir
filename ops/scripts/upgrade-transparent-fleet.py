@@ -28,8 +28,8 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def validate_gate(result, binary, script, config):
-    expected = dict(binary_sha256=binary, fleet_script_sha256=script, fleet_config_sha256=config)
+def validate_gate(result, binary, script, config, roster):
+    expected = dict(binary_sha256=binary, fleet_script_sha256=script, fleet_config_sha256=config, roster_sha256=roster)
     if result.get('passed') is not True or any(result.get(k) != v for k, v in expected.items()):
         raise ValueError('canary result is unsuccessful or does not match this deployment')
     if (result.get('worker') != 'transparent-pir-recent-01' or result.get('seconds', 0) < 21600
@@ -204,7 +204,7 @@ async def upgrade(args):
         if args.canary_result is None:
             raise ValueError('full fleet upgrade requires --canary-result')
         validate_gate(json.loads(args.canary_result.read_text()), binary,
-                      sha(HERE/'transparent-live-fleet.py'), sha(args.fleet_config))
+                      sha(HERE/'transparent-live-fleet.py'), sha(args.fleet_config), sha(fleet.c['roster']))
     args.out.mkdir(parents=True, exist_ok=False)
     D.atomic_bytes(args.out/'fleet.json', args.fleet_config.read_bytes())
     before = {w['id']: (await asyncio.to_thread(D.read_json, 'http://'+w['upstream']+'/v1/ready'))['binary_sha256'] for w in workers}

@@ -271,6 +271,7 @@ impl SegmentSource {
             hasher.update(&buffer[..read]);
             total += read;
         }
+        crate::filecache::consumed(&file);
         self.check(total, hasher.finalize().as_slice())
     }
 
@@ -281,7 +282,21 @@ impl SegmentSource {
     /// plaintext beside it would be the accounting error this whole change
     /// exists to remove.
     pub fn load(&self) -> Result<Vec<u8>, LoadError> {
-        let bytes = read(&self.path)?;
+        let mut file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        let mut bytes = Vec::with_capacity(self.bytes());
+        // One extra byte detects an oversized/replaced source without allowing
+        // an untrusted file length to drive an unbounded allocation.
+        file.by_ref()
+            .take(self.bytes() as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|source| LoadError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        crate::filecache::consumed(&file);
         self.check(bytes.len(), Sha256::digest(&bytes).as_slice())?;
         Ok(bytes)
     }

@@ -9,6 +9,7 @@
 
 pub mod admission;
 pub mod assignment;
+mod filecache;
 pub mod memory;
 pub mod metrics;
 mod prewarm;

@@ -128,6 +128,24 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
         raise RuntimeError('worker unit lacks a simple ExecStart')
     if '--control-socket' not in args:
         args += ['--control-socket','/run/transparent-pir/control.sock','--active-record','/opt/transparent-publisher/active.json']
+    if 'build_slots' in worker:
+        slots = worker['build_slots']
+        if type(slots) is not int or not 1 <= slots <= 99:
+            raise ValueError('build_slots must be an integer from 1 to 99')
+        # Replace both accepted CLI spellings; never leave a stale duplicate.
+        updated = []
+        index = 0
+        while index < len(args):
+            if args[index] == '--build-slots':
+                if index + 1 >= len(args):
+                    raise ValueError('worker unit has an incomplete --build-slots')
+                index += 2
+            elif args[index].startswith('--build-slots='):
+                index += 1
+            else:
+                updated.append(args[index])
+                index += 1
+        args = updated + ['--build-slots', str(slots)]
     new_unit='\n'.join('ExecStart='+shlex.join(args) if line.startswith('ExecStart=') else line for line in unit.splitlines())+'\n'
     # RuntimeDirectory is created before the binary opens its control socket.
     if 'RuntimeDirectory=transparent-pir' not in new_unit.splitlines():
