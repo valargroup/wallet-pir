@@ -120,6 +120,16 @@ impl StateReader {
             .ok_or(StateError::MissingBlock(u64::from(height.0)))
     }
 
+    /// Read the full raw block without consulting the transparent event journal.
+    pub fn raw_block(
+        &self,
+        height: u64,
+    ) -> Result<std::sync::Arc<zakura_chain::block::Block>, StateError> {
+        self.db
+            .block(HashOrHeight::Height(to_height(height)?))
+            .ok_or(StateError::MissingBlock(height))
+    }
+
     /// The header time of a finalized block, as the miner stamped it.
     ///
     /// Block times are not monotone — consensus only requires each to exceed

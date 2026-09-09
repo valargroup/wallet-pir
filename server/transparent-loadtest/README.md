@@ -316,3 +316,96 @@ retrieval. A page-setup overload after the directory commit previously created
 duplicate pending entries: one copy could finish while the original remained,
 producing `PendingLimit` despite matching event counts. A real HTTP regression
 test exercises this sequence without preparation-level retries.
+
+## Comparing compact-block scanning with PIR
+
+The block backend scans a pinned dataset reconstructed from raw blocks. It is a
+benchmark implementation, not a measurement of an existing wallet/lightwalletd
+release. The journal remains the independent event oracle; the scanner never
+receives expected events or performs address-specific requests.
+
+Build the tools with `cargo build --release -p transparent-filter-server --bin
+compact-export --bin sample-oracle -p transparent-block-server -p transparent-loadtest`.
+`protoc` is required to compile the pinned protobuf schema. Export the full dataset
+on the archive host, outside measured time:
+
+```sh
+compact-export --state-dir /root/.cache/zakura \
+  --anchor-height HEIGHT --anchor-hash HASH --out-dir /srv/transparent-sync-bench/data
+```
+
+The state reader uses the pinned Zakura revision; RPC input is also available via
+`--rpc-url` and `--cookie`. Export starts at genesis so shielded commitment counts
+are complete. It checkpoints bounded batches, validates artifacts on resume, and
+refuses another target, exporter binary, or incomplete coverage. Preserve the exporter binary to resume an interrupted export. Do not point it at a live service's
+data directory. It writes transparent-only, shielded-only, and combined protobuf
+representations, each with identity and gzip encoding. Messages remain per-block; gzip compression applies to each bounded batch (up to 1,000 blocks), not individual gRPC messages. Unsupported transparent
+scripts still consume bytes in the dataset.
+
+Freeze the selected wallets and independently derive their fresh-restore answers:
+
+```sh
+make transparent-sim-freeze BLOCK_SELECTED_SAMPLE=/tmp/selected-sample.json
+sample-oracle --data-dir /srv/zakura/transparent-event-data \
+  --sample /tmp/selected-sample.json --out /tmp/fresh-sample.json
+```
+
+Serve the dataset using `transparent-block-server --dataset PATH`. Defaults are
+loopback port 8096 for data and 8097 for private metrics. Use a verified TLS proxy
+for remote runs, with measurement-client access restricted independently of ACME
+validation. The service verifies all artifacts before becoming ready.
+
+The default Make target uses the recorded benchmark origin and checked-in fresh
+oracle for the supplied 20-wallet scenario:
+
+```sh
+make transparent-sim-compare
+make transparent-sim-open
+```
+
+For a custom dataset or explicit server APM:
+
+```sh
+make transparent-sim-compare \
+  BLOCK_URL=https://transparent-sync-bench.valargroup.dev \
+  BLOCK_FRESH_SAMPLE=/path/to/fresh-sample.json \
+  BLOCK_METRICS_URL=http://localhost:18097/metrics \
+  SIM_METRICS='recent1=http://localhost:18101/metrics archive1=http://localhost:18105/metrics'
+make transparent-sim-open
+```
+
+Use `SIM_COMPARISON_METADATA=/path/to/conditions.json` to preserve host hardware, cache conditions and concurrent background work in the parent report. Client OS, architecture and logical CPU count are captured automatically.
+
+Supply a metrics URL for every participating PIR worker; tunnel private endpoints
+rather than exposing them publicly. The comparison runs the mixed wave PIR-first,
+then the fresh suite blocks-first. Each backend admits the same 20 wallets in its
+own run. Mixed runs copy the same validated prior ledger events; measured time includes opening each fresh store and importing those events. Fresh runs start
+empty at genesis with a six-hour deadline. The original mixed deadline is retained.
+Scripts are fixed known sets; seed-phrase derivation and HD gap discovery are not
+part of these results.
+
+Set `SIM_OUT` to an existing comparison directory to resume. The controller pins
+samples, dataset identity, encoding, executable bytes, and shared seed checksums.
+Completed successful children are reused; unsuccessful child evidence is moved to
+an `*-interrupted-*` directory before a new attempt. Changed inputs require a new
+comparison directory. The parent report is updated during each child run and links
+the detailed reports and raw request/APM evidence.
+
+`backend: "blocks"` scenarios require `dataset_id` and exactly one of `block_url`
+or `block_dataset`. Block preflight checks the dataset independently of PIR availability. The latter runs the same scanner offline, with zero network
+calls; its encoded dataset sizes remain available for bandwidth analysis. Set
+`block_encoding` to `gzip` (default) or `identity`. Network wallets prefetch up to four batches, with a 64 MiB encoded-byte window; a larger batch runs alone. `block_prefetch` (1–8) and `block_prefetch_bytes` configure these bounds. Results are verified and committed in block order; all admitted requests contribute to traffic, including work prefetched before a later failure. The server streams files with a small buffer per response. Range manifests are assertions by the trusted TLS publisher, not Merkle proofs. Network runs download complete
+batches intersecting the requested range, so any boundary overfetch is paid and
+included in all three representation sizes. Wallet events outside the requested
+range are never imported from those boundary blocks.
+
+The incremental bandwidth figure is combined minus shielded-only encoded bytes
+for the fetched batches, without retries. It includes transparent-only transactions
+newly present in the combined stream. Actual standalone wallet traffic includes range-manifest
+and batch requests and all failed/retried attempts. Supervisor preflight/postflight
+validation and shared preparation are excluded from wallet totals for both methods. These are HTTP payload sizes,
+not TLS/socket totals. Do not infer incremental shielded-wallet latency by
+subtracting independent runs. Success ratios and latency comparisons require exact
+results from both backends; a single paired run does not establish fleet capacity
+or dependable tail latency. SQLite size is recorded before cleanup, not inferred
+from event counts; OS-reported process write bytes are recorded separately and are not a measure of SQLite logical write volume.

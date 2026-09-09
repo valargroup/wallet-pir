@@ -32,7 +32,7 @@ jobs:
         with:
           cache-on-failure: true
           shared-key: workspace
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev protobuf-compiler
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --release

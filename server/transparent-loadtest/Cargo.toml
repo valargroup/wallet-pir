@@ -8,6 +8,7 @@ name = "transparent-loadtest"
 path = "src/main.rs"
 
 [dependencies]
+transparent-blocks = { path = "../../pir/transparent-blocks" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 hdrhistogram = "7"

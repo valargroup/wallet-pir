@@ -270,6 +270,49 @@ fn execute_once(
     result
 }
 
+/// A public immutable resource downloaded with the same measured retry policy.
+/// Response bytes are returned before any application decoding occurs.
+pub struct HttpResourceClient {
+    client: reqwest::blocking::Client,
+    observer: Option<HttpObserver>,
+    attempts: usize,
+}
+impl HttpResourceClient {
+    pub fn new(
+        options: &HttpOptions,
+        observer: Option<HttpObserver>,
+        attempts: usize,
+    ) -> Result<Self, BoxError> {
+        Ok(Self {
+            client: reqwest::blocking::Client::builder()
+                .timeout(options.timeout)
+                .user_agent(options.user_agent.clone())
+                .no_gzip()
+                .no_brotli()
+                .no_deflate()
+                .no_zstd()
+                .build()?,
+            observer,
+            attempts: attempts.clamp(1, 3),
+        })
+    }
+    pub fn get(&self, url: &str, stage: &'static str) -> Result<Vec<u8>, BoxError> {
+        execute(
+            // Explicit negotiation also prevents intermediary HTTP clients from
+            // transparently decompressing a response before forwarding it.
+            self.client
+                .get(url)
+                .header("accept-encoding", "gzip, identity"),
+            stage,
+            0,
+            None,
+            &self.observer,
+            self.attempts,
+            false,
+        )
+    }
+}
+
 /// The private shard service over HTTP.
 pub struct HttpShardTransport {
     base: String,

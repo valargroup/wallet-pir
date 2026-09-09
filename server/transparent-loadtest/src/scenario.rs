@@ -29,6 +29,10 @@ use crate::{Sample, SampleClient};
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]
+    selected_sample: Option<PathBuf>,
+    #[arg(long)]
+    prepare_only: bool,
+    #[arg(long)]
     scenario: Option<PathBuf>,
     #[arg(long)]
     out_dir: Option<PathBuf>,
@@ -66,6 +70,22 @@ fn parse_target(value: &str) -> Result<(String, String), String> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub backend: Backend,
+    #[serde(default)]
+    pub block_url: Option<String>,
+    #[serde(default)]
+    pub block_dataset: Option<PathBuf>,
+    #[serde(default)]
+    pub dataset_id: Option<String>,
+    #[serde(default = "gzip")]
+    pub block_encoding: String,
+    #[serde(default = "block_prefetch")]
+    pub block_prefetch: usize,
+    #[serde(default = "block_prefetch_bytes")]
+    pub block_prefetch_bytes: u64,
+    #[serde(default)]
+    pub prepared_seeds: Option<PathBuf>,
     pub schema: String,
     pub name: String,
     pub mode: Mode,
@@ -105,6 +125,22 @@ pub struct Config {
     #[serde(default)]
     pub notes: String,
 }
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    #[default]
+    Pir,
+    Blocks,
+}
+fn block_prefetch_bytes() -> u64 {
+    64 * 1024 * 1024
+}
+fn block_prefetch() -> usize {
+    4
+}
+fn gzip() -> String {
+    "gzip".into()
+}
 fn preparation_concurrency() -> usize {
     2
 }
@@ -143,6 +179,38 @@ pub enum Store {
 
 impl Config {
     fn validate(&self) -> Result<()> {
+        if self.backend == Backend::Blocks {
+            anyhow::ensure!(
+                (1..=8).contains(&self.block_prefetch),
+                "block_prefetch must be 1..8"
+            );
+            anyhow::ensure!(
+                (1..=transparent_blocks::dataset::MAX_BATCH_BYTES)
+                    .contains(&self.block_prefetch_bytes),
+                "invalid block prefetch byte budget"
+            );
+            anyhow::ensure!(
+                self.block_url.is_some() != self.block_dataset.is_some(),
+                "choose block_url or block_dataset"
+            );
+            let url = reqwest::Url::parse(self.block_url.as_deref().unwrap_or("http://localhost"))?;
+            anyhow::ensure!(
+                ["http", "https"].contains(&url.scheme())
+                    && url.username().is_empty()
+                    && url.password().is_none(),
+                "invalid block URL"
+            );
+            anyhow::ensure!(
+                self.dataset_id
+                    .as_ref()
+                    .is_some_and(|id| hex::decode(id).is_ok_and(|b| b.len() == 32)),
+                "dataset_id required"
+            );
+            anyhow::ensure!(
+                ["gzip", "identity"].contains(&self.block_encoding.as_str()),
+                "invalid block encoding"
+            );
+        }
         if !(1..=3).contains(&self.measured_http_attempts) {
             bail!("measured_http_attempts must be between 1 and 3");
         }
@@ -431,8 +499,9 @@ fn worker() -> Result<()> {
         let job: Job = serde_json::from_str(&line?)?;
         let started = now();
         emit(&json!({"type":"started", "id":job.id, "at":started}))?;
+        let usage_before = process_usage();
         let result = recover(&job);
-        let event = match result {
+        let mut event = match result {
             Ok(mut result) => {
                 result["type"] = json!("outcome");
                 result["id"] = json!(job.id);
@@ -443,9 +512,28 @@ fn worker() -> Result<()> {
                 json!({"type":"outcome", "id":job.id, "at":now(), "outcome":"failed", "error":format!("{error:#}")})
             }
         };
+        let usage_after = process_usage();
+        event["client_cpu_seconds"] = json!(usage_after.0 - usage_before.0);
+        event["process_written_bytes"] = json!(usage_after.1.saturating_sub(usage_before.1));
+        event["client_end_rss_bytes"] = json!(usage_after.2);
         emit(&event)?;
     }
     Ok(())
+}
+
+fn process_usage() -> (f64, u64, u64) {
+    let Ok(pid) = sysinfo::get_current_pid() else {
+        return (0.0, 0, 0);
+    };
+    let mut system = sysinfo::System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+    system.process(pid).map_or((0.0, 0, 0), |p| {
+        (
+            p.accumulated_cpu_time() as f64 / 1000.0,
+            p.disk_usage().total_written_bytes,
+            p.memory(),
+        )
+    })
 }
 
 fn recover(job: &Job) -> Result<Value> {
@@ -463,6 +551,9 @@ fn recover(job: &Job) -> Result<Value> {
             std::process::exit(2);
         }
     });
+    if job.config.backend == Backend::Blocks && !job.preparing {
+        return recover_blocks(job, observer);
+    }
     let options = job.config.options();
     let mut filters = HttpFilterSource::new(job.config.filter_origin(), &options)
         .map_err(io_error)?
@@ -569,11 +660,12 @@ fn recover(job: &Job) -> Result<Value> {
         )?;
     }
     drop(store);
+    let sqlite_bytes = fs::metadata(&job.store_path).map_or(0, |m| m.len());
     if outcome == "exact" && job.config.store == Store::Sqlite {
         fs::remove_file(&job.store_path)?;
     }
     Ok(
-        json!({"outcome":outcome, "events":events, "actual_digest":actual, "events_exact":actual == job.wallet.expected_digest && events == job.wallet.journal_events, "unresolved_spends":unresolved_spends, "seeded_events":seeded_events,
+        json!({"outcome":outcome, "sqlite_bytes":sqlite_bytes, "events":events, "actual_digest":actual, "events_exact":actual == job.wallet.expected_digest && events == job.wallet.journal_events, "unresolved_spends":unresolved_spends, "seeded_events":seeded_events,
         "completion":format!("{:?}",report.completion), "map_refreshes":report.map_refreshes,
         "matched_shards":report.matched_shards.len(), "commits":report.commits}),
     )
@@ -745,6 +837,21 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
         }
     }
     let selector = Selector::new(&config, &sample.clients)?;
+    if let Some(output) = cli.selected_sample {
+        let selected: Vec<usize> = selector
+            .pools
+            .iter()
+            .flat_map(|(class, pool)| pool[..config.profiles[class]].iter().copied())
+            .collect();
+        let mut value = serde_json::to_value(&sample)?;
+        value["clients"] = json!(selected
+            .iter()
+            .map(|i| sample.clients[*i].clone())
+            .collect::<Vec<_>>());
+        value["source_sample_indices"] = json!(selected);
+        fs::write(output, serde_json::to_vec_pretty(&value)?)?;
+        return Ok(());
+    }
     let out = cli.out_dir.context("--out-dir is required")?;
     fs::create_dir(&out).context("output directory must be new")?;
     fs::create_dir(out.join("stores"))?;
@@ -771,6 +878,9 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
             &interrupted,
             &mut report,
         )?;
+        if cli.prepare_only {
+            return Ok(());
+        }
         report.phase = "measuring".into();
         simulation_report::write(&out, &report)?;
         run(
@@ -790,6 +900,9 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
     report.finished_at = Some(now());
     report.interrupted = interrupted.load(Ordering::Relaxed);
     report.finalize();
+    if cli.prepare_only && result.is_ok() && !report.interrupted {
+        report.success = true;
+    }
     report.phase = if report.success {
         "complete"
     } else if report.phase == "preparing" {
@@ -874,6 +987,19 @@ fn prepare(
     if selected.is_empty() {
         return Ok(());
     }
+    if config.backend == Backend::Blocks {
+        if let Some(shared) = &config.prepared_seeds {
+            block_preflight(config, sample)?;
+            for i in &selected {
+                fs::copy(
+                    shared.join(format!("sample-{i}.json")),
+                    seeds.join(format!("sample-{i}.json")),
+                )?;
+            }
+            parent.preparation_status = json!({"required":selected.len(),"shared":selected.len(),"complete":selected.len(),"active":0,"queued":0,"failed":0,"seconds":started.elapsed().as_secs_f64()});
+            return Ok(());
+        }
+    }
     let (map, map_digest, schema) = preflight(config, out, "preparation-preflight.ndjson")?;
     let anchor = Anchor {
         height: sample.anchor_height,
@@ -889,6 +1015,27 @@ fn prepare(
         &anchor,
         config.allow_advancing_publication,
     );
+    if let Some(shared) = &config.prepared_seeds {
+        compatible?;
+        for i in &selected {
+            let source = shared.join(format!("sample-{i}.json"));
+            let bytes = fs::read(&source)?;
+            let seed: Seed = serde_json::from_slice(&bytes)?;
+            validate_seed(
+                &seed,
+                &map,
+                &anchor,
+                &sample.clients[*i],
+                config.allow_advancing_publication,
+            )?;
+            fs::write(seeds.join(format!("sample-{i}.json")), bytes)?;
+        }
+        parent.preparation_status = json!({"required":selected.len(),"shared":selected.len(),"cached":0,"complete":selected.len(),"active":0,"queued":0,"failed":0,"seconds":started.elapsed().as_secs_f64()});
+        parent
+            .preparation
+            .push(json!({"status":"shared","wallets":selected.len(),"source":shared}));
+        return Ok(());
+    }
     // Child preflight still writes a detailed failure report when incompatible.
     let sample_digest = digest(&fs::read(&config.sample)?);
     let identities: BTreeMap<usize,Value> = selected.iter().map(|i| (*i,json!({
@@ -1153,9 +1300,6 @@ fn run(
     seeds: &Path,
     preparing: bool,
 ) -> Result<()> {
-    let (map, map_digest, schema) = preflight(config, out, "preflight.ndjson")?;
-    let tip = map.shards.last().context("empty shard map")?;
-    fs::write(out.join("map.json"), serde_json::to_vec_pretty(&map)?)?;
     let anchor = Anchor {
         height: sample.anchor_height,
         hash: sample
@@ -1163,21 +1307,36 @@ fn run(
             .clone()
             .context("workload sample has no anchor hash")?,
     };
-    validate_publication(
-        &map,
-        &sample.genesis_hash,
-        sample.start_height,
-        &anchor,
-        config.allow_advancing_publication,
-    )?;
+    let blocks = config.backend == Backend::Blocks && !preparing;
+    let (map_digest, schema) = if blocks {
+        let manifest = block_preflight(config, sample)?;
+        let id = manifest.id()?;
+        report.publication = json!({"dataset_id":id,"schema":manifest.schema,"genesis_hash":manifest.genesis_hash,"start_height":manifest.start,"anchor_height":anchor.height,"anchor_hash":anchor.hash});
+        fs::write(
+            out.join("block-manifest.json"),
+            serde_json::to_vec_pretty(&manifest)?,
+        )?;
+        (id, manifest.schema)
+    } else {
+        let (map, hash, schema) = preflight(config, out, "preflight.ndjson")?;
+        fs::write(out.join("map.json"), serde_json::to_vec_pretty(&map)?)?;
+        let tip = map.shards.last().context("empty shard map")?;
+        validate_publication(
+            &map,
+            &sample.genesis_hash,
+            sample.start_height,
+            &anchor,
+            config.allow_advancing_publication,
+        )?;
+        report.publication = json!({"map_sha256":hash, "schema":schema,"genesis_hash":map.genesis_hash,"start_height":map.start_height,"anchor_height":anchor.height,"anchor_hash":anchor.hash,"served_tip_height":tip.end_height,"served_tip_hash":tip.terminal_block_hash,"cutoff_height":sample.cutoff_height,"shards":map.shards.len(),"geometries":map.seal.keys().collect::<Vec<_>>()});
+        (hash, schema)
+    };
     report.provenance["phase"] = json!(if preparing {
         "wallet_preparation"
     } else {
         "measured_recovery"
     });
     report.provenance["wallet_initialization"] = json!("Prior ledger events only; independent stores with cold filter/setup caches. Preparation can warm server caches.");
-    report.publication = json!({"map_sha256":map_digest, "schema":schema,"genesis_hash":map.genesis_hash,"start_height":map.start_height,"anchor_height":anchor.height,"anchor_hash":anchor.hash,"served_tip_height":tip.end_height,"served_tip_hash":tip.terminal_block_hash,"cutoff_height":sample.cutoff_height,"shards":map.shards.len(),"geometries":map.seal.keys().collect::<Vec<_>>()});
-    fs::write(out.join("map.json"), serde_json::to_vec_pretty(&map)?)?;
     let (tx, rx) = mpsc::channel();
     let mut requests = File::create(out.join("requests.ndjson"))?;
     let mut events = File::create(out.join("wallets.ndjson"))?;
@@ -1340,7 +1499,7 @@ fn run(
                     seed_path: seeds.join(format!("sample-{sample_index}.json")),
                     preparing,
                 };
-                let value = json!({"type":"scheduled","id":id,"at":now(),"slot":index,"sample_index":sample_index,"profile":slot.class,"expected_events":job.wallet.journal_events,"expected_digest":job.wallet.expected_digest,"required_from":job.wallet.required_from,"script_count":job.wallet.scripts.len()});
+                let value = json!({"type":"scheduled","id":id,"at":now(),"pid":slot.process.as_ref().unwrap().child.id(),"slot":index,"sample_index":sample_index,"profile":slot.class,"expected_events":job.wallet.journal_events,"expected_digest":job.wallet.expected_digest,"required_from":job.wallet.required_from,"script_count":job.wallet.scripts.len()});
                 write_line(&mut events, &value)?;
                 report.event(&value);
                 slot.active = Some((id, sample_index, Instant::now()));
@@ -1421,7 +1580,20 @@ fn run(
         report.event(&value);
     }
     execution?;
-    if !interrupted.load(Ordering::Relaxed) {
+    if !interrupted.load(Ordering::Relaxed) && blocks {
+        match block_preflight(config, sample) {
+            Ok(manifest) => {
+                report.publication_stable = Some(manifest.id()? == map_digest);
+                report.publication_compatible = report.publication_stable;
+            }
+            Err(error) => {
+                report
+                    .errors
+                    .push(format!("block publication postflight: {error}"));
+                report.publication_stable = Some(false);
+            }
+        }
+    } else if !interrupted.load(Ordering::Relaxed) {
         match preflight(config, out, "postflight.ndjson") {
             Ok((final_map, final_digest, final_schema)) => {
                 report.publication_compatible = Some(
@@ -1449,9 +1621,342 @@ fn run(
     Ok(())
 }
 
+fn block_preflight(
+    config: &Config,
+    sample: &Sample,
+) -> Result<transparent_blocks::dataset::Manifest> {
+    use transparent_blocks::dataset::Manifest;
+    let manifest = if let Some(path) = &config.block_dataset {
+        Manifest::load(path, true)?
+    } else {
+        let client = transparent_wallet::http::HttpResourceClient::new(&config.options(), None, 3)
+            .map_err(io_error)?;
+        serde_json::from_slice(
+            &client
+                .get(
+                    &format!(
+                        "{}/manifest",
+                        config.block_url.as_deref().unwrap().trim_end_matches('/')
+                    ),
+                    "block_preflight",
+                )
+                .map_err(io_error)?,
+        )?
+    };
+    manifest.validate(true)?;
+    anyhow::ensure!(
+        Some(&manifest.id()?) == config.dataset_id.as_ref()
+            && manifest.genesis_hash == sample.genesis_hash
+            && manifest.start <= sample.start_height
+            && manifest.anchor_height == sample.anchor_height
+            && Some(&manifest.anchor_hash) == sample.anchor_hash.as_ref(),
+        "block publication does not match workload"
+    );
+    Ok(manifest)
+}
+
+/// Fetch a bounded window concurrently while applying results strictly in order.
+/// A new fetch is admitted only after one batch is committed, bounding both
+/// buffered responses and outstanding work even when an early batch is slow.
+fn ordered_fetch<F, A>(
+    costs: &[u64],
+    concurrency: usize,
+    byte_budget: u64,
+    fetch: F,
+    mut apply: A,
+) -> Result<()>
+where
+    F: Fn(usize) -> Result<Vec<u8>> + Sync,
+    A: FnMut(usize, Vec<u8>) -> Result<()>,
+{
+    let count = costs.len();
+    if count == 0 {
+        return Ok(());
+    }
+    let width = concurrency.max(1).min(count);
+    std::thread::scope(|scope| {
+        let (results_tx, results_rx) = mpsc::channel();
+        let mut jobs = Vec::new();
+        for _ in 0..width {
+            let (jobs_tx, jobs_rx) = mpsc::channel::<usize>();
+            let results = results_tx.clone();
+            let fetch = &fetch;
+            scope.spawn(move || {
+                while let Ok(index) = jobs_rx.recv() {
+                    if results.send((index, fetch(index))).is_err() {
+                        break;
+                    }
+                }
+            });
+            jobs.push(jobs_tx);
+        }
+        drop(results_tx);
+        let mut pending = BTreeMap::new();
+        let mut admitted = 0;
+        let mut outstanding_bytes = 0u64;
+        for next in 0..count {
+            // An oversized batch may run alone, so every valid artifact remains
+            // recoverable without multiplying its size by the prefetch width.
+            while admitted < count
+                && admitted - next < width
+                && (admitted == next
+                    || outstanding_bytes.saturating_add(costs[admitted]) <= byte_budget)
+            {
+                jobs[admitted % width].send(admitted)?;
+                outstanding_bytes += costs[admitted];
+                admitted += 1;
+            }
+            while !pending.contains_key(&next) {
+                let (index, result) = results_rx.recv()?;
+                pending.insert(index, result);
+            }
+            apply(next, pending.remove(&next).unwrap()?)?;
+            outstanding_bytes -= costs[next];
+        }
+        Ok(())
+    })
+}
+
+fn recover_blocks(job: &Job, observer: HttpObserver) -> Result<Value> {
+    use transparent_blocks::{
+        dataset::{decode, Manifest},
+        scan::Scanner,
+    };
+    use transparent_wallet::http::HttpResourceClient;
+    let base = job
+        .config
+        .block_url
+        .as_deref()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    let http = HttpResourceClient::new(
+        &job.config.options(),
+        Some(observer),
+        job.config.measured_http_attempts,
+    )
+    .map_err(io_error)?;
+    let (manifest, dataset_id, first_batch_index): (Manifest, String, usize) =
+        if let Some(path) = &job.config.block_dataset {
+            let manifest = Manifest::load(path, true)?;
+            let id = manifest.id()?;
+            (manifest, id, 0)
+        } else {
+            let view: Value = serde_json::from_slice(
+                &http
+                    .get(
+                        &format!("{base}/range-manifest?from={}", job.wallet.required_from),
+                        "block_manifest",
+                    )
+                    .map_err(io_error)?,
+            )?;
+            (
+                serde_json::from_value(view["manifest"].clone())?,
+                view["dataset_id"]
+                    .as_str()
+                    .context("missing dataset identity")?
+                    .to_owned(),
+                usize::try_from(
+                    view["first_batch_index"]
+                        .as_u64()
+                        .context("missing batch index")?,
+                )?,
+            )
+        };
+    manifest.validate(true)?;
+    anyhow::ensure!(
+        Some(&dataset_id) == job.config.dataset_id.as_ref()
+            && manifest.genesis_hash == job.genesis_hash
+            && manifest.anchor_height == job.anchor.height
+            && manifest.anchor_hash == job.anchor.hash,
+        "block dataset identity mismatch"
+    );
+    let mut store: Box<dyn WalletStore> = match job.config.store {
+        Store::Sqlite => Box::new(SqliteStore::open(&job.store_path)?),
+        Store::Memory => Box::new(MemoryStore::new()),
+    };
+    let scripts = job
+        .wallet
+        .scripts
+        .iter()
+        .map(|s| {
+            Ok(ScriptEntry {
+                script: hex::decode(s)?,
+                required_from: job.wallet.required_from,
+                origin: ScriptOrigin::Derived,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    // Bind the independent block store before importing the common prior ledger.
+    let _ = Scanner::new(
+        &mut store,
+        &manifest,
+        &scripts,
+        job.wallet.required_from,
+        job.anchor.height,
+    )?;
+    if job.wallet.required_from > job.start_height && store.events()?.is_empty() {
+        let seed: Seed = serde_json::from_slice(&fs::read(&job.seed_path)?)?;
+        anyhow::ensure!(
+            seed.genesis_hash == job.genesis_hash && seed.anchor == job.anchor,
+            "seed target mismatch"
+        );
+        let events = seed
+            .events
+            .iter()
+            .map(|e| {
+                let event =
+                    transparent_events::TransparentEvent::from_bytes(&hex::decode(&e.event)?)?;
+                anyhow::ensure!(
+                    u64::from(event.height()) < job.wallet.required_from
+                        && job.wallet.scripts.contains(&e.script),
+                    "invalid prior event"
+                );
+                Ok(StoredEvent {
+                    script: hex::decode(&e.script)?,
+                    event,
+                    shard_id: u64::MAX,
+                    revision_digest: dataset_id.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        store.commit_shard(ShardCommit {
+            shard_id: u64::MAX,
+            revision_digest: dataset_id.clone(),
+            events,
+            ..Default::default()
+        })?;
+    }
+    let seeded_events = store.events()?.len();
+    let mut scanner = Scanner::new(
+        &mut store,
+        &manifest,
+        &scripts,
+        job.wallet.required_from,
+        job.anchor.height,
+    )?;
+    let mut sizes: BTreeMap<String, u64> = BTreeMap::new();
+    let batches: Vec<_> = manifest
+        .batches
+        .iter()
+        .enumerate()
+        .filter(|(_, batch)| batch.end >= scanner.next && batch.start <= scanner.through)
+        .collect();
+    let encoding = &job.config.block_encoding;
+    let costs: Vec<_> = batches
+        .iter()
+        .map(|(_, batch)| batch.artifacts[&format!("transparent.{encoding}")].bytes)
+        .collect();
+    ordered_fetch(
+        &costs,
+        if job.config.block_dataset.is_some() {
+            1
+        } else {
+            job.config.block_prefetch
+        },
+        job.config.block_prefetch_bytes,
+        |position| {
+            let (index, _) = batches[position];
+            if let Some(path) = &job.config.block_dataset {
+                transparent_blocks::dataset::read_batch(
+                    path,
+                    &manifest,
+                    index,
+                    "transparent",
+                    encoding,
+                )
+            } else {
+                http.get(
+                    &format!(
+                        "{base}/batch/{}/transparent?encoding={encoding}",
+                        index + first_batch_index
+                    ),
+                    "blocks",
+                )
+                .map_err(io_error)
+            }
+        },
+        |position, bytes| {
+            let (_, batch) = batches[position];
+            let artifact = &batch.artifacts[&format!("transparent.{encoding}")];
+            anyhow::ensure!(
+                bytes.len() as u64 == artifact.bytes && digest(&bytes) == artifact.sha256,
+                "block artifact checksum mismatch"
+            );
+            let blocks = decode(&bytes, encoding)?;
+            scanner.apply(&mut store, batch, &blocks)?;
+            for variant in transparent_blocks::dataset::VARIANTS {
+                *sizes.entry(variant.into()).or_default() +=
+                    batch.artifacts[&format!("{variant}.{encoding}")].bytes;
+            }
+            Ok(())
+        },
+    )?;
+    scanner.finish(&mut store, &job.anchor)?;
+    let (actual, events) =
+        crate::store_digest(&store, job.wallet.required_from, job.anchor.height)?;
+    let exact = actual == job.wallet.expected_digest && events == job.wallet.journal_events;
+    let unresolved = store.ledger()?.unresolved().len();
+    drop(store);
+    let sqlite_bytes = fs::metadata(&job.store_path).map_or(0, |m| m.len());
+    Ok(
+        json!({"outcome":if exact && unresolved==0 {"exact"}else{"mismatched"},"events":events,"actual_digest":actual,"events_exact":exact,"unresolved_spends":unresolved,"seeded_events":seeded_events,"completion":"Complete","dataset_id":dataset_id,"offline":job.config.block_dataset.is_some(),"encoded_dataset_bytes":sizes,"sqlite_bytes":sqlite_bytes}),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prefetch_is_bounded_ordered_and_stops_commits_at_failure() {
+        let committed = std::sync::atomic::AtomicUsize::new(0);
+        let mut applied = Vec::new();
+        ordered_fetch(
+            &[10, 1, 1, 10, 1, 1, 1, 1, 1, 1],
+            3,
+            3,
+            |index| {
+                anyhow::ensure!(
+                    index < committed.load(Ordering::SeqCst) + 3,
+                    "unbounded prefetch"
+                );
+                if index == 1 || index == 4 {
+                    anyhow::ensure!(
+                        committed.load(Ordering::SeqCst) >= index,
+                        "oversized batch was not alone"
+                    );
+                }
+                if index == 0 {
+                    std::thread::sleep(Duration::from_millis(30));
+                }
+                Ok(vec![index as u8])
+            },
+            |index, bytes| {
+                assert_eq!(bytes, vec![index as u8]);
+                applied.push(index);
+                committed.store(index + 1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(applied, (0..10).collect::<Vec<_>>());
+        applied.clear();
+        let result = ordered_fetch(
+            &[1; 10],
+            3,
+            3,
+            |index| {
+                anyhow::ensure!(index != 2, "failed batch");
+                Ok(vec![])
+            },
+            |index, _| {
+                applied.push(index);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(applied, vec![0, 1]);
+    }
+
     fn config() -> Config {
         serde_json::from_value(json!({"schema":"transparent-scenario-v1","name":"test","mode":"wave","sample":"sample.json","shard_url":"http://localhost:1","profiles":{"small-active":2}})).unwrap()
     }

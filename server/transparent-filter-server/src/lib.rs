@@ -16,3 +16,5 @@ pub mod zakura;
 pub mod publication;
 
 pub mod controller;
+
+pub mod compact;

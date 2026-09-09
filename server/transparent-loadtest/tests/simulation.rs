@@ -862,3 +862,217 @@ async fn measured_connection_close_retries_and_retains_diagnostics() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn block_backend_matches_oracle_with_network_and_offline_scanning() {
+    use std::collections::BTreeMap;
+    use transparent_blocks::{
+        dataset::{read_batch, write_batch, Manifest},
+        proto::*,
+    };
+    use transparent_events::TransparentEvent;
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path(), &[2]);
+    let (base, _) = service(dir.path(), Fault::None).await;
+    let blocks_dir = dir.path().join("blocks");
+    fs::create_dir(&blocks_dir).unwrap();
+    let chain = common::chain();
+    let mut transactions: BTreeMap<(u64, u16), CompactTx> = BTreeMap::new();
+    for (_, event) in chain.iter().flatten() {
+        let tx = transactions
+            .entry((u64::from(event.height()), event.transaction_index()))
+            .or_insert_with(|| CompactTx {
+                index: u64::from(event.transaction_index()),
+                txid: event.txid().0.to_vec(),
+                ..Default::default()
+            });
+        match event {
+            TransparentEvent::Receive(e) => {
+                let script = chain
+                    .iter()
+                    .flatten()
+                    .find(|(_, candidate)| candidate == event)
+                    .unwrap()
+                    .0
+                    .as_slice()
+                    .to_vec();
+                tx.vout
+                    .resize(e.output_index as usize + 1, TxOut::default());
+                tx.vout[e.output_index as usize] = TxOut {
+                    value: e.value,
+                    script_pub_key: script,
+                };
+            }
+            TransparentEvent::Spend(e) => {
+                tx.vin.resize(
+                    e.input_index as usize + 1,
+                    CompactTxIn {
+                        prevout_txid: vec![0; 32],
+                        prevout_index: 0,
+                    },
+                );
+                tx.vin[e.input_index as usize] = CompactTxIn {
+                    prevout_txid: e.spent_txid.0.to_vec(),
+                    prevout_index: e.spent_output_index,
+                };
+            }
+        }
+    }
+    let sample: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("sample.json")).unwrap()).unwrap();
+    let start = sample["start_height"].as_u64().unwrap();
+    let end = sample["anchor_height"].as_u64().unwrap();
+    let blocks: Vec<_> = (start..=end)
+        .map(|height| CompactBlock {
+            height,
+            hash: common::hash_at(height).internal_bytes().to_vec(),
+            prev_hash: common::hash_at(height - 1).internal_bytes().to_vec(),
+            vtx: transactions
+                .range((height, 0)..=(height, u16::MAX))
+                .map(|(_, tx)| tx.clone())
+                .collect(),
+            ..Default::default()
+        })
+        .collect();
+    let mut manifest = Manifest::new(
+        sample["genesis_hash"].as_str().unwrap().into(),
+        start,
+        end,
+        sample["anchor_hash"].as_str().unwrap().into(),
+        "fixture".into(),
+    );
+    for (index, chunk) in blocks.chunks(common::SPAN as usize).enumerate() {
+        manifest
+            .batches
+            .push(write_batch(&blocks_dir, index, chunk).unwrap());
+    }
+    manifest.complete = true;
+    manifest.save(&blocks_dir).unwrap();
+    let manifest_copy = manifest.clone();
+    let full_manifest = manifest.clone();
+    let dataset_root = blocks_dir.clone();
+    let app = axum::Router::new()
+        .route(
+            "/manifest",
+            axum::routing::get(move || {
+                let m = full_manifest.clone();
+                async move { axum::Json(m) }
+            }),
+        )
+        .route(
+            "/range-manifest",
+            axum::routing::get(
+                move |axum::extract::Query(query): axum::extract::Query<
+                    std::collections::HashMap<String, u64>,
+                >| {
+                    let mut m = manifest_copy.clone();
+                    async move {
+                        let dataset_id = m.id().unwrap();
+                        let index = m
+                            .batches
+                            .iter()
+                            .position(|b| b.end >= query["from"])
+                            .unwrap();
+                        m.batches = m.batches.split_off(index);
+                        m.start = m.batches[0].start;
+                        axum::Json(
+                            json!({"dataset_id":dataset_id,"first_batch_index":index,"manifest":m}),
+                        )
+                    }
+                },
+            ),
+        )
+        .route(
+            "/batch/:index/transparent",
+            axum::routing::get(
+                move |axum::extract::Path(index): axum::extract::Path<usize>,
+                      headers: axum::http::HeaderMap| {
+                    assert_eq!(headers["accept-encoding"], "gzip, identity");
+                    let m = manifest.clone();
+                    let root = dataset_root.clone();
+                    async move {
+                        if index == 0 {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        }
+                        (
+                            [("content-encoding", "gzip")],
+                            read_batch(&root, &m, index, "transparent", "gzip").unwrap(),
+                        )
+                    }
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let block_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let manifest = Manifest::load(&blocks_dir, true).unwrap();
+    for offline in [false, true] {
+        let name = if offline {
+            "blocks-offline"
+        } else {
+            "blocks-network"
+        };
+        let mut config = json!({"schema":"transparent-scenario-v1","name":name,"mode":"wave","sample":"sample.json","shard_url":"http://127.0.0.1:1","profiles":{"test":1},"backend":"blocks","dataset_id":manifest.id().unwrap(),"recovery_deadline_seconds":120});
+        if offline {
+            config["block_dataset"] = json!(blocks_dir);
+        } else {
+            config["block_url"] = json!(block_url);
+        }
+        let report = run_config(dir.path(), name, config).await;
+        assert_eq!(report["success"], true, "{report}");
+        assert_eq!(report["users"][0]["outcome"], "exact");
+        assert!(report["users"][0]["sqlite_bytes"].as_u64().unwrap() > 0);
+        assert_eq!(report["users"][0]["offline"], offline);
+        let calls = report["users"][0]["http_totals"]["calls"]
+            .as_f64()
+            .unwrap_or(0.0);
+        assert_eq!(
+            calls,
+            if offline {
+                0.0
+            } else {
+                1.0 + manifest.batches.len() as f64
+            }
+        );
+    }
+    // The mixed comparison copies the exact prior ledger produced by one preparation.
+    let mut caught_up = sample.clone();
+    let from = common::FIRST + 2 * common::SPAN + 1;
+    caught_up["clients"][0]["required_from"] = json!(from);
+    let remaining: Vec<_> = chain
+        .iter()
+        .flatten()
+        .filter(|(script, event)| *script == common::script(2) && u64::from(event.height()) >= from)
+        .map(|(_, e)| *e)
+        .collect();
+    let mut hash = Sha256::new();
+    for event in &remaining {
+        hash.update(event.to_bytes());
+    }
+    caught_up["clients"][0]["journal_events"] = json!(remaining.len());
+    caught_up["clients"][0]["expected_digest"] = json!(hex::encode(hash.finalize()));
+    fs::write(
+        dir.path().join("sample.json"),
+        serde_json::to_vec(&caught_up).unwrap(),
+    )
+    .unwrap();
+    let prep_config = json!({"schema":"transparent-scenario-v1","name":"shared","mode":"wave","sample":"sample.json","shard_url":base,"profiles":{"test":1},"recovery_deadline_seconds":120});
+    let prepared = run_config(dir.path(), "shared", prep_config.clone()).await;
+    assert_eq!(prepared["success"], true, "{prepared}");
+    for backend in ["pir", "blocks"] {
+        let mut config = prep_config.clone();
+        config["backend"] = json!(backend);
+        config["prepared_seeds"] = json!(dir.path().join("shared/seeds"));
+        if backend == "blocks" {
+            config["block_dataset"] = json!(blocks_dir);
+            config["dataset_id"] = json!(manifest.id().unwrap());
+        }
+        let report = run_config(dir.path(), &format!("shared-{backend}"), config).await;
+        assert_eq!(report["success"], true, "{report}");
+        assert_eq!(report["users"][0]["seeded_events"], 1);
+        assert_eq!(report["preparation_status"]["shared"], 1);
+    }
+    server.abort();
+}

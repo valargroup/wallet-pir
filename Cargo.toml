@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "pir/enhance",
     "pir/transparent-events",
+    "pir/transparent-blocks",
     "pir/transparent-filter",
     "pir/transparent-shard",
     "pir/transparent-wallet",
@@ -13,6 +14,7 @@ members = [
     "server/enhance-pir-server",
     "server/pir-apm",
     "server/transparent-filter-server",
+    "server/transparent-block-server",
     "server/transparent-history-server",
     "server/transparent-loadtest",
     "server/transparent-regression",

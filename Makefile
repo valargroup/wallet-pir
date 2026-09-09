@@ -16,7 +16,7 @@ TRANSPARENT_LOAD_JSON ?= transparent-load-report.json
 build:
 	cargo build --release --workspace --bins --features enhance-pir/cli
 
-check: check-ops check-docs
+check: check-ops check-docs check-reports
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --release
@@ -30,6 +30,10 @@ check-ops:
 	ops/scripts/check-jq-contracts.sh
 	python3 ops/tests/test_transparent_fleet.py
 	python3 ops/tests/test_transparent_publication.py
+
+.PHONY: check-reports
+check-reports:
+	python3 -m unittest discover -s server/transparent-loadtest/tests -p 'test_*.py'
 
 # Every relative Markdown link must resolve. The transparent PIR documentation
 # rules delete superseded prose instead of leaving stubs, so a dangling link is
@@ -164,4 +168,45 @@ transparent-sim-help:
 		'Examples:' \
 		'  make transparent-sim SIM_OUT=/tmp/my-wave' \
 		'  make transparent-sim SIM_URL=http://localhost:8093 SIM_METRICS="local=http://localhost:8093/metrics"' \
-		'  make transparent-sim SIM_SCENARIO=/path/to/custom.json'
+		'  make transparent-sim SIM_SCENARIO=/path/to/custom.json' \
+		'  make transparent-sim-compare  # paired PIR/block scan; then transparent-sim-open'
+
+# Block datasets are exported independently from raw chain data; the fresh sample
+# comes from sample-oracle's separate journal pass.
+BLOCK_DATASET ?= /srv/transparent-sync-bench/data
+BLOCK_URL ?= https://transparent-sync-bench.valargroup.dev
+BLOCK_FRESH_SAMPLE ?= ops/benchmarks/transparent-comparison-fresh-sample.json
+BLOCK_METRICS_URL ?=
+BLOCK_ENCODING ?= gzip
+SIM_COMPARISON_METADATA ?=
+export SIM_COMPARISON_METADATA
+export BLOCK_DATASET BLOCK_URL BLOCK_FRESH_SAMPLE BLOCK_METRICS_URL BLOCK_ENCODING
+.PHONY: transparent-block-export transparent-block-serve transparent-sim-freeze transparent-sim-compare
+transparent-block-export:
+	cargo run --locked --release -p transparent-filter-server --bin compact-export -- $(BLOCK_EXPORT_ARGS) --out-dir "$(BLOCK_DATASET)"
+
+transparent-block-serve:
+	cargo run --locked --release -p transparent-block-server -- --dataset "$(BLOCK_DATASET)" $(BLOCK_SERVE_ARGS)
+
+transparent-sim-freeze:
+	@test -n "$(BLOCK_SELECTED_SAMPLE)" || { echo 'Set BLOCK_SELECTED_SAMPLE=/path/selected-sample.json'; exit 1; }
+	cargo run --locked --release -p transparent-loadtest -- --scenario "$(SIM_SCENARIO)" --selected-sample "$(BLOCK_SELECTED_SAMPLE)"
+
+transparent-sim-compare:
+	@test -n "$(BLOCK_URL)" -a -n "$(BLOCK_FRESH_SAMPLE)" || { echo 'Set BLOCK_URL and BLOCK_FRESH_SAMPLE (see server/transparent-loadtest/README.md)'; exit 1; }
+	cargo build --locked --release -p transparent-loadtest
+	@set -eu; \
+	out="$${SIM_OUT:-$${TMPDIR:-/tmp}/transparent-sim-compare-$$(date -u +%Y%m%dT%H%M%SZ)-$$$$}"; \
+	set -- --binary "$${CARGO_TARGET_DIR:-target}/release/transparent-loadtest" --scenario "$$SIM_SCENARIO" --fresh-sample "$$BLOCK_FRESH_SAMPLE" --block-url "$$BLOCK_URL" --encoding "$$BLOCK_ENCODING" --out-dir "$$out"; \
+	if [ -n "$$SIM_URL" ]; then set -- "$$@" --shard-url "$$SIM_URL"; fi; \
+	if [ -n "$$SIM_FILTER_URL" ]; then set -- "$$@" --filter-url "$$SIM_FILTER_URL"; fi; \
+	if [ -n "$$SIM_PREP_CACHE" ]; then set -- "$$@" --preparation-cache "$$SIM_PREP_CACHE"; fi; \
+	if [ -n "$$SIM_PREP_CACHE_DIR" ]; then set -- "$$@" --preparation-cache-dir "$$SIM_PREP_CACHE_DIR"; fi; \
+	if [ -n "$$SIM_PREP_CONCURRENCY" ]; then set -- "$$@" --preparation-concurrency "$$SIM_PREP_CONCURRENCY"; fi; \
+	if [ -n "$$SIM_HTTP_ATTEMPTS" ]; then set -- "$$@" --measured-http-attempts "$$SIM_HTTP_ATTEMPTS"; fi; \
+	if [ -n "$$SIM_COMPARISON_METADATA" ]; then set -- "$$@" --metadata "$$SIM_COMPARISON_METADATA"; fi; \
+	if [ -n "$$BLOCK_METRICS_URL" ]; then set -- "$$@" --block-metrics-url "$$BLOCK_METRICS_URL"; fi; \
+	set -f; for target in $$SIM_METRICS; do set -- "$$@" --pir-metrics "$$target"; done; \
+	status=0; python3 server/transparent-loadtest/compare.py "$$@" || status=$$?; \
+	if [ -f "$$out/report.html" ]; then python3 server/transparent-loadtest/open_report.py --remember "$$out"; fi; \
+	exit "$$status"

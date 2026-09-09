@@ -1,0 +1,45 @@
+{
+  "managed_by": "ad-hoc benchmark provisioning; not production Terraform",
+  "name": "transparent-sync-bench",
+  "droplet_id": 598869323,
+  "project_id": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+  "region": "ams3",
+  "size": "s-4vcpu-8gb",
+  "vcpus": 4,
+  "ram_gib": 8,
+  "root_disk_gib": 160,
+  "public_ip": "167.172.34.2",
+  "private_ip": "10.142.0.14",
+  "origin": "https://transparent-sync-bench.valargroup.dev",
+  "firewall_id": "a606a02e-cf02-437f-8c77-619e815e24ac",
+  "measurement_client_ipv4": "152.42.137.247",
+  "ssh_key_name": "roman",
+  "private_keys_copied": false,
+  "dataset_dir": "/srv/transparent-sync-bench/data",
+  "metrics_listener": "127.0.0.1:8097",
+  "dataset_ready": false,
+  "export_host_private_ipv4": "10.142.0.3",
+  "fresh_oracle_sample": "transparent-comparison-fresh-sample.json",
+  "fresh_oracle_sha256": "fde07f0fabedc0a3a651cd8470d1ecd648b377e769242bcf58c8ec0cb25efbf6",
+  "tls_smoke": {
+    "anchor_height": 999,
+    "concurrent_wallets": 20,
+    "exact_wallets": 20,
+    "pir_endpoint_available": false,
+    "scope": "first 1000 blocks; deployment smoke only, not the full comparison"
+  },
+  "measurement_client": {
+    "name": "transparent-pir-loadgen-01",
+    "region": "ams3",
+    "vcpus": 16,
+    "ram_gib": 32,
+    "scope": "Both methods use public TLS from the same Amsterdam host; colocated regional latency."
+  },
+  "large_batch_transport_smoke": {
+    "concurrent_downloads": 20,
+    "artifact_bytes": 157011096,
+    "all_checksums_match": true,
+    "elapsed_seconds": 13.400375127792358,
+    "scope": "One batch, transport diagnostic only; not full wallet recovery."
+  }
+}

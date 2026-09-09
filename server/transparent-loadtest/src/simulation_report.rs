@@ -187,10 +187,11 @@ impl Report {
             add(totals, "retried_requests", 1.0);
         }
         let end = number(event, "at");
-        if totals["first_at"].is_null() {
-            totals["first_at"] = json!(end - number(event, "seconds"));
+        let begin = end - number(event, "seconds");
+        if totals["first_at"].as_f64().is_none_or(|old| begin < old) {
+            totals["first_at"] = json!(begin);
         }
-        totals["last_at"] = json!(end);
+        totals["last_at"] = json!(totals["last_at"].as_f64().map_or(end, |old| old.max(end)));
         let bin = (end - self.started_at.unwrap_or(self.created_at))
             .max(0.0)
             .floor() as u64;

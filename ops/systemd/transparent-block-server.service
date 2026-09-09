@@ -1,0 +1,18 @@
+[Unit]
+Description=Read-only transparent compact-block benchmark
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+ExecStart=/opt/transparent-block-bench/transparent-block-server --dataset /srv/transparent-sync-bench/data --listen 127.0.0.1:8096 --metrics-listen 127.0.0.1:8097
+Restart=on-failure
+RestartSec=10
+MemoryMax=7G
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

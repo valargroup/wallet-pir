@@ -111,7 +111,7 @@ struct SampleClient {
     journal_events: u64,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Sample {
     genesis_hash: String,
     start_height: u64,
