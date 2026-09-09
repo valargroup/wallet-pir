@@ -7,6 +7,12 @@ spec=importlib.util.spec_from_file_location('compare',Path(__file__).parents[1]/
 compare=importlib.util.module_from_spec(spec);spec.loader.exec_module(compare)
 
 class ComparisonTests(unittest.TestCase):
+    def test_comparison_rejects_scripts_outside_private_table_coverage(self):
+        compare.validate_common_coverage({'clients':[{'scripts':['51' * 40]}]})
+        for script in ['', '6a01', '51' * 41]:
+            with self.assertRaisesRegex(ValueError, 'outside common PIR/block coverage'):
+                compare.validate_common_coverage({'clients':[{'scripts':[script]}]})
+
     def test_failed_wallets_do_not_generate_savings(self):
         a={'users':[{'sample_index':0,'outcome':'exact','seconds':2,'http_totals':{'bytes_down':10}}]}
         b={'users':[{'sample_index':0,'outcome':'failed','seconds':1,'http_totals':{'bytes_down':20}}]}

@@ -32,6 +32,16 @@ def read(path):
         return None
 
 
+def validate_common_coverage(sample):
+    # transparent_shard::MAX_SCRIPT_BYTES for the pinned v1 private-table format.
+    for index, wallet in enumerate(sample['clients']):
+        for script in wallet['scripts']:
+            raw = bytes.fromhex(script)
+            if not raw or raw[0] == 0x6a or len(raw) > 40:
+                raise ValueError(f'wallet {index}: script is outside common PIR/block coverage '
+                                 '(nonempty, no leading OP_RETURN, at most 40 bytes)')
+
+
 def totals(user):
     if 'http_totals' in user:
         return user['http_totals']
@@ -251,6 +261,7 @@ def main():
         atomic(selection_config,json.dumps(config,indent=2))
         subprocess.run([binary,'--scenario',str(selection_config),'--selected-sample',str(selected)],check=True)
         chosen=json.loads(selected.read_text())
+        validate_common_coverage(chosen)
         fresh=json.loads(args.fresh_sample.read_text())
         for field in ['genesis_hash','anchor_height','anchor_hash']:
             if chosen[field]!=fresh[field] or chosen[field]!=dataset[field]: raise ValueError(f'{field} mismatch')

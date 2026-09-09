@@ -409,3 +409,10 @@ subtracting independent runs. Success ratios and latency comparisons require exa
 results from both backends; a single paired run does not establish fleet capacity
 or dependable tail latency. SQLite size is recorded before cleanup, not inferred
 from event counts; OS-reported process write bytes are recorded separately and are not a measure of SQLite logical write volume.
+
+Paired runs require scripts in both methods' coverage: nonempty scripts without a
+leading OP_RETURN, at most 40 bytes (the v1 PIR private-table limit). The controller
+rejects other scripts before starting recovery. For example, the 67-byte genesis
+P2PK script is present in the raw block/journal but excluded from PIR private
+tables; comparing it as an ordinary wallet would produce a misleading mismatch.
+Standalone block scanning can inspect that broader raw-block history.
