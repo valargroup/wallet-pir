@@ -41,5 +41,19 @@
     "all_checksums_match": true,
     "elapsed_seconds": 13.400375127792358,
     "scope": "One batch, transport diagnostic only; not full wallet recovery."
+  },
+  "paired_deployment_smoke": {
+    "anchor_height": 999,
+    "suites": [
+      "mixed",
+      "fresh"
+    ],
+    "methods": [
+      "pir",
+      "blocks"
+    ],
+    "wallets_per_run": 20,
+    "exact_per_run": 20,
+    "scope": "Supported scripts only, first 1000 blocks. A transient PIR preflight 503 was retained before a successful resumed run; not full-chain performance evidence."
   }
 }

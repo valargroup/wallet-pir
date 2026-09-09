@@ -178,7 +178,7 @@ mod tests {
                 .match_all(&mut bytes.as_slice(), scripts.iter().map(Vec::as_slice))
                 .unwrap());
             for script in &scripts {
-                assert!(p.matches(&valid, &[script.clone()]).unwrap());
+                assert!(p.matches(&valid, std::slice::from_ref(script)).unwrap());
             }
             for mut corrupt in [
                 bytes[..bytes.len() - 1].to_vec(),
