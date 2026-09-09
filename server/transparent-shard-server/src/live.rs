@@ -63,10 +63,22 @@ struct Candidate {
     publication: Publication,
     epoch: u64,
 }
+struct Preparing {
+    digest: String,
+    started: std::time::Instant,
+    phase: &'static str,
+}
+struct PreparingGuard<'a>(&'a RwLock<Option<Preparing>>);
+impl Drop for PreparingGuard<'_> {
+    fn drop(&mut self) {
+        *self.0.write().unwrap() = None;
+    }
+}
 struct Inner {
     active: RwLock<Active>,
     invalid: RwLock<BTreeSet<String>>,
     candidate: tokio::sync::Mutex<Option<Candidate>>,
+    preparing: RwLock<Option<Preparing>>,
     config: ServiceConfig,
     options: LoadOptions,
     record: PathBuf,
@@ -96,6 +108,7 @@ impl LiveService {
             active: RwLock::new(Active { state, publication }),
             invalid: RwLock::new(invalid),
             candidate: tokio::sync::Mutex::new(None),
+            preparing: RwLock::new(None),
             config,
             options,
             record,
@@ -148,13 +161,14 @@ impl LiveService {
             return Ok(serde_json::json!({"invalidated": true, "from_height":from_height}));
         }
         if matches!(command, Command::Status) {
-            let candidate = self.0.candidate.try_lock().ok().and_then(|c| c.as_ref().map(|c| serde_json::json!({"map_sha256":c.publication.map_sha256,"age_seconds":c.prepared_at.elapsed().as_secs_f64(),"epoch":c.epoch})));
+            let candidate = self.0.candidate.try_lock().ok().and_then(|c| c.as_ref().map(|c| serde_json::json!({"map_sha256":c.publication.map_sha256,"age_seconds":c.prepared_at.elapsed().as_secs_f64(),"epoch":c.epoch,"warm":c.state.is_warm() && c.epoch == self.0.epoch.load(std::sync::atomic::Ordering::Acquire)})));
+            let preparing = self.0.preparing.read().unwrap().as_ref().map(|p| serde_json::json!({"map_sha256":p.digest,"age_seconds":p.started.elapsed().as_secs_f64(),"phase":p.phase}));
             let active = self.0.active.read().unwrap();
             let retired = self.0.retired.read().unwrap();
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":!self.0.invalid.read().unwrap().is_empty(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"preparing":preparing,"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.lock().await;
@@ -183,6 +197,12 @@ impl LiveService {
                 }) {
                     return Ok(serde_json::json!({"prepared":publication.map_sha256}));
                 }
+                *self.0.preparing.write().unwrap() = Some(Preparing {
+                    digest: publication.map_sha256.clone(),
+                    started: std::time::Instant::now(),
+                    phase: "loading",
+                });
+                let _preparing = PreparingGuard(&self.0.preparing);
                 // Release an obsolete candidate's pins before reserving anew.
                 *self.0.candidate.lock().await = None;
                 let mut options = self.0.options.clone();
@@ -218,6 +238,7 @@ impl LiveService {
                 })
                 .await
                 .map_err(|e| e.to_string())??;
+                self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
                 next.spawn_prewarm().await.map_err(|e| e.to_string())?;
                 if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
                     return Err("reorg invalidated preparation".into());

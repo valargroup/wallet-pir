@@ -19,3 +19,21 @@ class MonitorTests(unittest.TestCase):
             M.completed_blocks({10: 0}, {}, 10, 31, 30)
         self.assertEqual(M.completed_blocks({10: 0, 11: 5}, {}, 11, 30, 30), {10: 30, 11: 25})
         self.assertEqual(M.completed_blocks({10: 0}, {10: 10}, 10, 90, 30), {})
+
+    def test_public_and_replica_budgets_are_independent(self):
+        seen = {38: 0}
+        with self.assertRaisesRegex(RuntimeError, 'public arrived late'):
+            M.completed_blocks(seen, {}, 38, 40, 30, 'public')
+        self.assertEqual(M.completed_blocks(seen, {}, 38, 40, 60, 'replica recent'), {38: 40})
+        with self.assertRaisesRegex(RuntimeError, 'replica recent arrived late'):
+            M.completed_blocks(seen, {}, 38, 61, 60, 'replica recent')
+
+    def test_host_pressure_and_memory_peak_cannot_hide_in_current_charge(self):
+        sample=dict(NRestarts=0,ExecMainStartTimestampMonotonic=1,oom=0,oom_kill=0,MemoryCurrent=500,MemoryPeak=600,MemTotal=1,MemAvailable=1)
+        self.assertIsNone(M.worker_failure(sample,sample))
+        self.assertIsNotNone(M.worker_failure(sample,{**sample,'MemoryPeak':900}))
+        self.assertIsNotNone(M.worker_failure(sample,{**sample,'MemAvailable':0}))
+        parsed=M.facts('MemAvailable: 2000 kB\nanon 100\nfile 200\nsome avg10=1.23 avg60=2.0 total=30\n')
+        self.assertEqual(parsed['MemAvailable'],2000)
+        self.assertEqual(parsed['anon'],100)
+        self.assertEqual(parsed['pressure_some_avg10'],1.23)

@@ -894,7 +894,7 @@ async fn live_prepare_activate_and_invalidate() {
     .unwrap();
     live.command(Command::Prepare {
         expected: new_map.clone(),
-        publication: saved,
+        publication: saved.clone(),
     })
     .await
     .unwrap();
@@ -911,5 +911,36 @@ async fn live_prepare_activate_and_invalidate() {
             .unwrap()
             .status(),
         StatusCode::OK
+    );
+    let status = live.command(Command::Status).await.unwrap();
+    assert_eq!(status["invalidated"], false);
+    assert!(status["revoked_revisions"].as_u64().unwrap() > 0);
+    assert!(status["preparing"].is_null());
+    drop(live);
+    let restarted_state = state_with(&saved.directory, config);
+    restarted_state.spawn_prewarm().await.unwrap();
+    let restarted = LiveService::new(
+        restarted_state,
+        saved,
+        config,
+        LoadOptions::whole(3),
+        root.path().join("active.json"),
+    )
+    .unwrap();
+    let status = restarted.command(Command::Status).await.unwrap();
+    assert_eq!(status["invalidated"], false);
+    assert!(status["revoked_revisions"].as_u64().unwrap() > 0);
+    assert_eq!(
+        restarted
+            .router()
+            .oneshot(
+                Request::get(format!("/v1/shards/0/revisions/{old}/manifest"))
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
     );
 }

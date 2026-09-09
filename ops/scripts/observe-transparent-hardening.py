@@ -23,12 +23,18 @@ def fetch(url):
 def facts(raw):
     out = {}
     for line in raw.splitlines():
-        if '=' in line:
+        if '=' in line and ' ' not in line:
             key, value = line.split('=', 1)
             out[key] = int(value) if value.isdigit() else value
-        elif line.startswith(('oom ', 'oom_kill ', 'MemTotal:')):
+        elif line.startswith(('some ', 'full ')):
             words = line.split()
-            out[words[0].rstrip(':')] = int(words[1])
+            for pair in words[1:]:
+                key, value = pair.split('=', 1)
+                out['pressure_'+words[0]+'_'+key] = float(value)
+        else:
+            words = line.split()
+            if len(words) >= 2 and words[1].isdigit():
+                out[words[0].rstrip(':')] = int(words[1])
     return out
 
 
@@ -36,18 +42,20 @@ def worker_failure(baseline, current):
     for key in ('NRestarts', 'ExecMainStartTimestampMonotonic', 'oom', 'oom_kill'):
         if current.get(key) != baseline.get(key):
             return key + ' changed'
-    if current['MemoryCurrent'] > current['MemTotal'] * 1024 * 0.8:
-        return 'less than twenty percent host memory headroom'
+    if max(current['MemoryCurrent'], current.get('MemoryPeak', 0)) > current['MemTotal'] * 1024 * 0.8:
+        return 'worker cgroup exceeds eighty percent of host RAM'
+    if current.get('MemAvailable', current['MemTotal']) < current['MemTotal'] * 0.2:
+        return 'less than twenty percent host memory available'
     return None
 
 
-def completed_blocks(seen, visible, end_height, now, budget):
+def completed_blocks(seen, visible, end_height, now, budget, layer="public"):
     completed = {}
     for height, observed in seen.items():
         if height <= end_height and height not in visible:
             latency = now-observed
             if latency > budget:
-                raise RuntimeError('publication arrived late at block '+str(height))
+                raise RuntimeError(f'{layer} arrived late at block {height}: {latency:.3f}s exceeds {budget}s')
             completed[height] = latency
     return completed
 
@@ -89,11 +97,10 @@ async def observe(args):
             now = time.monotonic()
             if any(process.poll() is not None for process in queries):
                 raise RuntimeError('a sustained private-query process exited before the gate finished')
-            status = json.loads(await asyncio.to_thread(fetch, 'http://127.0.0.1:8094/v1/status'))
-            node = status['node_height']
+            node = await fleet.node_height()
             if last_node is None:
                 last_node = node
-                emit('start', node_height=node, worker=args.worker, minimum_seconds=args.seconds, minimum_blocks=args.blocks)
+                emit('start', node_height=node, worker=args.worker, minimum_seconds=args.seconds, minimum_blocks=args.blocks, public_budget_seconds=args.freshness_seconds, replica_budget_seconds=args.replica_freshness_seconds)
             fleet.canonical.clear()
             if last_hash is not None and (node < last_node or await fleet.canonical_hash(last_node) != last_hash):
                 # Restart the block count conservatively, including same-height
@@ -129,20 +136,26 @@ async def observe(args):
             canary_tail = canary_map['shards'][-1]
             if await fleet.canonical_hash(canary_tail['end_height']) != canary_tail['terminal_block_hash']:
                 raise RuntimeError('canary endpoint is not canonical')
-            caught_up = completed_blocks(seen, canary_visible, canary_tail['end_height'], time.monotonic(), args.freshness_seconds)
+            caught_up = completed_blocks(seen, canary_visible, canary_tail['end_height'], time.monotonic(), args.replica_freshness_seconds, 'replica '+args.worker)
             canary_visible.update(caught_up)
             for height, latency in caught_up.items():
                 emit('canary_block_visible', height=height, seconds=latency)
             # A burst can coalesce; the oldest uncovered block must still
             # become visible within the ordinary-block freshness budget.
-            overdue = [h for h,t in seen.items() if (h not in visible or h not in canary_visible) and time.monotonic()-t > args.freshness_seconds]
-            if overdue:
-                raise RuntimeError('publication freshness exceeded at block '+str(min(overdue)))
+            for layer, completed, budget in [('public', visible, args.freshness_seconds), ('replica '+args.worker, canary_visible, args.replica_freshness_seconds)]:
+                overdue = [(h, time.monotonic()-t) for h,t in seen.items() if h not in completed and time.monotonic()-t > budget]
+                if overdue:
+                    height, age = min(overdue)
+                    raise RuntimeError(f'{layer} freshness exceeded at block {height}: {age:.3f}s exceeds {budget}s')
             if now >= next_worker:
-                raw = await fleet.ssh(worker['ssh_host'], 'systemctl show transparent-shard-server -p NRestarts -p ExecMainStartTimestampMonotonic -p MemoryCurrent -p MemoryPeak; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.events; head -1 /proc/meminfo')
+                raw = await fleet.ssh(worker['ssh_host'], 'systemctl show transparent-shard-server -p NRestarts -p ExecMainStartTimestampMonotonic -p MemoryCurrent -p MemoryPeak; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.events; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.stat; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.pressure; cat /proc/meminfo')
                 current = facts(raw.decode())
                 ready = json.loads(await asyncio.to_thread(fetch, 'http://'+worker['upstream']+'/v1/ready'))
-                control = await fleet.control(worker, {'operation':'status'})
+                async with fleet.lock('routing'):
+                    control = await fleet.control(worker, {'operation':'status'})
+                    authority = json.loads((fleet.root/'active.json').read_text())
+                    if worker['id'] in authority['workers'] and not fleet.attests(control, authority['map_sha256']):
+                        raise RuntimeError('routed worker does not attest current warm publication: '+args.worker)
                 if ready.get('binary_sha256') != args.binary_sha256 or not ready.get('ready'):
                     raise RuntimeError('canary is not warm on the selected binary')
                 if baseline is None:
@@ -200,6 +213,7 @@ def main():
     parser.add_argument('--seconds', type=int, default=21600)
     parser.add_argument('--blocks', type=int, default=300)
     parser.add_argument('--freshness-seconds', type=float, default=30)
+    parser.add_argument('--replica-freshness-seconds', type=float, default=60)
     parser.add_argument('--filter-origin', default='https://enhance-pir.valargroup.dev')
     parser.add_argument('--shard-origin', default='https://transparent-pir.valargroup.dev')
     asyncio.run(observe(parser.parse_args()))
