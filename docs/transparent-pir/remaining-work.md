@@ -22,10 +22,18 @@ complete M0 or supersede earlier gate results.
   active at the handoff capture. Require both six hours and 300 new blocks,
   followed by the matching fleet batch and 24-hour observation. Earlier failed
   canaries remain preserved; no previous sample counts toward this gate.
-- [ ] M2 — Deliver the isolated native macOS recovery application; sending disabled.
-  Carry forward M0-F1/F2/F3: fix the wallet-specific checkpoint rewrite, preserve
-  incomplete reasons near tip, and remove beta demo fallback/shared profile/send
-  paths. Findings and reproduction probes are in the M0 evidence.
+- [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.
+  [2026-09-09 evidence](evidence/productionize-m2-2026-09-09/README.md): wallet
+  branch `m2/macos-recovery-beta` from `b6aa1f97f`, final source
+  `0ce6d158f`. M0-F1 closed (one checkpoint append after 1,000 changes
+  two rows, not 2,002), M0-F2 closed (a stopped-short reason is never silenced by
+  proximity to the tip) and M0-F3 closed (no demo fallback, an isolated
+  `org.valargroup.zakura-recovery-beta` profile, no send path in the interface and
+  `SendDisabled` from the native build). Release build
+  `ZakuraRecoveryBeta.app` in recovery mode with real native bindings; live restore,
+  sync, stop, reopen and resume through the same library. Opt-in PIR authority
+  stays gated on M3, and the live check used one fresh synthetic wallet without
+  operator coordination, both recorded as limits.
 - [ ] M3 — Pass independent wallet correctness and lifecycle validation before opt-in PIR.
 - [ ] M4 — Measure matched whole-wallet workflows and additional transparent traffic.
 - [ ] M5 — Accept capacity, alerts and bounded failure recovery on existing hardware.

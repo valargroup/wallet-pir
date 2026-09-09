@@ -1,0 +1,61 @@
+{
+  "schema": "transparent-productionization-m2-coverage-comparison-v1",
+  "measurement": "SQLite total_changes() delta around one commit_transparent_shard call appending one empty-event sealed checkpoint for one script after N existing checkpoints; synthetic in-memory wallet database; account creation and preparation outside the counter",
+  "baseline": {
+    "wallet_source": "b6aa1f97fd48744f31f129c59c7d287a7c96d5aa",
+    "probe": "../productionize-m0-2026-09-09/coverage-probe.rs appended to zakura/wallet-store/tests/transparent.rs in a detached scratch worktree",
+    "log": "baseline-coverage-probe.log",
+    "rows": [
+      {
+        "prior_checkpoints": 0,
+        "sql_row_changes": 2,
+        "coverage_rows": 1
+      },
+      {
+        "prior_checkpoints": 10,
+        "sql_row_changes": 22,
+        "coverage_rows": 11
+      },
+      {
+        "prior_checkpoints": 100,
+        "sql_row_changes": 202,
+        "coverage_rows": 101
+      },
+      {
+        "prior_checkpoints": 1000,
+        "sql_row_changes": 2002,
+        "coverage_rows": 1001
+      }
+    ],
+    "growth": "2N + 2"
+  },
+  "corrected": {
+    "wallet_source": "0ce6d158f",
+    "probe": "appending_a_checkpoint_writes_only_its_own_row in zakura/wallet-store/tests/transparent.rs (committed test, asserts at most 3 changes)",
+    "log": "m2-coverage-probe.log",
+    "rows": [
+      {
+        "prior_checkpoints": 0,
+        "sql_row_changes": 2,
+        "coverage_rows": 1
+      },
+      {
+        "prior_checkpoints": 10,
+        "sql_row_changes": 2,
+        "coverage_rows": 11
+      },
+      {
+        "prior_checkpoints": 100,
+        "sql_row_changes": 2,
+        "coverage_rows": 101
+      },
+      {
+        "prior_checkpoints": 1000,
+        "sql_row_changes": 2,
+        "coverage_rows": 1001
+      }
+    ],
+    "growth": "constant: the new row plus the commit record"
+  },
+  "note": "Row changes, not filesystem bytes or a full recovery benchmark. The corrected path reads only the row keyed by (script, start_height); the historical read/delete/reinsert rewrite remains for the cases it was written for (a second range at the same start), and is not reached by an ordinary append, an identical retry, or an extension of the same shard."
+}

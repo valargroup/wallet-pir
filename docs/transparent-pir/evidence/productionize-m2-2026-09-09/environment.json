@@ -1,0 +1,88 @@
+{
+  "captured_at": "2026-09-09T22:17:40.863596+00:00",
+  "commands": [
+    {
+      "command": [
+        "uname",
+        "-sm"
+      ],
+      "exit_status": 0,
+      "stdout": "Darwin arm64\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "sw_vers"
+      ],
+      "exit_status": 0,
+      "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t26.2\nBuildVersion:\t\t25C56\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "sysctl",
+        "-n",
+        "hw.memsize"
+      ],
+      "exit_status": 0,
+      "stdout": "137438953472\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "sysctl",
+        "-n",
+        "machdep.cpu.brand_string"
+      ],
+      "exit_status": 0,
+      "stdout": "Apple M4 Max\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rustc",
+        "--version"
+      ],
+      "exit_status": 0,
+      "stdout": "rustc 1.91.0 (f8297e351 2025-10-28)\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cargo",
+        "--version"
+      ],
+      "exit_status": 0,
+      "stdout": "cargo 1.91.0 (ea2d97820 2025-10-10)\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "fvm",
+        "flutter",
+        "--version"
+      ],
+      "exit_status": 0,
+      "stdout": "Flutter 3.41.6 \u2022 channel stable \u2022 https://github.com/flutter/flutter.git\nFramework \u2022 revision db50e20168 (6 months ago) \u2022 2026-03-25 16:21:00 -0700\nEngine \u2022 hash 5cdd32777948fa7a648fac915f8da7120ac7e97a (revision 425cfb54d0) (5 months ago) \u2022 2026-03-25 20:14:42.000Z\nTools \u2022 Dart 3.11.4 \u2022 DevTools 2.54.2\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "xcodebuild",
+        "-version"
+      ],
+      "exit_status": 0,
+      "stdout": "Xcode 26.6\nBuild version 17F113\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "flutter_rust_bridge_codegen",
+        "--version"
+      ],
+      "exit_status": 0,
+      "stdout": "flutter_rust_bridge_codegen 2.11.1\n",
+      "stderr": ""
+    }
+  ]
+}

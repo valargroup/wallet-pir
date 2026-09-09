@@ -2,6 +2,32 @@
 
 Source inspection: 2026-09-09 through worker/qualification correction `f2f351c` and fleet burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
+## M2 recovery application: source-verified 2026-09-09
+
+The [M2 evidence](evidence/productionize-m2-2026-09-09/README.md) records the
+wallet branch `m2/macos-recovery-beta` (from `b6aa1f97f`, final
+`0ce6d158f`). The wallet's own store now appends a coverage
+checkpoint by inserting one row: the matched baseline probe changed 2,002 SQL
+rows after 1,000 checkpoints and the corrected store changes two. Incomplete
+reasons are never silenced near the tip; only `scan-ahead` and
+`publication-behind` may read as current within ten blocks. A wallet that has
+read nothing reports no coverage rather than the block before its birthday.
+The bridge is built without its `send` feature, so `send` and `quote` answer
+`SendDisabled` (code 20) before a phrase is read, and the facade refuses to
+open a recovery wallet without both transparent services over TLS on separate
+hosts (`Configuration`, code 21). The application requires an explicit
+`ZAKURA_MODE` of `demo`, `shadow` or `recovery`, refuses to run on native-load
+failure, checks the light server's chain before opening, keeps each beta mode's
+wallet under its own bundle container and profile marker, and refuses another
+build's layout before touching its files.
+
+The macOS release build `ZakuraRecoveryBeta.app` was produced in recovery mode
+with real native bindings (`executable SHA-256 `851df2642730f402…`, ad-hoc signed`). A live restore, sync, stop, reopen
+and resume ran through the same library against `us.zec.stardust.rest` and the
+public transparent services with one fresh synthetic wallet
+(`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
+that gate. M2 closes with the limits listed in the evidence.
+
 ## M1 current canary: 2026-09-09, 20:56 UTC
 
 Source `f2f351c` makes verified runtimes servable before optional snapshot writes

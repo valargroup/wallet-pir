@@ -1,0 +1,9 @@
+build send_enabled=false schema=transparent-shard-v7 layout=4
+server chain=main height=3477838 software=ECC LightWalletD v0.5.4
+restored account birthday=3477808 tip=3477838
+first sync elapsed_ms=5037 phase=idle failed=false scanned_to=3477838 tip=3477838
+coverage completion=complete anchor=3477838 covered=3477838 settled=3477807 pending=0 unresolved=0 synchronized=true
+status="Transparent coverage through block 3477838"
+stopped phase=stopped
+reopened completion=complete anchor=3477838 covered=3477838
+second sync elapsed_ms=3523 failed=false completion=complete anchor=3477838 covered=3477838

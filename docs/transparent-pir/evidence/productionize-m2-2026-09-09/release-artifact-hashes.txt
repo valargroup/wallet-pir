@@ -1,0 +1,10 @@
+851df2642730f402c3bfc088dbd5189313c2cdea3713ecd889da893f89c2d4c1  ZakuraRecoveryBeta.app/Contents/MacOS/ZakuraRecoveryBeta
+360b6a5393deb1dfbaa6731a92e89084d99400414dd0238ee7cd9e8d3cfc7fc1  ZakuraRecoveryBeta.app/Contents/Frameworks/zakura_wallet_bridge.framework/zakura_wallet_bridge
+297d9026dd2af82a43bcf1f578d8d37350dcf17160eae3c3de58d002625af003  ZakuraRecoveryBeta.app/Contents/Frameworks/App.framework/App
+Identifier=org.valargroup.zakuraRecoveryBeta
+Signature=adhoc
+TeamIdentifier=not set
+	[Key] com.apple.security.app-sandbox
+	[Key] com.apple.security.network.client
+Architectures in the fat file: ZakuraRecoveryBeta.app/Contents/Frameworks/zakura_wallet_bridge.framework/zakura_wallet_bridge are: x86_64 arm64 
+refusal string occurrences: 2

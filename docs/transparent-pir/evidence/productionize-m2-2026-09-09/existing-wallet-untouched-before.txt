@@ -1,0 +1,12 @@
+captured_at 2026-09-09T22:19:36Z
+existing example container: ~/Library/Containers/com.example.zakuraExample/Data/.zakura-example
+/Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/cache.db size=30711808 mtime=1788916627 ctime=1788916627
+/Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/cache.db-shm size=32768 mtime=1788917028 ctime=1788917028
+/Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/cache.db-wal size=15520072 mtime=1788917652 ctime=1788917652
+/Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/wallet.db size=4096 mtime=1788915417 ctime=1788915417
+/Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/wallet.db-shm size=32768 mtime=1788917028 ctime=1788917028
+/Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/wallet.db-wal size=280192 mtime=1788917646 ctime=1788917646
+edbee11a2e909b4413b8e2265b665c0f156aaba120e5c715a11d8fc30ba789d7  /Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/wallet.db
+bac2d495778c6bd5676d0f3e52bbeb98e3f5e4391a98e97b8a9ff7d3c9866031  /Users/roman/Library/Containers/com.example.zakuraExample/Data/.zakura-example/cache.db
+home profile ~/.zakura-example: absent
+beta container: absent

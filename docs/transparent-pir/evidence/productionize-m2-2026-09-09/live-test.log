@@ -1,0 +1,15 @@
+00:00 +0: loading /Users/roman/projects/wallet-libraries-m2-recovery/zakura/wallet-app/bindings/test/live_recovery_test.dart
+Warning: A tag was used that wasn't specified in dart_test.yaml.
+  native was used in the suite itself
+
+00:00 +0: a fresh wallet restores, syncs, stops, reopens and resumes with its coverage intact
+LIVE build send_enabled=false schema=transparent-shard-v7 layout=4
+LIVE server chain=main height=3477838 software=ECC LightWalletD v0.5.4
+LIVE restored account birthday=3477808 tip=3477838
+LIVE first sync elapsed_ms=5037 phase=idle failed=false scanned_to=3477838 tip=3477838
+LIVE coverage completion=complete anchor=3477838 covered=3477838 settled=3477807 pending=0 unresolved=0 synchronized=true
+LIVE status="Transparent coverage through block 3477838"
+LIVE stopped phase=stopped
+LIVE reopened completion=complete anchor=3477838 covered=3477838
+LIVE second sync elapsed_ms=3523 failed=false completion=complete anchor=3477838 covered=3477838
+00:10 +1: All tests passed!

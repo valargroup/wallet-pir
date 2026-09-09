@@ -1,0 +1,1 @@
+d04ff35cf751ca93571a074ce40d1a7c4faf8c4c805affc9571864b4e87cf5eb  /Users/roman/projects/wallet-libraries/target/release/libzakura_wallet_bridge.dylib
