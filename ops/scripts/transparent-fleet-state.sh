@@ -95,6 +95,9 @@ REMOTE
         # leaving space for a loaded tail build and concurrent private work.
         awk '{print; if ($0 == "[Service]") print "MemoryHigh=5905580032"}' "$RENDERED_UNIT" >"$RENDERED_UNIT.next"
         mv "$RENDERED_UNIT.next" "$RENDERED_UNIT"
+      elif [[ "$(worker_field "$id" role)" == archive-owner ]]; then
+        awk '{print; if ($0 == "[Service]") print "MemoryHigh=51539607552"}' "$RENDERED_UNIT" >"$RENDERED_UNIT.next"
+        mv "$RENDERED_UNIT.next" "$RENDERED_UNIT"
       fi
     fi
     unit="$(unit_digest "$RENDERED_UNIT")"

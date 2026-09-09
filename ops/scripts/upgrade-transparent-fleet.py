@@ -77,6 +77,33 @@ def service(action, *names):
     D.execute(['systemctl', action, *names])
 
 
+async def start_authority():
+    service('start', 'transparent-replica-reconciler')
+    service('start', 'transparent-publish-controller')
+    deadline = time.monotonic()+60
+    while True:
+        try:
+            await asyncio.to_thread(D.read_json, 'http://127.0.0.1:8094/v1/shards')
+            return
+        except Exception:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('publication authority did not become available under maintenance')
+            await asyncio.sleep(0.5)
+
+
+async def verify_public(fleet):
+    first = fleet.c['authority_upstream']+'/v1/filters/shards'
+    second = 'https://'+fleet.c['public_host']+'/v1/shards'
+    a = await asyncio.to_thread(D.read_json, first)
+    b = await asyncio.to_thread(D.read_json, second)
+    if a != b and await asyncio.to_thread(D.read_json, first) != b:
+        raise RuntimeError('public origins disagree after maintenance')
+    tail = b['shards'][-1]
+    fleet.canonical.clear()
+    if await fleet.canonical_hash(tail['end_height']) != tail['terminal_block_hash']:
+        raise RuntimeError('public authority is not canonical after maintenance')
+
+
 async def maintenance(fleet, saved):
     D.atomic_bytes(saved/'Caddyfile.coordinator', Path('/etc/caddy/Caddyfile').read_bytes())
     guarded = guard_coordinator((saved/'Caddyfile.coordinator').read_text()).encode()
@@ -206,9 +233,9 @@ async def upgrade(args):
                     raise RuntimeError('fleet verification exceeded fifteen minutes') from error
                 await asyncio.sleep(2)
         L.atomic_json(args.out/'verified.json', evidence)
+        await start_authority()
         await reopen(fleet, args.out)
-        service('start', 'transparent-replica-reconciler')
-        service('start', 'transparent-publish-controller')
+        await verify_public(fleet)
         L.atomic_json(args.out/'result.json', {'passed':True, 'binary_sha256':binary, 'workers':[w['id'] for w in workers]})
     except BaseException as error:
         # Stop retries before reverting binaries/configuration. Preserve the
@@ -241,7 +268,9 @@ fi''', timeout=60)
                 service('stop', *services)
                 evidence = await verify_workers(fleet, workers, before, args.query_binary, args.publications)
                 L.atomic_json(args.out/'rollback-verified.json', evidence)
+                await start_authority()
                 await reopen(fleet, args.out)
+                await verify_public(fleet)
                 reopened = True
                 break
             except Exception as recovery_error:

@@ -366,10 +366,11 @@ impl ServiceState {
                         let Some(source) = shard.segment(table, segment).cloned() else {
                             continue;
                         };
-                        match inner
-                            .cache
-                            .get((digest.clone(), table, segment), shared, source)
-                            .await
+                        match crate::prewarm::retry(
+                            &inner.warm.cancelled,
+                            std::time::Duration::from_secs(30),
+                            || inner.cache.get((digest.clone(), table, segment), shared.clone(), source.clone()),
+                        ).await
                         {
                             Ok(handle) => {
                                 if inner.warm.cancelled.load(Ordering::Acquire) {break;}

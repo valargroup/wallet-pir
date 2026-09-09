@@ -72,6 +72,12 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
         self.fleet = M.L.Fleet(self.config)
         self.fleet.ssh = AsyncMock()
 
+    async def test_authority_start_waits_for_http_readiness(self):
+        with patch.object(M, 'service') as service, patch.object(M.D, 'read_json', side_effect=[RuntimeError('not listening'), {'shards':[]}]) as read:
+            await M.start_authority()
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual([c.args for c in service.call_args_list], [('start', 'transparent-replica-reconciler'), ('start', 'transparent-publish-controller')])
+
     async def test_controller_reroute_cannot_bypass_maintenance_but_private_validation_can_run(self):
         M.L.atomic_json(self.fleet.root/'maintenance.json', {'enabled':True})
         await self.fleet.route([self.worker], {'workers':[dict(id='recent', shards=[173])]})

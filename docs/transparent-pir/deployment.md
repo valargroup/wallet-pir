@@ -16,7 +16,7 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
 | Process MemoryMax | 7 GiB | 56 GiB |
-| Process MemoryHigh (hardening canary target) | 5.5 GiB = 5905580032 bytes | Unchanged |
+| Process MemoryHigh (hardening rollout target) | 5.5 GiB = 5905580032 bytes | 48 GiB = 51539607552 bytes |
 | Swap | Disabled for service | Disabled for service |
 | Build/query slots initially | 1 / 2 | 1 / 2 |
 | Disk restore slots | 4 | 4 |
