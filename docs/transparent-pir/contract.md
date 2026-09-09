@@ -95,6 +95,11 @@ V1 evaluation accepts service contact, network identity on a direct connection,
 generation/coverage selection, timing, and query-count leakage. No cover traffic
 or anonymity against public-chain correlation is claimed. Filter-triggered contact
 can reveal activity; unusually large retrievals can narrow likely scripts.
+The explicit [parent-filter experiment](parent-filter-evaluation.md) additionally accepts
+match-dependent child-filter requests, exposing probable activity in coarse
+intervals. This exception applies only when that experiment is enabled; the
+default public filter traversal remains script-independent.
+
 Tor can change network-identity exposure but does not erase count/timing leakage.
 An actively malicious service and error/retry side channels require composition
 review before claiming privacy beyond this stated baseline.

@@ -39,17 +39,17 @@ use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::{Metrics, Snapshot};
 use crate::runtime::{CacheError, RuntimeCache, RuntimeHandle, SharedParams};
 use crate::shardset::{LoadedShard, ShardSet, Table};
+use axum::Router;
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Router;
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use ipir_sp::YpirSchemeParams;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use transparent_shard::manifest::query_binding;
 
 /// How the worker is sized. Everything here is per process, not per shard.
@@ -396,7 +396,7 @@ impl ServiceState {
             );
             inner.warm.finished.store(true, Ordering::Release);
             tracing::info!(
-                warm = Metrics::get(&inner.metrics.warm_runtimes),
+                warm = inner.warm.count.load(Ordering::Acquire),
                 target = inner.warm.target,
                 failed = Metrics::get(&inner.metrics.prewarm_failed),
                 seconds = started.elapsed().as_secs_f64(),
@@ -416,6 +416,13 @@ impl ServiceState {
 
     pub(crate) fn evict_unpinned(&self) {
         self.inner.cache.evict_unpinned();
+    }
+
+    pub(crate) fn prune_disk(
+        &self,
+        keep: &std::collections::HashSet<String>,
+    ) -> Result<u64, String> {
+        self.inner.cache.prune_disk(keep)
     }
 
     pub(crate) fn release_invalidated(&self, digests: &std::collections::BTreeSet<String>) {
@@ -486,6 +493,8 @@ impl ServiceState {
             revisions: inner.set.revisions().len() as u64,
             prunable_revisions: inner.set.prunable().len() as u64,
             cache_budget_bytes: inner.cache.budget(),
+            warm_runtimes: inner.warm.count.load(Ordering::Acquire),
+            work_memory_reserved_bytes: inner.cache.work_memory.reserved_bytes(),
             process_rss_bytes: crate::procmem::process_rss_bytes(),
             process_cpu: crate::procmem::process_cpu(),
             cgroup_memory_bytes: crate::procmem::cgroup_memory_bytes(),
@@ -743,7 +752,9 @@ async fn health(State(state): State<ServiceState>) -> Response {
             ReadinessMode::LoadedOnly => "loaded-only",
             ReadinessMode::Warm => "warm",
         },
-        "warm_runtimes": Metrics::get(&inner.metrics.warm_runtimes),
+        "warm_runtimes": inner.warm.count.load(Ordering::Acquire),
+        "prewarm_operations_total": Metrics::get(&inner.metrics.warm_runtimes),
+        "work_memory_reserved_bytes": inner.cache.work_memory.reserved_bytes(),
         "target_runtimes": inner.warm.target,
     });
     if let (Some(body), Some(identity)) = (body.as_object_mut(), state.identity().as_object()) {
@@ -1201,8 +1212,21 @@ async fn query_inner(
     // if the client goes away meanwhile the evaluation still finishes and is
     // discarded, but the slot is released when it does, not when the dropped
     // future would have been polled.
+    let memory = match state
+        .inner
+        .cache
+        .work_memory
+        .reserve(shared.reserved_bytes().saturating_mul(2))
+    {
+        Some(memory) => memory,
+        None => {
+            Metrics::incr(&metrics.overloads);
+            return RequestError::Overloaded.into_response(&map_digest);
+        }
+    };
     let evaluation_metrics = metrics.clone();
     let evaluated = tokio::task::spawn_blocking(move || {
+        let _memory = memory;
         let _timer = evaluation_metrics.evaluation_seconds.timer();
         let mut answer = Vec::new();
         for handle in &handles {

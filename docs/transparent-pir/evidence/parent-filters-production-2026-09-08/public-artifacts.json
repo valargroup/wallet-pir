@@ -1,0 +1,107 @@
+{
+  "url": "https://enhance-pir.valargroup.dev/v1/filters/parents/",
+  "manifest_sha256": "682a3dd85457bcda8201134980b0ee392885a51039615a7e24c61accc67b67ed",
+  "bodies": [
+    {
+      "hash": "00da5ea7a4aacbaa803a47f4d9ea8bc0c972fda9ddbbbe6b4c5067ec9c7fbfb8",
+      "bytes": 194652,
+      "verified": true
+    },
+    {
+      "hash": "457a65e8e25829d22f167882357293eb3e011265bd820452c2d8c12274d2f93d",
+      "bytes": 131941,
+      "verified": true
+    },
+    {
+      "hash": "3b61349ed327bcadf738740d7f9f72ce162b49cca68e11d0caa25948391dd3d7",
+      "bytes": 379505,
+      "verified": true
+    },
+    {
+      "hash": "ef52d5e295746e55ec3adafdc659f8f687f3b8b9af842caf9a44517b76738d06",
+      "bytes": 435422,
+      "verified": true
+    },
+    {
+      "hash": "bbb350e54180eb182c36e76995a4306533983ea2aad29e19fc401be5fafeb87d",
+      "bytes": 446819,
+      "verified": true
+    },
+    {
+      "hash": "2c74e2c7573b3fc3724d60cae9af1754732aed638fb813add219455fe7acf33e",
+      "bytes": 662117,
+      "verified": true
+    },
+    {
+      "hash": "6db05d20ed96769282abd4db7541249a6b85cc94a60d36cf0eacec8774f9d4ec",
+      "bytes": 599857,
+      "verified": true
+    },
+    {
+      "hash": "8099557bc38bdfb5a84fbb64d613838b09d8fd7e87955313aa6c8c6d0b6ffad5",
+      "bytes": 461360,
+      "verified": true
+    },
+    {
+      "hash": "10b8169084b7605c82048c3ce298af6e053529764c6b7d39f917cf6e2a572a3e",
+      "bytes": 478438,
+      "verified": true
+    },
+    {
+      "hash": "be12679baecb8551f6cdc0c5ebc45ae0cb963f37e5276128ffd6b3fc25d732e5",
+      "bytes": 353276,
+      "verified": true
+    },
+    {
+      "hash": "e871885fc7300ecf4f6c064020630ac517c5092f2d7f599e8f10b1d8f9ed11ab",
+      "bytes": 631922,
+      "verified": true
+    },
+    {
+      "hash": "3ab62163e3d116d0d7f735a2f0031dc53a14e3713e778e0c0a8adecc19450213",
+      "bytes": 968498,
+      "verified": true
+    },
+    {
+      "hash": "d63428656e3acac4423f562c0aa1faf620b998b113cdb3b16d09256accfbb1dd",
+      "bytes": 994844,
+      "verified": true
+    },
+    {
+      "hash": "b81765c79a25a70cc77d47243ccd7a865893a11e9bab58198b0f71f898fb3e45",
+      "bytes": 887325,
+      "verified": true
+    },
+    {
+      "hash": "2d526815bd183eaa7ab157623ec67183d8d54ca34bc0c800dc8d3cf740b4f34c",
+      "bytes": 998819,
+      "verified": true
+    },
+    {
+      "hash": "ad38b020a75b0fe9281cb8b0a5bab26cbfab6df5305fa078a703ea7aa7862cbd",
+      "bytes": 974063,
+      "verified": true
+    },
+    {
+      "hash": "24d53996314cf314219e6db263f85141273872fc9eb024f80bc46c20d8417c33",
+      "bytes": 983216,
+      "verified": true
+    },
+    {
+      "hash": "ee1a87371869d3e76033ad17947399c5d873fbc7826f6f2b81b43e020853ffa3",
+      "bytes": 757644,
+      "verified": true
+    },
+    {
+      "hash": "e17a56478ea8492d7e710aba35fd7a628a1868f076a510502b42ca644678a820",
+      "bytes": 549057,
+      "verified": true
+    },
+    {
+      "hash": "0d9a678dd29811193ea7d1af6089bdd3b6265e6b2f998cf28180d44aceaf182c",
+      "bytes": 863522,
+      "verified": true
+    }
+  ],
+  "both_origins_agree_on_archive": true
+}

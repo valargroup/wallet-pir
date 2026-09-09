@@ -16,6 +16,7 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
 | Process MemoryMax | 7 GiB | 56 GiB |
+| Process MemoryHigh (hardening canary target) | 5.5 GiB = 5905580032 bytes | Unchanged |
 | Swap | Disabled for service | Disabled for service |
 | Build/query slots initially | 1 / 2 | 1 / 2 |
 | Disk restore slots | 4 | 4 |
@@ -238,3 +239,40 @@ when a pending observed block exceeds 30 seconds. Prometheus alert rules are in
 `ops/infra/digitalocean/production/deploy/transparent-publication-alerts.yml`.
 The production deployment key is supplied by the GitHub Environment and stored
 only in the controller's root-readable runtime credential directory.
+
+## Hardening rollout gate
+
+Continuous-publication recent worker upgrades preserve the 5.5 GiB MemoryHigh
+setting in both deployment paths. It triggers file-cache reclamation below the
+hard limit; cache and transient allocation admission remain separate. The
+[canary evidence](evidence/hardening-2026-09-08/README.md) records the observed
+tradeoff and failed lower threshold. Other workers retain their installed
+settings until their rollout.
+
+Run `ops/scripts/observe-transparent-hardening.py` on the coordinator with the
+expected worker binary digest and release `soak-query` executable. Its defaults
+require **both six hours and 300 new blocks**, two sustained query clients with
+exact source-byte comparisons, public and canary visibility within 30 seconds,
+canonical endpoints, no OOM or restart, and 20% host memory headroom. A reorg
+resets the counted block samples. The monitor is read-only and cannot trigger a
+rollout; preserve its result and raw NDJSON before rolling the next workers.
+
+After a passing canary, upgrade the remaining recent replicas individually,
+verify their warm/current identities, remove the reconciler's canary allowlist,
+and validate the archive deployment path before rolling owners. Preserve
+compatible rollback artifacts and keep orphaned publications withdrawn. Run
+24-hour monitoring after the fleet rollout. An elapsed timer alone is not a
+passing gate.
+
+
+## Opt-in archive parent filters
+
+The user approved publishing the evaluated archive configuration after accepting the large-script overhead. Use **8 consecutive sealed archive shards per parent, M=100, P=6**. Keep recent and provisional filters direct. Parent-enabled clients accept the coarse-activity leakage described in the contract. The production manifest URL is `https://enhance-pir.valargroup.dev/v1/filters/parents/archive-wide.json`.
+
+The public bundle contains only `archive-wide.json` and `artifacts/<sha256>.bin`. Stage a previously evaluated bundle with `ops/scripts/stage-transparent-parents.py --candidate /path/to/archive-wide-k8-m100.json --map-url https://enhance-pir.valargroup.dev/v1/filters/shards --out /srv/transparent-parent-filters/releases/NEW_RELEASE`. The script checks exact live sealed archive descriptors, complete archive coverage, precision/group sizes and evaluated body digests before creating the serving tree. It does not regenerate filters or independently prove their journal completeness; that comes from the full-journal evaluator.
+
+The coordinator Caddy template routes `/v1/filters/parents/*` to `/srv/transparent-parent-filters/public` with a five-minute HTTP cache lifetime. Point that symlink to the staged immutable release atomically. When first adding the route, preserve existing routing, validate the candidate Caddyfile before installation, save the predecessor, reload Caddy, and verify the manifest and every parent digest through public HTTPS. Restore the predecessor on activation failure. Do not restart the PIR fleet to publish static parent artifacts.
+
+The bundle is tied to exact sealed child revisions. Refresh it after archive membership or revisions change; wallets reject stale parent descriptors and fall back to children. To withdraw a release, unlink its public symlink after checking the current target. Existing validated client caches can remain usable for unchanged child revisions. See the [production evidence](evidence/parent-filters-production-2026-09-08/README.md) for the deployed release, canary and rollback record.
+
+Reference clients opt in with `HttpFilterSource::with_parent_experiment(manifest_url, "archive-wide".into())`; loadtest scenarios use `experimental_parent_manifests.archive-wide`. Hosting the bundle does not change already-installed wallet applications. No script-count bypass is enabled.

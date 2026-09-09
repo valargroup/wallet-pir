@@ -31,3 +31,7 @@ The [filter API](../transparent_filter_api.md), [range envelope](../transparent_
 Use measured, projected, proposed, implemented, and deployed precisely. Every new benchmark needs the evidence metadata; every deployment needs an observed status record. Keep exact target parameters only in deployment.md and link there elsewhere. Keep unchecked work only in remaining-work.md; status summarizes it by reference. Delete superseded documents and update inbound links instead of creating archive copies or forwarding stubs.
 
 Superseded transparent PIR documents and their old paths have been deleted. Raw evidence stays at its original paths. Use version control history for former designs and operational narratives; those historical texts are not current instructions.
+
+## Experiments
+
+[Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. The later [production artifact rollout](evidence/parent-filters-production-2026-09-08/README.md) records HTTPS verification and the bounded production recovery canary.

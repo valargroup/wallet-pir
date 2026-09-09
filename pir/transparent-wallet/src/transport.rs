@@ -332,10 +332,14 @@ impl ByteCharges {
 
 /// Source of public shard filters.
 ///
-/// Separate from [`ShardTransport`] on purpose. These bytes are identical for
-/// every wallet and reveal nothing; the private ones do not have that property,
-/// and taking both from one place would correlate them.
+/// Separate from [`ShardTransport`] on purpose. Default filter requests depend
+/// only on public intervals. The explicit parent experiment additionally leaks
+/// coarse activity through selective child requests; it never sends scripts.
 pub trait FilterSource {
+    /// Avoid additional cache reads in the default traversal.
+    fn uses_parents(&self) -> bool {
+        false
+    }
     /// The published shard map, as JSON, with the bytes it cost.
     fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError>;
 
@@ -347,6 +351,30 @@ pub trait FilterSource {
     /// the superseded filter after a republication, which the sync catches as a
     /// digest mismatch against the map rather than acting on.
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError>;
+
+    /// Research-only parent discovery for uncached work. Default sources never
+    /// skip child filters. Costs include manifest discovery even on fallback.
+    fn prepare_parents(
+        &mut self,
+        _map: &transparent_filter::ShardMap,
+        _uncached: &[u64],
+        _store: &mut dyn crate::WalletStore,
+    ) -> Result<u64, BoxError> {
+        Ok(0)
+    }
+
+    /// An explicitly enabled source may establish a negative from a validated
+    /// parent covering this exact child revision. Implementations must check
+    /// the current scripts on every call, including newly imported scripts.
+    fn parent_negative(
+        &mut self,
+        _map: &transparent_filter::ShardMap,
+        _shard_id: u64,
+        _scripts: &[Vec<u8>],
+        _store: &mut dyn crate::WalletStore,
+    ) -> Result<(bool, u64), BoxError> {
+        Ok((false, 0))
+    }
 }
 
 /// Source of private shard retrieval.
@@ -403,6 +431,27 @@ pub trait ShardTransport {
 }
 
 impl<T: FilterSource + ?Sized> FilterSource for Box<T> {
+    fn uses_parents(&self) -> bool {
+        (**self).uses_parents()
+    }
+    fn prepare_parents(
+        &mut self,
+        map: &transparent_filter::ShardMap,
+        uncached: &[u64],
+        store: &mut dyn crate::WalletStore,
+    ) -> Result<u64, BoxError> {
+        (**self).prepare_parents(map, uncached, store)
+    }
+    fn parent_negative(
+        &mut self,
+        map: &transparent_filter::ShardMap,
+        id: u64,
+        scripts: &[Vec<u8>],
+        store: &mut dyn crate::WalletStore,
+    ) -> Result<(bool, u64), BoxError> {
+        (**self).parent_negative(map, id, scripts, store)
+    }
+
     fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         (**self).shard_map()
     }

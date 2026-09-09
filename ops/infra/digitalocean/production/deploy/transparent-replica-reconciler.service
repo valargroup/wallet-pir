@@ -1,0 +1,22 @@
+[Unit]
+Description=Transparent PIR replica catch-up
+After=network-online.target transparent-publish-controller.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/transparent-publisher
+ExecStart=/usr/bin/python3 /opt/transparent-publisher/transparent-live-fleet.py /opt/transparent-publisher/fleet.json --reconcile
+Restart=on-failure
+RestartSec=3
+UMask=0077
+MemoryMax=256M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/transparent-publisher/state
+ReadOnlyPaths=/opt/transparent-publisher/credentials
+
+[Install]
+WantedBy=multi-user.target

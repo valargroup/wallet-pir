@@ -1,0 +1,560 @@
+{
+  "schema": "transparent-simulation-v1",
+  "run_id": "simulation-1788908761250-1180116",
+  "config": {
+    "schema": "transparent-scenario-v1",
+    "name": "20-user mixed recovery wave",
+    "mode": "wave",
+    "sample": "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/held-out-sample.json",
+    "shard_url": "http://127.0.0.1:18092",
+    "filter_url": "http://127.0.0.1:18092",
+    "experimental_parent_manifests": {},
+    "experimental_journal_seeds": "/srv/zakura/parent-filter-eval-20260908/journal-seeds",
+    "profiles": {
+      "catch-up-1d": 2,
+      "catch-up-30d": 2,
+      "catch-up-7d": 2,
+      "multi-script": 2,
+      "restore-6m": 3,
+      "restore-old": 2,
+      "reused-tail": 1,
+      "small-active": 4,
+      "unused": 2
+    },
+    "seed": 1,
+    "preparation_concurrency": 2,
+    "allow_advancing_publication": false,
+    "preparation_cache": "reuse",
+    "preparation_cache_dir": null,
+    "measured_http_attempts": 3,
+    "preparation_deadline_seconds": 3600,
+    "duration_seconds": 600,
+    "recovery_deadline_seconds": 600,
+    "request_timeout_seconds": 60,
+    "max_queries": null,
+    "store": "sqlite",
+    "metrics_targets": {
+      "evaluation": "http://127.0.0.1:18092/metrics"
+    },
+    "max_p99_exact_seconds": null,
+    "notes": "Synthetic public-script workload, not population weights. Record target SKU, region, background traffic and observed cache state with the run. Add named full worker /metrics URLs or --metrics-target overrides."
+  },
+  "sample_sha256": "7cf4bc87a465087bda59b7ff8f873339cdddcd8e533d2c02b0a9e6d19e4d8720",
+  "publication": {
+    "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "anchor_height": 3473686,
+    "cutoff_height": 3262749,
+    "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "geometries": [
+      "archive-wide",
+      "recent-8k"
+    ],
+    "map_sha256": "7b7021eb48d77671380369f897b327ac58347ca132028804a4a2efc1e7ac34ba",
+    "schema": "transparent-shard-v7",
+    "served_tip_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "served_tip_height": 3473686,
+    "shards": 174,
+    "start_height": 0
+  },
+  "publication_stable": true,
+  "publication_compatible": true,
+  "success": false,
+  "errors": [],
+  "preparation_status": {
+    "active": 0,
+    "cached": 0,
+    "complete": 16,
+    "failed": 0,
+    "queued": 0,
+    "required": 16,
+    "seconds": 0.036516108,
+    "source": "journal-verified"
+  },
+  "provenance": {
+    "build_opt_level": "3",
+    "build_optimized": true,
+    "build_profile": "release",
+    "build_target": "x86_64-unknown-linux-gnu",
+    "build_working_tree_dirty": "unknown",
+    "command": [
+      "target/release-fast/transparent-loadtest",
+      "--scenario",
+      "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/warmup-01.json",
+      "--out-dir",
+      "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/warmup-01"
+    ],
+    "cpu": "INTEL(R) XEON(R) GOLD 6548N",
+    "host": "enhance-pir-coordinator-01",
+    "invocation_checkout_sha": null,
+    "kernel": "6.8.0-124-generic",
+    "logical_cpus": 8,
+    "memory_bytes": 67427414016,
+    "os": "Linux (Ubuntu 24.04)",
+    "phase": "measured_recovery",
+    "source_sha": "unknown",
+    "wallet_initialization": "Prior ledger events only; independent stores with cold filter/setup caches. Preparation can warm server caches."
+  },
+  "users": [
+    {
+      "profile": "catch-up-1d",
+      "sample_index": 116,
+      "script_count": 4,
+      "expected_events": 3,
+      "outcome": "exact",
+      "seconds": 1.0287270545959473,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 271174.0,
+        "bytes_up": 512032.0,
+        "calls": 10.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 10.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.33819988500000003
+      }
+    },
+    {
+      "profile": "catch-up-1d",
+      "sample_index": 93,
+      "script_count": 4,
+      "expected_events": 4,
+      "outcome": "exact",
+      "seconds": 1.4065148830413818,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 326736.0,
+        "bytes_up": 896056.0,
+        "calls": 16.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 16.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.49444175
+      }
+    },
+    {
+      "profile": "catch-up-30d",
+      "sample_index": 160,
+      "script_count": 4,
+      "expected_events": 4,
+      "outcome": "exact",
+      "seconds": 1.0211775302886963,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 476764.0,
+        "bytes_up": 512032.0,
+        "calls": 12.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 12.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.36780022500000004
+      }
+    },
+    {
+      "profile": "catch-up-30d",
+      "sample_index": 162,
+      "script_count": 4,
+      "expected_events": 4,
+      "outcome": "exact",
+      "seconds": 1.0385997295379639,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 497487.0,
+        "bytes_up": 512032.0,
+        "calls": 14.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 14.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.34461193800000006
+      }
+    },
+    {
+      "profile": "catch-up-7d",
+      "sample_index": 132,
+      "script_count": 4,
+      "expected_events": 5,
+      "outcome": "exact",
+      "seconds": 1.170844554901123,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 295748.0,
+        "bytes_up": 640040.0,
+        "calls": 12.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 12.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.38245452699999993
+      }
+    },
+    {
+      "profile": "catch-up-7d",
+      "sample_index": 123,
+      "script_count": 4,
+      "expected_events": 4,
+      "outcome": "exact",
+      "seconds": 1.007829189300537,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 271181.0,
+        "bytes_up": 512032.0,
+        "calls": 10.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 10.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.31221889900000005
+      }
+    },
+    {
+      "profile": "multi-script",
+      "sample_index": 296,
+      "script_count": 40,
+      "expected_events": 175,
+      "outcome": "exact",
+      "seconds": 9.936066150665283,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 2461025.0,
+        "bytes_up": 15616976.0,
+        "calls": 173.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 173.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 4.5854298810000005
+      }
+    },
+    {
+      "profile": "multi-script",
+      "sample_index": 304,
+      "script_count": 40,
+      "expected_events": 458,
+      "outcome": "exact",
+      "seconds": 11.71664547920227,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 2677421.0,
+        "bytes_up": 19073192.0,
+        "calls": 204.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 204.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 5.864813700000001
+      }
+    },
+    {
+      "profile": "restore-6m",
+      "sample_index": 201,
+      "script_count": 10,
+      "expected_events": 225,
+      "outcome": "exact",
+      "seconds": 4.744905710220337,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 1871710.0,
+        "bytes_up": 4480280.0,
+        "calls": 74.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 74.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 2.3670532050000004
+      }
+    },
+    {
+      "profile": "restore-6m",
+      "sample_index": 203,
+      "script_count": 10,
+      "expected_events": 12,
+      "outcome": "exact",
+      "seconds": 1.8986334800720215,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 1569698.0,
+        "bytes_up": 1408088.0,
+        "calls": 38.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 38.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.705148988
+      }
+    },
+    {
+      "profile": "restore-6m",
+      "sample_index": 225,
+      "script_count": 10,
+      "expected_events": 10,
+      "outcome": "exact",
+      "seconds": 1.8281903266906738,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 1545131.0,
+        "bytes_up": 1280080.0,
+        "calls": 36.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 36.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.688175514
+      }
+    },
+    {
+      "profile": "restore-old",
+      "sample_index": 250,
+      "script_count": 3,
+      "expected_events": 930,
+      "outcome": "exact",
+      "seconds": 139.9317111968994,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 64262970.0,
+        "bytes_up": 23052832.0,
+        "calls": 291.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 291.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 132.383763222
+      }
+    },
+    {
+      "profile": "restore-old",
+      "sample_index": 269,
+      "script_count": 3,
+      "expected_events": 14,
+      "outcome": "exact",
+      "seconds": 12.558472871780396,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 63436514.0,
+        "bytes_up": 2494536.0,
+        "calls": 192.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 192.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 7.970057429999999
+      }
+    },
+    {
+      "profile": "reused-tail",
+      "sample_index": 321,
+      "script_count": 1,
+      "expected_events": 530514,
+      "outcome": "timed_out",
+      "seconds": 600.0284905433655,
+      "error": "Measured recovery exceeded its 600 second deadline; the worker was stopped before completion. See request stages for completed work.",
+      "http_totals": {
+        "bytes_down": 39505983.0,
+        "bytes_up": 2812689592.0,
+        "calls": 6611.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 6611.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 167.79579096399956
+      }
+    },
+    {
+      "profile": "small-active",
+      "sample_index": 46,
+      "script_count": 1,
+      "expected_events": 3,
+      "outcome": "exact",
+      "seconds": 1.1126422882080078,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 1445718.0,
+        "bytes_up": 384024.0,
+        "calls": 22.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 22.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.317464913
+      }
+    },
+    {
+      "profile": "small-active",
+      "sample_index": 42,
+      "script_count": 1,
+      "expected_events": 1,
+      "outcome": "exact",
+      "seconds": 0.703563928604126,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 556989.0,
+        "bytes_up": 256016.0,
+        "calls": 11.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 11.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.21501897200000003
+      }
+    },
+    {
+      "profile": "small-active",
+      "sample_index": 66,
+      "script_count": 1,
+      "expected_events": 2,
+      "outcome": "exact",
+      "seconds": 0.5279383659362793,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 260909.0,
+        "bytes_up": 256016.0,
+        "calls": 8.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 8.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.18732517099999998
+      }
+    },
+    {
+      "profile": "small-active",
+      "sample_index": 68,
+      "script_count": 1,
+      "expected_events": 2,
+      "outcome": "exact",
+      "seconds": 1.1707327365875244,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 1333010.0,
+        "bytes_up": 256016.0,
+        "calls": 19.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 19.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.28167082699999996
+      }
+    },
+    {
+      "profile": "unused",
+      "sample_index": 6,
+      "script_count": 4,
+      "expected_events": 0,
+      "outcome": "exact",
+      "seconds": 5.524754762649536,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 63308645.0,
+        "bytes_up": 0.0,
+        "calls": 176.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 176.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.48421542100000015
+      }
+    },
+    {
+      "profile": "unused",
+      "sample_index": 3,
+      "script_count": 4,
+      "expected_events": 0,
+      "outcome": "exact",
+      "seconds": 5.52718448638916,
+      "error": null,
+      "http_totals": {
+        "bytes_down": 63308645.0,
+        "bytes_up": 0.0,
+        "calls": 176.0,
+        "failures": 0.0,
+        "http_409": 0.0,
+        "http_503": 0.0,
+        "http_status_counts": {
+          "200": 176.0
+        },
+        "retried_requests": 0.0,
+        "retry_attempts": 0.0,
+        "seconds": 0.45527941599999977
+      }
+    }
+  ],
+  "source_report_sha256": "76eb6c3ae9aad51c316e0b9b5993e139c87de8af971f60de6a7151c2b2d3b149"
+}

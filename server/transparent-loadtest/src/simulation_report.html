@@ -299,18 +299,23 @@
     }
     for (const batch of R.preparation || []) {
       const detail = el("details", $("preparation"));
-      detail.open = batch.status !== "complete" && batch.status !== "cached";
+      detail.open = !["complete", "cached", "journal-verified"].includes(batch.status);
       const summary = batch.summary || {};
       el(
         "summary",
         detail,
-        `Preparation ${batch.batch}: ${batch.status} · ${batch.profile || ""} ${batch.sample_index ?? ""} · ${batch.status === "cached" ? 1 : summary.outcomes?.exact || 0} / ${summary.started ?? batch.wallets ?? 0} ready`,
+        `Preparation ${batch.batch}: ${batch.status} · ${batch.profile || ""} ${batch.sample_index ?? ""} · ${["cached", "journal-verified"].includes(batch.status) ? 1 : summary.outcomes?.exact || 0} / ${summary.started ?? batch.wallets ?? 0} ready`,
       );
       // Reports contain only generated relative artifact links, never URLs from errors.
       if (/^preparation\/batch-\d+\/report\.html$/.test(batch.report || "")) {
         el("a", detail, "Open preparation report").href = batch.report;
       }
       if (batch.cache) el("pre", detail, JSON.stringify(batch.cache, null, 2));
+      if (batch.status === "journal-verified") {
+        el("p", detail, "Prior ledger verified from the pinned journal and independent oracle. No HTTP preparation recovery was performed.");
+        el("pre", detail, JSON.stringify({ source: batch.source, seed_file_sha256: batch.seed_file_sha256 }, null, 2));
+        continue;
+      }
       if (batch.status === "cached") {
         el(
           "p",

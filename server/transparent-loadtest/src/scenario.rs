@@ -93,6 +93,10 @@ pub struct Config {
     pub shard_url: String,
     #[serde(default)]
     pub filter_url: Option<String>,
+    #[serde(default)]
+    pub experimental_parent_manifests: BTreeMap<String, String>,
+    #[serde(default)]
+    pub experimental_journal_seeds: Option<PathBuf>,
     pub profiles: BTreeMap<String, usize>,
     #[serde(default = "default_seed")]
     pub seed: u64,
@@ -210,6 +214,16 @@ impl Config {
                 ["gzip", "identity"].contains(&self.block_encoding.as_str()),
                 "invalid block encoding"
             );
+        }
+        if self.experimental_journal_seeds.is_some() && self.allow_advancing_publication {
+            bail!("journal experiment seeds require a frozen publication");
+        }
+        if self
+            .experimental_parent_manifests
+            .keys()
+            .any(|g| !["recent-8k", "archive-wide"].contains(&g.as_str()))
+        {
+            bail!("invalid parent experiment geometry");
         }
         if !(1..=3).contains(&self.measured_http_attempts) {
             bail!("measured_http_attempts must be between 1 and 3");
@@ -380,7 +394,8 @@ struct SeedEvent {
 
 /// Import prior ledger events without claiming coverage for the measured window
 /// or warming its filter/setup caches. Every seed comes from a complete recovery
-/// against the same pinned publication in the separate preparation phase.
+/// against the same pinned publication in the separate preparation phase, or
+/// the explicitly labeled journal-verified experiment seed path.
 fn seed_store(
     store: &mut impl WalletStore,
     map: &transparent_filter::ShardMap,
@@ -563,6 +578,11 @@ fn recover(job: &Job) -> Result<Value> {
     } else {
         filters.with_transient_retry_attempts(job.config.measured_http_attempts)
     };
+    if !job.preparing {
+        for (geometry, url) in &job.config.experimental_parent_manifests {
+            filters = filters.with_parent_experiment(url.clone(), geometry.clone());
+        }
+    }
     let mut transport = HttpShardTransport::new(&job.config.shard_url, &options)
         .map_err(io_error)?
         .with_observer(observer);
@@ -1046,6 +1066,42 @@ fn prepare(
         "shard_url":config.shard_url.trim_end_matches('/'),"filter_url":config.filter_origin().trim_end_matches('/'),
         "strict_map":if config.allow_advancing_publication { None } else { Some(&map_digest) }
     }))).collect();
+    if let Some(directory) = &config.experimental_journal_seeds {
+        compatible?;
+        let manifest: Value = serde_json::from_slice(&fs::read(directory.join("manifest.json"))?)?;
+        if manifest["schema"] != "transparent-parent-journal-seeds-v1"
+            || manifest["sample_sha256"] != sample_digest
+            || manifest["map_sha256"] != map_digest
+            || manifest["anchor"] != serde_json::to_value(&anchor)?
+        {
+            bail!("journal experiment seed manifest mismatch");
+        }
+        for i in &selected {
+            let raw = fs::read(directory.join(format!("{i}.json")))?;
+            if manifest["files"][i.to_string()] != digest(&raw) {
+                bail!("journal experiment seed file digest mismatch");
+            }
+            let envelope: Value = serde_json::from_slice(&raw)?;
+            let wallet = &sample.clients[*i];
+            if envelope["scripts"] != json!(wallet.scripts)
+                || envelope["required_from"] != wallet.required_from
+                || envelope["actual_digest"] != wallet.expected_digest
+                || envelope["events"] != wallet.journal_events
+                || envelope["seed_sha256"] != digest(&serde_json::to_vec(&envelope["seed"])?)
+            {
+                bail!("journal experiment seed scope/oracle mismatch");
+            }
+            let seed: Seed = serde_json::from_value(envelope["seed"].clone())?;
+            validate_seed(&seed, &map, &anchor, wallet, false)?;
+            fs::write(
+                seeds.join(format!("sample-{i}.json")),
+                serde_json::to_vec(&seed)?,
+            )?;
+            parent.preparation.push(json!({"batch":parent.preparation.len(),"wallets":1,"status":"journal-verified","sample_index":i,"profile":wallet.class,"source":directory,"seed_file_sha256":digest(&raw)}));
+        }
+        parent.preparation_status = json!({"required":selected.len(),"complete":selected.len(),"cached":0,"active":0,"queued":0,"failed":0,"source":"journal-verified","seconds":started.elapsed().as_secs_f64()});
+        return Ok(());
+    }
     let mut queue = std::collections::VecDeque::new();
     let mut cached = 0;
     for i in &selected {
@@ -2000,5 +2056,11 @@ mod tests {
         let mut c = config();
         c.recovery_deadline_seconds = 0;
         assert!(c.validate().is_err());
+        let mut c = config();
+        c.experimental_journal_seeds = Some("journal-seeds".into());
+        c.allow_advancing_publication = true;
+        assert!(c.validate().is_err());
+        c.allow_advancing_publication = false;
+        assert!(c.validate().is_ok());
     }
 }

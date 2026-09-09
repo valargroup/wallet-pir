@@ -7,6 +7,7 @@ through that environment, never through command arguments or artifact files.
 import argparse
 import asyncio
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -129,13 +130,20 @@ async def install_worker(fleet,worker,artifacts,rollback):
         args += ['--control-socket','/run/transparent-pir/control.sock','--active-record','/opt/transparent-publisher/active.json']
     new_unit='\n'.join('ExecStart='+shlex.join(args) if line.startswith('ExecStart=') else line for line in unit.splitlines())+'\n'
     # RuntimeDirectory is created before the binary opens its control socket.
-    new_unit=new_unit.replace('[Service]','[Service]\nRuntimeDirectory=transparent-pir',1)
+    if 'RuntimeDirectory=transparent-pir' not in new_unit.splitlines():
+        new_unit=new_unit.replace('[Service]','[Service]\nRuntimeDirectory=transparent-pir',1)
+    if worker['role'] == 'recent-replica':
+        # Reclaim file cache before transient admission reaches the 7 GiB
+        # hard limit. The four-replica target is measured with a 5.5 GiB high
+        # threshold; anonymous allocations still obey the work/cache guards.
+        new_unit='\n'.join(line for line in new_unit.splitlines() if not line.startswith('MemoryHigh='))+'\n'
+        new_unit=new_unit.replace('[Service]','[Service]\nMemoryHigh=5905580032',1)
     remote='/opt/transparent-publisher/staged'
     await fleet.ssh(host,'mkdir -p '+remote+' '+shlex.quote(rollback))
     for name in ['transparent-shard-server','shard-control']:
         await LIVE.run(['rsync','-a','-e',shlex.join(fleet.ssh_args),str(artifacts/name),'root@'+host+':'+remote+'/'+name],timeout=120)
     verify=[remote+'/transparent-shard-server']+args[1:]+['--verify-only']
-    await fleet.ssh(host,shlex.join(verify),timeout=300)
+    await fleet.ssh(host,shlex.join(verify),timeout=300,multiplex=False)
     await fleet.ssh(host,'cat > '+remote+'/worker.service',new_unit.encode())
     command=f'''set -eu
 if [ ! -f {shlex.quote(rollback)}/worker.service ]; then
@@ -150,12 +158,15 @@ systemctl daemon-reload
 systemctl restart transparent-shard-server
 '''
     await fleet.ssh(host,command)
+    expected_binary=hashlib.sha256((artifacts/'transparent-shard-server').read_bytes()).hexdigest()
     deadline=time.monotonic()+1800
     while time.monotonic()<deadline:
         try:
             ready=await asyncio.to_thread(read_json,'http://'+worker['upstream']+'/v1/ready')
-            if ready.get('ready') and ready.get('map_sha256')==before['map_sha256']:
-                await fleet.control(worker,{'operation':'status'})
+            if ready.get('ready') and ready.get('binary_sha256')==expected_binary:
+                status=await fleet.control(worker,{'operation':'status'})
+                if status['active']['map_sha256']!=ready['map_sha256'] or not status['warm']:
+                    continue
                 print(worker['id']+': warm with publication control',flush=True)
                 return
         except Exception:
@@ -165,6 +176,7 @@ systemctl restart transparent-shard-server
 
 
 async def rollback(fleet, saved):
+    subprocess.run(['systemctl','stop','transparent-replica-reconciler'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     # A binary rollback must never resurrect an orphaned publication. Validate
     # the static predecessor against the node before changing routing or units.
@@ -236,6 +248,7 @@ async def main():
             os.replace('/usr/local/bin/'+name+'.next','/usr/local/bin/'+name)
         shutil.copy2(SCRIPT/'transparent-live-fleet.py',ROOT/'transparent-live-fleet.py')
         shutil.copy2(SCRIPT.parent/'infra/digitalocean/production/deploy/transparent-publish-controller.service','/etc/systemd/system/transparent-publish-controller.service')
+        shutil.copy2(SCRIPT.parent/'infra/digitalocean/production/deploy/transparent-replica-reconciler.service','/etc/systemd/system/transparent-replica-reconciler.service')
         Path('/srv/zakura/transparent-publications').mkdir(exist_ok=True)
         # Recent canary first; archive owners follow serially, then other replicas.
         recent=[w for w in fleet.roster if w['role']=='recent-replica']
@@ -266,6 +279,7 @@ async def main():
         LIVE.atomic_json(ROOT/'controller.json',config)
         route_coordinator()
         execute(['systemctl','restart','transparent-publish-controller'])
+        execute(['systemctl','enable','--now','transparent-replica-reconciler'])
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
             try:

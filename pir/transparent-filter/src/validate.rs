@@ -56,6 +56,7 @@ pub struct ValidatedFilter {
     bytes: Vec<u8>,
     /// Decoded values, strictly ascending, each in `[0, n * M)`.
     values: Vec<u64>,
+    range: u64,
 }
 
 impl ValidatedFilter {
@@ -70,7 +71,7 @@ impl ValidatedFilter {
     }
     /// The exclusive upper bound of the mapped range, `n * M`.
     pub fn range(&self) -> u64 {
-        self.values.len() as u64 * M
+        self.range
     }
 }
 
@@ -172,6 +173,19 @@ fn read_compact_size(bytes: &[u8]) -> Result<(u64, usize), FilterError> {
 /// bounded before it is used to reserve memory, so a filter claiming an
 /// enormous count cannot cause a large allocation.
 pub fn validate_filter(bytes: &[u8], limits: FilterLimits) -> Result<ValidatedFilter, FilterError> {
+    validate_parameters(bytes, limits, M, P)
+}
+
+/// Shared strict decoder; experimental profiles must keep their own parameter identity.
+pub(crate) fn validate_parameters(
+    bytes: &[u8],
+    limits: FilterLimits,
+    m: u64,
+    p: u8,
+) -> Result<ValidatedFilter, FilterError> {
+    if m == 0 || m >= (1u64 << 32) || p > 31 {
+        return Err(FilterError::Encoding("invalid GCS parameters".into()));
+    }
     if bytes.len() > limits.max_bytes {
         return Err(FilterError::LimitExceeded(format!(
             "filter is {} bytes, limit is {}",
@@ -192,7 +206,7 @@ pub fn validate_filter(bytes: &[u8], limits: FilterLimits) -> Result<ValidatedFi
     // body before any allocation.
     let body = &bytes[header_len..];
     let minimum_bits = count
-        .checked_mul(u64::from(P) + 1)
+        .checked_mul(u64::from(p) + 1)
         .ok_or_else(|| FilterError::LimitExceeded("element count overflows".into()))?;
     if minimum_bits > (body.len() as u64).saturating_mul(8) {
         return Err(FilterError::Truncated(format!(
@@ -208,15 +222,16 @@ pub fn validate_filter(bytes: &[u8], limits: FilterLimits) -> Result<ValidatedFi
         return Ok(ValidatedFilter {
             bytes: bytes.to_vec(),
             values: Vec::new(),
+            range: 0,
         });
     }
 
     let range = count
-        .checked_mul(M)
+        .checked_mul(m)
         .ok_or_else(|| FilterError::LimitExceeded("mapped range overflows".into()))?;
     // Bounds the unary run: no legitimate quotient can exceed this, so a
     // malicious run of set bits terminates instead of spinning.
-    let max_quotient = range >> P;
+    let max_quotient = range >> p;
 
     let mut reader = BitReader::new(body);
     let mut values = Vec::with_capacity(count as usize);
@@ -231,8 +246,8 @@ pub fn validate_filter(bytes: &[u8], limits: FilterLimits) -> Result<ValidatedFi
                 )));
             }
         }
-        let remainder = reader.read_bits(P)?;
-        let delta = (quotient << P)
+        let remainder = reader.read_bits(p)?;
+        let delta = (quotient << p)
             .checked_add(remainder)
             .ok_or_else(|| FilterError::Encoding("delta overflows".into()))?;
         last = last
@@ -255,6 +270,7 @@ pub fn validate_filter(bytes: &[u8], limits: FilterLimits) -> Result<ValidatedFi
     Ok(ValidatedFilter {
         bytes: bytes.to_vec(),
         values,
+        range,
     })
 }
 

@@ -1,0 +1,26 @@
+{
+  "utc": "2026-09-08T23:17:01.736217+00:00",
+  "gate": "running",
+  "queries": [
+    691,
+    689
+  ],
+  "block_visible": {
+    "blocks": 1,
+    "maximum_seconds": 18.779964228975587
+  },
+  "canary_block_visible": {
+    "blocks": 1,
+    "maximum_seconds": 22.915458025992848
+  },
+  "maximum_sampled_memory": 5904982016,
+  "latest_facts": {
+    "NRestarts": 0,
+    "ExecMainStartTimestampMonotonic": 64457554242,
+    "MemoryCurrent": 5904736256,
+    "MemoryPeak": 5906362368,
+    "oom": 0,
+    "oom_kill": 0,
+    "MemTotal": 8131780
+  }
+}

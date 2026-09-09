@@ -1,0 +1,32 @@
+f8ee5d33103b51047f81c8073e3f0f96b00edc4133a1809d9f5d73baa9f848a1  /srv/zakura/parent-filter-eval-20260908/final-client.tar.gz
+225ed4e99e33f44519a965059c51493535ddd0936eba3ef8d7f5b21f8599e057  /srv/zakura/parent-filter-eval-20260908/http-final.tar.gz
+1968c93809a4a83f47b9bd1acb2fcb21e5af9e8eb518538051a31d00e5aa0da1  /srv/zakura/parent-filter-eval-20260908/overlay.tar.gz
+2a48b97f6fbafee71b8ca49f7dc5ae82cda18c83a93a29dd2028d145a7528cf0  /srv/zakura/parent-filter-eval-20260908/overlay2.tar.gz
+35adcdda34fb3ca0d8c066aad1e75b8b6f105cd59ba1440a8f6abd7d11022082  /srv/zakura/parent-filter-eval-20260908/seed-tools.tar.gz
+56072858681f0fec9253d8d5d9a1dc32012eb3a6f8d1333b051c87671b9b6445  /srv/zakura/parent-filter-eval-20260908/source.tar.gz
+1692d7f8c2161ab8846d6efe41c6d5bd704c37d2f2e1bbb9bb18a7fc7af80f17  /srv/zakura/parent-filter-eval-20260908/source/target/release-fast/hierarchical-filter-eval
+69c543e03637bc5f0105556b6d306fd8fc4c0e7562c1e2616f50263c3eb64d05  /srv/zakura/parent-filter-eval-20260908/source/target/release-fast/transparent-loadtest
+d201114b09fd130a24176827a0c900ab58e8078fc43272bcb8049d8e4cd4d4ec  /srv/zakura/parent-filter-eval-20260908/source/target/release-fast/parent-evaluation-server
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           40 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  8
+On-line CPU(s) list:                     0-7
+Vendor ID:                               GenuineIntel
+BIOS Vendor ID:                          QEMU
+Model name:                              INTEL(R) XEON(R) GOLD 6548N
+BIOS Model name:                         pc-i440fx-6.1  CPU @ 2.0GHz
+BIOS CPU family:                         1
+CPU family:                              6
+Model:                                   106
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+Socket(s):                               1
+Stepping:                                6
+BogoMIPS:                                5600.00
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault pti ssbd ibrs ibpb tpr_shadow flexpriority ept vpid ept_ad fsgsbase bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap clflushopt clwb avx512cd avx512bw avx512vl xsaveopt xsavec xgetbv1 wbnoinvd arat vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq
+Virtualization:                          VT-x
+               total        used        free      shared  buff/cache   available
+Mem:     67427414016 49105928192   626540544    34082816 18482110464 18321485824
+Swap:              0           0           0

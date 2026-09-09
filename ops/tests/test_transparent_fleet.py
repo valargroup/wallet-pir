@@ -84,6 +84,13 @@ fleet_prune
             self.assertEqual((root/'calls').read_text().splitlines(), ['read'])
             with self.assertRaises(subprocess.CalledProcessError):
                 shell(code, READY=json.dumps({**ready,'worker_assignment_sha256':'changed'}), **env)
+            worker['role'] = 'recent-replica'
+            assignment.write_text(json.dumps(dict(workers=[worker])))
+            env['TRANSPARENT_FLEET_JSON'] = json.dumps([worker])
+            shell(code, READY=json.dumps(ready), **env)
+            recent_unit = (root/'transparent-shard-server.service.owner.rendered').read_text()
+            self.assertIn('MemoryHigh=5905580032\n', recent_unit)
+            self.assertNotIn('MemoryHigh=', unit)
 
     def test_worker_decisions(self):
         wanted = dict(binary="bin", unit="unit", assignment="assignment", map="map")

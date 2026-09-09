@@ -82,3 +82,21 @@ pub fn process_cpu() -> Option<(u64, u64)> {
     let process = system.process(pid)?;
     Some((process.accumulated_cpu_time(), process.start_time()))
 }
+
+/// Return free allocator pages after retiring large revision allocations.
+/// glibc may retain freed arenas indefinitely across publication churn.
+/// This does not free live objects and is only an optimization; admission
+/// still uses the actual kernel charge on the next allocation.
+pub fn release_allocator_pages() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> std::ffi::c_int;
+        }
+        // SAFETY: glibc documents malloc_trim as thread-safe; zero retains no
+        // extra top-of-heap padding. No Rust allocation pointers are exposed.
+        unsafe {
+            malloc_trim(0);
+        }
+    }
+}

@@ -4,6 +4,10 @@ Updated 2026-09-08 against source `6ff2bfe`. The user accepted the [deployment t
 
 ## Sequence and critical path
 
+Optional parent-filter experiment: the [full-journal sweep and HTTP prototype](evidence/parent-filters-2026-09-08/README.md) are implemented. Recent direct retrieval wins the offline objective. The user subsequently approved the [archive artifact rollout](evidence/parent-filters-production-2026-09-08/README.md), whose small production canary passed. The baseline warm-up timed out on a 530,514-event wallet, before candidate measurements.
+
+- [ ] Establish a baseline completion budget for that workload, then repeat the same frozen finalists and paired seeds under identical limits. Resolve the recent latency and total-byte gates before claiming broad performance validation or a wider wallet rollout. The static artifact deployment does not close this benchmark gate.
+
 Deliver documentation first, then verified inventory and dataset, mixed census, full-chain correctness pilot, fleet/wallet prerequisites, target-host load tests, and staged activation. The optional narrower recent directory must not block the initial deployment. Do not provision the full fleet before mixed-set sizing and target-host measurements justify it.
 
 Suggested reviewable changes:
@@ -141,9 +145,13 @@ Each completed gate links source commits, exact commands and evidence. Update st
   population, compatible restart, memory and disk headroom. All eleven baseline
   wallet cases passed; the final nine overlapped publisher upgrades.
   [Live evidence](evidence/deployment-runtime-live-2026-09-08/README.md).
-- [ ] Validate four-slot restores on live canaries. The single-slot archive
-  warm deployment took 746 seconds; continuous publication is now active,
-  preventing the fixed-publication rollout from safely continuing.
+- [x] Confirm four-slot restores on live canaries: publisher rollout journals
+  record 17.644-second recent and 125.416-second archive prewarm; archive
+  upgrade took 362.398 seconds. [Follow-up evidence](evidence/deployment-runtime-followup-2026-09-08/README.md).
+- [ ] Enable persistent caches on the remaining four workers and implement
+  publisher-aware disk-cache reclamation. The recent canary has exhausted its
+  cache budget and rebuilds new tail runtimes without persisting them. Continuous
+  publication requires a compatible rollout procedure before fleet timing tests.
 - [ ] Measure a compatible-binary fleet deployment below ten minutes, excluding
   build/CI; verify unchanged rollouts cause zero restarts and router-only changes
   leave workers serving. Preserve decisions, phase timings and regression results.
@@ -161,4 +169,13 @@ Each completed gate links source commits, exact commands and evidence. Update st
 - [x] Deploy shadow and active operation from tested main; record real per-block latency, generation overlap RSS and both-origin consistency. Controller `c676fb6`, workers `6e0c65c`, fleet hook `08e2261`; [rollout and acceptance evidence](evidence/continuous-publication-2026-09-08/README.md).
 - [x] Observe at least 20 consecutive live blocks. Heights 3,476,357–3,476,376 passed with maximum 26.687-second visibility, no origin mismatches and no OOM/restarts; same evidence.
 - [x] Record actual wallet-adapter findings separately from reference-library tests. Current-pin fresh recovery and private tail/archive queries passed; a later map/filter race failed safely. Reference-library refresh fix `87226c3` passes controlled race/corruption tests and the 146-test client/store/server suite.
-- [ ] Migrate the Zakura adapter's accepted-anchor persistence/API and adopt the client refresh fix. A pin-only update from `5758ffd` to `87226c3` fails to compile: accepted-anchor rollback, target anchor input, coverage source anchor, pending-work target/validated events and new incomplete reasons need integration. Preserve the existing wallet checkout's uncommitted integration work; rerun store contracts, persisted recovery/reorg suites and concurrent-publication live recovery after migration. [Exact compiler findings](evidence/continuous-publication-2026-09-08/initial-attempts/wallet-updated-pin-recovery.log).
+- [x] Update the Zakura adapter's accepted-anchor persistence/API and adopt client `22e6bec`. Wallet main `bca43b343` preserves the prior integration, persists source/target anchors and validated page events, uses a fixed independently accepted target, rolls back to an exact ancestor, and returns amount plus coverage atomically to the app. Layout 4 rejects old databases without deleting them; no migration was requested. Store contracts, 282 wallet Rust tests, an extra schema rejection test, 49 UI tests, binding analysis, macOS build and live recent/archive private queries passed. [Evidence](evidence/hardening-2026-09-08/README.md).
+- [x] Complete fresh-wallet live recovery against concurrent publication with independently supplied node hashes. Wallet test commit `2c7cee52c` requires the independent accepted-chain fixture; recovery reached 3,476,726 in 3.665 seconds and repeated in 2.142 seconds, with complete coverage and no pending/unresolved work. This empty test wallet does not establish recovery of a specific user payment.
+
+## Worker hardening rollout
+
+- [x] Add cancellation-safe transient allocation reservations, safe failed-slot removal, allocator reclamation and disk cache collection tied to active/candidate/held revisions. Worker, cache churn and operator tests passed.
+- [x] Add background recent-replica catch-up with worker/routing locks and canonical/withdrawal rechecks, scoped to a deployment canary. Deploy recent-01 with the hardened binary and measured soft-limit configuration.
+- [ ] Pass both six hours and 300 new blocks with two sustained exact private-query clients, public and canary visibility within 30 seconds, no OOM/restart, canonical endpoints and 20% host memory headroom. Replacement run: `transparent-hardening-canary-soak-3.service`, started 2026-09-08 23:15:22 UTC; first run stopped after reclamation stalls, second failed catch-up freshness and led to correction `7b76b39`. Preserve the eventual result and full evidence.
+- [ ] After acceptance, roll remaining recent replicas individually, validate archive rollout before upgrading owners, remove canary reconciliation scope, and verify all advertised workers warm on the current publication.
+- [ ] Complete 24-hour post-rollout monitoring and the remaining failure/rollback rehearsals; do not promote the short smoke or deterministic reorg tests to live fleet acceptance.

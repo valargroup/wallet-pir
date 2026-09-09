@@ -1,0 +1,75 @@
+{
+  "status": "incomplete",
+  "failures": [
+    "Missing complete.json: paired experiment did not finish",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-01-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-01-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-01-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-01-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-02-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-02-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-02-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-02-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-03-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-03-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-03-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-03-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-04-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-04-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-04-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-04-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-05-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-05-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-05-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-05-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-06-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-06-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-06-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-06-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-07-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-07-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-07-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-07-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-08-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-08-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-08-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-08-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-09-variant-2/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-09-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-09-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-09-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-10-variant-0/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-10-variant-3/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-10-variant-1/report.json",
+    "/srv/zakura/parent-filter-eval-20260908/http-journal-seeds/wave-10-variant-2/report.json"
+  ],
+  "recommended": null,
+  "results": [
+    {
+      "id": "baseline",
+      "profiles": {}
+    },
+    {
+      "id": "archive-wide-k8-m100",
+      "profiles": {},
+      "correctness_gate": false,
+      "recent_bytes_gate": false,
+      "latency_gate": false
+    },
+    {
+      "id": "archive-wide-k16-m100",
+      "profiles": {},
+      "correctness_gate": false,
+      "recent_bytes_gate": false,
+      "latency_gate": false
+    },
+    {
+      "id": "archive-wide-k4-m100",
+      "profiles": {},
+      "correctness_gate": false,
+      "recent_bytes_gate": false,
+      "latency_gate": false
+    }
+  ],
+  "limits": "Synthetic mixed workload; median latency only. Final production adoption additionally requires retained-cache and revision tests."
+}

@@ -265,6 +265,8 @@ pub struct Snapshot {
     pub revisions: u64,
     pub prunable_revisions: u64,
     pub cache_budget_bytes: u64,
+    pub warm_runtimes: u64,
+    pub work_memory_reserved_bytes: u64,
     pub process_rss_bytes: Option<u64>,
     pub process_cpu: Option<(u64, u64)>,
     pub cgroup_memory_bytes: Option<(u64, Option<u64>)>,
@@ -515,8 +517,8 @@ impl Metrics {
             Self::get(&self.body_bytes_in_flight),
         );
         line(
-            "transparent_shard_warm_runtimes",
-            "gauge",
+            "transparent_shard_prewarm_operations_total",
+            "counter",
             "Runtimes the prewarm has built or found resident.",
             Self::get(&self.warm_runtimes),
         );
@@ -546,6 +548,18 @@ impl Metrics {
                 rss,
             );
         }
+        line(
+            "transparent_shard_warm_runtimes",
+            "gauge",
+            "Current publication runtimes warmed.",
+            snapshot.warm_runtimes,
+        );
+        line(
+            "transparent_shard_work_memory_reserved_bytes",
+            "gauge",
+            "Reservations held by build, restore and query work.",
+            snapshot.work_memory_reserved_bytes,
+        );
         if let Some((current, max)) = snapshot.cgroup_memory_bytes {
             line(
                 "transparent_shard_cgroup_memory_current_bytes",
@@ -667,6 +681,8 @@ mod tests {
             revisions: 2,
             prunable_revisions: 0,
             cache_budget_bytes: 1,
+            warm_runtimes: 1,
+            work_memory_reserved_bytes: 0,
             process_rss_bytes: Some(2),
             process_cpu: Some((1500, 123)),
             cgroup_memory_bytes: Some((3, None)),

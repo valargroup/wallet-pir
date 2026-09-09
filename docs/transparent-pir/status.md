@@ -1,6 +1,10 @@
 # Transparent PIR status
 
-Source inspection: 2026-09-08 through `87226c3`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
+Source inspection: 2026-09-08 through worker hardening `9af5c12` and catch-up correction `7b76b39`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
+
+## Archive parent artifacts: observed 2026-09-08
+
+The [production parent-filter rollout](evidence/parent-filters-production-2026-09-08/README.md) published the archive bundle on the existing public filter origin. All 20 bodies were verified over HTTPS and all 160 archive descriptors matched both production origins. The updated reference client (`5577b34`) completed 5/5 exact recoveries with parents enabled and 5/5 with direct filters; the three recent profiles downloaded identical bytes. This was a small deployment canary, not the unfinished paired performance study. Wallet applications require explicit opt-in; no application release or PIR worker rollout was performed.
 
 ## Source-verified implementation
 
@@ -28,9 +32,35 @@ Source inspection: 2026-09-08 through `87226c3`. Live state is observed separate
 
 Relevant sources: [store](../../pir/transparent-wallet/src/store.rs), [publisher](../../server/transparent-filter-server/src/bin/shard-publish.rs), [census](../../server/transparent-filter-server/src/bin/shard-census.rs), [service](../../server/transparent-shard-server/src/service.rs), [runtime](../../server/transparent-shard-server/src/runtime.rs), [loader](../../server/transparent-shard-server/src/shardset.rs), [wallet](../../pir/transparent-wallet/src/sync.rs).
 
+## Hardening and adapter: observed 2026-09-08, 23:04 UTC
+
+[Hardening evidence](evidence/hardening-2026-09-08/README.md) separates committed
+changes from rollout state. Shared transient memory admission, allocator
+reclamation, disk runtime collection and background recent-replica reconciliation
+are implemented. Only recent-01 has the new worker binary; reconciliation is
+restricted to that canary. The other five workers retain their previous binary.
+Both public origins agreed at height 3,476,721, matching node and journal. All
+workers reported warm; recent-02 and recent-03 were still on older publications.
+
+The Zakura adapter is committed to `zakura-core/wallet-libraries` main at
+`bca43b343`, pinned to client `22e6bec`: fixed accepted scan target, exact rollback
+anchor, distinct coverage source anchor, durable validated page progress,
+explicit incomplete reasons, and atomic balance/coverage reads through the app.
+Its new layout 4 refuses older layouts without deleting wallet data. The 282-test
+wallet suite, schema rejection test, 49 UI tests, generated binding analysis and
+macOS debug build passed. Live recent/archive adapter queries decoded correctly;
+a fresh recovery using independent node hashes also reached its accepted target of 3,476,726 and completed on repeat. These test fixtures do not prove a particular user's balance.
+
+A 60-second canary smoke passed 662 exact private queries. The initial sustained
+run exposed excessive reclamation at a 5 GiB MemoryHigh and was stopped. The
+second run found a catch-up scheduling gap during a block burst. Commit
+`7b76b39` corrected it without relaxing the gate; the third run uses the
+[deployment target](deployment.md) and began at 23:15:22 UTC. **The six-hour/300-block canary, wider rollout and 24-hour monitoring
+are not yet accepted.** See [remaining work](remaining-work.md).
+
 ## Live deployment: observed 2026-09-08, continuous publication
 
-The current rollout is recorded in [continuous-publication evidence](evidence/continuous-publication-2026-09-08/README.md). The post-fix 20-block service acceptance passed; the wallet adapter migration identified below remains open. Earlier [dataset inventory](evidence/inventory-2026-09-08/README.md), [full-chain publication](evidence/publication-2026-09-08/README.md), [warm fleet measurements](evidence/runs/fleet-warm-2026-09-08-c/README.md) and [cache canaries](evidence/deployment-runtime-live-2026-09-08/README.md) remain historical evidence at their recorded sources and workloads.
+The current rollout is recorded in [continuous-publication evidence](evidence/continuous-publication-2026-09-08/README.md). The post-fix 20-block service acceptance passed; the subsequent wallet adapter changes and worker canary are recorded below. Earlier [dataset inventory](evidence/inventory-2026-09-08/README.md), [full-chain publication](evidence/publication-2026-09-08/README.md), [warm fleet measurements](evidence/runs/fleet-warm-2026-09-08-c/README.md) and [cache canaries](evidence/deployment-runtime-live-2026-09-08/README.md) remain historical evidence at their recorded sources and workloads.
 
 | Field | Observed |
 |---|---|
@@ -50,3 +80,12 @@ The current rollout is recorded in [continuous-publication evidence](evidence/co
 ## Decision and evidence state
 
 The user accepted the two-tier target on 2026-09-07. [Deployment](deployment.md) owns its settings. Full-chain uniform geometry and single-c8 evaluation/residency evidence exist; mixed publication evidence and limited target-host HTTP measurements are recorded; sustained capacity, cross-host scaling and mobile wallet latency remain open. [Remaining work](remaining-work.md) is the authoritative checklist.
+
+## Deployment runtime follow-up
+
+[Further live validation](evidence/deployment-runtime-followup-2026-09-08/README.md)
+confirmed four-slot startup prewarm at 17.644 seconds on recent-01 and 125.416
+seconds on archive-01 from current-process journals. Three new encrypted public
+row probes passed. Four workers still lack disk-cache configuration; recent-01
+has exhausted its disk-cache budget and rebuilds new tails without persisting
+them. A full-fleet deployment under ten minutes remains unverified.
