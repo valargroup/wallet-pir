@@ -71,5 +71,18 @@
   },
   "dataset_manifest_sha256": "33935ba58c885d3c4d67507476de18f25329be2dabb4b8bcbcbd7f2f9dfd5ce9",
   "extra_volume": null,
-  "free_bytes_after_copy": 48234639360
+  "free_bytes_after_copy": 48234639360,
+  "metrics_transport": {
+    "block": "loadgen 127.0.0.1:19097 forwards over private SSH to baseline 127.0.0.1:8097",
+    "filter": "coordinator 127.0.0.1:8090 reverse-forwards over private SSH to loadgen 127.0.0.1:19100",
+    "workers": "direct private VPC port 8093",
+    "operator_dependency": false
+  },
+  "full_comparison": {
+    "run_id": "full-20260909-private-apm",
+    "exact_recoveries": 80,
+    "expected_recoveries": 80,
+    "apm_scrapes": "all configured targets observed without gaps",
+    "evidence": "../../docs/transparent-pir/evidence/block-comparison-2026-09-09/README.md"
+  }
 }

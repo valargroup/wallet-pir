@@ -1,0 +1,9 @@
+tools/check-doc-links.sh
+check-doc-links: 50 files, no broken links
+python3 -m unittest discover -s server/transparent-loadtest/tests -p 'test_*.py'
+........Measured wave did not start; opening its preparation results.
+.
+----------------------------------------------------------------------
+Ran 9 tests in 11.103s
+
+OK

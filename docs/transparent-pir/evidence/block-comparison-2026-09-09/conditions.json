@@ -1,0 +1,144 @@
+{
+  "servers": [
+    {
+      "id": 598646446,
+      "name": "transparent-pir-archive-01",
+      "memory": 65536,
+      "vcpus": 8,
+      "disk": 200,
+      "size_slug": "m-8vcpu-64gb",
+      "region": "ams3"
+    },
+    {
+      "id": 598646447,
+      "name": "transparent-pir-archive-02",
+      "memory": 65536,
+      "vcpus": 8,
+      "disk": 200,
+      "size_slug": "m-8vcpu-64gb",
+      "region": "ams3"
+    },
+    {
+      "id": 598646448,
+      "name": "transparent-pir-recent-02",
+      "memory": 8192,
+      "vcpus": 4,
+      "disk": 160,
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3"
+    },
+    {
+      "id": 598646449,
+      "name": "transparent-pir-recent-04",
+      "memory": 8192,
+      "vcpus": 4,
+      "disk": 160,
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3"
+    },
+    {
+      "id": 598646452,
+      "name": "transparent-pir-recent-03",
+      "memory": 8192,
+      "vcpus": 4,
+      "disk": 160,
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3"
+    },
+    {
+      "id": 598646453,
+      "name": "transparent-pir-recent-01",
+      "memory": 8192,
+      "vcpus": 4,
+      "disk": 160,
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3"
+    },
+    {
+      "id": 598869323,
+      "name": "transparent-sync-bench",
+      "memory": 8192,
+      "vcpus": 4,
+      "disk": 160,
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3"
+    },
+    {
+      "id": 597174997,
+      "name": "enhance-pir-coordinator-01",
+      "memory": 65536,
+      "vcpus": 8,
+      "disk": 200,
+      "size_slug": "m-8vcpu-64gb-intel",
+      "region": "ams3",
+      "role": "shared filter/coordinator; process CPU/RSS unavailable from metrics"
+    }
+  ],
+  "client_memory_bytes": 34359738368,
+  "client_cpu": "Intel Xeon Platinum 8280 @ 2.70 GHz, 16 vCPUs",
+  "cache_conditions": "Client stores and retrieval setup caches start cold. Shared prior-ledger preparation may warm PIR server caches. No server cache eviction is performed. Mixed runs PIR first; fresh runs blocks first.",
+  "background_work": "PIR fleet continues normal publication and may serve other traffic. Server counters include background work. Baseline host is dedicated to this benchmark.",
+  "transport": "Public TLS from the same Amsterdam load generator for both backends; colocated regional latency, not Canadian WAN latency. Encoded HTTP payloads exclude headers and TLS framing.",
+  "block_layout": "Length-delimited per-block protobuf messages; gzip is applied independently to each immutable batch of up to 1000 blocks.",
+  "metrics_scope": "All six retrieval workers plus filter-service metrics. The filter service does not export process CPU/RSS, so those fields are unavailable; no total-system CPU claim is made. Block counters cover batch payloads submitted by the dedicated server.",
+  "prior_ledger_preparation": {
+    "report": "/opt/transparent-sync-bench-client/preparation/report.html",
+    "report_sha256": "15cf1e72caa2bc177cc1e1fb3a8a3ae80d6e3706bc7207029adff5904f2b7e51",
+    "selected_sample_sha256": "04497cd01e8ef28373256adc87c4f01ad8b84cd39ace029a3501b3b6dc910393",
+    "source_binary_sha256": "17cc540c70cf960ab537c767faa44073083bba470873fff1944c372d11fdfabf",
+    "complete_wallets": 16,
+    "scope": "Complete PIR recoveries with the supplied window digests checked; only events before each measured range are imported. Identical seed files are supplied to both methods."
+  },
+  "client_host": "transparent-pir-loadgen-01",
+  "client_region": "ams3",
+  "client_public_ipv4": "152.42.137.247",
+  "metrics_transport": "Private Amsterdam SSH tunnels: loadgen to baseline for block metrics; coordinator to loadgen reverse tunnel for filter metrics. Six workers directly over VPC. Independent of operator Mac connection.",
+  "pir_filter_mode": "Standard per-shard filters; optional parent-filter experiment disabled.",
+  "client_source_commit": "ae75d12",
+  "client_source_note": "Source archive ae75d12 with the SQLite coverage append fix from 1d95ebf. Both methods use this same frozen executable.",
+  "baseline_cache": "Server startup checksum verification reads all artifacts. No filesystem cache eviction is performed; the dataset exceeds server RAM.",
+  "client_binary_sha256": "eba1a7ca837b3f63be21e48aa97b138a2f48537845f60e5271f9d77f0d4aa27a",
+  "baseline_scope": "Controlled HTTP serving of exported per-block compact protobufs, batched and gzip-compressed. This is not a latency measurement of a deployed lightwalletd GetBlockRange service.",
+  "comparison_controller_sha256": "663bc718bd8fe25903f7581b0c73740823b7f77a3b8857d8494b98d9bd238490",
+  "comparison_controller_source_commit": "252cb83",
+  "pir_running_binaries_before": {
+    "at": 1788917594.667777,
+    "workers": [
+      {
+        "name": "transparent-pir-archive-01",
+        "pid": 60362,
+        "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+      },
+      {
+        "name": "transparent-pir-archive-02",
+        "pid": 58905,
+        "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+      },
+      {
+        "name": "transparent-pir-recent-02",
+        "pid": 53728,
+        "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+      },
+      {
+        "name": "transparent-pir-recent-04",
+        "pid": 188477,
+        "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+      },
+      {
+        "name": "transparent-pir-recent-03",
+        "pid": 52991,
+        "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+      },
+      {
+        "name": "transparent-pir-recent-01",
+        "pid": 202707,
+        "running_binary_sha256": "817b621cbffc5743750ed0d91280dc041ed4040f55764aadf1230ce6cc718eee"
+      }
+    ]
+  },
+  "fleet_conditions": "Normal shared-fleet publication continues. Five workers and one recent canary currently have different binary hashes; hashes and raw APM are retained, so this is not a controlled uniform-version fleet test.",
+  "client_source_overrides": {
+    "pir/transparent-wallet-store/src/lib.rs": "1d95ebf"
+  },
+  "prior_diagnostic_run": "full-20260909 interrupted for quadratic SQLite fix; full-20260909-linear-coverage passed all 80 recoveries but had operator-network APM gaps. This repeat uses fresh client stores and private APM; preceding runs may warm servers."
+}

@@ -1,0 +1,167 @@
+{
+  "success": true,
+  "suites": {
+    "mixed": {
+      "pir": {
+        "exact": 20,
+        "upload_bytes": 135796584,
+        "download_bytes": 277682138,
+        "median_seconds": 2.012673854827881,
+        "max_seconds": 30.491631507873535,
+        "client_cpu_seconds": 42.78,
+        "server_apm": [
+          {
+            "target": "filter",
+            "cpu_seconds": null,
+            "peak_rss_bytes": null,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "archive-01",
+            "cpu_seconds": 2.4200000000000728,
+            "peak_rss_bytes": 49790218240.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "archive-02",
+            "cpu_seconds": 17.099999999999454,
+            "peak_rss_bytes": 50227367936.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-03",
+            "cpu_seconds": 6.450000000000728,
+            "peak_rss_bytes": 5500055552.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-01",
+            "cpu_seconds": 21.11999999999989,
+            "peak_rss_bytes": 5643993088.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-04",
+            "cpu_seconds": 13.730000000000018,
+            "peak_rss_bytes": 7142772736.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-02",
+            "cpu_seconds": 16.55999999999949,
+            "peak_rss_bytes": 5786923008.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          }
+        ],
+        "total_bytes": 413478722
+      },
+      "blocks": {
+        "exact": 20,
+        "upload_bytes": 0,
+        "download_bytes": 38445232614,
+        "median_seconds": 8.125855207443237,
+        "max_seconds": 235.9132435321808,
+        "client_cpu_seconds": 1045.91,
+        "server_apm": [
+          {
+            "target": "blocks",
+            "cpu_seconds": 114.94000000000005,
+            "peak_rss_bytes": 217776128.0,
+            "response_payload_bytes": 38431008208.0,
+            "evidence": "observed"
+          }
+        ],
+        "total_bytes": 38445232614
+      },
+      "total_traffic_savings_fraction": 0.9892449936211485
+    },
+    "fresh": {
+      "pir": {
+        "exact": 20,
+        "upload_bytes": 205170264,
+        "download_bytes": 1275924491,
+        "median_seconds": 20.356045126914978,
+        "max_seconds": 48.25983667373657,
+        "client_cpu_seconds": 92.26,
+        "server_apm": [
+          {
+            "target": "filter",
+            "cpu_seconds": null,
+            "peak_rss_bytes": null,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "archive-01",
+            "cpu_seconds": 2.490000000000009,
+            "peak_rss_bytes": 49789231104.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "archive-02",
+            "cpu_seconds": 30.73999999999978,
+            "peak_rss_bytes": 50231382016.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-01",
+            "cpu_seconds": 10.190000000000055,
+            "peak_rss_bytes": 5582909440.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-03",
+            "cpu_seconds": 0.16000000000167347,
+            "peak_rss_bytes": 5500063744.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-04",
+            "cpu_seconds": 9.149999999999864,
+            "peak_rss_bytes": 7077199872.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          },
+          {
+            "target": "recent-02",
+            "cpu_seconds": 0.18000000000029104,
+            "peak_rss_bytes": 5474947072.0,
+            "response_payload_bytes": null,
+            "evidence": "observed"
+          }
+        ],
+        "total_bytes": 1481094755
+      },
+      "blocks": {
+        "exact": 20,
+        "upload_bytes": 0,
+        "download_bytes": 185101412900,
+        "median_seconds": 799.3211277723312,
+        "max_seconds": 809.7853419780731,
+        "client_cpu_seconds": 7506.31,
+        "server_apm": [
+          {
+            "target": "blocks",
+            "cpu_seconds": 494.48,
+            "peak_rss_bytes": 221229056.0,
+            "response_payload_bytes": 185040388840.0,
+            "evidence": "observed"
+          }
+        ],
+        "total_bytes": 185101412900
+      },
+      "total_traffic_savings_fraction": 0.9919984686675506
+    }
+  }
+}

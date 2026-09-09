@@ -1,0 +1,35 @@
+{
+  "at": 1788919286.8012655,
+  "workers": [
+    {
+      "name": "transparent-pir-archive-01",
+      "pid": 60362,
+      "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+    },
+    {
+      "name": "transparent-pir-archive-02",
+      "pid": 58905,
+      "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+    },
+    {
+      "name": "transparent-pir-recent-02",
+      "pid": 53728,
+      "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+    },
+    {
+      "name": "transparent-pir-recent-04",
+      "pid": 188477,
+      "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+    },
+    {
+      "name": "transparent-pir-recent-03",
+      "pid": 52991,
+      "running_binary_sha256": "a2ed225699fdee84a155dba28a94e85decc917f8382da0258faf03c02cc6682a"
+    },
+    {
+      "name": "transparent-pir-recent-01",
+      "pid": 202707,
+      "running_binary_sha256": "817b621cbffc5743750ed0d91280dc041ed4040f55764aadf1230ce6cc718eee"
+    }
+  ]
+}

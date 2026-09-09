@@ -1,0 +1,61 @@
+{
+  "schema": "transparent-block-comparison-evidence-v1",
+  "run_id": "full-20260909-private-apm",
+  "status": "passed",
+  "dataset_id": "3a9c03fa734acbf9eb21f3030ad71cc63113f1957d492702546b024df062a02d",
+  "anchor_height": 3473686,
+  "client_source_commit": "ae75d12",
+  "client_source_archive_sha256": "ba1bf74dbfa0d159bdf26095ea9f687b00b5a2d269962a87c2960b5e34f8bda0",
+  "client_binary_sha256": "eba1a7ca837b3f63be21e48aa97b138a2f48537845f60e5271f9d77f0d4aa27a",
+  "controller_source_commit": "252cb83",
+  "server_binary_sha256": "7dbcf5ac1d40d04df4ad78a191fe0d6b6a1aaf677ccaf3992acce2a926dbf861",
+  "server_source_archive_sha256": "568a9cd681961f4f85674bdf59bd22e1456f8dc9d1a361fa3088ead5da20b411",
+  "build_profile": "release",
+  "dependency_lock_sha256": "f2d01365710437d5bb38648b4e9e5cde52b3709f84a886e0856b62a6d2e54be5",
+  "command_file": "command.sh",
+  "remote_report_directory": "root@152.42.137.247:/opt/transparent-sync-bench-client/results/full-20260909-private-apm",
+  "local_report_directory": "/tmp/transparent-sim-compare-amsterdam-private-apm-20260909",
+  "dataset_directory": "root@167.172.34.2:/srv/transparent-sync-bench/data",
+  "schema_manifest": "dataset-manifest.json.gz",
+  "replicates_per_suite_and_method": 1,
+  "wallets_per_run": 20,
+  "suites": {
+    "mixed": {
+      "order": [
+        "pir",
+        "blocks"
+      ],
+      "deadline_seconds": 600,
+      "initial_state": "identical validated prior-ledger seeds; cold client filter/setup caches"
+    },
+    "fresh": {
+      "order": [
+        "blocks",
+        "pir"
+      ],
+      "deadline_seconds": 21600,
+      "initial_state": "empty SQLite stores; fixed known scripts; from genesis"
+    }
+  },
+  "validation": {
+    "make_check_exit_status": 0,
+    "make_check_log": "make-check.log.gz"
+  },
+  "limitations": [
+    "Synthetic profiles, not population weights or seed/HD discovery.",
+    "HTTP payload bytes exclude headers/TLS, controller preflight and preparation.",
+    "Compact protobufs are gzip-compressed per immutable batch, not per gRPC message.",
+    "Shared live PIR fleet, heterogeneous hardware and one different worker binary; no cache eviction.",
+    "Partial/missing server APM is unavailable, not zero; no total-system CPU or equal-hardware capacity claim."
+  ],
+  "client_source_overrides": {
+    "pir/transparent-wallet-store/src/lib.rs": "1d95ebf"
+  },
+  "completed_at_utc": "2026-09-09T02:19:32.450117+00:00",
+  "raw_report": "raw/report.json.gz",
+  "summary": "summary.json",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+  "protobuf_sha256": "d8d0c8aaa5ceec7d5dcc188ef25b04011df2ec0254901620fce982fc13aeb32d",
+  "client_store_source_sha256": "b74b59fabb954c0ed424456da540e8421566d0dde73b35ea3f31769c8dc788f8"
+}

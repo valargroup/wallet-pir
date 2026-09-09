@@ -1,0 +1,113 @@
+{
+  "captured_at": "2026-09-09T01:14:25.913924+00:00",
+  "hosts": [
+    {
+      "name": "enhance-pir-coordinator-01",
+      "size_slug": "m-8vcpu-64gb-intel",
+      "region": "ams3",
+      "hostname": "enhance-pir-coordinator-01",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "INTEL(R) XEON(R) GOLD 6548N",
+      "logical_cpus": 8,
+      "memory_bytes": 67427414016,
+      "root_filesystem_bytes": 206900281344,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-pir-archive-01",
+      "size_slug": "m-8vcpu-64gb",
+      "region": "ams3",
+      "hostname": "transparent-pir-archive-01",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz",
+      "logical_cpus": 8,
+      "memory_bytes": 67427405824,
+      "root_filesystem_bytes": 206900281344,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-pir-archive-02",
+      "size_slug": "m-8vcpu-64gb",
+      "region": "ams3",
+      "hostname": "transparent-pir-archive-02",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "Intel(R) Xeon(R) Platinum 8168 CPU @ 2.70GHz",
+      "logical_cpus": 8,
+      "memory_bytes": 67427401728,
+      "root_filesystem_bytes": 206900281344,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-pir-recent-02",
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3",
+      "hostname": "transparent-pir-recent-02",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "DO-Regular",
+      "logical_cpus": 4,
+      "memory_bytes": 8326942720,
+      "root_filesystem_bytes": 165295407104,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-pir-recent-04",
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3",
+      "hostname": "transparent-pir-recent-04",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "DO-Regular",
+      "logical_cpus": 4,
+      "memory_bytes": 8326942720,
+      "root_filesystem_bytes": 165295407104,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-pir-recent-03",
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3",
+      "hostname": "transparent-pir-recent-03",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "DO-Regular",
+      "logical_cpus": 4,
+      "memory_bytes": 8326942720,
+      "root_filesystem_bytes": 165295407104,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-pir-recent-01",
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3",
+      "hostname": "transparent-pir-recent-01",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "DO-Regular",
+      "logical_cpus": 4,
+      "memory_bytes": 8326942720,
+      "root_filesystem_bytes": 165295407104,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-pir-loadgen-01",
+      "size_slug": "c-16",
+      "region": "ams3",
+      "hostname": "transparent-pir-loadgen-01",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "Intel(R) Xeon(R) Platinum 8280 CPU @ 2.70GHz",
+      "logical_cpus": 16,
+      "memory_bytes": 33652011008,
+      "root_filesystem_bytes": 206900281344,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    },
+    {
+      "name": "transparent-sync-bench",
+      "size_slug": "s-4vcpu-8gb",
+      "region": "ams3",
+      "hostname": "transparent-sync-bench",
+      "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+      "cpu_model": "DO-Regular",
+      "logical_cpus": 4,
+      "memory_bytes": 8326942720,
+      "root_filesystem_bytes": 165295407104,
+      "os_release": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+    }
+  ]
+}

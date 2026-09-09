@@ -20,7 +20,7 @@ transparent-sync-bench.valargroup.dev {
 Disable the proxy transport's automatic decompression as shown above; do not add
 an `encode` middleware. The wallet explicitly negotiates gzip and decodes it after
 checking the encoded payload's length and checksum. Its cloud firewall allows HTTPS from the recorded
-measurement client and the recorded operator address, SSH from the operator and the export host, and HTTP for
+measurement client and the recorded operator address, SSH from the operator, measurement client and export host, and HTTP for
 ACME certificate validation. If the measurement client's IP changes, update that
 specific firewall rule and the recorded address before testing. Never broaden
 PIR-worker firewall rules to make a benchmark work.
@@ -28,10 +28,10 @@ PIR-worker firewall rules to make a benchmark work.
 Metrics remain private. From the measurement client:
 
 ```sh
-ssh -N -L 18097:127.0.0.1:8097 transparent-sync-bench
+ssh -N -L 19097:127.0.0.1:8097 root@10.142.0.14
 ```
 
-Use `BLOCK_METRICS_URL=http://127.0.0.1:18097/metrics` in the comparison. Record
+Use `BLOCK_METRICS_URL=http://127.0.0.1:19097/metrics` in the comparison. Record
 metrics from every PIR worker independently as described in the load-test README.
 
 Copy a complete, verified export into `/srv/transparent-sync-bench/data` before
@@ -55,3 +55,10 @@ uses the same CLI as the local Make target. The six PIR worker metrics endpoints
 are reachable over the private VPC. Filter and block metrics remain on loopback
 and are forwarded over SSH; note this transport in the conditions metadata and
 retain scrape failures in the report. Do not expose private metrics publicly.
+
+The September 9 comparison uses SSH tunnels entirely within Amsterdam: the
+load generator connects to the baseline over the private network, and the
+coordinator reverse-forwards its filter metrics to load-generator loopback port
+19100. Authentication used a temporary forwarded agent; private keys were not
+copied. These established connections do not depend on the operator Mac staying
+online. Recreate them after a host restart before starting an APM comparison.

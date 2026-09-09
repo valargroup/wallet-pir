@@ -6,6 +6,7 @@ Updated 2026-09-09. Evidence supports the [deployment decision](../deployment.md
 
 | Evidence | Scope | Valid use | Limit |
 |---|---|---|---|
+| [Amsterdam PIR versus compact blocks](block-comparison-2026-09-09/README.md) | Full chain through 3,473,686; mixed and fresh suites, 20 concurrent wallets per method | 80 exact recoveries, per-wallet traffic/timing and observed server APM | One pair per suite; synthetic profiles, shared heterogeneous PIR fleet, controlled HTTP baseline |
 | [Managed preparation and gated rollout](managed-preparation-2026-09-09/README.md) | Persistent preparation ownership, active reorg validity, prewarm retries and coordinated maintenance | Exact source/tests, failed attempts, corrected recent-01 deployment and dated loaded-canary snapshot | Six-hour/300-block gate, whole-fleet batch and 24-hour observation still pending |
 | [Worker hardening and wallet adapter](hardening-2026-09-08/README.md) | Recent canary, memory/cache corrections, wallet store/API/app changes | Dated source/tests, live query smoke and failed attempts | Six-hour/300-block gate and wider rollout pending; no user balance proof |
 | [Continuous publication rollout](continuous-publication-2026-09-08/README.md) | Mainnet RPC ingestion, suffix publication, warm activation, public routing and wallet adapter | Dated rollout, reorg withdrawal, memory corrections and final acceptance record | See the run result; no user balance, mobile latency or saturation claim |

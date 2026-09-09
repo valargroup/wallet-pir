@@ -1,0 +1,133 @@
+{
+  "scope": "20 concurrent TLS downloads of one large exported batch; transport diagnostic, not wallet performance",
+  "dataset_id": "ed51e18c20cca786e7e1971e8c069a3336371695e1790d4b77aa79ec3a366619",
+  "artifact": {
+    "bytes": 157011096,
+    "sha256": "4ca804c2c9b56fee1812866555b0b4a2725f0932f2777d10e7f2b5562fad519b"
+  },
+  "started_at": 1788913238.2482715,
+  "seconds": 13.400375127792358,
+  "success": true,
+  "results": [
+    {
+      "index": 2,
+      "seconds": 12.184182881996094,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 4,
+      "seconds": 12.332551839994267,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 13,
+      "seconds": 12.623542094996083,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 11,
+      "seconds": 12.65835424400575,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 5,
+      "seconds": 12.927760918006243,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 12,
+      "seconds": 12.938893970000208,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 18,
+      "seconds": 12.99850798099942,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 0,
+      "seconds": 13.030540394000127,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 16,
+      "seconds": 13.025845860996924,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 6,
+      "seconds": 13.059226582998235,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 9,
+      "seconds": 13.114876843996171,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 17,
+      "seconds": 13.161620331004087,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 15,
+      "seconds": 13.194636312997318,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 8,
+      "seconds": 13.205443926002772,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 7,
+      "seconds": 13.236794918004307,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 14,
+      "seconds": 13.263196377003624,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 19,
+      "seconds": 13.273149485998147,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 10,
+      "seconds": 13.313747621003131,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 1,
+      "seconds": 13.344453641002474,
+      "bytes": 157011096,
+      "exact": true
+    },
+    {
+      "index": 3,
+      "seconds": 13.388906689004216,
+      "bytes": 157011096,
+      "exact": true
+    }
+  ]
+}
