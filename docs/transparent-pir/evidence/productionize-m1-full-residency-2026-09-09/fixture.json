@@ -1,0 +1,77 @@
+{
+  "worker_id": "transparent-pir-recent-01",
+  "query_shard": 173,
+  "publications": [
+    {
+      "directory": "0",
+      "assignment": "0/assignment.json",
+      "map_sha256": "f2416193787fd2b3d35802d9ab7ae5d7efe54bc2f37479d4fd69a5c307089e0b",
+      "height": 3477140,
+      "hash": "00000000005cf82ee2d051e0dc380256f99662284d26f9e83eebffae0c68c5f3",
+      "assigned_shards": [
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173
+      ]
+    },
+    {
+      "directory": "1",
+      "assignment": "1/assignment.json",
+      "map_sha256": "378daa990634e8524a321b75d2b6adf4f03d0e92f22f57d6cb85c3b0bd120e8e",
+      "height": 3477141,
+      "hash": "00000000003ff1c0e469e155ac1ec4c284c336a2e677d7fc85e78f925c59b4d1",
+      "assigned_shards": [
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173
+      ]
+    },
+    {
+      "directory": "2",
+      "assignment": "2/assignment.json",
+      "map_sha256": "eb36a08960344f08ed2d26f3f63bf8e32440f9eb6b75a80d0af1b107b27c9d52",
+      "height": 3477142,
+      "hash": "00000000006bbe1a5d446c38c48afa2d949d30d292a5a8808f8a27a8cbebbd26",
+      "assigned_shards": [
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173
+      ]
+    }
+  ],
+  "captured_utc": "2026-09-09T07:58:33.768333+00:00",
+  "scope": "frozen recent assignment; no live authority"
+}

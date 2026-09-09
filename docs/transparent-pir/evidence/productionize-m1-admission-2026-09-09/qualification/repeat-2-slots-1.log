@@ -1,0 +1,273 @@
+Running as unit: transparent-full-burst-e4a4b80329204d289ab0162f4860ef5b.service; invocation ID: ef250860610c4f009a2cce91c9c8947b
+
+running 1 test
+2026-09-09T08:57:26.575109Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=3.257e-6 stage="restore_slot"
+2026-09-09T08:57:26.575179Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=6.63e-7 stage="restore_slot"
+2026-09-09T08:57:26.575133Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=1.14e-6 stage="restore_slot"
+2026-09-09T08:57:26.575204Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=6.57e-7 stage="restore_slot"
+2026-09-09T08:57:26.575680Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=3.1274e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:26.575690Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=2.7356e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:26.575697Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=2.5636e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:26.575710Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=5.15e-7 stage="build_slot"
+2026-09-09T08:57:26.575726Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=9.7e-6 hit=false stage="disk_restore"
+2026-09-09T08:57:26.575746Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.1172e-5 admitted=true
+2026-09-09T08:57:26.708144Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=0.132384525 stage="source_load"
+2026-09-09T08:57:30.813165Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=4.104970823 stage="runtime_build"
+2026-09-09T08:57:31.549526Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=0.735029468 stage="disk_save"
+2026-09-09T08:57:31.549596Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=4.97385493 stage="build_slot"
+2026-09-09T08:57:31.549631Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=1.225e-6 stage="restore_slot"
+2026-09-09T08:57:31.549711Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=8.74e-5 admitted=true
+2026-09-09T08:57:31.549756Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=3.6351e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:31.684326Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=0.134571845 stage="source_load"
+2026-09-09T08:57:35.768812Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=4.084438039 stage="runtime_build"
+2026-09-09T08:57:36.499158Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=0.730298905 stage="disk_save"
+2026-09-09T08:57:36.499258Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=9.923516657 stage="build_slot"
+2026-09-09T08:57:36.499278Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=1.417e-6 stage="restore_slot"
+2026-09-09T08:57:36.499349Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.0066e-5 admitted=true
+2026-09-09T08:57:36.499395Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=2.7816e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:36.631504Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.132071729 stage="source_load"
+2026-09-09T08:57:40.648909Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=4.017364573 stage="runtime_build"
+2026-09-09T08:57:41.369921Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.720970446 stage="disk_save"
+2026-09-09T08:57:41.369990Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=14.794249306 stage="build_slot"
+2026-09-09T08:57:41.370044Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=1.176e-6 stage="restore_slot"
+2026-09-09T08:57:41.370068Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.0115e-5 admitted=true
+2026-09-09T08:57:41.370219Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=7.3922e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:41.493605Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=0.123515323 stage="source_load"
+2026-09-09T08:57:45.414806Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=3.9211583 stage="runtime_build"
+2026-09-09T08:57:46.127079Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=0.712232325 stage="disk_save"
+2026-09-09T08:57:46.127183Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=14.577366186999999 stage="build_slot"
+2026-09-09T08:57:46.127222Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=1.455e-6 stage="restore_slot"
+2026-09-09T08:57:46.127289Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=8.1686e-5 admitted=true
+2026-09-09T08:57:46.127368Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=2.5042e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:46.246917Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=0.119594455 stage="source_load"
+2026-09-09T08:57:50.133204Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=3.886243862 stage="runtime_build"
+2026-09-09T08:57:50.861777Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=0.728531575 stage="disk_save"
+2026-09-09T08:57:50.861898Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=14.362482052 stage="build_slot"
+2026-09-09T08:57:50.861955Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=1.245e-6 stage="restore_slot"
+2026-09-09T08:57:50.861999Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.8438e-5 admitted=true
+2026-09-09T08:57:50.862067Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=2.6204e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:50.980925Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=0.118902185 stage="source_load"
+2026-09-09T08:57:54.916783Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=3.935807352 stage="runtime_build"
+2026-09-09T08:57:55.624878Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=0.708045622 stage="disk_save"
+2026-09-09T08:57:55.624958Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=14.254709079 stage="build_slot"
+2026-09-09T08:57:55.625009Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=1.104e-6 stage="restore_slot"
+2026-09-09T08:57:55.625054Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.5305e-5 admitted=true
+2026-09-09T08:57:55.625177Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=4.0707e-5 hit=false stage="disk_restore"
+2026-09-09T08:57:55.744868Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=0.119760772 stage="source_load"
+2026-09-09T08:57:59.642028Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=3.897117142 stage="runtime_build"
+2026-09-09T08:58:00.366014Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=0.723941187 stage="disk_save"
+2026-09-09T08:58:00.366087Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=14.238696842 stage="build_slot"
+2026-09-09T08:58:00.366219Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=0.000112096 admitted=true
+2026-09-09T08:58:00.366248Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=4.44e-7 stage="restore_slot"
+2026-09-09T08:58:00.366317Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=2.5039e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:00.488757Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=0.122497902 stage="source_load"
+2026-09-09T08:58:04.467597Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=3.978798167 stage="runtime_build"
+2026-09-09T08:58:05.167614Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=0.699973365 stage="disk_save"
+2026-09-09T08:58:05.167777Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=14.305695817 stage="build_slot"
+2026-09-09T08:58:05.167814Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=1.383e-6 stage="restore_slot"
+2026-09-09T08:58:05.167871Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.3559e-5 admitted=true
+2026-09-09T08:58:05.167950Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=2.628e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:05.288541Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=0.120632934 stage="source_load"
+2026-09-09T08:58:09.183229Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=3.894647779 stage="runtime_build"
+2026-09-09T08:58:09.905145Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=0.721874894 stage="disk_save"
+2026-09-09T08:58:09.905291Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=14.280087483 stage="build_slot"
+2026-09-09T08:58:09.905340Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=1.539e-6 stage="restore_slot"
+2026-09-09T08:58:09.905391Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.7984e-5 admitted=true
+2026-09-09T08:58:09.905465Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=3.7793e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:10.027217Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=0.12180136 stage="source_load"
+2026-09-09T08:58:14.006776Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=3.979518423 stage="runtime_build"
+2026-09-09T08:58:14.737052Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=0.730227733 stage="disk_save"
+2026-09-09T08:58:14.737209Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=14.37087437 stage="build_slot"
+2026-09-09T08:58:14.737311Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.6043e-5 admitted=true
+2026-09-09T08:58:14.737339Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=8.39e-7 stage="restore_slot"
+2026-09-09T08:58:14.737510Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=2.949e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:14.859444Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=0.121993602 stage="source_load"
+2026-09-09T08:58:18.862019Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=4.00252761 stage="runtime_build"
+2026-09-09T08:58:19.601310Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=0.739231403 stage="disk_save"
+2026-09-09T08:58:19.601380Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=14.433414967 stage="build_slot"
+2026-09-09T08:58:19.601432Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=1.079e-6 stage="restore_slot"
+2026-09-09T08:58:19.601480Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.8246e-5 admitted=true
+2026-09-09T08:58:19.601574Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=3.6407e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:19.724859Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=0.123356021 stage="source_load"
+test burst::publication_burst_under_exact_load has been running for over 60 seconds
+2026-09-09T08:58:23.724457Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=3.999546627 stage="runtime_build"
+2026-09-09T08:58:24.441872Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=0.717381829 stage="disk_save"
+2026-09-09T08:58:24.441971Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=14.536466254 stage="build_slot"
+2026-09-09T08:58:24.442090Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=8.0728e-5 admitted=true
+2026-09-09T08:58:24.442118Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=5.09e-7 stage="restore_slot"
+2026-09-09T08:58:24.442295Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=5.0272e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:24.560745Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=0.118597953 stage="source_load"
+2026-09-09T08:58:28.469664Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=3.908878113 stage="runtime_build"
+2026-09-09T08:58:29.185638Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=0.715933546 stage="disk_save"
+2026-09-09T08:58:29.185703Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=14.448166361 stage="build_slot"
+2026-09-09T08:58:29.185759Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=1.23e-6 stage="restore_slot"
+2026-09-09T08:58:29.185819Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=9.6917e-5 admitted=true
+2026-09-09T08:58:29.185944Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=4.8653e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:29.305442Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=0.119593158 stage="source_load"
+2026-09-09T08:58:33.244560Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=3.939077947 stage="runtime_build"
+2026-09-09T08:58:33.953906Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=0.709294054 stage="disk_save"
+2026-09-09T08:58:33.953956Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=14.352335986 stage="build_slot"
+2026-09-09T08:58:33.954022Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.039e-5 admitted=true
+2026-09-09T08:58:33.954056Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=4.44e-7 stage="restore_slot"
+2026-09-09T08:58:33.954114Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=2.1696e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:34.074622Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=0.120550833 stage="source_load"
+2026-09-09T08:58:37.988576Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=3.9139137330000002 stage="runtime_build"
+2026-09-09T08:58:38.690433Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=0.701815017 stage="disk_save"
+2026-09-09T08:58:38.690525Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=14.248172251 stage="build_slot"
+2026-09-09T08:58:38.690555Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=1.453e-6 stage="restore_slot"
+2026-09-09T08:58:38.690619Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.3857e-5 admitted=true
+2026-09-09T08:58:38.690689Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=2.5967e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:38.812889Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=0.122240562 stage="source_load"
+2026-09-09T08:58:42.743576Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=3.930645894 stage="runtime_build"
+2026-09-09T08:58:43.443761Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=0.700141297 stage="disk_save"
+2026-09-09T08:58:43.443931Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=14.257940901 stage="build_slot"
+2026-09-09T08:58:43.443963Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=8.43e-7 stage="restore_slot"
+2026-09-09T08:58:43.444025Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.4498e-5 admitted=true
+2026-09-09T08:58:43.444113Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.4416e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:43.565113Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=0.121035796 stage="source_load"
+2026-09-09T08:58:47.547624Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=3.982468198 stage="runtime_build"
+2026-09-09T08:58:48.275950Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=0.72825855 stage="disk_save"
+2026-09-09T08:58:48.276018Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=14.32189129 stage="build_slot"
+2026-09-09T08:58:48.276111Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.2066e-5 admitted=true
+2026-09-09T08:58:48.276136Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=4.06e-7 stage="restore_slot"
+2026-09-09T08:58:48.276240Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=4.2852e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:48.398037Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=0.121882914 stage="source_load"
+2026-09-09T08:58:52.352566Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=3.954480995 stage="runtime_build"
+2026-09-09T08:58:53.091185Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=0.738578822 stage="disk_save"
+2026-09-09T08:58:53.091270Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=14.400560746 stage="build_slot"
+2026-09-09T08:58:53.091299Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=1.283e-6 stage="restore_slot"
+2026-09-09T08:58:53.091355Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.5304e-5 admitted=true
+2026-09-09T08:58:53.091434Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=2.4272e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:53.209810Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=0.118414835 stage="source_load"
+2026-09-09T08:58:57.150384Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=3.940535111 stage="runtime_build"
+2026-09-09T08:58:57.884240Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=0.73381793 stage="disk_save"
+2026-09-09T08:58:57.884329Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=14.440203797 stage="build_slot"
+2026-09-09T08:58:57.884361Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=1.124e-6 stage="restore_slot"
+2026-09-09T08:58:57.884420Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.9883e-5 admitted=true
+2026-09-09T08:58:57.884511Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=2.5873e-5 hit=false stage="disk_restore"
+2026-09-09T08:58:58.002777Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=0.118300616 stage="source_load"
+2026-09-09T08:59:01.966326Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=3.963489226 stage="runtime_build"
+2026-09-09T08:59:02.709678Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=0.743314484 stage="disk_save"
+2026-09-09T08:59:02.709742Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=14.433477844 stage="build_slot"
+2026-09-09T08:59:02.709765Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=1.208e-6 stage="restore_slot"
+2026-09-09T08:59:02.709829Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.7236e-5 admitted=true
+2026-09-09T08:59:02.709998Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=0.000130888 hit=false stage="disk_restore"
+2026-09-09T08:59:02.829894Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=0.120008717 stage="source_load"
+2026-09-09T08:59:06.767085Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=3.937144184 stage="runtime_build"
+2026-09-09T08:59:07.496599Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=0.729473886 stage="disk_save"
+2026-09-09T08:59:07.496774Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=14.405319796 stage="build_slot"
+2026-09-09T08:59:07.496807Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=1.329e-6 stage="restore_slot"
+2026-09-09T08:59:07.496866Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.0643e-5 admitted=true
+2026-09-09T08:59:07.496936Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=2.5473e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:07.616503Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=0.119610558 stage="source_load"
+2026-09-09T08:59:11.598571Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=3.982028302 stage="runtime_build"
+2026-09-09T08:59:12.353305Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=0.75468762 stage="disk_save"
+2026-09-09T08:59:12.353358Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=14.468833602 stage="build_slot"
+2026-09-09T08:59:12.353419Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905133568 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T08:59:12.353458Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=7.73e-7 stage="restore_slot"
+2026-09-09T08:59:12.353676Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=3.7425e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:12.454907Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=0.101540767 admitted=true
+2026-09-09T08:59:12.577709Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=0.122702395 stage="source_load"
+2026-09-09T08:59:16.562255Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=3.984499487 stage="runtime_build"
+2026-09-09T08:59:17.297001Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=0.734706388 stage="disk_save"
+2026-09-09T08:59:17.297096Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=14.587057127 stage="build_slot"
+2026-09-09T08:59:17.297147Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=1.179e-6 stage="restore_slot"
+2026-09-09T08:59:17.297213Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=9.7374e-5 admitted=true
+2026-09-09T08:59:17.299241Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=3.2223e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:17.418504Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=0.121251229 stage="source_load"
+2026-09-09T08:59:21.389248Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=3.970701283 stage="runtime_build"
+2026-09-09T08:59:22.127218Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=0.737922987 stage="disk_save"
+2026-09-09T08:59:22.127316Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=14.630357486 stage="build_slot"
+2026-09-09T08:59:22.127422Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=8.0929e-5 admitted=true
+2026-09-09T08:59:22.127451Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=5.23e-7 stage="restore_slot"
+2026-09-09T08:59:22.128277Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=3.9363e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:22.250765Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=0.123299798 stage="source_load"
+2026-09-09T08:59:26.299172Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=4.048358464 stage="runtime_build"
+2026-09-09T08:59:27.037861Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=0.738646761 stage="disk_save"
+2026-09-09T08:59:27.037975Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=14.68426909 stage="build_slot"
+2026-09-09T08:59:27.038045Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=5.9352e-5 admitted=true
+2026-09-09T08:59:27.158981Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=0.120802275 stage="source_load"
+2026-09-09T08:59:31.132157Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=3.973133792 stage="runtime_build"
+2026-09-09T08:59:31.877075Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=0.744842915 stage="disk_save"
+2026-09-09T08:59:31.877254Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=14.577978267 stage="build_slot"
+2026-09-09T08:59:31.877362Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.4691e-5 admitted=true
+2026-09-09T08:59:32.001358Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=0.123972937 stage="source_load"
+2026-09-09T08:59:35.987971Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=3.9865666060000002 stage="runtime_build"
+2026-09-09T08:59:36.707623Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=0.719606069 stage="disk_save"
+2026-09-09T08:59:36.707675Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=14.579351872 stage="build_slot"
+2026-09-09T08:59:36.707750Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.9969e-5 admitted=true
+2026-09-09T08:59:36.826460Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=0.11867338 stage="source_load"
+2026-09-09T08:59:40.785595Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=3.959093087 stage="runtime_build"
+2026-09-09T08:59:41.483137Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=0.697502918 stage="disk_save"
+2026-09-09T08:59:41.483257Z  INFO transparent_shard_server::service: prewarm finished warm=28 target=28 failed=0 seconds=134.908195794
+2026-09-09T08:59:41.881307Z  INFO transparent_shard_server::runtime: retired runtime memory reclaimed rss_before=5130883072 rss_after=4351451136
+2026-09-09T08:59:42.412074Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=2.067e-6 stage="restore_slot"
+2026-09-09T08:59:42.412074Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=7.61e-7 stage="restore_slot"
+2026-09-09T08:59:42.412266Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=2.4576e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:42.412265Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=3.9888e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:42.412290Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=4.64e-7 stage="build_slot"
+2026-09-09T08:59:42.412318Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=2.3927e-5 admitted=true
+2026-09-09T08:59:42.552106Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=0.139774488 stage="source_load"
+2026-09-09T08:59:46.689436Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=4.137295813 stage="runtime_build"
+2026-09-09T08:59:47.203726Z DEBUG transparent_shard_server::memory: work memory admission denied current=5691535360 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:47.395023Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=0.70555155 stage="disk_save"
+2026-09-09T08:59:47.395087Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=4.98278419 stage="build_slot"
+2026-09-09T08:59:47.395174Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.6344e-5 admitted=true
+2026-09-09T08:59:47.530767Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=0.135574227 stage="source_load"
+2026-09-09T08:59:47.900108Z DEBUG transparent_shard_server::memory: work memory admission denied current=5782851584 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:48.099643Z DEBUG transparent_shard_server::memory: work memory admission denied current=5782593536 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:48.308990Z DEBUG transparent_shard_server::memory: work memory admission denied current=5782589440 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:50.216241Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905285120 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:50.767923Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905444864 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:51.817624Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=4.286827228 stage="runtime_build"
+2026-09-09T08:59:52.539005Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=0.721348408 stage="disk_save"
+2026-09-09T08:59:52.539087Z  INFO transparent_shard_server::service: prewarm finished warm=28 target=28 failed=0 seconds=10.127080346
+2026-09-09T08:59:52.539135Z DEBUG transparent_shard_server::live: publication preparation stages map=32426d9e9300c44558210d8540b636402af2b3c322627f9e9f26e0082b489725 loading_seconds=0.572398438 warming_seconds=10.127193445
+2026-09-09T08:59:52.544870Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=1.402e-6 stage="restore_slot"
+2026-09-09T08:59:52.577284Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=7.82e-7 stage="restore_slot"
+2026-09-09T08:59:52.617512Z  INFO transparent_shard_server::runtime: retired runtime memory reclaimed rss_before=5120839680 rss_after=4434137088
+2026-09-09T08:59:53.156313Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=1.459e-6 stage="restore_slot"
+2026-09-09T08:59:53.156427Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=2.94e-7 stage="restore_slot"
+2026-09-09T08:59:53.156467Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=3.29e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:53.156584Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=7.46e-7 stage="build_slot"
+2026-09-09T08:59:53.156619Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=2.2842e-5 hit=false stage="disk_restore"
+2026-09-09T08:59:53.156622Z DEBUG transparent_shard_server::memory: work memory admission denied current=5524807680 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T08:59:53.258346Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=0.101751499 admitted=true
+2026-09-09T08:59:53.390281Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=0.131874992 stage="source_load"
+2026-09-09T08:59:53.449152Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=0.904183451 hit=true stage="disk_restore"
+2026-09-09T08:59:53.500431Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.923008264 hit=true stage="disk_restore"
+2026-09-09T08:59:53.567882Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=0.1186907 stage="source_verify"
+2026-09-09T08:59:53.567911Z  INFO transparent_shard_server::runtime: restored runtime cache seconds=1.022944293
+2026-09-09T08:59:53.597844Z DEBUG transparent_shard_server::memory: work memory admission denied current=5814095872 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:53.619244Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.118779687 stage="source_verify"
+2026-09-09T08:59:53.619267Z  INFO transparent_shard_server::runtime: restored runtime cache seconds=1.041846794
+2026-09-09T08:59:53.817798Z DEBUG transparent_shard_server::memory: work memory admission denied current=5814726656 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:54.024079Z DEBUG transparent_shard_server::memory: work memory admission denied current=5814751232 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:55.038546Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905473536 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:55.243667Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905383424 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:55.446316Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905457152 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:57.466566Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=4.076249207 stage="runtime_build"
+2026-09-09T08:59:58.172087Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=0.705492326 stage="disk_save"
+2026-09-09T08:59:58.172177Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=5.015519446 stage="build_slot"
+2026-09-09T08:59:58.172325Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=0.000128364 admitted=true
+2026-09-09T08:59:58.315647Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=0.14316952 stage="source_load"
+2026-09-09T08:59:58.765170Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:58.970259Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905039360 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T08:59:59.673944Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905027072 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T09:00:00.038458Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905489920 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T09:00:00.247849Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905170432 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T09:00:02.485990Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=4.170309273 stage="runtime_build"
+2026-09-09T09:00:02.859888Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905420288 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T09:00:03.202592Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=0.716561618 stage="disk_save"
+2026-09-09T09:00:03.202654Z  INFO transparent_shard_server::service: prewarm finished warm=28 target=28 failed=0 seconds=10.046378133
+2026-09-09T09:00:03.202686Z DEBUG transparent_shard_server::live: publication preparation stages map=12cbb58695cd66166197842d179b61598c15effb06ad32efcd899a13e36e7b10 loading_seconds=0.615926157 warming_seconds=10.046447252
+test burst::publication_burst_under_exact_load ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 162.12s
+
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 2min 42.147s
+CPU time consumed: 3min 59.669s
+Memory peak: 512.0K
+Memory swap peak: 0B

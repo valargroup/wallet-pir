@@ -1,6 +1,6 @@
 # Transparent PIR documentation
 
-Updated 2026-09-08. The accepted target is four small recent replicas and two larger archive workers. Deployment observations and continuous-publication verification are recorded in [status](status.md); they do not establish sustained fleet capacity.
+Updated 2026-09-09. The accepted target is four small recent replicas and two larger archive workers. Deployment observations and continuous-publication verification are recorded in [status](status.md); they do not establish sustained fleet capacity.
 
 ## Reading order and authority
 
@@ -17,6 +17,7 @@ Do not infer live state from a plan, source code, a workflow default or an old h
 The contract governs intended behavior; code establishes implementation; deployment governs target configuration; dated operational evidence establishes live state. If these disagree, report the gap and update the owning document with the implementation change. Do not silently weaken the contract.
 
 8. [Regression and conformance tests](testing.md): accepted-anchor recovery, fixed fixtures, and manual release validation.
+9. [Productionization execution plan](productionize-plan.md): staged path to a recovery-only macOS beta, dependencies and definitions of done.
 
 ## Product boundaries
 

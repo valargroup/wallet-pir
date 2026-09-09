@@ -1,0 +1,10 @@
+{
+  "make_check_exit_code": 0,
+  "rust_passed": 576,
+  "rust_failed": 0,
+  "rust_ignored": 1,
+  "manual_amsterdam_runs": 4,
+  "manual_exact_queries": 592,
+  "final_python_runner_tests": 2,
+  "final_doc_links": "56 files, no broken links"
+}

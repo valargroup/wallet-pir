@@ -1,0 +1,6 @@
+{
+  "phase": "failed",
+  "binary_sha256": "c9d88ca7d73014c8217c4240c4af858921fbfaa2848da5a1d49f9fbb7727308f",
+  "source_sha": "d778c62",
+  "error": "observe-transparent-hardening.py exited 1; see /opt/transparent-publisher-build/readbatch-20260909/rollout/canary.log"
+}

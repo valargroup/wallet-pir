@@ -1,0 +1,176 @@
+2026-09-09T01:29:24+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: journal 0-3476835, archive-wide below 3262749 at SealPolicy { scripts: Limit { target: 393216, capacity: 458752 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3262749 at SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+2026-09-09T01:29:24+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: shard 173 3473055-3476835 (3781 blocks) scripts 24236 pages 2945 events 134732 segments 1/1 TAIL r510
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: published 174 shards covering 0-3476835; filters ~60.10 MB
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.027145, "exit_code": 0}
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: assignment 06f3a051cc4ec900e3a4709ceab060e0d6f7f8b81fd18acd3783323e6d8056d2 written to /opt/transparent-publisher/state/d74a0501a367560729cc22502ab22bcdb2f1ecee7c3918165f4499ffe5272ea5.assignment.json
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]:   transparent-pir-archive-01 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  0-79
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]:   transparent-pir-archive-02 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  80-159
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]:   transparent-pir-recent-01 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]:   transparent-pir-recent-02 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]:   transparent-pir-recent-03 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]:   transparent-pir-recent-04 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.66642, "exit_code": 0}
+2026-09-09T01:29:25+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016546, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.004234, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.877058, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.205103, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.022691, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003829, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.095991, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.009849, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 1.122909, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.268161, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 1.190494, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.034912, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.004093, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.146292, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.011314, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.082447, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003669, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 1.359437, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.075588, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003763, "exit_code": 0}
+2026-09-09T01:29:26+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.543643, "exit_code": 0}
+2026-09-09T01:29:27+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.437535, "exit_code": 0}
+2026-09-09T01:29:27+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.460082, "exit_code": 0}
+2026-09-09T01:29:27+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.434881, "exit_code": 0}
+2026-09-09T01:29:27+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.569225, "exit_code": 0}
+2026-09-09T01:29:27+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.650469, "exit_code": 0}
+2026-09-09T01:29:27+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.013851, "exit_code": 0}
+2026-09-09T01:29:28+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "rsync", "seconds": 1.411964, "exit_code": 0}
+2026-09-09T01:29:28+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014695, "exit_code": 0}
+2026-09-09T01:29:29+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "rsync", "seconds": 1.935684, "exit_code": 0}
+2026-09-09T01:29:29+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017404, "exit_code": 0}
+2026-09-09T01:29:39+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1303974]: {"event": "fleet_command", "tool": "ssh", "seconds": 11.362574, "exit_code": 0}
+2026-09-09T01:29:39+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014854, "exit_code": 0}
+2026-09-09T01:29:39+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.018493, "exit_code": 0}
+2026-09-09T01:29:39+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.019649, "exit_code": 0}
+2026-09-09T01:29:39+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01102, "exit_code": 0}
+2026-09-09T01:29:39+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014016, "exit_code": 0}
+2026-09-09T01:29:39+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.012561, "exit_code": 0}
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"event": "fleet_command", "tool": "ssh", "seconds": 1.727109, "exit_code": 0}
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"level":"info","ts":1788917381.3359976,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile.live-next","config_adapter":"caddyfile"}
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"level":"info","ts":1788917381.345097,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"level":"info","ts":1788917381.345442,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"level":"info","ts":1788917381.346528,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc0001da9a0"}
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: {"level":"info","ts":1788917381.3527293,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc0001da9a0"}
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304574]: Valid configuration
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: 2026-09-09T01:29:41.513324Z  INFO transparent_filter_server::controller: activated warm publication height=3476835 hash="00000000005dc2139f71cbfb6435d12692856ae2c324e4163eaa82b16ae49ded" freshness_seconds=17.329833713 seconds=17.299839113
+2026-09-09T01:29:41+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: journal 0-3476836, archive-wide below 3262749 at SealPolicy { scripts: Limit { target: 393216, capacity: 458752 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3262749 at SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: shard 173 3473055-3476836 (3782 blocks) scripts 24236 pages 2945 events 134734 segments 1/1 TAIL r511
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: published 174 shards covering 0-3476836; filters ~60.10 MB
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.026637, "exit_code": 0}
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: assignment 4ef0dbc25e9f7e1b95d6030006d7cd5a13f6b867d501e87b1234e51e11e91b9a written to /opt/transparent-publisher/state/4f76a19a09d1dd6f87dcc3c760a07fa9d6faf6bd1ebd2d6ad5402fd8c0c4adfb.assignment.json
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]:   transparent-pir-archive-01 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  0-79
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]:   transparent-pir-archive-02 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  80-159
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]:   transparent-pir-recent-01 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]:   transparent-pir-recent-02 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]:   transparent-pir-recent-03 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:42+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]:   transparent-pir-recent-04 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.011915, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014574, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017759, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.037997, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.040021, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.026489, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.010048, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.04227, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.01501, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.038758, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003938, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.232725, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.264069, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.09362, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.011446, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.100033, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01034, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.407051, "exit_code": 0}
+2026-09-09T01:29:43+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.541896, "exit_code": 0}
+2026-09-09T01:29:44+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.564628, "exit_code": 0}
+2026-09-09T01:29:44+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.49723, "exit_code": 0}
+2026-09-09T01:29:44+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015012, "exit_code": 0}
+2026-09-09T01:29:44+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 1.593347, "exit_code": 0}
+2026-09-09T01:29:44+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.004128, "exit_code": 0}
+2026-09-09T01:29:44+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 1.80969, "exit_code": 0}
+2026-09-09T01:29:44+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003997, "exit_code": 0}
+2026-09-09T01:29:45+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.399213, "exit_code": 0}
+2026-09-09T01:29:45+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.526757, "exit_code": 0}
+2026-09-09T01:29:46+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "rsync", "seconds": 1.227923, "exit_code": 0}
+2026-09-09T01:29:46+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017297, "exit_code": 0}
+2026-09-09T01:29:46+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "rsync", "seconds": 1.393314, "exit_code": 0}
+2026-09-09T01:29:46+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014273, "exit_code": 0}
+2026-09-09T01:29:55+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1304671]: {"event": "fleet_command", "tool": "ssh", "seconds": 10.916775, "exit_code": 0}
+2026-09-09T01:29:55+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015294, "exit_code": 0}
+2026-09-09T01:29:55+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.021879, "exit_code": 0}
+2026-09-09T01:29:55+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.021408, "exit_code": 0}
+2026-09-09T01:29:55+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.011002, "exit_code": 0}
+2026-09-09T01:29:55+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.012081, "exit_code": 0}
+2026-09-09T01:29:55+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.012923, "exit_code": 0}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.309627, "exit_code": 0}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"level":"info","ts":1788917395.8028507,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile.live-next","config_adapter":"caddyfile"}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"level":"info","ts":1788917395.8248503,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"level":"info","ts":1788917395.8249042,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"level":"info","ts":1788917395.8357885,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc0001d3810"}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"level":"info","ts":1788917395.8423204,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc0001d3810"}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: {"level":"info","ts":1788917395.8424416,"logger":"http.handlers.reverse_proxy.health_checker.active","msg":"HTTP request failed","host":"10.142.0.9:8093","error":"Get \"http://10.142.0.9:8093/v1/ready\": context canceled"}
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305060]: Valid configuration
+2026-09-09T01:29:56+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: 2026-09-09T01:29:56.044949Z  INFO transparent_filter_server::controller: activated warm publication height=3476836 hash="00000000003c9c9cac35fa5b9d4bf037afc9b46d2f348348c0ae67b8b5d04892" freshness_seconds=30.842082266 seconds=14.508512903
+2026-09-09T01:30:01+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: journal 0-3476837, archive-wide below 3262749 at SealPolicy { scripts: Limit { target: 393216, capacity: 458752 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3262749 at SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+2026-09-09T01:30:01+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: shard 173 3473055-3476837 (3783 blocks) scripts 24236 pages 2946 events 134736 segments 1/1 TAIL r512
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: published 174 shards covering 0-3476837; filters ~60.10 MB
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.026682, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: assignment 3181e3ac1eeb9cb4ae1da24fb2e5d0e814d4b36e6786236fbb4cfbffe59a1b28 written to /opt/transparent-publisher/state/d562f427d22848839768b425a701ca27522fc6f3bb5ee353a24dfd8a9e728fce.assignment.json
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]:   transparent-pir-archive-01 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  0-79
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]:   transparent-pir-archive-02 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  80-159
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]:   transparent-pir-recent-01 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]:   transparent-pir-recent-02 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]:   transparent-pir-recent-03 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]:   transparent-pir-recent-04 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.012579, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014035, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017401, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.038773, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.025607, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.047533, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.013221, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.043683, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.010817, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.057501, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.006043, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.22395, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.112383, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.004058, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.271869, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.095843, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.009826, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.096317, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.010765, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.283593, "exit_code": 0}
+2026-09-09T01:30:02+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003907, "exit_code": 0}
+2026-09-09T01:30:03+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.555765, "exit_code": 0}
+2026-09-09T01:30:03+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.549066, "exit_code": 0}
+2026-09-09T01:30:03+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.736997, "exit_code": 0}
+2026-09-09T01:30:03+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.704826, "exit_code": 0}
+2026-09-09T01:30:03+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.986987, "exit_code": 0}
+2026-09-09T01:30:04+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "rsync", "seconds": 1.122999, "exit_code": 0}
+2026-09-09T01:30:04+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.025918, "exit_code": 0}
+2026-09-09T01:30:05+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "rsync", "seconds": 1.850751, "exit_code": 0}
+2026-09-09T01:30:05+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.021115, "exit_code": 0}
+2026-09-09T01:30:05+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "rsync", "seconds": 2.104935, "exit_code": 0}
+2026-09-09T01:30:05+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.021319, "exit_code": 0}
+2026-09-09T01:30:16+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305105]: {"event": "fleet_command", "tool": "ssh", "seconds": 11.881076, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015099, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.020168, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.024631, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.010829, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014872, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.010788, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.239151, "exit_code": 0}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"level":"info","ts":1788917417.4519157,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile.live-next","config_adapter":"caddyfile"}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"level":"info","ts":1788917417.4633667,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"level":"info","ts":1788917417.463423,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"level":"info","ts":1788917417.4648244,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc0001e8850"}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: {"level":"info","ts":1788917417.4922411,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc0001e8850"}
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1305177]: Valid configuration
+2026-09-09T01:30:17+00:00 enhance-pir-coordinator-01 transparent-publish-controller[1226335]: 2026-09-09T01:30:17.656284Z  INFO transparent_filter_server::controller: activated warm publication height=3476837 hash="000000000057ae73cc0b696ed97368584a9a80c0cfeda97384ba73ae5cf4215c" freshness_seconds=16.349916178 seconds=16.294613244
+ExecStart={ path=/usr/local/bin/transparent-publish-controller ; argv[]=/usr/local/bin/transparent-publish-controller --config /opt/transparent-publisher/controller.json ; ignore_errors=no ; start_time=[Wed 2026-09-09 00:45:09 UTC] ; stop_time=[n/a] ; pid=1226335 ; code=(null) ; status=0/0 }

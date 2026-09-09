@@ -110,7 +110,10 @@ The first cache-enabled activation builds and writes its runtimes. Later
 compatible restarts restore them, while still verifying source tables. Cache
 restoration consumes the existing RAM reservation and a separate bounded pool
 (`--runtime-restore-slots`, default 4). Cold fallbacks still use the configured
-build slots. Prewarm schedules enough jobs for both pools; blocking jobs retain
+build slots. The qualified M1 rollout selects two cold-build slots for recent
+replicas; archive settings are unchanged. This target does not imply every worker
+has upgraded: [status](status.md) records the dated rollout inventory.
+Prewarm schedules enough jobs for both pools; blocking jobs retain
 their slot and reservation even when the caller is cancelled. Missing,
 corrupt or incompatible entries rebuild; a failed cache write is counted and
 logged but does not prevent serving a successfully built runtime. This reduces
@@ -268,10 +271,12 @@ after verification. Unverified recovery keeps the maintenance response.
 
 `run-transparent-hardening-rollout.py` supervises the canary upgrade, the loaded
 gate, the whole-fleet batch and 24-hour observation of all six workers. It stops
-on failure. The full-fleet gate must match the tested binary, fleet script and
-configuration; elapsed time alone is insufficient. The foreground adapter and
+on failure. The full-fleet gate must match the tested binary, fleet script, configuration
+and roster digest; elapsed time alone is insufficient. The foreground adapter and
 reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
 recent-01 at the canary stage and all four recent replicas after their upgrade.
+The installer applies an explicit roster `build_slots` value to the staged worker
+unit before verification; an omitted value preserves the installed setting.
 One daemon task owns each managed worker's preparation across foreground quorum
 cancellation; it coalesces queued targets and reattests status after restart.
 A superseded but canonical prepared candidate may advance an unrouted worker
@@ -293,3 +298,39 @@ The coordinator Caddy template routes `/v1/filters/parents/*` to `/srv/transpare
 The bundle is tied to exact sealed child revisions. Refresh it after archive membership or revisions change; wallets reject stale parent descriptors and fall back to children. To withdraw a release, unlink its public symlink after checking the current target. Existing validated client caches can remain usable for unchanged child revisions. See the [production evidence](evidence/parent-filters-production-2026-09-08/README.md) for the deployed release, canary and rollback record.
 
 Reference clients opt in with `HttpFilterSource::with_parent_experiment(manifest_url, "archive-wide".into())`; loadtest scenarios use `experimental_parent_manifests.archive-wide`. Hosting the bundle does not change already-installed wallet applications. No script-count bypass is enabled.
+
+## macOS recovery beta acceptance targets
+
+Agreed planning targets, 2026-09-09; **not measured acceptance or a general
+production SLO**. The [execution plan](productionize-plan.md) defines the bounded,
+recovery-only beta. Existing hardening/publication gates above still apply.
+
+- Capacity protocol: 8, 20 and 40 concurrent wallets; advance to 80 only if 40
+  passes. At each level perform three 60-minute sustained runs with the existing
+  mixed profile distribution and publication active. Collect at least 100
+  completed observations per ordinary profile before accepting its p95; extend
+  measurement if the three runs do not supply enough samples.
+- Freeze the ordinary-wallet candidate thresholds from
+  [the proposed wallet objectives](#proposed-wallet-objectives-from-the-2026-09-08-fleet-series)
+  before running: p95 below 5 seconds for catch-up/small active, 10 seconds for
+  six-month restore, 60 seconds for old-birthday and cutoff forty-script wallets,
+  and 15 seconds for unused wallets. These thresholds must pass the new protocol;
+  the older measurements do not establish their acceptance.
+- Heavy reused histories remain outside those ordinary-profile latency targets.
+  Use the existing scenario's 600-second recovery deadline for a bounded attempt;
+  preserve explicit incomplete state and test continuation. Do not exclude such
+  attempts from failure/incomplete reporting or claim their completion SLO.
+- Stop load escalation on correctness failure, OOM, sustained available host
+  memory below 20%, or publication freshness violation. Planned beta demand must
+  be at most 50% of measured sustainable completed-sync throughput at the accepted
+  workload mix, with bounded queues and resources.
+- Outage rehearsal budget: restore canonical service and exact completion within
+  15 minutes for each tested single failure. Temporary archive-owner unavailability
+  is accepted for this beta; redundant general availability is a separate decision.
+- Begin with five internal testers. Expand to at most 20 after 48 passing hours
+  only if the measured capacity envelope permits it. Require seven consecutive
+  days after the last release-affecting fix; such fixes restart observation.
+
+These are release-test criteria, not automatic deployment, fault-injection or
+infrastructure-provisioning actions. Any revised target needs an explicit recorded
+change before retesting, with the previous failed result retained.

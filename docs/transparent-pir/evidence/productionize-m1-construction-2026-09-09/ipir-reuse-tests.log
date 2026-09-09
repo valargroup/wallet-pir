@@ -1,0 +1,78 @@
+   Compiling utf8parse v0.2.2
+   Compiling aho-corasick v1.1.4
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle-query v1.1.5
+   Compiling heck v0.5.0
+   Compiling strsim v0.11.1
+   Compiling log v0.4.29
+   Compiling jiff v0.2.24
+   Compiling sha1 v0.10.6
+   Compiling simplepir-kernel v0.1.0 (/private/tmp/ipir-public-preprocessing-20260909/simplepir-kernel)
+   Compiling anstyle-parse v1.0.0
+   Compiling clap_derive v4.6.1
+   Compiling anstream v1.0.0
+   Compiling clap_builder v4.6.0
+   Compiling regex-automata v0.4.14
+   Compiling clap v4.6.1
+   Compiling regex v1.12.3
+   Compiling env_filter v1.0.1
+   Compiling criterion v0.5.1
+   Compiling env_logger v0.11.10
+   Compiling ipir-sp v0.1.0 (/private/tmp/ipir-public-preprocessing-20260909/ipir-sp)
+    Finished `release` profile [optimized] target(s) in 13.43s
+     Running unittests src/lib.rs (target/release/deps/ipir_sp-10a6096d0b92ce1f)
+
+running 49 tests
+test bits::tests::contiguous_roundtrip_handles_non_byte_widths ... ok
+test bits::tests::write_and_read_bits_match_ypir_layout ... ok
+test client::tests::client_secret_reduces_coefficients_mod_q ... ok
+test client::tests::branch_free_modular_helpers_match_reference ... ok
+test client::tests::encrypted_selection_query_matches_scalar_reference ... ok
+test client::tests::encrypted_selection_query_is_randomized ... ok
+test client::tests::ntt_decode_multiply_matches_scalar_negacyclic_multiply ... ok
+test client::tests::monomial_inner_product_matches_full_negacyclic_multiply ... ok
+test client::tests::encrypted_selection_query_rejects_out_of_range_target_row - should panic ... ok
+test client::tests::sampled_ternary_secret_uses_mod_q_minus_one_for_negative_one ... ok
+test client::tests::ntt_query_inner_products_match_scalar_monomial_inner_products ... ok
+test modulus_switch::tests::query_coeff_switch_is_identity_at_full_width ... ok
+test client::tests::simple_query_packed_bytes_roundtrip ... ok
+test client::tests::generate_fresh_query_returns_full_packing_key_bodies ... ok
+test modulus_switch::tests::query_modulus_bits_tracks_shape_and_never_exceeds_q ... ok
+test modulus_switch::tests::recover_rlwe_rows_matches_expected_quantization ... ok
+test modulus_switch::tests::rescale_matches_expected_rounding ... ok
+test modulus_switch::tests::serialize_rlwe_response_concatenates_ciphertexts ... ok
+test modulus_switch::tests::switch_and_recover_roundtrip_with_expected_quantization ... ok
+test modulus_switch::tests::switch_rlwe_ciphertext_reads_two_raw_rows ... ok
+test modulus_switch::tests::switch_rlwe_rows_uses_ypir_row_order_and_moduli ... ok
+test serialize::tests::deserialize_packing_keys_rejects_unreduced_coefficients ... ok
+test serialize::tests::deserialize_u64s_le_rejects_truncated_value ... ok
+test serialize::tests::packing_keys_roundtrip_kg_then_kh_bodies ... ok
+test serialize::tests::serialized_packing_keys_len_packs_two_body_rows_at_modulus_width ... ok
+test server::tests::crs_block_converts_to_inspiring_ntt_shape ... ok
+test params::tests::gaussian_gadget_carry_out_per_switch_bound ... ok
+test server::tests::extract_crs_block_maps_hint_columns_to_crs_rows ... ok
+test modulus_switch::tests::query_coeff_switch_roundtrips_within_the_rounding_bound ... ok
+test server::tests::generate_hint_column_from_query_ntts_matches_scalar_column_reference ... ok
+test params::tests::simplepir_params_match_ypir_scenario_shape ... ok
+test params::tests::ypir_params_serialize_stably ... ok
+test server::tests::offline_precompute_splits_one_block_per_rlwe_output ... ok
+test server::tests::multiply_query_matches_plain_matrix_vector_product_mod_q ... ok
+test server::tests::server_stores_row_major_input_as_column_major ... ok
+test server::tests::polynomial_to_ntt_roundtrips_reduced_coefficients ... ok
+test server::tests::perform_offline_precomputation_simplepir_generates_blocks_from_db ... ok
+test server::tests::default_kernel_matches_scalar_kernel ... ok
+test server::tests::generate_hint_from_query_polys_matches_scalar_negacyclic_reference ... ok
+test server::tests::ingest_orders_agree_on_the_same_matrix ... ok
+test server::tests::generate_hint_from_query_polys_maps_single_block_to_hint_layout ... ok
+test server::tests::generate_hint_from_query_polys_sums_multiple_row_blocks ... ok
+test server::tests::pack_intermediate_blocks_rejects_wrong_intermediate_length ... ok
+test server::tests::perform_online_computation_simplepir_with_uploaded_packing_keys_serializes_response ... ok
+test server::tests::pack_intermediate_blocks_routes_b_values_with_uploaded_packing_keys ... ok
+test server::tests::crs_blocks_match_the_hint_materialize_and_extract_route ... ok
+test server::tests::ingest_row_major_matches_naive_scatter ... ok
+test client::tests::gaussian_secret_matches_backend_sampler_and_expected_scale ... ok
+test client::tests::fresh_query_seed_replays_gaussian_secret_keys_and_query ... ok
+
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

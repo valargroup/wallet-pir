@@ -49,9 +49,25 @@ The publisher supports recent/archive geometry and a forced `--recent-from` heig
 
 The current cache retains prepared runtimes by byte reservation, builds on demand, and keeps active handles pinned. Plaintext sources are verified files rather than permanent copies in memory. Source defaults allow one construction, two evaluations and three superseded revisions per shard beyond the current one. An expired revision returns 409; cache pressure can return retryable 503. The wallet distinguishes these responses and bounds revision refreshes within one sync.
 
+Cold builders hold their construction slot and queue fairly for shared scratch-memory admission. Each builder retains its turn while waiting for memory, so later work cannot repeatedly overtake it. Already-admitted queries wait at most 250 ms, bounded by their remaining deadline, for memory; restore reservations remain nonblocking; the shared memory ceiling and cancellation ownership rules apply to every path.
+
+After cold construction drops its plaintext input and completed scratch buffers,
+the worker shrinks the transient reservation to the retained runtime allowance
+plus 2 MiB of serialization scratch and releases the construction slot. The
+verified runtime becomes available immediately. A separate blocking snapshot writer
+retains the reservation, runtime reference and cache pin through snapshot locking,
+writing and durability, including after request cancellation. Snapshot failure
+increments the cache error counter without invalidating the serving runtime.
+`transparent_shard_disk_save_pending` tracks outstanding writers. Linux workers advise
+the kernel that consumed source/cache files and synced snapshot files can leave
+page cache; this is advisory and never deducted from measured admission usage.
+Non-Linux workers omit the advice. Checksums and snapshot format remain unchanged.
+
+Runtime construction reuses the fixed public mask images already shared by online packing. The pinned library (`61dc83e`) computes the independent left/right reference collapse halves in parallel and preserves their digit order. Database-dependent preprocessing is rebuilt for each changed table; client secrets and uploaded key bodies are never shared. Differential and frozen-vector tests require identical output to the preceding implementation, so existing public runtime snapshots remain compatible. Snapshot reads and writes batch the same little-endian coefficients into 8 KiB buffers and retain their checksum, atomic rename and durability barriers.
+
 The target recent pool fully replicates its assigned hot set so the newest shard can use every worker's bandwidth. Archive ownership is disjoint and balanced by prepared bytes. Public routing uses set identity, shard, revision and table; selected script, row and page locator never determine a plaintext route. Public immutable filters/setup belong on an artifact origin; map discovery has refreshable cache semantics.
 
-Prepare and verify artifacts at owners before publishing routing/map state. The existing `/v1/ready` only means a nonempty set loaded; fleet readiness must additionally attest assignment and revision identity plus the required warm runtimes. Restart/readiness semantics must distinguish an intentionally cold correctness pilot from the warm fleet.
+Prepare and verify artifacts at owners before publishing routing/map state. `/v1/ready` reports assignment and revision identity and, in warm mode, requires every current assigned runtime to finish warming. The explicit loaded-only pilot mode has a weaker readiness condition. Completion of a prewarm task alone does not prove full warm readiness.
 
 ## Wallet state and aging
 

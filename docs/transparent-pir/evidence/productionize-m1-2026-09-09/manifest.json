@@ -1,0 +1,23 @@
+{
+  "run_id": "productionize-m1-2026-09-09",
+  "operator": "Codex acting for Roman",
+  "repository_head": "14f3919a86fab1c2be44877026a9d50270f70e88",
+  "worker_source": "d5fea93",
+  "result": "failed canary retrieved; no promotion; M1 incomplete",
+  "remote_run": "/opt/transparent-publisher-build/managed-hardening-rollout-3",
+  "gate": {
+    "seconds": 21600,
+    "blocks": 300,
+    "public_seconds": 30,
+    "replica_seconds": 60,
+    "fleet_observation_seconds": 86400
+  },
+  "files_sha256": {
+    "canary-result.json": "fac016adb13638eac9e13d47088fd3d8f5349d9397c0acc3ff51d8012a568cad",
+    "failed-run-3.tar.gz": "7bc30edb139d045d6cc6bf2af6f7e38b7ed580be25e631912c3d7e891e2291fa",
+    "failure-controller.log": "94c42d8af7418d911edcef0f9526b7df83c6bc15386c598fff275f6703c7d51c",
+    "fleet-snapshot.json": "f4f19cbe9d2bb5f1e78b8896cb7529e5d7983611c0e02e27c9bb9a85ccaad5a5",
+    "supervisor-status.json": "321baca33a8c1007c10776bf4ce0451debc2e3a2abc9a6707d84f34a6462b583",
+    "worker-prewarm-window.json": "d57e6a27ce13d72eb2a6ccbf78028140fb5346dd4116fb1fc1e41e2068409b7b"
+  }
+}

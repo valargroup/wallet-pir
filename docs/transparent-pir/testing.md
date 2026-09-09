@@ -110,3 +110,133 @@ separately validated preparation phase, excluded from measured traffic and laten
 Client filter/setup caches start cold; preparation can warm server caches. This
 complements the accepted-anchor regression suite. Local fixture tests are not
 full-chain deployed capacity evidence.
+
+## Isolated publication burst comparison
+
+Use `TRANSPARENT_BURST_BUILD_SLOTS=1` for a focused one-slot construction
+comparison; the default remains `1 2`. Duplicate configurations are rejected.
+The run manifest records Cargo manifests and the lockfile as well as worker
+sources and the executable hash, so dependency changes are part of its identity.
+
+Run `make transparent-burst` to compare one and two runtime build slots in separate
+release-test processes. By default it runs two repetitions in alternating order;
+set `TRANSPARENT_BURST_REPETITIONS` or `TRANSPARENT_BURST_OUT` to override them.
+The command prints the report directory. Read `summary.json` first, then the
+per-run JSON for exact queries, queue/preparation/activation timings and memory
+samples. Every run keeps its log, including failures. Existing reports are never
+overwritten. The command exits unsuccessfully if correctness or the worker-stage
+30-second budget fails, after attempting both configurations.
+
+The fixture uses real `recent-8k` tables, two HTTP query clients checking occupied
+rows against hashed plaintext, and two candidate arrivals one second apart.
+Candidates are prepared and activated sequentially; the second candidate's
+latency includes its time waiting behind the first. The service binds only to
+loopback and its artifacts and activation file live in a temporary directory.
+It cannot update a deployed worker or mainnet authority.
+
+The default is a **single-shard worker-stage experiment**, not fleet acceptance. Artifact
+construction is excluded; there is no ingestion, SSH/rsync, router, archive quorum
+or 14-shard residency. Query clients share the test process, so RSS includes
+client work. Memory sampling starts after initial prewarm and uses a 100 ms
+interval, not an exact kernel high-water mark. Host available memory is reported,
+but an isolated test cannot pass the production host-headroom gate.
+
+For the existing Amsterdam generator, a portable Linux release test executable
+can be passed to `ops/scripts/run-transparent-burst.py --test-binary <path>
+--source-sha <revision> --out <new-directory>`. Keep the source checkout with the
+runner so its manifest can hash the Rust source. The manifest also hashes the
+prebuilt executable; preserve build flags and host/cgroup configuration with the
+results. The actual canary and fleet gates remain in [deployment](deployment.md).
+
+### Full recent residency
+
+Pass `--fixture <fixture.json>` to load a frozen three-publication fixture with
+an assignment for fourteen recent shards. Its JSON contains `worker_id`,
+`query_shard` and exactly three `publications`, each with `directory`, `assignment`,
+`map_sha256` and `height`; paths resolve relative to the fixture file. Copy public
+artifacts to an isolated location, preserve hard links between unchanged revisions,
+and keep the source map and assignment hashes. Do not use the mutable live
+publication tree as a replay fixture.
+
+This mode uses a 5 GiB RAM cache and a new 10 GiB runtime disk cache per process,
+prewarms all 28 runtimes, and verifies full warm readiness on each activation.
+Both clients query the changing tail. Cold prewarm has a ten-minute timeout; the
+measured burst and verification have a two-minute timeout. Runtime-cache writes
+and cleanup affect only the temporary directory, never the frozen input.
+
+On Linux, use `--systemd --test-binary <executable> --source-sha <revision>` for
+one fresh cgroup per repetition: CPUs 0–3, the recent-worker MemoryHigh/MemoryMax
+settings from [deployment](deployment.md), and zero swap. Kernel peak memory
+includes cold startup; cgroup limits, memory events and CPU accounting are saved.
+The runner checks a **modeled** 8 GiB host with 512 MiB reserved for non-worker
+memory, requiring at least 20% remaining. `--host-overhead-bytes` makes that
+assumption explicit; do not lower it to force a pass. This model cannot substitute
+for measured live-host headroom. A fixture run without validated kernel counters
+and process isolation cannot pass the memory qualification.
+
+The Makefile exposes these options as `TRANSPARENT_BURST_FIXTURE`,
+`TRANSPARENT_BURST_BINARY`, `TRANSPARENT_BURST_SOURCE_SHA` and
+`TRANSPARENT_BURST_SYSTEMD=1`. Keep `summary.json` and all logs even if only one
+setting fails; the runner attempts the complete comparison before exiting.
+
+### Separate clients and preparation diagnostics
+
+Use `--external-clients` with a prebuilt test executable to move the two exact
+query clients into another process. With `--systemd`, clients run on CPUs 4–7,
+outside the worker's memory cgroup; the generator therefore needs those CPUs
+available. Each run retains the client configuration, JSONL query records and
+process log beside the worker report. Client failure fails the run even when
+worker publication succeeds. Version 4 reports require `client_shutdown_complete`: after requesting stop, the
+worker keeps HTTP serving until each client flushes its final record and writes a
+done marker. Readers drain to EOF after that marker; missing completion, truncated
+records and fatal errors fail qualification. Both clients must complete warmup, and the final
+publication must return exact occupied rows for both tables.
+
+`TRANSPARENT_BURST_EXTERNAL_CLIENTS=1` enables this through Make;
+`TRANSPARENT_BURST_HOST_OVERHEAD_BYTES` exposes the explicit non-worker reserve.
+The default remains the smaller local experiment described above.
+
+Manual burst logs enable worker debug diagnostics. Runtime events identify the
+revision/table/segment and time waiting for restore/build slots, disk restoration,
+source verification/loading, runtime construction and disk saving. Admission
+rejections record the current cgroup usage, held reservations and requested
+bytes; prewarm retries are also recorded. Successful prepare responses include
+`loading_seconds` and `warming_seconds`, retained in each activation report.
+Query events also separate evaluation-slot admission, runtime acquisition,
+blocking dispatch and evaluation. A setup request may restore the runtime before
+the private query starts; use the complete client completion gap to include that
+work. These durations can overlap across runtimes: their sum is work time, not the
+publication's wall time. Debug diagnostics are opt-in for normal service runs.
+
+Construction events further split encoding, public setup, hint-column generation,
+packing preprocessing and published-parameter serialization. The packing reuse
+dependency includes coefficient-for-coefficient comparisons at production
+parameters and a frozen reference digest; disk tests check byte compatibility
+across buffer boundaries, short writes, restore and corruption. Retain query
+retry counts and gaps between each client's exact completions alongside latency
+percentiles; successful-query p95 alone omits admission backoff.
+
+Full-residency runs must also prove full warm readiness **before** starting the
+publication wave. `cold_ready` and `cold_warm` preserve that check; an incomplete
+startup fails the run rather than charging missing startup work to publication.
+A successful prewarm task by itself does not prove that every runtime was built.
+
+`--worker-budget-seconds` (Make: `TRANSPARENT_BURST_WORKER_BUDGET_SECONDS`) adds a
+stricter screening budget derived from the fleet's remaining work. It cannot
+exceed the public 30-second ceiling. Both the original ceiling result and the
+stricter result remain visible in the summary; neither is fleet acceptance.
+
+
+The v6 burst report drains optional snapshot persistence before initial readiness
+and after the measured clients finish. Memory sampling continues through the
+final drain. Both `cold_persistence_complete` and `persistence_complete` must be
+true, so asynchronous writes cannot conceal later memory peaks or unfinished
+work. The report includes both drain durations.
+
+For target CPU diagnostics, build the shard server test with
+`--features portable-kernel` to force the existing chunked-split backend for both
+construction and restoration. The default remains automatic backend selection.
+Reports record `kernel_policy` and the runner records CPU information; pinning
+four CPUs on the Amsterdam generator does not reproduce the older four-vCPU
+worker's performance. Qualification on the generator is a screening step before
+the actual loaded canary.

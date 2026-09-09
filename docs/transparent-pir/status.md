@@ -1,6 +1,157 @@
 # Transparent PIR status
 
-Source inspection: 2026-09-09 through worker `d5fea93` and deployment and burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
+Source inspection: 2026-09-09 through worker/qualification correction `f2f351c` and fleet burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
+
+## M1 current canary: 2026-09-09, 20:56 UTC
+
+Source `f2f351c` makes verified runtimes servable before optional snapshot writes
+finish and gives admitted queries a cancellable memory wait of at most 250 ms,
+bounded by their remaining deadline. The memory ceiling is unchanged. The
+[qualification and handoff evidence](evidence/productionize-m1-query-wait-2026-09-09/README.md)
+records three passing two-slot portable-backend runs: 8.856–9.721 s visibility,
+233 exact queries, two retries and 1.172–1.236 s maximum completion gaps. Memory
+and persistence-drain checks passed. `make check`: 587 Rust tests passed, two
+manual benchmarks ignored; 71 transparent operations tests passed.
+
+Recent-01 runs binary
+`c6f169a3bdbd0cc5f110309ac70ee089b9336b507f46493b8fe80aaa51861bea`.
+Its upgrade restored 28/28 runtimes in 10.296 s and verified 43 exact queries
+before reopening public service. A fresh six-hour/300-block canary started at
+20:56:02 UTC under `transparent-m1-querywait-rollout.service`. At the handoff
+capture it was active in `canary_observation`. The other five binaries remain
+unchanged. The supervisor advances to the fleet batch and 24-hour observation
+only after passing the matching gate. **M1 is not complete.** The saved canary
+files are a dated start capture, not a final acceptance result.
+
+## M1 preceding candidate and failed loaded canary: 2026-09-09
+
+The [query-tail qualification](evidence/productionize-m1-query-tails-2026-09-09/README.md)
+passes all three two-slot coupled screens: worker visibility 10.923–11.298 s,
+retry fractions 0.9–5.4%, maximum completion gaps 1.189–1.281 s. All 730 queries
+across six runs were exact, initial readiness was complete, and memory checks
+passed without high/max/OOM events. Source `d778c62` batches snapshot reads and
+adds query phase diagnostics; 585 Rust tests and 70 operations tests passed.
+
+At this preceding capture, recent-01 ran binary `c9d88ca7d73014c8217c4240c4af858921fbfaa2848da5a1d49f9fbb7727308f`.
+Its upgrade warmed 28/28 runtimes in 18.014 s and passed 43 exact maintenance
+queries before reopening public service. The desired roster selects two build
+slots for recent replicas; the other five workers retain their preceding binaries
+until the gated batch. The loaded canary started at 20:00:53 UTC and failed after 78.576 s: block
+3,477,724 reached public visibility in 30.228 s (observer exceeded 30 s first).
+The two clients completed 1,052 exact queries without retries. No fleet batch ran;
+`transparent-m1-qualified-rollout.service` is stopped in `failed`.
+
+The generator's Xeon 8280 selects the AVX-512 backend; recent-01's older
+`DO-Regular` CPU selects the portable split backend. Live worker preparation took
+8.911 and 10.572 s in the failed burst. CPU-count/memory matching did not establish
+hardware equivalence. M1 now requires fallback-path and actual-target timing
+qualification before restarting the full loaded gate. **M1 remains open.**
+
+## M1 memory phase qualification: 2026-09-09
+
+The [memory phase experiment](evidence/productionize-m1-memory-phases-2026-09-09/README.md)
+releases completed construction accounting before snapshot persistence and advises
+Linux to release consumed file cache. Under unchanged limits, two-slot visibility
+fell to 10.765–11.566 s and retry fractions to 5.6–7.5%. All 687 queries across six
+final runs were exact, all 28 initial runtimes were warm, and no cgroup memory-limit
+or OOM events occurred. Modeled host headroom was 26.5–27.4%.
+
+Only one of three two-slot runs passed the coupled screen: two query completion
+gaps (2.371 and 2.182 s) exceeded the 2.089 s reference. One slot avoided retries
+but missed the 14 s worker screen. The benchmark now drains external clients before
+closing HTTP; unsuccessful earlier shutdown attempts are retained separately.
+584 Rust tests and seven runner tests passed. No live configuration changed.
+The subsequent query-tail qualification above resolves this isolated screen;
+its loaded canary subsequently failed, as recorded above.
+
+## M1 construction optimization: 2026-09-09
+
+The [construction experiment](evidence/productionize-m1-construction-2026-09-09/README.md)
+reuses fixed public packing images, parallelizes independent collapse halves,
+and batches snapshot writes. Packing preprocessing fell about 38%; one-slot
+worker visibility improved from 20.592 s to 15.307–15.870 s. Two slots met the
+provisional 14-second timing screen in all three repetitions (12.774–13.009 s),
+but query retries rose to 37.9–43.8% of attempts and completion gaps reached
+4.747 s. All 696 final queries were exact; full warm readiness and modeled memory
+checks passed. No configuration passes both latency and query availability.
+
+The source pins `ipir-sp` `61dc83e`; 579 application Rust tests and the upstream
+equivalence tests passed. No live binary or configuration changed. The subsequent memory phase experiment above tests allocation lifetimes and
+file-cache pressure under those same limits.
+
+## M1 admission diagnosis and correction: 2026-09-09
+
+The [instrumented comparison](evidence/productionize-m1-admission-2026-09-09/README.md)
+separated clients from the worker's cgroup and CPUs. It found that both baseline
+two-slot startups warmed only 25 of 28 runtimes. The benchmark had omitted an
+initial readiness check, so candidate preparation repaired missing startup work.
+Those baseline timings cannot qualify a fully warm publication comparison.
+The earlier full-residency run likewise lacks proof of complete initial readiness.
+
+The source correction queues cold-build memory admission fairly without reducing
+reservations or changing memory limits, and the benchmark now rejects incomplete
+initial readiness. Corrected two-slot repeats completed startup but produced
+13.037 s and 16.842 s worst worker visibility; only one met the provisional
+14-second screen derived from earlier fleet overhead. Query overload retries also
+remain observable. This rejects promotion based on the build-slot change alone;
+no live worker setting or canary soak has changed. M1 remains open.
+
+## M1 full-residency qualification: observed 2026-09-09, 08:18 UTC
+
+The [full recent-assignment comparison](evidence/productionize-m1-full-residency-2026-09-09/README.md)
+loaded all 14 recent shards with disk caching and production memory limits on the
+Amsterdam generator. All 864 queries were exact and modeled headroom exceeded
+20%. Two slots reported shorter cold startup, whose completeness was not checked,
+and produced worst update visibility of
+29.97–30.18 s, versus 20.72–26.45 s with one slot. The supervisor correctly failed
+the comparison when two slots exceeded the worker-stage 30-second budget.
+The earlier single-shard result does not support promotion. No live setting or
+canary soak changed. The later admission investigation above supersedes the
+interpretation of the cold-start speedup and supplies the missing diagnostics.
+
+## M1 burst experiment: observed 2026-09-09, 07:39 UTC
+
+The [isolated Amsterdam comparison](evidence/productionize-m1-burst-2026-09-09/README.md)
+completed four fresh worker processes with two exact-query clients and real
+recent-8k tables. One build slot produced worst worker visibility of 20.85–25.17 s;
+two slots produced 10.27–13.99 s. All 592 queries decoded exactly. This supports
+qualifying two slots with full residency; the single-shard experiment does not
+establish live freshness or 8 GiB host headroom. No deployed worker setting was
+changed and no replacement canary soak was started. M1 remains open.
+
+## M1 investigation: observed 2026-09-09, 07:18 UTC
+
+[M1 evidence](evidence/productionize-m1-2026-09-09/README.md) resolves the M0
+private-access unknown. The managed rollout-3 canary failed after 2,090.910 seconds
+and 23 blocks: block 3,476,836 exceeded public freshness (observer 30.719 s;
+controller activation 30.842 s). Two blocks arriving about a second apart incurred
+serial publication cycles of 17.300 and 14.509 seconds. Recent-worker preparation
+was the principal observed cost; unchanged archive preparation was negligible.
+No fleet promotion occurred. All six workers currently report warm readiness;
+only recent-01 runs the corrected binary. The failed run and logs are preserved.
+M1 remains open pending a burst-latency correction and fresh complete acceptance.
+No replacement soak was started. The older active-run description below is historical.
+
+## Productionization baseline: observed 2026-09-09, 07:06 UTC
+
+[M0 evidence](evidence/productionize-m0-2026-09-09/README.md) captures the wallet
+integration at `2c7cee52c` plus an exact working patch and untracked height screen.
+Wallet HEAD advanced independently to `8267008b4` during the inventory; captured
+source contents still matched. The client is pinned to `22e6bec`, and the wallet's
+own layout-4 store retains quadratic coverage rewrites: appending after 1,000
+checkpoints changed 2,002 SQL rows. A Dart probe also reproduced suppression of
+incomplete reasons near tip without changing the model's false completion state.
+Targeted native/database and Dart/Flutter checks passed; release and user-wallet
+validation remain separate gates.
+
+The two public map samples agreed at height 3,477,098 and were corroborated by
+`us.zec.stardust.rest:443` at that height/hash. This establishes sampled
+independent-server agreement, not index completeness. Private SSH timed out:
+current worker readiness, binary/configuration identity and the supervised
+rollout result were not verified. No infrastructure was changed. M0 is complete
+with those explicit unknowns; [M1 and M2](remaining-work.md#macos-recovery-beta-milestones)
+own their resolution. The earlier deployment observations below remain dated
+historical records rather than assertions about the current supervisor phase.
 
 ## Archive parent artifacts: observed 2026-09-08
 

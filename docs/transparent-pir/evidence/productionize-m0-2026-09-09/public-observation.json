@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-09-09T06:57:05.280860+00:00",
+  "map_urls": [
+    "https://transparent-pir.valargroup.dev/v1/filters/shards",
+    "https://enhance-pir.valargroup.dev/v1/filters/shards"
+  ],
+  "map_sha256": "dfc89f953813c17266720d5e6ad93e8115cba360e535ce96118e62ec600b1d49",
+  "origins_agree": true,
+  "height": 3477098,
+  "hash": "00000000007e760bac455c24dc26b85dc8b43ac58c3459041133436df42f1b11",
+  "network": "main",
+  "independent_source": "us.zec.stardust.rest:443 / CompactTxStreamer.GetTreeState",
+  "independent_anchor_matches": true,
+  "qualification": "Independent server corroboration, not local consensus validation or proof of index completeness. Worker readiness/binaries and supervised soak result remain unverified because private SSH access timed out."
+}

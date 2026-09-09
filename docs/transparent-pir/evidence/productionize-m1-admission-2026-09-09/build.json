@@ -1,0 +1,31 @@
+{
+  "source_sha": "14f3919a86fab1c2be44877026a9d50270f70e88",
+  "patch_sha256": "51e66efc9dded0bb2b877776880a3850e63e5d7dcf1ec16c07211d4e2b1d8c93",
+  "source_files_sha256": {
+    "Makefile": "49c073e49e03b368fbcbeb2b5e857a5f8b83075135c5b503d2619bae8503f294",
+    "ops/scripts/run-transparent-burst.py": "41593347128cc6f0fbf70b7fa92d191dd54c3bc821dfdc0325d627489d56a542",
+    "ops/tests/test_transparent_burst.py": "a04843abe5ee68f603ec7e958cbe9ca1da85e20950a4facceda08c3f59a739f5",
+    "server/transparent-shard-server/examples/soak-query.rs": "8c0b7b65845ef876f34c520b8a558f6e0efad37136140a8c32472c8ef1debc6c",
+    "server/transparent-shard-server/examples/support/query.rs": "1133cfdc5dc969ededc1fdad5aa35fb9fc9085a27b77e5e9b3b16daca122216d",
+    "server/transparent-shard-server/tests/revisions_and_cache.rs": "8ed64dbe93959a8ddd88bd0f66a678555ecc1ef04a6d481f247d96936fcae560",
+    "server/transparent-shard-server/tests/support/burst.rs": "2d90b96723668bae95e01d0f13f8a2928f3065725435290283128bd7390dd9c0",
+    "server/transparent-shard-server/src/memory.rs": "d241ab149799c6e8eb99afbad42ca2f76a02137d5c64a9db5c5cd17ab34698a8",
+    "server/transparent-shard-server/src/runtime.rs": "c12e1c3fec5498dc9d5039658fb44c64aa9f8fa0c665f0b9a371dca1575cec95",
+    "server/transparent-shard-server/src/prewarm.rs": "515b8e54c88f65fffadccceee5d2215c95a062afbac47e076c0a72be82c73100",
+    "server/transparent-shard-server/src/live.rs": "e213dc05ebe7307fffe185445e294e6fd6261887078ce4a9c7cc360e97b472c1"
+  },
+  "test_binary_sha256": "49f233419beec228acd4199624064637dda20c14770341364e19fceff6c58203",
+  "rust_toolchain": "1.91.0",
+  "profile": "release",
+  "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+  "source_matches_experiment": true,
+  "fixture_sha256": "ed29aac2c8e23efb5553587f2676bb891c507e69c1f8750fda00d5ff19cd531a",
+  "host_overhead_bytes": 805306368,
+  "worker_cpus": "0-3",
+  "client_cpus": "4-7",
+  "worker_budget_seconds": 14,
+  "generator": "transparent-pir-loadgen-01",
+  "supervisor": "transparent-m1-stage-fixed.service",
+  "supervisor_exit_code": 1,
+  "live_deployment_performed": false
+}

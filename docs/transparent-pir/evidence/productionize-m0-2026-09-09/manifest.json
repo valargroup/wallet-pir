@@ -1,0 +1,67 @@
+{
+  "schema": "transparent-productionization-m0-v1",
+  "status": "complete_with_explicit_deployment_unknowns",
+  "completed_at": "2026-09-09T07:07:32.776038+00:00",
+  "executor": "Codex acting as integration engineer and read-only operator for Roman",
+  "pir_code_head": "14f3919a86fab1c2be44877026a9d50270f70e88",
+  "wallet_baseline": "wallet-source-baseline.json",
+  "wallet_client_pin": "22e6becacdd0107683cda7280c5585fac9f4f4b2",
+  "wallet_database_layout": 4,
+  "wallet_default_limits": {
+    "max_queries": 256,
+    "max_private_bytes": 67108864
+  },
+  "local_source_directory": "/tmp/transparent-m0-20260909/wallet-source",
+  "verified_reconstruction_directory": "/tmp/transparent-m0-20260909/reproduction-verified",
+  "commands": "commands.md",
+  "environment": "environment.json",
+  "preservation": "preservation-check.json",
+  "public_observation": "public-observation.json",
+  "tests": {
+    "native_facade": 18,
+    "native_recovery": 25,
+    "adapter_store_contract_tests": 3,
+    "wallet_store_including_probe": 15,
+    "dart_client_including_status_probe": 47,
+    "flutter_state": 38,
+    "flutter_example": 12,
+    "all_final_commands_exit_status": 0
+  },
+  "findings": [
+    {
+      "id": "M0-F1",
+      "milestone": "M2",
+      "summary": "Own wallet coverage store retains quadratic row-write growth; client pin alone cannot fix it."
+    },
+    {
+      "id": "M0-F2",
+      "milestone": "M2",
+      "summary": "Near-tip UI presentation can suppress incomplete reasons despite synchronized=false."
+    },
+    {
+      "id": "M0-F3",
+      "milestone": "M2",
+      "summary": "Demo fallback, shared profile path and placeholder send flow require recovery-beta boundaries."
+    },
+    {
+      "id": "M0-F4",
+      "milestone": "M1",
+      "summary": "Private access unavailable; verify current binary/config/readiness and supervisor result before promotion or restart."
+    }
+  ],
+  "deployment": {
+    "public_maps_match": true,
+    "independent_server_anchor_matches": true,
+    "worker_binary_hashes": "unverified current; historical evidence linked in README",
+    "fleet_configuration": "unverified current; historical evidence linked in README",
+    "worker_readiness": "unverified",
+    "supervisor_acceptance": "unverified",
+    "infrastructure_mutations": false
+  },
+  "limits": [
+    "Synthetic local tests, not a live user-balance proof or macOS release validation.",
+    "SQL row changes, not physical disk bytes or full-wallet performance.",
+    "Public-map agreement and independent-server corroboration do not prove index completeness or fleet soak acceptance.",
+    "Wallet content was frozen; an independent concurrent commit changed HEAD without changing captured source bytes."
+  ]
+}

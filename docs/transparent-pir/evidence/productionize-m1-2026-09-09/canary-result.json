@@ -1,0 +1,8 @@
+{
+  "utc": "2026-09-09T01:29:55.842658+00:00",
+  "event": "result",
+  "passed": false,
+  "seconds": 2090.909747257014,
+  "blocks": 23,
+  "error": "public freshness exceeded at block 3476836: 30.719s exceeds 30.0s"
+}

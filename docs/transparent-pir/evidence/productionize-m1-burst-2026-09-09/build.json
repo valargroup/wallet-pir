@@ -1,0 +1,28 @@
+{
+  "source_sha": "14f3919a86fab1c2be44877026a9d50270f70e88",
+  "patch_sha256": "cb5206dc9d2503126de0b0c1728206d66f84d0ebd0f677d396333e2520ec805f",
+  "test_binary_sha256": "21a9389ed435e240d7bf10d34191308c280cca5a569ef3bc2da5f04d5b791cfd",
+  "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+  "profile": "release",
+  "rust_toolchain": "1.91.0",
+  "operator": "Codex acting for Roman",
+  "generator": "transparent-pir-loadgen-01 (existing Amsterdam host)",
+  "unit": "transparent-m1-burst.service",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "memory_max_bytes": 7516192768,
+  "memory_swap_max_bytes": 0,
+  "source_files_sha256": {
+    "Makefile": "89b172dee670ec02e7598bdbbb9e52856b44e463e957e6f656a1745ad635f281",
+    "ops/scripts/run-transparent-burst.py": "e26ecfabf5958994581a7c5d4708beb57c554d8f7ff7377bf7cd8e9be65bd2dd",
+    "ops/tests/test_transparent_burst.py": "a16fb08948f04103d23a0a9fcbf43cd342b05dd31b2dbd63873090badbb246b1",
+    "server/transparent-shard-server/examples/soak-query.rs": "8c0b7b65845ef876f34c520b8a558f6e0efad37136140a8c32472c8ef1debc6c",
+    "server/transparent-shard-server/examples/support/query.rs": "1133cfdc5dc969ededc1fdad5aa35fb9fc9085a27b77e5e9b3b16daca122216d",
+    "server/transparent-shard-server/tests/revisions_and_cache.rs": "8ed64dbe93959a8ddd88bd0f66a678555ecc1ef04a6d481f247d96936fcae560",
+    "server/transparent-shard-server/tests/support/burst.rs": "b5441bcfdf0847200948d33164883b853862301df9e3d80152ed14d8f74aaba8"
+  }
+}

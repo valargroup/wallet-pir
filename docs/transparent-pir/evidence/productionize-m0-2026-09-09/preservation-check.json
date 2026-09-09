@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-09-09T07:06:34.184606+00:00",
+  "changed_captured_source_files": [],
+  "index_matches_capture": false,
+  "unstaged_diff_matches_capture": false,
+  "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "unstaged_diff_sha256": "d157f2e85c6d4316dfaabe21e87dbbf92f7572e8aa889a85e2fb64135d9693bd",
+  "policy": "No commands edited the original wallet source, index or application data. Tests used isolated source and the shared build-artifact cache.",
+  "ending_wallet_head": "8267008b422e17965f62f106ea4c7358ec9a53f3",
+  "concurrent_change": "Wallet HEAD advanced independently to 8267008b4 while M0 ran. All captured source file bytes still match; index/unstaged hashes changed as work was committed outside M0."
+}

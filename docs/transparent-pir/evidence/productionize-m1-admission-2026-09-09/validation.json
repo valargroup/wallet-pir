@@ -1,0 +1,20 @@
+{
+  "make_check_exit_code": 0,
+  "rust_tests_passed": 578,
+  "rust_tests_failed": 0,
+  "rust_tests_ignored": 2,
+  "burst_runner_tests_passed": 5,
+  "doc_links_files_checked": 58,
+  "broken_doc_links": 0,
+  "fixed_runs": 4,
+  "initial_full_warm_passes": 4,
+  "exact_queries": 624,
+  "client_isolation_passes": 4,
+  "memory_qualification_passes": 4,
+  "worker_30s_passes": 4,
+  "worker_14s_passes": 1,
+  "qualification_supervisor_exit_code": 1,
+  "two_slot_promotion_accepted": false,
+  "live_deployment_performed": false,
+  "source_and_archives_hashes_verified": true
+}

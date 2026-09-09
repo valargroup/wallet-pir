@@ -2,6 +2,38 @@
 
 Updated 2026-09-08 against source `6ff2bfe`. The user accepted the [deployment target](deployment.md). This is the authoritative execution checklist, not a claim that unchecked work is absent in every future commit. Update each item with its implementing commit and verification artifact when it closes.
 
+## macOS recovery beta milestones
+
+Added 2026-09-09. The [execution plan](productionize-plan.md) organizes the existing
+technical gates into the agreed recovery-only beta. These unchecked milestones
+require new or reconciled acceptance evidence; the document's creation does not
+complete M0 or supersede earlier gate results.
+
+- [x] M0 — Establish the wallet/deployment baseline and preserve existing work.
+  [2026-09-09 evidence](evidence/productionize-m0-2026-09-09/README.md): exact
+  wallet source snapshot, targeted native/UI tests, measured checkpoint writes and
+  public maps corroborated by an independent server. Current private worker and
+  supervisor acceptance were explicitly unverified at M0; the M1 investigation below resolves access and records the failed canary.
+- [ ] M1 — Accept the matching loaded canary, fleet rollout and full observation.
+  The [current qualification and handoff](evidence/productionize-m1-query-wait-2026-09-09/README.md)
+  records source `f2f351c`, three passing generator screens, 28/28 warm runtimes
+  and 43 exact maintenance queries. The fresh actual-hardware canary started
+  2026-09-09 20:56:02 UTC under `transparent-m1-querywait-rollout.service` and was
+  active at the handoff capture. Require both six hours and 300 new blocks,
+  followed by the matching fleet batch and 24-hour observation. Earlier failed
+  canaries remain preserved; no previous sample counts toward this gate.
+- [ ] M2 — Deliver the isolated native macOS recovery application; sending disabled.
+  Carry forward M0-F1/F2/F3: fix the wallet-specific checkpoint rewrite, preserve
+  incomplete reasons near tip, and remove beta demo fallback/shared profile/send
+  paths. Findings and reproduction probes are in the M0 evidence.
+- [ ] M3 — Pass independent wallet correctness and lifecycle validation before opt-in PIR.
+- [ ] M4 — Measure matched whole-wallet workflows and additional transparent traffic.
+- [ ] M5 — Accept capacity, alerts and bounded failure recovery on existing hardware.
+- [ ] M6 — Complete release review and the limited-beta observation.
+
+Close each milestone with its source revisions and immutable evidence link. M1/M2
+follow M0; M3 follows both; M4/M5 follow M3; M6 requires all preceding gates.
+
 ## Sequence and critical path
 
 Optional parent-filter experiment: the [full-journal sweep and HTTP prototype](evidence/parent-filters-2026-09-08/README.md) are implemented. Recent direct retrieval wins the offline objective. The user subsequently approved the [archive artifact rollout](evidence/parent-filters-production-2026-09-08/README.md), whose small production canary passed. The baseline warm-up timed out on a 530,514-event wallet, before candidate measurements.
@@ -179,6 +211,6 @@ Each completed gate links source commits, exact commands and evidence. Update st
 - [x] Give the reconciler persistent ownership of managed recent preparation and reattest recovered jobs; distinguish active validity from retained reorg revocations (`1f82093`).
 - [x] Retry transient prewarm admission pressure without losing assigned targets; keep both public transparent origins guarded until the controller listener and canonical fleet are verified. Deploy corrected worker `d5fea93` and operations `45d066c` to the recent-01 canary; 106 worker and 26 portable Linux tests passed; the subsequent operations corrections pass 61 tests.
 - [x] Preserve canonical intermediate progress on unrouted replicas during publication bursts (`7754d6c`); reject future/orphaned candidates and retain exact-current public membership.
-- [ ] Pass both six hours and 300 new blocks with two sustained exact private-query clients, the separate public/replica budgets in [deployment](deployment.md), no OOM/restart, canonical endpoints and 20% host memory headroom. The third prior soak failed after 572.605 seconds; none of the three previous runs satisfies this gate. The second managed attempt also failed replica freshness; the new gate is `transparent-managed-hardening-rollout-3.service`, started 2026-09-09 00:55:04 UTC. Preserve its result and full evidence.
+- [ ] Pass both six hours and 300 new blocks with two sustained exact private-query clients, the separate public/replica budgets in [deployment](deployment.md), no OOM/restart, canonical endpoints and 20% host memory headroom. The third prior soak failed after 572.605 seconds; none of the three previous runs satisfies this gate. The second managed attempt also failed replica freshness; `transparent-managed-hardening-rollout-3.service`, started 2026-09-09 00:55:04 UTC, also failed after 2,090.910 seconds and 23 blocks on public freshness. Its [full evidence is preserved](evidence/productionize-m1-2026-09-09/README.md); superseded by the qualified `d778c62` candidate and fresh loaded canary described above; prior samples do not count.
 - [ ] After acceptance, perform the approved coordinated six-worker maintenance batch on existing hardware, enable managed preparation for all recent replicas, and verify all advertised workers warm on the current publication before reopening both public transparent origins.
 - [ ] Complete 24-hour post-rollout monitoring and the remaining failure/rollback rehearsals; do not promote the short smoke or deterministic reorg tests to live fleet acceptance.

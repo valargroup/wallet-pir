@@ -1,0 +1,6 @@
+2026-09-09T07:35:01+00:00 enhance-pir-coordinator-01 systemd[1]: Started transparent-m1-burst-build-verified.service - /root/.cargo/bin/cargo test --release -p transparent-shard-server --test revisions_and_cache --no-run.
+2026-09-09T07:35:01+00:00 enhance-pir-coordinator-01 cargo[1395883]:    Compiling transparent-shard-server v0.1.0 (/opt/transparent-publisher-build/m1-burst-20260909/server/transparent-shard-server)
+2026-09-09T07:35:46+00:00 enhance-pir-coordinator-01 cargo[1395883]:     Finished `release` profile [optimized] target(s) in 44.57s
+2026-09-09T07:35:46+00:00 enhance-pir-coordinator-01 cargo[1395883]:   Executable tests/revisions_and_cache.rs (/opt/transparent-publisher-build/6e0c65c/target/release/deps/revisions_and_cache-21161dbd23316f1f)
+2026-09-09T07:35:46+00:00 enhance-pir-coordinator-01 systemd[1]: transparent-m1-burst-build-verified.service: Deactivated successfully.
+2026-09-09T07:35:46+00:00 enhance-pir-coordinator-01 systemd[1]: transparent-m1-burst-build-verified.service: Consumed 44.679s CPU time, 994.0M memory peak, 0B memory swap peak.

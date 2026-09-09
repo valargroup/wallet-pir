@@ -1,0 +1,30 @@
+{
+  "method": "Conservative proxy: controller cycle minus temporally matching recent-04 warm duration; includes worker loading as well as non-worker work. Three adjacent publications, not a fleet tail bound.",
+  "source": "../productionize-m1-2026-09-09/failure-controller.log and worker-prewarm-window.json",
+  "heights": [
+    3476835,
+    3476836,
+    3476837
+  ],
+  "cycle_seconds": [
+    17.299839113,
+    14.508512903,
+    16.294613244
+  ],
+  "recent04_warm_seconds": [
+    10.406784811,
+    9.933216666,
+    10.667150476
+  ],
+  "residual_seconds": [
+    6.893054302000001,
+    4.575296237,
+    5.627462768000001
+  ],
+  "rounded_residual_per_publication_seconds": 7,
+  "engineering_margin_per_publication_seconds": 1,
+  "two_publication_overhead_allowance_seconds": 16,
+  "provisional_worker_screen_seconds": 14,
+  "accepted_public_freshness_seconds": 30,
+  "fleet_acceptance": false
+}

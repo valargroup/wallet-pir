@@ -1,0 +1,22 @@
+
+running 1 test
+test burst::external_query_clients has been running for over 60 seconds
+
+thread '<unnamed>' (127864) panicked at server/transparent-shard-server/tests/support/burst.rs:450:17:
+external exact query failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (127863) panicked at server/transparent-shard-server/tests/support/burst.rs:450:17:
+external exact query failed
+
+thread 'burst::external_query_clients' (127698) panicked at server/transparent-shard-server/tests/support/burst.rs:457:23:
+called `Result::unwrap()` on an `Err` value: Any { .. }
+test burst::external_query_clients ... FAILED
+
+failures:
+
+failures:
+    burst::external_query_clients
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 74.72s
+

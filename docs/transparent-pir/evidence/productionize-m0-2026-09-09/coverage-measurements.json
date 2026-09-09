@@ -1,0 +1,26 @@
+[
+  {
+    "prior_checkpoints": 0,
+    "sql_row_changes": 2,
+    "elapsed_ns": 86333,
+    "coverage_rows": 1
+  },
+  {
+    "prior_checkpoints": 10,
+    "sql_row_changes": 22,
+    "elapsed_ns": 68583,
+    "coverage_rows": 11
+  },
+  {
+    "prior_checkpoints": 100,
+    "sql_row_changes": 202,
+    "elapsed_ns": 553417,
+    "coverage_rows": 101
+  },
+  {
+    "prior_checkpoints": 1000,
+    "sql_row_changes": 2002,
+    "elapsed_ns": 4152416,
+    "coverage_rows": 1001
+  }
+]

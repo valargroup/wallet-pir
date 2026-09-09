@@ -1,0 +1,979 @@
+Running as unit: transparent-full-burst-fb189130ec904654ab6610882e09b02a.service
+
+running 1 test
+2026-09-09T18:21:00.417034Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=6.598e-6 stage="restore_slot"
+2026-09-09T18:21:00.417042Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=1.087e-6 stage="restore_slot"
+2026-09-09T18:21:00.417239Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=6.22e-7 stage="restore_slot"
+2026-09-09T18:21:00.417305Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=3.61e-7 stage="restore_slot"
+2026-09-09T18:21:00.417582Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=3.2433e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:00.417584Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=3.8324e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:00.417613Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=1.017e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:00.417624Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=2.6001e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:00.417646Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=7.87e-7 stage="build_slot"
+2026-09-09T18:21:00.417613Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=6.47e-7 stage="build_slot"
+2026-09-09T18:21:00.417695Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=4.4439e-5 admitted=true
+2026-09-09T18:21:00.417736Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=8.201e-5 admitted=true
+2026-09-09T18:21:00.556580Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.138818936 stage="source_load"
+2026-09-09T18:21:00.558024Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=0.140264506 stage="source_load"
+2026-09-09T18:21:00.865818Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.309192244 stage="encode_database"
+2026-09-09T18:21:00.865922Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=6.211e-5 stage="public_setup"
+2026-09-09T18:21:00.867909Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.309855141 stage="encode_database"
+2026-09-09T18:21:00.867999Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=6.6143e-5 stage="public_setup"
+2026-09-09T18:21:01.935979Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=1.067973289 stage="hint_columns"
+2026-09-09T18:21:01.939325Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=1.073396372 stage="hint_columns"
+2026-09-09T18:21:04.212854Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.273495685 stage="pack_preprocessing"
+2026-09-09T18:21:04.213181Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000285654 stage="publish_parameters"
+2026-09-09T18:21:04.213684Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=3.65706041 stage="runtime_build"
+2026-09-09T18:21:04.234280Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.298250809 stage="pack_preprocessing"
+2026-09-09T18:21:04.234632Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000304434 stage="publish_parameters"
+2026-09-09T18:21:04.235082Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=3.677029044 stage="runtime_build"
+2026-09-09T18:21:04.907773Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.692692138 stage="disk_save"
+2026-09-09T18:21:04.907895Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=1.383e-6 stage="restore_slot"
+2026-09-09T18:21:04.908048Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=4.490392588 stage="build_slot"
+2026-09-09T18:21:04.908071Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=3.4884e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:04.908124Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.2338e-5 admitted=true
+2026-09-09T18:21:05.128937Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=0.220778702 stage="source_load"
+2026-09-09T18:21:05.431017Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.302038185 stage="encode_database"
+2026-09-09T18:21:05.431110Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=5.822e-5 stage="public_setup"
+2026-09-09T18:21:05.695216Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Directory, 0) seconds=1.458426543 stage="disk_save"
+2026-09-09T18:21:05.695301Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=5.277645185 stage="build_slot"
+2026-09-09T18:21:05.695395Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.2959e-5 admitted=true
+2026-09-09T18:21:05.695434Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=6.39e-7 stage="restore_slot"
+2026-09-09T18:21:05.702214Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=4.2558e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:05.943371Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=0.247190172 stage="source_load"
+2026-09-09T18:21:06.065517Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.63440021 stage="hint_columns"
+2026-09-09T18:21:06.308310Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.364871527 stage="encode_database"
+2026-09-09T18:21:06.308427Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.4104e-5 stage="public_setup"
+2026-09-09T18:21:07.107978Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.799543798 stage="hint_columns"
+2026-09-09T18:21:08.285833Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.220274072 stage="pack_preprocessing"
+2026-09-09T18:21:08.286155Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000285336 stage="publish_parameters"
+2026-09-09T18:21:08.286912Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=3.157935317 stage="runtime_build"
+2026-09-09T18:21:08.967130Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Directory, 0) seconds=0.680198783 stage="disk_save"
+2026-09-09T18:21:08.967194Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=4.059049227 stage="build_slot"
+2026-09-09T18:21:08.967262Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.1854e-5 admitted=true
+2026-09-09T18:21:08.967302Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=8.39e-7 stage="restore_slot"
+2026-09-09T18:21:08.967369Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=2.8067e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:09.092493Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=0.125205935 stage="source_load"
+2026-09-09T18:21:09.323289Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.2152563929999998 stage="pack_preprocessing"
+2026-09-09T18:21:09.323593Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.00026492 stage="publish_parameters"
+2026-09-09T18:21:09.324098Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=3.380660949 stage="runtime_build"
+2026-09-09T18:21:09.398756Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.30621602 stage="encode_database"
+2026-09-09T18:21:09.398852Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=6.3503e-5 stage="public_setup"
+2026-09-09T18:21:10.021576Z DEBUG transparent_shard_server::runtime: runtime stage key=("1f5d7213a380745d83cc554ad16bdf9e039a0304d0de0b71376828e1838d0ea4", Pages, 0) seconds=0.697464699 stage="disk_save"
+2026-09-09T18:21:10.021645Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=4.319384176 stage="build_slot"
+2026-09-09T18:21:10.021742Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.543e-5 admitted=true
+2026-09-09T18:21:10.021782Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=5.71e-7 stage="restore_slot"
+2026-09-09T18:21:10.021857Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=2.8254e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:10.079682Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.680822395 stage="hint_columns"
+2026-09-09T18:21:10.182973Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=0.161211705 stage="source_load"
+2026-09-09T18:21:10.484208Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.301186036 stage="encode_database"
+2026-09-09T18:21:10.484319Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=5.7061e-5 stage="public_setup"
+2026-09-09T18:21:11.238020Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.753695256 stage="hint_columns"
+2026-09-09T18:21:12.423437Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.343693717 stage="pack_preprocessing"
+2026-09-09T18:21:12.423744Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000262629 stage="publish_parameters"
+2026-09-09T18:21:12.424621Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=3.332082313 stage="runtime_build"
+2026-09-09T18:21:13.128363Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Directory, 0) seconds=0.703717686 stage="disk_save"
+2026-09-09T18:21:13.128439Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=4.161058223 stage="build_slot"
+2026-09-09T18:21:13.128546Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.7846e-5 admitted=true
+2026-09-09T18:21:13.128576Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=5.62e-7 stage="restore_slot"
+2026-09-09T18:21:13.131249Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=3.3526e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:13.264059Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=0.132875159 stage="source_load"
+2026-09-09T18:21:13.494423Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.2563596009999998 stage="pack_preprocessing"
+2026-09-09T18:21:13.494730Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000265693 stage="publish_parameters"
+2026-09-09T18:21:13.495321Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=3.312301423 stage="runtime_build"
+2026-09-09T18:21:13.559210Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.295102556 stage="encode_database"
+2026-09-09T18:21:13.559314Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.0937e-5 stage="public_setup"
+2026-09-09T18:21:14.198082Z DEBUG transparent_shard_server::runtime: runtime stage key=("ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000", Pages, 0) seconds=0.702743471 stage="disk_save"
+2026-09-09T18:21:14.198154Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=4.176282452 stage="build_slot"
+2026-09-09T18:21:14.198273Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=8.0308e-5 admitted=true
+2026-09-09T18:21:14.198301Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=1.021e-6 stage="restore_slot"
+2026-09-09T18:21:14.200209Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=2.999e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:14.268341Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.709018594 stage="hint_columns"
+2026-09-09T18:21:14.355009Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=0.155832709 stage="source_load"
+2026-09-09T18:21:14.650060Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.295003801 stage="encode_database"
+2026-09-09T18:21:14.650188Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=8.7223e-5 stage="public_setup"
+2026-09-09T18:21:15.417428Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.767232898 stage="hint_columns"
+2026-09-09T18:21:16.592491Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.324087937 stage="pack_preprocessing"
+2026-09-09T18:21:16.592823Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000293581 stage="publish_parameters"
+2026-09-09T18:21:16.596606Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=3.332500276 stage="runtime_build"
+2026-09-09T18:21:17.295059Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Directory, 0) seconds=0.698427615 stage="disk_save"
+2026-09-09T18:21:17.295359Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=1.484e-6 stage="restore_slot"
+2026-09-09T18:21:17.295473Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=4.16418449 stage="build_slot"
+2026-09-09T18:21:17.295499Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=2.9537e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:17.295505Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=2.4762e-5 admitted=true
+2026-09-09T18:21:17.419473Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=0.123958129 stage="source_load"
+2026-09-09T18:21:17.680294Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.262821692 stage="pack_preprocessing"
+2026-09-09T18:21:17.680577Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000241518 stage="publish_parameters"
+2026-09-09T18:21:17.681240Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=3.3261846840000002 stage="runtime_build"
+2026-09-09T18:21:17.711020Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.291495962 stage="encode_database"
+2026-09-09T18:21:17.711129Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.2004e-5 stage="public_setup"
+2026-09-09T18:21:18.389672Z DEBUG transparent_shard_server::runtime: runtime stage key=("95df7205357fe2d9c962d2b41daded841e05afa7b6fc8d06dfec46ad04e15335", Pages, 0) seconds=0.708411282 stage="disk_save"
+2026-09-09T18:21:18.389756Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=4.189523171 stage="build_slot"
+2026-09-09T18:21:18.389859Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.6583e-5 admitted=true
+2026-09-09T18:21:18.389895Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=8.36e-7 stage="restore_slot"
+2026-09-09T18:21:18.394265Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=6.7277e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:18.403266Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.692130306 stage="hint_columns"
+2026-09-09T18:21:18.518908Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=0.128966593 stage="source_load"
+2026-09-09T18:21:18.821677Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.302720302 stage="encode_database"
+2026-09-09T18:21:18.821794Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.441e-5 stage="public_setup"
+2026-09-09T18:21:19.555229Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.733428147 stage="hint_columns"
+2026-09-09T18:21:20.729205Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.325902046 stage="pack_preprocessing"
+2026-09-09T18:21:20.729511Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000266531 stage="publish_parameters"
+2026-09-09T18:21:20.730277Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=3.310755203 stage="runtime_build"
+2026-09-09T18:21:21.457178Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Directory, 0) seconds=0.726883014 stage="disk_save"
+2026-09-09T18:21:21.457269Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=4.161743652 stage="build_slot"
+2026-09-09T18:21:21.457302Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=8.77e-7 stage="restore_slot"
+2026-09-09T18:21:21.457373Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.96e-5 admitted=true
+2026-09-09T18:21:21.457430Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=3.8081e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:21.599859Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=0.142405381 stage="source_load"
+2026-09-09T18:21:21.778724Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.223450267 stage="pack_preprocessing"
+2026-09-09T18:21:21.779087Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000323405 stage="publish_parameters"
+2026-09-09T18:21:21.779729Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=3.260775022 stage="runtime_build"
+2026-09-09T18:21:21.903349Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.303439782 stage="encode_database"
+2026-09-09T18:21:21.903457Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.2528e-5 stage="public_setup"
+2026-09-09T18:21:22.478698Z DEBUG transparent_shard_server::runtime: runtime stage key=("73d46a59d0d03d7616f9a47e53b50448d4c5a3504e6e296600d8884c8c4403b8", Pages, 0) seconds=0.698950898 stage="disk_save"
+2026-09-09T18:21:22.480189Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=4.085864753 stage="build_slot"
+2026-09-09T18:21:22.480305Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.7008e-5 admitted=true
+2026-09-09T18:21:22.480332Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=4.97e-7 stage="restore_slot"
+2026-09-09T18:21:22.487232Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=4.3464e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:22.569044Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.665580712 stage="hint_columns"
+2026-09-09T18:21:22.649760Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=0.16938001 stage="source_load"
+2026-09-09T18:21:22.941386Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.291576236 stage="encode_database"
+2026-09-09T18:21:22.941501Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.3698e-5 stage="public_setup"
+2026-09-09T18:21:23.778487Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.836977897 stage="hint_columns"
+2026-09-09T18:21:24.846570Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.277482756 stage="pack_preprocessing"
+2026-09-09T18:21:24.846881Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000267293 stage="publish_parameters"
+2026-09-09T18:21:24.850722Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=3.250814419 stage="runtime_build"
+2026-09-09T18:21:25.595706Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Directory, 0) seconds=0.744943047 stage="disk_save"
+2026-09-09T18:21:25.595993Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=4.138525831 stage="build_slot"
+2026-09-09T18:21:25.596031Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=1.073e-6 stage="restore_slot"
+2026-09-09T18:21:25.596134Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=9.538e-5 admitted=true
+2026-09-09T18:21:25.596196Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=4.1907e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:25.721178Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=0.124985607 stage="source_load"
+2026-09-09T18:21:25.905500Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.126956723 stage="pack_preprocessing"
+2026-09-09T18:21:25.905808Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000267686 stage="publish_parameters"
+2026-09-09T18:21:25.906472Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=3.25666428 stage="runtime_build"
+2026-09-09T18:21:26.016501Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.295272609 stage="encode_database"
+2026-09-09T18:21:26.016607Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.0414e-5 stage="public_setup"
+2026-09-09T18:21:26.609598Z DEBUG transparent_shard_server::runtime: runtime stage key=("b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc", Pages, 0) seconds=0.703106557 stage="disk_save"
+2026-09-09T18:21:26.609656Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=4.122380857 stage="build_slot"
+2026-09-09T18:21:26.609725Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.404e-5 admitted=true
+2026-09-09T18:21:26.609757Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=6.53e-7 stage="restore_slot"
+2026-09-09T18:21:26.615235Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=4.7458e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:26.704441Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.687811399 stage="hint_columns"
+2026-09-09T18:21:26.782890Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=0.170710926 stage="source_load"
+2026-09-09T18:21:27.088749Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.305748355 stage="encode_database"
+2026-09-09T18:21:27.088873Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.863e-5 stage="public_setup"
+2026-09-09T18:21:27.737252Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.648372034 stage="hint_columns"
+2026-09-09T18:21:29.125659Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.421175199 stage="pack_preprocessing"
+2026-09-09T18:21:29.125967Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000264495 stage="publish_parameters"
+2026-09-09T18:21:29.126858Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=3.405631277 stage="runtime_build"
+2026-09-09T18:21:29.817720Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Directory, 0) seconds=0.690839123 stage="disk_save"
+2026-09-09T18:21:29.817777Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=4.22152101 stage="build_slot"
+2026-09-09T18:21:29.817846Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=6.398e-5 admitted=true
+2026-09-09T18:21:29.817885Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=8.39e-7 stage="restore_slot"
+2026-09-09T18:21:29.817947Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=2.3986e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:29.940872Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=0.12299865 stage="source_load"
+2026-09-09T18:21:29.995947Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.258660007 stage="pack_preprocessing"
+2026-09-09T18:21:29.996260Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000273345 stage="publish_parameters"
+2026-09-09T18:21:29.996959Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=3.214015909 stage="runtime_build"
+2026-09-09T18:21:30.233215Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.292291496 stage="encode_database"
+2026-09-09T18:21:30.233323Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.8966e-5 stage="public_setup"
+2026-09-09T18:21:30.692115Z DEBUG transparent_shard_server::runtime: runtime stage key=("16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5", Pages, 0) seconds=0.695122255 stage="disk_save"
+2026-09-09T18:21:30.693189Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=4.077908315 stage="build_slot"
+2026-09-09T18:21:30.693224Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=8.3e-7 stage="restore_slot"
+2026-09-09T18:21:30.693298Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=8.0115e-5 admitted=true
+2026-09-09T18:21:30.696206Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=3.4135e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:30.872856Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.639526623 stage="hint_columns"
+2026-09-09T18:21:30.905332Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=0.209071965 stage="source_load"
+2026-09-09T18:21:31.203739Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.29836369 stage="encode_database"
+2026-09-09T18:21:31.203856Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.6004e-5 stage="public_setup"
+2026-09-09T18:21:31.970944Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.767081014 stage="hint_columns"
+2026-09-09T18:21:33.139641Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.266738657 stage="pack_preprocessing"
+2026-09-09T18:21:33.139949Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000267764 stage="publish_parameters"
+2026-09-09T18:21:33.140825Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=3.199903112 stage="runtime_build"
+2026-09-09T18:21:33.885240Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Directory, 0) seconds=0.744380101 stage="disk_save"
+2026-09-09T18:21:33.885343Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=1.204e-6 stage="restore_slot"
+2026-09-09T18:21:33.885454Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=4.0642555 stage="build_slot"
+2026-09-09T18:21:33.885482Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=2.8943e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:33.885487Z DEBUG transparent_shard_server::memory: work memory admission denied current=5427535872 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:21:33.985841Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=0.100378497 admitted=true
+2026-09-09T18:21:34.116957Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=0.13105264 stage="source_load"
+2026-09-09T18:21:34.165767Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.194752632 stage="pack_preprocessing"
+2026-09-09T18:21:34.166080Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000273545 stage="publish_parameters"
+2026-09-09T18:21:34.166711Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=3.261338265 stage="runtime_build"
+2026-09-09T18:21:34.409480Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.292461065 stage="encode_database"
+2026-09-09T18:21:34.409597Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.4966e-5 stage="public_setup"
+2026-09-09T18:21:34.848468Z DEBUG transparent_shard_server::runtime: runtime stage key=("1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e", Pages, 0) seconds=0.681736323 stage="disk_save"
+2026-09-09T18:21:34.849198Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=4.152956442 stage="build_slot"
+2026-09-09T18:21:34.849297Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=7.4649e-5 admitted=true
+2026-09-09T18:21:34.849322Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.013e-6 stage="restore_slot"
+2026-09-09T18:21:34.849349Z DEBUG transparent_shard_server::memory: work memory admission denied current=5547786240 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:34.849355Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:34.849359Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:34.950573Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.719e-6 stage="restore_slot"
+2026-09-09T18:21:34.950693Z DEBUG transparent_shard_server::memory: work memory admission denied current=5547786240 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:34.950699Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:34.950707Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.051890Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.497e-6 stage="restore_slot"
+2026-09-09T18:21:35.052009Z DEBUG transparent_shard_server::memory: work memory admission denied current=5547786240 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.052015Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.052021Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.080215Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.670610714 stage="hint_columns"
+2026-09-09T18:21:35.081111Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=0.229921535 stage="source_load"
+2026-09-09T18:21:35.153308Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.495e-6 stage="restore_slot"
+2026-09-09T18:21:35.153433Z DEBUG transparent_shard_server::memory: work memory admission denied current=5589729280 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.153455Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.153461Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.253771Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.88e-6 stage="restore_slot"
+2026-09-09T18:21:35.253903Z DEBUG transparent_shard_server::memory: work memory admission denied current=5606506496 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.253909Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.253916Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.355329Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.511e-6 stage="restore_slot"
+2026-09-09T18:21:35.355461Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.355469Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.355475Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.381104Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.299958666 stage="encode_database"
+2026-09-09T18:21:35.381229Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=8.4727e-5 stage="public_setup"
+2026-09-09T18:21:35.456442Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.381e-6 stage="restore_slot"
+2026-09-09T18:21:35.456578Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.456584Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.456591Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.558233Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.068e-6 stage="restore_slot"
+2026-09-09T18:21:35.558357Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.558368Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.558375Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.659598Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.035e-6 stage="restore_slot"
+2026-09-09T18:21:35.659732Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.659736Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.659741Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.760977Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.664e-6 stage="restore_slot"
+2026-09-09T18:21:35.761118Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.761123Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.761129Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.862244Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.295e-6 stage="restore_slot"
+2026-09-09T18:21:35.862360Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.862365Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.862370Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:35.963550Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.224e-6 stage="restore_slot"
+2026-09-09T18:21:35.963672Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:35.963677Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:35.963682Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.064884Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.172e-6 stage="restore_slot"
+2026-09-09T18:21:36.065005Z DEBUG transparent_shard_server::memory: work memory admission denied current=5614895104 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.065009Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.065015Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.166255Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.792e-6 stage="restore_slot"
+2026-09-09T18:21:36.166390Z DEBUG transparent_shard_server::memory: work memory admission denied current=5682266112 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.166395Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.166400Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.166459Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.785225646 stage="hint_columns"
+2026-09-09T18:21:36.268211Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.476e-6 stage="restore_slot"
+2026-09-09T18:21:36.268321Z DEBUG transparent_shard_server::memory: work memory admission denied current=5683167232 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.268325Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.268340Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.369553Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.585e-6 stage="restore_slot"
+2026-09-09T18:21:36.369689Z DEBUG transparent_shard_server::memory: work memory admission denied current=5749489664 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.369694Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.369700Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.470874Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.55e-6 stage="restore_slot"
+2026-09-09T18:21:36.470989Z DEBUG transparent_shard_server::memory: work memory admission denied current=5720637440 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.470995Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.471000Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.572197Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.877e-6 stage="restore_slot"
+2026-09-09T18:21:36.572309Z DEBUG transparent_shard_server::memory: work memory admission denied current=5731909632 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.572313Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.572318Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.673501Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.488e-6 stage="restore_slot"
+2026-09-09T18:21:36.673624Z DEBUG transparent_shard_server::memory: work memory admission denied current=5742845952 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.673628Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.673634Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.775271Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.102e-6 stage="restore_slot"
+2026-09-09T18:21:36.775387Z DEBUG transparent_shard_server::memory: work memory admission denied current=5754118144 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.775392Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.775397Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.876607Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.594e-6 stage="restore_slot"
+2026-09-09T18:21:36.876729Z DEBUG transparent_shard_server::memory: work memory admission denied current=5765390336 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.876733Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.876750Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:36.978296Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.655e-6 stage="restore_slot"
+2026-09-09T18:21:36.978417Z DEBUG transparent_shard_server::memory: work memory admission denied current=5776400384 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:36.978421Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:36.978428Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.079666Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.663e-6 stage="restore_slot"
+2026-09-09T18:21:37.079786Z DEBUG transparent_shard_server::memory: work memory admission denied current=5804654592 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.079791Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.079797Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.181280Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.616e-6 stage="restore_slot"
+2026-09-09T18:21:37.181402Z DEBUG transparent_shard_server::memory: work memory admission denied current=5819195392 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.181406Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.181412Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.282634Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.771e-6 stage="restore_slot"
+2026-09-09T18:21:37.282761Z DEBUG transparent_shard_server::memory: work memory admission denied current=5830205440 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.282766Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.282772Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.319511Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.239250845 stage="pack_preprocessing"
+2026-09-09T18:21:37.319803Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000251959 stage="publish_parameters"
+2026-09-09T18:21:37.320720Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=3.203704158 stage="runtime_build"
+2026-09-09T18:21:37.385197Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.821e-6 stage="restore_slot"
+2026-09-09T18:21:37.385312Z DEBUG transparent_shard_server::memory: work memory admission denied current=5827698688 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.385317Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.385332Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.486512Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.237e-6 stage="restore_slot"
+2026-09-09T18:21:37.486621Z DEBUG transparent_shard_server::memory: work memory admission denied current=5784612864 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.486626Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.486632Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.587868Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.929e-6 stage="restore_slot"
+2026-09-09T18:21:37.587981Z DEBUG transparent_shard_server::memory: work memory admission denied current=5818429440 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.587985Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.587991Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.689174Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.136e-6 stage="restore_slot"
+2026-09-09T18:21:37.689278Z DEBUG transparent_shard_server::memory: work memory admission denied current=5852508160 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.689283Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.689289Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.790498Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.648e-6 stage="restore_slot"
+2026-09-09T18:21:37.790698Z DEBUG transparent_shard_server::memory: work memory admission denied current=5886324736 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.790706Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.790715Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.891993Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.781e-6 stage="restore_slot"
+2026-09-09T18:21:37.892092Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905375232 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.892096Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.892102Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:37.993263Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.162e-6 stage="restore_slot"
+2026-09-09T18:21:37.993370Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904826368 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:21:37.993375Z DEBUG transparent_shard_server::runtime: runtime admission denied key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) stage="restore_admission"
+2026-09-09T18:21:37.993389Z DEBUG transparent_shard_server::prewarm: prewarm admission retry; sleeping 100ms
+2026-09-09T18:21:38.019579Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Directory, 0) seconds=0.698833823 stage="disk_save"
+2026-09-09T18:21:38.019656Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=4.134154043 stage="build_slot"
+2026-09-09T18:21:38.019697Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=8.38e-7 stage="restore_slot"
+2026-09-09T18:21:38.019735Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905453056 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.019812Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=2.8373e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:38.093850Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=1.632e-6 stage="restore_slot"
+2026-09-09T18:21:38.094019Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=3.2834e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:38.121232Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905272832 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.222555Z DEBUG transparent_shard_server::memory: work memory admission denied current=5892100096 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.323834Z DEBUG transparent_shard_server::memory: work memory admission denied current=5903372288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.392675Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.226207228 stage="pack_preprocessing"
+2026-09-09T18:21:38.392993Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.00026824 stage="publish_parameters"
+2026-09-09T18:21:38.393679Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=3.312535105 stage="runtime_build"
+2026-09-09T18:21:38.425228Z DEBUG transparent_shard_server::memory: work memory admission denied current=5879025664 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.526722Z DEBUG transparent_shard_server::memory: work memory admission denied current=5901832192 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.628184Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905137664 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.729630Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904924672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.830957Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905252352 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:38.932321Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905223680 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.033762Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905321984 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.101773Z DEBUG transparent_shard_server::runtime: runtime stage key=("27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1", Pages, 0) seconds=0.708073881 stage="disk_save"
+2026-09-09T18:21:39.101895Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=1.086e-6 stage="restore_slot"
+2026-09-09T18:21:39.102025Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=1.082179075 stage="build_slot"
+2026-09-09T18:21:39.102089Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=3.9487e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:39.135261Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=1.115584267 admitted=true
+2026-09-09T18:21:39.135344Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904539648 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.235686Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904539648 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.258942Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=0.1235831 stage="source_load"
+2026-09-09T18:21:39.337013Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904674816 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.438475Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905276928 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.538913Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904777216 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.568231Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.309240167 stage="encode_database"
+2026-09-09T18:21:39.568348Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.2887e-5 stage="public_setup"
+2026-09-09T18:21:39.640373Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905039360 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.741657Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905039360 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.843097Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905039360 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:39.944346Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905039360 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.045644Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905039360 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.091958Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.523603389 stage="hint_columns"
+2026-09-09T18:21:40.147019Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905481728 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.248494Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905248256 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.348906Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905248256 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.450391Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905248256 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.550925Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905436672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.652321Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905436672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.753779Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905436672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.855289Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905248256 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:40.956337Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905379328 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.057671Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871288320 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.161284Z DEBUG transparent_shard_server::memory: work memory admission denied current=5817933824 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.262568Z DEBUG transparent_shard_server::memory: work memory admission denied current=5829206016 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.363895Z DEBUG transparent_shard_server::memory: work memory admission denied current=5840216064 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.465181Z DEBUG transparent_shard_server::memory: work memory admission denied current=5851226112 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.566477Z DEBUG transparent_shard_server::memory: work memory admission denied current=5862760448 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.667722Z DEBUG transparent_shard_server::memory: work memory admission denied current=5873770496 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.769080Z DEBUG transparent_shard_server::memory: work memory admission denied current=5884780544 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.870371Z DEBUG transparent_shard_server::memory: work memory admission denied current=5896314880 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:41.971654Z DEBUG transparent_shard_server::memory: work memory admission denied current=5893644288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.072986Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904654336 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.080680Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=1.988673354 stage="pack_preprocessing"
+2026-09-09T18:21:42.081011Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000285911 stage="publish_parameters"
+2026-09-09T18:21:42.081775Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=2.822787183 stage="runtime_build"
+2026-09-09T18:21:42.174417Z DEBUG transparent_shard_server::memory: work memory admission denied current=5891735552 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.274776Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905428480 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.376259Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905473536 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.477698Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905534976 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.579066Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904793600 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.680579Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905096704 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.781957Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905633280 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.784102Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Directory, 0) seconds=0.702309321 stage="disk_save"
+2026-09-09T18:21:42.784191Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=4.690148821 stage="build_slot"
+2026-09-09T18:21:42.784231Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=9.45e-7 stage="restore_slot"
+2026-09-09T18:21:42.784317Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=2.8147e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:42.883591Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.781557181 admitted=true
+2026-09-09T18:21:42.883680Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904850944 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:42.985362Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904850944 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.005804Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=0.122097997 stage="source_load"
+2026-09-09T18:21:43.086672Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.188363Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905412096 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.289679Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905182720 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.313635Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.307789663 stage="encode_database"
+2026-09-09T18:21:43.313749Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.6128e-5 stage="public_setup"
+2026-09-09T18:21:43.391307Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905182720 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.492610Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905182720 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.593944Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905182720 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.695306Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905182720 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.796648Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905182720 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.843227Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.529470917 stage="hint_columns"
+2026-09-09T18:21:43.897961Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905297408 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:43.999466Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904867328 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.099731Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904867328 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.201076Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904867328 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.302369Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905055744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.403681Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905055744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.505008Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905055744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.606577Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905055744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.708361Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905342464 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.810298Z DEBUG transparent_shard_server::memory: work memory admission denied current=5892182016 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:44.911615Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885292544 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.013023Z DEBUG transparent_shard_server::memory: work memory admission denied current=5828087808 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.114420Z DEBUG transparent_shard_server::memory: work memory admission denied current=5839360000 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.214796Z DEBUG transparent_shard_server::memory: work memory admission denied current=5850632192 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.316191Z DEBUG transparent_shard_server::memory: work memory admission denied current=5861642240 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.417555Z DEBUG transparent_shard_server::memory: work memory admission denied current=5872652288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.519009Z DEBUG transparent_shard_server::memory: work memory admission denied current=5884186624 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.620384Z DEBUG transparent_shard_server::memory: work memory admission denied current=5895196672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.721767Z DEBUG transparent_shard_server::memory: work memory admission denied current=5892526080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.823139Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904060416 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:45.837308Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=1.9940427870000001 stage="pack_preprocessing"
+2026-09-09T18:21:45.837616Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000266802 stage="publish_parameters"
+2026-09-09T18:21:45.838452Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=2.832607989 stage="runtime_build"
+2026-09-09T18:21:45.924516Z DEBUG transparent_shard_server::memory: work memory admission denied current=5891141632 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.025882Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905256448 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.127215Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905305600 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.228580Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905334272 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.329939Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905387520 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.431279Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905195008 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.532779Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905190912 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.562423Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Directory, 0) seconds=0.723946909 stage="disk_save"
+2026-09-09T18:21:46.562528Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=7.460397353 stage="build_slot"
+2026-09-09T18:21:46.562567Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=6.9e-7 stage="restore_slot"
+2026-09-09T18:21:46.562693Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=3.1222e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:46.634143Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.8499226159999997 admitted=true
+2026-09-09T18:21:46.634252Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905453056 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.735728Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905453056 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.758031Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=0.12374896 stage="source_load"
+2026-09-09T18:21:46.837061Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905543168 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:46.938544Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905108992 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.040025Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905420288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.066646Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.308564878 stage="encode_database"
+2026-09-09T18:21:47.066768Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=8.521e-5 stage="public_setup"
+2026-09-09T18:21:47.143299Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904891904 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.244637Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904891904 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.345919Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904891904 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.447220Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904891904 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.548533Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904891904 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.631766Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.564991391 stage="hint_columns"
+2026-09-09T18:21:47.648878Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905498112 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.750455Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905350656 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.850854Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905350656 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:47.952362Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905350656 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.053794Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.155311Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.256691Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.358224Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.459353Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905129472 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.560650Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871677440 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.661993Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885759488 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.763281Z DEBUG transparent_shard_server::memory: work memory admission denied current=5822218240 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.864595Z DEBUG transparent_shard_server::memory: work memory admission denied current=5833490432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:48.965971Z DEBUG transparent_shard_server::memory: work memory admission denied current=5844762624 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.067286Z DEBUG transparent_shard_server::memory: work memory admission denied current=5855748096 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.168602Z DEBUG transparent_shard_server::memory: work memory admission denied current=5867020288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.269888Z DEBUG transparent_shard_server::memory: work memory admission denied current=5878554624 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.371217Z DEBUG transparent_shard_server::memory: work memory admission denied current=5889564672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.472637Z DEBUG transparent_shard_server::memory: work memory admission denied current=5897388032 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.574069Z DEBUG transparent_shard_server::memory: work memory admission denied current=5891469312 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.675585Z DEBUG transparent_shard_server::memory: work memory admission denied current=5901692928 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.717395Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.0855872619999998 stage="pack_preprocessing"
+2026-09-09T18:21:49.717710Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000274958 stage="publish_parameters"
+2026-09-09T18:21:49.718542Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=2.960463715 stage="runtime_build"
+2026-09-09T18:21:49.776961Z DEBUG transparent_shard_server::memory: work memory admission denied current=5884321792 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.878495Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905551360 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:49.978909Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905068032 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.080299Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905121280 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.181624Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905166336 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.283075Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905215488 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.384575Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904969728 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.424988Z DEBUG transparent_shard_server::runtime: runtime stage key=("ced665ae1f1140944bcd0c9aa2b83c1019df768df87fa513f9509106fc5b88c1", Pages, 0) seconds=0.706422501 stage="disk_save"
+2026-09-09T18:21:50.425089Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=7.640761202 stage="build_slot"
+2026-09-09T18:21:50.425115Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=1.013e-6 stage="restore_slot"
+2026-09-09T18:21:50.425269Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=4.0067e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:50.486677Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.924125589 admitted=true
+2026-09-09T18:21:50.486766Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905231872 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.588249Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905231872 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.607619Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=0.120842 stage="source_load"
+2026-09-09T18:21:50.689619Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905362944 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.790991Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904969728 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.892502Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905276928 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:50.915084Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.307414301 stage="encode_database"
+2026-09-09T18:21:50.915208Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=8.1502e-5 stage="public_setup"
+2026-09-09T18:21:50.993383Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.094712Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.196036Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.297304Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.398622Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.472373Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.557154398 stage="hint_columns"
+2026-09-09T18:21:51.500050Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905551360 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.601580Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905211392 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.703097Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905211392 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.804588Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905211392 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:51.906046Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905399808 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.007534Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905399808 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.108077Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905399808 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.209523Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905399808 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.310294Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904924672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.411578Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871403008 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.512919Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885227008 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.614460Z DEBUG transparent_shard_server::memory: work memory admission denied current=5826949120 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.714930Z DEBUG transparent_shard_server::memory: work memory admission denied current=5838483456 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.816467Z DEBUG transparent_shard_server::memory: work memory admission denied current=5849755648 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:52.916952Z DEBUG transparent_shard_server::memory: work memory admission denied current=5861027840 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.018340Z DEBUG transparent_shard_server::memory: work memory admission denied current=5872037888 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.119737Z DEBUG transparent_shard_server::memory: work memory admission denied current=5883584512 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.221187Z DEBUG transparent_shard_server::memory: work memory admission denied current=5895118848 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.322716Z DEBUG transparent_shard_server::memory: work memory admission denied current=5892345856 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.424211Z DEBUG transparent_shard_server::memory: work memory admission denied current=5903618048 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.442906Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=1.970489795 stage="pack_preprocessing"
+2026-09-09T18:21:53.443203Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000258382 stage="publish_parameters"
+2026-09-09T18:21:53.443974Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=2.836306547 stage="runtime_build"
+2026-09-09T18:21:53.525604Z DEBUG transparent_shard_server::memory: work memory admission denied current=5889912832 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.627048Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905235968 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.728404Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905276928 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.828845Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905317888 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:53.930212Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905137664 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.031592Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905424384 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.132934Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905170432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.165255Z DEBUG transparent_shard_server::runtime: runtime stage key=("2d4497bf9e8bafc6139ee4e57114238a7ecfa0782702939922bf2a79b1fe05bf", Pages, 0) seconds=0.721266948 stage="disk_save"
+2026-09-09T18:21:54.165379Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=7.6026627399999995 stage="build_slot"
+2026-09-09T18:21:54.165419Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=7.88e-7 stage="restore_slot"
+2026-09-09T18:21:54.165537Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=2.9059e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:54.233982Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.808840789 admitted=true
+2026-09-09T18:21:54.234062Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904875520 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.335465Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905129472 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.356181Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=0.122026049 stage="source_load"
+2026-09-09T18:21:54.436007Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905444864 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.537470Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905293312 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.637927Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905063936 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.662090Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.305859843 stage="encode_database"
+2026-09-09T18:21:54.662282Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000128198 stage="public_setup"
+2026-09-09T18:21:54.741306Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.842614Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:54.943929Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.045262Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.146594Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.195425Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.533126751 stage="hint_columns"
+2026-09-09T18:21:55.248120Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905301504 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.349510Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904998400 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.449913Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904998400 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.551379Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904998400 limit=7516192768 held=536870912 requested=536870912
+test burst::publication_burst_under_exact_load has been running for over 60 seconds
+2026-09-09T18:21:55.651894Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905186816 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.753350Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905186816 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.853791Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905186816 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:55.955403Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905186816 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.056388Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905522688 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.157714Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871476736 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.259000Z DEBUG transparent_shard_server::memory: work memory admission denied current=5851811840 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.360540Z DEBUG transparent_shard_server::memory: work memory admission denied current=5829156864 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.461953Z DEBUG transparent_shard_server::memory: work memory admission denied current=5840166912 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.563379Z DEBUG transparent_shard_server::memory: work memory admission denied current=5851176960 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.663856Z DEBUG transparent_shard_server::memory: work memory admission denied current=5862449152 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.765305Z DEBUG transparent_shard_server::memory: work memory admission denied current=5873459200 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.865825Z DEBUG transparent_shard_server::memory: work memory admission denied current=5884469248 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:56.967242Z DEBUG transparent_shard_server::memory: work memory admission denied current=5896003584 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.068594Z DEBUG transparent_shard_server::memory: work memory admission denied current=5892902912 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.170190Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904175104 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.184591Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=1.9891171810000001 stage="pack_preprocessing"
+2026-09-09T18:21:57.184912Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000280027 stage="publish_parameters"
+2026-09-09T18:21:57.185696Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=2.829468523 stage="runtime_build"
+2026-09-09T18:21:57.271710Z DEBUG transparent_shard_server::memory: work memory admission denied current=5890879488 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.373149Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.474609Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905604608 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.576021Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905125376 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.677453Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904924672 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.777789Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905489920 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.879153Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905227776 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:57.899107Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Directory, 0) seconds=0.713378533 stage="disk_save"
+2026-09-09T18:21:57.899203Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=7.473903391 stage="build_slot"
+2026-09-09T18:21:57.899231Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=8.19e-7 stage="restore_slot"
+2026-09-09T18:21:57.899363Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=4.0459e-5 hit=false stage="disk_restore"
+2026-09-09T18:21:57.980655Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.815250929 admitted=true
+2026-09-09T18:21:57.980760Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905227776 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.082132Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905489920 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.103293Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=0.122523709 stage="source_load"
+2026-09-09T18:21:58.183606Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905539072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.284976Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905137664 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.386422Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904908288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.410805Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.307465765 stage="encode_database"
+2026-09-09T18:21:58.410936Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=8.9105e-5 stage="public_setup"
+2026-09-09T18:21:58.487378Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905170432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.588719Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905170432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.690027Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905170432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.791348Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905170432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.892669Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905170432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:58.986520Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.575575517 stage="hint_columns"
+2026-09-09T18:21:58.994032Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905088512 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.095407Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905375232 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.196804Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905375232 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.298252Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905375232 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.399643Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.501041Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.602458Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.702864Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.804376Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905027072 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:21:59.905686Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871632384 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.008284Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885714432 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.109667Z DEBUG transparent_shard_server::memory: work memory admission denied current=5824831488 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.211005Z DEBUG transparent_shard_server::memory: work memory admission denied current=5835579392 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.312367Z DEBUG transparent_shard_server::memory: work memory admission denied current=5846589440 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.413723Z DEBUG transparent_shard_server::memory: work memory admission denied current=5857599488 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.515062Z DEBUG transparent_shard_server::memory: work memory admission denied current=5868347392 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.616638Z DEBUG transparent_shard_server::memory: work memory admission denied current=5879619584 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.718007Z DEBUG transparent_shard_server::memory: work memory admission denied current=5890629632 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.819393Z DEBUG transparent_shard_server::memory: work memory admission denied current=5887774720 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.920754Z DEBUG transparent_shard_server::memory: work memory admission denied current=5898784768 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:00.995696Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.009129321 stage="pack_preprocessing"
+2026-09-09T18:22:00.996003Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000266362 stage="publish_parameters"
+2026-09-09T18:22:00.996851Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=2.893513069 stage="runtime_build"
+2026-09-09T18:22:01.022138Z DEBUG transparent_shard_server::memory: work memory admission denied current=5877219328 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.123469Z DEBUG transparent_shard_server::memory: work memory admission denied current=5899763712 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.223815Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905375232 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.325220Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905424384 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.426627Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905461248 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.528111Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905522688 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.629445Z DEBUG transparent_shard_server::memory: work memory admission denied current=5906096128 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.718055Z DEBUG transparent_shard_server::runtime: runtime stage key=("a4bd72b37c0aafb265c77bb09cbc402cf69b65a87a1fabc8a0f12614b35469be", Pages, 0) seconds=0.721179204 stage="disk_save"
+2026-09-09T18:22:01.718133Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=7.552582707 stage="build_slot"
+2026-09-09T18:22:01.718189Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=9.23e-7 stage="restore_slot"
+2026-09-09T18:22:01.718335Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=3.6989e-5 hit=false stage="disk_restore"
+2026-09-09T18:22:01.730467Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.831231603 admitted=true
+2026-09-09T18:22:01.730559Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905559552 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.831377Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905559552 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:01.855264Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=0.124678753 stage="source_load"
+2026-09-09T18:22:01.932681Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905616896 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.034052Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905158144 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.135551Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905207296 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.168222Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.312916313 stage="encode_database"
+2026-09-09T18:22:02.168337Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.2705e-5 stage="public_setup"
+2026-09-09T18:22:02.237359Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905469440 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.338680Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905469440 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.440006Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905469440 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.541352Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905469440 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.642635Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905469440 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.687443Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.519098249 stage="hint_columns"
+2026-09-09T18:22:02.744093Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904900096 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.845525Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905129472 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:02.946029Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905129472 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.047486Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905129472 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.147821Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.249178Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.350575Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.451944Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.553359Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905350656 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.654348Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871648768 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.755684Z DEBUG transparent_shard_server::memory: work memory admission denied current=5818601472 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.857617Z DEBUG transparent_shard_server::memory: work memory admission denied current=5830135808 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:03.959099Z DEBUG transparent_shard_server::memory: work memory admission denied current=5841670144 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.060430Z DEBUG transparent_shard_server::memory: work memory admission denied current=5852942336 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.160798Z DEBUG transparent_shard_server::memory: work memory admission denied current=5864214528 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.262158Z DEBUG transparent_shard_server::memory: work memory admission denied current=5875224576 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.363721Z DEBUG transparent_shard_server::memory: work memory admission denied current=5886758912 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.465082Z DEBUG transparent_shard_server::memory: work memory admission denied current=5897768960 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.566401Z DEBUG transparent_shard_server::memory: work memory admission denied current=5895356416 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.661875Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=1.974390283 stage="pack_preprocessing"
+2026-09-09T18:22:04.662193Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000257743 stage="publish_parameters"
+2026-09-09T18:22:04.663001Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=2.807697502 stage="runtime_build"
+2026-09-09T18:22:04.667862Z DEBUG transparent_shard_server::memory: work memory admission denied current=5873000448 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.769250Z DEBUG transparent_shard_server::memory: work memory admission denied current=5896593408 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.870675Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905371136 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:04.972055Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905526784 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.073375Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.174797Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904834560 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.276156Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905141760 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.368562Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Directory, 0) seconds=0.705543737 stage="disk_save"
+2026-09-09T18:22:05.368747Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=7.469355335 stage="build_slot"
+2026-09-09T18:22:05.376956Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.658801004 admitted=true
+2026-09-09T18:22:05.377010Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904863232 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.478522Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904863232 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.499399Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=0.122369906 stage="source_load"
+2026-09-09T18:22:05.579007Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905403904 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.680351Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905260544 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.781665Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905031168 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.804193Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.304759416 stage="encode_database"
+2026-09-09T18:22:05.804287Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=6.7415e-5 stage="public_setup"
+2026-09-09T18:22:05.883333Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905293312 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:05.984616Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905293312 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.085908Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905293312 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.187364Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905293312 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.288640Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905293312 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.362318Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.558023447 stage="hint_columns"
+2026-09-09T18:22:06.389990Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905506304 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.491315Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904961536 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.592810Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904961536 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.694387Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904961536 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.794872Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905154048 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.896435Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905154048 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:06.996814Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905154048 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.098230Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905154048 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.199374Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905358848 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.300741Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871362048 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.402135Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885186048 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.503648Z DEBUG transparent_shard_server::memory: work memory admission denied current=5827162112 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.605034Z DEBUG transparent_shard_server::memory: work memory admission denied current=5838172160 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.706521Z DEBUG transparent_shard_server::memory: work memory admission denied current=5849706496 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.806970Z DEBUG transparent_shard_server::memory: work memory admission denied current=5860716544 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:07.908348Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871726592 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.008821Z DEBUG transparent_shard_server::memory: work memory admission denied current=5882998784 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.110313Z DEBUG transparent_shard_server::memory: work memory admission denied current=5894270976 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.211762Z DEBUG transparent_shard_server::memory: work memory admission denied current=5891579904 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.313241Z DEBUG transparent_shard_server::memory: work memory admission denied current=5902852096 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.338182Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=1.9758215909999999 stage="pack_preprocessing"
+2026-09-09T18:22:08.338495Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000273956 stage="publish_parameters"
+2026-09-09T18:22:08.339335Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=2.839902601 stage="runtime_build"
+2026-09-09T18:22:08.414677Z DEBUG transparent_shard_server::memory: work memory admission denied current=5888884736 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.516077Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905080320 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.617548Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905379328 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.718960Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905420288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.820485Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905465344 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:08.920830Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905272832 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.022209Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905272832 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.056255Z DEBUG transparent_shard_server::runtime: runtime stage key=("c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde", Pages, 0) seconds=0.716898882 stage="disk_save"
+2026-09-09T18:22:09.056361Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=7.3379907620000004 stage="build_slot"
+2026-09-09T18:22:09.123676Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.754891122 admitted=true
+2026-09-09T18:22:09.123756Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905534976 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.225112Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905534976 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.246027Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=0.122146065 stage="source_load"
+2026-09-09T18:22:09.326489Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905285120 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.426848Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905395712 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.528370Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905166336 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.556420Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.310343291 stage="encode_database"
+2026-09-09T18:22:09.556536Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.2806e-5 stage="public_setup"
+2026-09-09T18:22:09.629281Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905428480 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.730610Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905428480 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.831918Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905428480 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:09.935271Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905428480 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.036580Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905428480 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.075776Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.51923406 stage="hint_columns"
+2026-09-09T18:22:10.138025Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904818176 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.239466Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905096704 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.339777Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905096704 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.441188Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905096704 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.542694Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905289216 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.644146Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905289216 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.745578Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905289216 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.847077Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905289216 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:10.948347Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905575936 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.049701Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871648768 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.151373Z DEBUG transparent_shard_server::memory: work memory admission denied current=5818904576 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.252789Z DEBUG transparent_shard_server::memory: work memory admission denied current=5829914624 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.354440Z DEBUG transparent_shard_server::memory: work memory admission denied current=5841186816 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.454815Z DEBUG transparent_shard_server::memory: work memory admission denied current=5852196864 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.556213Z DEBUG transparent_shard_server::memory: work memory admission denied current=5863206912 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.657660Z DEBUG transparent_shard_server::memory: work memory admission denied current=5874741248 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.759155Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885489152 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.860676Z DEBUG transparent_shard_server::memory: work memory admission denied current=5896499200 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:11.962084Z DEBUG transparent_shard_server::memory: work memory admission denied current=5893545984 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.063467Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904556032 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.079123Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.003306206 stage="pack_preprocessing"
+2026-09-09T18:22:12.079473Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000302329 stage="publish_parameters"
+2026-09-09T18:22:12.080297Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=2.834221392 stage="runtime_build"
+2026-09-09T18:22:12.163923Z DEBUG transparent_shard_server::memory: work memory admission denied current=5890068480 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.265361Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905068032 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.366784Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905371136 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.468186Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905420288 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.569599Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905723392 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.671186Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905510400 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.772558Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905530880 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:12.800555Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Directory, 0) seconds=0.720226621 stage="disk_save"
+2026-09-09T18:22:12.874023Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.8176337030000003 admitted=true
+2026-09-09T18:22:12.998198Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=0.124073732 stage="source_load"
+2026-09-09T18:22:13.306034Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.30777138 stage="encode_database"
+2026-09-09T18:22:13.306158Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.6986e-5 stage="public_setup"
+2026-09-09T18:22:13.879220Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.573046137 stage="hint_columns"
+2026-09-09T18:22:15.874325Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=1.9950617689999999 stage="pack_preprocessing"
+2026-09-09T18:22:15.874621Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000254698 stage="publish_parameters"
+2026-09-09T18:22:15.875465Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=2.8772046209999997 stage="runtime_build"
+2026-09-09T18:22:16.604392Z DEBUG transparent_shard_server::runtime: runtime stage key=("67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b", Pages, 0) seconds=0.728904102 stage="disk_save"
+2026-09-09T18:22:16.604504Z  INFO transparent_shard_server::service: prewarm finished warm=28 target=28 failed=0 seconds=76.187557213
+2026-09-09T18:22:17.102467Z  INFO transparent_shard_server::runtime: retired runtime memory reclaimed rss_before=4933591040 rss_after=4445954048
+2026-09-09T18:22:17.650374Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=1.048e-6 stage="restore_slot"
+2026-09-09T18:22:17.650471Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=1.83e-7 stage="restore_slot"
+2026-09-09T18:22:17.650597Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=4.018e-5 hit=false stage="disk_restore"
+2026-09-09T18:22:17.650611Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=3.738e-5 hit=false stage="disk_restore"
+2026-09-09T18:22:17.650652Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=7.8e-8 stage="build_slot"
+2026-09-09T18:22:17.650684Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=2.704e-5 admitted=true
+2026-09-09T18:22:17.650642Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=4.07e-7 stage="build_slot"
+2026-09-09T18:22:17.650722Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=2.16e-5 admitted=true
+2026-09-09T18:22:17.713763Z DEBUG transparent_shard_server::memory: work memory admission denied current=5520293888 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:17.714001Z DEBUG transparent_shard_server::memory: work memory admission denied current=5520248832 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:17.774407Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=0.123696746 stage="source_load"
+2026-09-09T18:22:17.789086Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=0.13834362 stage="source_load"
+2026-09-09T18:22:17.917007Z DEBUG transparent_shard_server::memory: work memory admission denied current=5554413568 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:17.928739Z DEBUG transparent_shard_server::memory: work memory admission denied current=5560438784 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.078325Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.303883414 stage="encode_database"
+2026-09-09T18:22:18.078439Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.7129e-5 stage="public_setup"
+2026-09-09T18:22:18.108332Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.319207976 stage="encode_database"
+2026-09-09T18:22:18.108455Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=8.5625e-5 stage="public_setup"
+2026-09-09T18:22:18.124305Z DEBUG transparent_shard_server::memory: work memory admission denied current=5594275840 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.133654Z DEBUG transparent_shard_server::memory: work memory admission denied current=5595705344 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.337330Z DEBUG transparent_shard_server::memory: work memory admission denied current=5619593216 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.338457Z DEBUG transparent_shard_server::memory: work memory admission denied current=5619986432 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.548317Z DEBUG transparent_shard_server::memory: work memory admission denied current=5629140992 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.550461Z DEBUG transparent_shard_server::memory: work memory admission denied current=5629161472 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.757934Z DEBUG transparent_shard_server::memory: work memory admission denied current=5639696384 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.761557Z DEBUG transparent_shard_server::memory: work memory admission denied current=5640249344 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.970673Z DEBUG transparent_shard_server::memory: work memory admission denied current=5651832832 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:18.970849Z DEBUG transparent_shard_server::memory: work memory admission denied current=5651857408 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.172055Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=1.063593834 stage="hint_columns"
+2026-09-09T18:22:19.177539Z DEBUG transparent_shard_server::memory: work memory admission denied current=5670449152 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.180565Z DEBUG transparent_shard_server::memory: work memory admission denied current=5676437504 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.180774Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=1.102329524 stage="hint_columns"
+2026-09-09T18:22:19.383194Z DEBUG transparent_shard_server::memory: work memory admission denied current=5794705408 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.383825Z DEBUG transparent_shard_server::memory: work memory admission denied current=5794701312 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.587706Z DEBUG transparent_shard_server::memory: work memory admission denied current=5794922496 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.587883Z DEBUG transparent_shard_server::memory: work memory admission denied current=5794852864 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.792437Z DEBUG transparent_shard_server::memory: work memory admission denied current=5794914304 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.795227Z DEBUG transparent_shard_server::memory: work memory admission denied current=5794906112 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.999486Z DEBUG transparent_shard_server::memory: work memory admission denied current=5855846400 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:19.999706Z DEBUG transparent_shard_server::memory: work memory admission denied current=5855780864 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.208922Z DEBUG transparent_shard_server::memory: work memory admission denied current=5872082944 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.291675Z DEBUG transparent_shard_server::memory: work memory admission denied current=5871984640 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.415465Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905285120 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.499518Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905281024 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.621377Z DEBUG transparent_shard_server::memory: work memory admission denied current=5792534528 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.706118Z DEBUG transparent_shard_server::memory: work memory admission denied current=5811081216 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.825035Z DEBUG transparent_shard_server::memory: work memory admission denied current=5836849152 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:20.920402Z DEBUG transparent_shard_server::memory: work memory admission denied current=5857660928 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.032999Z DEBUG transparent_shard_server::memory: work memory admission denied current=5882609664 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.126576Z DEBUG transparent_shard_server::memory: work memory admission denied current=5903110144 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.238342Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905420288 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.336900Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905477632 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.444903Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905350656 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.445938Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.265143724 stage="pack_preprocessing"
+2026-09-09T18:22:21.446300Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000338549 stage="publish_parameters"
+2026-09-09T18:22:21.447214Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=3.67277399 stage="runtime_build"
+2026-09-09T18:22:21.477699Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.305607208 stage="pack_preprocessing"
+2026-09-09T18:22:21.478007Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000277698 stage="publish_parameters"
+2026-09-09T18:22:21.478684Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=3.689561586 stage="runtime_build"
+2026-09-09T18:22:21.544137Z DEBUG transparent_shard_server::memory: work memory admission denied current=5861572608 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.648728Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885169664 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.750421Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904867328 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.852656Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905416192 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:21.953745Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905240064 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:22.056245Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905285120 limit=7516192768 held=1073741824 requested=268435456
+2026-09-09T18:22:22.109749Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Pages, 0) seconds=0.662518043 stage="disk_save"
+2026-09-09T18:22:22.782467Z DEBUG transparent_shard_server::runtime: runtime stage key=("be059aab39ac34125e0452548d6fbcfb1e7cdb7237a597bd59ee86011ed4882b", Directory, 0) seconds=1.303764811 stage="disk_save"
+2026-09-09T18:22:22.782622Z  INFO transparent_shard_server::service: prewarm finished warm=28 target=28 failed=0 seconds=5.132299427
+2026-09-09T18:22:22.784220Z DEBUG transparent_shard_server::live: publication preparation stages map=32426d9e9300c44558210d8540b636402af2b3c322627f9e9f26e0082b489725 loading_seconds=0.595287586 warming_seconds=5.133929372
+2026-09-09T18:22:22.823365Z  INFO transparent_shard_server::runtime: retired runtime memory reclaimed rss_before=5000065024 rss_after=4657168384
+2026-09-09T18:22:22.825198Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=1.544e-6 stage="restore_slot"
+2026-09-09T18:22:23.418450Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=1.109e-6 stage="restore_slot"
+2026-09-09T18:22:23.418572Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=2.44e-7 stage="restore_slot"
+2026-09-09T18:22:23.418714Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=2.9177e-5 hit=false stage="disk_restore"
+2026-09-09T18:22:23.418713Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=5.3782e-5 hit=false stage="disk_restore"
+2026-09-09T18:22:23.418769Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=3.96e-7 stage="build_slot"
+2026-09-09T18:22:23.418780Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=7.6e-8 stage="build_slot"
+2026-09-09T18:22:23.418821Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=2.8587e-5 admitted=true
+2026-09-09T18:22:23.418854Z DEBUG transparent_shard_server::memory: work memory admission denied current=5747503104 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:23.457561Z DEBUG transparent_shard_server::memory: work memory admission denied current=5789704192 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:23.520289Z DEBUG transparent_shard_server::memory: work memory admission denied current=5801238528 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:23.553062Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=0.13421782 stage="source_load"
+2026-09-09T18:22:23.621208Z DEBUG transparent_shard_server::memory: work memory admission denied current=5828501504 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:23.661679Z DEBUG transparent_shard_server::memory: work memory admission denied current=5849473024 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:23.722420Z DEBUG transparent_shard_server::memory: work memory admission denied current=5879619584 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:23.752524Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.927167787 hit=true stage="disk_restore"
+2026-09-09T18:22:23.823258Z DEBUG transparent_shard_server::memory: work memory admission denied current=5897707520 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:23.856564Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.303455892 stage="encode_database"
+2026-09-09T18:22:23.856677Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=7.6766e-5 stage="public_setup"
+2026-09-09T18:22:23.867519Z DEBUG transparent_shard_server::memory: work memory admission denied current=5898571776 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:23.873088Z DEBUG transparent_shard_server::runtime: runtime stage key=("5b7ee9849d47f5ee67d04eb6ca4588beacf42dce75e5a1b481dfd02607b1fb20", Pages, 0) seconds=0.120526812 stage="source_verify"
+2026-09-09T18:22:23.873111Z  INFO transparent_shard_server::runtime: restored runtime cache seconds=1.047758679
+2026-09-09T18:22:23.924452Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904359424 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:24.028249Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905567744 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:24.072234Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905559552 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:24.128924Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905338368 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:24.230317Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905457152 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:24.275691Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905264640 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:24.334297Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905453056 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:24.417211Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.560527201 stage="hint_columns"
+2026-09-09T18:22:24.435422Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905203200 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:24.535908Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905285120 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:24.637281Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904879616 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:24.738115Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904920576 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:24.839362Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904543744 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:24.940091Z DEBUG transparent_shard_server::memory: work memory admission denied current=5904818176 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:25.041716Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905326080 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:25.142904Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905072128 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:25.245231Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905412096 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:25.346424Z DEBUG transparent_shard_server::memory: work memory admission denied current=5872320512 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:25.449286Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905354752 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:25.550273Z DEBUG transparent_shard_server::memory: work memory admission denied current=5840125952 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:25.563930Z DEBUG transparent_shard_server::memory: work memory admission denied current=5841793024 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:25.651701Z DEBUG transparent_shard_server::memory: work memory admission denied current=5851746304 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:25.752928Z DEBUG transparent_shard_server::memory: work memory admission denied current=5862518784 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:25.767693Z DEBUG transparent_shard_server::memory: work memory admission denied current=5864333312 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:25.854313Z DEBUG transparent_shard_server::memory: work memory admission denied current=5873799168 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:25.954963Z DEBUG transparent_shard_server::memory: work memory admission denied current=5885095936 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:25.971051Z DEBUG transparent_shard_server::memory: work memory admission denied current=5886922752 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:26.056486Z DEBUG transparent_shard_server::memory: work memory admission denied current=5896343552 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:26.157549Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905375232 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:26.173767Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905367040 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:26.259596Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905145856 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:26.361231Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905498112 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:26.378084Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905408000 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:26.447612Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=2.030355381 stage="pack_preprocessing"
+2026-09-09T18:22:26.447942Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="directory" seconds=0.000297358 stage="publish_parameters"
+2026-09-09T18:22:26.448666Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=2.8955606510000003 stage="runtime_build"
+2026-09-09T18:22:26.462298Z DEBUG transparent_shard_server::memory: work memory admission denied current=5874999296 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:26.563268Z DEBUG transparent_shard_server::memory: work memory admission denied current=5897572352 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:26.663965Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905227776 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:26.769241Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905555456 limit=7516192768 held=805306368 requested=536870912
+2026-09-09T18:22:26.869933Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905383424 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:26.938711Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905412096 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:26.971017Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905530880 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:27.072533Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905506304 limit=7516192768 held=536870912 requested=536870912
+2026-09-09T18:22:27.108225Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Directory, 0) seconds=0.659540841 stage="disk_save"
+2026-09-09T18:22:27.173180Z DEBUG transparent_shard_server::memory: cold build admission wait seconds=3.754344132 admitted=true
+2026-09-09T18:22:27.295718Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=0.122455439 stage="source_load"
+2026-09-09T18:22:27.602448Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.306693672 stage="encode_database"
+2026-09-09T18:22:27.602562Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=7.4385e-5 stage="public_setup"
+2026-09-09T18:22:27.654444Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905367040 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:27.862562Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905477632 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:28.070462Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905457152 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:28.147234Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.544664404 stage="hint_columns"
+2026-09-09T18:22:29.007913Z DEBUG transparent_shard_server::memory: work memory admission denied current=5905092608 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:29.214245Z DEBUG transparent_shard_server::memory: work memory admission denied current=5901004800 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:29.753561Z DEBUG transparent_shard_server::memory: work memory admission denied current=5890187264 limit=7516192768 held=805306368 requested=268435456
+2026-09-09T18:22:30.164404Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=2.017132684 stage="pack_preprocessing"
+2026-09-09T18:22:30.164712Z DEBUG transparent_shard_server::runtime: construction stage geometry="recent-8k" table="pages" seconds=0.000274394 stage="publish_parameters"
+2026-09-09T18:22:30.165439Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=2.86968759 stage="runtime_build"
+2026-09-09T18:22:30.826593Z DEBUG transparent_shard_server::runtime: runtime stage key=("268f5c527d35817d37919707b04a706c850d449156baa071b5438dbf8eb53aec", Pages, 0) seconds=0.661135981 stage="disk_save"
+2026-09-09T18:22:30.826677Z  INFO transparent_shard_server::service: prewarm finished warm=28 target=28 failed=0 seconds=7.40829092
+2026-09-09T18:22:30.826722Z DEBUG transparent_shard_server::live: publication preparation stages map=12cbb58695cd66166197842d179b61598c15effb06ad32efcd899a13e36e7b10 loading_seconds=0.63248844 warming_seconds=7.408393648
+test burst::publication_burst_under_exact_load ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 95.96s
+
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 1min 35.992s
+CPU time consumed: 3min 49.597s
+Memory peak: 2.2M
+Memory swap peak: 0B

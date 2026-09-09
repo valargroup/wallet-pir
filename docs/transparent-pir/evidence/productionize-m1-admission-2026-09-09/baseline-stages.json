@@ -1,0 +1,538 @@
+[
+  {
+    "run": "repeat-1-slots-1",
+    "phases": [
+      {
+        "phase": 0,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 0,
+        "stages": {
+          "restore_slot": {
+            "count": 35,
+            "sum_seconds": 6.4071e-05,
+            "max_seconds": 1.8824e-05
+          },
+          "disk_restore": {
+            "count": 32,
+            "sum_seconds": 0.00141127,
+            "max_seconds": 0.000145577
+          },
+          "build_slot": {
+            "count": 32,
+            "sum_seconds": 382.440995934,
+            "max_seconds": 14.905872945
+          },
+          "source_load": {
+            "count": 28,
+            "sum_seconds": 3.432645586,
+            "max_seconds": 0.132413638
+          },
+          "runtime_build": {
+            "count": 28,
+            "sum_seconds": 113.95158390900001,
+            "max_seconds": 4.182678863
+          },
+          "disk_save": {
+            "count": 28,
+            "sum_seconds": 20.166403101,
+            "max_seconds": 0.756952164
+          }
+        },
+        "memory_admission_denials": 7,
+        "prewarm_retries": 7
+      },
+      {
+        "phase": 1,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 0,
+        "stages": {
+          "restore_slot": {
+            "count": 2,
+            "sum_seconds": 2.92e-06,
+            "max_seconds": 1.665e-06
+          },
+          "disk_restore": {
+            "count": 2,
+            "sum_seconds": 6.861000000000001e-05,
+            "max_seconds": 3.7815e-05
+          },
+          "build_slot": {
+            "count": 2,
+            "sum_seconds": 5.158145713000001,
+            "max_seconds": 5.158145324
+          },
+          "source_load": {
+            "count": 2,
+            "sum_seconds": 0.299863144,
+            "max_seconds": 0.16032103
+          },
+          "runtime_build": {
+            "count": 2,
+            "sum_seconds": 8.491996480000001,
+            "max_seconds": 4.285232966
+          },
+          "disk_save": {
+            "count": 2,
+            "sum_seconds": 1.43675564,
+            "max_seconds": 0.721062192
+          }
+        },
+        "memory_admission_denials": 0,
+        "prewarm_retries": 0,
+        "loading_seconds": 0.609048664,
+        "warming_seconds": 10.229488627
+      },
+      {
+        "phase": 2,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 0,
+        "stages": {
+          "restore_slot": {
+            "count": 3,
+            "sum_seconds": 3.589e-06,
+            "max_seconds": 1.548e-06
+          },
+          "disk_restore": {
+            "count": 3,
+            "sum_seconds": 0.896403501,
+            "max_seconds": 0.896319103
+          },
+          "build_slot": {
+            "count": 2,
+            "sum_seconds": 5.079052343,
+            "max_seconds": 5.07905196
+          },
+          "source_load": {
+            "count": 2,
+            "sum_seconds": 0.284245364,
+            "max_seconds": 0.147922152
+          },
+          "source_verify": {
+            "count": 1,
+            "sum_seconds": 0.122274195,
+            "max_seconds": 0.122274195
+          },
+          "runtime_build": {
+            "count": 2,
+            "sum_seconds": 8.538946926000001,
+            "max_seconds": 4.321935339
+          },
+          "disk_save": {
+            "count": 2,
+            "sum_seconds": 1.430079594,
+            "max_seconds": 0.725479884
+          }
+        },
+        "memory_admission_denials": 6,
+        "prewarm_retries": 0,
+        "loading_seconds": 0.587116005,
+        "warming_seconds": 10.254334599
+      }
+    ]
+  },
+  {
+    "run": "repeat-1-slots-2",
+    "phases": [
+      {
+        "phase": 0,
+        "warm_runtimes": 25,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 3,
+        "stages": {
+          "restore_slot": {
+            "count": 1189,
+            "sum_seconds": 0.001793762,
+            "max_seconds": 1.9026e-05
+          },
+          "disk_restore": {
+            "count": 1046,
+            "sum_seconds": 0.038859511,
+            "max_seconds": 0.003400949
+          },
+          "build_slot": {
+            "count": 1046,
+            "sum_seconds": 76.254636409,
+            "max_seconds": 6.791270083
+          },
+          "source_load": {
+            "count": 25,
+            "sum_seconds": 3.628656239,
+            "max_seconds": 0.237664438
+          },
+          "runtime_build": {
+            "count": 25,
+            "sum_seconds": 109.638394224,
+            "max_seconds": 5.040184595
+          },
+          "disk_save": {
+            "count": 25,
+            "sum_seconds": 19.142898848,
+            "max_seconds": 1.611686482
+          }
+        },
+        "memory_admission_denials": 1164,
+        "prewarm_retries": 1161
+      },
+      {
+        "phase": 1,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 3,
+        "stages": {
+          "restore_slot": {
+            "count": 185,
+            "sum_seconds": 0.000273419,
+            "max_seconds": 1.6821e-05
+          },
+          "disk_restore": {
+            "count": 123,
+            "sum_seconds": 0.003477137,
+            "max_seconds": 0.000149578
+          },
+          "build_slot": {
+            "count": 123,
+            "sum_seconds": 11.554527057,
+            "max_seconds": 5.7804368329999996
+          },
+          "source_load": {
+            "count": 5,
+            "sum_seconds": 0.7082239850000001,
+            "max_seconds": 0.154095426
+          },
+          "runtime_build": {
+            "count": 5,
+            "sum_seconds": 22.960201898999998,
+            "max_seconds": 5.052453042
+          },
+          "disk_save": {
+            "count": 5,
+            "sum_seconds": 4.235011731,
+            "max_seconds": 1.311116682
+          }
+        },
+        "memory_admission_denials": 225,
+        "prewarm_retries": 180,
+        "loading_seconds": 0.682939434,
+        "warming_seconds": 22.31445426
+      },
+      {
+        "phase": 2,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 3,
+        "stages": {
+          "restore_slot": {
+            "count": 4,
+            "sum_seconds": 4.228e-06,
+            "max_seconds": 1.49e-06
+          },
+          "disk_restore": {
+            "count": 4,
+            "sum_seconds": 1.7728388910000001,
+            "max_seconds": 0.889623982
+          },
+          "build_slot": {
+            "count": 2,
+            "sum_seconds": 1.624e-06,
+            "max_seconds": 9.28e-07
+          },
+          "source_load": {
+            "count": 2,
+            "sum_seconds": 0.272907285,
+            "max_seconds": 0.139135819
+          },
+          "source_verify": {
+            "count": 2,
+            "sum_seconds": 0.240640512,
+            "max_seconds": 0.121118576
+          },
+          "runtime_build": {
+            "count": 2,
+            "sum_seconds": 10.068175429,
+            "max_seconds": 5.046027149
+          },
+          "disk_save": {
+            "count": 2,
+            "sum_seconds": 2.0579301379999997,
+            "max_seconds": 1.367151775
+          }
+        },
+        "memory_admission_denials": 46,
+        "prewarm_retries": 0,
+        "loading_seconds": 0.63758045,
+        "warming_seconds": 6.551860041
+      }
+    ]
+  },
+  {
+    "run": "repeat-2-slots-1",
+    "phases": [
+      {
+        "phase": 0,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 0,
+        "stages": {
+          "restore_slot": {
+            "count": 28,
+            "sum_seconds": 5.158e-05,
+            "max_seconds": 1.4323e-05
+          },
+          "disk_restore": {
+            "count": 28,
+            "sum_seconds": 0.001093886,
+            "max_seconds": 0.000135211
+          },
+          "build_slot": {
+            "count": 28,
+            "sum_seconds": 382.834002908,
+            "max_seconds": 14.975170445
+          },
+          "source_load": {
+            "count": 28,
+            "sum_seconds": 3.425364072,
+            "max_seconds": 0.135691792
+          },
+          "runtime_build": {
+            "count": 28,
+            "sum_seconds": 113.740145412,
+            "max_seconds": 4.184458884
+          },
+          "disk_save": {
+            "count": 28,
+            "sum_seconds": 20.144945369,
+            "max_seconds": 0.771960576
+          }
+        },
+        "memory_admission_denials": 0,
+        "prewarm_retries": 0
+      },
+      {
+        "phase": 1,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 0,
+        "stages": {
+          "restore_slot": {
+            "count": 2,
+            "sum_seconds": 3.312e-06,
+            "max_seconds": 1.963e-06
+          },
+          "disk_restore": {
+            "count": 2,
+            "sum_seconds": 7.0345e-05,
+            "max_seconds": 4.2568e-05
+          },
+          "build_slot": {
+            "count": 2,
+            "sum_seconds": 5.0601115089999995,
+            "max_seconds": 5.060111169
+          },
+          "source_load": {
+            "count": 2,
+            "sum_seconds": 0.268110823,
+            "max_seconds": 0.137202284
+          },
+          "runtime_build": {
+            "count": 2,
+            "sum_seconds": 8.502894198,
+            "max_seconds": 4.303922509
+          },
+          "disk_save": {
+            "count": 2,
+            "sum_seconds": 1.4532012779999999,
+            "max_seconds": 0.730030105
+          }
+        },
+        "memory_admission_denials": 6,
+        "prewarm_retries": 0,
+        "loading_seconds": 0.584020145,
+        "warming_seconds": 10.226205126
+      },
+      {
+        "phase": 2,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 0,
+        "stages": {
+          "restore_slot": {
+            "count": 3,
+            "sum_seconds": 4.4799999999999995e-06,
+            "max_seconds": 1.993e-06
+          },
+          "disk_restore": {
+            "count": 3,
+            "sum_seconds": 0.9053940500000001,
+            "max_seconds": 0.905313448
+          },
+          "build_slot": {
+            "count": 2,
+            "sum_seconds": 5.093226079,
+            "max_seconds": 5.093225604
+          },
+          "source_load": {
+            "count": 2,
+            "sum_seconds": 0.287141234,
+            "max_seconds": 0.145849108
+          },
+          "source_verify": {
+            "count": 1,
+            "sum_seconds": 0.120119711,
+            "max_seconds": 0.120119711
+          },
+          "runtime_build": {
+            "count": 2,
+            "sum_seconds": 8.534115866,
+            "max_seconds": 4.284339109
+          },
+          "disk_save": {
+            "count": 2,
+            "sum_seconds": 1.418695929,
+            "max_seconds": 0.721279543
+          }
+        },
+        "memory_admission_denials": 7,
+        "prewarm_retries": 0,
+        "loading_seconds": 0.593056688,
+        "warming_seconds": 10.241040042
+      }
+    ]
+  },
+  {
+    "run": "repeat-2-slots-2",
+    "phases": [
+      {
+        "phase": 0,
+        "warm_runtimes": 25,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 3,
+        "stages": {
+          "restore_slot": {
+            "count": 1174,
+            "sum_seconds": 0.001549845,
+            "max_seconds": 1.3318e-05
+          },
+          "disk_restore": {
+            "count": 974,
+            "sum_seconds": 0.028015998,
+            "max_seconds": 0.000121406
+          },
+          "build_slot": {
+            "count": 974,
+            "sum_seconds": 76.59578563,
+            "max_seconds": 6.5256845420000005
+          },
+          "source_load": {
+            "count": 25,
+            "sum_seconds": 3.715604078,
+            "max_seconds": 0.265775333
+          },
+          "runtime_build": {
+            "count": 25,
+            "sum_seconds": 109.148717944,
+            "max_seconds": 4.981887475
+          },
+          "disk_save": {
+            "count": 25,
+            "sum_seconds": 18.848901694,
+            "max_seconds": 1.408404534
+          }
+        },
+        "memory_admission_denials": 1149,
+        "prewarm_retries": 1146
+      },
+      {
+        "phase": 1,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 3,
+        "stages": {
+          "restore_slot": {
+            "count": 179,
+            "sum_seconds": 0.000248586,
+            "max_seconds": 3.205e-06
+          },
+          "disk_restore": {
+            "count": 109,
+            "sum_seconds": 0.002992274,
+            "max_seconds": 7.9836e-05
+          },
+          "build_slot": {
+            "count": 109,
+            "sum_seconds": 11.651885222,
+            "max_seconds": 5.827433281
+          },
+          "source_load": {
+            "count": 5,
+            "sum_seconds": 0.683551688,
+            "max_seconds": 0.149652749
+          },
+          "runtime_build": {
+            "count": 5,
+            "sum_seconds": 22.577819708,
+            "max_seconds": 5.016854836
+          },
+          "disk_save": {
+            "count": 5,
+            "sum_seconds": 4.241061034,
+            "max_seconds": 1.382218671
+          }
+        },
+        "memory_admission_denials": 217,
+        "prewarm_retries": 174,
+        "loading_seconds": 0.625249185,
+        "warming_seconds": 21.935348182
+      },
+      {
+        "phase": 2,
+        "warm_runtimes": 28,
+        "target_runtimes": 28,
+        "cumulative_prewarm_failures": 3,
+        "stages": {
+          "restore_slot": {
+            "count": 9,
+            "sum_seconds": 1.2516e-05,
+            "max_seconds": 2.414e-06
+          },
+          "disk_restore": {
+            "count": 6,
+            "sum_seconds": 1.784799561,
+            "max_seconds": 0.901681445
+          },
+          "build_slot": {
+            "count": 4,
+            "sum_seconds": 1.73e-06,
+            "max_seconds": 7.98e-07
+          },
+          "source_load": {
+            "count": 2,
+            "sum_seconds": 0.402066684,
+            "max_seconds": 0.267766412
+          },
+          "source_verify": {
+            "count": 2,
+            "sum_seconds": 0.238391004,
+            "max_seconds": 0.119516265
+          },
+          "runtime_build": {
+            "count": 2,
+            "sum_seconds": 9.394406585999999,
+            "max_seconds": 4.832281726
+          },
+          "disk_save": {
+            "count": 2,
+            "sum_seconds": 1.4761833210000002,
+            "max_seconds": 0.768240947
+          }
+        },
+        "memory_admission_denials": 54,
+        "prewarm_retries": 5,
+        "loading_seconds": 0.62026019,
+        "warming_seconds": 6.321860848
+      }
+    ]
+  }
+]

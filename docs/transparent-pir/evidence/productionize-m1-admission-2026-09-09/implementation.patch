@@ -1,0 +1,1514 @@
+diff --git a/Makefile b/Makefile
+index 882c520..002764a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -31,6 +31,7 @@ check-ops:
+ 	python3 ops/tests/test_transparent_parents.py
+ 	python3 ops/tests/test_transparent_fleet.py
+ 	python3 ops/tests/test_transparent_publication.py
++	python3 ops/tests/test_transparent_burst.py
+ 
+ .PHONY: check-reports
+ check-reports:
+@@ -211,3 +212,19 @@ transparent-sim-compare:
+ 	status=0; python3 server/transparent-loadtest/compare.py "$$@" || status=$$?; \
+ 	if [ -f "$$out/report.html" ]; then python3 server/transparent-loadtest/open_report.py --remember "$$out"; fi; \
+ 	exit "$$status"
++
++# Local-only worker-stage burst comparison; no fleet endpoints or live state.
++TRANSPARENT_BURST_REPETITIONS ?= 2
++TRANSPARENT_BURST_SYSTEMD ?= 0
++TRANSPARENT_BURST_EXTERNAL_CLIENTS ?= 0
++.PHONY: transparent-burst
++transparent-burst:
++	python3 ops/scripts/run-transparent-burst.py \
++		--repetitions "$(TRANSPARENT_BURST_REPETITIONS)" \
++		$(if $(strip $(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)),--worker-budget-seconds "$(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)") \
++		$(if $(strip $(TRANSPARENT_BURST_FIXTURE)),--fixture "$(TRANSPARENT_BURST_FIXTURE)") \
++		$(if $(strip $(TRANSPARENT_BURST_BINARY)),--test-binary "$(TRANSPARENT_BURST_BINARY)" --source-sha "$(or $(TRANSPARENT_BURST_SOURCE_SHA),$(shell git rev-parse HEAD))") \
++		$(if $(filter 1,$(TRANSPARENT_BURST_SYSTEMD)),--systemd) \
++		$(if $(filter 1,$(TRANSPARENT_BURST_EXTERNAL_CLIENTS)),--external-clients) \
++		$(if $(strip $(TRANSPARENT_BURST_HOST_OVERHEAD_BYTES)),--host-overhead-bytes "$(TRANSPARENT_BURST_HOST_OVERHEAD_BYTES)") \
++		$(if $(strip $(TRANSPARENT_BURST_OUT)),--out "$(TRANSPARENT_BURST_OUT)")
+diff --git a/ops/scripts/run-transparent-burst.py b/ops/scripts/run-transparent-burst.py
+new file mode 100644
+index 0000000..101e378
+--- /dev/null
++++ b/ops/scripts/run-transparent-burst.py
+@@ -0,0 +1,184 @@
++#!/usr/bin/env python3
++"""Run isolated worker burst comparisons in fresh processes, preserving failures."""
++import argparse
++import hashlib
++import json
++import os
++import math
++from pathlib import Path
++import platform
++import signal
++import subprocess
++import tempfile
++import uuid
++
++ROOT = Path(__file__).resolve().parents[2]
++
++
++def memory_qualification(kernel, isolated, overhead):
++    """Use the kernel high-water mark, including startup, never sampled RSS."""
++    peak = int(kernel.get('memory.peak', 0))
++    events = dict(line.split() for line in kernel.get('memory.events', '').splitlines())
++    headroom = ((8 << 30) - overhead - peak) / (8 << 30)
++    return dict(kernel_peak_bytes=peak, modeled_host_headroom_fraction=headroom,
++                memory_qualification_passed=bool(isolated and peak > 0 and headroom >= .20
++                    and int(events.get('oom', -1)) == 0 and int(events.get('oom_kill', -1)) == 0
++                    and kernel.get('memory.max', '').strip() == '7516192768'
++                    and kernel.get('memory.high', '').strip() == '5905580032'
++                    and kernel.get('memory.swap.max', '').strip() == '0'
++                    and kernel.get('cpuset.cpus.effective', '').strip() == '0-3'),
++                kernel_memory_events=events)
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--out', type=Path)
++    parser.add_argument('--fixture', type=Path, help='Frozen three-publication recent assignment')
++    parser.add_argument('--systemd', action='store_true', help='Fresh 4-CPU, MemoryHigh=5.5 GiB, MemoryMax=7 GiB cgroup per run (Linux prebuilt only)')
++    parser.add_argument('--host-overhead-bytes', type=int, default=512 << 20,
++                        help='Reserved non-worker memory in the modeled 8 GiB headroom check')
++    parser.add_argument('--test-binary', type=Path, help='Prebuilt revisions_and_cache test executable')
++    parser.add_argument('--external-clients', action='store_true', help='Separate client process; Linux systemd runs pin clients to CPUs 4-7')
++    parser.add_argument('--source-sha', help='Source revision for a prebuilt executable')
++    parser.add_argument('--worker-budget-seconds', type=float, default=30.,
++                        help='Stricter worker-stage screening budget, at most the 30s public ceiling')
++    parser.add_argument('--repetitions', type=int, default=2)
++    args = parser.parse_args()
++    if args.systemd and (not args.test_binary or platform.system() != 'Linux'):
++        parser.error('--systemd requires Linux and --test-binary')
++    if args.external_clients and not args.test_binary:
++        parser.error('--external-clients requires --test-binary')
++    if args.fixture and not args.fixture.is_file():
++        parser.error('--fixture must exist')
++    if not 0 <= args.host_overhead_bytes < (8 << 30):
++        parser.error('--host-overhead-bytes must be within the modeled 8 GiB host')
++    if args.test_binary and not args.source_sha:
++        parser.error('--test-binary requires --source-sha')
++    if not 0 < args.worker_budget_seconds <= 30:
++        parser.error('--worker-budget-seconds must be positive and at most 30')
++    if args.repetitions < 1:
++        parser.error('--repetitions must be positive')
++    output = args.out.resolve() if args.out else Path(tempfile.mkdtemp(prefix='transparent-burst-'))
++    output.mkdir(parents=True, exist_ok=True)
++    # Refuse to mix runs or overwrite prior evidence.
++    with (output / 'manifest.json').open('x') as stream:
++        source = args.source_sha or subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
++        paths = [ROOT / 'ops/scripts/run-transparent-burst.py']
++        paths += sorted((ROOT / 'server/transparent-shard-server').rglob('*.rs'))
++        json.dump({'source_sha': source, 'machine': platform.platform(),
++                   'external_clients': args.external_clients, 'client_cpus': '4-7' if args.systemd and args.external_clients else None,
++                   'worker_budget_seconds': args.worker_budget_seconds, 'repetitions': args.repetitions, 'isolated_cgroup': args.systemd,
++                   'fixture_sha256': hashlib.sha256(args.fixture.read_bytes()).hexdigest() if args.fixture else None,
++                   'modeled_host_bytes': 8 << 30, 'host_overhead_bytes': args.host_overhead_bytes,
++                   'test_binary_sha256': hashlib.sha256(args.test_binary.read_bytes()).hexdigest() if args.test_binary else None,
++                   'source_files_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if not p.name.startswith('._')}}, stream, indent=2)
++    print(f'Reports: {output}', flush=True)
++    command = ['cargo', 'test', '--release', '-p', 'transparent-shard-server',
++               '--test', 'revisions_and_cache', 'burst::publication_burst_under_exact_load',
++               '--', '--ignored', '--exact', '--nocapture']
++    if args.test_binary:
++        command = [str(args.test_binary.resolve()), 'burst::publication_burst_under_exact_load',
++                   '--ignored', '--exact', '--nocapture']
++    runs = []
++    for repetition in range(args.repetitions):
++        for slots in ([1, 2] if repetition % 2 == 0 else [2, 1]):
++            name = f'repeat-{repetition + 1}-slots-{slots}'
++            report = output / f'{name}.json'
++            env = dict({k: v for k, v in os.environ.items() if not k.startswith("TRANSPARENT_BURST_")}, TRANSPARENT_BURST_BUILD_SLOTS=str(slots),
++                       TRANSPARENT_BURST_REPORT=str(report), TRANSPARENT_BURST_SOURCE_SHA=source)
++            if args.fixture:
++                env['TRANSPARENT_BURST_FIXTURE'] = str(args.fixture.resolve())
++            client_process = None
++            client_log = None
++            if args.external_clients:
++                client_dir = output / (name + '-clients')
++                client_dir.mkdir()
++                env['TRANSPARENT_BURST_CLIENT_DIR'] = str(client_dir)
++                client_command = [str(args.test_binary.resolve()), 'burst::external_query_clients', '--ignored', '--exact', '--nocapture']
++                if args.systemd:
++                    client_command = ['taskset', '-c', '4-7'] + client_command
++                client_log = (client_dir / 'process.log').open('x')
++                client_process = subprocess.Popen(client_command, env=env, stdout=client_log, stderr=subprocess.STDOUT, start_new_session=True)
++            unit = 'transparent-full-burst-' + uuid.uuid4().hex if args.systemd else None
++            run_command = command
++            if unit:
++                run_command = ['systemd-run', '--wait', '--pipe', '--collect', '--unit', unit,
++                               '--property=CPUAffinity=0 1 2 3', '--property=AllowedCPUs=0-3', '--property=MemoryHigh=5905580032',
++                               '--property=MemoryMax=7516192768', '--property=MemorySwapMax=0']
++                run_command += ['--setenv=' + k + '=' + v for k, v in env.items() if k.startswith('TRANSPARENT_BURST_')]
++                run_command += command
++            print(f'Running {name}', flush=True)
++            with (output / f'{name}.log').open('x') as log:
++                process = subprocess.Popen(run_command, cwd=ROOT, env=env, stdout=log,
++                                           stderr=subprocess.STDOUT, start_new_session=True)
++                try:
++                    code = process.wait(timeout=900)
++                except subprocess.TimeoutExpired:
++                    if unit:
++                        subprocess.run(['systemctl', 'stop', unit], timeout=30, check=False)
++                    os.killpg(process.pid, signal.SIGKILL)
++                    process.wait()
++                    code = 124
++                except BaseException:
++                    if unit:
++                        subprocess.run(['systemctl', 'stop', unit], timeout=30, check=False)
++                    if process.poll() is None:
++                        os.killpg(process.pid, signal.SIGKILL)
++                        process.wait()
++                    raise
++                finally:
++                    if client_process:
++                        (client_dir / 'stop').touch()
++                        try:
++                            client_code = client_process.wait(timeout=70)
++                        except subprocess.TimeoutExpired:
++                            os.killpg(client_process.pid, signal.SIGKILL)
++                            client_process.wait()
++                            client_code = 124
++                        client_log.close()
++            row = {'name': name, 'build_slots': slots, 'exit_code': code, 'report': report.name}
++            if client_process:
++                row['client_exit_code'] = client_code
++                if client_code != 0:
++                    row['exit_code'] = client_code
++            if report.exists() and report.stat().st_size:
++                try:
++                    value = json.loads(report.read_text())
++                    if args.external_clients:
++                        row['external_clients'] = value.get('external_clients', False)
++                        if args.systemd:
++                            host = json.loads((client_dir / 'host.json').read_text())
++                            client_cpus = dict(line.split(':', 1) for line in host['proc_status'].splitlines())['Cpus_allowed_list'].strip()
++                            worker_group = value.get('kernel_memory', {}).get('path')
++                            client_group = host.get('kernel', {}).get('path')
++                            row['client_isolation_passed'] = bool(client_cpus == '4-7' and worker_group and client_group and worker_group != client_group)
++                    row['load_overlapped_burst'] = value.get('load_overlapped_burst', False)
++                    row['cold_warm'] = value.get('cold_warm', False)
++                    row['assigned_shards'] = value.get('assigned_shards', 1)
++                    if args.fixture:
++                        row.update(memory_qualification(value.get('kernel_memory', {}), args.systemd, args.host_overhead_bytes))
++                    latencies = sorted(q['query']['seconds'] for q in value.get('queries', []) if 'query' in q)
++                    row.update(exact_query_count=len(latencies),
++                               query_p50_seconds=latencies[math.ceil(len(latencies) * .50) - 1] if latencies else None,
++                               query_p95_seconds=latencies[math.ceil(len(latencies) * .95) - 1] if latencies else None,
++                               completed=value['completed'], exact_queries=value['exact_queries'],
++                               worker_30s_budget_passed=value['worker_30s_budget_passed'],
++                               max_worker_visibility_seconds=max((a['worker_visibility_seconds'] for a in value['activations']), default=None),
++                               peak_process_rss_bytes=max((s['process_rss_bytes'] or 0 for s in value['memory_samples']), default=None))
++                except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
++                    row['report_error'] = str(error)
++                    row['worker_30s_budget_passed'] = False
++            row['worker_budget_seconds'] = args.worker_budget_seconds
++            row['worker_budget_passed'] = bool(row.get('completed') and row.get('max_worker_visibility_seconds') is not None and row['max_worker_visibility_seconds'] <= args.worker_budget_seconds)
++            runs.append(row)
++            (output / 'summary.json').write_text(json.dumps({'scope': 'isolated worker; modeled headroom is not live-host acceptance', 'runs': runs}, indent=2) + '\n')
++            print(json.dumps(row), flush=True)
++    return 0 if all(r['exit_code'] == 0 and r.get('completed') and r.get('exact_queries')
++                    and r.get('worker_30s_budget_passed') and r.get('worker_budget_passed')
++                    and (not args.external_clients or r.get('external_clients'))
++                    and (not (args.external_clients and args.systemd) or r.get('client_isolation_passed'))
++                    and (not args.fixture or (r.get('cold_warm') and r.get('assigned_shards') == 14 and r.get('load_overlapped_burst') and r.get('memory_qualification_passed'))) for r in runs) else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/ops/tests/test_transparent_burst.py b/ops/tests/test_transparent_burst.py
+new file mode 100644
+index 0000000..a884d54
+--- /dev/null
++++ b/ops/tests/test_transparent_burst.py
+@@ -0,0 +1,102 @@
++#!/usr/bin/env python3
++"""The burst runner must preserve failures and finish both configurations."""
++import json
++import importlib.util
++from pathlib import Path
++import subprocess
++import sys
++import tempfile
++import unittest
++
++RUNNER = Path(__file__).resolve().parents[1] / 'scripts/run-transparent-burst.py'
++
++
++class BurstRunnerTests(unittest.TestCase):
++    def test_headroom_requires_kernel_peak_and_verified_limits(self):
++        spec = importlib.util.spec_from_file_location('burst_runner', RUNNER)
++        module = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(module)
++        kernel = {'memory.peak': str(5 << 30), 'memory.current': '1',
++                  'memory.high': '5905580032', 'memory.max': '7516192768',
++                  'memory.events': 'oom 0\noom_kill 0\nhigh 12\n',
++                  'memory.swap.max': '0', 'cpuset.cpus.effective': '0-3'}
++        def passed(value, isolated=True):
++            return module.memory_qualification(value, isolated, 512 << 20)['memory_qualification_passed']
++        self.assertTrue(passed(kernel))
++        self.assertFalse(passed(kernel, False))
++        self.assertFalse(passed({**kernel, 'memory.peak': str(7 << 30)}))
++        self.assertFalse(passed({**kernel, 'memory.events': 'oom 1\noom_kill 0\n'}))
++        for key in ['memory.peak', 'memory.high', 'memory.max', 'memory.events', 'memory.swap.max', 'cpuset.cpus.effective']:
++            self.assertFalse(passed({k: v for k, v in kernel.items() if k != key}), key)
++
++    def test_failed_budget_is_retained_and_does_not_skip_other_configuration(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            binary = root / 'probe'
++            binary.write_text('''#!/usr/bin/env python3
++import json,os
++slots=int(os.environ['TRANSPARENT_BURST_BUILD_SLOTS'])
++json.dump({'completed':True,'exact_queries':True,'worker_30s_budget_passed':slots==2,
++'activations':[{'worker_visibility_seconds':31 if slots==1 else 15}],
++'memory_samples':[{'process_rss_bytes':100}]},open(os.environ['TRANSPARENT_BURST_REPORT'],'w'))
++''')
++            binary.chmod(0o755)
++            out = root / 'out'
++            command = [sys.executable, str(RUNNER), '--test-binary', str(binary),
++                       '--source-sha', 'fixture', '--out', str(out)]
++            result = subprocess.run(command, capture_output=True)
++            self.assertEqual(result.returncode, 1)
++            runs = json.loads((out / 'summary.json').read_text())['runs']
++            self.assertEqual([r['build_slots'] for r in runs], [1, 2, 2, 1])
++            self.assertEqual(len(list(out.glob('repeat-*.json'))), 4)
++            original = (out / 'summary.json').read_bytes()
++            self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
++            self.assertEqual((out / 'summary.json').read_bytes(), original)
++
++    def test_worker_budget_cannot_weaken_public_ceiling(self):
++        for budget in ['0', '31', 'nan']:
++            result = subprocess.run([sys.executable, str(RUNNER), '--worker-budget-seconds', budget], capture_output=True)
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn(b'--worker-budget-seconds', result.stderr)
++
++    def test_external_client_failure_fails_otherwise_successful_worker(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            binary = root / 'probe'
++            binary.write_text('''#!/usr/bin/env python3
++import json, os, sys, time
++from pathlib import Path
++if 'burst::external_query_clients' in sys.argv:
++    stop = Path(os.environ['TRANSPARENT_BURST_CLIENT_DIR']) / 'stop'
++    while not stop.exists(): time.sleep(.01)
++    sys.exit(23)
++json.dump({'completed':True,'exact_queries':True,'worker_30s_budget_passed':True,
++'activations':[{'worker_visibility_seconds':1}], 'memory_samples':[]},
++open(os.environ['TRANSPARENT_BURST_REPORT'],'w'))
++''')
++            binary.chmod(0o755)
++            out = root / 'out'
++            result = subprocess.run([sys.executable, str(RUNNER), '--test-binary', str(binary),
++                                     '--source-sha', 'fixture', '--external-clients', '--out', str(out),
++                                     '--repetitions', '1'], capture_output=True)
++            self.assertEqual(result.returncode, 1)
++            runs = json.loads((out / 'summary.json').read_text())['runs']
++            self.assertEqual([r['client_exit_code'] for r in runs], [23, 23])
++            self.assertTrue(all(r['completed'] for r in runs))
++
++    def test_crashed_probe_still_produces_summary(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            binary = root / 'probe'
++            binary.write_text('#!/bin/sh\nexit 17\n')
++            binary.chmod(0o755)
++            out = root / 'out'
++            result = subprocess.run([sys.executable, str(RUNNER), '--test-binary', str(binary),
++                                     '--source-sha', 'fixture', '--out', str(out), '--repetitions', '1'], capture_output=True)
++            self.assertEqual(result.returncode, 1)
++            runs = json.loads((out / 'summary.json').read_text())['runs']
++            self.assertEqual([r['exit_code'] for r in runs], [17, 17])
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/server/transparent-shard-server/examples/soak-query.rs b/server/transparent-shard-server/examples/soak-query.rs
+index 36ac455..b39044f 100644
+--- a/server/transparent-shard-server/examples/soak-query.rs
++++ b/server/transparent-shard-server/examples/soak-query.rs
+@@ -2,18 +2,16 @@
+ //! No scripts or returned row bytes are logged. Stale revisions are retried;
+ //! a transport failure or an incorrect decoded row fails the run.
+ use clap::Parser;
+-use serde::Deserialize;
+-use sha2::{Digest, Sha256};
+ use std::{
+-    io::{Read, Seek, SeekFrom},
+-    path::{Path, PathBuf},
++    path::PathBuf,
+     time::{Duration, Instant},
+ };
+ use transparent_wallet::{
+-    client::{Table, TableClient},
+-    http::{HttpFilterSource, HttpOptions, HttpShardTransport},
+-    transport::{BoxError, FilterSource, Overloaded, ShardTransport, StaleRevision},
++    client::Table,
++    transport::{BoxError, Overloaded, StaleRevision},
+ };
++#[path = "support/query.rs"]
++mod query;
+ 
+ #[derive(Parser)]
+ struct Args {
+@@ -26,113 +24,6 @@ struct Args {
+     #[arg(long, default_value_t = 21600)]
+     seconds: u64,
+ }
+-#[derive(Deserialize)]
+-struct Setup {
+-    public_params: String,
+-    public_params_sha256: String,
+-}
+-
+-fn once(args: &Args, table: Table) -> Result<serde_json::Value, BoxError> {
+-    let options = HttpOptions {
+-        timeout: Duration::from_secs(60),
+-        ..Default::default()
+-    };
+-    let mut filters = HttpFilterSource::new(&args.url, &options)?;
+-    let mut transport = HttpShardTransport::new(&args.url, &options)?;
+-    let (bytes, _) = filters.shard_map()?;
+-    let map: transparent_filter::ShardMap = serde_json::from_slice(&bytes)?;
+-    map.check_shape().map_err(|e| format!("map: {e}"))?;
+-    let entry = map.shards.get(args.shard).ok_or("shard absent")?;
+-    let geometry = transport.geometry()?;
+-    let g = geometry
+-        .geometries
+-        .iter()
+-        .find(|g| g.name == entry.geometry)
+-        .ok_or("geometry absent")?;
+-    let (rows, width, seed, scheme, segments, name) = match table {
+-        Table::Directory => (
+-            g.directory_rows,
+-            g.directory_row_bytes,
+-            g.directory_setup_seed,
+-            &g.directory_scheme,
+-            entry.directory_segments,
+-            "directory",
+-        ),
+-        Table::Pages => (
+-            g.page_rows,
+-            g.page_row_bytes,
+-            g.pages_setup_seed,
+-            &g.pages_scheme,
+-            entry.page_segments,
+-            "pages",
+-        ),
+-    };
+-    let directory = find_revision(&args.publications, &entry.manifest_digest)?;
+-    let manifest_bytes = std::fs::read(directory.join("manifest.json"))?;
+-    let manifest: transparent_shard::manifest::ShardManifest =
+-        serde_json::from_slice(&manifest_bytes)?;
+-    if manifest.digest() != entry.manifest_digest {
+-        return Err("local manifest digest mismatch".into());
+-    }
+-    let sources = if name == "directory" {
+-        &manifest.directory_segments
+-    } else {
+-        &manifest.page_segments
+-    };
+-    let mut expected = Vec::new();
+-    // Hold the expected bytes before the publisher can collect this directory.
+-    for (segment, source) in sources.iter().enumerate() {
+-        let path = directory.join(format!("{name}.{segment}.bin"));
+-        let mut file = std::fs::File::open(&path)?;
+-        let mut hash = Sha256::new();
+-        let mut buffer = [0u8; 65536];
+-        loop {
+-            let n = file.read(&mut buffer)?;
+-            if n == 0 {
+-                break;
+-            }
+-            hash.update(&buffer[..n]);
+-        }
+-        if hex::encode(hash.finalize()) != source.sha256 {
+-            return Err("local table digest mismatch".into());
+-        }
+-        file.seek(SeekFrom::Start(7 * u64::from(width)))?;
+-        let mut row = vec![0; width as usize];
+-        file.read_exact(&mut row)?;
+-        expected.push(row);
+-    }
+-    let mut client = TableClient::new(table, rows, width, seed, scheme)?;
+-    for segment in 0..segments {
+-        let (bytes, _) = transport.setup(entry.shard_id, &entry.manifest_digest, table, segment)?;
+-        let setup: Setup = serde_json::from_slice(&bytes)?;
+-        client.open_segment(
+-            &entry.manifest_digest,
+-            segment,
+-            &setup.public_params,
+-            &setup.public_params_sha256,
+-        )?;
+-    }
+-    let query = client.prepare(&entry.manifest_digest, 7)?;
+-    let started = Instant::now();
+-    let response = transport.query(entry.shard_id, &entry.manifest_digest, table, &query.body)?;
+-    let decoded = client.decode(&entry.manifest_digest, segments, query, &response)?;
+-    if decoded != expected {
+-        return Err("private query differs from published plaintext".into());
+-    }
+-    Ok(
+-        serde_json::json!({"event":"query", "height":entry.end_height,"revision":entry.manifest_digest,"table":name,"seconds":started.elapsed().as_secs_f64(),"exact":true}),
+-    )
+-}
+-
+-fn find_revision(root: &Path, digest: &str) -> Result<PathBuf, BoxError> {
+-    for item in std::fs::read_dir(root)? {
+-        let directory = item?.path().join(digest);
+-        if directory.join("manifest.json").is_file() {
+-            return Ok(directory);
+-        }
+-    }
+-    Err("published source revision unavailable".into())
+-}
+ fn main() -> Result<(), BoxError> {
+     let args = Args::parse();
+     let started = Instant::now();
+@@ -148,7 +39,7 @@ fn main() -> Result<(), BoxError> {
+         } else {
+             Table::Pages
+         };
+-        match once(&args, table) {
++        match query::once(&args.url, &args.publications, args.shard, table) {
+             Ok(value) => {
+                 println!("{value}");
+                 queries += 1;
+diff --git a/server/transparent-shard-server/examples/support/query.rs b/server/transparent-shard-server/examples/support/query.rs
+new file mode 100644
+index 0000000..1a029f0
+--- /dev/null
++++ b/server/transparent-shard-server/examples/support/query.rs
+@@ -0,0 +1,164 @@
++//! Shared exact HTTP query probe for the operator soak and isolated burst test.
++use serde::Deserialize;
++use sha2::{Digest, Sha256};
++use std::{
++    io::{Read, Seek, SeekFrom},
++    path::{Path, PathBuf},
++    time::{Duration, Instant},
++};
++use transparent_wallet::{
++    client::{Table, TableClient},
++    http::{HttpFilterSource, HttpOptions, HttpShardTransport},
++    transport::{BoxError, FilterSource, ShardTransport},
++};
++
++#[derive(Deserialize)]
++struct Setup {
++    public_params: String,
++    public_params_sha256: String,
++}
++
++#[allow(dead_code)] // Used by the soak executable, not the manual burst test.
++pub fn once(
++    url: &str,
++    publications: &Path,
++    shard: usize,
++    table: Table,
++) -> Result<serde_json::Value, BoxError> {
++    once_at(url, publications, shard, table, Some(7))
++}
++
++/// Select an occupied row so an empty response cannot pass a burst probe.
++#[allow(dead_code)] // Used by the manual burst test, not the soak executable.
++pub fn once_nonempty(
++    url: &str,
++    publications: &Path,
++    shard: usize,
++    table: Table,
++) -> Result<serde_json::Value, BoxError> {
++    once_at(url, publications, shard, table, None)
++}
++
++fn once_at(
++    url: &str,
++    publications: &Path,
++    shard: usize,
++    table: Table,
++    row: Option<u64>,
++) -> Result<serde_json::Value, BoxError> {
++    let options = HttpOptions {
++        timeout: Duration::from_secs(60),
++        ..Default::default()
++    };
++    let mut filters = HttpFilterSource::new(url, &options)?;
++    let mut transport = HttpShardTransport::new(url, &options)?;
++    let (bytes, _) = filters.shard_map()?;
++    let map: transparent_filter::ShardMap = serde_json::from_slice(&bytes)?;
++    map.check_shape().map_err(|e| format!("map: {e}"))?;
++    let entry = map.shards.get(shard).ok_or("shard absent")?;
++    let geometry = transport.geometry()?;
++    let g = geometry
++        .geometries
++        .iter()
++        .find(|g| g.name == entry.geometry)
++        .ok_or("geometry absent")?;
++    let (rows, width, seed, scheme, segments, name) = match table {
++        Table::Directory => (
++            g.directory_rows,
++            g.directory_row_bytes,
++            g.directory_setup_seed,
++            &g.directory_scheme,
++            entry.directory_segments,
++            "directory",
++        ),
++        Table::Pages => (
++            g.page_rows,
++            g.page_row_bytes,
++            g.pages_setup_seed,
++            &g.pages_scheme,
++            entry.page_segments,
++            "pages",
++        ),
++    };
++    let directory = find_revision(publications, &entry.manifest_digest)?;
++    let manifest_bytes = std::fs::read(directory.join("manifest.json"))?;
++    let manifest: transparent_shard::manifest::ShardManifest =
++        serde_json::from_slice(&manifest_bytes)?;
++    if manifest.digest() != entry.manifest_digest {
++        return Err("local manifest digest mismatch".into());
++    }
++    let sources = if name == "directory" {
++        &manifest.directory_segments
++    } else {
++        &manifest.page_segments
++    };
++    let row_number = match row {
++        Some(row) => row,
++        None => {
++            let mut file = std::fs::File::open(directory.join(format!("{name}.0.bin")))?;
++            let mut bytes = vec![0; width as usize];
++            let mut found = None;
++            for index in 0..rows {
++                file.read_exact(&mut bytes)?;
++                if bytes.iter().any(|b| *b != 0) {
++                    found = Some(index);
++                    break;
++                }
++            }
++            found.ok_or("fixture table contains no occupied row")?
++        }
++    };
++    let mut expected = Vec::new();
++    // Hold the expected bytes before the publisher can collect this directory.
++    for (segment, source) in sources.iter().enumerate() {
++        let path = directory.join(format!("{name}.{segment}.bin"));
++        let mut file = std::fs::File::open(&path)?;
++        let mut hash = Sha256::new();
++        let mut buffer = [0u8; 65536];
++        loop {
++            let n = file.read(&mut buffer)?;
++            if n == 0 {
++                break;
++            }
++            hash.update(&buffer[..n]);
++        }
++        if hex::encode(hash.finalize()) != source.sha256 {
++            return Err("local table digest mismatch".into());
++        }
++        file.seek(SeekFrom::Start(row_number * u64::from(width)))?;
++        let mut row = vec![0; width as usize];
++        file.read_exact(&mut row)?;
++        expected.push(row);
++    }
++    let mut client = TableClient::new(table, rows, width, seed, scheme)?;
++    for segment in 0..segments {
++        let (bytes, _) = transport.setup(entry.shard_id, &entry.manifest_digest, table, segment)?;
++        let setup: Setup = serde_json::from_slice(&bytes)?;
++        client.open_segment(
++            &entry.manifest_digest,
++            segment,
++            &setup.public_params,
++            &setup.public_params_sha256,
++        )?;
++    }
++    let query = client.prepare(&entry.manifest_digest, usize::try_from(row_number)?)?;
++    let started = Instant::now();
++    let response = transport.query(entry.shard_id, &entry.manifest_digest, table, &query.body)?;
++    let decoded = client.decode(&entry.manifest_digest, segments, query, &response)?;
++    if decoded != expected {
++        return Err("private query differs from published plaintext".into());
++    }
++    Ok(
++        serde_json::json!({"event":"query", "height":entry.end_height,"revision":entry.manifest_digest,"table":name,"seconds":started.elapsed().as_secs_f64(),"exact":true}),
++    )
++}
++
++fn find_revision(root: &Path, digest: &str) -> Result<PathBuf, BoxError> {
++    for item in std::fs::read_dir(root)? {
++        let directory = item?.path().join(digest);
++        if directory.join("manifest.json").is_file() {
++            return Ok(directory);
++        }
++    }
++    Err("published source revision unavailable".into())
++}
+diff --git a/server/transparent-shard-server/tests/revisions_and_cache.rs b/server/transparent-shard-server/tests/revisions_and_cache.rs
+index f54e25d..e4fae3f 100644
+--- a/server/transparent-shard-server/tests/revisions_and_cache.rs
++++ b/server/transparent-shard-server/tests/revisions_and_cache.rs
+@@ -81,6 +81,16 @@ fn events_through(last: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
+ 
+ /// Writes one revision of shard zero and returns its manifest digest.
+ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (String, u64) {
++    write_revision_geometry(dir, end, revision, supersedes, &GEOMETRY)
++}
++
++fn write_revision_geometry(
++    dir: &Path,
++    end: u64,
++    revision: u32,
++    supersedes: &str,
++    geometry: &'static Geometry,
++) -> (String, u64) {
+     let events = events_through(end);
+     let built = build_shard(
+         0,
+@@ -89,7 +99,7 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
+         genesis(),
+         hash_at(end),
+         transparent_filter::RANGE_PROFILE,
+-        &GEOMETRY,
++        geometry,
+         &events,
+     )
+     .expect("build");
+@@ -97,7 +107,7 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
+     let manifest = ShardManifest {
+         schema: SCHEMA.to_string(),
+         profile: transparent_filter::RANGE_PROFILE.to_string(),
+-        geometry: GEOMETRY.name.to_string(),
++        geometry: geometry.name.to_string(),
+         network: transparent_filter::NETWORK.to_string(),
+         genesis_hash: GENESIS.to_string(),
+         shard_id: 0,
+@@ -130,8 +140,8 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
+             .directory
+             .iter()
+             .map(|segment| TableGeometry {
+-                rows: GEOMETRY.directory_rows,
+-                row_bytes: GEOMETRY.directory_row_bytes as u32,
++                rows: geometry.directory_rows,
++                row_bytes: geometry.directory_row_bytes as u32,
+                 sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
+             })
+             .collect(),
+@@ -139,8 +149,8 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
+             .pages
+             .iter()
+             .map(|segment| TableGeometry {
+-                rows: GEOMETRY.page_rows,
+-                row_bytes: GEOMETRY.page_row_bytes as u32,
++                rows: geometry.page_rows,
++                row_bytes: geometry.page_row_bytes as u32,
+                 sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
+             })
+             .collect(),
+@@ -171,6 +181,17 @@ fn write_revision(dir: &Path, end: u64, revision: u32, supersedes: &str) -> (Str
+ 
+ /// Writes a map naming `digest` as the current revision of shard zero.
+ fn write_map(dir: &Path, digest: &str, end: u64, revision: u32, scripts: u64) -> ShardMap {
++    write_map_geometry(dir, digest, end, revision, scripts, &GEOMETRY)
++}
++
++fn write_map_geometry(
++    dir: &Path,
++    digest: &str,
++    end: u64,
++    revision: u32,
++    scripts: u64,
++    geometry: &'static Geometry,
++) -> ShardMap {
+     let map = ShardMap {
+         genesis_hash: GENESIS.to_string(),
+         network: transparent_filter::NETWORK.to_string(),
+@@ -178,7 +199,7 @@ fn write_map(dir: &Path, digest: &str, end: u64, revision: u32, scripts: u64) ->
+         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
+         start_height: FIRST,
+         seal: std::collections::BTreeMap::from([(
+-            GEOMETRY.name.to_string(),
++            geometry.name.to_string(),
+             SealParameters {
+                 max_scripts: 8_192,
+                 max_page_rows: 2_048,
+@@ -187,7 +208,7 @@ fn write_map(dir: &Path, digest: &str, end: u64, revision: u32, scripts: u64) ->
+         )]),
+         shards: vec![transparent_filter::ShardMapEntry {
+             shard_id: 0,
+-            geometry: GEOMETRY.name.to_string(),
++            geometry: geometry.name.to_string(),
+             start_height: FIRST,
+             end_height: end,
+             parent_block_hash: hash_at(FIRST - 1).to_display_hex(),
+@@ -942,3 +963,8 @@ async fn live_prepare_activate_and_invalidate() {
+         StatusCode::CONFLICT
+     );
+ }
++
++#[path = "support/burst.rs"]
++mod burst;
++#[path = "../examples/support/query.rs"]
++mod burst_query;
+diff --git a/server/transparent-shard-server/tests/support/burst.rs b/server/transparent-shard-server/tests/support/burst.rs
+new file mode 100644
+index 0000000..c23f11c
+--- /dev/null
++++ b/server/transparent-shard-server/tests/support/burst.rs
+@@ -0,0 +1,459 @@
++//! Isolated worker-stage benchmark. It never contacts or mutates a fleet.
++use super::*;
++use std::sync::atomic::AtomicBool;
++use std::time::{Duration, Instant};
++use transparent_shard::layout::RECENT_8K;
++use transparent_shard_server::live::{Command, LiveService, Publication};
++use transparent_shard_server::service::ReadinessMode;
++use transparent_shard_server::shardset::LoadOptions;
++use transparent_wallet::transport::{Overloaded, StaleRevision};
++
++/// Run each configuration in its own process so allocator retention does not
++/// contaminate the comparison. Timings are measurements, not normal CI asserts.
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++#[ignore = "manual recent-8k burst benchmark; use make transparent-burst"]
++async fn publication_burst_under_exact_load() {
++    let _ = tracing_subscriber::fmt()
++        .with_ansi(false)
++        .with_env_filter("transparent_shard_server=debug")
++        .try_init();
++    let slots: usize = std::env::var("TRANSPARENT_BURST_BUILD_SLOTS")
++        .unwrap_or_else(|_| "1".into())
++        .parse()
++        .unwrap();
++    assert!((1..=2).contains(&slots));
++    let output = std::env::var("TRANSPARENT_BURST_REPORT").expect("report path required");
++    let mut report = std::fs::OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(output)
++        .expect("report must not already exist");
++    let root = tempfile::tempdir().unwrap();
++    let fixture = std::env::var("TRANSPARENT_BURST_FIXTURE").ok();
++    let mut publications = Vec::new();
++    let (options, query_root, query_shard, final_height, assigned_count) =
++        if let Some(path) = &fixture {
++            let path = std::path::PathBuf::from(path).canonicalize().unwrap();
++            let base = path.parent().unwrap();
++            let value: serde_json::Value =
++                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++            for item in value["publications"].as_array().unwrap() {
++                publications.push(Publication {
++                    directory: base.join(item["directory"].as_str().unwrap()),
++                    assignment: Some(base.join(item["assignment"].as_str().unwrap())),
++                    map_sha256: item["map_sha256"].as_str().unwrap().to_owned(),
++                });
++            }
++            assert_eq!(publications.len(), 3);
++            let assignment = transparent_shard_server::assignment::Assignment::load(
++                publications[0].assignment.as_ref().unwrap(),
++            )
++            .unwrap();
++            let worker_id = value["worker_id"].as_str().unwrap().to_owned();
++            let count = assignment.worker(&worker_id).unwrap().shards.len();
++            assert_eq!(
++                count, 14,
++                "full-residency fixture must assign fourteen shards"
++            );
++            let options = LoadOptions {
++                scope: transparent_shard_server::shardset::LoadScope::Assigned {
++                    assignment: Arc::new(assignment),
++                    worker_id,
++                },
++                prune_excess: true,
++                ..LoadOptions::whole(3)
++            };
++            (
++                options,
++                base.to_path_buf(),
++                value["query_shard"].as_u64().unwrap() as usize,
++                value["publications"][2]["height"].as_u64().unwrap(),
++                count,
++            )
++        } else {
++            let mut predecessor = String::new();
++            for revision in 0..3 {
++                let directory = root.path().join(revision.to_string());
++                std::fs::create_dir(&directory).unwrap();
++                let end = FIRST + 40 + u64::from(revision);
++                let (digest, count) =
++                    write_revision_geometry(&directory, end, revision, &predecessor, &RECENT_8K);
++                write_map_geometry(&directory, &digest, end, revision, count, &RECENT_8K);
++                predecessor = digest;
++                let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
++                publications.push(Publication {
++                    directory,
++                    assignment: None,
++                    map_sha256,
++                });
++            }
++            (
++                LoadOptions::whole(3),
++                root.path().to_path_buf(),
++                0,
++                FIRST + 42,
++                1,
++            )
++        };
++    let config = ServiceConfig {
++        cache_bytes: if fixture.is_some() { 5 << 30 } else { 1 << 30 },
++        build_slots: slots,
++        readiness: ReadinessMode::Warm,
++        ..ServiceConfig::default()
++    };
++    let disk = fixture.as_ref().map(|_| {
++        transparent_shard_server::runtime::disk::DiskCache::new(
++            root.path().join("runtime-cache"),
++            10 << 30,
++        )
++        .unwrap()
++    });
++    let set = ShardSet::open_with(&publications[0].directory, &options).unwrap();
++    assert_eq!(set.map_digest, publications[0].map_sha256);
++    assert_eq!(set.assigned_len(), assigned_count);
++    let state = ServiceState::build_with_disk(set, config, disk).unwrap();
++    let cold_started = Instant::now();
++    tokio::time::timeout(Duration::from_secs(600), state.spawn_prewarm())
++        .await
++        .unwrap()
++        .unwrap();
++    let cold_prewarm_seconds = cold_started.elapsed().as_secs_f64();
++    let cold_memory = kernel_memory();
++    let response = router(state.clone())
++        .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap())
++        .await
++        .unwrap();
++    let cold_ready: serde_json::Value = serde_json::from_slice(
++        &axum::body::to_bytes(response.into_body(), usize::MAX)
++            .await
++            .unwrap(),
++    )
++    .unwrap();
++    let cold_warm = cold_ready["ready"] == true
++        && cold_ready["warm_runtimes"].as_u64() == Some((assigned_count * 2) as u64)
++        && cold_ready["target_runtimes"].as_u64() == Some((assigned_count * 2) as u64);
++    let live = LiveService::new(
++        state,
++        publications[0].clone(),
++        config,
++        options,
++        root.path().join("active.json"),
++    )
++    .unwrap();
++    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let url = format!("http://{}", listener.local_addr().unwrap());
++    let app = live.router();
++    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
++    let stop = Arc::new(AtomicBool::new(false));
++    let clock = Instant::now();
++    let queries = Arc::new(std::sync::Mutex::new(Vec::new()));
++    let (ready_tx, mut ready_rx) = tokio::sync::mpsc::unbounded_channel();
++    let mut clients = Vec::new();
++    let external = std::env::var("TRANSPARENT_BURST_CLIENT_DIR")
++        .ok()
++        .map(std::path::PathBuf::from);
++    if let Some(directory) = &external {
++        let epoch = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .unwrap()
++            .as_secs_f64()
++            - clock.elapsed().as_secs_f64();
++        let config =
++            serde_json::json!({"url":url,"root":query_root,"shard":query_shard,"epoch":epoch});
++        std::fs::write(directory.join("config.tmp"), config.to_string()).unwrap();
++        std::fs::rename(directory.join("config.tmp"), directory.join("config.json")).unwrap();
++        for client in 0..2 {
++            let (directory, stop, queries, ready_tx) = (
++                directory.clone(),
++                stop.clone(),
++                queries.clone(),
++                ready_tx.clone(),
++            );
++            clients.push(tokio::task::spawn_blocking(move || {
++                use std::io::BufRead;
++                let path = directory.join(format!("client-{client}.jsonl"));
++                while !path.exists() {
++                    if stop.load(Ordering::Acquire) {
++                        return Err("client never started".into());
++                    }
++                    std::thread::sleep(Duration::from_millis(20));
++                }
++                let mut reader = std::io::BufReader::new(std::fs::File::open(path).unwrap());
++                let mut pending = String::new();
++                let mut count = 0;
++                loop {
++                    let n = reader.read_line(&mut pending).map_err(|e| e.to_string())?;
++                    if pending.ends_with('\n') {
++                        let record: serde_json::Value =
++                            serde_json::from_str(&pending).map_err(|e| e.to_string())?;
++                        pending.clear();
++                        let error = record.get("error").is_some() && record["retry"] != true;
++                        if record["query"]["exact"] == true {
++                            count += 1;
++                        }
++                        queries.lock().unwrap().push(record);
++                        if error {
++                            return Err("external query failed; see client records".into());
++                        }
++                        if count == 2 {
++                            let _ = ready_tx.send(client);
++                        }
++                    }
++                    if n == 0 {
++                        if stop.load(Ordering::Acquire) {
++                            return Ok(count);
++                        }
++                        std::thread::sleep(Duration::from_millis(10));
++                    }
++                }
++            }));
++        }
++    } else {
++        for client in 0..2 {
++            let (url, directory, stop, queries, ready_tx) = (
++                url.clone(),
++                query_root.clone(),
++                stop.clone(),
++                queries.clone(),
++                ready_tx.clone(),
++            );
++            clients.push(tokio::task::spawn_blocking(move || {
++                let mut count = 0;
++                while !stop.load(Ordering::Acquire) {
++                    let table = if count % 2 == 0 {
++                        transparent_wallet::client::Table::Directory
++                    } else {
++                        transparent_wallet::client::Table::Pages
++                    };
++                    let started = clock.elapsed().as_secs_f64();
++                    let result =
++                        super::burst_query::once_nonempty(&url, &directory, query_shard, table);
++                    let mut record = serde_json::json!({"client":client,"started_seconds":started,
++                    "finished_seconds":clock.elapsed().as_secs_f64()});
++                    match result {
++                        Ok(value) => {
++                            record["query"] = value;
++                            count += 1;
++                            if count == 2 {
++                                let _ = ready_tx.send(client);
++                            }
++                        }
++                        Err(error) => {
++                            let retry = StaleRevision::found_in(&error).is_some()
++                                || Overloaded::found_in(&error).is_some();
++                            record["retry"] = retry.into();
++                            record["error"] = error.to_string().into();
++                            queries.lock().unwrap().push(record);
++                            if !retry {
++                                return Err(error.to_string());
++                            }
++                            std::thread::sleep(Duration::from_millis(50));
++                            continue;
++                        }
++                    }
++                    queries.lock().unwrap().push(record);
++                }
++                Ok(count)
++            }));
++        }
++    }
++    drop(ready_tx);
++    let sample_stop = stop.clone();
++    let sampler = tokio::spawn(async move {
++        let mut system = sysinfo::System::new();
++        let pid = sysinfo::get_current_pid().unwrap();
++        let mut samples = Vec::new();
++        while !sample_stop.load(Ordering::Acquire) {
++            system.refresh_memory();
++            system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
++            samples.push(serde_json::json!({"seconds":clock.elapsed().as_secs_f64(),
++                "process_rss_bytes":system.process(pid).map(|p| p.memory()),
++                "host_available_bytes":system.available_memory(), "host_total_bytes":system.total_memory(),
++                "cgroup":transparent_shard_server::procmem::cgroup_memory_bytes()}));
++            tokio::time::sleep(Duration::from_millis(100)).await;
++        }
++        samples
++    });
++    let mut activations = Vec::new();
++    let result = tokio::time::timeout(Duration::from_secs(120), async {
++        if !cold_warm { return Err("initial assignment did not fully warm; invalid full-residency baseline".into()); }
++        let mut ready_clients = std::collections::HashSet::new();
++        while ready_clients.len() < 2 { ready_clients.insert(ready_rx.recv().await.ok_or("query client failed before warmup")?); }
++        let burst_start = Instant::now();
++        let burst_offset = clock.elapsed().as_secs_f64();
++        let mut expected = publications[0].map_sha256.clone();
++        for (index, publication) in publications.iter().enumerate().skip(1) {
++            let arrival = Duration::from_secs((index - 1) as u64);
++            tokio::time::sleep_until(tokio::time::Instant::from_std(burst_start + arrival)).await;
++            let preparation_started = burst_start.elapsed().as_secs_f64();
++            let preparation = live.command(Command::Prepare { expected: expected.clone(), publication: publication.clone() })
++                .await.map_err(|e| e.to_string())?;
++            let prepared = burst_start.elapsed().as_secs_f64();
++            live.command(Command::Activate { expected, map_sha256: publication.map_sha256.clone() })
++                .await.map_err(|e| e.to_string())?;
++            expected = publication.map_sha256.clone();
++            let activated = burst_start.elapsed().as_secs_f64();
++            let response = live.router().oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap()).await.unwrap();
++            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
++            let ready: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
++            if ready["ready"] != true || ready["warm_runtimes"].as_u64() != Some((assigned_count * 2) as u64)
++                || ready["target_runtimes"].as_u64() != Some((assigned_count * 2) as u64) {
++                return Err("activation did not warm the entire assignment".to_string());
++            }
++            activations.push(serde_json::json!({"revision":index,"map_sha256":expected,
++                "arrival_seconds":arrival.as_secs_f64(),"queue_seconds":preparation_started-arrival.as_secs_f64(),
++                "prepare_seconds":prepared-preparation_started,"activate_seconds":activated-prepared,
++                "worker_visibility_seconds":activated-arrival.as_secs_f64(),"burst_clock_offset":burst_offset,
++                "ready":ready,"preparation":preparation}));
++        }
++        // Let the clients decode both newly activated tables before stopping.
++        // This verification is outside the recorded publication cycle times.
++        loop {
++            let verified = {
++                let records = queries.lock().unwrap();
++                ["directory", "pages"].iter().all(|table| records.iter().any(|q|
++                    q["query"]["height"] == final_height && q["query"]["table"] == *table
++                    && q["query"]["exact"] == true))
++            };
++            if verified { break; }
++            tokio::time::sleep(Duration::from_millis(20)).await;
++        }
++        Ok::<(), String>(())
++    }).await;
++    if let Some(directory) = &external {
++        std::fs::write(directory.join("stop"), b"").unwrap();
++    }
++    stop.store(true, Ordering::Release);
++    let mut client_results = Vec::new();
++    for client in clients {
++        client_results.push(client.await.unwrap());
++    }
++    let samples = sampler.await.unwrap();
++    server.abort();
++    let query_records = queries.lock().unwrap();
++    let exact = client_results
++        .iter()
++        .all(|r| r.as_ref().is_ok_and(|n| *n >= 2));
++    let loaded = activations
++        .first()
++        .zip(activations.last())
++        .is_some_and(|(first, last)| {
++            let start = first["burst_clock_offset"].as_f64().unwrap();
++            let end = start
++                + last["arrival_seconds"].as_f64().unwrap()
++                + last["worker_visibility_seconds"].as_f64().unwrap();
++            (0..2).all(|client| {
++                query_records.iter().any(|q| {
++                    q["client"] == client
++                        && q["query"]["exact"] == true
++                        && q["started_seconds"].as_f64().unwrap() < end
++                        && q["finished_seconds"].as_f64().unwrap() > start
++                })
++            })
++        });
++    let completed = matches!(&result, Ok(Ok(())));
++    let within_budget = activations.len() == 2
++        && activations
++            .iter()
++            .all(|a| a["worker_visibility_seconds"].as_f64().unwrap() <= 30.0);
++    let value = serde_json::json!({"schema":"transparent-worker-burst-v3","build_slots":slots,
++        "geometry":"recent-8k","query_clients":2,"cache_bytes":config.cache_bytes,
++        "scope":"isolated worker stage; not fleet acceptance", "external_clients":external.is_some(),
++        "cold_ready":cold_ready,"cold_warm":cold_warm,"assigned_shards":assigned_count,"fixture":fixture,"cold_prewarm_seconds":cold_prewarm_seconds,
++        "kernel_memory":kernel_memory(),"cold_memory":cold_memory,
++        "source_sha":std::env::var("TRANSPARENT_BURST_SOURCE_SHA").ok(),
++        "os":std::env::consts::OS,"arch":std::env::consts::ARCH,
++        "completed":completed,"exact_queries":exact,"load_overlapped_burst":loaded,"worker_30s_budget_passed":within_budget,
++        "outcome":format!("{result:?}"),"client_results":client_results,
++        "activations":activations,"queries":*query_records,"memory_samples":samples});
++    use std::io::Write;
++    serde_json::to_writer_pretty(&mut report, &value).unwrap();
++    report.write_all(b"\n").unwrap();
++    report.sync_all().unwrap();
++    assert!(
++        completed && exact && loaded,
++        "burst or query correctness failed; see report"
++    );
++    // A missed performance budget is retained as data, so both configurations
++    // run even when the baseline is slow. Fleet acceptance uses its own gate.
++}
++
++/// Kernel counters include cold prewarm and unsampled transient allocations.
++fn kernel_memory() -> serde_json::Value {
++    let mut value = serde_json::Map::new();
++    if let Ok(cgroup) = std::fs::read_to_string("/proc/self/cgroup") {
++        if let Some(path) = cgroup.lines().find_map(|l| l.strip_prefix("0::")) {
++            value.insert("path".into(), path.into());
++            let base = std::path::Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/'));
++            for name in [
++                "cpu.stat",
++                "cpuset.cpus.effective",
++                "memory.swap.max",
++                "memory.peak",
++                "memory.current",
++                "memory.high",
++                "memory.max",
++                "memory.events",
++                "memory.stat",
++                "memory.pressure",
++            ] {
++                if let Ok(raw) = std::fs::read_to_string(base.join(name)) {
++                    value.insert(name.into(), raw.into());
++                }
++            }
++        }
++    }
++    value.into()
++}
++
++/// Runner starts this process outside the worker cgroup and on disjoint CPUs.
++#[test]
++#[ignore = "manual external burst clients; started by the burst runner"]
++fn external_query_clients() {
++    use std::io::Write;
++    let directory =
++        std::path::PathBuf::from(std::env::var("TRANSPARENT_BURST_CLIENT_DIR").unwrap());
++    std::fs::write(directory.join("host.json"), serde_json::json!({"pid":std::process::id(),"kernel":kernel_memory(),"proc_status":std::fs::read_to_string("/proc/self/status").ok()}).to_string()).unwrap();
++    let deadline = Instant::now() + Duration::from_secs(800);
++    while !directory.join("config.json").exists() {
++        assert!(
++            Instant::now() < deadline,
++            "worker never published client configuration"
++        );
++        if directory.join("stop").exists() {
++            return;
++        }
++        std::thread::sleep(Duration::from_millis(50));
++    }
++    let config: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(directory.join("config.json")).unwrap()).unwrap();
++    let handles: Vec<_> = (0..2).map(|client| {
++        let (directory, config) = (directory.clone(), config.clone());
++        std::thread::spawn(move || {
++            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(directory.join(format!("client-{client}.jsonl"))).unwrap();
++            let elapsed = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() - config["epoch"].as_f64().unwrap();
++            let mut count = 0;
++            while !directory.join("stop").exists() && Instant::now() < deadline {
++                let table = if count % 2 == 0 { transparent_wallet::client::Table::Directory } else { transparent_wallet::client::Table::Pages };
++                let started = elapsed();
++                let result = super::burst_query::once_nonempty(config["url"].as_str().unwrap(), std::path::Path::new(config["root"].as_str().unwrap()), config["shard"].as_u64().unwrap() as usize, table);
++                let mut record = serde_json::json!({"client":client,"started_seconds":started,"finished_seconds":elapsed()});
++                let mut fatal = false;
++                match result {
++                    Ok(value) => { record["query"] = value; count += 1; }
++                    Err(error) => {
++                        let retry = StaleRevision::found_in(&error).is_some() || Overloaded::found_in(&error).is_some();
++                        record["retry"] = retry.into(); record["error"] = error.to_string().into(); fatal = !retry;
++                    }
++                }
++                writeln!(file, "{record}").unwrap(); file.flush().unwrap();
++                assert!(!fatal, "external exact query failed");
++                if record["retry"] == true { std::thread::sleep(Duration::from_millis(50)); }
++            }
++            assert!(count >= 2, "insufficient exact queries");
++        })
++    }).collect();
++    for handle in handles {
++        handle.join().unwrap();
++    }
++}
+diff --git a/server/transparent-shard-server/src/memory.rs b/server/transparent-shard-server/src/memory.rs
+index ae906fd..770ebb0 100644
+--- a/server/transparent-shard-server/src/memory.rs
++++ b/server/transparent-shard-server/src/memory.rs
+@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
+ #[derive(Default)]
+ pub struct WorkMemory {
+     reserved: Mutex<u64>,
++    build_waiters: tokio::sync::Mutex<()>,
+ }
+ 
+ pub struct Reservation {
+@@ -21,6 +22,39 @@ impl WorkMemory {
+         self.reserve_at(bytes, crate::procmem::cgroup_memory_bytes())
+     }
+ 
++    /// Cold builders queue fairly while scratch is busy. Keep the build permit
++    /// while waiting so newly scheduled work cannot bypass an older builder.
++    /// Query/restore admission stays nonblocking; all work uses the same guard.
++    pub async fn reserve_build(self: &Arc<Self>, bytes: u64) -> Option<Reservation> {
++        self.reserve_build_with(bytes, crate::procmem::cgroup_memory_bytes)
++            .await
++    }
++
++    async fn reserve_build_with(
++        self: &Arc<Self>,
++        bytes: u64,
++        sample: impl Fn() -> Option<(u64, Option<u64>)>,
++    ) -> Option<Reservation> {
++        let started = std::time::Instant::now();
++        let _turn = self.build_waiters.lock().await;
++        let result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
++            loop {
++                if let Some(reservation) = self.reserve_at(bytes, sample()) {
++                    return reservation;
++                }
++                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
++            }
++        })
++        .await
++        .ok();
++        tracing::debug!(
++            seconds = started.elapsed().as_secs_f64(),
++            admitted = result.is_some(),
++            "cold build admission wait"
++        );
++        result
++    }
++
+     fn reserve_at(
+         self: &Arc<Self>,
+         bytes: u64,
+@@ -30,6 +64,13 @@ impl WorkMemory {
+         let next = held.checked_add(bytes)?;
+         if let Some((current, Some(limit))) = sample {
+             if current.checked_add(next)? > limit.saturating_sub(limit / 10) {
++                tracing::debug!(
++                    current,
++                    limit,
++                    held = *held,
++                    requested = bytes,
++                    "work memory admission denied"
++                );
+                 return None;
+             }
+         }
+@@ -64,6 +105,85 @@ mod tests {
+         assert_eq!(memory.reserved_bytes(), 0);
+     }
+ 
++    #[tokio::test]
++    async fn cold_builders_keep_fifo_order_until_memory_is_released() {
++        let memory = Arc::new(WorkMemory::default());
++        let active = memory.reserve_at(100, Some((500, Some(1000)))).unwrap();
++        let first = {
++            let memory = memory.clone();
++            tokio::spawn(async move {
++                memory
++                    .reserve_build_with(400, || Some((500, Some(1000))))
++                    .await
++                    .unwrap()
++            })
++        };
++        tokio::time::timeout(std::time::Duration::from_secs(2), async {
++            while memory.build_waiters.try_lock().is_ok() {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .unwrap();
++        let second = {
++            let memory = memory.clone();
++            // This smaller request fits now, but must not bypass the first.
++            tokio::spawn(async move {
++                memory
++                    .reserve_build_with(200, || Some((500, Some(1000))))
++                    .await
++                    .unwrap()
++            })
++        };
++        assert_eq!(memory.reserved_bytes(), 100);
++        drop(active);
++        let first = tokio::time::timeout(std::time::Duration::from_secs(2), first)
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(memory.reserved_bytes(), 400);
++        assert!(!second.is_finished());
++        drop(first);
++        let second = tokio::time::timeout(std::time::Duration::from_secs(2), second)
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(memory.reserved_bytes(), 200);
++        drop(second);
++        assert_eq!(memory.reserved_bytes(), 0);
++    }
++
++    #[tokio::test]
++    async fn cancelling_a_queued_builder_releases_its_turn() {
++        let memory = Arc::new(WorkMemory::default());
++        let first = {
++            let memory = memory.clone();
++            tokio::spawn(async move {
++                memory
++                    .reserve_build_with(500, || Some((500, Some(1000))))
++                    .await
++            })
++        };
++        tokio::time::timeout(std::time::Duration::from_secs(2), async {
++            while memory.build_waiters.try_lock().is_ok() {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .unwrap();
++        first.abort();
++        assert!(matches!(first.await, Err(error) if error.is_cancelled()));
++        let next = tokio::time::timeout(
++            std::time::Duration::from_secs(2),
++            memory.reserve_build_with(200, || Some((500, Some(1000)))),
++        )
++        .await
++        .unwrap()
++        .unwrap();
++        assert_eq!(memory.reserved_bytes(), 200);
++        drop(next);
++    }
++
+     #[tokio::test]
+     async fn cancelled_waiter_cannot_release_blocking_work_reservation() {
+         let memory = Arc::new(WorkMemory::default());
+diff --git a/server/transparent-shard-server/src/runtime.rs b/server/transparent-shard-server/src/runtime.rs
+index 042d6ee..0ecddab 100644
+--- a/server/transparent-shard-server/src/runtime.rs
++++ b/server/transparent-shard-server/src/runtime.rs
+@@ -412,6 +412,7 @@ impl RuntimeCache {
+         source: SegmentSource,
+         pin: Arc<Slot>,
+     ) -> Result<TableRuntime, CacheError> {
++        let attempt = std::time::Instant::now();
+         if let Some(disk) = self.disk.clone() {
+             let permit = self
+                 .restore_slots
+@@ -419,10 +420,14 @@ impl RuntimeCache {
+                 .acquire_owned()
+                 .await
+                 .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
++            tracing::debug!(key = ?key, seconds = attempt.elapsed().as_secs_f64(), stage = "restore_slot", "runtime stage");
+             let memory = self
+                 .work_memory
+                 .reserve(shared.reserved_bytes().saturating_mul(2))
+-                .ok_or(CacheError::Overloaded)?;
++                .ok_or_else(|| {
++                    tracing::debug!(key = ?key, stage = "restore_admission", "runtime admission denied");
++                    CacheError::Overloaded
++                })?;
+             let restore_pin = pin.clone();
+             let restore_key = key.clone();
+             let restore_shared = shared.clone();
+@@ -434,12 +439,16 @@ impl RuntimeCache {
+                     let _permit = permit;
+                     let _pin = restore_pin;
+                     let started = std::time::Instant::now();
+-                    match disk.load(&restore_key, &restore_shared, &restore_source.sha256) {
++                    let restored = disk.load(&restore_key, &restore_shared, &restore_source.sha256);
++                    tracing::debug!(key = ?restore_key, seconds = started.elapsed().as_secs_f64(), hit = restored.is_ok(), stage = "disk_restore", "runtime stage");
++                    match restored {
+                         Ok(runtime) => {
+                             // A cache hit must not conceal a source changed since startup.
++                            let verify_started = std::time::Instant::now();
+                             restore_source
+                                 .verify()
+                                 .map_err(|error| CacheError::Failed(error.to_string()))?;
++                            tracing::debug!(key = ?restore_key, seconds = verify_started.elapsed().as_secs_f64(), stage = "source_verify", "runtime stage");
+                             Metrics::incr(&metrics.disk_hits);
+                             Metrics::add(
+                                 &metrics.disk_load_micros,
+@@ -466,18 +475,24 @@ impl RuntimeCache {
+                 return Ok(runtime);
+             }
+         }
++        let slot_started = std::time::Instant::now();
+         let permit = self
+             .build_slots
+             .clone()
+             .acquire_owned()
+             .await
+             .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
++        tracing::debug!(key = ?key, seconds = slot_started.elapsed().as_secs_f64(), stage = "build_slot", "runtime stage");
+         // Includes the new runtime and conservative scratch space for encoding,
+         // setup/preprocessing and disk serialization. Calibrate in residency tests.
+         let memory = self
+             .work_memory
+-            .reserve(shared.reserved_bytes().saturating_mul(4))
+-            .ok_or(CacheError::Overloaded)?;
++            .reserve_build(shared.reserved_bytes().saturating_mul(4))
++            .await
++            .ok_or_else(|| {
++                tracing::debug!(key = ?key, stage = "build_admission", "runtime admission denied");
++                CacheError::Overloaded
++            })?;
+         let disk = self.disk.clone();
+         let metrics = self.metrics.clone();
+         tokio::task::spawn_blocking(move || {
+@@ -488,13 +503,18 @@ impl RuntimeCache {
+             let bytes = source
+                 .load()
+                 .map_err(|error| CacheError::Failed(error.to_string()))?;
++            tracing::debug!(key = ?key, seconds = started.elapsed().as_secs_f64(), stage = "source_load", "runtime stage");
++            let compute_started = std::time::Instant::now();
+             let runtime = TableRuntime::build(&shared, &bytes).map_err(CacheError::Failed)?;
++            tracing::debug!(key = ?key, seconds = compute_started.elapsed().as_secs_f64(), stage = "runtime_build", "runtime stage");
+             drop(bytes);
+             if let Some(disk) = disk {
++                let save_started = std::time::Instant::now();
+                 if let Err(error) = disk.save(&key, &shared, &source.sha256, &runtime) {
+                     Metrics::incr(&metrics.disk_write_failures);
+                     tracing::warn!(%error, "runtime cache write failed; serving built runtime");
+                 }
++                tracing::debug!(key = ?key, seconds = save_started.elapsed().as_secs_f64(), stage = "disk_save", "runtime stage");
+             }
+             Metrics::incr(&metrics.builds);
+             Metrics::add(&metrics.build_micros, started.elapsed().as_micros() as u64);
+diff --git a/server/transparent-shard-server/src/prewarm.rs b/server/transparent-shard-server/src/prewarm.rs
+index e7edbde..6b9a40e 100644
+--- a/server/transparent-shard-server/src/prewarm.rs
++++ b/server/transparent-shard-server/src/prewarm.rs
+@@ -22,6 +22,7 @@ where
+         }
+         match get().await {
+             Err(CacheError::Overloaded) if tokio::time::Instant::now() < deadline => {
++                tracing::debug!("prewarm admission retry; sleeping 100ms");
+                 // Other restores may have materialized their reservations in
+                 // memory.current. Let those operations release the extra charge
+                 // before retrying; never discard an assigned warm target.
+diff --git a/server/transparent-shard-server/src/live.rs b/server/transparent-shard-server/src/live.rs
+index 1765dc8..4c5a69f 100644
+--- a/server/transparent-shard-server/src/live.rs
++++ b/server/transparent-shard-server/src/live.rs
+@@ -221,6 +221,7 @@ impl LiveService {
+                 let directory = publication.directory.clone();
+                 let digest = publication.map_sha256.clone();
+                 let config = self.0.config;
++                let loading_started = std::time::Instant::now();
+                 let next = tokio::task::spawn_blocking(move || {
+                     old.evict_unpinned();
+                     let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
+@@ -238,8 +239,12 @@ impl LiveService {
+                 })
+                 .await
+                 .map_err(|e| e.to_string())??;
++                let loading_seconds = loading_started.elapsed().as_secs_f64();
++                let warming_started = std::time::Instant::now();
+                 self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
+                 next.spawn_prewarm().await.map_err(|e| e.to_string())?;
++                let warming_seconds = warming_started.elapsed().as_secs_f64();
++                tracing::debug!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
+                 if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
+                     return Err("reorg invalidated preparation".into());
+                 }
+@@ -254,7 +259,9 @@ impl LiveService {
+                     publication: publication.clone(),
+                     epoch,
+                 });
+-                Ok(serde_json::json!({"prepared":publication.map_sha256}))
++                Ok(
++                    serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds}),
++                )
+             }
+             Command::Activate {
+                 expected,

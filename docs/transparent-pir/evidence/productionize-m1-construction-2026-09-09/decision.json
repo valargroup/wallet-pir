@@ -1,0 +1,17 @@
+{
+  "promote": false,
+  "live_changed": false,
+  "canary_started": false,
+  "final_dependency": "61dc83e7410ff13ccfdd9ad1e830b711bd9080ed",
+  "one_slot_timing_screen_passed": false,
+  "two_slot_timing_screen_passed": true,
+  "two_slot_query_availability_screen_passed": false,
+  "final_exact_queries": 696,
+  "all_experiment_exact_queries": 1494,
+  "make_check_exit": 0,
+  "rust_tests_passed": 579,
+  "rust_tests_failed": 0,
+  "rust_tests_ignored": 2,
+  "source_archives_match_manifests": true,
+  "next": "Qualify preparation/query memory admission and allocation lifetimes under unchanged memory limits before another canary."
+}
