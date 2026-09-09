@@ -70,11 +70,14 @@ def pair_rows(pir, blocks, original):
         extra = sizes.get('combined', 0) - sizes.get('shielded', 0) if sizes else None
         ad = a.get('http_totals', {}).get('bytes_down')
         bd = b.get('http_totals', {}).get('bytes_down')
+        au = a.get('http_totals', {}).get('bytes_up')
+        bu = b.get('http_totals', {}).get('bytes_up')
         exact = 0 <= index < len(original) and a.get('outcome') == b.get('outcome') == 'exact'
         rows.append(dict(sample_index=index, source_sample_index=original[index] if 0 <= index < len(original) else None,
                          profile=a.get('profile', b.get('profile')), pir=a, blocks=b,
                          incremental_block_bytes=extra,
                          standalone_download_savings=(1-ad/bd) if exact and bd and ad is not None else None,
+                         standalone_total_traffic_savings=(1-(ad+au)/(bd+bu)) if exact and None not in (ad,au,bd,bu) and bd+bu else None,
                          latency_ratio_blocks_over_pir=(b['seconds']/a['seconds']) if exact and a.get('seconds') else None))
     return rows
 
@@ -143,7 +146,7 @@ def report(out, manifest, status, errors):
     chunks = ['<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
               '<title>Transparent sync comparison</title><style>body{font:16px system-ui;margin:30px;max-width:1500px;color:#172033}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:right}td:first-child,th:first-child{text-align:left}.scroll,pre{overflow:auto}.note{color:#536074}a{color:#165ad0}</style></head><body>',
               '<h1>Transparent sync comparison</h1>', f'<p><strong>{html.escape(status)}</strong></p>',
-              '<p class="note">Same known scripts and accepted anchor. Incremental bytes are combined minus shielded-only encoded batches; they are not a measured shielded-wallet latency saving. Wallet totals are HTTP payloads, excluding TLS, headers, controller validation and preparation. One pair per suite gives preliminary latency observations.</p>']
+              '<p class="note">Same known scripts and accepted anchor. Incremental bytes are combined minus shielded-only encoded batches; they are not a measured shielded-wallet latency saving. Wallet totals are HTTP payloads, excluding TLS, headers, controller validation and preparation. Total traffic savings include upload and download. One pair per suite gives preliminary latency observations.</p>']
     if manifest.get('conditions'):
         chunks.append('<details><summary>Run conditions</summary><pre>'+html.escape(json.dumps(manifest['conditions'],indent=2))+'</pre></details>')
     for error in errors:
@@ -152,7 +155,7 @@ def report(out, manifest, status, errors):
         chunks.append(f'<h2>{suite.title()}: {"PASS" if data["success"] else "Pending or unsuccessful"}</h2>')
         for backend, path in data['reports'].items():
             chunks.append(f'<a href="{html.escape(path)}/report.html">{backend.upper()} detailed report / APM</a> &nbsp;')
-        chunks.append('<div class="scroll"><table><tr><th>Wallet / profile</th><th>PIR result</th><th>Blocks result</th><th>PIR ↓ / ↑ MiB</th><th>Blocks ↓ / ↑ MiB</th><th>Incremental blocks MiB</th><th>PIR / blocks seconds</th><th>Download savings</th></tr>')
+        chunks.append('<div class="scroll"><table><tr><th>Wallet / profile</th><th>PIR result</th><th>Blocks result</th><th>PIR ↓ / ↑ MiB</th><th>Blocks ↓ / ↑ MiB</th><th>Incremental blocks MiB</th><th>PIR / blocks seconds</th><th>Download savings</th><th>Total traffic savings</th></tr>')
         def fmt(value, scale=1):
             return '—' if value is None else f'{value/scale:,.2f}'
         for row in data['rows']:
@@ -162,7 +165,8 @@ def report(out, manifest, status, errors):
                      f'{fmt(at.get("bytes_down"),1048576)} / {fmt(at.get("bytes_up"),1048576)}',
                      f'{fmt(bt.get("bytes_down"),1048576)} / {fmt(bt.get("bytes_up"),1048576)}',
                      fmt(row['incremental_block_bytes'],1048576), f'{fmt(a.get("seconds"))} / {fmt(b.get("seconds"))}',
-                     fmt(row['standalone_download_savings'],.01)+'%' if row['standalone_download_savings'] is not None else '—']
+                     fmt(row['standalone_download_savings'],.01)+'%' if row['standalone_download_savings'] is not None else '—',
+                     fmt(row['standalone_total_traffic_savings'],.01)+'%' if row['standalone_total_traffic_savings'] is not None else '—']
             chunks.append('<tr>'+''.join(f'<td>{html.escape(str(c))}</td>' for c in cells)+'</tr>')
         chunks.append('</table></div><details><summary>Per-wallet compute and storage</summary><div class="scroll"><table><tr><th>Wallet / method</th><th>Client CPU seconds</th><th>Sampled peak RSS MiB</th><th>OS process writes MiB</th><th>SQLite MiB</th></tr>')
         for row in data['rows']:

@@ -24,6 +24,9 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(row['incremental_block_bytes'],75)
         self.assertEqual(row['standalone_download_savings'],.5)
         self.assertEqual(row['source_sample_index'],90)
+        a['users'][0]['http_totals']['bytes_up']=30
+        b['users'][0]['http_totals']['bytes_up']=0
+        self.assertEqual(compare.pair_rows(a,b,[90])[0]['standalone_total_traffic_savings'],-1)
 
     def test_empty_and_partial_reports_are_readable(self):
         with tempfile.TemporaryDirectory() as directory:
