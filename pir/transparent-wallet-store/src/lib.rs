@@ -258,22 +258,31 @@ impl SqliteStore {
         conn.execute("DELETE FROM coverage WHERE script = ?1", params![script])
             .map_err(io)?;
         for range in ranges {
-            conn.execute(
-                "INSERT INTO coverage (script, start_height, end_height, kind, shard_id, revision_digest, terminal_block_hash, source_anchor) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    script,
-                    range.start_height as i64,
-                    range.end_height as i64,
-                    kind_str(range.kind),
-                    range.shard_id as i64,
-                    range.revision_digest,
-                    range.terminal_block_hash,
-                    range.source_anchor.as_ref().map(|a| serde_json::to_string(a).unwrap()),
-                ],
-            )
-            .map_err(io)?;
+            Self::insert_coverage(conn, script, range)?;
         }
+        Ok(())
+    }
+
+    fn insert_coverage(
+        conn: &Connection,
+        script: &[u8],
+        range: &CoverageRange,
+    ) -> Result<(), StoreError> {
+        conn.execute(
+            "INSERT INTO coverage (script, start_height, end_height, kind, shard_id, revision_digest, terminal_block_hash, source_anchor) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                script,
+                range.start_height as i64,
+                range.end_height as i64,
+                kind_str(range.kind),
+                range.shard_id as i64,
+                range.revision_digest,
+                range.terminal_block_hash,
+                range.source_anchor.as_ref().map(|a| serde_json::to_string(a).unwrap()),
+            ],
+        )
+        .map_err(io)?;
         Ok(())
     }
 }
@@ -597,7 +606,6 @@ impl WalletStore for SqliteStore {
             CoverageKind::Provisional
         };
         for script in &commit.covered_scripts {
-            let mut ranges = Self::coverage_of(&tx, script)?;
             let range = CoverageRange {
                 source_anchor: commit.source_anchor.clone(),
                 script: script.clone(),
@@ -608,6 +616,21 @@ impl WalletStore for SqliteStore {
                 revision_digest: commit.revision_digest.clone(),
                 terminal_block_hash: commit.terminal_block_hash.clone(),
             };
+            // New checkpoint starts do not replace any existing primary key.
+            // Keep append work independent of the accumulated coverage history.
+            let exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM coverage WHERE script = ?1 AND start_height = ?2)",
+                    params![script, range.start_height as i64],
+                    |row| row.get(0),
+                )
+                .map_err(io)?;
+            if !exists {
+                Self::insert_coverage(&tx, script, &range)?;
+                continue;
+            }
+            // Preserve the existing replay/replacement and conflict semantics.
+            let mut ranges = Self::coverage_of(&tx, script)?;
             ranges.retain(|old| {
                 !(old.shard_id == range.shard_id
                     && old.start_height == range.start_height
@@ -961,4 +984,48 @@ fn decode_anchor(raw: Option<String>) -> rusqlite::Result<Option<Anchor>> {
         })
     })
     .transpose()
+}
+
+#[cfg(test)]
+mod coverage_append_tests {
+    use super::*;
+
+    #[test]
+    fn appending_checkpoints_does_not_rewrite_prior_coverage() {
+        let mut store = SqliteStore::open_in_memory().unwrap();
+        let script = vec![0x51];
+        let commit = |height| ShardCommit {
+            shard_id: height,
+            revision_digest: "dataset".into(),
+            sealed: true,
+            start_height: height,
+            end_height: height,
+            terminal_block_hash: format!("{height:064x}"),
+            covered_scripts: vec![script.clone()],
+            ..Default::default()
+        };
+        for height in 0..100 {
+            store.commit_shard(commit(height)).unwrap();
+        }
+        let before: u64 = store
+            .conn
+            .query_row("SELECT total_changes()", [], |r| r.get(0))
+            .unwrap();
+        store.commit_shard(commit(100)).unwrap();
+        let after: u64 = store
+            .conn
+            .query_row("SELECT total_changes()", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            after - before <= 3,
+            "append rewrote prior rows: {} changes",
+            after - before
+        );
+        let ranges = store.coverage(&script).unwrap();
+        assert_eq!(ranges.len(), 101);
+        assert_eq!(ranges.first().unwrap().start_height, 0);
+        assert_eq!(ranges.last().unwrap().end_height, 100);
+        store.commit_shard(commit(100)).unwrap();
+        assert_eq!(store.coverage(&script).unwrap(), ranges);
+    }
 }
