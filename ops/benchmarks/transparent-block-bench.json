@@ -17,7 +17,7 @@
   "private_keys_copied": false,
   "dataset_dir": "/srv/transparent-sync-bench/data",
   "metrics_listener": "127.0.0.1:8097",
-  "dataset_ready": false,
+  "dataset_ready": true,
   "export_host_private_ipv4": "10.142.0.3",
   "fresh_oracle_sample": "transparent-comparison-fresh-sample.json",
   "fresh_oracle_sha256": "fde07f0fabedc0a3a651cd8470d1ecd648b377e769242bcf58c8ec0cb25efbf6",
@@ -55,5 +55,21 @@
     "wallets_per_run": 20,
     "exact_per_run": 20,
     "scope": "Supported scripts only, first 1000 blocks. A transient PIR preflight 503 was retained before a successful resumed run; not full-chain performance evidence."
-  }
+  },
+  "dataset_id": "3a9c03fa734acbf9eb21f3030ad71cc63113f1957d492702546b024df062a02d",
+  "anchor_height": 3473686,
+  "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+  "dataset_batches": 3474,
+  "dataset_artifact_bytes": 114896778048,
+  "dataset_totals": {
+    "combined.gzip": 26389207567,
+    "combined.identity": 30818781296,
+    "shielded.gzip": 17268404078,
+    "shielded.identity": 17743789543,
+    "transparent.gzip": 9252019442,
+    "transparent.identity": 13424576122
+  },
+  "dataset_manifest_sha256": "33935ba58c885d3c4d67507476de18f25329be2dabb4b8bcbcbd7f2f9dfd5ce9",
+  "extra_volume": null,
+  "free_bytes_after_copy": 48234639360
 }
