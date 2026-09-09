@@ -114,7 +114,7 @@ def route_coordinator():
     execute(['systemctl','reload','caddy'])
 
 
-async def install_worker(fleet,worker,artifacts,rollback):
+async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_seconds=1800):
     host=worker['ssh_host']
     before=read_json('http://'+worker['upstream']+'/v1/ready')
     if not before.get('ready') or before.get('mode')!='warm':
@@ -145,10 +145,13 @@ async def install_worker(fleet,worker,artifacts,rollback):
     verify=[remote+'/transparent-shard-server']+args[1:]+['--verify-only']
     await fleet.ssh(host,shlex.join(verify),timeout=300,multiplex=False)
     await fleet.ssh(host,'cat > '+remote+'/worker.service',new_unit.encode())
+    if stage_only:
+        return
     command=f'''set -eu
 if [ ! -f {shlex.quote(rollback)}/worker.service ]; then
  cp /etc/systemd/system/transparent-shard-server.service {shlex.quote(rollback)}/worker.service
  cp /usr/local/bin/transparent-shard-server {shlex.quote(rollback)}/transparent-shard-server
+ cp /usr/local/bin/shard-control {shlex.quote(rollback)}/shard-control
 fi
 install -m755 {remote}/transparent-shard-server /usr/local/bin/transparent-shard-server.next
 mv /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server
@@ -159,7 +162,7 @@ systemctl restart transparent-shard-server
 '''
     await fleet.ssh(host,command)
     expected_binary=hashlib.sha256((artifacts/'transparent-shard-server').read_bytes()).hexdigest()
-    deadline=time.monotonic()+1800
+    deadline=time.monotonic()+warm_seconds
     while time.monotonic()<deadline:
         try:
             ready=await asyncio.to_thread(read_json,'http://'+worker['upstream']+'/v1/ready')

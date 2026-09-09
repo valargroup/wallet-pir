@@ -287,7 +287,12 @@ class Fleet:
         sites = [host]
         if self.c.get('internal_listen'):
             sites.append('http://' + self.c['internal_listen'])
-        text = '\n'.join(site+' {\n'+'\n'.join(body)+'\n}\n' for site in sites)
+        maintenance = self.root/'maintenance.json'
+        guarded = maintenance.exists() and json.loads(maintenance.read_text()).get('enabled', False)
+        unavailable = '\thandle {\n\t\theader Retry-After 1\n\t\trespond "transparent fleet maintenance" 503\n\t}'
+        # During a batch restart the private router can exercise the new fleet,
+        # while controller retries cannot accidentally reopen the public site.
+        text = '\n'.join(site+' {\n'+(unavailable if guarded and site == host else '\n'.join(body))+'\n}\n' for site in sites)
         target = self.c.get('router_file','/etc/caddy/Caddyfile')
         quoted = shlex.quote(target)
         # Record successful application separately: a crash after rename but before

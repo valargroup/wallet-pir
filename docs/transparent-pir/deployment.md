@@ -252,17 +252,28 @@ settings until their rollout.
 Run `ops/scripts/observe-transparent-hardening.py` on the coordinator with the
 expected worker binary digest and release `soak-query` executable. Its defaults
 require **both six hours and 300 new blocks**, two sustained query clients with
-exact source-byte comparisons, public and canary visibility within 30 seconds,
+exact source-byte comparisons, public visibility within 30 seconds and recent
+replica catch-up within 60 seconds from independent node observation,
 canonical endpoints, no OOM or restart, and 20% host memory headroom. A reorg
 resets the counted block samples. The monitor is read-only and cannot trigger a
 rollout; preserve its result and raw NDJSON before rolling the next workers.
 
-After a passing canary, upgrade the remaining recent replicas individually,
-verify their warm/current identities, remove the reconciler's canary allowlist,
-and validate the archive deployment path before rolling owners. Preserve
-compatible rollback artifacts and keep orphaned publications withdrawn. Run
-24-hour monitoring after the fleet rollout. An elapsed timer alone is not a
-passing gate.
+The approved rollout accepts downtime and upgrades all six workers in one
+maintenance batch on the existing hardware. `upgrade-transparent-fleet.py`
+preflights every selected worker before guarding both public transparent origins.
+It gives restarted workers fifteen minutes to warm, verifies current canonical
+publications and exact directory/page queries, then reopens public service.
+Rollback preserves current publication records and revocations and reopens only
+after verification. Unverified recovery keeps the maintenance response.
+
+`run-transparent-hardening-rollout.py` supervises the canary upgrade, the loaded
+gate, the whole-fleet batch and 24-hour observation of all six workers. It stops
+on failure. The full-fleet gate must match the tested binary, fleet script and
+configuration; elapsed time alone is insufficient. The foreground adapter and
+reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
+recent-01 at the canary stage and all four recent replicas after their upgrade.
+One daemon task owns each managed worker's preparation across foreground quorum
+cancellation; it coalesces queued targets and reattests status after restart.
 
 
 ## Opt-in archive parent filters
