@@ -274,6 +274,12 @@ reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
 recent-01 at the canary stage and all four recent replicas after their upgrade.
 One daemon task owns each managed worker's preparation across foreground quorum
 cancellation; it coalesces queued targets and reattests status after restart.
+A superseded but canonical prepared candidate may advance an unrouted worker
+privately when its height is already covered by the public authority. The worker
+remains excluded until it attests the exact current public map. This prevents a
+burst from discarding every completed preparation and indefinitely delaying
+replica coverage. Future candidates and withdrawn/orphaned publications cannot
+use this path.
 
 
 ## Opt-in archive parent filters
