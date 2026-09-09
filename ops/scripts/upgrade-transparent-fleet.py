@@ -182,6 +182,18 @@ async def verify_workers(fleet, workers, binary, query_binary, publications):
     return results
 
 
+async def ready_to_freeze(fleet, workers):
+    target = fleet.reconciliation_target()
+    if target is None:
+        raise RuntimeError('waiting for publication')
+    tail = json.loads((Path(target[1]['directory'])/'shards.json').read_text())['shards'][-1]
+    if tail['end_height'] < await fleet.node_height():
+        raise RuntimeError('waiting for the authority to catch up before freezing verification')
+    statuses = await asyncio.gather(*(fleet.control(w, {'operation':'status'}) for w in workers))
+    if not all(fleet.attests(s, target[0]['map_sha256']) for s in statuses):
+        raise RuntimeError('waiting for workers to join the current publication')
+
+
 async def upgrade(args):
     fleet = L.Fleet(json.loads(args.fleet_config.read_text()))
     binary = sha(args.artifacts/'transparent-shard-server')
@@ -216,12 +228,7 @@ async def upgrade(args):
             try:
                 # Freeze preparation/activation only after all target workers
                 # attest the authority, then verify private rows on that snapshot.
-                target = fleet.reconciliation_target()
-                if target is None:
-                    raise RuntimeError('waiting for publication')
-                statuses = await asyncio.gather(*(fleet.control(w, {'operation':'status'}) for w in workers))
-                if not all(fleet.attests(s, target[0]['map_sha256']) for s in statuses):
-                    raise RuntimeError('waiting for workers to join the current publication')
+                await ready_to_freeze(fleet, workers)
                 service('stop', *services)
                 evidence = await verify_workers(fleet, workers, binary, args.query_binary, args.publications)
                 break
@@ -265,6 +272,7 @@ fi''', timeout=60)
         deadline = time.monotonic()+900
         while not rollback_errors and time.monotonic() < deadline:
             try:
+                await ready_to_freeze(fleet, workers)
                 service('stop', *services)
                 evidence = await verify_workers(fleet, workers, before, args.query_binary, args.publications)
                 L.atomic_json(args.out/'rollback-verified.json', evidence)

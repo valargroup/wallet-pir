@@ -117,6 +117,18 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
             apply.assert_not_called()
             self.fleet.route.assert_not_awaited()
 
+    async def test_old_warm_workers_do_not_allow_freezing_a_controller_that_is_catching_up(self):
+        directory = self.root/'publication'; directory.mkdir()
+        (directory/'shards.json').write_text(json.dumps({'shards':[dict(end_height=100)]}))
+        self.fleet.reconciliation_target = lambda: ({'map_sha256':'digest'}, {'directory':str(directory)})
+        self.fleet.node_height = AsyncMock(return_value=101)
+        self.fleet.control = AsyncMock(return_value={'active':{'map_sha256':'digest'},'warm':True})
+        with self.assertRaisesRegex(RuntimeError, 'catch up before freezing'):
+            await M.ready_to_freeze(self.fleet, [self.worker])
+        self.fleet.control.assert_not_awaited()
+        self.fleet.node_height.return_value = 100
+        await M.ready_to_freeze(self.fleet, [self.worker])
+
     async def test_supervisor_stops_after_a_failed_canary(self):
         artifacts = self.root/'artifacts'; artifacts.mkdir()
         (artifacts/'transparent-shard-server').write_bytes(b'fixture')
