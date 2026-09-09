@@ -22,9 +22,44 @@ impl WorkMemory {
         self.reserve_at(bytes, crate::procmem::cgroup_memory_bytes())
     }
 
+    /// An already-admitted query may briefly wait for construction scratch to
+    /// retire. It still owns one of the bounded query slots; cancellation drops
+    /// the wait. Its budget is the smaller of the caller deadline and 250 ms.
+    pub async fn reserve_query(
+        self: &Arc<Self>,
+        bytes: u64,
+        remaining: std::time::Duration,
+    ) -> Option<Reservation> {
+        self.reserve_query_with(bytes, remaining, crate::procmem::cgroup_memory_bytes)
+            .await
+    }
+
+    async fn reserve_query_with(
+        self: &Arc<Self>,
+        bytes: u64,
+        remaining: std::time::Duration,
+        sample: impl Fn() -> Option<(u64, Option<u64>)>,
+    ) -> Option<Reservation> {
+        let budget = remaining.min(std::time::Duration::from_millis(250));
+        if budget.is_zero() {
+            return None;
+        }
+        tokio::time::timeout(budget, async {
+            loop {
+                if let Some(reservation) = self.reserve_at(bytes, sample()) {
+                    return reservation;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .ok()
+    }
+
     /// Cold builders queue fairly while scratch is busy. Keep the build permit
     /// while waiting so newly scheduled work cannot bypass an older builder.
-    /// Query/restore admission stays nonblocking; all work uses the same guard.
+    /// Restores remain nonblocking; queries have a short bounded wait. All work
+    /// uses the same guard.
     pub async fn reserve_build(self: &Arc<Self>, bytes: u64) -> Option<Reservation> {
         self.reserve_build_with(bytes, crate::procmem::cgroup_memory_bytes)
             .await
@@ -242,6 +277,56 @@ mod tests {
         assert_eq!(memory.reserved_bytes(), 200);
         finish_tx.send(()).unwrap();
         done_rx.await.unwrap();
+        assert_eq!(memory.reserved_bytes(), 0);
+    }
+    #[tokio::test]
+    async fn admitted_query_waits_for_memory_without_exceeding_the_budget() {
+        let memory = Arc::new(WorkMemory::default());
+        let held = memory.reserve_at(400, Some((400, Some(1000)))).unwrap();
+        let (query, ()) = tokio::join!(
+            memory.reserve_query_with(200, std::time::Duration::from_secs(1), || Some((
+                400,
+                Some(1000)
+            ))),
+            async {
+                tokio::task::yield_now().await;
+                drop(held);
+            }
+        );
+        let query = query.expect("released memory should admit the waiting query");
+        assert_eq!(memory.reserved_bytes(), 200);
+        drop(query);
+        assert_eq!(memory.reserved_bytes(), 0);
+    }
+
+    #[tokio::test]
+    async fn expired_or_cancelled_query_wait_does_not_leave_a_reservation() {
+        let memory = Arc::new(WorkMemory::default());
+        assert!(memory
+            .reserve_query_with(200, std::time::Duration::ZERO, || Some((400, Some(1000))))
+            .await
+            .is_none());
+        assert_eq!(memory.reserved_bytes(), 0);
+        let held = memory.reserve_at(400, Some((400, Some(1000)))).unwrap();
+        assert!(memory
+            .reserve_query_with(200, std::time::Duration::ZERO, || Some((400, Some(1000))))
+            .await
+            .is_none());
+        assert_eq!(memory.reserved_bytes(), 400);
+        let waiting = {
+            let memory = memory.clone();
+            tokio::spawn(async move {
+                memory
+                    .reserve_query_with(200, std::time::Duration::from_secs(1), || {
+                        Some((400, Some(1000)))
+                    })
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        waiting.abort();
+        assert!(matches!(waiting.await, Err(error) if error.is_cancelled()));
+        drop(held);
         assert_eq!(memory.reserved_bytes(), 0);
     }
 }

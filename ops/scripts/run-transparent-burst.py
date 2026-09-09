@@ -71,7 +71,7 @@ def main():
         paths += sorted((ROOT / 'pir').glob('*/Cargo.toml'))
         paths += sorted((ROOT / 'server').glob('*/Cargo.toml'))
         paths += sorted((ROOT / 'server/transparent-shard-server').rglob('*.rs'))
-        json.dump({'source_sha': source, 'machine': platform.platform(),
+        json.dump({'source_sha': source, 'machine': platform.platform(), 'cpu_info': Path('/proc/cpuinfo').read_text() if Path('/proc/cpuinfo').exists() else None,
                    'external_clients': args.external_clients, 'client_cpus': '4-7' if args.systemd and args.external_clients else None,
                    'worker_budget_seconds': args.worker_budget_seconds, 'build_slots': args.build_slots, 'repetitions': args.repetitions, 'isolated_cgroup': args.systemd,
                    'fixture_sha256': hashlib.sha256(args.fixture.read_bytes()).hexdigest() if args.fixture else None,
@@ -160,6 +160,9 @@ def main():
                             client_group = host.get('kernel', {}).get('path')
                             row['client_isolation_passed'] = bool(client_cpus == '4-7' and worker_group and client_group and worker_group != client_group)
                     row['load_overlapped_burst'] = value.get('load_overlapped_burst', False)
+                    row['kernel_policy'] = value.get('kernel_policy', 'unreported')
+                    row['cold_persistence_complete'] = value.get('cold_persistence_complete', False)
+                    row['persistence_complete'] = value.get('persistence_complete', False)
                     row['cold_warm'] = value.get('cold_warm', False)
                     row['assigned_shards'] = value.get('assigned_shards', 1)
                     if args.fixture:
@@ -182,6 +185,7 @@ def main():
             print(json.dumps(row), flush=True)
     return 0 if all(r['exit_code'] == 0 and r.get('completed') and r.get('exact_queries')
                     and r.get('worker_30s_budget_passed') and r.get('worker_budget_passed')
+                    and r.get('cold_persistence_complete') and r.get('persistence_complete')
                     and (not args.external_clients or (r.get('external_clients') and r.get('client_shutdown_complete')))
                     and (not (args.external_clients and args.systemd) or r.get('client_isolation_passed'))
                     and (not args.fixture or (r.get('cold_warm') and r.get('assigned_shards') == 14 and r.get('load_overlapped_burst') and r.get('memory_qualification_passed'))) for r in runs) else 1

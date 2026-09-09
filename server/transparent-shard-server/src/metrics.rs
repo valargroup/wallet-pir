@@ -180,6 +180,7 @@ pub struct Metrics {
     pub disk_misses: AtomicU64,
     pub disk_load_micros: AtomicU64,
     pub disk_write_failures: AtomicU64,
+    pub disk_save_pending: AtomicU64,
     pub cache_hits: AtomicU64,
     pub cache_misses: AtomicU64,
     /// Microseconds spent waiting for a query slot.
@@ -234,6 +235,7 @@ impl Default for Metrics {
             disk_misses: AtomicU64::new(0),
             disk_load_micros: AtomicU64::new(0),
             disk_write_failures: AtomicU64::new(0),
+            disk_save_pending: AtomicU64::new(0),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             query_queue_micros: AtomicU64::new(0),
@@ -371,6 +373,12 @@ impl Metrics {
             "counter",
             "Microseconds spent restoring runtimes.",
             Self::get(&self.disk_load_micros),
+        );
+        line(
+            "transparent_shard_disk_save_pending",
+            "gauge",
+            "Owned runtime snapshots queued or being persisted.",
+            Self::get(&self.disk_save_pending),
         );
         line(
             "transparent_shard_disk_write_failures_total",

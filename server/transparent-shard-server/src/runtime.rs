@@ -54,6 +54,28 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use transparent_shard::layout::Geometry;
 
+/// Explicit build policy for reproducible hardware-path comparisons. The
+/// portable feature selects the library's existing fallback; it changes no
+/// parameters or wire encoding and never depends on a client request.
+pub const KERNEL_POLICY: &str = if cfg!(feature = "portable-kernel") {
+    "chunked-split"
+} else {
+    "auto"
+};
+
+fn database_server(
+    shared: &SharedParams,
+    coefficients: impl Iterator<Item = u16>,
+    transposed: bool,
+) -> IPIRServer<u16> {
+    #[cfg(feature = "portable-kernel")]
+    let server = IPIRServer::<u16>::new(shared.scheme.clone(), coefficients, transposed, true);
+    #[cfg(not(feature = "portable-kernel"))]
+    let server =
+        IPIRServer::<u16>::new_auto_kernel(shared.scheme.clone(), coefficients, transposed, true);
+    server
+}
+
 /// Bytes one prepared runtime reserves at these parameters.
 ///
 /// Two terms, both derived rather than measured:
@@ -156,8 +178,7 @@ impl TableRuntime {
             shared.scheme.db_cols,
             shared.scheme.p.trailing_zeros() as usize,
         );
-        let server =
-            IPIRServer::<u16>::new_auto_kernel(shared.scheme.clone(), coefficients, false, true);
+        let server = database_server(shared, coefficients, false);
 
         tracing::debug!(
             geometry = shared.geometry.name,
@@ -325,9 +346,17 @@ impl RuntimeHandle {
     }
 }
 
+/// The pending gauge drops only after all writer-owned allocations and pins.
+struct PendingSave(Arc<Metrics>);
+impl Drop for PendingSave {
+    fn drop(&mut self) {
+        Metrics::sub(&self.0.disk_save_pending, 1);
+    }
+}
+
 /// One cache entry's shared state.
 struct Slot {
-    runtime: tokio::sync::OnceCell<TableRuntime>,
+    runtime: tokio::sync::OnceCell<Arc<TableRuntime>>,
 }
 
 struct Entry {
@@ -389,6 +418,7 @@ impl RuntimeCache {
             serde_json::json!({"bytes":disk.used_bytes().ok(),"limit_bytes":disk.max_bytes,
                 "hits":Metrics::get(&self.metrics.disk_hits),"misses":Metrics::get(&self.metrics.disk_misses),
                 "write_failures":Metrics::get(&self.metrics.disk_write_failures),
+                "pending_saves":Metrics::get(&self.metrics.disk_save_pending),
                 "restore_slots":disk.restore_slots.max(1)}))
     }
 
@@ -455,7 +485,7 @@ impl RuntimeCache {
         shared: Arc<SharedParams>,
         source: SegmentSource,
         pin: Arc<Slot>,
-    ) -> Result<TableRuntime, CacheError> {
+    ) -> Result<Arc<TableRuntime>, CacheError> {
         let attempt = std::time::Instant::now();
         if let Some(disk) = self.disk.clone() {
             let permit = self
@@ -516,7 +546,7 @@ impl RuntimeCache {
                 .await
                 .map_err(|error| CacheError::Failed(error.to_string()))??;
             if let Some(runtime) = restored {
-                return Ok(runtime);
+                return Ok(Arc::new(runtime));
             }
         }
         let slot_started = std::time::Instant::now();
@@ -541,7 +571,6 @@ impl RuntimeCache {
         let metrics = self.metrics.clone();
         tokio::task::spawn_blocking(move || {
             let mut memory = memory;
-            let _pin = pin;
             let started = std::time::Instant::now();
             let bytes = source
                 .load()
@@ -551,25 +580,30 @@ impl RuntimeCache {
             let runtime = TableRuntime::build(&shared, &bytes).map_err(CacheError::Failed)?;
             tracing::debug!(key = ?key, seconds = compute_started.elapsed().as_secs_f64(), stage = "runtime_build", "runtime stage");
             drop(bytes);
-            // Construction's plaintext and preprocessing temporaries are gone.
-            // Keep the built runtime and bounded writer scratch charged while
-            // waiting for the disk lock and durability barriers. The closure
-            // retains this guard and the cache pin even if its caller cancels.
+            // The optional cache must not delay serving this verified runtime.
+            // Its writer owns the runtime, pin and reduced reservation until
+            // persistence finishes, independently of HTTP/control cancellation.
             memory.shrink_to(shared.reserved_bytes() + disk::SAVE_SCRATCH_BYTES);
             drop(permit);
-            tracing::debug!(key = ?key, reserved_bytes = shared.reserved_bytes() + disk::SAVE_SCRATCH_BYTES,
-                stage = "serialization_handoff", "runtime stage");
-            if let Some(disk) = disk {
-                let save_started = std::time::Instant::now();
-                if let Err(error) = disk.save(&key, &shared, &source.sha256, &runtime) {
-                    Metrics::incr(&metrics.disk_write_failures);
-                    tracing::warn!(%error, "runtime cache write failed; serving built runtime");
-                }
-                tracing::debug!(key = ?key, seconds = save_started.elapsed().as_secs_f64(), stage = "disk_save", "runtime stage");
-            }
+            let runtime = Arc::new(runtime);
             Metrics::incr(&metrics.builds);
             Metrics::add(&metrics.build_micros, started.elapsed().as_micros() as u64);
             metrics.build_seconds.observe(started.elapsed());
+            if let Some(disk) = disk {
+                Metrics::incr(&metrics.disk_save_pending);
+                // Tuple fields drop in order; pending becomes zero only after
+                // the runtime reference, resident pin and work guard are gone.
+                let work = (runtime.clone(), pin, memory, PendingSave(metrics.clone()));
+                tokio::task::spawn_blocking(move || {
+                    let save_started = std::time::Instant::now();
+                    if let Err(error) = disk.save(&key, &shared, &source.sha256, &work.0) {
+                        Metrics::incr(&metrics.disk_write_failures);
+                        tracing::warn!(%error, "runtime cache write failed; runtime remains servable");
+                    }
+                    tracing::debug!(key = ?key, seconds = save_started.elapsed().as_secs_f64(), stage = "disk_save", "runtime stage");
+                    drop(work);
+                });
+            }
             Ok(runtime)
         })
         .await

@@ -19,6 +19,10 @@ path = "src/bin/shard-scaling.rs"
 name = "shard-residency"
 path = "src/bin/shard-residency.rs"
 
+[features]
+# Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
+portable-kernel = []
+
 [dependencies]
 spiral-rs = { package = "valar-spiral-rs", git = "https://github.com/valargroup/spiral-rs.git", rev = "6f5b66c6a5a639827c6486c59d31c7ec2d4399a8" }
 axum = "0.7"

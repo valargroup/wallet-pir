@@ -1219,18 +1219,31 @@ async fn query_inner(
     // if the client goes away meanwhile the evaluation still finishes and is
     // discarded, but the slot is released when it does, not when the dropped
     // future would have been polled.
+    let memory_started = std::time::Instant::now();
     let memory = match state
         .inner
         .cache
         .work_memory
-        .reserve(shared.reserved_bytes().saturating_mul(2))
+        .reserve_query(
+            shared.reserved_bytes().saturating_mul(2),
+            admitted.remaining(),
+        )
+        .await
     {
         Some(memory) => memory,
         None => {
+            tracing::debug!(revision = %digest, table = table.as_str(), seconds = memory_started.elapsed().as_secs_f64(), admitted = false, stage = "query_memory_admission", "query stage");
+            if admitted.remaining().is_zero() {
+                Metrics::incr(&metrics.deadline_exceeded);
+                Metrics::incr(&metrics.query_errors);
+                return RequestError::from(AdmissionError::DeadlineExceeded)
+                    .into_response(&map_digest);
+            }
             Metrics::incr(&metrics.overloads);
             return RequestError::Overloaded.into_response(&map_digest);
         }
     };
+    tracing::debug!(revision = %digest, table = table.as_str(), seconds = memory_started.elapsed().as_secs_f64(), admitted = true, stage = "query_memory_admission", "query stage");
     let evaluation_metrics = metrics.clone();
     let query_stage = std::time::Instant::now();
     let query_revision = digest.clone();

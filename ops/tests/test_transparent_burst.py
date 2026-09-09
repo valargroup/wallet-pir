@@ -19,7 +19,7 @@ class BurstRunnerTests(unittest.TestCase):
             binary.write_text('''#!/usr/bin/env python3
 import json, os, sys
 if 'burst::external_query_clients' in sys.argv: sys.exit(0)
-json.dump({'completed':True,'exact_queries':True,'external_clients':True,
+json.dump({'completed':True,'cold_persistence_complete':True,'persistence_complete':True,'exact_queries':True,'external_clients':True,
 'worker_30s_budget_passed':True,'activations':[{'worker_visibility_seconds':1}],
 'memory_samples':[]},open(os.environ['TRANSPARENT_BURST_REPORT'],'w'))
 ''')
@@ -32,6 +32,24 @@ json.dump({'completed':True,'exact_queries':True,'external_clients':True,
             runs = json.loads((out / 'summary.json').read_text())['runs']
             self.assertTrue(all(r['exit_code'] == 0 for r in runs))
             self.assertTrue(all(not r['client_shutdown_complete'] for r in runs))
+
+    def test_persistence_must_drain_before_and_after_measured_load(self):
+        for missing in [None, 'cold_persistence_complete', 'persistence_complete']:
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                record = dict(completed=True, exact_queries=True, worker_30s_budget_passed=True,
+                              cold_persistence_complete=True, persistence_complete=True,
+                              activations=[dict(worker_visibility_seconds=1)], memory_samples=[])
+                if missing:
+                    del record[missing]
+                binary = root / 'probe'
+                binary.write_text('#!/usr/bin/env python3\nimport json,os\njson.dump(' + repr(record) +
+                                  ',open(os.environ["TRANSPARENT_BURST_REPORT"],"w"))\n')
+                binary.chmod(0o755)
+                result = subprocess.run([sys.executable, str(RUNNER), '--test-binary', str(binary),
+                                         '--source-sha', 'fixture', '--out', str(root/'out'),
+                                         '--build-slots', '2', '--repetitions', '1'], capture_output=True)
+                self.assertEqual(result.returncode, 1 if missing else 0)
 
     def test_repeated_build_configuration_is_rejected(self):
         result = subprocess.run([sys.executable, str(RUNNER), '--build-slots', '1', '1'], capture_output=True)
@@ -62,7 +80,7 @@ json.dump({'completed':True,'exact_queries':True,'external_clients':True,
             binary.write_text('''#!/usr/bin/env python3
 import json,os
 slots=int(os.environ['TRANSPARENT_BURST_BUILD_SLOTS'])
-json.dump({'completed':True,'exact_queries':True,'worker_30s_budget_passed':slots==2,
+json.dump({'completed':True,'cold_persistence_complete':True,'persistence_complete':True,'exact_queries':True,'worker_30s_budget_passed':slots==2,
 'activations':[{'worker_visibility_seconds':31 if slots==1 else 15}],
 'memory_samples':[{'process_rss_bytes':100}]},open(os.environ['TRANSPARENT_BURST_REPORT'],'w'))
 ''')
@@ -96,7 +114,7 @@ if 'burst::external_query_clients' in sys.argv:
     stop = Path(os.environ['TRANSPARENT_BURST_CLIENT_DIR']) / 'stop'
     while not stop.exists(): time.sleep(.01)
     sys.exit(23)
-json.dump({'completed':True,'exact_queries':True,'worker_30s_budget_passed':True,
+json.dump({'completed':True,'cold_persistence_complete':True,'persistence_complete':True,'exact_queries':True,'worker_30s_budget_passed':True,
 'activations':[{'worker_visibility_seconds':1}], 'memory_samples':[]},
 open(os.environ['TRANSPARENT_BURST_REPORT'],'w'))
 ''')

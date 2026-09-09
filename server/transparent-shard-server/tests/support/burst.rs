@@ -8,6 +8,18 @@ use transparent_shard_server::service::ReadinessMode;
 use transparent_shard_server::shardset::LoadOptions;
 use transparent_wallet::transport::{Overloaded, StaleRevision};
 
+/// Drain optional writes outside the query/visibility window while retaining
+/// memory sampling. Holding metrics does not pin a retired ServiceState/runtime.
+async fn drain_persistence(metrics: &Arc<transparent_shard_server::metrics::Metrics>) -> bool {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while transparent_shard_server::metrics::Metrics::get(&metrics.disk_save_pending) != 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
 /// Run each configuration in its own process so allocator retention does not
 /// contaminate the comparison. Timings are measurements, not normal CI asserts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -118,6 +130,10 @@ async fn publication_burst_under_exact_load() {
         .unwrap()
         .unwrap();
     let cold_prewarm_seconds = cold_started.elapsed().as_secs_f64();
+    let persistence_metrics = state.metrics().clone();
+    let drain_started = Instant::now();
+    let cold_persistence_complete = drain_persistence(&persistence_metrics).await;
+    let cold_persistence_drain_seconds = drain_started.elapsed().as_secs_f64();
     let cold_memory = kernel_memory();
     let response = router(state.clone())
         .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap())
@@ -129,7 +145,8 @@ async fn publication_burst_under_exact_load() {
             .unwrap(),
     )
     .unwrap();
-    let cold_warm = cold_ready["ready"] == true
+    let cold_warm = cold_persistence_complete
+        && cold_ready["ready"] == true
         && cold_ready["warm_runtimes"].as_u64() == Some((assigned_count * 2) as u64)
         && cold_ready["target_runtimes"].as_u64() == Some((assigned_count * 2) as u64);
     let live = LiveService::new(
@@ -223,7 +240,8 @@ async fn publication_burst_under_exact_load() {
         }
     }
     drop(ready_tx);
-    let sample_stop = stop.clone();
+    let sample_control = Arc::new(AtomicBool::new(false));
+    let sample_stop = sample_control.clone();
     let sampler = tokio::spawn(async move {
         let mut system = sysinfo::System::new();
         let pid = sysinfo::get_current_pid().unwrap();
@@ -293,6 +311,10 @@ async fn publication_burst_under_exact_load() {
     for client in clients {
         client_results.push(client.await.unwrap());
     }
+    let drain_started = Instant::now();
+    let persistence_complete = drain_persistence(&persistence_metrics).await;
+    let persistence_drain_seconds = drain_started.elapsed().as_secs_f64();
+    sample_control.store(true, Ordering::Release);
     let samples = sampler.await.unwrap();
     server.abort();
     let query_records = queries.lock().unwrap();
@@ -319,15 +341,18 @@ async fn publication_burst_under_exact_load() {
                 })
             })
         });
-    let completed = matches!(&result, Ok(Ok(())));
+    let completed = persistence_complete && matches!(&result, Ok(Ok(())));
     let within_budget = activations.len() == 2
         && activations
             .iter()
             .all(|a| a["worker_visibility_seconds"].as_f64().unwrap() <= 30.0);
-    let value = serde_json::json!({"schema":"transparent-worker-burst-v4","build_slots":slots,
+    let value = serde_json::json!({"schema":"transparent-worker-burst-v6","build_slots":slots,
         "client_shutdown_complete":client_shutdown_complete,
         "geometry":"recent-8k","query_clients":2,"cache_bytes":config.cache_bytes,
         "scope":"isolated worker stage; not fleet acceptance", "external_clients":external.is_some(),
+        "kernel_policy":transparent_shard_server::runtime::KERNEL_POLICY,
+        "cold_persistence_complete":cold_persistence_complete,"cold_persistence_drain_seconds":cold_persistence_drain_seconds,
+        "persistence_complete":persistence_complete,"persistence_drain_seconds":persistence_drain_seconds,
         "cold_ready":cold_ready,"cold_warm":cold_warm,"assigned_shards":assigned_count,"fixture":fixture,"cold_prewarm_seconds":cold_prewarm_seconds,
         "kernel_memory":kernel_memory(),"cold_memory":cold_memory,
         "source_sha":std::env::var("TRANSPARENT_BURST_SOURCE_SHA").ok(),

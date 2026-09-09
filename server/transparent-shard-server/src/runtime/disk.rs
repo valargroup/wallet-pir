@@ -4,7 +4,6 @@
 //! changes. The dependency revisions below are part of the compatibility key.
 use super::{published_c1_rows, RuntimeKey, SharedParams, TableRuntime};
 use inspiring::QueryPackPreprocessed;
-use ipir_sp::server::IPIRServer;
 use sha2::{Digest, Sha256};
 use spiral_rs::poly::{PolyMatrix, PolyMatrixNTT};
 use std::fs::{self, File, OpenOptions};
@@ -138,8 +137,7 @@ impl DiskCache {
             }
             value
         });
-        let server =
-            IPIRServer::<u16>::new_auto_kernel(shared.scheme.clone(), coefficients, true, true);
+        let server = super::database_server(shared, coefficients, true);
         if let Some(error) = error {
             return Err(error);
         }
@@ -617,8 +615,18 @@ mod cache_integration_tests {
     use std::sync::Arc;
     use transparent_shard::layout::RECENT_4K;
 
+    async fn wait_for_saves(metrics: &Arc<Metrics>) {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while Metrics::get(&metrics.disk_save_pending) != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("snapshot writer did not finish");
+    }
+
     #[tokio::test]
-    async fn blocked_snapshot_releases_build_slot_but_cancel_keeps_runtime_accounted() {
+    async fn blocked_snapshot_does_not_delay_serving_or_release_owned_memory() {
         let dir = tempfile::tempdir().unwrap();
         let shared = Arc::new(SharedParams::build(&RECENT_4K, Table::Directory).unwrap());
         let rows = vec![
@@ -653,32 +661,34 @@ mod cache_integration_tests {
                 (cache.clone(), shared.clone(), source.clone(), key.clone());
             tokio::spawn(async move { cache.get(key, shared, source).await })
         };
-        tokio::time::timeout(std::time::Duration::from_secs(60), async {
-            while cache.work_memory.reserved_bytes() != shared.reserved_bytes() + SAVE_SCRATCH_BYTES
-                || cache.build_slots.available_permits() != 1
-            {
-                assert!(
-                    !request.is_finished(),
-                    "build ended before reaching blocked writer"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("construction reservation did not transition to serialization");
-        request.abort();
-        assert!(matches!(request.await, Err(error) if error.is_cancelled()));
+        let handle = tokio::time::timeout(std::time::Duration::from_secs(60), request)
+            .await
+            .expect("snapshot lock blocked runtime readiness")
+            .unwrap()
+            .unwrap();
+        assert_eq!(Metrics::get(&metrics.disk_save_pending), 1);
+        assert_eq!(cache.build_slots.available_permits(), 1);
+        // An independent caller also receives the same already-built runtime
+        // while persistence is blocked. Dropping both callers cannot free it.
+        let again = cache
+            .get(key.clone(), shared.clone(), source.clone())
+            .await
+            .unwrap();
+        assert!(std::ptr::eq(handle.get(), again.get()));
+        drop(handle);
+        drop(again);
+        cache.evict_unpinned();
         assert_eq!(
             cache.work_memory.reserved_bytes(),
             shared.reserved_bytes() + SAVE_SCRATCH_BYTES
         );
         assert_eq!(cache.resident_bytes(), shared.reserved_bytes());
-        assert_eq!(Metrics::get(&metrics.builds), 0);
+        assert_eq!(Metrics::get(&metrics.builds), 1);
         // RAII unlock also prevents a test failure from leaving a blocking task
         // stuck during runtime shutdown.
         drop(lock);
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            while cache.work_memory.reserved_bytes() != 0 {
+            while Metrics::get(&metrics.disk_save_pending) != 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
@@ -715,6 +725,13 @@ mod cache_integration_tests {
             .await
             .unwrap();
         let expected = first.get().public_params_sha256.clone();
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while Metrics::get(&metrics.disk_save_pending) != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(Metrics::get(&metrics.builds), 1);
         drop(first);
         drop(cache);
@@ -754,6 +771,7 @@ mod cache_integration_tests {
         );
         assert_eq!(Metrics::get(&metrics.builds), 1);
         assert_eq!(Metrics::get(&metrics.disk_misses), 1);
+        wait_for_saves(&metrics).await;
         drop(cache);
         let metrics = Arc::new(Metrics::default());
         let tiny_disk = DiskCache::new(dir.path().join("too-small"), 1).unwrap();
@@ -768,6 +786,7 @@ mod cache_integration_tests {
                 .public_params_sha256,
             expected
         );
+        wait_for_saves(&metrics).await;
         assert_eq!(Metrics::get(&metrics.disk_write_failures), 1);
         assert_eq!(Metrics::get(&metrics.builds), 1);
         drop(cache);
