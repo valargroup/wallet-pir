@@ -1,6 +1,6 @@
 # Transparent PIR status
 
-Source inspection: 2026-09-08 through worker hardening `9af5c12` and catch-up correction `7b76b39`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
+Source inspection: 2026-09-09 through worker `d5fea93` and deployment and burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
 ## Archive parent artifacts: observed 2026-09-08
 
@@ -32,15 +32,17 @@ The [production parent-filter rollout](evidence/parent-filters-production-2026-0
 
 Relevant sources: [store](../../pir/transparent-wallet/src/store.rs), [publisher](../../server/transparent-filter-server/src/bin/shard-publish.rs), [census](../../server/transparent-filter-server/src/bin/shard-census.rs), [service](../../server/transparent-shard-server/src/service.rs), [runtime](../../server/transparent-shard-server/src/runtime.rs), [loader](../../server/transparent-shard-server/src/shardset.rs), [wallet](../../pir/transparent-wallet/src/sync.rs).
 
-## Hardening and adapter: observed 2026-09-08, 23:04 UTC
+## Hardening and adapter: observed 2026-09-09, 00:55 UTC
 
-[Hardening evidence](evidence/hardening-2026-09-08/README.md) separates committed
-changes from rollout state. Shared transient memory admission, allocator
-reclamation, disk runtime collection and background recent-replica reconciliation
-are implemented. Only recent-01 has the new worker binary; reconciliation is
-restricted to that canary. The other five workers retain their previous binary.
-Both public origins agreed at height 3,476,721, matching node and journal. All
-workers reported warm; recent-02 and recent-03 were still on older publications.
+[Managed-preparation evidence](evidence/managed-preparation-2026-09-09/README.md)
+records the new canary deployment and failed predecessors. Recent-01 runs worker
+`d5fea93`, binary `817b621cbffc5743750ed0d91280dc041ed4040f55764aadf1230ce6cc718eee`.
+It warmed all 28 runtimes without failures, passed 41 exact directory/page
+queries during maintenance verification, and reopened with canonical authority.
+Both public origins matched the node at height 3,476,801 in the 00:45:54 capture.
+The other five workers retain their previous binaries. Foreground publication
+and the reconciler now share `fleet.json`; only recent-01 uses persistent
+managed preparation. No archive soft-limit change is yet deployed.
 
 The Zakura adapter is committed to `zakura-core/wallet-libraries` main at
 `bca43b343`, pinned to client `22e6bec`: fixed accepted scan target, exact rollback
@@ -51,19 +53,21 @@ wallet suite, schema rejection test, 49 UI tests, generated binding analysis and
 macOS debug build passed. Live recent/archive adapter queries decoded correctly;
 a fresh recovery using independent node hashes also reached its accepted target of 3,476,726 and completed on repeat. These test fixtures do not prove a particular user's balance.
 
-A 60-second canary smoke passed 662 exact private queries. The initial sustained
-run exposed excessive reclamation at a 5 GiB MemoryHigh and was stopped. The
-second run found a catch-up scheduling gap during a block burst. Commit
-`7b76b39` corrected one starvation path; the third run failed at 23:24:55 UTC
-after 572.605 seconds and six publicly visible new blocks. Preparing a lagging
-replica only after publication still missed the old shared 30-second gate.
-Commit `1f82093` gives the reconciler persistent preparation ownership, separates
-active invalidation from retained revocations, and measures independent node
-observation with the newly approved [public/replica budgets](deployment.md).
-Its 46 operations tests, 15 worker integration tests, strict worker Clippy and
-23 portable Linux library tests passed. This establishes implementation, not
-deployment acceptance. **The six-hour/300-block canary, wider rollout and 24-hour monitoring
-are not yet accepted.** See [remaining work](remaining-work.md).
+The final code passed 106 worker tests, 61 operations tests, strict worker
+Clippy and 26 portable Linux library tests. The prior third soak failed its
+catch-up gate; the first managed deployment then exposed permanently incomplete
+prewarm after transient admission refusal and premature public reopening before
+the controller listener was ready. Both are corrected and their raw failures
+are preserved. The second managed run failed after 141.740 seconds: public visibility stayed
+within budget, but a superseded prepared candidate was discarded instead of
+advancing the unrouted replica. Correction `7754d6c` preserves that verified
+canonical private progress while keeping exact-current public membership checks.
+The fresh loaded gate began at 00:55:04 UTC under
+`transparent-managed-hardening-rollout-3.service`. Its supervisor advances to the
+approved six-worker maintenance batch only after a matching successful gate,
+then monitors all six workers for 24 hours. **The six-hour/300-block canary,
+wider rollout and 24-hour monitoring are not yet accepted.** See
+[remaining work](remaining-work.md).
 
 ## Live deployment: observed 2026-09-08, continuous publication
 
