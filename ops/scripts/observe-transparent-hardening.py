@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import datetime
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import time
@@ -65,6 +66,11 @@ async def observe(args):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     fleet = module.Fleet(json.loads(Path(args.fleet_config).read_text()))
+    provenance = dict(worker=args.worker, binary_sha256=args.binary_sha256,
+                      fleet_script_sha256=hashlib.sha256(Path(args.fleet_script).read_bytes()).hexdigest(),
+                      fleet_config_sha256=hashlib.sha256(Path(args.fleet_config).read_bytes()).hexdigest(),
+                      public_budget_seconds=args.freshness_seconds,
+                      replica_budget_seconds=args.replica_freshness_seconds)
     worker = next(w for w in fleet.roster if w['id'] == args.worker)
     began = time.monotonic()
     baseline = None
@@ -85,7 +91,7 @@ async def observe(args):
             log = (output/f'query-{index}.ndjson').open('w', buffering=1)
             query_logs.append(log)
             queries.append(subprocess.Popen([args.query_binary, '--url', 'http://'+worker['upstream'],
-                '--publications', args.publications, '--shard', str(args.shard), '--seconds', '43200'], stdout=log, stderr=log))
+                '--publications', args.publications, '--shard', str(args.shard), '--seconds', str(max(43200, args.seconds+3600))], stdout=log, stderr=log))
 
     def emit(event, **value):
         record = dict(utc=datetime.datetime.now(datetime.timezone.utc).isoformat(), event=event, **value)
@@ -114,6 +120,8 @@ async def observe(args):
                 seen[height] = now
             last_node = node
             last_hash = await fleet.canonical_hash(node)
+            if last_hash is None:
+                raise RuntimeError('node tip changed during sampling; restart with a coherent chain observation')
             # Re-read A to distinguish a normal activation between two HTTP
             # reads from origins that disagree while publication is stable.
             a = await asyncio.to_thread(fetch, args.filter_origin+'/v1/filters/shards')
@@ -173,7 +181,7 @@ async def observe(args):
                         counts.append(sum(1 for line in log if '"exact":true' in line))
                 if queries and any(count < args.minimum_queries for count in counts):
                     raise RuntimeError('insufficient exact private-query samples')
-                result = emit('result', passed=True, seconds=now-began, blocks=len(visible), worker_samples=samples, exact_queries=counts,
+                result = emit('result', **provenance, passed=True, seconds=now-began, blocks=len(visible), replica_blocks=len(canary_visible), worker_samples=samples, exact_queries=counts,
                               maximum_visibility_seconds=max(visible.values(), default=None),
                               maximum_canary_visibility_seconds=max(canary_visible.values(), default=None))
                 (output/'result.json').write_text(json.dumps(result, indent=2)+'\n')

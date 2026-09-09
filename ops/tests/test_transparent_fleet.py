@@ -90,7 +90,7 @@ fleet_prune
             shell(code, READY=json.dumps(ready), **env)
             recent_unit = (root/'transparent-shard-server.service.owner.rendered').read_text()
             self.assertIn('MemoryHigh=5905580032\n', recent_unit)
-            self.assertNotIn('MemoryHigh=', unit)
+            self.assertIn('MemoryHigh=51539607552\n', unit)
 
     def test_worker_decisions(self):
         wanted = dict(binary="bin", unit="unit", assignment="assignment", map="map")

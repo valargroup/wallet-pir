@@ -114,7 +114,7 @@ def route_coordinator():
     execute(['systemctl','reload','caddy'])
 
 
-async def install_worker(fleet,worker,artifacts,rollback):
+async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_seconds=1800):
     host=worker['ssh_host']
     before=read_json('http://'+worker['upstream']+'/v1/ready')
     if not before.get('ready') or before.get('mode')!='warm':
@@ -132,12 +132,15 @@ async def install_worker(fleet,worker,artifacts,rollback):
     # RuntimeDirectory is created before the binary opens its control socket.
     if 'RuntimeDirectory=transparent-pir' not in new_unit.splitlines():
         new_unit=new_unit.replace('[Service]','[Service]\nRuntimeDirectory=transparent-pir',1)
-    if worker['role'] == 'recent-replica':
+    if worker['role'] in ('recent-replica', 'archive-owner'):
         # Reclaim file cache before transient admission reaches the 7 GiB
         # hard limit. The four-replica target is measured with a 5.5 GiB high
         # threshold; anonymous allocations still obey the work/cache guards.
         new_unit='\n'.join(line for line in new_unit.splitlines() if not line.startswith('MemoryHigh='))+'\n'
-        new_unit=new_unit.replace('[Service]','[Service]\nMemoryHigh=5905580032',1)
+        # Archive hosts otherwise retain ~10 GiB of file cache on top of their
+        # ~46 GiB anonymous working set, exceeding the cgroup headroom gate.
+        high = 5905580032 if worker['role'] == 'recent-replica' else 51539607552
+        new_unit=new_unit.replace('[Service]',f'[Service]\nMemoryHigh={high}',1)
     remote='/opt/transparent-publisher/staged'
     await fleet.ssh(host,'mkdir -p '+remote+' '+shlex.quote(rollback))
     for name in ['transparent-shard-server','shard-control']:
@@ -145,10 +148,13 @@ async def install_worker(fleet,worker,artifacts,rollback):
     verify=[remote+'/transparent-shard-server']+args[1:]+['--verify-only']
     await fleet.ssh(host,shlex.join(verify),timeout=300,multiplex=False)
     await fleet.ssh(host,'cat > '+remote+'/worker.service',new_unit.encode())
+    if stage_only:
+        return
     command=f'''set -eu
 if [ ! -f {shlex.quote(rollback)}/worker.service ]; then
  cp /etc/systemd/system/transparent-shard-server.service {shlex.quote(rollback)}/worker.service
  cp /usr/local/bin/transparent-shard-server {shlex.quote(rollback)}/transparent-shard-server
+ cp /usr/local/bin/shard-control {shlex.quote(rollback)}/shard-control
 fi
 install -m755 {remote}/transparent-shard-server /usr/local/bin/transparent-shard-server.next
 mv /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server
@@ -159,7 +165,7 @@ systemctl restart transparent-shard-server
 '''
     await fleet.ssh(host,command)
     expected_binary=hashlib.sha256((artifacts/'transparent-shard-server').read_bytes()).hexdigest()
-    deadline=time.monotonic()+1800
+    deadline=time.monotonic()+warm_seconds
     while time.monotonic()<deadline:
         try:
             ready=await asyncio.to_thread(read_json,'http://'+worker['upstream']+'/v1/ready')

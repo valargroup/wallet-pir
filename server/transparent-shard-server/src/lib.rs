@@ -11,6 +11,7 @@ pub mod admission;
 pub mod assignment;
 pub mod memory;
 pub mod metrics;
+mod prewarm;
 pub mod procmem;
 pub mod router;
 pub mod runtime;

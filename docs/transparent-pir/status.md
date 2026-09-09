@@ -54,8 +54,15 @@ a fresh recovery using independent node hashes also reached its accepted target 
 A 60-second canary smoke passed 662 exact private queries. The initial sustained
 run exposed excessive reclamation at a 5 GiB MemoryHigh and was stopped. The
 second run found a catch-up scheduling gap during a block burst. Commit
-`7b76b39` corrected it without relaxing the gate; the third run uses the
-[deployment target](deployment.md) and began at 23:15:22 UTC. **The six-hour/300-block canary, wider rollout and 24-hour monitoring
+`7b76b39` corrected one starvation path; the third run failed at 23:24:55 UTC
+after 572.605 seconds and six publicly visible new blocks. Preparing a lagging
+replica only after publication still missed the old shared 30-second gate.
+Commit `1f82093` gives the reconciler persistent preparation ownership, separates
+active invalidation from retained revocations, and measures independent node
+observation with the newly approved [public/replica budgets](deployment.md).
+Its 46 operations tests, 15 worker integration tests, strict worker Clippy and
+23 portable Linux library tests passed. This establishes implementation, not
+deployment acceptance. **The six-hour/300-block canary, wider rollout and 24-hour monitoring
 are not yet accepted.** See [remaining work](remaining-work.md).
 
 ## Live deployment: observed 2026-09-08, continuous publication

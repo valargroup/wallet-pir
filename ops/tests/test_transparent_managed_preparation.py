@@ -28,7 +28,7 @@ class ManagedTests(unittest.IsolatedAsyncioTestCase):
 
     def request(self, tag):
         directory=self.root/tag;directory.mkdir(exist_ok=True)
-        (directory/'shards.json').write_text(json.dumps({'shards':[{'end_height':1,'terminal_block_hash':'canonical'}]}))
+        (directory/'shards.json').write_text(json.dumps({'shards':[{'end_height':ord(tag)-96,'terminal_block_hash':'canonical'}]}))
         req=dict(map_sha256=tag*64,directory=str(directory),assignment=str(self.assignment))
         M.atomic_json(self.root/(tag*64+'.request.json'),req)
         return req
@@ -112,6 +112,40 @@ class ManagedTests(unittest.IsolatedAsyncioTestCase):
         self.active('b',['owner']);self.status.update(candidate={'map_sha256':'b'*64,'warm':True},revoked_revisions=3)
         await self.f.reconcile_member(self.worker)
         self.assertIn('recent',json.loads((self.root/'active.json').read_text())['workers'])
+
+    async def test_superseded_preparation_advances_an_unrouted_replica_during_a_burst(self):
+        self.request('b');self.active('d',['owner'])
+        self.status['candidate']={'map_sha256':'b'*64,'warm':True}
+        await self.f.advance_unrouted(self.worker)
+        self.assertEqual(self.status['active']['map_sha256'],'b'*64)
+        self.assertEqual(json.loads((self.root/'active.json').read_text())['map_sha256'],'d'*64)
+        self.assertNotIn('recent',json.loads((self.root/'active.json').read_text())['workers'])
+        self.f.route.assert_not_awaited()
+
+    async def test_unrouted_advancement_refuses_future_or_orphaned_candidates_and_withdrawal(self):
+        self.active('a',['owner']);self.request('b')
+        self.status['candidate']={'map_sha256':'b'*64,'warm':True}
+        await self.f.advance_unrouted(self.worker)
+        self.assertEqual(self.status['active']['map_sha256'],'a'*64)
+        self.active('d',['owner']);self.f.canonical_hash=AsyncMock(return_value='fork')
+        await self.f.advance_unrouted(self.worker)
+        self.assertEqual(self.status['active']['map_sha256'],'a'*64)
+        M.atomic_json(self.root/'withdrawn.json',{'withdrawn':True});self.f.control.reset_mock()
+        await self.f.advance_unrouted(self.worker)
+        self.f.control.assert_not_awaited()
+
+    async def test_unrouted_advancement_never_changes_a_publicly_routed_worker(self):
+        self.active('d');self.request('b')
+        self.status['candidate']={'map_sha256':'b'*64,'warm':True}
+        await self.f.advance_unrouted(self.worker)
+        self.f.control.assert_not_awaited()
+
+    async def test_collected_intermediate_source_does_not_stall_the_next_target(self):
+        req=self.request('b');self.active('d',['owner'])
+        self.status['candidate']={'map_sha256':'b'*64,'warm':True}
+        (Path(req['directory'])/'shards.json').unlink()
+        await self.f.advance_unrouted(self.worker)
+        self.assertTrue(all(c.args[1]['operation']=='status' for c in self.f.control.await_args_list))
 
     async def test_withdrawal_or_orphan_never_activates_prepared_future(self):
         self.active('b',['owner']);self.status['candidate']={'map_sha256':'b'*64,'warm':True}
