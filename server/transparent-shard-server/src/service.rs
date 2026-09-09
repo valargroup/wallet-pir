@@ -39,17 +39,17 @@ use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::{Metrics, Snapshot};
 use crate::runtime::{CacheError, RuntimeCache, RuntimeHandle, SharedParams};
 use crate::shardset::{LoadedShard, ShardSet, Table};
-use axum::Router;
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use axum::Router;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ipir_sp::YpirSchemeParams;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use transparent_shard::manifest::query_binding;
 
 /// How the worker is sized. Everything here is per process, not per shard.

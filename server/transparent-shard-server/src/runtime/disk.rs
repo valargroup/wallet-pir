@@ -2,7 +2,7 @@
 //! allocator-controlled dimensions: shapes are derived from verified parameters.
 //! Bump FORMAT when dependency layout, NTT representation, or setup derivation
 //! changes. The dependency revisions below are part of the compatibility key.
-use super::{RuntimeKey, SharedParams, TableRuntime, published_c1_rows};
+use super::{published_c1_rows, RuntimeKey, SharedParams, TableRuntime};
 use inspiring::QueryPackPreprocessed;
 use ipir_sp::server::IPIRServer;
 use sha2::{Digest, Sha256};
@@ -612,13 +612,11 @@ mod cache_integration_tests {
         // reservation while this blocking verification is still alive.
         let rows = fs::read(&source.path).unwrap();
         fs::remove_file(&source.path).unwrap();
-        assert!(
-            std::process::Command::new("mkfifo")
-                .arg(&source.path)
-                .status()
-                .unwrap()
-                .success()
-        );
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&source.path)
+            .status()
+            .unwrap()
+            .success());
         let (opened_tx, opened_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let path = source.path.clone();
