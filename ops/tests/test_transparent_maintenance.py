@@ -1,6 +1,8 @@
 import argparse
 import asyncio
 import importlib.util
+import io
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -153,3 +155,23 @@ class MaintenanceTests(unittest.IsolatedAsyncioTestCase):
         final = list(map(str, command.await_args_list[-1].args[0]))
         self.assertEqual(final[final.index('--seconds')+1], '86400')
         self.assertEqual(json.loads((args.out/'status.json').read_text())['phase'], 'complete')
+
+    async def test_existing_canary_reuse_still_requires_matching_readiness_and_a_fresh_gate(self):
+        artifacts = self.root/'artifacts'; artifacts.mkdir()
+        (artifacts/'transparent-shard-server').write_bytes(b'fixture')
+        canary = 'transparent-pir-recent-01'
+        (self.root/'roster').write_text(json.dumps([{**self.worker, 'id':canary}]))
+        config = self.root/'fleet.json'
+        config.write_text(json.dumps({**self.config, 'managed_recent_workers':[canary]}))
+        args = argparse.Namespace(artifacts=artifacts, fleet_config=config, source_sha='source', out=self.root/'bad', observe_installed_canary=True)
+        with patch.object(R.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"ready":true,"binary_sha256":"old"}')), patch.object(R, 'command', AsyncMock()) as command:
+            with self.assertRaisesRegex(RuntimeError, 'does not match'):
+                await R.run(args)
+            command.assert_not_awaited()
+        args.out = self.root/'good'
+        ready = dict(ready=True, binary_sha256=hashlib.sha256(b'fixture').hexdigest())
+        with patch.object(R.urllib.request, 'urlopen', return_value=io.BytesIO(json.dumps(ready).encode())), patch.object(R, 'command', AsyncMock(side_effect=RuntimeError('new gate failed'))) as command:
+            with self.assertRaisesRegex(RuntimeError, 'new gate failed'):
+                await R.run(args)
+        self.assertEqual(command.await_count, 1)
+        self.assertTrue(str(command.await_args.args[0][1]).endswith('observe-transparent-hardening.py'))

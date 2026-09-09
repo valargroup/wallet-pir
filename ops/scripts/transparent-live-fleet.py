@@ -475,6 +475,7 @@ class Fleet:
 
     async def managed_once(self, worker):
         await self.reconcile_member(worker)
+        await self.advance_unrouted(worker)
         path = self.root/'desired.json'
         if not path.exists():
             return
@@ -505,8 +506,46 @@ class Fleet:
             raise RuntimeError('completed preparation did not attest requested revision')
         self.job(worker, req, 'prepared', expected=status['active']['map_sha256'], seconds=time.monotonic()-started)
         await self.reconcile_member(worker)
+        await self.advance_unrouted(worker)
         # The next iteration reads the latest desired target; no obsolete
         # intermediate targets accumulate in a queue.
+
+    async def advance_unrouted(self, worker):
+        # A burst can supersede a completed candidate before this replica can
+        # join. Preserve that canonical progress privately instead of discarding
+        # it and leaving the active replica arbitrarily far behind. Public
+        # membership still requires the exact current authority in reconcile_member.
+        async with self.lock('routing'):
+            target = self.reconciliation_target()
+            if target is None or worker['id'] in target[0]['workers']:
+                return
+            async with self.lock('worker-'+worker['id'], wait=False):
+                status = await self.control(worker, {'operation':'status'})
+                candidate = status.get('candidate') or {}
+                digest = candidate.get('map_sha256', '')
+                if candidate.get('warm') is not True or not re.fullmatch('[0-9a-f]{64}', digest):
+                    return
+                request = self.root/(digest+'.request.json')
+                if not request.exists():
+                    return
+                req = json.loads(request.read_text())
+                try:
+                    tail = json.loads((Path(req['directory'])/'shards.json').read_text())['shards'][-1]
+                except FileNotFoundError:
+                    # Coordinator collection can remove an old source after its
+                    # transfer. Skip this optional advancement and pursue the
+                    # newest desired publication instead of retrying forever.
+                    return
+                published = json.loads((Path(target[1]['directory'])/'shards.json').read_text())['shards'][-1]
+                if tail['end_height'] > published['end_height']:
+                    return
+                self.canonical.pop(tail['end_height'], None)
+                if await self.canonical_hash(tail['end_height']) != tail['terminal_block_hash']:
+                    return
+                await self.control(worker, {'operation':'activate', 'expected':status['active']['map_sha256'], 'map_sha256':digest})
+                if not self.attests(await self.control(worker, {'operation':'status'}), digest):
+                    raise RuntimeError('unrouted advancement did not attest its canonical revision')
+                print(json.dumps({'event':'worker_private_progress','worker':worker['id'],'map_sha256':digest,'height':tail['end_height'],'public_map_sha256':target[0]['map_sha256']}),file=sys.stderr)
 
     async def serve_reconciler(self):
         managed = [w for w in self.roster if w['id'] in self.managed_ids()]
