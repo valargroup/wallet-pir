@@ -210,8 +210,9 @@ reported separately from steady-state freshness.
 
 Activation requires all archive owners and at least one warm recent replica.
 Lagging replicas leave current routing and are retried on later publications.
-Short fleet operations reuse authenticated SSH sessions for up to 60 seconds;
-long preparation calls use direct connections so cancelling a slower replica
+Artifact transfer commands may reuse authenticated SSH sessions for up to 60
+seconds. Control commands use independent connections; bounded read-only status
+retry is described in the hardening gate below. Cancelling a slower replica
 does not delay an already warm quorum. An unchanged router configuration skips
 reload only when its successful application marker matches; an interrupted
 rename/reload is retried.
@@ -277,6 +278,12 @@ reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
 recent-01 at the canary stage and all four recent replicas after their upgrade.
 The installer applies an explicit roster `build_slots` value to the staged worker
 unit before verification; an omitted value preserves the installed setting.
+Control commands use independent SSH connections, separate from shared artifact
+transfer sessions. Read-only status retries one transport failure using a fresh
+connection (1 s then 1.5 s command budgets within the 3 s membership timeout).
+Returned status still must attest the current warm publication. Two failed reads
+withdraw membership; invalid or rejected status is not retried. Mutating control
+commands are never blindly retried after an ambiguous transport failure.
 One daemon task owns each managed worker's preparation across foreground quorum
 cancellation; it coalesces queued targets and reattests status after restart.
 A superseded but canonical prepared candidate may advance an unrouted worker

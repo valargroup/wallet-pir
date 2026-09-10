@@ -28,7 +28,39 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
-## M1 current canary: 2026-09-09, 20:56 UTC
+## M1 corrected control transport: 2026-09-10, 04:22 UTC
+
+Operations commit `7fedd79` isolates control SSH connections and retries a
+transport-failed read-only status once inside the existing membership timeout.
+No stale status is accepted; mutations are not blindly retried. The
+[503 investigation and correction](evidence/productionize-m1-publication-503-2026-09-10/README.md)
+records the failure chain, failing baseline regression, 75 passing operations
+tests and the full check (587 Rust tests, zero failures, two ignored benchmarks).
+
+The corrected script was installed at 04:22:10 UTC; only the reconciler restarted.
+Both public origins matched at height 3,478,132 and recent-01 remained warm 28/28
+on worker `f2f351c`. The 04:22:46 gate passed its first publication, then stopped
+at 04:24:01 on a real same-height reorg and protective public withdrawal. Canonical
+coverage recovered at 04:24:37; the observer was not weakened to accept that run.
+After canonical/warm verification, a new strict gate began at **04:26:57 UTC**
+under `transparent-m1-control-postreorg-rollout.service`. Its output is
+`/opt/transparent-publisher-build/control-20260910/postreorg-rollout` on the
+coordinator, active at the start capture. No previous samples count. M1 still
+requires the complete canary, fleet rollout and 24-hour observation. A reorg can
+still interrupt the strict gate; this operations correction does not change that
+policy or establish a reorg recovery SLO.
+
+## M1 public availability failure: observed 2026-09-10
+
+The `f2f351c` canary stopped at 2026-09-09 22:03:05 UTC after 67 minutes and 51
+blocks on HTTP 503 from the public shard map. No fleet rollout occurred. The
+[publication-control investigation](evidence/productionize-m1-publication-503-2026-09-10/README.md)
+traces membership withdrawal after a failed control status exchange, followed by
+an activation SSH failure and re-admission about three seconds after withdrawal.
+The worker remained query-correct: 57,386 exact queries, 28 retryable responses,
+no recorded restart/OOM. The prior ETA is invalid; M1 requires a fresh gate.
+
+## M1 preceding canary start: 2026-09-09, 20:56 UTC
 
 Source `f2f351c` makes verified runtimes servable before optional snapshot writes
 finish and gives admitted queries a cancellable memory wait of at most 250 ms,

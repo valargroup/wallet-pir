@@ -1,0 +1,53 @@
+{
+  "utc": "2026-09-10T04:22:45.729184+00:00",
+  "services": [
+    "active",
+    "active"
+  ],
+  "responses": [
+    {
+      "url": "https://enhance-pir.valargroup.dev/v1/filters/shards",
+      "http_status": 200,
+      "sha256": "5b3640505e086cf99926900bafa4074a8598aa4bae5c9abdeb3025982c73e94d",
+      "tail": 3478132
+    },
+    {
+      "url": "https://transparent-pir.valargroup.dev/v1/shards",
+      "http_status": 200,
+      "sha256": "5b3640505e086cf99926900bafa4074a8598aa4bae5c9abdeb3025982c73e94d",
+      "tail": 3478132
+    },
+    {
+      "url": "http://10.142.0.10:8093/v1/ready",
+      "http_status": 200,
+      "sha256": "323d4a0be5e031c195d7f6ecbf053977c748b1c82c27cde06f06b18331160110",
+      "ready": {
+        "assigned_shards": 14,
+        "assignment_sha256": "2aa12d98ce96d37bd99d34e59f8909f1ae9558cd8f84f24ebe42297fb568a339",
+        "binary_sha256": "c6f169a3bdbd0cc5f110309ac70ee089b9336b507f46493b8fe80aaa51861bea",
+        "map_sha256": "5b3640505e086cf99926900bafa4074a8598aa4bae5c9abdeb3025982c73e94d",
+        "mode": "warm",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "prewarm_seconds": 6.206458,
+        "ready": true,
+        "replica_group": "recent",
+        "role": "recent-replica",
+        "runtime_cache": {
+          "bytes": 5635771008,
+          "hits": 28,
+          "limit_bytes": 10737418240,
+          "misses": 714,
+          "pending_saves": 0,
+          "restore_slots": 4,
+          "write_failures": 0
+        },
+        "shards": 174,
+        "target_runtimes": 28,
+        "warm_runtimes": 28,
+        "worker_assignment_sha256": "b79d5fcf8ef5b713e44cb93c9e283c9e338ce561746e533b406712e125b56e5b",
+        "worker_id": "transparent-pir-recent-01"
+      }
+    }
+  ]
+}

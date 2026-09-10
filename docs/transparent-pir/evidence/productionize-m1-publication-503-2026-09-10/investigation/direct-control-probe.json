@@ -1,0 +1,74 @@
+[
+  {
+    "worker": "transparent-pir-recent-01",
+    "seconds": 1.3465012789238244,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-recent-02",
+    "seconds": 2.060146701987833,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-recent-03",
+    "seconds": 2.168044605990872,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-recent-04",
+    "seconds": 1.2952475529164076,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-archive-01",
+    "seconds": 0.6308986539952457,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-archive-02",
+    "seconds": 0.8222131909569725,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-recent-01",
+    "seconds": 0.3046587760327384,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-recent-02",
+    "seconds": 0.31426734395790845,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-recent-03",
+    "seconds": 0.36628504504915327,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-recent-04",
+    "seconds": 0.2928067430621013,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-archive-01",
+    "seconds": 0.24636691098567098,
+    "warm": true,
+    "invalidated": false
+  },
+  {
+    "worker": "transparent-pir-archive-02",
+    "seconds": 0.26350683392956853,
+    "warm": true,
+    "invalidated": false
+  }
+]

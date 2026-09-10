@@ -1,0 +1,23 @@
+{
+  "utc": "2026-09-10T04:28:39.926214+00:00",
+  "phase": "canary_observation",
+  "events": {
+    "start": 1,
+    "worker": 4,
+    "block_visible": 1,
+    "canary_block_visible": 1
+  },
+  "public": [
+    {
+      "utc": "2026-09-10T04:27:42.626404+00:00",
+      "event": "block_visible",
+      "height": 3478138,
+      "seconds": 16.140490149031393,
+      "public_height": 3478138
+    }
+  ],
+  "queries": {
+    "exact": 1470,
+    "retry": 1
+  }
+}

@@ -1,0 +1,23 @@
+test_transient_status_transport_failure_does_not_withdraw_a_warm_quorum (regression.ManagedTests.test_transient_status_transport_failure_does_not_withdraw_a_warm_quorum) ... {"event": "membership_status_failed", "worker": "recent", "error_type": "RuntimeError"}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+FAIL
+
+======================================================================
+FAIL: test_transient_status_transport_failure_does_not_withdraw_a_warm_quorum (regression.ManagedTests.test_transient_status_transport_failure_does_not_withdraw_a_warm_quorum)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/Users/roman/projects/spendability-pir/ops/tests/test_transparent_managed_preparation.py", line 111, in test_transient_status_transport_failure_does_not_withdraw_a_warm_quorum
+    self.assertEqual(self.f.ssh.await_count,2)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 2
+
+----------------------------------------------------------------------
+Ran 1 test in 0.007s
+
+FAILED (failures=1)

@@ -15,13 +15,13 @@ complete M0 or supersede earlier gate results.
   public maps corroborated by an independent server. Current private worker and
   supervisor acceptance were explicitly unverified at M0; the M1 investigation below resolves access and records the failed canary.
 - [ ] M1 — Accept the matching loaded canary, fleet rollout and full observation.
-  The [current qualification and handoff](evidence/productionize-m1-query-wait-2026-09-09/README.md)
-  records source `f2f351c`, three passing generator screens, 28/28 warm runtimes
-  and 43 exact maintenance queries. The fresh actual-hardware canary started
-  2026-09-09 20:56:02 UTC under `transparent-m1-querywait-rollout.service` and was
-  active at the handoff capture. Require both six hours and 300 new blocks,
-  followed by the matching fleet batch and 24-hour observation. Earlier failed
-  canaries remain preserved; no previous sample counts toward this gate.
+  The [503 correction](evidence/productionize-m1-publication-503-2026-09-10/README.md)
+  preserves the failed 67-minute/51-block run and records operations fix `7fedd79`.
+  The first corrected run was interrupted by a real reorg and is not accepted.
+  The fresh gate on worker `f2f351c` began 2026-09-10 04:26:57 UTC under
+  `transparent-m1-control-postreorg-rollout.service`, active at its start capture.
+  Require both six hours and 300 new blocks, followed by the matching fleet batch
+  and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.
   [2026-09-09 evidence](evidence/productionize-m2-2026-09-09/README.md): wallet
   branch `m2/macos-recovery-beta` from `b6aa1f97f`, final source

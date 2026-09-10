@@ -1,0 +1,53 @@
+..........................{"phase": "failed", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source", "error": "installed canary does not match the selected warm managed binary"}
+{"phase": "canary_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "failed", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source", "error": "new gate failed"}
+....{"phase": "canary_upgrade", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "canary_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "fleet_upgrade", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "fleet_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "complete", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+.{"phase": "canary_upgrade", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "canary_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "failed", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source", "error": "freshness exceeded"}
+....{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "prepared", "monotonic": 3387572.712120166, "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+..{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "staging", "monotonic": 3387572.825794458}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "prepared", "monotonic": 3387572.828184, "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "seconds": 0.0021634590812027454}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "phase": "staging", "monotonic": 3387572.829364333}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "phase": "prepared", "monotonic": 3387572.829654291, "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "seconds": 2.6584137231111526e-05}
+.{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "recovering", "monotonic": 3387572.834745375, "running": {"map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "warming"}}
+.{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "membership_status_failed", "worker": "recent", "error_type": "RuntimeError"}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+.{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+{"event": "membership_status_failed", "worker": "recent", "error_type": "RuntimeError"}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+.{"event": "worker_private_progress", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "height": 2, "public_map_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+.{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+.{"event": "membership_canonical_check_failed", "worker": "recent", "error": "node unavailable"}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+...{"event": "worker_membership", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "eligible": true}
+...{"event": "worker_control_transport_failed", "worker": "a1", "operation": "activate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "invalidate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "prepare", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+....{"event": "fleet_command", "tool": "sh", "seconds": 0.257559, "exit_code": 0}
+.a2: owner lost during activation
+.........{"event": "fleet_command", "tool": "sh", "seconds": 0.50828, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.01327, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.022822, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.021556, "exit_code": 0}
+../opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 500: 'RPC error'>
+  _warnings.warn(self.warn_message, ResourceWarning)
+..{"event": "replica_catch_up_failed", "worker": "slow", "error": "catch-up did not attest current warm revision"}
+.{"event": "replica_catch_up_failed", "worker": "slow", "error": "catch-up publication is no longer canonical"}
+....recent: warm with publication control
+...
+----------------------------------------------------------------------
+Ran 75 tests in 7.515s
+
+OK
