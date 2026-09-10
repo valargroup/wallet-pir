@@ -6,6 +6,7 @@ Updated 2026-09-09. Evidence supports the [deployment decision](../deployment.md
 
 | Evidence | Scope | Valid use | Limit |
 |---|---|---|---|
+| [M1 durable routing audit](productionize-m1-routing-audit-2026-09-10/README.md) | Confirmed outage missed between polls, invalidated run, durable counter and observer correction | Prevents recovered withdrawals from escaping the gate; full checks pass | Source-only; worker delay unresolved; no active acceptance run |
 | [M1 reorg-related withdrawal](productionize-m1-postreorg-2026-09-10/README.md) | Failed 65.7-minute run, local probe window, controller rejection and fresh full gate | Separates reorg-related withdrawal from preceding worker stalls | Failed run is not accepted; fresh six-hour/300-block gate and fleet observation remain open |
 | [M1 collection and forwarding deployment](productionize-m1-collection-forward-canary-2026-09-10/README.md) | Qualified worker and control transport deployed; fresh canary start and preceding diagnostic failure preserved | Establishes exact deployed components and active observation at capture | Full canary, fleet rollout and 24-hour observation remain open; old local pause cause not fully established |
 | [M1 forwarded-status diagnosis](productionize-m1-forwarded-status-2026-09-10/README.md) | Local status remains fast during a remote delay; two bounded forwarding trials | Distinguishes a delay outside the Unix status handler | Pre-deployment diagnosis; later deployment recorded above; shared pauses need further diagnosis |

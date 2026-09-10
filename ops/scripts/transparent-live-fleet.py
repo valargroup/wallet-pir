@@ -17,6 +17,7 @@ import shlex
 import sys
 import tempfile
 import time
+import uuid
 
 
 def atomic_json(path, value):
@@ -400,7 +401,23 @@ class Fleet:
         atomic_json(self.root / (digest+'.prepared.json'), prepared)
         return {'ok':True,'workers':prepared,'assignment':str(assignment)}
 
+    def routing_availability(self):
+        value = json.loads((self.root/'routing-availability.json').read_text())
+        if (not isinstance(value, dict) or value.get('schema') != 1
+                or not isinstance(value.get('epoch'), str)
+                or not re.fullmatch(r'[0-9a-f]{32}', value['epoch'])
+                or type(value.get('unavailable_events')) is not int
+                or value['unavailable_events'] < 0
+                or type(value.get('available')) is not bool):
+            raise ValueError('invalid routing availability evidence')
+        return value
+
     async def route(self, workers, assignment=None):
+        # Serialize the durable audit with router application across processes.
+        async with self.lock('routing-availability'):
+            return await self._route(workers, assignment)
+
+    async def _route(self, workers, assignment=None):
         # This is the dedicated transparent router, never the Enhance Caddyfile.
         # Public metadata always comes from the one atomic publication authority.
         host = self.c['public_host']
@@ -441,7 +458,22 @@ class Fleet:
         # Record successful application separately: a crash after rename but before
         # reload must not turn a retry into a false no-op. Caddy reload is atomic.
         command = f'set -eu\ncat > {quoted}.live-next\nif cmp -s {quoted}.live-next {quoted} && sha256sum {quoted} | cmp -s - {quoted}.live-applied.sha256; then rm {quoted}.live-next; exit 0; fi\ncaddy validate --config {quoted}.live-next --adapter caddyfile >&2\ncp {quoted} {quoted}.live-previous\nmv {quoted}.live-next {quoted}\nif ! systemctl reload caddy; then cp {quoted}.live-previous {quoted}; systemctl reload caddy; exit 1; fi\nsha256sum {quoted} > {quoted}.live-applied.sha256.next\nmv {quoted}.live-applied.sha256.next {quoted}.live-applied.sha256'
+        audit_path = self.root/'routing-availability.json'
+        audit = self.routing_availability() if audit_path.exists() else dict(
+            schema=1, epoch=uuid.uuid4().hex, unavailable_events=0, available=False)
+        available = bool(workers) and not guarded
+        if not available:
+            # Persist before application: a crash or recovery between observer
+            # polls must not erase an attempted public withdrawal. Failed
+            # withdrawal attempts conservatively invalidate the loaded gate.
+            audit = {**audit, 'unavailable_events':audit['unavailable_events']+1,
+                     'available':False}
+            atomic_json(audit_path, audit)
+        elif not audit_path.exists():
+            atomic_json(audit_path, audit)
         await self.ssh(self.c['router_host'], command, text.encode())
+        if available and not audit['available']:
+            atomic_json(audit_path, {**audit, 'available':True})
 
     async def _activate(self, req):
         digest = req['map_sha256']

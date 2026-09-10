@@ -29,7 +29,10 @@ complete M0 or supersede earlier gate results.
   [fresh matching canary](evidence/productionize-m1-collection-forward-canary-2026-09-10/README.md)
   failed at 22:46:54 UTC during reorg-related withdrawal. The
   [fresh post-reorg gate](evidence/productionize-m1-postreorg-2026-09-10/README.md)
-  started at 22:50:58 UTC on unchanged components. No fleet promotion yet.
+  started at 22:50:58 UTC on unchanged components, but was invalidated by
+  a confirmed 23:14 status timeout and quorum withdrawal missed between polls.
+  It is stopped; no promotion occurred. Deploy and validate durable withdrawal
+  auditing, resolve the worker delay, then start a fresh matching gate.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.

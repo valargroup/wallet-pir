@@ -35,6 +35,27 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    async def test_withdrawal_and_recovery_remain_visible_between_observer_polls(self):
+        async def ssh(*args, **kwargs):
+            return b''
+        self.fleet.ssh = ssh
+        assignment = {'workers':[dict(id=w['id'],shards=[i]) for i,w in enumerate(self.roster)]}
+        await self.fleet.route(self.roster, assignment)
+        baseline = self.fleet.routing_availability()
+        await self.fleet.route([])
+        await self.fleet.route(self.roster, assignment)
+        recovered = self.fleet.routing_availability()
+        self.assertTrue(recovered['available'])
+        self.assertEqual(recovered['epoch'], baseline['epoch'])
+        self.assertEqual(recovered['unavailable_events'], baseline['unavailable_events']+1)
+        async def interrupted(*args, **kwargs):
+            raise asyncio.CancelledError()
+        self.fleet.ssh = interrupted
+        with self.assertRaises(asyncio.CancelledError):
+            await self.fleet.route([])
+        self.assertFalse(self.fleet.routing_availability()['available'])
+        self.assertEqual(self.fleet.routing_availability()['unavailable_events'], 2)
+
     def test_quorum_requires_all_archive_owners_and_only_one_recent(self):
         self.assertTrue(self.fleet.quorum({'a1','a2','r2'}))
         self.assertFalse(self.fleet.quorum({'a1','r1','r2'}))

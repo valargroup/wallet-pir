@@ -54,6 +54,20 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 post-reorg observation invalidated: observed 2026-09-10, 23:17 UTC
+
+The [23:14 timeout evidence](evidence/productionize-m1-postreorg-2026-09-10/status-timeout-2314/README.md)
+confirms two failed control attempts and removal of the only current recent
+replica from 23:14:08 to 23:14:10. The router installs HTTP 503 when that quorum
+is absent. Periodic observer checks missed the interval; an active supervisor
+was therefore insufficient acceptance evidence. The run was stopped before
+promotion and is not accepted. No full gate is currently running.
+
+A source correction adds durable routing withdrawal evidence and rejects a
+withdrawal followed by recovery between observer polls. Targeted operations
+tests and full repository checks pass; this correction is not deployed. The underlying multi-second
+worker scheduling delay remains unresolved. **M1 remains open.**
+
 ## M1 reorg-related withdrawal: observed 2026-09-10, 22:51 UTC
 
 The [failure and fresh-gate evidence](evidence/productionize-m1-postreorg-2026-09-10/README.md)

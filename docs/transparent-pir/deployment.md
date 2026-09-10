@@ -262,6 +262,17 @@ canonical endpoints, no OOM or restart, and 20% host memory headroom. A reorg
 resets the counted block samples. The monitor is read-only and cannot trigger a
 rollout; preserve its result and raw NDJSON before rolling the next workers.
 
+The observer also requires `state/routing-availability.json`, initialized by a
+successful router application using the matching fleet script. Its persistent
+epoch and cumulative unavailable-event count prevent a withdrawal and recovery
+between polls from escaping acceptance. Withdrawals are recorded before router
+application, so even a failed withdrawal attempt conservatively invalidates the
+run. Missing, malformed, replaced or regressed evidence fails the gate. Applying
+a warm route may initialize this record; do not synthesize or reset it to rescue
+an existing acceptance window. This records routing changes, not every possible
+network outage; the ordinary public and private probes remain required.
+
+
 The approved rollout accepts downtime and upgrades all six workers in one
 maintenance batch on the existing hardware. `upgrade-transparent-fleet.py`
 preflights every selected worker before guarding both public transparent origins.

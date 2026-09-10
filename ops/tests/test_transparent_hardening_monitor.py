@@ -37,3 +37,12 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(parsed['MemAvailable'],2000)
         self.assertEqual(parsed['anon'],100)
         self.assertEqual(parsed['pressure_some_avg10'],1.23)
+
+    def test_recovered_outage_and_replaced_evidence_cannot_pass(self):
+        baseline = dict(epoch='a'*32, unavailable_events=4, available=True)
+        self.assertIsNone(M.routing_failure(None, baseline))
+        self.assertIsNone(M.routing_failure(baseline, baseline))
+        self.assertIsNotNone(M.routing_failure(baseline, {**baseline, 'unavailable_events':5}))
+        self.assertIsNotNone(M.routing_failure(baseline, {**baseline, 'unavailable_events':0}))
+        self.assertIsNotNone(M.routing_failure(baseline, {**baseline, 'epoch':'b'*32}))
+        self.assertIsNotNone(M.routing_failure(None, {**baseline, 'available':False}))

@@ -61,6 +61,17 @@ def completed_blocks(seen, visible, end_height, now, budget, layer="public"):
     return completed
 
 
+def routing_failure(baseline, current):
+    if not current['available']:
+        return 'public routing is unavailable'
+    if baseline is not None:
+        if current['epoch'] != baseline['epoch']:
+            return 'routing availability evidence was replaced'
+        if current['unavailable_events'] != baseline['unavailable_events']:
+            return 'public routing withdrawal occurred during observation'
+    return None
+
+
 async def observe(args):
     spec = importlib.util.spec_from_file_location('fleet', args.fleet_script)
     module = importlib.util.module_from_spec(spec)
@@ -75,6 +86,7 @@ async def observe(args):
     worker = next(w for w in fleet.roster if w['id'] == args.worker)
     began = time.monotonic()
     baseline = None
+    routing_baseline = None
     seen = {}
     visible = {}
     canary_visible = {}
@@ -101,6 +113,15 @@ async def observe(args):
 
     try:
         while True:
+            routing = fleet.routing_availability()
+            reason = routing_failure(routing_baseline, routing)
+            if reason:
+                raise RuntimeError(reason)
+            if routing_baseline is None:
+                routing_baseline = routing
+                began = time.monotonic()
+                provenance['routing_availability_baseline'] = routing
+                emit('routing_availability_baseline', evidence=routing)
             now = time.monotonic()
             if any(process.poll() is not None for process in queries):
                 raise RuntimeError('a sustained private-query process exited before the gate finished')
@@ -175,6 +196,10 @@ async def observe(args):
                     raise RuntimeError(reason)
                 samples += 1
                 next_worker = now+30
+            # Recheck after slow worker reads and immediately before acceptance.
+            reason = routing_failure(routing_baseline, fleet.routing_availability())
+            if reason:
+                raise RuntimeError(reason)
             if now-began >= args.seconds and min(len(visible), len(canary_visible)) >= args.blocks:
                 counts = []
                 for index in range(len(queries)):
@@ -182,6 +207,9 @@ async def observe(args):
                         counts.append(sum(1 for line in log if '"exact":true' in line))
                 if queries and any(count < args.minimum_queries for count in counts):
                     raise RuntimeError('insufficient exact private-query samples')
+                reason = routing_failure(routing_baseline, fleet.routing_availability())
+                if reason:
+                    raise RuntimeError(reason)
                 result = emit('result', **provenance, passed=True, seconds=now-began, blocks=len(visible), replica_blocks=len(canary_visible), worker_samples=samples, exact_queries=counts,
                               maximum_visibility_seconds=max(visible.values(), default=None),
                               maximum_canary_visibility_seconds=max(canary_visible.values(), default=None))
