@@ -66,7 +66,7 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         binary.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"ok":false,"error":"candidate map digest mismatch"}\'\nexit 1\n')
         binary.chmod(0o700)
         self.fleet.c['control_binary']=str(binary)
-        async def local_ssh(host,command,data=None):
+        async def local_ssh(host,command,data=None,**options):
             return await module.run(['sh','-c',command],data)
         self.fleet.ssh=local_ssh
         with self.assertRaisesRegex(RuntimeError,'candidate map digest mismatch'):
@@ -139,7 +139,7 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
             await self.fleet.activate({'map_sha256':'new','prepared':{'workers':{w['id']:{'expected':'old'} for w in self.roster}}})
         self.assertEqual(routed,[[]])
 
-    async def test_prepare_uses_cancellable_direct_ssh_while_status_reuses_sessions(self):
+    async def test_control_does_not_share_transfer_session_lifetime(self):
         commands = []
         async def capture(args, data=None, timeout=25):
             commands.append(args)
@@ -147,10 +147,37 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(module, 'run', capture):
             await self.fleet.control(self.roster[0], {'operation':'prepare'})
             await self.fleet.control(self.roster[0], {'operation':'status'})
+            await self.fleet.control(self.roster[0], {'operation':'activate'})
         self.assertIn('-oControlPath=none', commands[0])
         self.assertNotIn('-oControlMaster=auto', commands[0])
-        self.assertIn('-oControlMaster=auto', commands[1])
-        self.assertNotIn('-oControlPath=none', commands[1])
+        for command in commands:
+            self.assertNotIn('-oControlMaster=auto', command)
+            self.assertIn('-oControlPath=none', command)
+
+    async def test_ambiguous_mutation_and_semantic_status_errors_are_not_retried(self):
+        from unittest.mock import AsyncMock
+        worker=self.roster[0]
+        for operation in ('activate','invalidate','prepare'):
+            self.fleet.ssh=AsyncMock(side_effect=RuntimeError('connection lost after dispatch'))
+            with self.assertRaises(RuntimeError):
+                await self.fleet.control(worker,{'operation':operation})
+            self.assertEqual(self.fleet.ssh.await_count,1)
+        for reply in (b'{"ok":false,"error":"rejected"}',b'invalid JSON'):
+            self.fleet.ssh=AsyncMock(return_value=reply)
+            with self.assertRaises((RuntimeError,ValueError)):
+                await self.fleet.control(worker,{'operation':'status'})
+            self.assertEqual(self.fleet.ssh.await_count,1)
+
+    async def test_cancelled_status_does_not_start_a_retry(self):
+        calls=[];started=asyncio.Event()
+        async def wait(*args,**kwargs):
+            calls.append(kwargs);started.set()
+            await asyncio.Event().wait()
+        self.fleet.ssh=wait
+        task=asyncio.create_task(self.fleet.control(self.roster[0],{'operation':'status'}))
+        await started.wait();task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await task
+        self.assertEqual(len(calls),1)
 
     def test_ssh_reuse_socket_directory_is_private(self):
         self.assertEqual((self.root/'ssh').stat().st_mode & 0o777, 0o700)

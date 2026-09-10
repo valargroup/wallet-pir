@@ -100,6 +100,34 @@ class ManagedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
         self.assertEqual(self.f.route.await_args.args[0],[])
 
+    async def test_transient_status_transport_failure_does_not_withdraw_a_warm_quorum(self):
+        # Exercise real control parsing/retry and membership with a broken first
+        # connection. A recovered status is checked against the active digest.
+        self.f.control=M.Fleet.control.__get__(self.f)
+        reply=json.dumps({'ok':True,'result':self.status}).encode()
+        for failure in (RuntimeError('ssh exit 255'), TimeoutError()):
+            self.f.ssh=AsyncMock(side_effect=[failure,reply])
+            await self.f.reconcile_member(self.worker)
+            self.assertEqual(self.f.ssh.await_count,2)
+            for call in self.f.ssh.await_args_list:
+                self.assertFalse(call.kwargs['multiplex'])
+            self.assertEqual([c.kwargs['timeout'] for c in self.f.ssh.await_args_list],[1,1.5])
+            self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner','recent'])
+            self.f.route.assert_not_awaited()
+
+    async def test_status_retry_cannot_mask_unavailable_or_invalid_worker(self):
+        self.f.control=M.Fleet.control.__get__(self.f)
+        cases=[RuntimeError('still offline'),
+               json.dumps({'ok':True,'result':{**self.status,'warm':False}}).encode(),
+               json.dumps({'ok':True,'result':{**self.status,'active':{'map_sha256':'other'}}}).encode()]
+        for second in cases:
+            self.active('a');self.f.route.reset_mock()
+            self.f.ssh=AsyncMock(side_effect=[RuntimeError('first connection failed'),second])
+            await self.f.reconcile_member(self.worker)
+            self.assertEqual(self.f.ssh.await_count,2)
+            self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
+            self.assertEqual(self.f.route.await_args.args[0],[])
+
     async def test_restarted_or_unreachable_member_is_removed(self):
         self.status['warm']=False
         await self.f.reconcile_member(self.worker)

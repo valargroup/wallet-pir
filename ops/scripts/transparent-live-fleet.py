@@ -155,11 +155,24 @@ class Fleet:
         # A rejected command is JSON on stdout with exit status 1. Preserve
         # that diagnostic; transport failures and crashes must still fail SSH.
         command += ' || [ "$?" -eq 1 ]'
-        # A multiplex master retains a long command's pipe descriptors after
-        # its client is killed. Use a direct connection for preparation so
-        # cancelling a slower replica cannot delay an already warm quorum.
-        options = {'multiplex':False, 'timeout':120} if value.get('operation') == 'prepare' else {}
-        result = json.loads(await self.ssh(worker['ssh_host'], command, json.dumps(value).encode(), **options))
+        # Control is independent of transfer-session lifetime and cancellation.
+        # Only a read-only status can be retried after an ambiguous SSH failure.
+        # Both attempts fit inside reconcile_member's existing three-second bound.
+        operation = value.get('operation')
+        budgets = (1, 1.5) if operation == 'status' else (120 if operation == 'prepare' else 25,)
+        for attempt, timeout in enumerate(budgets):
+            try:
+                raw = await self.ssh(worker['ssh_host'], command, json.dumps(value).encode(),
+                                     multiplex=False, timeout=timeout)
+                break
+            except (RuntimeError, TimeoutError) as error:
+                retry = attempt + 1 < len(budgets)
+                print(json.dumps({'event':'worker_control_transport_failed', 'worker':worker['id'],
+                                  'operation':operation, 'attempt':attempt+1,
+                                  'error_type':type(error).__name__, 'retry':retry}), file=sys.stderr)
+                if not retry:
+                    raise
+        result = json.loads(raw)
         if not result.get('ok'):
             raise RuntimeError(f'{worker["id"]}: {result.get("error")}')
         return result['result']
@@ -451,7 +464,9 @@ class Fleet:
             async with self.lock('worker-'+worker['id'], wait=False):
                 try:
                     status = await asyncio.wait_for(self.control(worker, {'operation':'status'}), 3)
-                except Exception:
+                except Exception as error:
+                    print(json.dumps({'event':'membership_status_failed', 'worker':worker['id'],
+                                      'error_type':type(error).__name__}), file=sys.stderr)
                     status = None
                 valid = status is not None and self.attests(status, digest)
                 if status is not None and self.prepared_status(status, digest):
