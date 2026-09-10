@@ -766,6 +766,105 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     );
 }
 
+/// Disk snapshot writers and collection share a file lock. Waiting for that
+/// lock must not hold the serving snapshot locks or a Tokio executor thread.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blocked_collection_keeps_status_and_readiness_responsive() {
+    use std::time::Duration;
+    use transparent_shard_server::live::{Command, LiveService, Publication};
+    use transparent_shard_server::shardset::LoadOptions;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("initial");
+    std::fs::create_dir(&directory).unwrap();
+    two_revisions(&directory);
+    let set = ShardSet::open(&directory, 3).unwrap();
+    let map_sha256 = set.map_digest.clone();
+    let cache_dir = root.path().join("cache");
+    let disk = transparent_shard_server::runtime::disk::DiskCache::new(
+        cache_dir.clone(),
+        64 * 1024 * 1024,
+    )
+    .unwrap();
+    let config = ServiceConfig::default();
+    let state = ServiceState::build_with_disk(set, config, Some(disk)).unwrap();
+    let live = LiveService::new(
+        state,
+        Publication {
+            directory,
+            assignment: None,
+            map_sha256,
+        },
+        config,
+        LoadOptions::whole(3),
+        root.path().join("active.json"),
+    )
+    .unwrap();
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(cache_dir.join(".lock"))
+        .unwrap();
+    file.lock().unwrap();
+    // An independent thread releases the lock even if the buggy implementation
+    // blocks executor threads; the regression fails instead of hanging forever.
+    let (release, released) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let _ = released.recv_timeout(Duration::from_secs(3));
+        drop(file);
+    });
+    let collector = tokio::spawn({
+        let live = live.clone();
+        async move { live.command(Command::Collect).await }
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        !collector.is_finished(),
+        "collection must wait for the writer"
+    );
+    let status = tokio::spawn({
+        let live = live.clone();
+        async move { live.command(Command::Status).await }
+    });
+    let ready = tokio::spawn(
+        live.router()
+            .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap()),
+    );
+    let responsive = tokio::time::timeout(Duration::from_millis(500), async {
+        status.await.unwrap().unwrap();
+        ready.await.unwrap().unwrap()
+    })
+    .await;
+    // Cancelling the client must not release mutation serialization while
+    // the detached blocking job is still pruning the previous generations.
+    collector.abort();
+    let _ = collector.await;
+    let next_mutation = tokio::spawn({
+        let live = live.clone();
+        async move {
+            live.command(Command::Discard {
+                map_sha256: "unused".into(),
+            })
+            .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let serialized = !next_mutation.is_finished();
+    let _ = release.send(());
+    writer.join().unwrap();
+    next_mutation.await.unwrap().unwrap();
+    assert!(
+        responsive.is_ok(),
+        "disk collection blocked status/readiness"
+    );
+    assert_eq!(responsive.unwrap().status(), StatusCode::OK);
+    assert!(
+        serialized,
+        "cancelled collection allowed a mutation to race pruning"
+    );
+}
+
 /// Hot activation keeps the old revision usable, shares bounded runtime state,
 /// and refuses orphaned answers after a reorg without restarting the server.
 #[tokio::test(flavor = "multi_thread")]

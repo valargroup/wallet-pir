@@ -67,6 +67,14 @@ pressure probes are running to separate worker handling from transport or host
 stalls. They cannot satisfy acceptance or trigger rollout. Production retains
 `85d76e8` control sessions and the `f2f351c` recent-01 worker while diagnosis runs.
 
+The [collection-lock regression](evidence/productionize-m1-collection-lock-2026-09-10/README.md)
+reproduces a status stall when disk collection waits for a snapshot writer while
+holding a serving lock. The source correction moves collection off the async
+executor and releases serving locks before disk work, while preserving mutation
+serialization after caller cancellation. Its focused release suite passed
+16 tests (two manual benchmarks ignored). This is not yet deployed or established
+as the cause of every observed production pause.
+
 ## M1 owned control sessions: deployed 2026-09-10, 18:44 UTC
 
 Operations `85d76e8` is deployed with `control_sessions: true` and the dedicated

@@ -83,7 +83,7 @@ struct Inner {
     options: LoadOptions,
     record: PathBuf,
     retired: RwLock<Vec<Active>>,
-    operations: tokio::sync::Mutex<()>,
+    operations: Arc<tokio::sync::Mutex<()>>,
     publication_gate: std::sync::Mutex<()>,
     epoch: std::sync::atomic::AtomicU64,
 }
@@ -113,7 +113,7 @@ impl LiveService {
             options,
             record,
             retired: RwLock::new(Vec::new()),
-            operations: tokio::sync::Mutex::new(()),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
             publication_gate: std::sync::Mutex::new(()),
             epoch: std::sync::atomic::AtomicU64::new(0),
         })))
@@ -171,7 +171,7 @@ impl LiveService {
                 serde_json::json!({"active":active.publication,"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"preparing":preparing,"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
-        let _operation = self.0.operations.lock().await;
+        let _operation = self.0.operations.clone().lock_owned().await;
         match command {
             Command::Prepare {
                 expected,
@@ -314,64 +314,82 @@ impl LiveService {
                 Ok(serde_json::json!({"active":map_sha256}))
             }
             Command::Collect => {
-                let candidate = self.0.candidate.lock().await;
-                let candidate_dir = candidate.as_ref().map(|c| c.publication.directory.clone());
-                let mut runtime_digests: std::collections::HashSet<String> = candidate
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|c| c.state.set().revisions())
-                    .map(|s| s.digest.clone())
-                    .collect();
-                let mut retired = self.0.retired.write().unwrap();
-                // A long request may hold one old snapshot without preventing
-                // collection of every other unused generation behind it.
-                let recent_from = retired.len().saturating_sub(3);
-                let mut index = 0;
-                retired.retain(|old| {
-                    let keep = index >= recent_from || old.state.has_other_holders();
-                    index += 1;
-                    keep
-                });
-                let active = self.0.active.read().unwrap();
-                let root = active
-                    .publication
-                    .directory
-                    .parent()
-                    .ok_or("publication lacks parent")?;
-                let mut keep: BTreeSet<PathBuf> = retired
-                    .iter()
-                    .map(|a| a.publication.directory.clone())
-                    .collect();
-                keep.insert(active.publication.directory.clone());
-                if let Some(directory) = candidate_dir {
-                    keep.insert(directory);
-                }
-                runtime_digests.extend(
-                    std::iter::once(&*active)
-                        .chain(retired.iter())
-                        .flat_map(|a| a.state.set().revisions())
-                        .map(|s| s.digest.clone()),
-                );
-                let disk_freed_bytes = active.state.prune_disk(&runtime_digests)?;
-                // Only controller-created, digest-named generations are ours.
-                // Keep the newest three unused directories across restarts too.
-                let mut unused: Vec<_> = std::fs::read_dir(root)
-                    .map_err(|e| e.to_string())?
-                    .filter_map(Result::ok)
-                    .filter(|e| {
-                        e.file_name().to_str().is_some_and(|s| {
-                            s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit())
-                        }) && e.file_type().is_ok_and(|t| t.is_dir())
-                            && !keep.contains(&e.path())
-                    })
-                    .collect();
-                unused.sort_by_key(|e| {
-                    std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok())
-                });
-                for entry in unused.into_iter().skip(3) {
-                    std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
-                }
-                Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes}))
+                let service = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    // The job owns serialization even if its control caller is
+                    // cancelled. A later prepare must not race disk pruning.
+                    let _operation = _operation;
+                    let candidate = service.0.candidate.blocking_lock();
+                    let candidate_dir = candidate.as_ref().map(|c| c.publication.directory.clone());
+                    let mut runtime_digests: std::collections::HashSet<String> = candidate
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|c| c.state.set().revisions())
+                        .map(|s| s.digest.clone())
+                        .collect();
+                    let mut retired = service.0.retired.write().unwrap();
+                    // A long request may hold one old snapshot without preventing
+                    // collection of every other unused generation behind it.
+                    let recent_from = retired.len().saturating_sub(3);
+                    let mut removed = Vec::new();
+                    for (index, old) in std::mem::take(&mut *retired).into_iter().enumerate() {
+                        if index >= recent_from || old.state.has_other_holders() {
+                            retired.push(old);
+                        } else {
+                            removed.push(old);
+                        }
+                    }
+                    let active = service.0.active.read().unwrap();
+                    let root = active
+                        .publication
+                        .directory
+                        .parent()
+                        .ok_or("publication lacks parent")?
+                        .to_path_buf();
+                    let mut keep: BTreeSet<PathBuf> = retired
+                        .iter()
+                        .map(|a| a.publication.directory.clone())
+                        .collect();
+                    keep.insert(active.publication.directory.clone());
+                    if let Some(directory) = candidate_dir {
+                        keep.insert(directory);
+                    }
+                    runtime_digests.extend(
+                        std::iter::once(&*active)
+                            .chain(retired.iter())
+                            .flat_map(|a| a.state.set().revisions())
+                            .map(|s| s.digest.clone()),
+                    );
+                    let state = active.state.clone();
+                    // Status and request dispatch must never wait on disk writes,
+                    // directory traversal, or deletion while holding serving locks.
+                    drop(active);
+                    drop(retired);
+                    drop(candidate);
+                    drop(removed);
+                    let disk_freed_bytes = state.prune_disk(&runtime_digests)?;
+                    // Only controller-created, digest-named generations are ours.
+                    // Keep the newest three unused directories across restarts too.
+                    let mut unused: Vec<_> = std::fs::read_dir(root)
+                        .map_err(|e| e.to_string())?
+                        .filter_map(Result::ok)
+                        .filter(|e| {
+                            e.file_name().to_str().is_some_and(|s| {
+                                s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit())
+                            }) && e.file_type().is_ok_and(|t| t.is_dir())
+                                && !keep.contains(&e.path())
+                        })
+                        .collect();
+                    unused.sort_by_key(|e| {
+                        std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok())
+                    });
+                    for entry in unused.into_iter().skip(3) {
+                        std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
+                    }
+                    Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes}))
+                })
+                .await
+                .map_err(|e| format!("collection task failed: {e}"))?
             }
             Command::Discard { map_sha256 } => {
                 let mut candidate = self.0.candidate.lock().await;

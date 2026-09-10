@@ -25,6 +25,9 @@ complete M0 or supersede earlier gate results.
   2026-09-10; it failed after 96.8 minutes and 76 blocks on another status
   timeout/503. [Status-stall diagnosis](evidence/productionize-m1-status-stall-2026-09-10/README.md)
   is running under bounded load; no replacement acceptance is active.
+  The [collection-lock correction](evidence/productionize-m1-collection-lock-2026-09-10/README.md)
+  passes the focused release tests but still needs deployment qualification and
+  matching acceptance evidence.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.
