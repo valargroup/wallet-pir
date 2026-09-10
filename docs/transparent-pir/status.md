@@ -82,6 +82,15 @@ failure followed activation without a new collection recorded in that window;
 thread-state probing is now collecting evidence before attributing that failure
 to the corrected path. The candidate is not deployed and no acceptance is active.
 
+The [forwarded-status diagnosis](evidence/productionize-m1-forwarded-status-2026-09-10/README.md)
+captures a 21:00 UTC pause where local Unix status remained at 1–2 ms while SSH
+status/no-op took about 0.8 s. Separate-connection and same-master Unix forwarding
+trials are running to isolate helper/channel delay. Initial samples are fast,
+but later shared pauses show that forwarding alone does not explain every stall.
+An opt-in implementation passes 86 operations tests, full repository checks and
+an isolated live reconnect test. It remains disabled; disk-backed probe logging
+must be separated from socket latency before attributing the remaining pauses.
+
 ## M1 owned control sessions: deployed 2026-09-10, 18:44 UTC
 
 Operations `85d76e8` is deployed with `control_sessions: true` and the dedicated

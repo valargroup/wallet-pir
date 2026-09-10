@@ -290,6 +290,14 @@ or wait indefinitely for its output descriptors. Bootstrap configurations withou
 the flag retain direct SSH. Preparation always uses direct SSH. Read-only status
 retries one transport failure (1 s then 1.5 s command budgets within the 3 s
 membership timeout).
+The optional `status_socket_forwarding: true` flag requires `control_sessions`
+and carries status over root-only Unix forwards owned by the same supervisor.
+It is disabled by default; consult [status](status.md) for whether it is deployed.
+Each request has its own stream, a 1 MiB newline-framed response limit and the
+same status timeout/retry policy. Missing forwards do not fall back to helper
+execution. Mutations keep their existing SSH paths. Verify all worker forwards
+before enabling clients; changes require matching acceptance evidence.
+
 Returned status still must attest the current warm publication. Two failed reads
 withdraw membership; invalid or rejected status is not retried. Mutating control
 commands are never blindly retried after an ambiguous transport failure.

@@ -1,0 +1,2 @@
+b96c007ce76638f829119ab2013308d993cdba5fef76c7a8be2e14b21cf49698  ops/scripts/transparent-live-fleet.py
+69d45db0897192b6ebe017db28b7ca0b3261b9cf3187f3e828430916583e0225  ops/tests/test_transparent_publication.py

@@ -67,6 +67,8 @@ async def run(args, data=None, timeout=25, file_output=False):
 class Fleet:
     def __init__(self, config):
         self.c = config
+        if config.get('status_socket_forwarding') and not config.get('control_sessions'):
+            raise ValueError('status socket forwarding requires owned control sessions')
         self.roster = json.loads(Path(config['roster']).read_text())
         self.root = Path(config['state_dir'])
         self.root.mkdir(parents=True, exist_ok=True)
@@ -173,6 +175,30 @@ class Fleet:
         return self.direct_ssh_args + ['-oControlMaster=no', '-oProxyCommand=false',
                                       '-oControlPath=' + str(self.control_path(worker))]
 
+    def status_forward_path(self, worker):
+        identity = [str(self.control_path(worker)), self.c.get('control_socket', '/run/transparent-pir/control.sock')]
+        return self.control_dir / ('s-' + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:32])
+
+    async def forwarded_status(self, worker, value):
+        # One private channel per request: cancellation must not close the SSH
+        # master or leave a helper process running on the worker.
+        reader, writer = await asyncio.open_unix_connection(self.status_forward_path(worker), limit=1024*1024)
+        try:
+            writer.write(json.dumps(value).encode() + b'\n')
+            await writer.drain()
+            raw = await reader.readline()
+            if len(raw) > 1024*1024:
+                raise ValueError('oversized control response')
+            if not raw.endswith(b'\n'):
+                raise RuntimeError('incomplete control response')
+            return raw
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except ConnectionError:
+                pass
+
     async def control_session(self, worker):
         path = self.control_path(worker)
         destination = 'root@' + worker['ssh_host']
@@ -203,6 +229,24 @@ class Fleet:
             args = self.direct_ssh_args + ['-oControlMaster=yes', '-oControlPersist=no',
                     '-oControlPath=' + str(path), '-oServerAliveInterval=2',
                     '-oServerAliveCountMax=3', '-N', destination]
+            if self.c.get('status_socket_forwarding', False):
+                forward = self.status_forward_path(worker)
+                remote = self.c.get('control_socket', '/run/transparent-pir/control.sock')
+                if not remote.startswith('/') or any(c in remote for c in ':\n\r'):
+                    raise ValueError('control socket must be an absolute Unix path without colons or newlines')
+                if forward.exists():
+                    if forward.is_symlink() or not forward.is_socket():
+                        raise RuntimeError('status forward path is not an owned socket')
+                    try:
+                        _, writer = await asyncio.wait_for(asyncio.open_unix_connection(forward), 1)
+                    except (ConnectionRefusedError, FileNotFoundError):
+                        forward.unlink(missing_ok=True)
+                    else:
+                        writer.close()
+                        await writer.wait_closed()
+                        raise RuntimeError('existing status forward is still listening')
+                args[-1:-1] = ['-oStreamLocalBindMask=0177', '-oExitOnForwardFailure=yes',
+                              '-L', str(forward) + ':' + remote]
             # No -f and no command-owned pipes: the supervisor owns this process
             # until shutdown. Cancelling a client only closes its own channel.
             process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
@@ -242,14 +286,16 @@ class Fleet:
         budgets = (1, 1.5) if operation == 'status' else (120 if operation == 'prepare' else 25,)
         for attempt, timeout in enumerate(budgets):
             try:
-                if self.c.get('control_sessions', False) and operation != 'prepare':
+                if self.c.get('status_socket_forwarding', False) and operation == 'status':
+                    raw = await asyncio.wait_for(self.forwarded_status(worker, value), timeout)
+                elif self.c.get('control_sessions', False) and operation != 'prepare':
                     raw = await run(self.control_session_args(worker) + ['root@' + worker['ssh_host'], command],
                                     json.dumps(value).encode(), timeout, file_output=True)
                 else:
                     raw = await self.ssh(worker['ssh_host'], command, json.dumps(value).encode(),
                                          multiplex=False, timeout=timeout)
                 break
-            except (RuntimeError, TimeoutError) as error:
+            except (RuntimeError, TimeoutError, OSError) as error:
                 retry = attempt + 1 < len(budgets)
                 print(json.dumps({'event':'worker_control_transport_failed', 'worker':worker['id'],
                                   'operation':operation, 'attempt':attempt+1,

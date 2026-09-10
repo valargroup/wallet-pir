@@ -226,6 +226,122 @@ time.sleep(10)
             with self.assertRaises(RuntimeError):await self.fleet.control(self.roster[0],{'operation':'activate'})
             self.assertEqual(run.await_count,1)
 
+    async def test_forwarded_status_uses_private_stream_without_exec_fallback(self):
+        from unittest.mock import AsyncMock
+        self.fleet.c.update(control_sessions=True,status_socket_forwarding=True)
+        received=[]
+        async def accept(reader,writer):
+            received.append(json.loads(await reader.readline()))
+            writer.write(b'{"ok":true,"result":{"warm":true}}\n');await writer.drain()
+            writer.close();await writer.wait_closed()
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory:
+            self.fleet.control_dir=Path(directory)
+            server=await asyncio.start_unix_server(accept,path=self.fleet.status_forward_path(self.roster[0]))
+            try:
+                with patch.object(module,'run',AsyncMock(side_effect=AssertionError('must not exec'))) as run:
+                    results=await asyncio.gather(*(self.fleet.control(self.roster[0],{'operation':'status'}) for _ in range(2)))
+                    self.assertEqual(results,[{'warm':True}]*2)
+                    self.assertEqual(received,[{'operation':'status'}]*2)
+                    run.assert_not_awaited()
+                with patch.object(module,'run',AsyncMock(return_value=b'{"ok":true,"result":{}}')) as run:
+                    await self.fleet.control(self.roster[0],{'operation':'activate'})
+                    self.assertEqual(run.await_count,1)
+            finally:server.close();await server.wait_closed()
+
+    async def test_forwarded_status_cancellation_closes_only_its_stream(self):
+        self.fleet.c.update(control_sessions=True,status_socket_forwarding=True)
+        started=asyncio.Event();closed=asyncio.Event();calls=[]
+        async def accept(reader,writer):
+            calls.append(await reader.readline())
+            if len(calls)==1:
+                started.set();await reader.read();closed.set()
+            else:
+                writer.write(b'{"ok":true,"result":{"warm":true}}\n');await writer.drain()
+            writer.close();await writer.wait_closed()
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory:
+            self.fleet.control_dir=Path(directory)
+            server=await asyncio.start_unix_server(accept,path=self.fleet.status_forward_path(self.roster[0]))
+            try:
+                task=asyncio.create_task(self.fleet.control(self.roster[0],{'operation':'status'}))
+                await asyncio.wait_for(started.wait(),1);task.cancel()
+                with self.assertRaises(asyncio.CancelledError):await task
+                await asyncio.wait_for(closed.wait(),1)
+                self.assertEqual(await self.fleet.control(self.roster[0],{'operation':'status'}),{'warm':True})
+                self.assertEqual(len(calls),2)
+            finally:server.close();await server.wait_closed()
+
+    async def test_forwarded_status_bounds_frames_and_preserves_rejections(self):
+        from unittest.mock import AsyncMock
+        self.fleet.c.update(control_sessions=True,status_socket_forwarding=True)
+        for response,error,attempts in [(b'{}',RuntimeError,2),(b'x'*(1024*1024+1)+b'\n',ValueError,1),
+                                        (b'{"ok":false,"error":"rejected"}\n',RuntimeError,1)]:
+            with self.subTest(response_bytes=len(response)), tempfile.TemporaryDirectory(dir='/tmp') as directory:
+                self.fleet.control_dir=Path(directory);calls=[]
+                async def accept(reader,writer):
+                    calls.append(await reader.readline())
+                    try:writer.write(response);await writer.drain()
+                    except ConnectionError:pass
+                    finally:
+                        writer.close()
+                        try:await writer.wait_closed()
+                        except ConnectionError:pass
+                server=await asyncio.start_unix_server(accept,path=self.fleet.status_forward_path(self.roster[0]))
+                try:
+                    with patch.object(module,'run',AsyncMock(side_effect=AssertionError('must not fall back'))) as run:
+                        with self.assertRaises(error):await self.fleet.control(self.roster[0],{'operation':'status'})
+                        self.assertEqual(len(calls),attempts);run.assert_not_awaited()
+                finally:server.close();await server.wait_closed()
+
+    async def test_forwarded_status_keeps_existing_timeout_budget(self):
+        from unittest.mock import AsyncMock
+        self.fleet.c.update(control_sessions=True,status_socket_forwarding=True)
+        calls=[];closed=[]
+        async def accept(reader,writer):
+            calls.append(await reader.readline());await reader.read();closed.append(True)
+            writer.close();await writer.wait_closed()
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory:
+            self.fleet.control_dir=Path(directory)
+            server=await asyncio.start_unix_server(accept,path=self.fleet.status_forward_path(self.roster[0]))
+            try:
+                started=asyncio.get_running_loop().time()
+                with patch.object(module,'run',AsyncMock(side_effect=AssertionError('must not fall back'))) as run:
+                    with self.assertRaises(TimeoutError):await self.fleet.control(self.roster[0],{'operation':'status'})
+                    elapsed=asyncio.get_running_loop().time()-started
+                    self.assertGreaterEqual(elapsed,2.4);self.assertLess(elapsed,3)
+                    self.assertEqual(len(calls),2);run.assert_not_awaited()
+                async def drained():
+                    while len(closed)<2:await asyncio.sleep(.01)
+                await asyncio.wait_for(drained(),1)
+            finally:server.close();await server.wait_closed()
+
+    async def test_forward_supervisor_recovers_stale_socket_and_preserves_unexpected_paths(self):
+        import socket
+        self.fleet.c.update(control_sessions=True,status_socket_forwarding=True)
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory:
+            self.fleet.control_dir=Path(directory)
+            path=self.fleet.status_forward_path(self.roster[0])
+            listener=socket.socket(socket.AF_UNIX);listener.bind(str(path));listener.close()
+            async def spawn(*args,**kwargs):
+                self.assertFalse(path.exists())
+                self.assertIn('-oStreamLocalBindMask=0177',args)
+                self.assertIn('-oExitOnForwardFailure=yes',args)
+                self.assertIn(str(path)+':/run/transparent-pir/control.sock',args)
+                raise RuntimeError('stop after stale forward recovery')
+            with patch.object(module.asyncio,'create_subprocess_exec',spawn):
+                with self.assertRaisesRegex(RuntimeError,'stale forward recovery'):
+                    await self.fleet.control_session(self.roster[0])
+            path.write_text('preserve')
+            with self.assertRaisesRegex(RuntimeError,'not an owned socket'):
+                await self.fleet.control_session(self.roster[0])
+            self.assertEqual(path.read_text(),'preserve');path.unlink()
+            async def accept(reader,writer):writer.close();await writer.wait_closed()
+            server=await asyncio.start_unix_server(accept,path=path)
+            try:
+                with self.assertRaisesRegex(RuntimeError,'still listening'):
+                    await self.fleet.control_session(self.roster[0])
+                self.assertTrue(path.exists())
+            finally:server.close();await server.wait_closed()
+
     def test_control_socket_identity_tracks_authenticated_destination(self):
         worker=self.roster[0]
         before=self.fleet.control_path(worker)

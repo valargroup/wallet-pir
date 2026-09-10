@@ -6,6 +6,7 @@ Updated 2026-09-09. Evidence supports the [deployment decision](../deployment.md
 
 | Evidence | Scope | Valid use | Limit |
 |---|---|---|---|
+| [M1 forwarded-status diagnosis](productionize-m1-forwarded-status-2026-09-10/README.md) | Local status remains fast during a remote delay; two bounded forwarding trials | Distinguishes a delay outside the Unix status handler | Opt-in implementation tested but disabled; remaining shared pauses need further diagnosis |
 | [M1 collection correction qualification](productionize-m1-collection-qualification-2026-09-10/README.md) | Compatible Linux build and three Amsterdam repetitions | All unchanged combined screens pass for `d8f5217` | Not deployed; original post-activation stall still under diagnosis |
 | [M1 collection-lock regression](productionize-m1-collection-lock-2026-09-10/README.md) | Real cache writer lock blocks collection and status; source correction and cancellation regression | Establishes and fixes a reproducible serving-lock stall | Not yet deployed; does not prove all live pauses have this cause |
 | [M1 persistent-session status stall](productionize-m1-status-stall-2026-09-10/README.md) | Failed 96.8-minute canary and simultaneous local/remote diagnostic probes | Records renewed status timeout despite persistent connection | Diagnosis in progress; no acceptance or rollout |
