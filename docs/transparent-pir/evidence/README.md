@@ -6,6 +6,7 @@ Updated 2026-09-09. Evidence supports the [deployment decision](../deployment.md
 
 | Evidence | Scope | Valid use | Limit |
 |---|---|---|---|
+| [M1 collection correction qualification](productionize-m1-collection-qualification-2026-09-10/README.md) | Compatible Linux build and three Amsterdam repetitions | All unchanged combined screens pass for `d8f5217` | Not deployed; original post-activation stall still under diagnosis |
 | [M1 collection-lock regression](productionize-m1-collection-lock-2026-09-10/README.md) | Real cache writer lock blocks collection and status; source correction and cancellation regression | Establishes and fixes a reproducible serving-lock stall | Not yet deployed; does not prove all live pauses have this cause |
 | [M1 persistent-session status stall](productionize-m1-status-stall-2026-09-10/README.md) | Failed 96.8-minute canary and simultaneous local/remote diagnostic probes | Records renewed status timeout despite persistent connection | Diagnosis in progress; no acceptance or rollout |
 | [M1 status-channel investigation](productionize-m1-status-channel-2026-09-10/README.md) | Failed canary, SSH timing comparison and owned-session lifecycle tests | Separates connection setup from worker status; tests cancellation and reconnection | Diagnostic trials do not satisfy loaded acceptance |

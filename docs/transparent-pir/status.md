@@ -75,6 +75,13 @@ serialization after caller cancellation. Its focused release suite passed
 16 tests (two manual benchmarks ignored). This is not yet deployed or established
 as the cause of every observed production pause.
 
+Source `d8f5217` is committed and pushed. Its [Linux/Amsterdam qualification](evidence/productionize-m1-collection-qualification-2026-09-10/README.md)
+passed all three unchanged combined screens (193 exact queries, three retries,
+8.20–9.14 s visibility, at least 26.08% modeled memory headroom). The original
+failure followed activation without a new collection recorded in that window;
+thread-state probing is now collecting evidence before attributing that failure
+to the corrected path. The candidate is not deployed and no acceptance is active.
+
 ## M1 owned control sessions: deployed 2026-09-10, 18:44 UTC
 
 Operations `85d76e8` is deployed with `control_sessions: true` and the dedicated

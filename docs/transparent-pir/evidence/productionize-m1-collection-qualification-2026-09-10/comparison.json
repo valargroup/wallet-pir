@@ -1,0 +1,501 @@
+[
+  {
+    "variant": "baseline",
+    "name": "repeat-1-slots-1",
+    "build_slots": 1,
+    "exit_code": 0,
+    "report": "repeat-1-slots-1.json",
+    "client_exit_code": 0,
+    "external_clients": true,
+    "client_isolation_passed": true,
+    "load_overlapped_burst": true,
+    "cold_warm": true,
+    "assigned_shards": 14,
+    "kernel_peak_bytes": 5906599936,
+    "modeled_host_headroom_fraction": 0.21863126754760742,
+    "memory_qualification_passed": true,
+    "kernel_memory_events": {
+      "low": "0",
+      "high": "10271",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0"
+    },
+    "exact_query_count": 213,
+    "query_p50_seconds": 0.014032024,
+    "query_p95_seconds": 0.06899875,
+    "completed": true,
+    "exact_queries": true,
+    "worker_30s_budget_passed": true,
+    "max_worker_visibility_seconds": 20.59156457,
+    "peak_process_rss_bytes": 5552734208,
+    "worker_budget_seconds": 14.0,
+    "worker_budget_passed": false,
+    "reported_exact_query_count": 211,
+    "fatal_client_errors": 0,
+    "cold_seconds": 136.021230793,
+    "final_anon_bytes": 5514203136,
+    "final_file_bytes": 359456768,
+    "retries": 18,
+    "retry_attempt_fraction": 0.07792207792207792,
+    "max_completion_gap_seconds": 2.0892879962921143,
+    "stages_seconds": {
+      "encode_database": [
+        0.313962421,
+        0.306393034,
+        0.304351346,
+        0.317398677
+      ],
+      "public_setup": [
+        0.000158039,
+        7.0862e-05,
+        7.419e-05,
+        9.4319e-05
+      ],
+      "hint_columns": [
+        0.561716362,
+        0.586231314,
+        0.581733533,
+        0.542319831
+      ],
+      "pack_preprocessing": [
+        3.318571982,
+        3.352632302,
+        3.342307776,
+        3.358270334
+      ],
+      "publish_parameters": [
+        0.000269062,
+        0.000274922,
+        0.000274884,
+        0.000272561
+      ],
+      "runtime_build": [
+        4.195292638,
+        4.246147625,
+        4.229296073,
+        4.218931092
+      ],
+      "disk_save": [
+        0.718296694,
+        0.744822428,
+        0.748333253,
+        0.727480071
+      ]
+    },
+    "mean_stage_seconds": {
+      "encode_database": 0.3105263695,
+      "public_setup": 9.93525e-05,
+      "hint_columns": 0.56800026,
+      "pack_preprocessing": 3.3429455985,
+      "publish_parameters": 0.00027285724999999997,
+      "runtime_build": 4.222416857,
+      "disk_save": 0.7347331115
+    },
+    "query_availability_screen_passed": true,
+    "combined_screen_passed": false
+  },
+  {
+    "variant": "portable",
+    "name": "repeat-1-slots-2",
+    "build_slots": 2,
+    "exit_code": 0,
+    "report": "repeat-1-slots-2.json",
+    "client_exit_code": 0,
+    "external_clients": true,
+    "client_shutdown_complete": true,
+    "client_isolation_passed": true,
+    "load_overlapped_burst": true,
+    "kernel_policy": "chunked-split",
+    "cold_warm": true,
+    "assigned_shards": 14,
+    "kernel_peak_bytes": 5515706368,
+    "modeled_host_headroom_fraction": 0.26413726806640625,
+    "memory_qualification_passed": true,
+    "kernel_memory_events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0"
+    },
+    "exact_query_count": 79,
+    "query_p50_seconds": 0.020299759,
+    "query_p95_seconds": 1.0453966,
+    "completed": true,
+    "exact_queries": true,
+    "worker_30s_budget_passed": true,
+    "max_worker_visibility_seconds": 10.674521676,
+    "peak_process_rss_bytes": 5426302976,
+    "worker_budget_seconds": 14.0,
+    "worker_budget_passed": true,
+    "reported_exact_query_count": 79,
+    "fatal_client_errors": 0,
+    "cold_seconds": 55.586054768,
+    "final_anon_bytes": 5364805632,
+    "final_file_bytes": 184320,
+    "retries": 7,
+    "retry_attempt_fraction": 0.08139534883720931,
+    "max_completion_gap_seconds": 1.4146099090576172,
+    "stages_seconds": {
+      "encode_database": [
+        0.305356598,
+        0.30661906,
+        0.313551102,
+        0.378599319
+      ],
+      "public_setup": [
+        0.000103353,
+        9.4695e-05,
+        0.000136269,
+        8.8497e-05
+      ],
+      "hint_columns": [
+        0.59408293,
+        1.179067056,
+        1.0645290059999999,
+        1.146105596
+      ],
+      "pack_preprocessing": [
+        2.681544399,
+        2.277548607,
+        2.35327102,
+        2.380241739
+      ],
+      "publish_parameters": [
+        0.000262674,
+        0.000250028,
+        0.000265103,
+        0.000259514
+      ],
+      "runtime_build": [
+        3.582350838,
+        3.764443511,
+        3.814100787,
+        3.82442635
+      ],
+      "disk_save": [
+        0.677641151,
+        1.168722032,
+        0.685100103,
+        1.372401639
+      ]
+    },
+    "mean_stage_seconds": {
+      "encode_database": 0.32603151975,
+      "public_setup": 0.0001057035,
+      "hint_columns": 0.995946147,
+      "pack_preprocessing": 2.42315144125,
+      "publish_parameters": 0.00025932975,
+      "runtime_build": 3.7463303715,
+      "disk_save": 0.97596623125
+    },
+    "query_availability_screen_passed": false,
+    "combined_screen_passed": false
+  },
+  {
+    "variant": "qualification",
+    "name": "repeat-1-slots-2",
+    "build_slots": 2,
+    "exit_code": 0,
+    "report": "repeat-1-slots-2.json",
+    "client_exit_code": 0,
+    "external_clients": true,
+    "client_shutdown_complete": true,
+    "client_isolation_passed": true,
+    "load_overlapped_burst": true,
+    "kernel_policy": "chunked-split",
+    "cold_persistence_complete": true,
+    "persistence_complete": true,
+    "cold_warm": true,
+    "assigned_shards": 14,
+    "kernel_peak_bytes": 5361348608,
+    "modeled_host_headroom_fraction": 0.282106876373291,
+    "memory_qualification_passed": true,
+    "kernel_memory_events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0"
+    },
+    "exact_query_count": 59,
+    "query_p50_seconds": 0.028068973,
+    "query_p95_seconds": 1.013096906,
+    "completed": true,
+    "exact_queries": true,
+    "worker_30s_budget_passed": true,
+    "max_worker_visibility_seconds": 8.197951789,
+    "peak_process_rss_bytes": 5273063424,
+    "worker_budget_seconds": 14.0,
+    "worker_budget_passed": true,
+    "reported_exact_query_count": 59,
+    "fatal_client_errors": 0,
+    "cold_seconds": 53.418918428,
+    "final_anon_bytes": 5209718784,
+    "final_file_bytes": 286720,
+    "retries": 0,
+    "retry_attempt_fraction": 0.0,
+    "max_completion_gap_seconds": 1.2374639511108398,
+    "stages_seconds": {
+      "encode_database": [
+        0.305432707,
+        0.30130818,
+        0.309920401,
+        0.449586623
+      ],
+      "public_setup": [
+        0.000108843,
+        8.9019e-05,
+        8.1743e-05,
+        0.000132051
+      ],
+      "hint_columns": [
+        1.098616317,
+        1.115243586,
+        0.970198494,
+        1.192031978
+      ],
+      "pack_preprocessing": [
+        2.307757751,
+        2.353741567,
+        2.214822761,
+        2.448007133
+      ],
+      "publish_parameters": [
+        0.00327477,
+        0.000267681,
+        0.000246753,
+        0.000243047
+      ],
+      "runtime_build": [
+        3.732704423,
+        3.754799276,
+        3.718990369,
+        3.86895292
+      ],
+      "disk_save": [
+        0.722712829,
+        1.445407029,
+        0.661037762,
+        1.100847488
+      ]
+    },
+    "mean_stage_seconds": {
+      "encode_database": 0.34156197775,
+      "public_setup": 0.000102914,
+      "hint_columns": 1.09402259375,
+      "pack_preprocessing": 2.331082303,
+      "publish_parameters": 0.0010080627500000001,
+      "runtime_build": 3.768861747,
+      "disk_save": 0.982501277
+    },
+    "query_availability_screen_passed": true,
+    "combined_screen_passed": true
+  },
+  {
+    "variant": "qualification",
+    "name": "repeat-2-slots-2",
+    "build_slots": 2,
+    "exit_code": 0,
+    "report": "repeat-2-slots-2.json",
+    "client_exit_code": 0,
+    "external_clients": true,
+    "client_shutdown_complete": true,
+    "client_isolation_passed": true,
+    "load_overlapped_burst": true,
+    "kernel_policy": "chunked-split",
+    "cold_persistence_complete": true,
+    "persistence_complete": true,
+    "cold_warm": true,
+    "assigned_shards": 14,
+    "kernel_peak_bytes": 5379371008,
+    "modeled_host_headroom_fraction": 0.28000879287719727,
+    "memory_qualification_passed": true,
+    "kernel_memory_events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0"
+    },
+    "exact_query_count": 62,
+    "query_p50_seconds": 0.025764904,
+    "query_p95_seconds": 1.006344383,
+    "completed": true,
+    "exact_queries": true,
+    "worker_30s_budget_passed": true,
+    "max_worker_visibility_seconds": 8.354508414,
+    "peak_process_rss_bytes": 5268992000,
+    "worker_budget_seconds": 14.0,
+    "worker_budget_passed": true,
+    "reported_exact_query_count": 62,
+    "fatal_client_errors": 0,
+    "cold_seconds": 54.755545344,
+    "final_anon_bytes": 5227220992,
+    "final_file_bytes": 274432,
+    "retries": 1,
+    "retry_attempt_fraction": 0.015873015873015872,
+    "max_completion_gap_seconds": 1.258622169494629,
+    "stages_seconds": {
+      "encode_database": [
+        0.292070034,
+        0.326209467,
+        0.321939147,
+        0.317725597
+      ],
+      "public_setup": [
+        7.1737e-05,
+        8.782e-05,
+        8.3426e-05,
+        0.00012873
+      ],
+      "hint_columns": [
+        1.041523001,
+        1.089156455,
+        1.17606711,
+        1.189326065
+      ],
+      "pack_preprocessing": [
+        2.3230063530000002,
+        2.363696006,
+        2.232544264,
+        2.48805036
+      ],
+      "publish_parameters": [
+        0.000279823,
+        0.000245094,
+        0.000280554,
+        0.000247782
+      ],
+      "runtime_build": [
+        3.706526496,
+        3.73257382,
+        3.727699457,
+        4.000486359
+      ],
+      "disk_save": [
+        0.755261826,
+        1.488551056,
+        0.687643433,
+        1.083815297
+      ]
+    },
+    "mean_stage_seconds": {
+      "encode_database": 0.31448606125,
+      "public_setup": 9.292824999999999e-05,
+      "hint_columns": 1.12401815775,
+      "pack_preprocessing": 2.35182424575,
+      "publish_parameters": 0.00026331325,
+      "runtime_build": 3.791821533,
+      "disk_save": 1.0038179029999998
+    },
+    "query_availability_screen_passed": true,
+    "combined_screen_passed": true
+  },
+  {
+    "variant": "qualification",
+    "name": "repeat-3-slots-2",
+    "build_slots": 2,
+    "exit_code": 0,
+    "report": "repeat-3-slots-2.json",
+    "client_exit_code": 0,
+    "external_clients": true,
+    "client_shutdown_complete": true,
+    "client_isolation_passed": true,
+    "load_overlapped_burst": true,
+    "kernel_policy": "chunked-split",
+    "cold_persistence_complete": true,
+    "persistence_complete": true,
+    "cold_warm": true,
+    "assigned_shards": 14,
+    "kernel_peak_bytes": 5544075264,
+    "modeled_host_headroom_fraction": 0.2608346939086914,
+    "memory_qualification_passed": true,
+    "kernel_memory_events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0"
+    },
+    "exact_query_count": 72,
+    "query_p50_seconds": 0.025938816,
+    "query_p95_seconds": 0.995344739,
+    "completed": true,
+    "exact_queries": true,
+    "worker_30s_budget_passed": true,
+    "max_worker_visibility_seconds": 9.139946373,
+    "peak_process_rss_bytes": 5457494016,
+    "worker_budget_seconds": 14.0,
+    "worker_budget_passed": true,
+    "reported_exact_query_count": 72,
+    "fatal_client_errors": 0,
+    "cold_seconds": 55.047321569,
+    "final_anon_bytes": 5392805888,
+    "final_file_bytes": 319488,
+    "retries": 2,
+    "retry_attempt_fraction": 0.02702702702702703,
+    "max_completion_gap_seconds": 1.271143913269043,
+    "stages_seconds": {
+      "encode_database": [
+        0.298954633,
+        0.311022964,
+        0.320577913,
+        0.308420347
+      ],
+      "public_setup": [
+        0.000188685,
+        9.1801e-05,
+        0.000133755,
+        7.355e-05
+      ],
+      "hint_columns": [
+        1.06736494,
+        1.101952837,
+        0.906643153,
+        1.182900892
+      ],
+      "pack_preprocessing": [
+        2.173888537,
+        3.267679725,
+        2.310883728,
+        2.357206497
+      ],
+      "publish_parameters": [
+        0.000271487,
+        0.000249864,
+        0.000262381,
+        0.000270398
+      ],
+      "runtime_build": [
+        3.576134653,
+        4.647091511,
+        3.529146399,
+        3.861811426
+      ],
+      "disk_save": [
+        0.746171591,
+        0.782514258,
+        0.716838324,
+        1.3342823560000001
+      ]
+    },
+    "mean_stage_seconds": {
+      "encode_database": 0.30974396425,
+      "public_setup": 0.00012194775,
+      "hint_columns": 1.0647154555,
+      "pack_preprocessing": 2.5274146217499998,
+      "publish_parameters": 0.0002635325,
+      "runtime_build": 3.90354599725,
+      "disk_save": 0.89495163225
+    },
+    "query_availability_screen_passed": true,
+    "combined_screen_passed": true
+  }
+]
