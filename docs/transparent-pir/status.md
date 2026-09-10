@@ -91,6 +91,11 @@ An opt-in implementation passes 86 operations tests, full repository checks and
 an isolated live reconnect test. It remains disabled; disk-backed probe logging
 must be separated from socket latency before attributing the remaining pauses.
 
+At 21:25 UTC, the [memory-backed worker probe](evidence/productionize-m1-forwarded-status-2026-09-10/ram-probe/README.md)
+replaced the worker's disk-logging probes after a successful status check. It
+measures socket duration inside the requesting thread and records scheduling
+gaps separately. The diagnostic load continues; raw correlation is pending.
+
 ## M1 owned control sessions: deployed 2026-09-10, 18:44 UTC
 
 Operations `85d76e8` is deployed with `control_sessions: true` and the dedicated
