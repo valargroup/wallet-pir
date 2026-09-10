@@ -22,7 +22,9 @@ complete M0 or supersede earlier gate results.
   25 minutes and 18 blocks. The [status-channel investigation](evidence/productionize-m1-status-channel-2026-09-10/README.md)
   records the failed run and deployed control-session correction `85d76e8`.
   Fresh `transparent-m1-sessions-rollout.service` began at 18:45:04 UTC on
-  2026-09-10; its canary was active at start capture.
+  2026-09-10; it failed after 96.8 minutes and 76 blocks on another status
+  timeout/503. [Status-stall diagnosis](evidence/productionize-m1-status-stall-2026-09-10/README.md)
+  is running under bounded load; no replacement acceptance is active.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.

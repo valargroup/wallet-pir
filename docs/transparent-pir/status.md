@@ -54,6 +54,19 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 persistent-session canary failed: observed 2026-09-10, 20:21 UTC
+
+The [status-stall evidence](evidence/productionize-m1-status-stall-2026-09-10/README.md)
+records failure after 96.8 minutes and 76 new blocks, with 82,406 exact queries.
+Two status attempts timed out despite an intact persistent master. Membership
+withdrawal caused HTTP 503; routing recovered about four seconds later. No fleet
+promotion occurred. The acceptance supervisor is terminal failed.
+
+Bounded diagnostic load and simultaneous local/remote status, HTTP, SSH and host
+pressure probes are running to separate worker handling from transport or host
+stalls. They cannot satisfy acceptance or trigger rollout. Production retains
+`85d76e8` control sessions and the `f2f351c` recent-01 worker while diagnosis runs.
+
 ## M1 owned control sessions: deployed 2026-09-10, 18:44 UTC
 
 Operations `85d76e8` is deployed with `control_sessions: true` and the dedicated

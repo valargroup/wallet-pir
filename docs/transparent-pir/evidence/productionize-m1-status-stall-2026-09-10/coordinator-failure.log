@@ -1,0 +1,174 @@
+Sep 10 20:21:30 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.021765, "exit_code": 0}
+Sep 10 20:21:30 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.019765, "exit_code": 0}
+Sep 10 20:21:30 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.021033, "exit_code": 0}
+Sep 10 20:21:30 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016815, "exit_code": 0}
+Sep 10 20:21:31 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017987, "exit_code": 0}
+Sep 10 20:21:31 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.020777, "exit_code": 0}
+Sep 10 20:21:31 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015095, "exit_code": 0}
+Sep 10 20:21:31 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.013484, "exit_code": 0}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.0202, "exit_code": 0}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.02032, "exit_code": 0}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014533, "exit_code": 0}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017386, "exit_code": 0}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_preparation", "worker": "transparent-pir-recent-01", "map_sha256": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873", "phase": "staging", "monotonic": 725203.397261077}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014711, "exit_code": 0}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.032132, "exit_code": 0}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_preparation", "worker": "transparent-pir-recent-01", "map_sha256": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873", "phase": "transferring", "monotonic": 725203.45363321}
+Sep 10 20:21:32 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003818, "exit_code": 0}
+Sep 10 20:21:33 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.511587, "exit_code": 0}
+Sep 10 20:21:33 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "rsync", "seconds": 0.490445, "exit_code": 0}
+Sep 10 20:21:33 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.019003, "exit_code": 0}
+Sep 10 20:21:33 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_preparation", "worker": "transparent-pir-recent-01", "map_sha256": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873", "phase": "warming", "monotonic": 725204.482064343}
+Sep 10 20:21:42 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 8.902695, "exit_code": 0}
+Sep 10 20:21:42 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.019939, "exit_code": 0}
+Sep 10 20:21:42 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_preparation", "worker": "transparent-pir-recent-01", "map_sha256": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873", "phase": "prepared", "monotonic": 725213.40673239, "expected": "87021c9a92107d155378ee402540824aaa93282600879e4504a857b7d0f15746", "seconds": 10.008391704992391}
+Sep 10 20:21:42 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01694, "exit_code": 0}
+Sep 10 20:21:43 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014542, "exit_code": 0}
+Sep 10 20:21:43 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014271, "exit_code": 0}
+Sep 10 20:21:47 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.018855, "exit_code": 0}
+Sep 10 20:21:47 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01553, "exit_code": 0}
+Sep 10 20:21:47 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_preparation", "worker": "transparent-pir-recent-01", "map_sha256": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873", "phase": "prepared", "monotonic": 725218.006774494, "expected": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873"}
+Sep 10 20:21:47 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01848, "exit_code": 0}
+Sep 10 20:21:47 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017752, "exit_code": 0}
+Sep 10 20:21:48 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.018337, "exit_code": 0}
+Sep 10 20:21:48 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017473, "exit_code": 0}
+Sep 10 20:21:49 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_control_transport_failed", "worker": "transparent-pir-recent-01", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_control_transport_failed", "worker": "transparent-pir-recent-01", "operation": "status", "attempt": 2, "error_type": "TimeoutError", "retry": false}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"event": "membership_status_failed", "worker": "transparent-pir-recent-01", "error_type": "TimeoutError"}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.171703, "exit_code": 0}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071711.4952714,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile.live-next","config_adapter":"caddyfile"}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071711.4981203,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071711.4983194,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071711.4981647,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc0001db2d0"}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071711.4990144,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc0001db2d0"}
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: Valid configuration
+Sep 10 20:21:51 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_membership", "worker": "transparent-pir-recent-01", "map_sha256": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873", "eligible": false}
+Sep 10 20:21:52 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_control_transport_failed", "worker": "transparent-pir-recent-01", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+Sep 10 20:21:52 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.212063, "exit_code": 0}
+Sep 10 20:21:52 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017252, "exit_code": 0}
+Sep 10 20:21:54 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_control_transport_failed", "worker": "transparent-pir-recent-01", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 1.306583, "exit_code": 0}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.238674, "exit_code": 0}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071715.711384,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile.live-next","config_adapter":"caddyfile"}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071715.7324948,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071715.7325401,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071715.732804,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc0002de690"}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"level":"info","ts":1789071715.7369633,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc0002de690"}
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: Valid configuration
+Sep 10 20:21:55 enhance-pir-coordinator-01 python3[2033708]: {"event": "worker_membership", "worker": "transparent-pir-recent-01", "map_sha256": "0d155a0b62d15d68f405e12e1e3a80c86f6a432f42b086977a355be9e153c873", "eligible": true}
+Sep 10 20:21:56 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.648858, "exit_code": 0}
+Sep 10 20:21:57 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015756, "exit_code": 0}
+Sep 10 20:21:57 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015504, "exit_code": 0}
+Sep 10 20:21:57 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.018452, "exit_code": 0}
+Sep 10 20:21:57 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015926, "exit_code": 0}
+Sep 10 20:21:58 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016869, "exit_code": 0}
+Sep 10 20:21:58 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015768, "exit_code": 0}
+Sep 10 20:21:58 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016602, "exit_code": 0}
+Sep 10 20:21:58 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015471, "exit_code": 0}
+Sep 10 20:21:59 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01594, "exit_code": 0}
+Sep 10 20:21:59 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016522, "exit_code": 0}
+Sep 10 20:21:59 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.020189, "exit_code": 0}
+Sep 10 20:21:59 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016747, "exit_code": 0}
+Sep 10 20:22:00 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.018316, "exit_code": 0}
+Sep 10 20:22:00 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016385, "exit_code": 0}
+Sep 10 20:22:00 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.019572, "exit_code": 0}
+Sep 10 20:22:00 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.018514, "exit_code": 0}
+Sep 10 20:22:01 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.023479, "exit_code": 0}
+Sep 10 20:22:01 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.020486, "exit_code": 0}
+Sep 10 20:22:01 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.023579, "exit_code": 0}
+Sep 10 20:22:01 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.043718, "exit_code": 0}
+Sep 10 20:22:02 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.02147, "exit_code": 0}
+Sep 10 20:22:02 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.020767, "exit_code": 0}
+Sep 10 20:22:03 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017202, "exit_code": 0}
+Sep 10 20:22:03 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.018341, "exit_code": 0}
+Sep 10 20:22:03 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.019443, "exit_code": 0}
+Sep 10 20:22:03 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01971, "exit_code": 0}
+Sep 10 20:22:04 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.022915, "exit_code": 0}
+Sep 10 20:22:04 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.021223, "exit_code": 0}
+Sep 10 20:22:04 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.022264, "exit_code": 0}
+Sep 10 20:22:04 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016442, "exit_code": 0}
+Sep 10 20:22:05 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.019161, "exit_code": 0}
+Sep 10 20:22:05 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.020819, "exit_code": 0}
+Sep 10 20:22:05 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017363, "exit_code": 0}
+Sep 10 20:22:05 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016669, "exit_code": 0}
+Sep 10 20:22:06 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01669, "exit_code": 0}
+Sep 10 20:22:06 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015803, "exit_code": 0}
+Sep 10 20:22:06 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014207, "exit_code": 0}
+Sep 10 20:22:06 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014634, "exit_code": 0}
+Sep 10 20:22:07 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015256, "exit_code": 0}
+Sep 10 20:22:07 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01448, "exit_code": 0}
+Sep 10 20:22:07 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015276, "exit_code": 0}
+Sep 10 20:22:07 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014519, "exit_code": 0}
+Sep 10 20:22:08 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01728, "exit_code": 0}
+Sep 10 20:22:08 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015055, "exit_code": 0}
+Sep 10 20:22:08 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014894, "exit_code": 0}
+Sep 10 20:22:08 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.013981, "exit_code": 0}
+Sep 10 20:22:09 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01594, "exit_code": 0}
+Sep 10 20:22:09 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01491, "exit_code": 0}
+Sep 10 20:22:10 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.017104, "exit_code": 0}
+Sep 10 20:22:10 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.016084, "exit_code": 0}
+Sep 10 20:22:10 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014247, "exit_code": 0}
+Sep 10 20:22:10 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015191, "exit_code": 0}
+Sep 10 20:22:11 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015285, "exit_code": 0}
+Sep 10 20:22:11 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.01484, "exit_code": 0}
+Sep 10 20:22:11 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015314, "exit_code": 0}
+Sep 10 20:22:11 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014938, "exit_code": 0}
+Sep 10 20:22:12 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015198, "exit_code": 0}
+Sep 10 20:22:12 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.013994, "exit_code": 0}
+Sep 10 20:22:12 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015176, "exit_code": 0}
+Sep 10 20:22:12 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015328, "exit_code": 0}
+Sep 10 20:22:13 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014221, "exit_code": 0}
+Sep 10 20:22:13 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014534, "exit_code": 0}
+Sep 10 20:22:13 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015275, "exit_code": 0}
+Sep 10 20:22:13 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014555, "exit_code": 0}
+Sep 10 20:22:14 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015473, "exit_code": 0}
+Sep 10 20:22:14 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.015673, "exit_code": 0}
+Sep 10 20:22:14 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.014825, "exit_code": 0}
+Sep 10 20:22:14 enhance-pir-coordinator-01 python3[2033708]: {"event": "fleet_command", "tool": "ssh", "seconds": 0.013657, "exit_code": 0}
+  UNIT                                             LOAD   ACTIVE SUB     DESCRIPTION
+  transparent-control-sessions.service             loaded active running Authenticated transparent worker control sessions
+  transparent-filter-server.service                loaded active running Zcash transparent activity filter service (BIP 158)
+● transparent-hardening-canary-soak-2.service      loaded failed failed  /usr/bin/python3 /opt/transparent-publisher-build/observe-transparent-hardening.py --worker transparent-pir-recent-01 --binary-sha256 f713d3afd8af28f345341333b6208bcb05d154a87673b053556ac641558d385d --query-binary /opt/transparent-publisher-build/hardening/artifacts/soak-query --out /opt/transparent-publisher-build/hardening-canary-soak-2
+● transparent-hardening-canary-soak-3.service      loaded failed failed  /usr/bin/python3 /opt/transparent-publisher-build/observe-transparent-hardening.py --worker transparent-pir-recent-01 --binary-sha256 f713d3afd8af28f345341333b6208bcb05d154a87673b053556ac641558d385d --query-binary /opt/transparent-publisher-build/hardening/artifacts/soak-query --out /opt/transparent-publisher-build/hardening-canary-soak-3
+● transparent-hardening-canary-soak.service        loaded failed failed  /usr/bin/python3 /opt/transparent-publisher-build/observe-transparent-hardening.py --worker transparent-pir-recent-01 --binary-sha256 f713d3afd8af28f345341333b6208bcb05d154a87673b053556ac641558d385d --query-binary /opt/transparent-publisher-build/hardening/artifacts/soak-query --out /opt/transparent-publisher-build/hardening-canary-soak-1
+● transparent-m1-control-postreorg-rollout.service loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --artifacts /opt/transparent-publisher-build/querywait-20260909/artifacts --source-sha f2f351c --observe-installed-canary --out /opt/transparent-publisher-build/control-20260910/postreorg-rollout
+● transparent-m1-control-rollout.service           loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --artifacts /opt/transparent-publisher-build/querywait-20260909/artifacts --source-sha f2f351c --observe-installed-canary --out /opt/transparent-publisher-build/control-20260910/rollout
+● transparent-m1-persistent-latency-v2.service     loaded failed failed  /usr/bin/python3 /tmp/m1-persistent-latency.py
+● transparent-m1-persistent-latency.service        loaded failed failed  /usr/bin/python3 /tmp/m1-persistent-latency.py
+● transparent-m1-qualified-rollout.service         loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --artifacts /opt/transparent-publisher-build/readbatch-20260909/artifacts --source-sha d778c62 --out /opt/transparent-publisher-build/readbatch-20260909/rollout
+● transparent-m1-querywait-artifacts.service       loaded failed failed  /root/.cargo/bin/cargo build --release -p transparent-shard-server -p transparent-shard-control -p transparent-soak-query
+● transparent-m1-querywait-rollout.service         loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --artifacts /opt/transparent-publisher-build/querywait-20260909/artifacts --source-sha f2f351c --out /opt/transparent-publisher-build/querywait-20260909/rollout
+● transparent-m1-sessions-rollout.service          loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --artifacts /opt/transparent-publisher-build/querywait-20260909/artifacts --source-sha f2f351c --observe-installed-canary --out /opt/transparent-publisher-build/sessions-20260910/rollout
+● transparent-m1-stage-fix-build.service           loaded failed failed  /root/.cargo/bin/cargo test --release -p transparent-shard-server --test revisions_and_cache --no-run
+● transparent-managed-hardening-rollout-2.service  loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --artifacts /opt/transparent-publisher-build/d5fea93/artifacts --source-sha d5fea93 --out /opt/transparent-publisher-build/managed-hardening-rollout-2
+● transparent-managed-hardening-rollout-3.service  loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --observe-installed-canary --artifacts /opt/transparent-publisher-build/d5fea93/artifacts --source-sha d5fea93 --out /opt/transparent-publisher-build/managed-hardening-rollout-3
+● transparent-managed-hardening-rollout.service    loaded failed failed  /usr/bin/python3 /opt/transparent-publisher/run-transparent-hardening-rollout.py --artifacts /opt/transparent-publisher-build/1f82093/artifacts --source-sha 1f82093 --out /opt/transparent-publisher-build/managed-hardening-rollout-1
+  transparent-publish-controller.service           loaded active running Continuous transparent PIR publication
+  transparent-replica-reconciler.service           loaded active running Transparent PIR replica catch-up
+
+Legend: LOAD   → Reflects whether the unit definition was properly loaded.
+        ACTIVE → The high-level unit activation state, i.e. generalization of SUB.
+        SUB    → The low-level unit activation state, values depend on unit type.
+
+19 loaded units listed. Pass --all to see loaded but inactive units, too.
+To show all installed unit files use 'systemctl list-unit-files'.
+    with urllib.request.urlopen(url, timeout=8) as response:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 521, in open
+    response = meth(req, response)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 630, in http_response
+    response = self.parent.error(
+               ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 559, in error
+    return self._call_chain(*args)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 639, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 503: Service Unavailable

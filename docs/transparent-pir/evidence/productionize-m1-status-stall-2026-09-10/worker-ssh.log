@@ -1,0 +1,4 @@
+2026-09-10T20:21:42.725644+00:00 transparent-pir-recent-01 systemd-logind[913]: Session 79162 logged out. Waiting for processes to exit.
+2026-09-10T20:21:42.727493+00:00 transparent-pir-recent-01 systemd-logind[913]: Removed session 79162.
+2026-09-10T20:21:55.639292+00:00 transparent-pir-recent-01 systemd-logind[913]: Session 79075 logged out. Waiting for processes to exit.
+2026-09-10T20:21:55.644105+00:00 transparent-pir-recent-01 systemd-logind[913]: Removed session 79075.
