@@ -54,6 +54,24 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 owned control sessions: deployed 2026-09-10, 18:44 UTC
+
+Operations `85d76e8` is deployed with `control_sessions: true` and the dedicated
+`transparent-control-sessions.service`. All six connections attested warm, valid
+status before enabling; both public metadata endpoints returned HTTP 200 after
+the switch. Worker recent-01 remains `f2f351c`; no fleet promotion has occurred.
+The [status-channel investigation](evidence/productionize-m1-status-channel-2026-09-10/README.md)
+preserves the preceding failed 25-minute/18-block canary, direct-versus-persistent
+measurements and the live cancellation/reconnect tests. Full `make check` passed
+(587 Rust tests, two ignored), as did all 81 targeted operations tests.
+
+A fresh loaded gate started at **18:45:04 UTC** under
+`transparent-m1-sessions-rollout.service`, observed active in canary observation.
+Its outputs are `/opt/transparent-publisher-build/sessions-20260910/rollout` on
+the coordinator. Starting this run is not acceptance: the full duration and block
+count, gated rollout and all-worker observation remain required. Prior samples
+do not count. The supervisor stops on failure.
+
 ## M1 corrected control transport: 2026-09-10, 04:22 UTC
 
 Operations commit `7fedd79` isolates control SSH connections and retries a

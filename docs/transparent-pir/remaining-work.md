@@ -18,8 +18,11 @@ complete M0 or supersede earlier gate results.
   The [503 correction](evidence/productionize-m1-publication-503-2026-09-10/README.md)
   preserves the failed 67-minute/51-block run and records operations fix `7fedd79`.
   The first corrected run was interrupted by a real reorg and is not accepted.
-  The fresh gate on worker `f2f351c` began 2026-09-10 04:26:57 UTC under
-  `transparent-m1-control-postreorg-rollout.service`, active at its start capture.
+  The subsequent gate on worker `f2f351c` failed at 04:52:03 UTC after
+  25 minutes and 18 blocks. The [status-channel investigation](evidence/productionize-m1-status-channel-2026-09-10/README.md)
+  records the failed run and deployed control-session correction `85d76e8`.
+  Fresh `transparent-m1-sessions-rollout.service` began at 18:45:04 UTC on
+  2026-09-10; its canary was active at start capture.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.

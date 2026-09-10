@@ -1,0 +1,20 @@
+{
+  "http_ready": {
+    "samples": 60,
+    "median": 0.002839464519638568,
+    "maximum": 0.023269993951544166,
+    "errors": 0
+  },
+  "persistent_status": {
+    "samples": 60,
+    "median": 0.08398564404342324,
+    "maximum": 0.20619959000032395,
+    "errors": 0
+  },
+  "ssh_status": {
+    "samples": 60,
+    "median": 0.40823805902618915,
+    "maximum": 1.3308246239321306,
+    "errors": 0
+  }
+}

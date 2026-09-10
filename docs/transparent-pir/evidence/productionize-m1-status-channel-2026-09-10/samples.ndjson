@@ -1,0 +1,270 @@
+{"utc": "2026-09-10T18:16:11.657116+00:00", "kind": "ssh_status", "socket_seconds": 0.0007839330064598471, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4637296909932047}
+{"utc": "2026-09-10T18:16:11.657654+00:00", "kind": "ssh_noop", "total_seconds": 0.37536324898246676}
+{"utc": "2026-09-10T18:16:11.657976+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.023131784051656723}
+{"utc": "2026-09-10T18:16:13.122094+00:00", "kind": "ssh_status", "socket_seconds": 0.0009425590105820447, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4102316680364311}
+{"utc": "2026-09-10T18:16:13.122635+00:00", "kind": "ssh_noop", "total_seconds": 0.34080997994169593}
+{"utc": "2026-09-10T18:16:13.122990+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.008070995099842548}
+{"utc": "2026-09-10T18:16:14.533543+00:00", "kind": "ssh_status", "socket_seconds": 0.0008573770173825324, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4307077109115198}
+{"utc": "2026-09-10T18:16:14.534105+00:00", "kind": "ssh_noop", "total_seconds": 0.3595277740387246}
+{"utc": "2026-09-10T18:16:14.534479+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0030250089475885034}
+{"utc": "2026-09-10T18:16:15.965497+00:00", "kind": "ssh_status", "socket_seconds": 0.000981392979156226, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.40582449710927904}
+{"utc": "2026-09-10T18:16:15.966088+00:00", "kind": "ssh_noop", "total_seconds": 0.34022535395342857}
+{"utc": "2026-09-10T18:16:15.966362+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.002684229053556919}
+{"utc": "2026-09-10T18:16:17.372530+00:00", "kind": "ssh_status", "socket_seconds": 0.0008067759918048978, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.38680007797665894}
+{"utc": "2026-09-10T18:16:17.373040+00:00", "kind": "ssh_noop", "total_seconds": 0.3235621399944648}
+{"utc": "2026-09-10T18:16:17.373432+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0024219369515776634}
+{"utc": "2026-09-10T18:16:18.760569+00:00", "kind": "ssh_status", "socket_seconds": 0.0007818599988240749, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4044223700184375}
+{"utc": "2026-09-10T18:16:18.761165+00:00", "kind": "ssh_noop", "total_seconds": 0.33619254804216325}
+{"utc": "2026-09-10T18:16:18.761522+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0029150790069252253}
+{"utc": "2026-09-10T18:16:20.166240+00:00", "kind": "ssh_status", "socket_seconds": 0.0008134550007525831, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.40619786106981337}
+{"utc": "2026-09-10T18:16:20.166879+00:00", "kind": "ssh_noop", "total_seconds": 0.3351271749706939}
+{"utc": "2026-09-10T18:16:20.167248+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0023325580405071378}
+{"utc": "2026-09-10T18:16:21.573632+00:00", "kind": "ssh_status", "socket_seconds": 0.0009804480068851262, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.3721019170479849}
+{"utc": "2026-09-10T18:16:21.574140+00:00", "kind": "ssh_noop", "total_seconds": 0.30721418000757694}
+{"utc": "2026-09-10T18:16:21.574429+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0023841200163587928}
+{"utc": "2026-09-10T18:16:22.946975+00:00", "kind": "ssh_status", "socket_seconds": 0.0021254909806884825, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.38899475999642164}
+{"utc": "2026-09-10T18:16:22.947508+00:00", "kind": "ssh_noop", "total_seconds": 0.3173028969904408}
+{"utc": "2026-09-10T18:16:22.947811+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0025604700203984976}
+{"utc": "2026-09-10T18:16:24.337175+00:00", "kind": "ssh_status", "socket_seconds": 0.0007906979881227016, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4113607440376654}
+{"utc": "2026-09-10T18:16:24.337656+00:00", "kind": "ssh_noop", "total_seconds": 0.35594862303696573}
+{"utc": "2026-09-10T18:16:24.337981+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0024459990672767162}
+{"utc": "2026-09-10T18:16:25.749795+00:00", "kind": "ssh_status", "socket_seconds": 0.0007874029979575425, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4320978309260681}
+{"utc": "2026-09-10T18:16:25.750376+00:00", "kind": "ssh_noop", "total_seconds": 0.3904358260333538}
+{"utc": "2026-09-10T18:16:25.750721+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.002653219038620591}
+{"utc": "2026-09-10T18:16:27.183169+00:00", "kind": "ssh_status", "socket_seconds": 0.0009022819867823273, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.45606279489584267}
+{"utc": "2026-09-10T18:16:27.183748+00:00", "kind": "ssh_noop", "total_seconds": 0.39104417304042727}
+{"utc": "2026-09-10T18:16:27.184085+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.004462734912522137}
+{"utc": "2026-09-10T18:16:28.640440+00:00", "kind": "ssh_status", "socket_seconds": 0.0008964250155258924, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.40492540795821697}
+{"utc": "2026-09-10T18:16:28.640988+00:00", "kind": "ssh_noop", "total_seconds": 0.3405926340492442}
+{"utc": "2026-09-10T18:16:28.641288+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0024745099944993854}
+{"utc": "2026-09-10T18:16:30.046611+00:00", "kind": "ssh_status", "socket_seconds": 0.0009245940018445253, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.40857416996732354}
+{"utc": "2026-09-10T18:16:30.047232+00:00", "kind": "ssh_noop", "total_seconds": 0.33715703105553985}
+{"utc": "2026-09-10T18:16:30.047561+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.003033758024685085}
+{"utc": "2026-09-10T18:16:31.456406+00:00", "kind": "ssh_status", "socket_seconds": 0.0014441490056924522, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.39670623396523297}
+{"utc": "2026-09-10T18:16:31.456909+00:00", "kind": "ssh_noop", "total_seconds": 0.3315622969530523}
+{"utc": "2026-09-10T18:16:31.457226+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.002415435970760882}
+{"utc": "2026-09-10T18:16:32.854328+00:00", "kind": "ssh_status", "socket_seconds": 0.0007630680047441274, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4104101599659771}
+{"utc": "2026-09-10T18:16:32.854829+00:00", "kind": "ssh_noop", "total_seconds": 0.3586038639768958}
+{"utc": "2026-09-10T18:16:32.855113+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0021549660013988614}
+{"utc": "2026-09-10T18:16:34.265966+00:00", "kind": "ssh_status", "socket_seconds": 0.0007504639797843993, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.40487859200220555}
+{"utc": "2026-09-10T18:16:34.266511+00:00", "kind": "ssh_noop", "total_seconds": 0.32976478000637144}
+{"utc": "2026-09-10T18:16:34.266812+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.002168954932130873}
+{"utc": "2026-09-10T18:16:35.672060+00:00", "kind": "ssh_status", "socket_seconds": 0.0009017459815368056, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4217782870400697}
+{"utc": "2026-09-10T18:16:35.672649+00:00", "kind": "ssh_noop", "total_seconds": 0.33464876702055335}
+{"utc": "2026-09-10T18:16:35.672998+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0028605490224435925}
+{"utc": "2026-09-10T18:16:37.095060+00:00", "kind": "ssh_status", "socket_seconds": 0.0010067060065921396, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.41150459204800427}
+{"utc": "2026-09-10T18:16:37.095589+00:00", "kind": "ssh_noop", "total_seconds": 0.32203823793679476}
+{"utc": "2026-09-10T18:16:37.095908+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0023897039936855435}
+{"utc": "2026-09-10T18:16:38.507805+00:00", "kind": "ssh_status", "socket_seconds": 0.0008895710052456707, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.42871083796489984}
+{"utc": "2026-09-10T18:16:38.508400+00:00", "kind": "ssh_noop", "total_seconds": 0.3343387059867382}
+{"utc": "2026-09-10T18:16:38.508734+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.002805336029268801}
+{"utc": "2026-09-10T18:16:39.937747+00:00", "kind": "ssh_status", "socket_seconds": 0.0008768060069996864, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.39246278908103704}
+{"utc": "2026-09-10T18:16:39.938286+00:00", "kind": "ssh_noop", "total_seconds": 0.32299610297195613}
+{"utc": "2026-09-10T18:16:39.938614+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0023869749857112765}
+{"utc": "2026-09-10T18:16:41.331423+00:00", "kind": "ssh_status", "socket_seconds": 0.0007643350108992308, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.388445885037072}
+{"utc": "2026-09-10T18:16:41.331977+00:00", "kind": "ssh_noop", "total_seconds": 0.3238378370879218}
+{"utc": "2026-09-10T18:16:41.332374+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0024750150041654706}
+{"utc": "2026-09-10T18:16:42.721156+00:00", "kind": "ssh_status", "socket_seconds": 0.0007959629874676466, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.3688562929164618}
+{"utc": "2026-09-10T18:16:42.721753+00:00", "kind": "ssh_noop", "total_seconds": 0.31813021597918123}
+{"utc": "2026-09-10T18:16:42.722095+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0022669159807264805}
+{"utc": "2026-09-10T18:16:44.091250+00:00", "kind": "ssh_status", "socket_seconds": 0.0007077810005284846, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.37782017898280174}
+{"utc": "2026-09-10T18:16:44.091697+00:00", "kind": "ssh_noop", "total_seconds": 0.3128319520037621}
+{"utc": "2026-09-10T18:16:44.092015+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0033281910000368953}
+{"utc": "2026-09-10T18:16:45.470265+00:00", "kind": "ssh_status", "socket_seconds": 0.0009283849794883281, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.40296542295254767}
+{"utc": "2026-09-10T18:16:45.470758+00:00", "kind": "ssh_noop", "total_seconds": 0.34056174801662564}
+{"utc": "2026-09-10T18:16:45.471150+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0023250069934874773}
+{"utc": "2026-09-10T18:16:46.874461+00:00", "kind": "ssh_status", "socket_seconds": 0.0009988030069507658, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.363818340934813}
+{"utc": "2026-09-10T18:16:46.875076+00:00", "kind": "ssh_noop", "total_seconds": 0.3432896500453353}
+{"utc": "2026-09-10T18:16:46.875493+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.002993636066094041}
+{"utc": "2026-09-10T18:16:48.239073+00:00", "kind": "ssh_status", "socket_seconds": 0.0007158980006352067, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.3908400870859623}
+{"utc": "2026-09-10T18:16:48.239552+00:00", "kind": "ssh_noop", "total_seconds": 0.32561779697425663}
+{"utc": "2026-09-10T18:16:48.239864+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0023323590867221355}
+{"utc": "2026-09-10T18:16:49.631471+00:00", "kind": "ssh_status", "socket_seconds": 0.0007007420063018799, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.39723461808171123}
+{"utc": "2026-09-10T18:16:49.632073+00:00", "kind": "ssh_noop", "total_seconds": 0.33433264098130167}
+{"utc": "2026-09-10T18:16:49.632480+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.004620939027518034}
+{"utc": "2026-09-10T18:16:51.029919+00:00", "kind": "ssh_status", "socket_seconds": 0.0009032180241774768, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.39198385598137975}
+{"utc": "2026-09-10T18:16:51.030430+00:00", "kind": "ssh_noop", "total_seconds": 0.313891981029883}
+{"utc": "2026-09-10T18:16:51.030746+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0025243950076401234}
+{"utc": "2026-09-10T18:16:52.423170+00:00", "kind": "ssh_status", "socket_seconds": 0.0008787359984125942, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.5478318140376359}
+{"utc": "2026-09-10T18:16:52.423914+00:00", "kind": "ssh_noop", "total_seconds": 0.47678125801030546}
+{"utc": "2026-09-10T18:16:52.424475+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0024726520059630275}
+{"utc": "2026-09-10T18:16:53.972223+00:00", "kind": "ssh_status", "socket_seconds": 0.0018659610068425536, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.5522508900612593}
+{"utc": "2026-09-10T18:16:53.972772+00:00", "kind": "ssh_noop", "total_seconds": 0.43345322099048644}
+{"utc": "2026-09-10T18:16:53.973098+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.001901256968267262}
+{"utc": "2026-09-10T18:16:55.525667+00:00", "kind": "ssh_status", "socket_seconds": 0.0008401710074394941, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.51766091294121}
+{"utc": "2026-09-10T18:16:55.526203+00:00", "kind": "ssh_noop", "total_seconds": 0.4467312670312822}
+{"utc": "2026-09-10T18:16:55.526514+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.0022813279647380114}
+{"utc": "2026-09-10T18:16:57.044545+00:00", "kind": "ssh_status", "socket_seconds": 0.0030441829876508564, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.4887674329802394}
+{"utc": "2026-09-10T18:16:57.045101+00:00", "kind": "ssh_noop", "total_seconds": 0.41026066802442074}
+{"utc": "2026-09-10T18:16:57.045378+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.004979518009349704}
+{"utc": "2026-09-10T18:16:58.534525+00:00", "kind": "ssh_status", "socket_seconds": 0.0006249200087040663, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.5066690020030364}
+{"utc": "2026-09-10T18:16:58.535075+00:00", "kind": "ssh_noop", "total_seconds": 0.3957872421015054}
+{"utc": "2026-09-10T18:16:58.535363+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.004958992009051144}
+{"utc": "2026-09-10T18:17:00.042397+00:00", "kind": "ssh_status", "socket_seconds": 0.0013292280200403184, "ok": true, "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.6809581849956885}
+{"utc": "2026-09-10T18:17:00.042961+00:00", "kind": "ssh_noop", "total_seconds": 0.5898542739450932}
+{"utc": "2026-09-10T18:17:00.043308+00:00", "kind": "http_ready", "warm": true, "map": "d291ed4a91c0fd4ae5bb77920a60d997f7d8d86bd13c36046b2e338599154c84", "total_seconds": 0.023937942925840616}
+{"utc": "2026-09-10T18:17:01.724592+00:00", "kind": "ssh_status", "socket_seconds": 0.0008658800215926021, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.44844767602626234}
+{"utc": "2026-09-10T18:17:01.725012+00:00", "kind": "ssh_noop", "total_seconds": 0.8409635949647054}
+{"utc": "2026-09-10T18:17:01.725311+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0025578379863873124}
+{"utc": "2026-09-10T18:17:03.567215+00:00", "kind": "ssh_status", "socket_seconds": 0.0014465299900621176, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.49941746704280376}
+{"utc": "2026-09-10T18:17:03.567775+00:00", "kind": "ssh_noop", "total_seconds": 0.4031916189705953}
+{"utc": "2026-09-10T18:17:03.568091+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0024726740084588528}
+{"utc": "2026-09-10T18:17:05.067877+00:00", "kind": "ssh_status", "socket_seconds": 0.0057077049859799445, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.5402070169802755}
+{"utc": "2026-09-10T18:17:05.068495+00:00", "kind": "ssh_noop", "total_seconds": 0.43466986692510545}
+{"utc": "2026-09-10T18:17:05.068795+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0037011229433119297}
+{"utc": "2026-09-10T18:17:06.609368+00:00", "kind": "ssh_status", "socket_seconds": 0.0014363779919221997, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.5194494519382715}
+{"utc": "2026-09-10T18:17:06.610017+00:00", "kind": "ssh_noop", "total_seconds": 0.4431064199889079}
+{"utc": "2026-09-10T18:17:06.610349+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0026782889617606997}
+{"utc": "2026-09-10T18:17:08.130059+00:00", "kind": "ssh_status", "socket_seconds": 0.0008696140139363706, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4246294819749892}
+{"utc": "2026-09-10T18:17:08.130615+00:00", "kind": "ssh_noop", "total_seconds": 0.3530511469580233}
+{"utc": "2026-09-10T18:17:08.130941+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002490204991772771}
+{"utc": "2026-09-10T18:17:09.555959+00:00", "kind": "ssh_status", "socket_seconds": 0.0007463810034096241, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.44502375600859523}
+{"utc": "2026-09-10T18:17:09.556587+00:00", "kind": "ssh_noop", "total_seconds": 0.3658404329326004}
+{"utc": "2026-09-10T18:17:09.556915+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0026521789841353893}
+{"utc": "2026-09-10T18:17:11.002199+00:00", "kind": "ssh_status", "socket_seconds": 0.000863247987581417, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3931321039563045}
+{"utc": "2026-09-10T18:17:11.002696+00:00", "kind": "ssh_noop", "total_seconds": 0.32106525695417076}
+{"utc": "2026-09-10T18:17:11.003008+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002130648004822433}
+{"utc": "2026-09-10T18:17:12.396080+00:00", "kind": "ssh_status", "socket_seconds": 0.0007414240099024028, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3932968539884314}
+{"utc": "2026-09-10T18:17:12.396643+00:00", "kind": "ssh_noop", "total_seconds": 0.33929772197734565}
+{"utc": "2026-09-10T18:17:12.396961+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0026306930230930448}
+{"utc": "2026-09-10T18:17:13.790606+00:00", "kind": "ssh_status", "socket_seconds": 0.0008939729887060821, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39483129791915417}
+{"utc": "2026-09-10T18:17:13.791102+00:00", "kind": "ssh_noop", "total_seconds": 0.3276745369657874}
+{"utc": "2026-09-10T18:17:13.791385+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0032491290476173162}
+{"utc": "2026-09-10T18:17:15.186659+00:00", "kind": "ssh_status", "socket_seconds": 0.0008686330111231655, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4187417870853096}
+{"utc": "2026-09-10T18:17:15.187153+00:00", "kind": "ssh_noop", "total_seconds": 0.339005739078857}
+{"utc": "2026-09-10T18:17:15.187488+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.00269599596504122}
+{"utc": "2026-09-10T18:17:16.606615+00:00", "kind": "ssh_status", "socket_seconds": 0.0009042360179591924, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39938556298147887}
+{"utc": "2026-09-10T18:17:16.607213+00:00", "kind": "ssh_noop", "total_seconds": 0.33151051902677864}
+{"utc": "2026-09-10T18:17:16.607499+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002443428966216743}
+{"utc": "2026-09-10T18:17:18.007254+00:00", "kind": "ssh_status", "socket_seconds": 0.0010278900153934956, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39472592307720333}
+{"utc": "2026-09-10T18:17:18.007777+00:00", "kind": "ssh_noop", "total_seconds": 0.3199688659515232}
+{"utc": "2026-09-10T18:17:18.008095+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0024752849712967873}
+{"utc": "2026-09-10T18:17:19.403201+00:00", "kind": "ssh_status", "socket_seconds": 0.0018889240163844079, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39467457204591483}
+{"utc": "2026-09-10T18:17:19.403736+00:00", "kind": "ssh_noop", "total_seconds": 0.3236893250141293}
+{"utc": "2026-09-10T18:17:19.404053+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0020216680131852627}
+{"utc": "2026-09-10T18:17:20.799120+00:00", "kind": "ssh_status", "socket_seconds": 0.0008066890004556626, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4040853420738131}
+{"utc": "2026-09-10T18:17:20.799655+00:00", "kind": "ssh_noop", "total_seconds": 0.33081597194541246}
+{"utc": "2026-09-10T18:17:20.799976+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002432254026643932}
+{"utc": "2026-09-10T18:17:22.204429+00:00", "kind": "ssh_status", "socket_seconds": 0.0009926430066116154, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39544481690973043}
+{"utc": "2026-09-10T18:17:22.205006+00:00", "kind": "ssh_noop", "total_seconds": 0.33005323400720954}
+{"utc": "2026-09-10T18:17:22.205395+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002267598989419639}
+{"utc": "2026-09-10T18:17:23.601118+00:00", "kind": "ssh_status", "socket_seconds": 0.0009120840113610029, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3797718459973112}
+{"utc": "2026-09-10T18:17:23.601647+00:00", "kind": "ssh_noop", "total_seconds": 0.31559079489670694}
+{"utc": "2026-09-10T18:17:23.601980+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0023824520176276565}
+{"utc": "2026-09-10T18:17:24.982161+00:00", "kind": "ssh_status", "socket_seconds": 0.0013814490230288357, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.43034969398286194}
+{"utc": "2026-09-10T18:17:24.982763+00:00", "kind": "ssh_noop", "total_seconds": 0.3449418769450858}
+{"utc": "2026-09-10T18:17:24.983163+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0025130619760602713}
+{"utc": "2026-09-10T18:17:26.413756+00:00", "kind": "ssh_status", "socket_seconds": 0.0008520350093021989, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.42367081402335316}
+{"utc": "2026-09-10T18:17:26.414339+00:00", "kind": "ssh_noop", "total_seconds": 0.3590893460204825}
+{"utc": "2026-09-10T18:17:26.414682+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002784683951176703}
+{"utc": "2026-09-10T18:17:27.838672+00:00", "kind": "ssh_status", "socket_seconds": 0.0007484750240109861, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4001329200109467}
+{"utc": "2026-09-10T18:17:27.839235+00:00", "kind": "ssh_noop", "total_seconds": 0.33365901303477585}
+{"utc": "2026-09-10T18:17:27.839650+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0031127820257097483}
+{"utc": "2026-09-10T18:17:29.240111+00:00", "kind": "ssh_status", "socket_seconds": 0.0007129879959393293, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.38725503196474165}
+{"utc": "2026-09-10T18:17:29.240821+00:00", "kind": "ssh_noop", "total_seconds": 0.32171764003578573}
+{"utc": "2026-09-10T18:17:29.241246+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0026026859413832426}
+{"utc": "2026-09-10T18:17:30.628043+00:00", "kind": "ssh_status", "socket_seconds": 0.0009022789890877903, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3916119949426502}
+{"utc": "2026-09-10T18:17:30.628551+00:00", "kind": "ssh_noop", "total_seconds": 0.32492109306622297}
+{"utc": "2026-09-10T18:17:30.628841+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0022061490453779697}
+{"utc": "2026-09-10T18:17:32.020112+00:00", "kind": "ssh_status", "socket_seconds": 0.0009090919920708984, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3897728930460289}
+{"utc": "2026-09-10T18:17:32.020743+00:00", "kind": "ssh_noop", "total_seconds": 0.31891750800423324}
+{"utc": "2026-09-10T18:17:32.021067+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0024682380026206374}
+{"utc": "2026-09-10T18:17:33.411100+00:00", "kind": "ssh_status", "socket_seconds": 0.0008911769837141037, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3931066810619086}
+{"utc": "2026-09-10T18:17:33.411550+00:00", "kind": "ssh_noop", "total_seconds": 0.33433431503362954}
+{"utc": "2026-09-10T18:17:33.411821+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002272479934617877}
+{"utc": "2026-09-10T18:17:34.805453+00:00", "kind": "ssh_status", "socket_seconds": 0.0007055460009723902, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4089258270105347}
+{"utc": "2026-09-10T18:17:34.806093+00:00", "kind": "ssh_noop", "total_seconds": 0.3463967239949852}
+{"utc": "2026-09-10T18:17:34.806377+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002396533964201808}
+{"utc": "2026-09-10T18:17:36.215614+00:00", "kind": "ssh_status", "socket_seconds": 0.0007333959802053869, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3795814869226888}
+{"utc": "2026-09-10T18:17:36.216166+00:00", "kind": "ssh_noop", "total_seconds": 0.3149290879955515}
+{"utc": "2026-09-10T18:17:36.216470+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0020056230714544654}
+{"utc": "2026-09-10T18:17:37.596400+00:00", "kind": "ssh_status", "socket_seconds": 0.0007603289850521833, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3883057329803705}
+{"utc": "2026-09-10T18:17:37.597013+00:00", "kind": "ssh_noop", "total_seconds": 0.3323953530052677}
+{"utc": "2026-09-10T18:17:37.597366+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0028471910627558827}
+{"utc": "2026-09-10T18:17:38.985962+00:00", "kind": "ssh_status", "socket_seconds": 0.000994328991509974, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.48303767503239214}
+{"utc": "2026-09-10T18:17:38.986508+00:00", "kind": "ssh_noop", "total_seconds": 0.4257376230088994}
+{"utc": "2026-09-10T18:17:38.986774+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.008291519014164805}
+{"utc": "2026-09-10T18:17:40.470236+00:00", "kind": "ssh_status", "socket_seconds": 0.002191689010942355, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4600102900294587}
+{"utc": "2026-09-10T18:17:40.470726+00:00", "kind": "ssh_noop", "total_seconds": 0.3833429680671543}
+{"utc": "2026-09-10T18:17:40.471014+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0025074019795283675}
+{"utc": "2026-09-10T18:17:41.931452+00:00", "kind": "ssh_status", "socket_seconds": 0.0009728719887789339, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3875946889165789}
+{"utc": "2026-09-10T18:17:41.931878+00:00", "kind": "ssh_noop", "total_seconds": 0.3166627499740571}
+{"utc": "2026-09-10T18:17:41.932184+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0024361469550058246}
+{"utc": "2026-09-10T18:17:43.320044+00:00", "kind": "ssh_status", "socket_seconds": 0.0008695769938640296, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3875118780415505}
+{"utc": "2026-09-10T18:17:43.320961+00:00", "kind": "ssh_noop", "total_seconds": 0.336901969043538}
+{"utc": "2026-09-10T18:17:43.321307+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.001994833000935614}
+{"utc": "2026-09-10T18:17:44.708184+00:00", "kind": "ssh_status", "socket_seconds": 0.0012519389856606722, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.37611935508903116}
+{"utc": "2026-09-10T18:17:44.708798+00:00", "kind": "ssh_noop", "total_seconds": 0.32184183702338487}
+{"utc": "2026-09-10T18:17:44.709290+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0022779779974371195}
+{"utc": "2026-09-10T18:17:46.085554+00:00", "kind": "ssh_status", "socket_seconds": 0.0008578110137023032, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39392723399214447}
+{"utc": "2026-09-10T18:17:46.086568+00:00", "kind": "ssh_noop", "total_seconds": 0.3275398080004379}
+{"utc": "2026-09-10T18:17:46.087169+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002092581009492278}
+{"utc": "2026-09-10T18:17:47.480716+00:00", "kind": "ssh_status", "socket_seconds": 0.004220478003844619, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 1.09684377303347}
+{"utc": "2026-09-10T18:17:47.481244+00:00", "kind": "ssh_noop", "total_seconds": 1.1044123489409685}
+{"utc": "2026-09-10T18:17:47.481559+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0026001689257100224}
+{"utc": "2026-09-10T18:17:49.586867+00:00", "kind": "ssh_status", "socket_seconds": 0.0007968819991219789, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39329542394261807}
+{"utc": "2026-09-10T18:17:49.587350+00:00", "kind": "ssh_noop", "total_seconds": 0.3287896910915151}
+{"utc": "2026-09-10T18:17:49.587627+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0023348330287262797}
+{"utc": "2026-09-10T18:17:50.981382+00:00", "kind": "ssh_status", "socket_seconds": 0.0008662530162837356, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.38032082200516015}
+{"utc": "2026-09-10T18:17:50.981890+00:00", "kind": "ssh_noop", "total_seconds": 0.3169870860874653}
+{"utc": "2026-09-10T18:17:50.982205+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.00196058489382267}
+{"utc": "2026-09-10T18:17:52.362949+00:00", "kind": "ssh_status", "socket_seconds": 0.0011846869892906398, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39117690292187035}
+{"utc": "2026-09-10T18:17:52.363546+00:00", "kind": "ssh_noop", "total_seconds": 0.3316241839202121}
+{"utc": "2026-09-10T18:17:52.363859+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0024584229104220867}
+{"utc": "2026-09-10T18:17:53.755326+00:00", "kind": "ssh_status", "socket_seconds": 0.0010539990034885705, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4581587070133537}
+{"utc": "2026-09-10T18:17:53.755774+00:00", "kind": "ssh_noop", "total_seconds": 0.3882883049082011}
+{"utc": "2026-09-10T18:17:53.756104+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002793333027511835}
+{"utc": "2026-09-10T18:17:55.214705+00:00", "kind": "ssh_status", "socket_seconds": 0.0008680509927216917, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.48724827298428863}
+{"utc": "2026-09-10T18:17:55.215223+00:00", "kind": "ssh_noop", "total_seconds": 0.40791002300102264}
+{"utc": "2026-09-10T18:17:55.215529+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002451780019327998}
+{"utc": "2026-09-10T18:17:56.703188+00:00", "kind": "ssh_status", "socket_seconds": 0.0009795980004128069, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.40006504498887807}
+{"utc": "2026-09-10T18:17:56.703795+00:00", "kind": "ssh_noop", "total_seconds": 0.32892503403127193}
+{"utc": "2026-09-10T18:17:56.704117+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0025016089202836156}
+{"utc": "2026-09-10T18:17:58.104498+00:00", "kind": "ssh_status", "socket_seconds": 0.0008618269930593669, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4221085188910365}
+{"utc": "2026-09-10T18:17:58.105048+00:00", "kind": "ssh_noop", "total_seconds": 0.35460534505546093}
+{"utc": "2026-09-10T18:17:58.105336+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002281900029629469}
+{"utc": "2026-09-10T18:17:59.527861+00:00", "kind": "ssh_status", "socket_seconds": 0.0009169790137093514, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.41825191397219896}
+{"utc": "2026-09-10T18:17:59.528452+00:00", "kind": "ssh_noop", "total_seconds": 0.33028344402555376}
+{"utc": "2026-09-10T18:17:59.528774+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002974121947772801}
+{"utc": "2026-09-10T18:18:00.947369+00:00", "kind": "ssh_status", "socket_seconds": 0.0016052009887062013, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4923190700355917}
+{"utc": "2026-09-10T18:18:00.947965+00:00", "kind": "ssh_noop", "total_seconds": 0.4069503010250628}
+{"utc": "2026-09-10T18:18:00.948302+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0038864430971443653}
+{"utc": "2026-09-10T18:18:02.440980+00:00", "kind": "ssh_status", "socket_seconds": 0.0013152050087228417, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.526326106977649}
+{"utc": "2026-09-10T18:18:02.441598+00:00", "kind": "ssh_noop", "total_seconds": 0.47711366997100413}
+{"utc": "2026-09-10T18:18:02.441919+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0043616939801722765}
+{"utc": "2026-09-10T18:18:03.968560+00:00", "kind": "ssh_status", "socket_seconds": 0.0009734979830682278, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.5418382940115407}
+{"utc": "2026-09-10T18:18:03.969189+00:00", "kind": "ssh_noop", "total_seconds": 0.42650176491588354}
+{"utc": "2026-09-10T18:18:03.969552+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0029646370094269514}
+{"utc": "2026-09-10T18:18:05.511597+00:00", "kind": "ssh_status", "socket_seconds": 0.00613273901399225, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.5181118570035324}
+{"utc": "2026-09-10T18:18:05.512101+00:00", "kind": "ssh_noop", "total_seconds": 0.42401626508217305}
+{"utc": "2026-09-10T18:18:05.512395+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.006671666982583702}
+{"utc": "2026-09-10T18:18:07.030911+00:00", "kind": "ssh_status", "socket_seconds": 0.0008629340154584497, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39170969906263053}
+{"utc": "2026-09-10T18:18:07.031413+00:00", "kind": "ssh_noop", "total_seconds": 0.3357265869854018}
+{"utc": "2026-09-10T18:18:07.031723+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002195351989939809}
+{"utc": "2026-09-10T18:18:08.423833+00:00", "kind": "ssh_status", "socket_seconds": 0.0008594669925514609, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.42037633596919477}
+{"utc": "2026-09-10T18:18:08.424396+00:00", "kind": "ssh_noop", "total_seconds": 0.35128495504613966}
+{"utc": "2026-09-10T18:18:08.424683+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0033594369888305664}
+{"utc": "2026-09-10T18:18:09.845448+00:00", "kind": "ssh_status", "socket_seconds": 0.0009121580224018544, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4558518610429019}
+{"utc": "2026-09-10T18:18:09.845972+00:00", "kind": "ssh_noop", "total_seconds": 0.36755925603210926}
+{"utc": "2026-09-10T18:18:09.846370+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0031995620811358094}
+{"utc": "2026-09-10T18:18:11.302550+00:00", "kind": "ssh_status", "socket_seconds": 0.0007948449929244816, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.45909254101570696}
+{"utc": "2026-09-10T18:18:11.303105+00:00", "kind": "ssh_noop", "total_seconds": 0.3463209980400279}
+{"utc": "2026-09-10T18:18:11.303408+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.002012984943576157}
+{"utc": "2026-09-10T18:18:12.762880+00:00", "kind": "ssh_status", "socket_seconds": 0.0008497360104229301, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.40173106302972883}
+{"utc": "2026-09-10T18:18:12.763348+00:00", "kind": "ssh_noop", "total_seconds": 0.3116177939809859}
+{"utc": "2026-09-10T18:18:12.763622+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0023307650117203593}
+{"utc": "2026-09-10T18:18:14.165842+00:00", "kind": "ssh_status", "socket_seconds": 0.0008084290020633489, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.4296906919917092}
+{"utc": "2026-09-10T18:18:14.166420+00:00", "kind": "ssh_noop", "total_seconds": 0.3449677349999547}
+{"utc": "2026-09-10T18:18:14.166687+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0024774050107225776}
+{"utc": "2026-09-10T18:18:15.596764+00:00", "kind": "ssh_status", "socket_seconds": 0.0007626989972777665, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.39144611498340964}
+{"utc": "2026-09-10T18:18:15.597355+00:00", "kind": "ssh_noop", "total_seconds": 0.32990109000820667}
+{"utc": "2026-09-10T18:18:15.597663+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0025281469570472836}
+{"utc": "2026-09-10T18:18:16.989476+00:00", "kind": "ssh_status", "socket_seconds": 0.0008151759975589812, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3961059929570183}
+{"utc": "2026-09-10T18:18:16.990028+00:00", "kind": "ssh_noop", "total_seconds": 0.3197547170566395}
+{"utc": "2026-09-10T18:18:16.990334+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.004453956964425743}
+{"utc": "2026-09-10T18:18:18.386789+00:00", "kind": "ssh_status", "socket_seconds": 0.0007223860011436045, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.3816151909995824}
+{"utc": "2026-09-10T18:18:18.387323+00:00", "kind": "ssh_noop", "total_seconds": 0.3217045629862696}
+{"utc": "2026-09-10T18:18:18.387722+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0021282449597492814}
+{"utc": "2026-09-10T18:18:19.769627+00:00", "kind": "ssh_status", "socket_seconds": 0.0007487089897040278, "ok": true, "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.37609533104114234}
+{"utc": "2026-09-10T18:18:19.770229+00:00", "kind": "ssh_noop", "total_seconds": 0.3170054170768708}
+{"utc": "2026-09-10T18:18:19.770564+00:00", "kind": "http_ready", "warm": true, "map": "864acbf7270e89914c9c5110c489572122521a8a0cb1e04f27702006f161b0a7", "total_seconds": 0.0026407729601487517}

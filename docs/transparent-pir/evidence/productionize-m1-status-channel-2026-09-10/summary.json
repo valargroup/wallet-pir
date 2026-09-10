@@ -1,0 +1,23 @@
+{
+  "http_ready": {
+    "samples": 90,
+    "median": 0.0024959069560281932,
+    "maximum": 0.023937942925840616,
+    "socket_max": 0,
+    "errors": 0
+  },
+  "ssh_noop": {
+    "samples": 90,
+    "median": 0.33595956751378253,
+    "maximum": 1.1044123489409685,
+    "socket_max": 0,
+    "errors": 0
+  },
+  "ssh_status": {
+    "samples": 90,
+    "median": 0.40490199998021126,
+    "maximum": 1.09684377303347,
+    "socket_max": 0.00613273901399225,
+    "errors": 0
+  }
+}
