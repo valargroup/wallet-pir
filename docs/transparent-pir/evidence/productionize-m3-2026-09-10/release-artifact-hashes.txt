@@ -1,0 +1,9 @@
+# ZakuraRecoveryBeta.app, ZAKURA_MODE=recovery, ad-hoc signed (Identifier=org.valargroup.zakuraRecoveryBeta)
+31e2323a893ef2abfa5e5b9ba119cf2749cca2ff08f78239e3f73cf3bc055b18  build/macos/Build/Products/Release/ZakuraRecoveryBeta.app/Contents/MacOS/ZakuraRecoveryBeta
+cad2463b522cdf8a92e18708b89c7bac9a38807ec1fc8b55ae8af986936c7446  build/macos/Build/Products/Release/ZakuraRecoveryBeta.app/Contents/Frameworks/App.framework/App
+d8c4599458bcac999e83e42d11733320c7f730447b255f2eb9a5785e79d582bc  build/macos/Build/Products/Release/ZakuraRecoveryBeta.app/Contents/Frameworks/zakura_wallet_bridge.framework/zakura_wallet_bridge
+
+# ZakuraRecoveryBeta.app, ZAKURA_MODE=shadow, ad-hoc signed
+e20def80dc92fc6100ca51f9c0101c9391e5ecf540083e49c26049195818f683  build/macos/Build/Products/Release/ZakuraRecoveryBeta.app/Contents/MacOS/ZakuraRecoveryBeta
+34d480e9a9c83d11d52d302c9ffc87fd2cfa0010e658d41cfd490f86ce25655b  build/macos/Build/Products/Release/ZakuraRecoveryBeta.app/Contents/Frameworks/App.framework/App
+d8c4599458bcac999e83e42d11733320c7f730447b255f2eb9a5785e79d582bc  build/macos/Build/Products/Release/ZakuraRecoveryBeta.app/Contents/Frameworks/zakura_wallet_bridge.framework/zakura_wallet_bridge

@@ -1,0 +1,25 @@
+00:00 +0: loading /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/bindings/test/native_test.dart
+00:00 +0: (setUpAll)
+00:00 +0: an unreachable server is reported as a failure, not as being up to date
+00:01 +1: forgetting empties the wallet and frees the phrase
+00:01 +2: the same phrase restores the same wallet
+00:01 +3: an unknown birthday scans from the earliest height
+00:01 +4: importing the same wallet twice is refused
+00:01 +5: a bad phrase is refused
+00:01 +6: the native build identifies itself as recovery-only
+00:01 +7: opening without transparent services is refused
+00:01 +8: one host for both services is refused
+00:01 +9: a direct send is refused before the phrase is read
+00:01 +10: a server that cannot be reached has no identity
+00:01 +11: a phrase is generated and validated by the real BIP 39
+00:01 +12: opening creates both databases on disk
+00:01 +13: an account is created from a phrase and read back
+00:01 +14: a new account is worth nothing, in all three figures
+00:02 +15: each address is issued once, and is unified
+00:02 +16: an unknown account arrives as a typed error, not a zero
+00:02 +17: a bad phrase arrives as badMnemonic
+00:02 +18: calling before opening is refused rather than crashing
+00:02 +19: progress reports stopped before a sync starts
+00:02 +20: the wallet is readable while a sync is running
+00:02 +21: (tearDownAll)
+00:02 +21: All tests passed!

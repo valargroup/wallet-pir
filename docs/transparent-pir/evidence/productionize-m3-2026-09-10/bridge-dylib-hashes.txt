@@ -1,0 +1,2 @@
+52a51b5797916b05595cb5e82e1162b1689a6a8282b2b3d64c6126efdff5d802  /private/tmp/claude-501/-Users-roman-projects-spendability-pir/8b99087d-c1cd-4853-a1f3-d6b60c10317a/scratchpad/dylibs/libzakura_wallet_bridge-beta.dylib
+816ca88554268e29812b5cab2f8673907c45879a94ca5c9b7ef32d75890fe869  /private/tmp/claude-501/-Users-roman-projects-spendability-pir/8b99087d-c1cd-4853-a1f3-d6b60c10317a/scratchpad/dylibs/libzakura_wallet_bridge-fixture.dylib

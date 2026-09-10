@@ -1,0 +1,9 @@
+00:00 +0: loading /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/bindings/test/kill_fixture_test.dart
+00:00 +0: a wallet killed during a private query reopens interrupted and resumes exactly
+FIXTURE services up: lwd, filters and shards on loopback; hold=1:pages:2; tip=3428942 birthday=3428143 shards=4
+FIXTURE held query in flight; child was: Shell: CHILD phase=idle scanned_to=3428942 tip=3428942 completion=sync-in-progress anchor=null failed=false
+FIXTURE child killed with SIGKILL; runner exit=79
+FIXTURE reopened completion=interrupted anchor=null covered=3428342 pending=1
+FIXTURE resumed in 2031 ms: completion=complete anchor=3428942 covered=3428942 synchronized=true
+FIXTURE balance and history match the reducer: spendable 34174 of 312534174 zat, 58 transactions, 50 unspent outputs
+00:06 +1: All tests passed!

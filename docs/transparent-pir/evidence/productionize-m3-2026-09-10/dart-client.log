@@ -1,0 +1,58 @@
+Analyzing client...
+No issues found!
+00:00 +0: loading test/zatoshi_test.dart
+00:00 +0: test/zatoshi_test.dart: Zatoshi converts from ZEC
+00:00 +1: test/models_test.dart: unshielding is named as going transparent, not as the pool it left
+00:00 +2: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +3: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +4: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +5: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +6: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +7: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +8: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +9: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +10: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +11: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +12: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +13: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +14: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +15: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +16: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +17: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +18: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +19: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +20: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +21: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +22: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +23: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +24: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +25: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +26: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +27: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +28: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +29: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +30: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +31: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +32: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +33: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +34: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +35: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +36: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +37: test/wallet_test.dart: progress that is not a rising block height still announces a change
+00:00 +38: test/wallet_test.dart: an account is created and read back
+00:00 +39: test/wallet_test.dart: a bad phrase is refused
+00:00 +40: test/wallet_test.dart: an unknown account is refused rather than reported as empty
+00:00 +41: test/wallet_test.dart: each address is issued once
+00:00 +42: test/wallet_test.dart: progress reaches the stream
+00:00 +43: test/wallet_test.dart: an unchanged progress value is not re-emitted
+00:00 +44: test/wallet_test.dart: scanning further announces that the wallet may have changed
+00:00 +45: test/wallet_test.dart: forgetting the wallet announces a change and reaches the bindings
+00:00 +46: test/wallet_test.dart: forgetting the wallet stops polling
+00:00 +47: test/wallet_test.dart: forgetting the wallet clears the last progress
+00:00 +48: test/wallet_test.dart: creating an account announces a change
+00:00 +49: test/wallet_test.dart: a failed poll is survivable
+00:00 +50: test/wallet_test.dart: a quote covers the fee and the change
+00:00 +51: test/wallet_test.dart: a payment beyond the spendable balance is refused
+00:00 +52: test/wallet_test.dart: sending announces a change and returns a receipt
+00:00 +53: test/wallet_test.dart: closing stops the poll and releases the native side
+00:00 +54: All tests passed!

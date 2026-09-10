@@ -35,6 +35,15 @@ complete M0 or supersede earlier gate results.
   stays gated on M3, and the live check used one fresh synthetic wallet without
   operator coordination, both recorded as limits.
 - [ ] M3 — Pass independent wallet correctness and lifecycle validation before opt-in PIR.
+  [2026-09-10 evidence](evidence/productionize-m3-2026-09-10/README.md): wallet
+  branch `m3/wallet-correctness` from `0ce6d158f`, final source
+  `7937d48df`. Fixture scope established: exact comparison of every
+  required history with an independent block reducer, forks and reorgs, the
+  interruption matrix, process kills including the real bridge, the shadow
+  comparison, a real-chain sample and an independent review. Still required
+  before M3 closes: the deployed accepted-anchor regression suite after M1
+  acceptance, and the application-level comparison on public paths in a window
+  agreed with the M1 operator.
 - [ ] M4 — Measure matched whole-wallet workflows and additional transparent traffic.
 - [ ] M5 — Accept capacity, alerts and bounded failure recovery on existing hardware.
 - [ ] M6 — Complete release review and the limited-beta observation.

@@ -1,0 +1,33 @@
+    Blocking waiting for file lock on build directory
+   Compiling zakura-wallet-store v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-store)
+   Compiling zakura-wallet-sync v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-sync)
+   Compiling zakura-wallet-lwd v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-lwd)
+   Compiling zakura-wallet-transparent v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-transparent)
+    Finished `release` profile [optimized] target(s) in 4m 00s
+     Running tests/blocks_model.rs (/Users/roman/projects/wallet-libraries/target/release/deps/blocks_model-c26fe77a6cf039bd)
+
+running 7 tests
+
+thread 'the_reducer_refuses_a_double_spend' (251448525) panicked at zakura/wallet-transparent/tests/common/blocks.rs:732:13:
+a fixture double-spends (Txid(0000000000000000000000000000000000000000000000b100000000004c4b41), 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test the_reducer_counts_a_spend_of_a_receive_below_the_floor_as_unresolved ... ok
+test the_reducer_keeps_a_zero_balance_history ... ok
+test extraction_indexes_a_spend_under_the_consumed_output_script ... ok
+test extraction_marks_first_inputless_transaction_outputs_coinbase ... ok
+test the_reducer_refuses_a_double_spend - should panic ... ok
+test extraction_of_the_legacy_chain_equals_the_legacy_events ... ok
+test the_jsonl_sample_loads_and_chains ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/real_chain.rs (/Users/roman/projects/wallet-libraries/target/release/deps/real_chain-b8f64f302dd93305)
+
+running 1 test
+sample: 1152 blocks, 11316 scripts with activity; chosen 6 with 13 receives and 12 spends
+recovered: 25 events, 1 utxos, 12 spends, 0 unresolved, balance 3000000000 zat, 25 private queries over 6 shards
+test a_mainnet_sample_recovered_through_imported_scripts_matches_the_block_reducer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.32s
+
+exit=0

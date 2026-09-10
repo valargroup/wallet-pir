@@ -1,0 +1,193 @@
+warning: empty line after doc comment
+   --> librustzcash/zcash_client_sqlite/src/wallet/init/migrations/orchard_ironwood_migration_unsatisfiability.rs:146:1
+    |
+146 | / /// builder-produced PCZTs; this is its feature-free mirror, because a wallet schema migration must
+147 | |
+    | |_^
+...
+154 |   fn stored_pczt_txid(bytes: &[u8]) -> Result<::zcash_protocol::TxId, &'static str> {
+    |   ------------------- the comment documents this function
+--
+warning: `zakura-client-sqlite` (lib) generated 1 warning
+warning: this `if` statement can be collapsed
+   --> zakura/wallet-transparent/src/shadow.rs:217:9
+    |
+217 | /         if let Ok(meta) = std::fs::metadata(&side) {
+218 | |             if meta.len() > 0 {
+219 | |                 return Err(ShadowError::Busy(profile.to_path_buf()));
+220 | |             }
+221 | |         }
+    | |_________^
+--
+warning: `zakura-wallet-transparent` (lib) generated 1 warning (run `cargo clippy --fix --lib -p zakura-wallet-transparent -- ` to apply 1 suggestion)
+    Checking zakura-wallet-facade v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/facade)
+warning: large size difference between variants
+   --> zakura/wallet-app/facade/src/send.rs:410:1
+    |
+410 | /   pub(crate) enum Route {
+411 | |       /// An ordinary Ironwood-funded payment.
+412 | | /     Ironwood {
+413 | | |         proposal: zakura_wallet_tx::Proposal,
+414 | | |         witnesses: Vec<(zakura_wallet_tx::SpendableNote, orchard::tree::MerklePath)>,
+415 | | |         anchors: zakura_wallet_tx::Anchors,
+--
+warning: `zakura-wallet-facade` (lib) generated 1 warning (1 duplicate)
+    Checking zakura_wallet_bridge v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/bridge)
+warning: `zakura-wallet-facade` (lib test) generated 1 warning
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> zakura/wallet-transparent/tests/common/blocks.rs:666:16
+    |
+666 |     pub utxos: BTreeMap<(Txid, u32), (Vec<u8>, u64, u64, bool)>,
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+    = note: `#[warn(clippy::type_complexity)]` on by default
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> zakura/wallet-transparent/tests/common/blocks.rs:668:17
+    |
+668 |     pub spends: BTreeMap<(Txid, u32), (Vec<u8>, u64, u64, Txid)>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> zakura/wallet-transparent/tests/common/blocks.rs:701:22
+    |
+701 |     let mut created: BTreeMap<(Txid, u32), (Vec<u8>, u64, u64, bool)> = BTreeMap::new();
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> zakura/wallet-transparent/tests/common/blocks.rs:702:22
+    |
+702 |     let mut unspent: BTreeMap<(Txid, u32), (Vec<u8>, u64, u64, bool)> = BTreeMap::new();
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> zakura/wallet-transparent/tests/common/blocks.rs:806:16
+    |
+806 |     let utxos: BTreeMap<(Txid, u32), (Vec<u8>, u64, u64, bool)> = ledger
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> zakura/wallet-transparent/tests/common/blocks.rs:822:17
+    |
+822 |     let spends: BTreeMap<(Txid, u32), (Vec<u8>, u64, u64, Txid)> = ledger
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+
+warning: this `if` statement can be collapsed
+    --> zakura/wallet-transparent/tests/common/mod.rs:1027:20
+     |
+1027 |               } else if let Some(h) = &f.hold {
+     |  ____________________^
+1028 | |                 if h.shard == *shard && h.table.map_or(true, |t| t == table) && h.nth == arrival {
+1029 | |                     hold = Some(h.clone());
+1030 | |                 }
+1031 | |             }
+--
+warning: this `map_or` can be simplified
+    --> zakura/wallet-transparent/tests/common/mod.rs:1028:41
+     |
+1028 |                 if h.shard == *shard && h.table.map_or(true, |t| t == table) && h.nth == arrival {
+     |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_map_or
+     = note: `#[warn(clippy::unnecessary_map_or)]` on by default
+help: use `is_none_or` instead
+--
+warning: this `if` statement can be collapsed
+    --> zakura/wallet-transparent/tests/common/mod.rs:1203:17
+     |
+1203 | /                 if let TransparentEvent::Spend(spend) = event {
+1204 | |                     if seen.insert(spend.spent_txid) {
+1205 | |                         needles = needles.txid(&spend.spent_txid);
+1206 | |                     }
+1207 | |                 }
+     | |_________________^
+--
+warning: `zakura-wallet-transparent` (test "blocks_model") generated 9 warnings (run `cargo clippy --fix --test "blocks_model" -p zakura-wallet-transparent -- ` to apply 3 suggestions)
+warning: length comparison to zero
+   --> zakura/wallet-transparent/tests/reorg.rs:193:13
+    |
+193 |     assert!(before.events.len() > 0);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^ help: using `!is_empty` is clearer and more explicit: `!before.events.is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#len_zero
+    = note: `#[warn(clippy::len_zero)]` on by default
+
+warning: `zakura-wallet-transparent` (lib test) generated 1 warning (1 duplicate)
+warning: using `contains()` instead of `iter().any()` is more efficient
+   --> zakura/wallet-transparent/tests/reorg.rs:495:10
+    |
+495 |         !transport.revisions.iter().any(|r| *r == old_digest),
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `transport.revisions.contains(&old_digest)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_contains
+    = note: `#[warn(clippy::manual_contains)]` on by default
+
+warning: `zakura-wallet-transparent` (test "shadow") generated 9 warnings (9 duplicates)
+warning: `zakura-wallet-transparent` (test "reorg") generated 11 warnings (9 duplicates) (run `cargo clippy --fix --test "reorg" -p zakura-wallet-transparent -- ` to apply 2 suggestions)
+warning: `zakura-wallet-transparent` (test "fixture_services") generated 9 warnings (9 duplicates)
+warning: `zakura-wallet-transparent` (test "real_chain") generated 9 warnings (9 duplicates)
+warning: `zakura-wallet-transparent` (test "kill") generated 9 warnings (9 duplicates)
+warning: `zakura-wallet-transparent` (test "recover") generated 9 warnings (9 duplicates)
+error: this boolean expression contains a logic bug
+   --> zakura/wallet-transparent/tests/interrupt.rs:464:9
+    |
+464 | /         after.events.iter().all(|e| e.shard_id != refused.shard_id)
+465 | |             || refused.shard_id == after.events[0].shard_id && false,
+    | |____________________________________________________________________^ help: it would look like the following: `after.events.iter().all(|e| e.shard_id != refused.shard_id)`
+    |
+help: this expression can be optimized out by applying boolean operations to the outer expression
+   --> zakura/wallet-transparent/tests/interrupt.rs:465:16
+--
+error: this boolean expression contains a logic bug
+   --> zakura/wallet-transparent/tests/interrupt.rs:465:16
+    |
+465 |             || refused.shard_id == after.events[0].shard_id && false,
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: it would look like the following: `false`
+    |
+help: this expression can be optimized out by applying boolean operations to the outer expression
+   --> zakura/wallet-transparent/tests/interrupt.rs:465:16
+    |
+--
+warning: called `Iterator::last` on a `DoubleEndedIterator`; this will needlessly iterate the entire iterator
+    --> zakura/wallet-transparent/tests/interrupt.rs:1013:22
+     |
+1013 |     let shard: u64 = reason.split(':').last().unwrap().parse().unwrap();
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#double_ended_iterator_last
+     = note: `#[warn(clippy::double_ended_iterator_last)]` on by default
+help: try
+--
+warning: using `contains()` instead of `iter().any()` is more efficient
+    --> zakura/wallet-transparent/tests/interrupt.rs:1194:10
+     |
+1194 |         !transport.revisions.iter().any(|r| *r == old_digest),
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `transport.revisions.contains(&old_digest)`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_contains
+     = note: `#[warn(clippy::manual_contains)]` on by default
+
+warning: `zakura-wallet-transparent` (test "interrupt") generated 11 warnings (9 duplicates)
+error: could not compile `zakura-wallet-transparent` (test "interrupt") due to 2 previous errors; 11 warnings emitted
+warning: build failed, waiting for other jobs to finish...
+warning: this call to `clone` can be replaced with `std::slice::from_ref`
+   --> zakura/wallet-transparent/tests/correctness.rs:240:9
+    |
+240 |         &[cast.imported.clone()],
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `std::slice::from_ref(&cast.imported)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#cloned_ref_to_slice_refs
+    = note: `#[warn(clippy::cloned_ref_to_slice_refs)]` on by default
+
+warning: `zakura-wallet-transparent` (test "correctness") generated 10 warnings (9 duplicates)

@@ -34,7 +34,14 @@ two reference stores pass. The init document is parsed by
 
 `SyncStatus.completion` is `complete` or the reason the sync stopped:
 `query-budget`, `byte-budget`, `pending-limit`, `overloaded:<shard>`,
-`chain-unknown:<height>`, `discovery-unbounded`. The anchor commits only on a
+`chain-unknown:<height>`, `publication-behind:<height>`, `unresolved-spends`,
+`discovery-unbounded`. `unresolved-spends` is reported once every script in
+scope is covered to the target and a spend's receive lies below the wallet's
+floor; the anchor does not commit for it, so every later run re-verifies
+against the target. A wallet may add words of its own for states the library
+never sees — the reference integration writes `sync-in-progress`, `stopped`,
+`failed`, `interrupted` and `chain-rewound` — and must show every one as a
+reason, never as a bare height. The anchor commits only on a
 complete sync to the explicit target the chain view accepted. Events above that target never enter the ledger or advance discovery. A subsequent target inside the same shard re-queries it and deduplicates retained events. `unresolved` counts spends
 whose receive the ledger has never seen; `pending` counts page retrievals
 still owed.

@@ -1,0 +1,29 @@
+{
+  "captured": "2026-09-10",
+  "host": {
+    "os": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cores": "16",
+    "memory_bytes": "137438953472",
+    "cpu": "Apple M4 Max"
+  },
+  "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+  "flutter": "Flutter 3.41.6 \u2022 channel stable \u2022 https://github.com/flutter/flutter.git",
+  "dart": "Dart SDK version: 3.11.4 (stable) (Tue Mar 24 01:02:20 2026 -0700) on \"macos_arm64\"",
+  "flutter_rust_bridge_codegen": "flutter_rust_bridge_codegen 2.11.1",
+  "protoc": "libprotoc 34.1",
+  "wallet_repo": {
+    "path": "/Users/roman/projects/wallet-libraries-m3-correctness",
+    "branch": "m3/wallet-correctness",
+    "baseline": "0ce6d158f020dcace36e6727fe02a88d47c66c9e",
+    "head": "ca0f68ee6f2983402440f50a1b3cf149965fc9ad"
+  },
+  "pir_repo": {
+    "path": "/Users/roman/projects/spendability-pir",
+    "main_at_start": "a5dc8a0",
+    "docs_worktree": "/Users/roman/projects/spendability-pir-m3-docs"
+  },
+  "pir_client_pin": "22e6becacdd0107683cda7280c5585fac9f4f4b2",
+  "cargo_target_dir": "/Users/roman/projects/wallet-libraries/target"
+}

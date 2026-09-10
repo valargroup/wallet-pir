@@ -1,0 +1,14 @@
+    Blocking waiting for file lock on build directory
+   Compiling zakura-wallet-transparent v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-transparent)
+    Finished `release` profile [optimized] target(s) in 3m 38s
+     Running tests/kill.rs (/Users/roman/projects/wallet-libraries/target/release/deps/kill-f6b9cd05bed4d896)
+
+running 4 tests
+test a_process_killed_during_a_directory_query_reopens_with_only_prior_shards ... ok
+test a_process_killed_during_a_page_query_keeps_its_pending_rows ... ok
+test a_process_killed_during_the_first_query_reopens_with_nothing_committed_and_no_completion ... ok
+test kill_child_entry ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 48.53s
+
+exit=0

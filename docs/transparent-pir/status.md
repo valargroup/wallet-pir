@@ -2,6 +2,32 @@
 
 Source inspection: 2026-09-09 through worker/qualification correction `f2f351c` and fleet burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
+## M3 wallet correctness, fixture scope: source-verified 2026-09-10
+
+The [M3 evidence](evidence/productionize-m3-2026-09-10/README.md) records the
+wallet branch `m3/wallet-correctness` (from `0ce6d158f`, final
+`7937d48df`). Every wallet history the plan names — receives, spends, a
+coinbase, a self-transfer, a paged multi-script history, an old receive spent
+across the tier boundary, an offline receive and spend, a zero-balance
+history, unused and imported scripts, gap-limit discovery — is recovered
+privately against the real shard service from a chain expressed as blocks and
+compared exactly, event by event and through the wallet's own balance, outputs
+and history, with a reducer that never sees an event or the ledger. Six
+scripts from 1,152 real mainnet blocks recover the same way. Seven forks and
+reorgs, twenty-two interruption rows, three process kills and one kill of the
+real bridge library mid-query against loopback fixture services all leave
+nothing committed lost, nothing called complete and the next run exact. A
+shadow profile is read without being touched and compared by counts and
+digests. Imported scripts live in their own address scope, the count of
+scripts the tables cannot index is persisted and shown, a wallet reopened
+mid-run reads `interrupted`, and discovery keeps widening while a spend is
+unresolved. An independent reviewer's finding is part of the record.
+
+**M3 is not closed.** The deployed accepted-anchor regression suite and the
+application-level comparison on public paths are unexecuted because M1 is
+open; no private query was sent to the public services. Opt-in PIR balances
+remain non-authoritative and labelled so.
+
 ## M2 recovery application: source-verified 2026-09-09
 
 The [M2 evidence](evidence/productionize-m2-2026-09-09/README.md) records the

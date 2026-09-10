@@ -1,0 +1,58 @@
+Analyzing ui...
+No issues found!
+00:00 +0: loading /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart
+00:00 +0: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator failure a failure is not reported as up to date
+00:00 +1: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/coverage_details_test.dart: nothing read shows no heights and says no sync has run
+00:00 +2: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/coverage_details_test.dart: nothing read shows no heights and says no sync has run
+00:00 +3: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/coverage_details_test.dart: nothing read shows no heights and says no sync has run
+00:00 +4: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: history pools a shielded receipt names its pool
+00:00 +5: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: history pools a shielded receipt names its pool
+00:00 +6: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: history pools a shielded receipt names its pool
+00:00 +7: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: history pools a shielded receipt names its pool
+00:00 +8: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: history pools a shielded receipt names its pool
+00:00 +9: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: history pools a public receipt is marked as such
+00:00 +10: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: history pools a crossing is named as one
+00:00 +11: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: HistoryList while searching a recovery in progress says it is still looking
+00:00 +12: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: HistoryList while searching a finished sync says there is nothing
+00:00 +13: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator reasons it does not guess at a cause
+00:00 +14: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator reasons it shows the reason the wallet gave
+00:00 +15: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator reasons it offers a way out
+00:00 +16: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator reasons a healthy sync offers nothing to retry
+00:00 +17: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm an empty phrase is refused before anything is attempted
+00:00 +18: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm a phrase of the wrong length says so
+00:00 +19: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm a valid phrase with no birthday imports with none
+00:00 +20: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm a birthday above the tip is refused
+00:00 +21: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm a birthday within range is passed through
+00:00 +22: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm nonsense in the birthday is refused
+00:00 +23: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm blank is offered as safe rather than lazy
+00:00 +24: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm an error is shown where it will be read
+00:00 +25: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: ImportForm a busy form says what it is doing and cannot be resubmitted
+00:00 +26: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: transparent and crossings transparent value is named as needing a step
+00:00 +27: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: transparent and crossings nothing is said when there is no transparent value
+00:00 +28: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: transparent and crossings transparent counts toward the total but not toward the sendable
+00:00 +29: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: transparent and crossings a crossing says why its numbers are fixed
+00:00 +30: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: BalanceCard zero transparent value still reports publication lag
+00:00 +31: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: BalanceCard unresolved spends never appear synchronized
+00:00 +32: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: BalanceCard shows the spendable figure
+00:00 +33: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: BalanceCard names pending value separately
+00:00 +34: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: BalanceCard says nothing about pending when there is none
+00:00 +35: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: BalanceCard hides the figures when asked
+00:00 +36: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: BalanceCard can be replaced without forking the package
+00:00 +37: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator idle alone is not called up to date
+00:00 +38: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator is up to date once it has scanned to the tip
+00:00 +39: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator during recovery it counts down the queue, not the height
+00:00 +40: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator with nothing queued it falls back to the heights
+00:00 +41: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator recovery says what it is doing in plain terms
+00:00 +42: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SyncIndicator prefers the smoothed figure when given one
+00:00 +43: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: HistoryList explains an empty history rather than showing nothing
+00:00 +44: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: HistoryList shows a receipt as money in
+00:00 +45: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: HistoryList a change-only transaction reads as sent
+00:00 +46: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: HistoryList an unmined transaction says it is waiting
+00:00 +47: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: theme form factor follows the room available, not the platform
+00:00 +48: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: theme a compact scale is smaller
+00:00 +49: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: theme a palette can be swapped wholesale
+00:00 +50: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: theme width chooses the form factor
+00:00 +51: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SendForm shows the fee before it is charged
+00:00 +52: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SendForm says which slow step it is on
+00:00 +53: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/ui/test/widgets_test.dart: SendForm shows an error where it will be read
+00:00 +54: All tests passed!

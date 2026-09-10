@@ -1,0 +1,6 @@
+services up: lwd, filters and shards on loopback; hold=1:pages:2; tip=3428942 birthday=3428143 shards=4
+held query in flight; child was: Shell: CHILD phase=idle scanned_to=3428942 tip=3428942 completion=sync-in-progress anchor=null failed=false
+child killed with SIGKILL; runner exit=79
+reopened completion=interrupted anchor=null covered=3428342 pending=1
+resumed in 2031 ms: completion=complete anchor=3428942 covered=3428942 synchronized=true
+balance and history match the reducer: spendable 34174 of 312534174 zat, 58 transactions, 50 unspent outputs

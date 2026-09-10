@@ -1,0 +1,56 @@
+Analyzing example...
+No issues found!
+Resolving dependencies...
+Downloading packages...
+  _fe_analyzer_shared 93.0.0 (107.0.0 available)
+  analyzer 10.0.1 (14.3.0 available)
+  clock 1.1.2 (1.1.3 available)
+  flutter_riverpod 3.3.2 (3.4.3 available)
+  flutter_rust_bridge 2.11.1 (2.13.0 available)
+  matcher 0.12.19 (0.12.20 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.17.0 (1.19.0 available)
+  package_config 2.2.0 (3.0.0 available)
+  riverpod 3.3.2 (3.4.3 available)
+  stack_trace 1.12.1 (1.12.2 available)
+  test 1.30.0 (1.32.0 available)
+  test_api 0.7.10 (0.7.14 available)
+  test_core 0.6.16 (0.6.20 available)
+  vector_math 2.2.0 (2.4.2 available)
+Got dependencies!
+15 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart
+00:00 +0: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: BetaConfig a mode is required and must be one of three
+00:00 +1: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: BetaConfig a beta mode needs both services, over TLS, on separate hosts
+00:00 +2: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: BetaConfig the demo needs nothing
+00:00 +3: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: BetaConfig the light server has one public mainnet default
+00:00 +4: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: BetaProfile lives under the application namespace, per mode
+00:00 +5: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: BetaProfile is created with a marker, reopened, and refused for another mode
+00:00 +6: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: BetaProfile a directory with wallet files and no marker is left alone
+00:00 +7: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: startUp a misconfigured beta stops before the native library
+00:00 +8: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: startUp a native library that will not load is a failure, not a demo
+00:00 +9: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: startUp a native build that can send is not a recovery build
+00:00 +10: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: startUp a server on another chain is refused before anything opens
+00:00 +11: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: startUp a wallet another build wrote is reported and left as it was
+00:00 +12: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: startUp a recovery build comes up in its own profile with no account
+00:00 +13: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/mode_test.dart: startUp the demo comes up with no native library at all
+00:00 +14: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: the app offers restoring an existing wallet
+00:00 +15: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: the restore form says why blank is safe
+00:00 +16: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: the demo home screen offers Receive and never Send
+00:00 +17: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: Receive opens the receive screen
+00:00 +18: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: and comes back
+00:01 +19: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: Diagnostics opens and names nothing about the wallet
+00:01 +20: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: the home screen offers forgetting the wallet
+00:01 +21: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: Back leaves the wallet alone
+00:01 +22: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: confirming returns to onboarding with nothing left
+00:01 +23: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: a wallet can be restored after forgetting
+00:01 +24: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: the demo says it is the demo on every screen
+00:01 +25: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: a recovery build offers restore alone
+00:01 +26: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: a recovery home has no Send, no Receive, and shows coverage
+00:01 +27: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: a shadow home names its figures as validation output
+00:01 +28: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: a build that could not come up shows why, not a wallet
+00:01 +29: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: a build with no mode says so and shows nothing else
+00:01 +30: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: the app starts at onboarding and creates a wallet
+00:01 +31: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/example/test/app_test.dart: revealing shows all twenty-four numbered words
+00:01 +32: All tests passed!

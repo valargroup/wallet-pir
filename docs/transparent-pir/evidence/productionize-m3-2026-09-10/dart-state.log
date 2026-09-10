@@ -1,0 +1,42 @@
+Analyzing state...
+No issues found!
+00:00 +0: loading /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/providers_test.dart
+00:00 +0: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/providers_test.dart: a send stays in proving rather than claiming to be broadcasting
+00:00 +1: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +2: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +3: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +4: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +5: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +6: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +7: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +8: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +9: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +10: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +11: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +12: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +13: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +14: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +15: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +16: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +17: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +18: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +19: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +20: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +21: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +22: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +23: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +24: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +25: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +26: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +27: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +28: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +29: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +30: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +31: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +32: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +33: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/refresh_test.dart: a change signal refreshes the balance
+00:00 +34: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/onboarding_test.dart: restoring a failed restore keeps the guidance so the form still helps
+00:00 +35: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/onboarding_failure_test.dart: a sync that fails after creating does not undo the creation
+00:00 +36: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/onboarding_test.dart: restoring going back returns to the choice
+00:00 +37: /Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-app/state/test/onboarding_failure_test.dart: a failed creation stays on the creation screen
+00:00 +38: All tests passed!
