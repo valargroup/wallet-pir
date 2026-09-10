@@ -1,0 +1,9 @@
+{"utc": "2026-09-10T22:09:27.314916+00:00", "probe": "unix", "start_gap_seconds": 1.410873465007171, "value": {"socket_seconds": 0.006797976995585486, "ok": true, "warm": true}, "seconds": 0.007008268003119156}
+{"utc": "2026-09-10T22:09:27.815032+00:00", "probe": "unix", "start_gap_seconds": 0.5001143869885709, "value": {"socket_seconds": 0.0006986710068304092, "ok": true, "warm": true}, "seconds": 0.0008755270100664347}
+{"utc": "2026-09-10T22:09:28.315212+00:00", "probe": "unix", "start_gap_seconds": 0.500177733018063, "value": {"socket_seconds": 0.0009754450002219528, "ok": true, "warm": true}, "seconds": 0.0012057209969498217}
+{"utc": "2026-09-10T22:09:28.815376+00:00", "probe": "unix", "start_gap_seconds": 0.5001663079892751, "value": {"socket_seconds": 1.0032382039935328, "ok": true, "warm": true}, "seconds": 1.00369410100393}
+{"utc": "2026-09-10T22:09:29.833706+00:00", "probe": "unix", "start_gap_seconds": 1.0183345160039607, "value": {"socket_seconds": 0.0031822930031921715, "ok": true, "warm": true}, "seconds": 0.0033267170074395835}
+{"utc": "2026-09-10T22:09:30.333837+00:00", "probe": "unix", "start_gap_seconds": 0.5001252169895452, "value": {"socket_seconds": 0.0007107940036803484, "ok": true, "warm": true}, "seconds": 0.0009073340042959899}
+{"utc": "2026-09-10T22:09:30.833944+00:00", "probe": "unix", "start_gap_seconds": 0.5001087850250769, "value": {"socket_seconds": 0.0006409040070138872, "ok": true, "warm": true}, "seconds": 0.0008078559767454863}
+{"utc": "2026-09-10T22:09:31.334048+00:00", "probe": "unix", "start_gap_seconds": 0.5001046370016411, "value": {"socket_seconds": 0.0006164709920994937, "ok": true, "warm": true}, "seconds": 0.0007661869749426842}
+{"utc": "2026-09-10T22:09:31.836178+00:00", "probe": "unix", "start_gap_seconds": 0.5021305349946488, "value": {"socket_seconds": 0.000550173019291833, "ok": true, "warm": true}, "seconds": 0.000735345995053649}
