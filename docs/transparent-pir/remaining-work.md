@@ -27,7 +27,9 @@ complete M0 or supersede earlier gate results.
   subsequently reproduced HTTP 503 under bounded diagnostic load at 21:35:50 UTC.
   The qualified collection fix and forwarded status are now deployed; the
   [fresh matching canary](evidence/productionize-m1-collection-forward-canary-2026-09-10/README.md)
-  started at 21:41:13 UTC and was active at 21:53 UTC. No fleet promotion yet.
+  failed at 22:46:54 UTC during reorg-related withdrawal. The
+  [fresh post-reorg gate](evidence/productionize-m1-postreorg-2026-09-10/README.md)
+  started at 22:50:58 UTC on unchanged components. No fleet promotion yet.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.

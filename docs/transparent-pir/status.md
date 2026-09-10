@@ -54,6 +54,22 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 reorg-related withdrawal: observed 2026-09-10, 22:51 UTC
+
+The [failure and fresh-gate evidence](evidence/productionize-m1-postreorg-2026-09-10/README.md)
+records the collection/forwarding canary's HTTP 503 failure at 22:46:54 UTC
+after 65.7 minutes, 51 blocks and 57,670 exact queries. Local endpoints stayed
+below 8 ms during that window. The controller rejected a noncanonical candidate;
+its block hash differs from the node's subsequent canonical hash. Both public
+origins recovered to matching coverage. This supports a reorg-related withdrawal,
+not the earlier local status pauses, as this failure's trigger.
+
+A fresh full gate started at **22:50:58 UTC** under
+`transparent-m1-collection-postreorg-rollout.service`, verified active at 22:51 UTC.
+The installed worker and operations configuration are unchanged. No old samples
+count, no fleet promotion occurred, and no acceptance thresholds changed.
+**M1 remains open**, including the separate scheduling-pause investigation.
+
 ## M1 collection and forwarded-status canary: observed 2026-09-10, 21:53 UTC
 
 The [deployment and start evidence](evidence/productionize-m1-collection-forward-canary-2026-09-10/README.md)
