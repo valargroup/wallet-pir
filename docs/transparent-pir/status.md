@@ -54,6 +54,22 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 publication I/O correction: source work, 2026-09-10, 23:48 UTC
+
+The [completed diagnostic trace](evidence/productionize-m1-publication-io-2026-09-10/README.md)
+caught a 379.788 ms fsync on a Tokio executor thread. Activation and invalidation
+still performed publication persistence synchronously; both now use blocking
+jobs, retaining publication ordering and cancellation serialization. Invalidation
+releases serving locks before persistence after marking revoked history in memory.
+Both new blocked-write regressions fail on the previous source and pass with the
+correction. Full `make check` passed (590 Rust tests, zero failures, two ignored),
+and the Linux build and targeted regressions passed. No deployment has occurred.
+
+The ten-minute diagnostic load completed 9,157 exact queries with one retry.
+The trace did not reproduce the earlier multi-second timeout and does not settle
+its full cause. Neither this diagnostic nor the source correction closes M1;
+no full acceptance gate is running.
+
 ## M1 post-reorg observation invalidated: observed 2026-09-10, 23:17 UTC
 
 The [23:14 timeout evidence](evidence/productionize-m1-postreorg-2026-09-10/status-timeout-2314/README.md)

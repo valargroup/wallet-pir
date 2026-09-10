@@ -1,0 +1,279 @@
+{
+  "scheduler.ndjson": {
+    "events": {
+      "start": 1,
+      "runnable_wait": 1,
+      "fsync": 4,
+      "end": 1
+    },
+    "rows": [
+      {
+        "event": "start",
+        "monotonic_ns": 239224929245600,
+        "worker_pid": 649049
+      },
+      {
+        "event": "runnable_wait",
+        "monotonic_ns": 239291075094301,
+        "tid": 649293,
+        "cpu": 0,
+        "nanoseconds": 151040480
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239292104679358,
+        "tid": 674049,
+        "cpu": 0,
+        "nanoseconds": 173149689,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239293735215720,
+        "tid": 673766,
+        "cpu": 1,
+        "nanoseconds": 363543015,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239346298173213,
+        "tid": 674332,
+        "cpu": 2,
+        "nanoseconds": 520848566,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239347802835156,
+        "tid": 674336,
+        "cpu": 2,
+        "nanoseconds": 146588016,
+        "return": 0
+      },
+      {
+        "event": "end",
+        "monotonic_ns": 239387376704086
+      }
+    ]
+  },
+  "scheduler-v2.ndjson": {
+    "events": {
+      "start": 1,
+      "fsync": 13,
+      "end": 1
+    },
+    "rows": [
+      {
+        "event": "start",
+        "monotonic_ns": 239391323669180,
+        "worker_pid": 649049
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239445321475740,
+        "tid": 674827,
+        "cpu": 3,
+        "nanoseconds": 210333410,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239446515169870,
+        "tid": 674826,
+        "cpu": 0,
+        "nanoseconds": 210642279,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239579594271512,
+        "tid": 675261,
+        "cpu": 3,
+        "nanoseconds": 566866774,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239581219922180,
+        "tid": 675262,
+        "cpu": 2,
+        "nanoseconds": 295576543,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239820341961775,
+        "tid": 649051,
+        "cpu": 0,
+        "nanoseconds": 379788360,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239820598991729,
+        "tid": 675328,
+        "cpu": 1,
+        "nanoseconds": 159673711,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 239821931660543,
+        "tid": 675663,
+        "cpu": 0,
+        "nanoseconds": 273325096,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 240097587828046,
+        "tid": 675662,
+        "cpu": 0,
+        "nanoseconds": 240097778,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 240098967122467,
+        "tid": 675329,
+        "cpu": 1,
+        "nanoseconds": 194414224,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 240110398538719,
+        "tid": 675663,
+        "cpu": 0,
+        "nanoseconds": 602111455,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 240111649801464,
+        "tid": 675328,
+        "cpu": 0,
+        "nanoseconds": 201633577,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 240268813805696,
+        "tid": 675662,
+        "cpu": 2,
+        "nanoseconds": 235350307,
+        "return": 0
+      },
+      {
+        "event": "fsync",
+        "monotonic_ns": 240270185373123,
+        "tid": 675329,
+        "cpu": 1,
+        "nanoseconds": 223559398,
+        "return": 0
+      },
+      {
+        "event": "end",
+        "monotonic_ns": 240291634051925
+      }
+    ]
+  },
+  "unix": {
+    "first": "2026-09-10T21:43:06.525177+00:00",
+    "last": "2026-09-10T23:43:06.078558+00:00",
+    "samples": 14308,
+    "errors": [],
+    "max_socket_seconds": 3.9227112740045413
+  },
+  "http": {
+    "first": "2026-09-10T21:43:06.525779+00:00",
+    "last": "2026-09-10T23:43:06.231868+00:00",
+    "samples": 14271,
+    "errors": [
+      {
+        "utc": "2026-09-10T23:14:05.407915+00:00",
+        "probe": "http",
+        "start_gap_seconds": 0.5001766050118022,
+        "error": "TimeoutError: timed out",
+        "seconds": 4.004640073981136
+      },
+      {
+        "utc": "2026-09-10T23:14:44.462746+00:00",
+        "probe": "http",
+        "start_gap_seconds": 0.5001223580038641,
+        "error": "TimeoutError: timed out",
+        "seconds": 4.0046494280104525
+      },
+      {
+        "utc": "2026-09-10T23:21:49.555559+00:00",
+        "probe": "http",
+        "start_gap_seconds": 0.5001102649839595,
+        "error": "TimeoutError: timed out",
+        "seconds": 4.0048859840026125
+      },
+      {
+        "utc": "2026-09-10T23:24:54.506311+00:00",
+        "probe": "http",
+        "start_gap_seconds": 0.500874153978657,
+        "error": "TimeoutError: timed out",
+        "seconds": 4.004109514004085
+      }
+    ],
+    "max_socket_seconds": 3.4267840750108007
+  },
+  "start.json": {
+    "utc": "2026-09-10T23:36:13.762029+00:00",
+    "acceptance": false,
+    "clients": 2,
+    "seconds": 600,
+    "command": [
+      "/opt/transparent-publisher-build/collection-20260910/artifacts/soak-query",
+      "--url",
+      "http://10.142.0.10:8093",
+      "--publications",
+      "/srv/zakura/transparent-publications",
+      "--shard",
+      "173",
+      "--seconds",
+      "600"
+    ]
+  },
+  "result.json": {
+    "utc": "2026-09-10T23:46:13.945016+00:00",
+    "acceptance": false,
+    "exit_codes": [
+      0,
+      0
+    ]
+  },
+  "query-0.ndjson": {
+    "events": {
+      "query": 4583,
+      "retry": 1,
+      "result": 1
+    },
+    "last": {
+      "event": "result",
+      "passed": true,
+      "queries": 4583,
+      "retries": 1,
+      "seconds": 600.146434798
+    },
+    "not_exact": []
+  },
+  "query-1.ndjson": {
+    "events": {
+      "query": 4574,
+      "result": 1
+    },
+    "last": {
+      "event": "result",
+      "passed": true,
+      "queries": 4574,
+      "retries": 0,
+      "seconds": 600.088479362
+    },
+    "not_exact": []
+  }
+}

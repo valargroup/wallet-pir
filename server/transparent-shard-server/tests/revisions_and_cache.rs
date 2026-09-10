@@ -865,6 +865,147 @@ async fn blocked_collection_keeps_status_and_readiness_responsive() {
     );
 }
 
+/// A blocked publication write must not occupy the async executor. The FIFO
+/// exercises real file I/O without changing the production persistence path.
+/// Platforms differ on whether the later FIFO fsync succeeds; only the blocked
+/// interval is used to check serving behavior and cancellation ordering.
+#[cfg(unix)]
+async fn blocked_publication_write(invalidate: bool) {
+    use std::time::{Duration, Instant};
+    use transparent_shard_server::live::{Command, LiveService, Publication};
+    use transparent_shard_server::shardset::LoadOptions;
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("a");
+    let b = root.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (old, count) = write_revision(&a, FIRST + 1, 0, "");
+    write_map(&a, &old, FIRST + 1, 0, count);
+    let set = ShardSet::open(&a, 3).unwrap();
+    let old_map = set.map_digest.clone();
+    let config = ServiceConfig::default();
+    let record = root.path().join("active.json");
+    let live = LiveService::new(
+        ServiceState::build(set, config).unwrap(),
+        Publication {
+            directory: a,
+            assignment: None,
+            map_sha256: old_map.clone(),
+        },
+        config,
+        LoadOptions::whole(3),
+        record.clone(),
+    )
+    .unwrap();
+    let command = if invalidate {
+        Command::Invalidate {
+            expected: old_map.clone(),
+            from_height: FIRST,
+            keep_digests: Default::default(),
+        }
+    } else {
+        let (new, count) = write_revision(&b, FIRST + 2, 1, &old);
+        write_map(&b, &new, FIRST + 2, 1, count);
+        let map_sha256 = ShardSet::open(&b, 3).unwrap().map_digest;
+        live.command(Command::Prepare {
+            expected: old_map.clone(),
+            publication: Publication {
+                directory: b,
+                assignment: None,
+                map_sha256: map_sha256.clone(),
+            },
+        })
+        .await
+        .unwrap();
+        Command::Activate {
+            expected: old_map.clone(),
+            map_sha256,
+        }
+    };
+    let temporary = if invalidate {
+        record.with_extension("invalid.tmp")
+    } else {
+        record.with_extension("tmp")
+    };
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&temporary)
+        .status()
+        .unwrap()
+        .success());
+    let (release, released) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        // Independent of Tokio, so the regression terminates even if the
+        // only executor thread is blocked inside File::create.
+        let _ = released.recv_timeout(Duration::from_secs(3));
+        use std::io::Read;
+        let mut file = std::fs::File::open(temporary).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+    });
+    let began = Instant::now();
+    let mutation = tokio::spawn({
+        let live = live.clone();
+        async move { live.command(command).await }
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let pending = !mutation.is_finished();
+    let status = live.command(Command::Status).await.unwrap();
+    let response = live
+        .router()
+        .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let responsive = began.elapsed() < Duration::from_secs(1);
+    // Cancellation must not release the activation's operation guard while
+    // its disk operation remains in flight.
+    mutation.abort();
+    let _ = mutation.await;
+    let next = tokio::spawn({
+        let live = live.clone();
+        async move {
+            live.command(Command::Discard {
+                map_sha256: "unused".into(),
+            })
+            .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let serialized = invalidate || !next.is_finished();
+    let _ = release.send(());
+    reader.join().unwrap();
+    next.await.unwrap().unwrap();
+    assert!(pending, "publication write did not remain blocked");
+    assert!(responsive, "publication disk I/O blocked status/readiness");
+    assert!(
+        serialized,
+        "cancelled activation released mutation serialization"
+    );
+    assert_eq!(status["active"]["map_sha256"], old_map);
+    assert_eq!(
+        response.status(),
+        if invalidate {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::OK
+        }
+    );
+    if invalidate {
+        assert!(status["revoked_revisions"].as_u64().unwrap() > 0);
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn blocked_activation_keeps_executor_responsive() {
+    blocked_publication_write(false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn blocked_invalidation_refuses_without_blocking_executor() {
+    blocked_publication_write(true).await;
+}
+
 /// Hot activation keeps the old revision usable, shares bounded runtime state,
 /// and refuses orphaned answers after a reorg without restarting the server.
 #[tokio::test(flavor = "multi_thread")]

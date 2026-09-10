@@ -1,0 +1,30 @@
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 46.59s
+     Running tests/revisions_and_cache.rs (target/release/deps/revisions_and_cache-30734880a1ca2791)
+
+running 3 tests
+test blocked_collection_keeps_status_and_readiness_responsive ... ok
+test blocked_invalidation_refuses_without_blocking_executor ... FAILED
+test blocked_activation_keeps_executor_responsive ... FAILED
+
+failures:
+
+---- blocked_invalidation_refuses_without_blocking_executor stdout ----
+
+thread 'blocked_invalidation_refuses_without_blocking_executor' (256229210) panicked at server/transparent-shard-server/tests/revisions_and_cache.rs:977:5:
+publication write did not remain blocked
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- blocked_activation_keeps_executor_responsive stdout ----
+
+thread 'blocked_activation_keeps_executor_responsive' (256229208) panicked at server/transparent-shard-server/tests/revisions_and_cache.rs:977:5:
+publication write did not remain blocked
+
+
+failures:
+    blocked_activation_keeps_executor_responsive
+    blocked_invalidation_refuses_without_blocking_executor
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 17 filtered out; finished in 4.23s
+
+error: test failed, to rerun pass `-p transparent-shard-server --test revisions_and_cache`
