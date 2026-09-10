@@ -6,8 +6,9 @@ Artifact transfer and warm preparation run concurrently; activation requires all
 archive owners and at least one recent replica. SSH authenticates every operation.
 """
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, ExitStack
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,16 +35,26 @@ def atomic_json(path, value):
         os.close(fd)
 
 
-async def run(args, data=None, timeout=25):
+async def run(args, data=None, timeout=25, file_output=False):
     started = time.monotonic()
-    proc = await asyncio.create_subprocess_exec(*map(str, args), stdin=asyncio.subprocess.PIPE,
-                                              stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(data), timeout)
-    except BaseException:
-        proc.kill()
-        await proc.wait()
-        raise
+    # A multiplex master can retain a cancelled channel's output descriptors.
+    # Private temporary files let the client deadline reap its own process
+    # without waiting for EOF from that independently owned master.
+    with ExitStack() as files:
+        stdout = files.enter_context(tempfile.TemporaryFile()) if file_output else asyncio.subprocess.PIPE
+        stderr = files.enter_context(tempfile.TemporaryFile()) if file_output else asyncio.subprocess.PIPE
+        proc = await asyncio.create_subprocess_exec(*map(str, args), stdin=asyncio.subprocess.PIPE,
+                                                  stdout=stdout, stderr=stderr)
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(data), timeout)
+        except BaseException:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.wait()
+            raise
+        if file_output:
+            stdout.seek(0); stderr.seek(0)
+            out, err = stdout.read(), stderr.read()
     print(json.dumps({'event':'fleet_command','tool':Path(str(args[0])).name,
                       'seconds':round(time.monotonic()-started,6),'exit_code':proc.returncode}),file=sys.stderr)
     if proc.returncode:
@@ -62,6 +73,7 @@ class Fleet:
         control_dir = self.root / 'ssh'
         control_dir.mkdir(mode=0o700, exist_ok=True)
         control_dir.chmod(0o700)
+        self.control_dir = control_dir
         self.canonical = {}
         self.rpc_slots = asyncio.Semaphore(8)
         self.direct_ssh_args = ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes',
@@ -149,6 +161,74 @@ class Fleet:
             '-oControlMaster=no', '-oControlPersist=no', '-oControlPath=none']
         return await run(args + ['root@' + host, command], data, timeout)
 
+    def control_path(self, worker):
+        # Bind the private socket to the authenticated destination/configuration.
+        # A short digest leaves room for OpenSSH's temporary socket suffix.
+        identity = [worker['id'], worker['ssh_host'], self.c['known_hosts'], self.c['ssh_key']]
+        name = hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:32]
+        return self.control_dir / ('c-' + name)
+
+    def control_session_args(self, worker):
+        # ProxyCommand=false prevents OpenSSH's silent fresh-login fallback.
+        return self.direct_ssh_args + ['-oControlMaster=no', '-oProxyCommand=false',
+                                      '-oControlPath=' + str(self.control_path(worker))]
+
+    async def control_session(self, worker):
+        path = self.control_path(worker)
+        destination = 'root@' + worker['ssh_host']
+        while True:
+            # Only this supervisor owns this namespace (protected by its lock).
+            # Close a surviving predecessor; remove a dead Unix socket after a
+            # crash, but never overwrite an unexpected ordinary file.
+            if path.exists():
+                if not path.is_socket():
+                    raise RuntimeError('control session path is not a socket')
+                try:
+                    await run(self.control_session_args(worker) + ['-O', 'exit', destination], timeout=2)
+                except (RuntimeError, TimeoutError):
+                    # A failed exit request does not prove a dead master. Only
+                    # connection refusal permits deleting its stale socket.
+                    try:
+                        _, writer = await asyncio.wait_for(asyncio.open_unix_connection(path), 1)
+                    except (ConnectionRefusedError, FileNotFoundError):
+                        path.unlink(missing_ok=True)
+                    else:
+                        writer.close()
+                        await writer.wait_closed()
+                        raise RuntimeError('existing control session could not be stopped')
+                async def removed():
+                    while path.exists():
+                        await asyncio.sleep(0.02)
+                await asyncio.wait_for(removed(), 5)
+            args = self.direct_ssh_args + ['-oControlMaster=yes', '-oControlPersist=no',
+                    '-oControlPath=' + str(path), '-oServerAliveInterval=2',
+                    '-oServerAliveCountMax=3', '-N', destination]
+            # No -f and no command-owned pipes: the supervisor owns this process
+            # until shutdown. Cancelling a client only closes its own channel.
+            process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
+                        stdout=asyncio.subprocess.DEVNULL)
+            print(json.dumps({'event':'control_session_started','worker':worker['id'],
+                              'pid':process.pid}), file=sys.stderr)
+            try:
+                code = await process.wait()
+                print(json.dumps({'event':'control_session_exited','worker':worker['id'],
+                                  'exit_code':code}), file=sys.stderr)
+            finally:
+                if process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), 5)
+                    except TimeoutError:
+                        process.kill()
+                        await process.wait()
+            await asyncio.sleep(1)
+
+    async def serve_control_sessions(self):
+        async with self.lock('control-sessions', wait=False):
+            async with asyncio.TaskGroup() as group:
+                for worker in self.roster:
+                    group.create_task(self.control_session(worker))
+
     async def control(self, worker, value):
         command = shlex.join([self.c.get('control_binary', '/usr/local/bin/shard-control'),
                               self.c.get('control_socket', '/run/transparent-pir/control.sock')])
@@ -162,8 +242,12 @@ class Fleet:
         budgets = (1, 1.5) if operation == 'status' else (120 if operation == 'prepare' else 25,)
         for attempt, timeout in enumerate(budgets):
             try:
-                raw = await self.ssh(worker['ssh_host'], command, json.dumps(value).encode(),
-                                     multiplex=False, timeout=timeout)
+                if self.c.get('control_sessions', False) and operation != 'prepare':
+                    raw = await run(self.control_session_args(worker) + ['root@' + worker['ssh_host'], command],
+                                    json.dumps(value).encode(), timeout, file_output=True)
+                else:
+                    raw = await self.ssh(worker['ssh_host'], command, json.dumps(value).encode(),
+                                         multiplex=False, timeout=timeout)
                 break
             except (RuntimeError, TimeoutError) as error:
                 retry = attempt + 1 < len(budgets)
@@ -608,6 +692,9 @@ class Fleet:
 
 async def main():
     config = json.loads(Path(sys.argv[1]).read_text())
+    if '--control-sessions' in sys.argv[2:]:
+        await Fleet(config).serve_control_sessions()
+        return
     if '--reconcile' in sys.argv[2:]:
         fleet = Fleet(config)
         await fleet.serve_reconciler()

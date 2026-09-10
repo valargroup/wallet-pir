@@ -273,6 +273,7 @@ async def main():
         shutil.copy2(SCRIPT/'transparent-live-fleet.py',ROOT/'transparent-live-fleet.py')
         shutil.copy2(SCRIPT.parent/'infra/digitalocean/production/deploy/transparent-publish-controller.service','/etc/systemd/system/transparent-publish-controller.service')
         shutil.copy2(SCRIPT.parent/'infra/digitalocean/production/deploy/transparent-replica-reconciler.service','/etc/systemd/system/transparent-replica-reconciler.service')
+        shutil.copy2(SCRIPT.parent/'infra/digitalocean/production/deploy/transparent-control-sessions.service','/etc/systemd/system/transparent-control-sessions.service')
         Path('/srv/zakura/transparent-publications').mkdir(exist_ok=True)
         # Recent canary first; archive owners follow serially, then other replicas.
         recent=[w for w in fleet.roster if w['role']=='recent-replica']

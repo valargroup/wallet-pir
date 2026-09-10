@@ -278,9 +278,18 @@ reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
 recent-01 at the canary stage and all four recent replicas after their upgrade.
 The installer applies an explicit roster `build_slots` value to the staged worker
 unit before verification; an omitted value preserves the installed setting.
-Control commands use independent SSH connections, separate from shared artifact
-transfer sessions. Read-only status retries one transport failure using a fresh
-connection (1 s then 1.5 s command budgets within the 3 s membership timeout).
+With `control_sessions: true`, short control commands use authenticated SSH
+masters owned by `transparent-control-sessions.service`, separate from artifact
+transfers and long-running preparation. Install and start that unit, then verify
+status through every owned connection before enabling the configuration flag
+and restarting the reconciler. Restart the session unit after roster or SSH
+authentication configuration changes. It owns foreground SSH processes, reconnects
+after exit and uses a separate private socket namespace. Clients cannot silently
+fall back to fresh connections; cancellation cannot terminate the shared master
+or wait indefinitely for its output descriptors. Bootstrap configurations without
+the flag retain direct SSH. Preparation always uses direct SSH. Read-only status
+retries one transport failure (1 s then 1.5 s command budgets within the 3 s
+membership timeout).
 Returned status still must attest the current warm publication. Two failed reads
 withdraw membership; invalid or rejected status is not retried. Mutating control
 commands are never blindly retried after an ambiguous transport failure.

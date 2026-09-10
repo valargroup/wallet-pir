@@ -179,6 +179,120 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):await task
         self.assertEqual(len(calls),1)
 
+    @unittest.skipUnless(hasattr(os,'fork'),'requires Unix descriptor inheritance')
+    async def test_cancelled_channel_does_not_wait_for_a_descendant_output_pipe(self):
+        import sys
+        started=self.root/'descendant-started';release=self.root/'descendant-release'
+        code="""import os,time,sys
+from pathlib import Path
+if os.fork()==0:
+ Path(sys.argv[1]).touch()
+ while not Path(sys.argv[2]).exists():time.sleep(.01)
+ os._exit(0)
+time.sleep(10)
+"""
+        task=asyncio.create_task(module.run([sys.executable,'-c',code,str(started),str(release)],file_output=True))
+        try:
+            async def ready():
+                while not started.exists():await asyncio.sleep(.01)
+            await asyncio.wait_for(ready(),3)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):await asyncio.wait_for(task,1)
+        finally:
+            release.touch()
+            await asyncio.gather(task,return_exceptions=True)
+
+    async def test_enabled_control_requires_owned_session_but_prepare_stays_direct(self):
+        from unittest.mock import AsyncMock
+        self.fleet.c['control_sessions']=True
+        self.fleet.ssh=AsyncMock(return_value=b'{"ok":true,"result":{}}')
+        with patch.object(module,'run',AsyncMock(return_value=b'{"ok":true,"result":{}}')) as run:
+            await self.fleet.control(self.roster[0],{'operation':'status'})
+            await self.fleet.control(self.roster[0],{'operation':'activate'})
+            for call in run.await_args_list:
+                self.assertTrue(call.kwargs['file_output'])
+                self.assertIn('-oProxyCommand=false',call.args[0])
+                self.assertIn('-oControlMaster=no',call.args[0])
+            self.fleet.ssh.assert_not_awaited()
+            await self.fleet.control(self.roster[0],{'operation':'prepare'})
+            self.assertEqual(self.fleet.ssh.await_count,1)
+            self.assertFalse(self.fleet.ssh.await_args.kwargs['multiplex'])
+        self.fleet.ssh.reset_mock()
+        with patch.object(module,'run',AsyncMock(side_effect=RuntimeError('session unavailable'))) as run:
+            with self.assertRaises(RuntimeError):await self.fleet.control(self.roster[0],{'operation':'status'})
+            self.assertEqual(run.await_count,2)
+            self.fleet.ssh.assert_not_awaited()
+            run.reset_mock()
+            with self.assertRaises(RuntimeError):await self.fleet.control(self.roster[0],{'operation':'activate'})
+            self.assertEqual(run.await_count,1)
+
+    def test_control_socket_identity_tracks_authenticated_destination(self):
+        worker=self.roster[0]
+        before=self.fleet.control_path(worker)
+        self.assertNotEqual(before,self.fleet.control_path({**worker,'ssh_host':'other'}))
+        self.fleet.c['known_hosts']='other-known-hosts'
+        self.assertNotEqual(before,self.fleet.control_path(worker))
+        self.assertEqual(before.parent,self.root/'ssh')
+
+    async def test_supervisor_restarts_master_and_cancellation_reaps_owned_process(self):
+        class Process:
+            def __init__(self, code=None):
+                self.pid=123;self.returncode=code;self.done=asyncio.Event();self.terminated=False
+                if code is not None:self.done.set()
+            async def wait(self):await self.done.wait();return self.returncode
+            def terminate(self):self.terminated=True;self.returncode=0;self.done.set()
+        first=Process(255);second=Process();started=asyncio.Event();calls=[]
+        async def spawn(*args,**kwargs):
+            calls.append((args,kwargs))
+            if len(calls)==1:return first
+            started.set();return second
+        with patch.object(module.asyncio,'create_subprocess_exec',spawn):
+            task=asyncio.create_task(self.fleet.control_session(self.roster[0]))
+            await asyncio.wait_for(started.wait(),3)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):await task
+        self.assertTrue(second.terminated)
+        self.assertEqual(len(calls),2)
+        for args,kwargs in calls:
+            self.assertIn('-N',args);self.assertNotIn('-f',args);self.assertNotIn('-M',args)
+            self.assertIn('-oControlMaster=yes',args)
+            self.assertIn('-oControlPersist=no',args)
+            self.assertEqual(kwargs['stdin'],asyncio.subprocess.DEVNULL)
+            self.assertEqual(kwargs['stdout'],asyncio.subprocess.DEVNULL)
+
+    async def test_dead_socket_is_recovered_but_ordinary_file_is_preserved(self):
+        import socket
+        from unittest.mock import AsyncMock
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory:
+            self.fleet.control_dir=Path(directory)
+            path=self.fleet.control_path(self.roster[0])
+            listener=socket.socket(socket.AF_UNIX);listener.bind(str(path));listener.close()
+            async def spawn(*args,**kwargs):
+                self.assertFalse(path.exists())
+                raise RuntimeError('stop after stale socket recovery')
+            with patch.object(module,'run',AsyncMock(side_effect=RuntimeError('dead master'))), patch.object(module.asyncio,'create_subprocess_exec',spawn):
+                with self.assertRaisesRegex(RuntimeError,'stale socket recovery'):
+                    await self.fleet.control_session(self.roster[0])
+            path.write_text('preserve')
+            with self.assertRaisesRegex(RuntimeError,'not a socket'):
+                await self.fleet.control_session(self.roster[0])
+            self.assertEqual(path.read_text(),'preserve')
+
+    async def test_live_predecessor_is_not_unlinked_when_exit_fails(self):
+        from unittest.mock import AsyncMock
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory:
+            self.fleet.control_dir=Path(directory)
+            path=self.fleet.control_path(self.roster[0])
+            async def accept(reader,writer):writer.close();await writer.wait_closed()
+            server=await asyncio.start_unix_server(accept,path=path)
+            try:
+                with patch.object(module,'run',AsyncMock(side_effect=RuntimeError('exit failed'))):
+                    with self.assertRaisesRegex(RuntimeError,'could not be stopped'):
+                        await self.fleet.control_session(self.roster[0])
+                self.assertTrue(path.exists())
+            finally:
+                server.close();await server.wait_closed()
+
     def test_ssh_reuse_socket_directory_is_private(self):
         self.assertEqual((self.root/'ssh').stat().st_mode & 0o777, 0o700)
 
