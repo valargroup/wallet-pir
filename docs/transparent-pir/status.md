@@ -54,47 +54,27 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
-## M1 persistent-session canary failed: observed 2026-09-10, 20:21 UTC
+## M1 collection and forwarded-status canary: observed 2026-09-10, 21:53 UTC
 
-The [status-stall evidence](evidence/productionize-m1-status-stall-2026-09-10/README.md)
-records failure after 96.8 minutes and 76 new blocks, with 82,406 exact queries.
-Two status attempts timed out despite an intact persistent master. Membership
-withdrawal caused HTTP 503; routing recovered about four seconds later. No fleet
-promotion occurred. The acceptance supervisor is terminal failed.
+The [deployment and start evidence](evidence/productionize-m1-collection-forward-canary-2026-09-10/README.md)
+records worker `d8f5217` on recent-01 and operations `eb116e9` with owned sessions
+and forwarded status enabled. The collection fix prevents disk cleanup holding
+serving locks; forwarding removes remote helper startup from status requests.
+Three Amsterdam qualification runs and full local checks passed before deployment.
 
-Bounded diagnostic load and simultaneous local/remote status, HTTP, SSH and host
-pressure probes are running to separate worker handling from transport or host
-stalls. They cannot satisfy acceptance or trigger rollout. Production retains
-`85d76e8` control sessions and the `f2f351c` recent-01 worker while diagnosis runs.
+The fresh `transparent-m1-collection-forward-rollout.service` entered canary
+observation at **21:41:13 UTC** and was rechecked active at 21:53 UTC: 13 new
+blocks, about 10,700 exact queries, 11 retries, no worker restart or OOM.
+**M1 remains open.** These partial samples do not establish sustained acceptance;
+the matching full gates remain in [remaining work](remaining-work.md).
 
-The [collection-lock regression](evidence/productionize-m1-collection-lock-2026-09-10/README.md)
-reproduces a status stall when disk collection waits for a snapshot writer while
-holding a serving lock. The source correction moves collection off the async
-executor and releases serving locks before disk work, while preserving mutation
-serialization after caller cancellation. Its focused release suite passed
-16 tests (two manual benchmarks ignored). This is not yet deployed or established
-as the cause of every observed production pause.
-
-Source `d8f5217` is committed and pushed. Its [Linux/Amsterdam qualification](evidence/productionize-m1-collection-qualification-2026-09-10/README.md)
-passed all three unchanged combined screens (193 exact queries, three retries,
-8.20–9.14 s visibility, at least 26.08% modeled memory headroom). The original
-failure followed activation without a new collection recorded in that window;
-thread-state probing is now collecting evidence before attributing that failure
-to the corrected path. The candidate is not deployed and no acceptance is active.
-
-The [forwarded-status diagnosis](evidence/productionize-m1-forwarded-status-2026-09-10/README.md)
-captures a 21:00 UTC pause where local Unix status remained at 1–2 ms while SSH
-status/no-op took about 0.8 s. Separate-connection and same-master Unix forwarding
-trials are running to isolate helper/channel delay. Initial samples are fast,
-but later shared pauses show that forwarding alone does not explain every stall.
-An opt-in implementation passes 86 operations tests, full repository checks and
-an isolated live reconnect test. It remains disabled; disk-backed probe logging
-must be separated from socket latency before attributing the remaining pauses.
-
-At 21:25 UTC, the [memory-backed worker probe](evidence/productionize-m1-forwarded-status-2026-09-10/ram-probe/README.md)
-replaced the worker's disk-logging probes after a successful status check. It
-measures socket duration inside the requesting thread and records scheduling
-gaps separately. The diagnostic load continues; raw correlation is pending.
+The preceding persistent-session canary failed after 96.8 minutes and 76 blocks,
+with 82,406 exact queries, on status timeout and HTTP 503. The subsequent bounded
+diagnostic run also failed with HTTP 503 at 21:35:50 UTC before operator cleanup.
+Its final memory-backed probes captured a genuine 3.9-second local status pause,
+superseding the earlier partial maximum. The full cause of that pause remains
+unproven. The new candidate has a separate bounded diagnostic probe; acceptance
+budgets have not changed and no previous samples count toward this run.
 
 ## M1 owned control sessions: deployed 2026-09-10, 18:44 UTC
 

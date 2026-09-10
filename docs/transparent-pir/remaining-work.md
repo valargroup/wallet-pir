@@ -24,10 +24,10 @@ complete M0 or supersede earlier gate results.
   Fresh `transparent-m1-sessions-rollout.service` began at 18:45:04 UTC on
   2026-09-10; it failed after 96.8 minutes and 76 blocks on another status
   timeout/503. [Status-stall diagnosis](evidence/productionize-m1-status-stall-2026-09-10/README.md)
-  is running under bounded load; no replacement acceptance is active.
-  The [collection-lock correction](evidence/productionize-m1-collection-lock-2026-09-10/README.md)
-  passes full local checks and [Linux/Amsterdam qualification](evidence/productionize-m1-collection-qualification-2026-09-10/README.md).
-  Production stall diagnosis, deployment and matching acceptance remain open.
+  subsequently reproduced HTTP 503 under bounded diagnostic load at 21:35:50 UTC.
+  The qualified collection fix and forwarded status are now deployed; the
+  [fresh matching canary](evidence/productionize-m1-collection-forward-canary-2026-09-10/README.md)
+  started at 21:41:13 UTC and was active at 21:53 UTC. No fleet promotion yet.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.
