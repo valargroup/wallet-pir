@@ -114,3 +114,32 @@ zero. A distinct fifteen-minute diagnostic load started as
 `/opt/transparent-publisher-build/publication-io-20260910/control-path-load-2`.
 It keeps query traffic present for the new traces. No acceptance supervisor was
 restarted, and no deployment setting changed.
+
+## Virtual framebuffer experiment, 00:28 UTC
+
+The [stack-enabled trace](framebuffer-experiment/kernel-stacks-partial.txt)
+captured two further CPU sampling gaps (364 and 445 ms) ending in
+`iowrite16 → virtqueue_notify → virtio_gpu_notify →
+virtio_gpu_primary_plane_update → drm_fb_helper_damage_work`. Separately, the
+[raw HTTP probe](framebuffer-experiment/tcp-connect-timeout.json) captured a
+four-second **connect-stage** timeout at 00:21:26, followed by a connection
+requiring 2.676 seconds before the response arrived promptly. This distinguishes
+that event from time spent executing the HTTP readiness handler.
+
+The worker had `virtio_gpudrmfb`, a bound framebuffer console, cursor blinking
+enabled, and both tty1 and ttyS0 kernel consoles. At **00:28:36.551 UTC**, a
+[recorded runtime experiment](framebuffer-experiment/change.json) unbound only
+the framebuffer console, after verifying the serial console was registered.
+Worker source, process, query workload, routing and timeouts were unchanged.
+The kernel's [framebuffer-console documentation](https://www.kernel.org/doc/html/latest/fb/fbcon.html)
+documents the bind interface; restoring this host's previous binding is
+`echo 1 > /sys/class/vtconsole/vtcon0/bind`. This experiment is not yet persistent
+across reboot and is not an accepted fleet setting.
+
+The [early coordinator comparison](framebuffer-experiment/coordinator-early-comparison.json)
+is split by request start time at the exact change boundary. Before the change,
+both shared and dedicated status tunnels had timed out; therefore a dedicated
+SSH tunnel alone is not a demonstrated fix. The short post-change window had
+no errors. Its smaller sample size cannot establish production reliability.
+Continue matched load and kernel/endpoint observation before making a durable
+headless-host change and restarting acceptance. No new M1 gate is running.
