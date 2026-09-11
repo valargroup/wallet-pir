@@ -87,3 +87,30 @@ profile gaps nor their absence alone establishes a hypervisor or kernel fault.
 Bpftrace reported a signed/unsigned arithmetic warning in v2; preserve and
 inspect raw timestamps before interpreting any event. The exact scripts are
 in [readiness-followup](readiness-followup/).
+
+## CPU sampling gaps, 00:25 UTC
+
+The [completed v2 trace](cpu-gap-followup/m1-cpu-gaps-v2-final.tar.gz) recorded
+four non-idle sampling gaps: 4.045 s on CPU 3, 1.720 s on CPU 2, 0.863 s on CPU 1,
+and 2.015 s on CPU 3. The first gap's preceding TID 679430 was independently
+identified as a `tokio-rt-worker` in process 679049; later gap endpoints were
+kernel worker threads. These are sampling gaps, not proof of the particular
+kernel/host mechanism or proof that each gap caused an endpoint outage.
+
+V2 was stopped after the stack-enabled replacement was confirmed running.
+`transparent-m1-cpu-gaps-v3.service` (PID 685938) records prior/current kernel
+stacks at gaps, uses an unsigned timestamp map and retains the idle exclusion.
+It runs for 900 seconds from worker monotonic_ns 242441618559158 and writes
+`/run/tp-publication-io-probe/cpu-gaps-v3.*`. A second 900-second trace,
+`transparent-m1-worker-advice.service` (PID 686140), times worker `madvise` and
+`fadvise64` calls above 100 ms to test a memory/cache-reclamation hypothesis.
+Its start monotonic_ns is 242526996487300; output is in `worker-advice.*` beside
+the CPU trace. Both scripts are preserved in [cpu-gap-followup](cpu-gap-followup/).
+
+The [first ten-minute load](cpu-gap-followup/control-path-load-final.tar.gz)
+finished successfully: 8,579 exact queries, six retries, both clients exited
+zero. A distinct fifteen-minute diagnostic load started as
+`transparent-m1-control-path-load-2.service` (PID 2628176), recording under
+`/opt/transparent-publisher-build/publication-io-20260910/control-path-load-2`.
+It keeps query traffic present for the new traces. No acceptance supervisor was
+restarted, and no deployment setting changed.
