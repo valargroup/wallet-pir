@@ -22,7 +22,8 @@ after capturing cache advice blocking write submission, to qualify a tested cand
 See [deployment and terminal failure evidence](evidence/productionize-m1-cancel-prepare-2026-09-11/README.md).
 A [background cache-advice candidate](evidence/productionize-m1-cache-advice-2026-09-11/README.md)
 passes local full checks, 38 Linux library tests and 26 Linux integration tests;
-the guarded recent-01 upgrade is in progress, with actual-worker qualification pending.
+the guarded recent-01 upgrade passed at 14:24:23 UTC. A 30-minute loaded qualification
+is running from 14:26 UTC on candidate binary `674b7c927c9c`; it has no M1 acceptance credit.
 **M1 remains open.** The supervisor is terminal and no replacement acceptance
 run has started. Failed-run time does not count toward acceptance.
 

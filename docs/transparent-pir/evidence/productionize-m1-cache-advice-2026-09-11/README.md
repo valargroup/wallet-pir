@@ -12,7 +12,7 @@ and durability barriers are unchanged.
 This bounds background work and descriptor retention, not kernel file-cache
 residency. Actual-worker memory headroom and publication latency still need
 qualification. A slow background call can delay reclamation, and skipped advice
-leaves eviction to the kernel. This is not yet a deployed fix or M1 acceptance.
+leaves eviction to the kernel. The candidate is deployed to recent-01 for qualification; it is not M1 acceptance.
 All 321 manifest hashes were verified against committed source
 `be1e5759d89e62fc5801944cfd8d635626cb1199`; see [source identity](source-commit.json).
 
@@ -36,11 +36,23 @@ The longer diagnostic on the prior binary was intentionally interrupted after
 capturing the blocking call, to begin candidate qualification. Its Linux build and integration compilation ran on the
 coordinator concurrently with that reproduction experiment, not on recent-01.
 
-## Guarded upgrade in progress
+## Guarded upgrade and loaded qualification
 
 The [deployment script](deploy.py) checks source/artifact identities, completed
 Linux validation and the prior observer's terminal state before upgrading only
 recent-01. Unit `transparent-m1-cache-advice-deploy.service`, PID 3849428, is
-running on the coordinator. Output is under
+now terminal with exit status zero. Output is under
 `/opt/transparent-publisher-build/cache-advice-20260911/candidate-upgrade`.
-The upgrade result and subsequent loaded qualification remain pending.
+The [deployment bundle](deployment.tar.gz) records the successful guarded upgrade
+at 14:24:23 UTC, including private-query and warm-state verification. The public
+endpoints were reopened. No other worker was upgraded.
+
+A 30-minute loaded qualification began at approximately 14:26:00 UTC under
+`transparent-m1-cache-advice-screen.service`, PID 3850092. It uses two exact-query
+clients and the unchanged freshness and memory budgets, with output under the
+candidate build root at `qualification`. The [status helper](qualification-status.py)
+targets that exact process. Expected completion is approximately 14:56 UTC;
+RuntimeMaxSec is 1,900 and Restart is no. The first live sample had 29.48% host
+memory available and both query streams producing exact results. This short
+screen has no M1 acceptance credit and no automatic fleet rollout. If it passes,
+start a fresh matching six-hour/300-block canary.
