@@ -40,3 +40,12 @@ six-hour/300-block canary precedes gated six-worker rollout and a separate
 September 11; block production may extend it. The existing bounded package
 maintenance deferral expires around September 12 at 18:41 UTC and must not be
 silently extended.
+
+## Fifteen-minute checkpoint
+
+The [checkpoint](quarter-hour-checkpoint.json) at 2026-09-11T11:38:42.567303+00:00
+confirms the same supervisor remains active after 941.325 seconds, with 13 new
+blocks, 13,864 exact queries and nine retries, zero mismatches and no in-run
+routing withdrawals. Maximum public freshness is 18.894 seconds and minimum
+available RAM is 27.183%. Persistent storage policy and helper identity remain
+verified, with no cache write failures. This partial window does not satisfy M1.
