@@ -220,3 +220,13 @@ blocks, and a 17-minute process ceiling. Output is
 `/opt/transparent-publisher-build/shoup-release-20260911/nodiscard-diagnostic`.
 This is neither a canary restart nor acceptance credit. Assess its result and
 retain the raw captures before deciding on persistent configuration changes.
+
+Both samplers subsequently terminated successfully at their original deadlines.
+Their [complete scripts and raw captures](activation-samplers-complete.tar.gz)
+are preserved, along with the [complete failed loaded diagnostic](activation-diagnostic-complete.tar.gz).
+The file-path sampler contains 546 samples spanning 09:21:50–09:31:50 UTC.
+Of 260 samples before the remount, 68 contain blocked operations; of 286 after,
+four do. Workload and block-arrival differences prevent attributing that
+comparison solely to discard. The original disk sampler spans the failure
+and remount as well; the mount-change timestamp must be used when analyzing it.
+The separate nodiscard diagnostic remains in progress at this checkpoint.
