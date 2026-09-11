@@ -1,0 +1,105 @@
+   Compiling transparent-spend-pir v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-spend)
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/spendability-pir/pir/enhance)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet)
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/spendability-pir/server/enhance-pir-server)
+   Compiling transparent-blocks v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-blocks)
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-shard-server)
+   Compiling transparent-filter-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-filter-server)
+    Finished `release` profile [optimized] target(s) in 1m 00s
+     Running unittests src/lib.rs (target/release/deps/transparent_filter_server-7a89a5168b020ebb)
+
+running 1 test
+test controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 52 filtered out; finished in 1.90s
+
+     Running unittests src/bin/compact-export.rs (target/release/deps/compact_export-7d25428913666f2a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/event-spotcheck.rs (target/release/deps/event_spotcheck-9c3aeac11c454b28)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running unittests src/bin/journal-inventory.rs (target/release/deps/journal_inventory-a23399b378f697b4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/sample-oracle.rs (target/release/deps/sample_oracle-49b688bfcd1433dc)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/script-sample.rs (target/release/deps/script_sample-ccfefb0964b2b77e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/shard-census.rs (target/release/deps/shard_census-f0f3e17be5a2a97d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running unittests src/bin/shard-cutoff.rs (target/release/deps/shard_cutoff-b9ba40aca07b832a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running unittests src/bin/shard-publish.rs (target/release/deps/shard_publish-cbb9a814890fea43)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/shard-verify.rs (target/release/deps/shard_verify-e33463e4f3db1993)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/event-ingest.rs (target/release/deps/transparent_event_ingest-b3565de898ec450a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/server.rs (target/release/deps/transparent_filter_server-a35defe70ba14d3d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/transparent-publish-controller.rs (target/release/deps/transparent_publish_controller-f1c7fd862df9d418)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/compact.rs (target/release/deps/compact-b55a58f88042c138)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/service_round_trip.rs (target/release/deps/service_round_trip-8096aba1f8441d22)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+     Running tests/shard_filters.rs (target/release/deps/shard_filters-c4dbb957de04a33d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+

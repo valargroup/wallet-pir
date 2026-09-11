@@ -2,7 +2,7 @@
 
 Source inspection: 2026-09-09 through worker/qualification correction `f2f351c` and fleet burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
-## M1 managed storage-policy canary: observed 2026-09-11, 11:00 UTC
+## M1 managed storage-policy canary: failed 2026-09-11, 11:10 UTC
 
 Operations source `864f741` passed all-six-worker storage preflight and full
 checks, then upgraded recent-01 through the guarded workflow. The worker
@@ -16,7 +16,13 @@ records 35 new blocks, 54,689 exact queries, zero mismatches and no in-run routi
 withdrawals. Maximum public freshness is 15.504 seconds and minimum available
 memory is 26.734%; persistent storage policy and helper identity remain verified.
 See [deployment and provenance](evidence/productionize-m1-storage-policy-2026-09-11/README.md).
-**M1 remains open.** This is a fresh run, not reuse of the passing short diagnostic.
+The run failed at 11:10:27 UTC: block 3479594 arrived publicly in 30.536 seconds,
+exceeding the 30-second limit. It recorded 63,187 exact responses, zero mismatches
+and no in-run routing withdrawals. Logs show a noncanonical candidate rejected
+by the managed worker roughly 16 seconds before the controller abandoned its
+preparation wait; replacement activation took 0.100 seconds. Prompt cancellation
+of invalidated preparation is being implemented and tested. The supervisor is
+terminal; no replacement acceptance run has started. **M1 remains open.**
 
 ## M1 observation restarted after host maintenance: observed 2026-09-11
 

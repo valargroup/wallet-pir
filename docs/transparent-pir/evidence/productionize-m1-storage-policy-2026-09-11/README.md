@@ -76,3 +76,31 @@ Maximum public freshness is 15.504 seconds, maximum replica freshness is
 policy and helper identity remain verified; the latest pending-save count is
 zero and no cache write failures are recorded. This is a partial acceptance
 window, not a completed canary or M1 pass.
+
+## Terminal failure and correction plan
+
+The [complete failed run](failed-canary.tar.gz) ended at
+2026-09-11T11:10:27.588331+00:00 after 4,218.794 seconds: block 3479594
+arrived publicly after 30.536 seconds, exceeding the unchanged 30-second limit.
+The run recorded 63,187 exact responses, 33 retries, zero mismatches and no
+in-run routing withdrawals. It does not count toward acceptance.
+
+The [controller log](failure-controller.log) and [reconciler log](failure-reconciler.log)
+show the managed worker rejecting candidate `4d727126…` as noncanonical at
+11:09:58.131 UTC, but the controller only discarded preparation at 11:10:14.475.
+The replacement `0fd25fd8…` completed its publication cycle in 12.385 seconds;
+recent-01 activation took 0.100 seconds. This failure does not reproduce the
+previous long activation flush. A [preceding near-limit event](near-limit-controller.log)
+also involved candidate invalidation followed by retry.
+
+The correction path is to cancel the controller's outstanding preparation wait
+when ingestion changes its invalidation epoch, retaining the existing canonical
+hash checks and post-activation safety checks. A held-preparation regression
+must prove cancellation before the fleet replies, continued availability of
+canonical old coverage, and successful replacement publication. Required checks
+and a verified deployment must precede a fresh acceptance run.
+
+The controller cancellation change passed the [release regression](cancellation-regression.log)
+and [full make check](cancellation-make-check.log). The held reply is not released
+until after cancellation returns; replacement publication and later reorg checks
+also pass. This is source/test evidence only; the correction is not yet deployed.

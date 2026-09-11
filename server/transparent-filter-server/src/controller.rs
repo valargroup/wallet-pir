@@ -575,7 +575,22 @@ async fn publish_once(
     let mut candidate = read_public(directory.clone(), Vec::new())?;
     authority.0.status.write().unwrap()["candidate_height"] = height.into();
     let request = serde_json::json!({"operation":"prepare","directory":directory,"map_sha256":candidate.publication.map_sha256,"recent_from":config.recent_from,"source_sha":config.source_sha});
-    let prepared = fleet(config, request).await?;
+    // Ingestion may invalidate this candidate while the fleet is still waiting
+    // for a preparation quorum. Stop that wait promptly: finishing an orphan's
+    // preparation only delays the replacement. Dropping fleet() kills its local
+    // child; independently owned worker preparation remains fenced by its epoch.
+    // Activation is deliberately outside this cancellation path because it can
+    // change routing and must complete the existing post-activation checks.
+    let invalidated = async {
+        while authority.0.epoch.load(Ordering::Acquire) == epoch {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    };
+    let prepared = tokio::select! {
+        biased;
+        _ = invalidated => return Err("candidate invalidated while preparing".into()),
+        result = fleet(config, request) => result?,
+    };
     if authority.0.epoch.load(Ordering::Acquire) != epoch || rpc.block_hash(height).await? != hash {
         return Err("candidate invalidated while preparing".into());
     }
@@ -1068,12 +1083,17 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             )
             .await;
             assert_eq!(response.status(), StatusCode::OK);
+            // The orphaned preparation never replies. Cancellation must finish
+            // before releasing the hook, while canonical old coverage survives.
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(2), &mut publication)
+                    .await
+                    .expect("invalidated preparation must not wait for the fleet reply")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("candidate invalidated while preparing")
+            );
             std::fs::remove_file(&pause).unwrap();
-            assert!(publication
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("candidate invalidated while preparing"));
             assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
         }
         publish_once(&config, &client, &store, &authority)

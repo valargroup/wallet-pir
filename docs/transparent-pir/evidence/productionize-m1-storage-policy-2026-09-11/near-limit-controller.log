@@ -1,0 +1,263 @@
+journal 0-3479587, archive-wide below 3262749 at SealPolicy { scripts: Limit { target: 393216, capacity: 458752 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3262749 at SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+shard 173 3473055-3479587 (6533 blocks) scripts 34919 pages 4671 events 209183 segments 1/1 TAIL r3212
+published 174 shards covering 0-3479587; filters ~60.13 MB
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.012562, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.017116, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.02471, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.033113, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.030232, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.026081, "exit_code": 0}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.026591, "exit_code": 0}
+assignment 853ee7360a374f8cdf86bac510eb14ab6e898c9a252d211e5fbc3951e0558f6c written to /opt/transparent-publisher/state/7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa.assignment.json
+  transparent-pir-archive-01 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  0-79
+  transparent-pir-archive-02 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  80-159
+  transparent-pir-recent-01 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+  transparent-pir-recent-02 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+  transparent-pir-recent-03 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+  transparent-pir-recent-04 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "started", "monotonic": 778061.9188713}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "started", "monotonic": 778061.919163343}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "started", "monotonic": 778061.919378353}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "started", "monotonic": 778061.919561284}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "started", "monotonic": 778061.919825057}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "completed", "seconds": 0.0016648969613015652}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "started", "monotonic": 778061.921859932}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "completed", "seconds": 0.0011284049833193421}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "started", "monotonic": 778061.923035874}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "completed", "seconds": 0.004416170995682478}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "started", "monotonic": 778061.92464801}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "completed", "seconds": 0.005058069014921784}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "started", "monotonic": 778061.925713068}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "completed", "seconds": 0.006950502982363105}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "started", "monotonic": 778061.926954445}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "completed", "seconds": 0.0181029379600659}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "started", "monotonic": 778061.943855895}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "status", "state": "completed", "seconds": 0.026526514091528952}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "started", "monotonic": 778061.946292709}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.036109, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "completed", "seconds": 0.036231922917068005}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "started", "monotonic": 778061.959294022}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.006929, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "completed", "seconds": 0.007030663080513477}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "started", "monotonic": 778061.968865708}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.030542, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "completed", "seconds": 0.03066300507634878}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "started", "monotonic": 778061.974546721}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.009407, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "completed", "seconds": 0.009518736973404884}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "started", "monotonic": 778061.986666}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "completed", "seconds": 0.13207228004466742}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "started", "monotonic": 778062.059071064}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "completed", "seconds": 0.11328427807893604}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "started", "monotonic": 778062.059603941}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "revoke_orphans", "state": "completed", "seconds": 0.15873331297188997}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "started", "monotonic": 778062.083418216}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.043304, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "completed", "seconds": 0.04341024300083518}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "started", "monotonic": 778062.103035071}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003553, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "completed", "seconds": 0.0036213200073689222}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "started", "monotonic": 778062.108720591}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.043675, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "completed", "seconds": 0.04378308297600597}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "started", "monotonic": 778062.127223661}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003825, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "completed", "seconds": 0.003913516993634403}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "started", "monotonic": 778062.133218266}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.082316, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "collect", "state": "completed", "seconds": 0.08243802504148334}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "started", "monotonic": 778062.141532}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.00358, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "inventory", "state": "completed", "seconds": 0.0036609929520636797}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "started", "monotonic": 778062.147227582}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.212215, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "completed", "seconds": 0.21546015096828341}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "started", "monotonic": 778062.184506086}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.280304, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "completed", "seconds": 0.28054151602555066}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "started", "monotonic": 778062.267359179}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.09378, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "completed", "seconds": 0.09387979190796614}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "started", "monotonic": 778062.27846206}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.010769, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "completed", "seconds": 0.010892799939028919}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "started", "monotonic": 778062.289377695}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.09557, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "completed", "seconds": 0.09568256896454841}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "started", "monotonic": 778062.36309965}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.011143, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "completed", "seconds": 0.011353658977895975}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "started", "monotonic": 778062.374530504}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.558116, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "completed", "seconds": 0.5584593979874626}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "started", "monotonic": 778062.705893959}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.616439, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "completed", "seconds": 0.6168008100939915}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "started", "monotonic": 778062.750304377}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.743192, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "hardlink", "state": "completed", "seconds": 0.7435781310778111}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "started", "monotonic": 778062.852544421}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.82207, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "completed", "seconds": 0.8221903170924634}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.890733, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "completed", "seconds": 0.8908764390507713}
+{"event": "fleet_command", "tool": "rsync", "seconds": 1.540992, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "completed", "seconds": 1.5411935809534043}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "started", "monotonic": 778064.291582162}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016295, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "completed", "seconds": 0.016477408935315907}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "started", "monotonic": 778064.30809253}
+{"event": "fleet_command", "tool": "rsync", "seconds": 1.690421, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "completed", "seconds": 1.690562951960601}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "started", "monotonic": 778064.39653642}
+{"event": "fleet_command", "tool": "rsync", "seconds": 1.545158, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "transfer", "state": "completed", "seconds": 1.5452765930676833}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "started", "monotonic": 778064.397875807}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.015673, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "completed", "seconds": 0.015812256024219096}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "started", "monotonic": 778064.413725937}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.024663, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "assignment", "state": "completed", "seconds": 0.024809641996398568}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "started", "monotonic": 778064.421370072}
+{"event": "fleet_command", "tool": "ssh", "seconds": 13.492715, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "completed", "seconds": 13.492868097964674}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "CancelledError", "seconds": 13.889197372016497}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "7112bfef87a3ff22533c4d4bf543d6e1772b0e2bd414ab91764ca22a379a8efa", "phase": "prepare", "state": "CancelledError", "seconds": 13.88174021197483}
+[2m2026-09-11T11:02:47.666088Z[0m [31mERROR[0m [2mtransparent_filter_server::controller[0m[2m:[0m publication failed; keeping valid coverage and retrying [3merror[0m[2m=[0mcandidate invalidated while preparing
+journal 0-3479587, archive-wide below 3262749 at SealPolicy { scripts: Limit { target: 393216, capacity: 458752 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3262749 at SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+shard 173 3473055-3479587 (6533 blocks) scripts 34921 pages 4671 events 209187 segments 1/1 TAIL r3212
+published 174 shards covering 0-3479587; filters ~60.13 MB
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.026635, "exit_code": 0}
+assignment 21ee911b3c292c2662b8fd61203c0c12ac07257e426ab688b2a066374ddf12b8 written to /opt/transparent-publisher/state/6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b.assignment.json
+  transparent-pir-archive-01 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  0-79
+  transparent-pir-archive-02 archive-owner     80 shards   48318382080 bytes reserved of   51539607552 cache  80-159
+  transparent-pir-recent-01 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+  transparent-pir-recent-02 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+  transparent-pir-recent-03 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+  transparent-pir-recent-04 recent-replica    14 shards    3758096384 bytes reserved of    5368709120 cache  160-173
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "started", "monotonic": 778079.715906307}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "started", "monotonic": 778079.716179068}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "started", "monotonic": 778079.716349157}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "started", "monotonic": 778079.716496259}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "started", "monotonic": 778079.716908172}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "completed", "seconds": 0.00212281197309494}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "started", "monotonic": 778079.719309119}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "completed", "seconds": 0.004085136926732957}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "started", "monotonic": 778079.721276289}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "completed", "seconds": 0.0023620129795745015}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "started", "monotonic": 778079.721696431}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "completed", "seconds": 0.02326120703946799}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "started", "monotonic": 778079.741417375}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "completed", "seconds": 0.025874197017401457}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "started", "monotonic": 778079.742659374}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "status", "state": "completed", "seconds": 0.02665245602838695}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "started", "monotonic": 778079.743717935}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "completed", "seconds": 0.0030663429060950875}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "started", "monotonic": 778079.744511388}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.034093, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "completed", "seconds": 0.034219158929772675}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "started", "monotonic": 778079.755944497}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014951, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "completed", "seconds": 0.01507412304636091}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "started", "monotonic": 778079.759613812}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.009059, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "completed", "seconds": 0.009172372054308653}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "started", "monotonic": 778079.768236673}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.014855, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "completed", "seconds": 0.014976782025769353}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "started", "monotonic": 778079.777749529}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "completed", "seconds": 0.1154334059683606}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "started", "monotonic": 778079.858134966}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "completed", "seconds": 0.1148987589403987}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "started", "monotonic": 778079.858642565}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "revoke_orphans", "state": "completed", "seconds": 0.15463104099035263}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "started", "monotonic": 778079.875941185}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.050361, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "completed", "seconds": 0.050474406918510795}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "started", "monotonic": 778079.926437314}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.003825, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "completed", "seconds": 0.0039045719895511866}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "started", "monotonic": 778079.932381146}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.213309, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "completed", "seconds": 0.21349436708260328}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "started", "monotonic": 778079.981906332}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.273541, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "completed", "seconds": 0.2737632020143792}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "started", "monotonic": 778080.051660544}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.095236, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "completed", "seconds": 0.09532466100063175}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "started", "monotonic": 778080.077289078}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.01071, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "completed", "seconds": 0.010808915016241372}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "started", "monotonic": 778080.088116873}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.118395, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "completed", "seconds": 0.11848868895322084}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "started", "monotonic": 778080.170216607}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.012131, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "completed", "seconds": 0.012245793943293393}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "started", "monotonic": 778080.182485373}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.514834, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "completed", "seconds": 0.5150342449778691}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "started", "monotonic": 778080.447589746}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.523965, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "completed", "seconds": 0.5240487239789218}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.554945, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "completed", "seconds": 0.5550552969798446}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.649558, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "completed", "seconds": 1.6497038480592892}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "started", "monotonic": 778081.5078728}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.006009, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "completed", "seconds": 0.006094465032219887}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "started", "monotonic": 778081.516213778}
+{"event": "fleet_command", "tool": "rsync", "seconds": 1.577375, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "completed", "seconds": 1.5775096759898588}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "started", "monotonic": 778082.025204387}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016566, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "completed", "seconds": 0.016753986943513155}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "started", "monotonic": 778082.041994648}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.67621, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "completed", "seconds": 0.6763691889354959}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "started", "monotonic": 778082.192864076}
+{"event": "fleet_command", "tool": "ssh", "seconds": 2.480396, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "collect", "state": "completed", "seconds": 2.4805164920398965}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "started", "monotonic": 778082.339190678}
+{"event": "fleet_command", "tool": "shard-assign", "seconds": 0.00427, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "inventory", "state": "completed", "seconds": 0.004372618044726551}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "started", "monotonic": 778082.345694643}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.623167, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "hardlink", "state": "completed", "seconds": 0.623302538995631}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "started", "monotonic": 778082.969202068}
+{"event": "fleet_command", "tool": "rsync", "seconds": 1.899184, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "completed", "seconds": 1.899370718980208}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "started", "monotonic": 778084.092323538}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.015057, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "completed", "seconds": 0.015290961018763483}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "started", "monotonic": 778084.107647435}
+{"event": "fleet_command", "tool": "rsync", "seconds": 2.241245, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "transfer", "state": "completed", "seconds": 2.241379173938185}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "started", "monotonic": 778085.210666536}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.021281, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "assignment", "state": "completed", "seconds": 0.021551307989284396}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "started", "monotonic": 778085.232256505}
+{"event": "worker_stage", "worker": "transparent-pir-recent-03", "host": "10.142.0.7", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "CancelledError", "seconds": 2.6528022149577737}
+{"event": "worker_stage", "worker": "transparent-pir-recent-04", "host": "10.142.0.12", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "CancelledError", "seconds": 5.843159340904094}
+{"event": "worker_stage", "worker": "transparent-pir-recent-02", "host": "10.142.0.8", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "prepare", "state": "CancelledError", "seconds": 3.77754834596999}
+{"event": "worker_stage", "worker": "transparent-pir-recent-01", "host": "10.142.0.10", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "activate", "state": "started", "monotonic": 778087.98172897}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "activate", "state": "started", "monotonic": 778087.98286617}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "activate", "state": "started", "monotonic": 778087.98355537}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014265, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "activate", "state": "completed", "seconds": 0.014410997042432427}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "attest", "state": "started", "monotonic": 778087.997298267}
+{"event": "worker_stage", "worker": "transparent-pir-archive-01", "host": "10.142.0.6", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "attest", "state": "completed", "seconds": 0.0017334789736196399}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.019087, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "activate", "state": "completed", "seconds": 0.019279439002275467}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "attest", "state": "started", "monotonic": 778088.002896347}
+{"event": "worker_stage", "worker": "transparent-pir-archive-02", "host": "10.142.0.9", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "attest", "state": "completed", "seconds": 0.0022803350584581494}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.0965, "exit_code": 0}
+{"event": "worker_stage", "worker": "transparent-pir-recent-01", "host": "10.142.0.10", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "activate", "state": "completed", "seconds": 0.09672192099969834}
+{"event": "worker_stage", "worker": "transparent-pir-recent-01", "host": "10.142.0.10", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "attest", "state": "started", "monotonic": 778088.078516967}
+{"event": "worker_stage", "worker": "transparent-pir-recent-01", "host": "10.142.0.10", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "attest", "state": "completed", "seconds": 0.008520914940163493}
+{"event": "worker_stage", "worker": "router", "host": "10.142.0.11", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "route", "state": "started", "monotonic": 778088.087261028}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.743713, "exit_code": 0}
+{"event": "worker_stage", "worker": "router", "host": "10.142.0.11", "map_sha256": "6e9b5a627db2b1ccbee78320dccaa4c5e203e2aa1ba2337732f857bb32c6b79b", "phase": "route", "state": "completed", "seconds": 1.7441768189892173}
+[2m2026-09-11T11:02:59.184521Z[0m [32m INFO[0m [2mtransparent_filter_server::controller[0m[2m:[0m activated warm publication [3mheight[0m[2m=[0m3479587 [3mhash[0m[2m=[0m"000000000076456cf7e7d376c7c4a7d34f29e804ddcfaf0fdf28e1750d989dc4" [3mfreshness_seconds[0m[2m=[0m29.22593545 [3mseconds[0m[2m=[0m11.490052063
