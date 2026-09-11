@@ -16,7 +16,8 @@ seconds loading and 5.901 seconds warming. The underlying loading stall remains
 under investigation. Diagnostic source `8e3de82` was subsequently deployed to
 recent-01 through the guarded upgrade. A 30-minute loaded diagnostic with thread
 sampling passed at 13:58 UTC (25,298 exact responses, zero mismatches), but did not
-reproduce the stall and has no acceptance credit; see [diagnostic provenance](evidence/productionize-m1-loading-diagnostics-2026-09-11/README.md).
+reproduce the stall and has no acceptance credit. A separate four-hour instrumented
+diagnostic began at 14:00:52 UTC on the same binary, with no automatic rollout; see [diagnostic provenance](evidence/productionize-m1-loading-diagnostics-2026-09-11/README.md).
 See [deployment and terminal failure evidence](evidence/productionize-m1-cancel-prepare-2026-09-11/README.md).
 **M1 remains open.** The supervisor is terminal and no replacement acceptance
 run has started. Failed-run time does not count toward acceptance.

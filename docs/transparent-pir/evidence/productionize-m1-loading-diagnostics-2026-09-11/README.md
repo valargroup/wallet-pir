@@ -54,3 +54,27 @@ finished. This does not establish the cause of the previous loading stall.
 The 30-minute window did not reproduce that stall and earns no M1 acceptance
 credit. The next investigation needs a longer instrumented observation, since the
 prior failure occurred after approximately 110 minutes. No fleet rollout was triggered.
+
+## Four-hour follow-up diagnostic
+
+A separate four-hour run started at 2026-09-11 14:00:52 UTC on the same binary,
+with the same two query clients and freshness limits. The [launch script](start-long-diagnostic.py)
+checked that the previous observer and sampler were terminal, the previous
+result passed, the worker was ready on the expected binary, and the new output
+paths were unused. It did not redeploy or restart the worker.
+
+The live coordinator unit is `transparent-m1-loading-long-diagnostic.service`,
+PID 3806698, with output under the same build root at `diagnostic-long`.
+The [status helper](long-diagnostic-status.py) targets this exact run.
+The worker [sampler](long-thread-sampler.py) runs under
+`transparent-m1-loading-long-sampler.service`, PID 867196, and writes
+`/tmp/m1-loading-long-fd-samples.ndjson`. Both have a 14,520-second systemd runtime
+limit and no restart policy; their requested observation duration is 14,400 seconds.
+The expected observation end is approximately 18:00:52 UTC.
+
+This is a reproduction experiment, with no M1 acceptance credit or fleet rollout.
+If it fails, correlate the failed block and publication map with loading-stage
+logs and sampled thread stacks before selecting a fix. If it finishes without a
+recurrence, preserve that limited result rather than claiming the stall resolved.
+The first live poll at 14:01:04 UTC showed both query streams producing exact
+responses, unchanged routing availability, and the expected worker binary.
