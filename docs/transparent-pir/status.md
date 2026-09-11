@@ -2,6 +2,17 @@
 
 Source inspection: 2026-09-09 through worker/qualification correction `f2f351c` and fleet burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
+## M1 cancellation canary: observed 2026-09-11, 11:24 UTC
+
+Controller source `4a23670` cancels an outstanding preparation wait when ingestion
+invalidates the candidate. Full local checks and the Linux release regression
+passed. Guarded deployment verified both public origins, canonical tip and warm
+recent-01 before starting `transparent-m1-cancel-prepare-rollout.service` at
+11:23:01 UTC. The worker binary and persistent storage policy are unchanged.
+The initial checkpoint records one new block and 1,107 exact responses with zero
+mismatches; this is not acceptance. See [deployment and fresh-run evidence](evidence/productionize-m1-cancel-prepare-2026-09-11/README.md).
+**M1 remains open.** No failed-run time counts toward this new observation.
+
 ## M1 managed storage-policy canary: failed 2026-09-11, 11:10 UTC
 
 Operations source `864f741` passed all-six-worker storage preflight and full
