@@ -152,3 +152,12 @@ Maximum public and replica visibility are 25.968 and 34.196 seconds;
 minimum sampled available memory is 26.403%. Routing unavailable events remain
 at the new baseline of 10. Pending cache saves have returned to zero with no
 write failures. This is partial observation only and does not satisfy M1.
+
+
+The [post-maintenance half-hour checkpoint](post-maintenance-half-hour.json)
+at 07:14:22 UTC confirms the same active supervisor after 1,844.5 seconds:
+21 new blocks, 27,127 exact queries, 31 retries and zero mismatches.
+Maximum public and replica visibility remain 25.968 and 34.196 seconds;
+minimum sampled available memory remains 26.403%. Routing unavailable events
+remain at baseline 10. The latest cache sample has no pending saves or write
+failures. This remains partial evidence; M1 acceptance is not established.
