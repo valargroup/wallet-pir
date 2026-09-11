@@ -56,3 +56,14 @@ do not substitute for acceptance.
 This is **partial deployment evidence**, not a passed canary. Both six hours
 and 300 new blocks, followed by the matching six-worker rollout and 24-hour
 observation, remain required. Other workers have not been promoted.
+
+
+The [first-hour checkpoint](hour-1-checkpoint.json), captured with
+[capture-checkpoint.py](capture-checkpoint.py) at 01:59:42 UTC, confirms the
+same supervisor PID remains active after 3,632 seconds. The partial record has
+53,184 exact queries, 35 retries and no mismatches; 41 blocks passed both
+visibility checks. Maximum observed public/replica visibility is 22.92 seconds.
+Across 119 worker samples, minimum available host memory is 26.07%, with no
+restarts or OOM kills. The routing counter remains at its baseline of six.
+This checkpoint is a summary of a running observation, not an acceptance result
+or a replacement for the final raw logs. The full gates above remain open.

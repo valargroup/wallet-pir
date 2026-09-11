@@ -1,0 +1,62 @@
+{
+  "partial": true,
+  "start": {
+    "utc": "2026-09-11T00:59:10.563748+00:00",
+    "event": "start",
+    "node_height": 3479113,
+    "worker": "transparent-pir-recent-01",
+    "minimum_seconds": 21600,
+    "minimum_blocks": 300,
+    "public_budget_seconds": 30.0,
+    "replica_budget_seconds": 60.0
+  },
+  "summary": {
+    "worker_samples": 119,
+    "min_available_percent": 26.065092759518826,
+    "max_restarts": 0,
+    "max_oom_kills": 0,
+    "block_visible": {
+      "count": 41,
+      "max_seconds": 22.91947645007167
+    },
+    "canary_block_visible": {
+      "count": 41,
+      "max_seconds": 22.921816757065244
+    },
+    "elapsed_seconds": 3632.02809
+  },
+  "utc": "2026-09-11T01:59:42.591860+00:00",
+  "unit": "MainPID=2658846\nExecMainStatus=0\nActiveState=active\n",
+  "status": {
+    "phase": "canary_observation",
+    "binary_sha256": "6b97509b20dc21e67e39512676dbc896963411b00a7df7e76727d1305a1d705d",
+    "source_sha": "f383b01"
+  },
+  "events": {
+    "routing_availability_baseline": 1,
+    "start": 1,
+    "worker": 119,
+    "canary_block_visible": 41,
+    "block_visible": 41,
+    "publication_changed_between_reads": 1
+  },
+  "queries": [
+    {
+      "exact": 26590,
+      "retries": 19,
+      "mismatches": 0
+    },
+    {
+      "exact": 26594,
+      "retries": 16,
+      "mismatches": 0
+    }
+  ],
+  "routing": {
+    "schema": 1,
+    "epoch": "b1a6acc302ca4bf88b6532837e3c5435",
+    "unavailable_events": 6,
+    "available": true
+  },
+  "result": null
+}
