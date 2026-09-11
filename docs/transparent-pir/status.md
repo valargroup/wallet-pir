@@ -54,20 +54,21 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
-## M1 staging connection candidate: observed 2026-09-11, 02:25 UTC
+## M1 activation-delay investigation: observed 2026-09-11, 02:32 UTC
 
-The [stage-timing investigation](evidence/productionize-m1-stage-timing-2026-09-11/README.md)
-now attributes file staging by worker and phase. The ten-minute baseline finished
-with nine blocks and 8,646 exact queries. Candidate `9e674d3` reuses supervised
-worker SSH connections for staging instead of expiring automatic connections;
-missing masters fail without silent login fallback. All 100 operations tests
-and full `make check` passed (590 Rust tests, two ignored).
+The [stage-timing comparison](evidence/productionize-m1-stage-timing-2026-09-11/README.md)
+shows connection reuse reduced recent-01 hardlink staging to about 0.45–0.52
+seconds, but candidate `9e674d3` still failed its diagnostic after 434.583
+seconds: block 3,479,181 appeared publicly at 32.882 seconds. It returned
+6,582 exact queries with seven retries. No full rollout started.
 
-The candidate is installed on the coordinator; only the reconciler restarted.
-Worker binaries are unchanged. `transparent-m1-transfer-reuse-diagnostic.service`
-was confirmed active under PID 2797229. This is a separate ten-minute comparison,
-not a full acceptance run. **M1 remains open**; the failed headless canary below
-contributes no acceptance time and no fleet promotion has occurred.
+One activation-phase SSH operation took 9.782 seconds after preparation.
+Recent-01 remained responsive on its old map and switched around 02:32:14,
+after preparation completed around 02:32:03. The worker synchronizes its durable
+record before switching, so persistence latency is being traced. This cause is
+not yet proven; activation/attestation and router timing identify the exact
+operation on subsequent cycles. **M1 remains open**, and no failed-run time
+counts toward the full acceptance gates.
 
 ## M1 headless canary failure: observed 2026-09-11, 02:02 UTC
 

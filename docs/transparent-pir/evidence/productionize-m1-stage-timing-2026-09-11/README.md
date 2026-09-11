@@ -57,3 +57,27 @@ The unchanged worker runs under a new ten-minute diagnostic,
 Output is `/opt/transparent-publisher-build/transfer-reuse-20260911/diagnostic`.
 Compare stage durations and readiness under load before a new full gate; no
 acceptance time is reused.
+
+## Candidate comparison failed: activation delay
+
+The [complete candidate diagnostic](transfer-reuse-failed.tar.gz) failed at
+02:32:15 UTC after 434.583 seconds, three accepted new blocks, 6,582 exact
+queries and seven retries. Public visibility at height 3,479,181 was 32.882
+seconds. Recent-01 hardlink staging was consistently about 0.45–0.52 seconds,
+but preparation took 8.0–9.45 seconds and one activation-phase SSH operation
+took 9.782 seconds after preparation. Controller freshness reached 31.568
+seconds. The connection improvement alone does not satisfy the gate.
+
+[Local probes](transfer-reuse-failure-probes.json) during 02:31:50–02:32:20
+remained fast: 60 samples per path, no errors, maxima 4.76 ms Unix and 10.55 ms
+HTTP. The local HTTP map changed only at 02:32:14.368, following preparation
+completion around 02:32:03. The worker persists and synchronizes its active
+record before switching the public map. Slow persistence is a hypothesis to
+trace, not a proven cause.
+
+Activation/attestation timings now identify each worker and router separately.
+[Operations tests](activation-timing-operations-tests.log) pass all 100 tests;
+[full make check](activation-timing-make-check.log) passes. A bounded
+[worker fsync trace](worker-activation-fsync.bt) targets PID 695393 for fifteen
+minutes and reports calls longer than ten milliseconds with their opened paths.
+No full rollout started, and the failed diagnostic contributes no acceptance.

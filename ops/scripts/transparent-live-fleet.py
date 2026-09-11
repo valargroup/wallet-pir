@@ -517,10 +517,12 @@ class Fleet:
         workers = [w for w in self.roster if w['id'] in prepared]
         async def activate_worker(worker):
             async with self.lock('worker-' + worker['id']):
-                await self.control(worker, {'operation':'activate','expected':prepared[worker['id']]['expected'],'map_sha256':digest})
-                status = await self.control(worker, {'operation':'status'})
-                if not self.attests(status, digest):
-                    raise RuntimeError('worker activation did not attest warm candidate')
+                async with self.stage_timing(worker, req, 'activate'):
+                    await self.control(worker, {'operation':'activate','expected':prepared[worker['id']]['expected'],'map_sha256':digest})
+                async with self.stage_timing(worker, req, 'attest'):
+                    status = await self.control(worker, {'operation':'status'})
+                    if not self.attests(status, digest):
+                        raise RuntimeError('worker activation did not attest warm candidate')
                 return True
         active = await self.collect(activate_worker, workers)
         if not self.quorum(active):
@@ -528,7 +530,9 @@ class Fleet:
             raise RuntimeError('activation quorum unavailable; router withdrawn')
         workers = [w for w in workers if w['id'] in active]
         assignment = json.loads(Path(req['prepared']['assignment']).read_text())
-        await self.route(workers, assignment)
+        router = {'id':'router', 'ssh_host':self.c['router_host']}
+        async with self.stage_timing(router, req, 'route'):
+            await self.route(workers, assignment)
         atomic_json(self.root/'active.json',{'map_sha256':digest,'workers':list(active),'assignment':req['prepared']['assignment']})
         atomic_json(self.root/'withdrawn.json', {'withdrawn':False})
         return {'ok':True,'upstreams':[w['upstream'] for w in workers], 'recent_replicas':sum(w['role']=='recent-replica' for w in workers)}

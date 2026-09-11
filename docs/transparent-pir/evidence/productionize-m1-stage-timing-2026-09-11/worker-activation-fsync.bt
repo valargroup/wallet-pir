@@ -1,0 +1,14 @@
+BEGIN { printf("{\"event\":\"start\",\"monotonic_ns\":%llu,\"pid\":695393}\n",nsecs); }
+tracepoint:syscalls:sys_enter_openat /pid == 695393/ { @opening[tid]=str(args->filename); }
+tracepoint:syscalls:sys_exit_openat /pid == 695393/ { if (args->ret >= 0) { @path[args->ret]=@opening[tid]; } delete(@opening[tid]); }
+tracepoint:syscalls:sys_enter_close /pid == 695393/ { delete(@path[args->fd]); }
+tracepoint:syscalls:sys_enter_fsync /pid == 695393/
+{ @started[tid]=nsecs; @fd[tid]=args->fd; }
+tracepoint:syscalls:sys_exit_fsync /pid == 695393 && @started[tid]/
+{
+ $elapsed=nsecs-@started[tid];
+ if ($elapsed > 10000000) { printf("{\"event\":\"fsync\",\"monotonic_ns\":%llu,\"tid\":%d,\"fd\":%d,\"nanoseconds\":%llu,\"return\":%d,\"path\":\"%s\"}\n",nsecs,tid,@fd[tid],$elapsed,args->ret,@path[@fd[tid]]); }
+ delete(@started[tid]);delete(@fd[tid]);
+}
+interval:s:900 { exit(); }
+END { printf("{\"event\":\"end\",\"monotonic_ns\":%llu}\n",nsecs);clear(@started);clear(@fd);clear(@opening);clear(@path); }

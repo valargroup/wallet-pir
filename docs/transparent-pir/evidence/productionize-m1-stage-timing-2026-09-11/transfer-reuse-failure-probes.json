@@ -1,0 +1,12 @@
+{
+  "unix": {
+    "samples": 60,
+    "errors": [],
+    "max_seconds": 0.004751145985210314
+  },
+  "http": {
+    "samples": 60,
+    "errors": [],
+    "max_seconds": 0.010542725009145215
+  }
+}
