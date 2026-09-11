@@ -54,6 +54,16 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 durable-write attribution: observed 2026-09-11, 02:49 UTC
+
+The [completed traces](evidence/productionize-m1-stage-timing-2026-09-11/README.md)
+attribute 7.717 seconds of a 7.732-second recent-01 activation to its active-record
+file and directory fsync calls. Cache persistence was slow concurrently; its
+causal contribution still requires a controlled comparison. The ten-minute
+activation diagnostic passed but does not establish sustained acceptance.
+An incremental cache-writeback source candidate is under qualification. It
+preserves durability and is not deployed. M1 remains open with unchanged gates.
+
 ## M1 activation-delay investigation: observed 2026-09-11, 02:32 UTC
 
 The [stage-timing comparison](evidence/productionize-m1-stage-timing-2026-09-11/README.md)

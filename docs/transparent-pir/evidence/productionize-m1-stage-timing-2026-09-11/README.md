@@ -84,14 +84,43 @@ No full rollout started, and the failed diagnostic contributes no acceptance.
 
 The [activation-timing diagnostic](activation-timing-diagnostic.tar.gz) completed
 at 02:50:53 UTC on source `2932a60`: 600.026 seconds, five blocks and 9,362
-exact queries. Maximum public visibility was 20.574 seconds. It did not
-reproduce the long activation and does not establish a fix. The first traced
+exact queries. Maximum public visibility was 20.574 seconds. It does not establish a fix: final trace analysis below found a long
+activation even though this short diagnostic stayed within its freshness limit. The first traced
 activations were 23 and 84 ms on recent-01; the initial router update took
 1.357 seconds.
 
-The fsync trace and [additional record-I/O trace](worker-record-io-v2.bt) remain
-bounded diagnostics, confirmed active under PIDs 715873 and 717106. The latter
-covers slow open/write/rename calls. Its first version failed program loading;
-this simplified version attached nine probes successfully. Initial active-record
-fsync observations reached 579 ms, but have not reproduced the earlier 9.782
-seconds. Final trace collection and further attribution remain outstanding.
+The [completed fsync trace](worker-activation-fsync.log) and
+[completed record-I/O trace](worker-record-io-v2.log) both terminated successfully
+(MainPID 0, ExecMainStatus 0). The record-I/O probe's initial version failed
+loading; the committed v2 attached nine probes and ran to its bounded end.
+
+[Final correlation](slow-activation-correlation.json) identifies publication
+`38050c2bb632ff417d13e92b61f087c309ce5deb32aca6c6d19d6ce485233b0e`:
+recent-01 activation took 7.732 seconds at 02:48:48–02:48:55 UTC. Its active.tmp
+fsync took 6.171892 seconds and the following parent-directory fsync took
+1.544899 seconds, accounting for 7.716791 seconds. An overlapping cache-file
+fsync took 3.277513 seconds; cache writes also slowed during the same interval.
+This directly attributes the activation pause to durability barriers. Cache
+write interference is a supported hypothesis, not yet an isolated causal result.
+The earlier initial-trace maximum of 579 ms missed this later event.
+
+The next source candidate paces optional background cache persistence with a
+`sync_data` barrier after each 8 MiB before accepting more bytes. It keeps the
+checksum, final file fsync, atomic rename and directory fsync, and does not
+change active-record persistence. It adds no allocation or new dependency.
+A byte/checksum regression crosses multiple writeback boundaries. Source tests
+and Linux performance qualification must pass before deployment; no reduction
+in latency or completed M1 gate is claimed from this implementation alone.
+
+Linux qualification is running under
+`transparent-m1-incremental-writeback-build.service` on the existing coordinator,
+started 03:04:49 UTC (PID 2834345). Its immutable source manifest, test output
+and artifacts are under
+`/opt/transparent-publisher-build/incremental-writeback-20260911/`.
+The existing Amsterdam fixture is
+`/opt/transparent-full-fixture-20260909/fixture-canonical.json`; qualification
+uses three repetitions, two build slots, separate query clients and the existing
+14-second worker screening budget. This screening does not replace the public
+30-second freshness gate or the sustained fleet observation.
+
+[Full local make check](incremental-writeback-make-check.log) passed, including 591 Rust tests, zero failures and two ignored. [All 100 operations tests](incremental-writeback-operations-tests.log) passed. Linux qualification remains separate.

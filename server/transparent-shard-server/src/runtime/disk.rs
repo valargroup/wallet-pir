@@ -207,7 +207,7 @@ impl DiskCache {
                 output: BufWriter::with_capacity(
                     1 << 20,
                     HashWriter {
-                        output: file,
+                        output: IncrementalWriteback::new(&file),
                         hash: Sha256::new(),
                     },
                 ),
@@ -230,9 +230,9 @@ impl DiskCache {
             writer.output.flush()?;
             let checksum = writer.output.get_ref().hash.clone().finalize();
             writer.output.get_mut().output.write_all(&checksum)?;
-            writer.output.get_ref().output.sync_all()?;
-            crate::filecache::consumed(&writer.output.get_ref().output);
-            if writer.output.get_ref().output.metadata()?.len() != Self::entry_bytes(shared) {
+            file.sync_all()?;
+            crate::filecache::consumed(&file);
+            if file.metadata()?.len() != Self::entry_bytes(shared) {
                 return Err(invalid(
                     "runtime export layout changed; bump the cache format",
                 ));
@@ -385,6 +385,45 @@ impl<R: Read> CheckedReader<R> {
         Ok(())
     }
 }
+/// Limit dirty data produced by this optional snapshot writer before waiting
+/// for writeback. Otherwise an entire runtime can accumulate before its final
+/// fsync and interfere with the small, latency-sensitive publication record.
+/// This blocks only the background saver. The final file fsync, atomic rename
+/// and directory fsync in `save` still establish snapshot durability.
+struct IncrementalWriteback<'a> {
+    file: &'a File,
+    pending: usize,
+}
+impl<'a> IncrementalWriteback<'a> {
+    const CHUNK: usize = 8 << 20;
+
+    fn new(file: &'a File) -> Self {
+        Self { file, pending: 0 }
+    }
+}
+impl Write for IncrementalWriteback<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        // Sync before accepting more data: a failed barrier must not report an
+        // error after consuming bytes, which could make a retry duplicate them.
+        if self.pending == Self::CHUNK {
+            self.file.sync_data()?;
+            self.pending = 0;
+        }
+        let n = self
+            .file
+            .write(&bytes[..bytes.len().min(Self::CHUNK - self.pending)])?;
+        self.pending += n;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
 struct HashWriter<W> {
     output: W,
     hash: Sha256,
@@ -450,6 +489,29 @@ mod tests {
     use super::*;
     use crate::shardset::Table;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
+
+    #[test]
+    fn incremental_snapshot_preserves_bytes_and_checksum_across_writeback() {
+        let mut file = tempfile::tempfile().unwrap();
+        let bytes: Vec<u8> = (0..IncrementalWriteback::CHUNK * 2 + 37)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let mut writer = HashWriter {
+            output: IncrementalWriteback::new(&file),
+            hash: Sha256::new(),
+        };
+        // A single oversized call exercises Write's short-write contract;
+        // a trailing write crosses the second barrier without alignment.
+        writer.write_all(&bytes[..bytes.len() - 19]).unwrap();
+        writer.write_all(&bytes[bytes.len() - 19..]).unwrap();
+        writer.flush().unwrap();
+        assert_eq!(writer.hash.finalize(), Sha256::digest(&bytes));
+        file.sync_all().unwrap();
+        file.rewind().unwrap();
+        let mut actual = Vec::new();
+        file.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, bytes);
+    }
 
     #[test]
     fn batched_words_preserve_legacy_bytes_across_buffer_boundaries() {
