@@ -160,6 +160,67 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
             await self.fleet.activate({'map_sha256':'new','prepared':{'workers':{w['id']:{'expected':'old'} for w in self.roster}}})
         self.assertEqual(routed,[[]])
 
+    async def test_unpublished_reorg_retains_only_verified_served_coverage(self):
+        directory = self.root/'publication'
+        directory.mkdir()
+        (directory/'shards.json').write_text(json.dumps({'shards':[
+            {'end_height':11,'terminal_block_hash':'canonical'}]}))
+        module.atomic_json(self.root/'active.json', {'map_sha256':'old',
+            'workers':[w['id'] for w in self.roster]})
+        module.atomic_json(self.root/'old.request.json',
+            {'map_sha256':'old','directory':str(directory)})
+        events=[]
+        canonical='canonical'
+        failed=None
+        async def lookup(height):
+            self.assertEqual(height,11)
+            return canonical
+        async def route(workers,assignment=None):
+            events.append(('route',workers))
+        async def control(worker,value):
+            events.append((value['operation'],worker['id']))
+            if value['operation']=='status':
+                return {'active':{'map_sha256':'old'},'warm':True,'revisions':[
+                    {'digest':'served','end_height':11,'terminal_block_hash':'canonical'}]}
+            self.assertEqual(value['keep_digests'],['served'] if canonical=='canonical' else [])
+            if worker['id']==failed:
+                raise RuntimeError('revocation failed')
+            return {}
+        self.fleet.canonical_hash=lookup
+        self.fleet.route=route
+        self.fleet.control=control
+        req={'from_height':12,'retain_publication':
+            {'map_sha256':'old','height':11,'hash':'canonical'}}
+        result=await self.fleet.invalidate(req)
+        self.assertTrue(result['retained_publication'])
+        self.assertFalse(any(e[0]=='route' for e in events))
+        self.assertEqual(len([e for e in events if e[0]=='invalidate']),4)
+        # A routed owner's failed revocation fails closed, even though its
+        # previous status was warm and canonical.
+        events.clear()
+        failed='a2'
+        result=await self.fleet.invalidate(req)
+        self.assertFalse(result['retained_publication'])
+        self.assertIn(('route',[]),events)
+        failed=None
+        module.atomic_json(self.root/'withdrawn.json', {'withdrawn':False})
+        # A fork reaching served coverage must withdraw before revocation.
+        events.clear()
+        canonical='replacement'
+        result=await self.fleet.invalidate(req)
+        self.assertFalse(result['retained_publication'])
+        first_revoke=next(i for i,e in enumerate(events) if e[0]=='invalidate')
+        self.assertLess(events.index(('route',[])),first_revoke)
+        # A completed activation while invalidation waited for the routing
+        # lock invalidates the controller's older retention hint.
+        module.atomic_json(self.root/'withdrawn.json', {'withdrawn':False})
+        module.atomic_json(self.root/'active.json', {'map_sha256':'new',
+            'workers':[w['id'] for w in self.roster]})
+        events.clear()
+        result=await self.fleet.invalidate(req)
+        self.assertFalse(result['retained_publication'])
+        self.assertEqual(events[0],('route',[]))
+
     async def test_control_does_not_share_transfer_session_lifetime(self):
         commands = []
         async def capture(args, data=None, timeout=25):

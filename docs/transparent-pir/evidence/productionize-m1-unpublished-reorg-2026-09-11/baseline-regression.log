@@ -1,0 +1,32 @@
+   Compiling transparent-spend-pir v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-spend)
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/spendability-pir/pir/enhance)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet)
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/spendability-pir/server/enhance-pir-server)
+   Compiling transparent-blocks v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-blocks)
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-shard-server)
+   Compiling transparent-filter-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-filter-server)
+    Finished `release` profile [optimized] target(s) in 58.57s
+     Running unittests src/lib.rs (target/release/deps/transparent_filter_server-cfb5745c1b5e51d7)
+
+running 1 test
+test controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg ... FAILED
+
+failures:
+
+---- controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg stdout ----
+journal 0-2, recent-8k below 2 at SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }, recent-4k from 2 at SealPolicy { scripts: Limit { target: 49152, capacity: 57344 }, page_rows: Limit { target: 3968, capacity: 4096 } }
+shard   0 0-1 (2 blocks) scripts 0 pages 0 events 0 segments 1/1 sealed
+shard   1 2-2 (1 blocks) scripts 0 pages 0 events 0 segments 1/1 TAIL r0
+published 2 shards covering 0-2; filters ~0.00 MB
+
+thread 'controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg' (257209637) panicked at server/transparent-filter-server/src/controller.rs:995:9:
+a journal-only fork must preserve canonical public coverage
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 52 filtered out; finished in 0.70s
+
+error: test failed, to rerun pass `-p transparent-filter-server --lib`

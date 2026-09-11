@@ -150,12 +150,12 @@ class Fleet:
             return int(value['result'])
         return await asyncio.to_thread(fetch)
 
-    async def revoke_orphans(self, worker, status, from_height=0, known=()):
+    async def revoke_orphans(self, worker, status, from_height=0, known=(), force=False):
         revisions = status.get('revisions',[])
         async def accepted(revision):
             return revision['digest'] if revision['end_height']<from_height or revision['digest'] in known or await self.canonical_hash(revision['end_height'])==revision['terminal_block_hash'] else None
         keep = [digest for digest in await asyncio.gather(*(accepted(r) for r in revisions)) if digest]
-        if len(keep)!=len(revisions) or status.get("invalidated"):
+        if force or len(keep)!=len(revisions) or status.get("invalidated"):
             await self.control(worker,{'operation':'invalidate','expected':status['active']['map_sha256'],'from_height':from_height,'keep_digests':keep})
         return keep
 
@@ -537,17 +537,65 @@ class Fleet:
         atomic_json(self.root/'withdrawn.json', {'withdrawn':False})
         return {'ok':True,'upstreams':[w['upstream'] for w in workers], 'recent_replicas':sum(w['role']=='recent-replica' for w in workers)}
 
+    async def retained_publication(self, req):
+        """Prove a requested older publication safe under the routing lock.
+
+        The controller's hint is insufficient: activation may have advanced
+        the fleet while invalidation waited for this lock. Require identical
+        authority, canonical endpoint and all currently routed workers warm.
+        """
+        keep = req.get('retain_publication')
+        if not keep:
+            return None
+        target = self.reconciliation_target()
+        if target is None:
+            return None
+        active, desired = target
+        if active['map_sha256'] != keep['map_sha256']:
+            return None
+        tail = json.loads((Path(desired['directory'])/'shards.json').read_text())['shards'][-1]
+        if (tail['end_height'] >= req['from_height']
+                or tail['end_height'] != keep['height']
+                or tail['terminal_block_hash'] != keep['hash']):
+            return None
+        self.canonical.clear()
+        if await self.canonical_hash(tail['end_height']) != tail['terminal_block_hash']:
+            return None
+        workers = [w for w in self.roster if w['id'] in active['workers']]
+        if not self.quorum({w['id'] for w in workers}):
+            return None
+        statuses = await asyncio.gather(*(self.control(w, {'operation':'status'}) for w in workers))
+        if not all(self.attests(status, active['map_sha256']) for status in statuses):
+            return None
+        return {w['id'] for w in workers}
+
     async def _invalidate(self, req):
-        atomic_json(self.root/'withdrawn.json', {'withdrawn':True})
-        # Withdraw routing before contacting workers, including unreachable ones.
-        await self.route([])
+        try:
+            retained = await self.retained_publication(req)
+        except Exception:
+            # Missing identity, unavailable nodes and unreachable workers must
+            # never turn a request to preserve coverage into an unsafe bypass.
+            retained = None
+        if retained is None:
+            atomic_json(self.root/'withdrawn.json', {'withdrawn':True})
+            # Withdraw before revocation whenever served coverage is uncertain.
+            await self.route([])
+        # A rejected retention hint can mean a deeper fork than the caller
+        # observed. Recheck every served revision in that case.
+        from_height = 0 if req.get('retain_publication') and retained is None else req['from_height']
         async def revoke(worker):
             status = await self.control(worker, {'operation':'status'})
             if 'revisions' not in status:
-                return await self.control(worker, {'operation':'invalidate','expected':status['active']['map_sha256'],'from_height':req['from_height']})
-            return await self.revoke_orphans(worker,status,req['from_height'])
+                return await self.control(worker, {'operation':'invalidate','expected':status['active']['map_sha256'],'from_height':from_height})
+            # Even if every served/retired revision remains canonical, a
+            # candidate in preparation must lose its activation epoch.
+            return await self.revoke_orphans(worker,status,from_height,force=True)
         revoked = await self.collect(revoke,self.roster)
-        return {'ok':True,'invalidated':list(revoked)}
+        if retained is not None and not retained.issubset(revoked):
+            atomic_json(self.root/'withdrawn.json', {'withdrawn':True})
+            await self.route([])
+            retained = None
+        return {'ok':True,'invalidated':list(revoked),'retained_publication':retained is not None}
 
     async def activate(self, req):
         async with self.lock('routing'):

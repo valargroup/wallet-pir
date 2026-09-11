@@ -325,21 +325,44 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
 }
 
 async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result<(), BoxError> {
-    {
+    let retain = {
         let _gate = authority.0.publication_gate.lock().unwrap();
-        authority.0.withdrawn.store(true, Ordering::Release);
+        let active = authority.0.active.read().unwrap();
+        // A journal-only fork cancels candidates, but does not orphan this
+        // older endpoint. The fleet independently checks this exact identity
+        // under its routing lock before agreeing to preserve public service.
+        let retain = (from > active.publication.height
+            && !authority.0.withdrawn.load(Ordering::Acquire))
+        .then(|| {
+            serde_json::json!({
+                "map_sha256":active.publication.map_sha256,
+                "height":active.publication.height,
+                "hash":active.publication.hash,
+            })
+        });
+        if retain.is_none() {
+            authority.0.withdrawn.store(true, Ordering::Release);
+        }
         authority.0.epoch.fetch_add(1, Ordering::AcqRel);
         publication::write_atomic(
             &config.publication_root.join("withdrawn.json"),
             &serde_json::to_vec(&serde_json::json!({"from_height":from,"acknowledged":false}))?,
         )?;
-    }
+        retain
+    };
     if !config.shadow {
-        fleet(
+        let result = fleet(
             config,
-            serde_json::json!({"operation":"invalidate","from_height":from}),
+            serde_json::json!({"operation":"invalidate","from_height":from,
+                "retain_publication":retain}),
         )
-        .await?;
+        .await;
+        // An unavailable/older fleet adapter cannot implicitly acknowledge
+        // retention. A retry must revalidate and revoke before publication.
+        if !matches!(&result, Ok(value) if value["retained_publication"] == true) {
+            authority.0.withdrawn.store(true, Ordering::Release);
+        }
+        result?;
     }
     publication::write_atomic(
         &config.publication_root.join("withdrawn.json"),
@@ -947,7 +970,19 @@ mod tests {
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
         let hook = root.path().join("fleet.py");
-        std::fs::write(&hook,"#!/usr/bin/env python3\nimport json,sys\nr=json.load(sys.stdin)\nprint(json.dumps({'ok':True,'upstreams':[]}))\n").unwrap();
+        std::fs::write(&hook, r#"#!/usr/bin/env python3
+import json,sys,time
+from pathlib import Path
+r=json.load(sys.stdin)
+pause=Path(__file__).with_suffix('.pause')
+if r['operation']=='prepare' and pause.exists():
+    pause.with_suffix('.entered').touch()
+    deadline=time.monotonic()+10
+    while pause.exists():
+        if time.monotonic()>deadline: raise RuntimeError('fixture preparation pause expired')
+        time.sleep(.01)
+print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
+"#).unwrap();
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
         let publications = root.path().join("publications");
         std::fs::create_dir(&publications).unwrap();
@@ -981,6 +1016,66 @@ mod tests {
         ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
             .await
             .unwrap();
+        // Replacing journal-only blocks must cancel preparation without
+        // withdrawing the still-canonical publication through height two.
+        {
+            let mut blocks = chain.write().unwrap();
+            blocks.truncate(3);
+            extend(&mut blocks, 2, 17);
+        }
+        ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+            .await
+            .unwrap();
+        assert!(authority.0.epoch.load(Ordering::Acquire) > 0);
+        assert!(
+            !authority.0.withdrawn.load(Ordering::Acquire),
+            "a journal-only fork must preserve canonical public coverage"
+        );
+        assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
+        // Hold the fleet preparation reply while ingestion discovers another
+        // journal-only fork. Old public coverage stays available; the orphaned
+        // candidate must fail its epoch check before any activation request.
+        let pause = config.fleet_command.with_extension("pause");
+        let entered = config.fleet_command.with_extension("entered");
+        std::fs::write(&pause, []).unwrap();
+        {
+            let publication = publish_once(&config, &client, &store, &authority);
+            tokio::pin!(publication);
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    tokio::select! {
+                        result = &mut publication => panic!("preparation did not pause: {result:?}"),
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                            if entered.exists() { break; }
+                        }
+                    }
+                }
+            }).await.unwrap();
+            {
+                let mut blocks = chain.write().unwrap();
+                blocks.truncate(3);
+                extend(&mut blocks, 2, 18);
+            }
+            ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+                .await
+                .unwrap();
+            let response = public_request(
+                State(authority.clone()),
+                Request::builder()
+                    .uri("/v1/shards")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            std::fs::remove_file(&pause).unwrap();
+            assert!(publication
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("candidate invalidated while preparing"));
+            assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
+        }
         publish_once(&config, &client, &store, &authority)
             .await
             .unwrap();

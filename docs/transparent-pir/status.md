@@ -54,6 +54,20 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 unpublished-reorg correction: qualified source, 2026-09-11
+
+The controller and fleet now distinguish invalidating a candidate above served
+coverage from withdrawing an orphaned served publication. Retention requires an
+explicit fleet acknowledgment after independent canonical identity and routed
+worker checks under the routing lock. Worker invalidation always cancels the
+preparation epoch, including when every served revision remains canonical.
+
+[Regression and qualification evidence](evidence/productionize-m1-unpublished-reorg-2026-09-11/README.md)
+records the failure against prior code, successful concurrent preparation and
+deep-reorg tests, all 591 Rust tests and 101 operations tests. The Linux controller
+build is in progress. This source is not deployed; the failed canary remains
+stopped. M1 remains open, including the separate freshness margin concern.
+
 ## M1 unpublished-candidate withdrawal: observed 2026-09-11, 03:32 UTC
 
 The incremental-writeback canary failed after 1,112.910 seconds and 21 blocks

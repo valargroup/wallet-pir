@@ -230,8 +230,10 @@ private control status reports `retired_snapshots` so a growing backlog is
 visible. Three superseded normal tail revisions may also accompany the current set.
 Immutable files are shared by hard link rather than copied per block.
 
-A reorg withdraws public coverage before rebuilding. Workers refuse orphaned
-revisions and discard affected preparation; the publisher preserves the valid
+A reorg affecting served coverage withdraws it before rebuilding. A fork
+strictly above served coverage may retain that coverage only after the fleet
+independently verifies its canonical endpoint and warm routed workers; otherwise
+it withdraws. Workers refuse orphaned revisions and discard affected preparation; the publisher preserves the valid
 sealed prefix and creates a new immutable suffix publication. Retry and restart
 must revalidate the candidate against the node before exposing it. Wallets still
 accept anchors against their own chain view and rederive affected ledger state.
