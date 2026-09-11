@@ -54,6 +54,24 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 publication I/O canary: observed 2026-09-11, 00:02 UTC
+
+The [new deployment and start evidence](evidence/productionize-m1-publication-io-canary-2026-09-11/README.md)
+records three successful Amsterdam qualifications (174 exact queries, maximum
+visibility 8.502 seconds, minimum modeled headroom 25.694%). The durable routing
+audit is now deployed. Recent-01 runs worker `043c051`, binary
+`6b97509b20dc21e67e39512676dbc896963411b00a7df7e76727d1305a1d705d`;
+warm and exact-query upgrade verification passed. The other five workers have
+not been promoted.
+
+The fresh loaded canary began at **00:01:23 UTC** under
+`transparent-m1-publication-io-rollout.service` and was verified active at
+00:02:55 UTC. Its durable withdrawal counter is unchanged from the baseline.
+Local status/readiness probes run alongside it. **M1 remains open** pending
+both six hours and 300 new blocks, the gated fleet batch and full 24-hour
+observation. The earlier multi-second timeout has not yet been conclusively
+explained; no previous run counts toward this gate.
+
 ## M1 publication I/O correction: source work, 2026-09-10, 23:48 UTC
 
 The [completed diagnostic trace](evidence/productionize-m1-publication-io-2026-09-10/README.md)
