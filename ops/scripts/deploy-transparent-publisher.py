@@ -133,6 +133,20 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
             args=shlex.split(line.removeprefix('ExecStart='))
     if not args:
         raise RuntimeError('worker unit lacks a simple ExecStart')
+    # Older units predate the fleet generator's persistent runtime cache.
+    # Preserve explicit cache settings, but repair an absent cache before the
+    # next restart so archive workers can restore instead of rebuilding.
+    cache_flags = ('--runtime-cache-dir', '--runtime-cache-max-bytes')
+    present = [any(arg == flag or arg.startswith(flag+'=') for arg in args)
+               for flag in cache_flags]
+    if any(present) and not all(present):
+        raise ValueError('worker unit has incomplete runtime cache configuration')
+    if not any(present) and 'cache_bytes' in worker:
+        cache_bytes = worker['cache_bytes']
+        if type(cache_bytes) is not int or cache_bytes <= 0:
+            raise ValueError('cache_bytes must be a positive integer')
+        args += ['--runtime-cache-dir', '/srv/transparent-pir/runtime-cache',
+                 '--runtime-cache-max-bytes', str(cache_bytes * 2)]
     if '--control-socket' not in args:
         args += ['--control-socket','/run/transparent-pir/control.sock','--active-record','/opt/transparent-publisher/active.json']
     if 'build_slots' in worker:

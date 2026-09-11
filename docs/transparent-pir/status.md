@@ -28,9 +28,14 @@ cache writer lock; loading then took 1.256 seconds. The full failure evidence is
 preserved with the candidate record. That failed screen has no acceptance credit; the replacement run is described below.
 A [deferred-collection candidate](evidence/productionize-m1-deferred-collection-2026-09-11/README.md)
 passes full local and Linux validation and its guarded recent-01 upgrade passed.
-The matching fresh six-hour/300-block canary began at 14:54:32 UTC under
-`transparent-m1-defer-collection-rollout.service`; fleet upgrade and 24-hour
-observation remain gated on preceding success.
+The matching fresh six-hour/300-block canary passed at 21:10:44 UTC after
+22,572 seconds with 336,603 exact answers and zero mismatches. The same
+`transparent-m1-defer-collection-rollout.service` then attempted fleet upgrade,
+which entered guarded rollback around 21:27 UTC before archive-02 finished
+its cold build. That worker's unit lacked a persistent runtime cache.
+At 21:34:57 UTC rollback verification was still live; archive-02 was at
+61/160 warm runtimes on its predecessor binary. Fleet upgrade has not passed
+and the separate 24-hour observation has not started.
 **M1 remains open.** The earlier supervisor is terminal. Failed-run time does not count toward acceptance.
 
 ## M1 managed storage-policy canary: failed 2026-09-11, 11:10 UTC

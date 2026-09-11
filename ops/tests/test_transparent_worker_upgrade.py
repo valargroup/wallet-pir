@@ -9,6 +9,48 @@ SPEC = importlib.util.spec_from_file_location('deploy', Path(__file__).resolve()
 M = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(M)
 
 class UpgradeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_runtime_cache_is_preserved_and_partial_cache_rejected(self):
+        for flags, valid in [
+            ('--runtime-cache-dir=/custom --runtime-cache-max-bytes=1234', True),
+            ('--runtime-cache-dir /custom --runtime-cache-max-bytes 1234', True),
+            ('--runtime-cache-dir /custom', False),
+            ('--runtime-cache-max-bytes=1234', False),
+        ]:
+            with self.subTest(flags=flags):
+                fleet = AsyncMock()
+                fleet.c = {}
+                fleet.ssh_args = []
+                fleet.ssh.return_value = ('[Service]\nExecStart=/worker --shard-dir /set '+flags+'\n').encode()
+                worker = dict(id='archive', role='archive-owner', ssh_host='host',
+                              upstream='host:8093', cache_bytes=51539607552)
+                with tempfile.TemporaryDirectory() as directory, patch.object(M, 'read_json', return_value={'ready':True,'mode':'warm'}), patch.object(M.LIVE, 'run', new=AsyncMock()):
+                    if valid:
+                        await M.install_worker(fleet, worker, Path(directory), '/rollback', stage_only=True)
+                        unit = next(call.args[2].decode() for call in fleet.ssh.await_args_list if call.args[1].endswith('/worker.service'))
+                        self.assertIn(flags, unit)
+                        self.assertEqual(unit.count('--runtime-cache-dir'), 1)
+                        self.assertNotIn('103079215104', unit)
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'incomplete runtime cache'):
+                            await M.install_worker(fleet, worker, Path(directory), '/rollback', stage_only=True)
+                        self.assertFalse(any(call.args[1].startswith('cat >') for call in fleet.ssh.await_args_list))
+
+    async def test_legacy_archive_unit_gains_bounded_cache_before_restart(self):
+        fleet = AsyncMock()
+        fleet.c = {}
+        fleet.ssh_args = []
+        fleet.ssh.return_value = b'[Service]\nExecStart=/worker --shard-dir /set\n'
+        worker = dict(id='archive', role='archive-owner', ssh_host='host',
+                      upstream='host:8093', cache_bytes=51539607552)
+        with tempfile.TemporaryDirectory() as directory, patch.object(M, 'read_json', return_value={'ready':True,'mode':'warm'}), patch.object(M.LIVE, 'run', new=AsyncMock()):
+            await M.install_worker(fleet, worker, Path(directory), '/rollback', stage_only=True)
+        unit = next(call.args[2].decode() for call in fleet.ssh.await_args_list if call.args[1].endswith('/worker.service'))
+        self.assertIn('--runtime-cache-dir /srv/transparent-pir/runtime-cache', unit)
+        self.assertIn('--runtime-cache-max-bytes 103079215104', unit)
+        verify = next(call.args[1] for call in fleet.ssh.await_args_list if '--verify-only' in call.args[1])
+        self.assertIn('--runtime-cache-max-bytes 103079215104', verify)
+        self.assertFalse(any('systemctl restart' in call.args[1] for call in fleet.ssh.await_args_list))
+
     async def test_current_binary_and_warm_control_attest_advancing_publication(self):
         unit = '[Service]\nRuntimeDirectory=transparent-pir\nExecStart=/usr/local/bin/transparent-shard-server --shard-dir /set\nMemoryMax=7G\n'
         fleet = AsyncMock()

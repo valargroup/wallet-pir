@@ -23,6 +23,13 @@ D = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(D)
 L = D.LIVE
 
+# Archive workers without a populated disk cache need a full runtime build.
+# Keep installation bounded separately from post-start warm-up; the previous
+# shared fifteen-minute bound also consumed staging and shard validation time.
+INSTALL_SECONDS = 2400
+WARM_SECONDS = 1800
+ROLLBACK_SECONDS = 1800
+
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -221,7 +228,7 @@ async def upgrade(args):
     services = ('transparent-publish-controller', 'transparent-replica-reconciler')
     try:
         service('stop', *services)
-        await asyncio.wait_for(asyncio.gather(*(D.install_worker(fleet, w, args.artifacts, str(args.out), warm_seconds=900) for w in workers)), 900)
+        await asyncio.wait_for(asyncio.gather(*(D.install_worker(fleet, w, args.artifacts, str(args.out), warm_seconds=WARM_SECONDS) for w in workers)), INSTALL_SECONDS)
         config = {**fleet.c, 'reconcile_workers': [],
                   'managed_recent_workers': sorted({*fleet.managed_ids(), *(w['id'] for w in workers if w['role'] == 'recent-replica')})}
         L.atomic_json(args.fleet_config, config)
@@ -251,6 +258,12 @@ async def upgrade(args):
         await verify_public(fleet)
         L.atomic_json(args.out/'result.json', {'passed':True, 'binary_sha256':binary, 'workers':[w['id'] for w in workers]})
     except BaseException as error:
+        # Record the original cause before a potentially lengthy rollback.
+        # TimeoutError has an empty string representation.
+        failure = {'error_type':type(error).__name__,
+                   'error':str(error) or type(error).__name__,
+                   'install_seconds':INSTALL_SECONDS, 'warm_seconds':WARM_SECONDS}
+        L.atomic_json(args.out/'failure.json', failure)
         # Stop retries before reverting binaries/configuration. Preserve the
         # current active records and revocations, including any new reorg state.
         service('stop', *services)
@@ -278,7 +291,7 @@ fi''', timeout=60)
         service('start', 'transparent-publish-controller')
         rollback_errors = [str(r) for r in restored if isinstance(r, BaseException)]
         reopened = False
-        deadline = time.monotonic()+900
+        deadline = time.monotonic()+ROLLBACK_SECONDS
         while not rollback_errors and time.monotonic() < deadline:
             try:
                 await ready_to_freeze(fleet, workers)
@@ -296,7 +309,7 @@ fi''', timeout=60)
                 service('start', 'transparent-replica-reconciler')
                 service('start', 'transparent-publish-controller')
             await asyncio.sleep(5)
-        L.atomic_json(args.out/'result.json', {'passed':False, 'error':str(error), 'rollback_errors':rollback_errors, 'public_maintenance':not reopened})
+        L.atomic_json(args.out/'result.json', {'passed':False, **failure, 'rollback_errors':rollback_errors, 'public_maintenance':not reopened})
         raise RuntimeError('upgrade failed; rollback '+('verified and reopened' if reopened else 'requires recovery with public maintenance retained')) from error
 
 

@@ -37,8 +37,7 @@ loosening eventual cleanup or capacity assertions.
 Source `a5f79ed760e458b873b5382a1e4243dda632d1f7` matches all 321 build-source
 hashes. The [deployment bundle](deployment.tar.gz) records the source identity,
 guarded recent-01 upgrade, query/warm-state verification and acceptance launch.
-The upgrade passed and public endpoints reopened. Only recent-01 has received
-this candidate so far.
+The canary upgrade passed and public endpoints reopened.
 
 A fresh supervised acceptance run started at approximately 14:54:32 UTC under
 `transparent-m1-defer-collection-rollout.service`, PID 3869401, with output at
@@ -64,3 +63,21 @@ It recorded 12 new blocks, 14,298 exact responses, zero mismatches and nine
 retries. Maximum public/replica visibility was 15.215/13.463 seconds; minimum
 available host RAM was 25.605%, with no new routing withdrawals. This is an
 intermediate checkpoint, not a completed canary result.
+
+## Completed canary and fleet upgrade attempt
+
+The [final canary result](passed-canary-result.json) passed at 21:10:44 UTC:
+22,572.362 seconds, 300 public and replica blocks, and 336,603 exact responses.
+The [raw canary bundle](passed-canary.tar.gz) contains both query streams,
+samples and the monitor log. Query streams recorded zero mismatches. Maximum
+public/replica visibility was 22.046/22.049 seconds; the observed minimum
+available-memory fraction was 0.2455177. This completes the canary gate only.
+
+The supervisor then entered fleet upgrade. That attempt entered guarded
+rollback at approximately 21:27 UTC while archive-02 was still prewarming.
+Its installed unit lacked a persistent runtime cache and used one build slot;
+it had reached 117/160 warm runtimes at 21:26:55 without prewarm failures.
+At 21:33:47 the supervisor was still live in rollback verification, and
+archive-02 was rebuilding on its predecessor binary at 47/160 runtimes.
+The final upgrade/rollback result is pending. No 24-hour fleet observation
+has started, and this canary pass does not close M1.

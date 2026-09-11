@@ -1,0 +1,30 @@
+{
+  "utc": "2026-09-11T21:10:44.260818+00:00",
+  "event": "result",
+  "worker": "transparent-pir-recent-01",
+  "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+  "fleet_script_sha256": "75186ce5c7e5d8bb0e2f33a667192a136657623fe2ea5cbe5df8cffa6aa27b63",
+  "fleet_config_sha256": "c844b3a1e04fc22a0ee95cfd49174e3bf35e8d848eb5a1069254b7ef8675c7fe",
+  "roster_sha256": "f81674cd250e596aead154e579ab24d5c9b3367f088823c94cf0444112ae4db9",
+  "public_budget_seconds": 30.0,
+  "replica_budget_seconds": 60.0,
+  "storage_helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff",
+  "headless_helper_sha256": "1daa5418f1dc9a510e839f032c2aed6b062395bd855d5b6a729db563f4cf44df",
+  "routing_availability_baseline": {
+    "schema": 1,
+    "epoch": "b1a6acc302ca4bf88b6532837e3c5435",
+    "unavailable_events": 32,
+    "available": true
+  },
+  "passed": true,
+  "seconds": 22572.362196170026,
+  "blocks": 300,
+  "replica_blocks": 300,
+  "worker_samples": 748,
+  "exact_queries": [
+    168270,
+    168333
+  ],
+  "maximum_visibility_seconds": 22.04559777106624,
+  "maximum_canary_visibility_seconds": 22.04946144798305
+}

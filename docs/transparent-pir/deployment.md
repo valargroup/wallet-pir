@@ -85,6 +85,20 @@ This excludes existing node/indexer/publisher, CDN/object storage, backups, taxe
 
 ## Publication and rollout procedure
 
+The hardening upgrader repairs legacy units missing both runtime-cache options
+using the fleet generator's cache directory and a disk limit of twice the worker's
+memory-cache reservation. Explicit cache settings are preserved; a partial pair
+is rejected. Check disk headroom before activating this repair. The first build
+populates the cache; only subsequent compatible starts benefit from restoration.
+
+For planned hardening maintenance, installation is bounded at 40 minutes,
+including staging and validation, with a 30-minute post-start warm-up allowance.
+Rollback verification has a 30-minute recovery allowance. These operational
+timeouts do not establish or relax the beta's 15-minute single-failure recovery
+target, nor the canary freshness limits or observation durations. The original
+failure is recorded before rollback begins, and public maintenance remains in
+place until canonical warm service and exact private queries are verified.
+
 1. Verify live state and journal identity. Pin source SHA, schema, anchor hash/time, explicit cutoff height and cutoff derivation algorithm in candidate metadata.
 2. Use a new publication directory; never overwrite the rollback set or switch an existing schema in place. Publish through `.github/workflows/publish-transparent-shards.yml`, which takes the commit, journal, fresh output directory, anchor height, recorded `recent_from` and both geometries, re-derives the cutoff with `shard-cutoff --expect-cutoff` and refuses a disagreement, publishes `--through` the anchor, and stores `publication.json` and `cutoff.json` beside `shards.json`.
 3. Validate complete coverage, manifests, tables, filters, true directory placement and exact replay before touching running services. Stage verified bytes at assigned owners.
