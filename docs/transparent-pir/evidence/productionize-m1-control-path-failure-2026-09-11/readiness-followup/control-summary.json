@@ -1,0 +1,58 @@
+{
+  "utc": "2026-09-11T00:18:38.467730+00:00",
+  "units": "MainPID=2608879\nExecMainStatus=0\nId=transparent-m1-control-path-load.service\nActiveState=active\n\nMainPID=2607970\nExecMainStatus=0\nId=transparent-m1-reconciler-fsync.service\nActiveState=active\n\nMainPID=2608079\nExecMainStatus=0\nId=transparent-m1-control-path-probe.service\nActiveState=active\n\nMainPID=2608617\nExecMainStatus=0\nId=transparent-m1-dedicated-status-tunnel.service\nActiveState=active\n\nMainPID=2608713\nExecMainStatus=0\nId=transparent-m1-dedicated-control-probe.service\nActiveState=active\n",
+  "transparent-control-path-probe/unix": {
+    "samples": 910,
+    "errors": [],
+    "worst": {
+      "utc": "2026-09-11T00:11:59.364753+00:00",
+      "probe": "unix",
+      "start_gap_seconds": 0.5000903429463506,
+      "value": {
+        "socket_seconds": 3.6358082570368424,
+        "ok": true,
+        "warm": true
+      },
+      "seconds": 3.635984302032739
+    }
+  },
+  "transparent-control-path-probe/http": {
+    "samples": 900,
+    "errors": [
+      {
+        "utc": "2026-09-11T00:13:06.362201+00:00",
+        "probe": "http",
+        "start_gap_seconds": 0.5000797710381448,
+        "error": "TimeoutError: timed out",
+        "seconds": 4.005055199027993
+      }
+    ],
+    "worst": {
+      "utc": "2026-09-11T00:11:59.365658+00:00",
+      "probe": "http",
+      "start_gap_seconds": 0.5000791630009189,
+      "value": {
+        "socket_seconds": 2.3226921430323273,
+        "ready": true,
+        "map_sha256": "e021f50d5fc68cf298dfd69b894e2401b25b2b7a2c9140b8f3074eaf374d4d7b"
+      },
+      "seconds": 2.3227583839325234
+    }
+  },
+  "transparent-dedicated-control-probe/unix": {
+    "samples": 608,
+    "errors": [],
+    "worst": {
+      "utc": "2026-09-11T00:13:44.956513+00:00",
+      "probe": "unix",
+      "start_gap_seconds": 0.5000807730248198,
+      "value": {
+        "socket_seconds": 0.36792195693124086,
+        "ok": true,
+        "warm": true
+      },
+      "seconds": 0.36804528802167624
+    }
+  },
+  "fsync": "Attaching 5 probes...\n{\"event\":\"start\",\"monotonic_ns\":738949705961807,\"pid\":2594424}\n"
+}

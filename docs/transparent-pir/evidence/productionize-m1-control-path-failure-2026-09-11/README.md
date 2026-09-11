@@ -60,3 +60,30 @@ The first observed queries are exact. This restores query load for the transport
 comparison without restarting acceptance or enabling promotion. The fsync trace
 had no over-10-ms event at this capture; that is not proof that persistence can
 never delay the reconciler.
+
+## Readiness follow-up, 00:18 UTC
+
+[Independent control samples](readiness-followup/control-summary.json) captured
+shared forwarding at 3.636 seconds and direct HTTP at 2.323 seconds around
+00:11:59. A later direct HTTP timeout at 00:13:06 coincides with a
+[worker-local HTTP timeout](readiness-followup/worker-window.json). Local Unix
+status remained responsive in that later window. Therefore SSH alone cannot
+explain all observed delays. This does not undo the distinct 00:08 incident,
+whose worker-local samples were fast while coordinator status timed out.
+
+The dedicated tunnel's maximum was 368 ms at capture, but it started after the
+largest shared-path incident. Those maxima are not a matched comparison. The
+reconciler fsync trace remained active with no over-10-ms event; asynchronous
+persistence remains a source concern, not an established incident cause.
+
+Two additional 900-second diagnostics are running: raw HTTP probes separate
+connect, send, first byte and total response time on the coordinator and worker
+(`transparent-m1-tcp-stages.service`, PIDs 2616194 / 684357, logs in
+`/run/tp-tcp-stages` on each host). A 49-Hz CPU profile records sampling gaps over
+200 ms on the worker (`transparent-m1-cpu-gaps-v2.service`, PID 684246, logs in
+`/run/tp-publication-io-probe/cpu-gaps-v2.*`). V2 resets the comparison across
+observed idle transitions; v1 was stopped early to add that exclusion. Neither
+profile gaps nor their absence alone establishes a hypervisor or kernel fault.
+Bpftrace reported a signed/unsigned arithmetic warning in v2; preserve and
+inspect raw timestamps before interpreting any event. The exact scripts are
+in [readiness-followup](readiness-followup/).

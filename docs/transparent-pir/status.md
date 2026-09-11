@@ -67,7 +67,11 @@ it does not reproduce the earlier worker-wide pause.
 The supervisor is terminal failed; no fleet promotion or replacement gate is
 running. Independent forwarded-status/direct-HTTP probes and a bounded
 reconciler-thread fsync trace are active. Synchronous reconciler persistence is
-a candidate cause, not yet confirmed. **M1 remains open.**
+a candidate cause, not yet confirmed. Subsequent diagnostics caught local and
+remote HTTP timeouts together while local Unix status stayed responsive, so SSH
+alone does not explain all delays. TCP-stage timing and CPU sampling-gap probes
+are active; their limits and raw observations are recorded in the same evidence.
+**M1 remains open.**
 
 ## M1 publication I/O canary: observed 2026-09-11, 00:02 UTC
 
