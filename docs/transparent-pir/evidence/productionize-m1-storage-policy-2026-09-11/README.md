@@ -57,3 +57,11 @@ the same supervisor is active, with 12 new public blocks and 13792 exact
 queries, zero mismatches, unchanged routing and verified storage policy.
 Maximum public freshness is 14.499 seconds; minimum available
 memory is 27.128%. This partial window does not satisfy M1.
+
+## Half-hour checkpoint
+
+The [checkpoint](half-hour-checkpoint.json) at 2026-09-11T10:30:45.705989+00:00 confirms
+the same supervisor remains active with 19 new blocks, 27459 exact queries and
+14 retries, zero mismatches, unchanged routing and verified persistent storage
+policy. Maximum public freshness is 14.499 seconds and minimum available memory
+is 27.128%. This remains a partial acceptance window.
