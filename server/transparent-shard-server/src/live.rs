@@ -400,7 +400,9 @@ impl LiveService {
                     drop(removed);
                     let snapshot_seconds = collection_started.elapsed().as_secs_f64();
                     let disk_started = std::time::Instant::now();
-                    let disk_freed_bytes = state.prune_disk(&runtime_digests)?;
+                    let disk_pruned = state.prune_disk(&runtime_digests)?;
+                    let disk_collection_deferred = disk_pruned.is_none();
+                    let disk_freed_bytes = disk_pruned.unwrap_or(0);
                     let disk_seconds = disk_started.elapsed().as_secs_f64();
                     let directories_started = std::time::Instant::now();
                     // Only controller-created, digest-named generations are ours.
@@ -422,8 +424,8 @@ impl LiveService {
                         std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
                     }
                     let directory_seconds = directories_started.elapsed().as_secs_f64();
-                    tracing::info!(snapshot_seconds, disk_seconds, directory_seconds, disk_freed_bytes, "publication collection stages");
-                    Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes,"snapshot_seconds":snapshot_seconds,"disk_seconds":disk_seconds,"directory_seconds":directory_seconds}))
+                    tracing::info!(snapshot_seconds, disk_seconds, directory_seconds, disk_freed_bytes, disk_collection_deferred, "publication collection stages");
+                    Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes,"disk_collection_deferred":disk_collection_deferred,"snapshot_seconds":snapshot_seconds,"disk_seconds":disk_seconds,"directory_seconds":directory_seconds}))
                 })
                 .await
                 .map_err(|e| format!("collection task failed: {e}"))?

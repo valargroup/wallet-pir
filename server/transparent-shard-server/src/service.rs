@@ -422,7 +422,7 @@ impl ServiceState {
     pub(crate) fn prune_disk(
         &self,
         keep: &std::collections::HashSet<String>,
-    ) -> Result<u64, String> {
+    ) -> Result<Option<u64>, String> {
         self.inner.cache.prune_disk(keep)
     }
 

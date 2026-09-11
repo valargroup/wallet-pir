@@ -693,7 +693,7 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         preflight["assignment_bytes"].as_u64().unwrap() <= pair + 4096,
         "preflight budgets current warm revisions only"
     );
-    let state = ServiceState::build_with_disk(set, config, Some(disk)).unwrap();
+    let state = ServiceState::build_with_disk(set, config, Some(disk.clone())).unwrap();
     state.spawn_prewarm().await.unwrap();
     // A slow reader of the oldest snapshot must not pin every later one.
     let held_reader = state.clone();
@@ -744,6 +744,10 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         .await
         .unwrap();
         live.command(Command::Collect).await.unwrap();
+        assert!(
+            disk.used_bytes().unwrap() <= pair * 16,
+            "disk budget exceeded during churn"
+        );
         let status = live.command(Command::Status).await.unwrap();
         assert!(status["retired_snapshots"].as_u64().unwrap() <= 4);
         assert!(status["revisions"].as_array().unwrap().len() <= 6);
@@ -751,7 +755,18 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         previous = digest;
     }
     drop(held_reader);
-    live.command(Command::Collect).await.unwrap();
+    // Live collection can defer while optional snapshot writes own the lock.
+    // Once those writers finish, require full reclamation with the same retained
+    // set; deferred collection must not turn into permanent cache growth.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while metrics.disk_save_pending.load(Ordering::Relaxed) != 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("snapshot writers did not finish");
+    let collected = live.command(Command::Collect).await.unwrap();
+    assert_eq!(collected["disk_collection_deferred"], false);
     let status = live.command(Command::Status).await.unwrap();
     assert_eq!(status["retired_snapshots"], 3);
     assert_eq!(status["revisions"].as_array().unwrap().len(), 4);
@@ -766,8 +781,8 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     );
 }
 
-/// Disk snapshot writers and collection share a file lock. Waiting for that
-/// lock must not hold the serving snapshot locks or a Tokio executor thread.
+/// Live collection must defer optional disk pruning while a snapshot writer
+/// holds its lock, keeping readiness and subsequent control operations responsive.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn blocked_collection_keeps_status_and_readiness_responsive() {
     use std::time::Duration;
@@ -818,11 +833,7 @@ async fn blocked_collection_keeps_status_and_readiness_responsive() {
         let live = live.clone();
         async move { live.command(Command::Collect).await }
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    assert!(
-        !collector.is_finished(),
-        "collection must wait for the writer"
-    );
+    let collected = tokio::time::timeout(Duration::from_millis(500), collector).await;
     let status = tokio::spawn({
         let live = live.clone();
         async move { live.command(Command::Status).await }
@@ -831,15 +842,6 @@ async fn blocked_collection_keeps_status_and_readiness_responsive() {
         live.router()
             .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap()),
     );
-    let responsive = tokio::time::timeout(Duration::from_millis(500), async {
-        status.await.unwrap().unwrap();
-        ready.await.unwrap().unwrap()
-    })
-    .await;
-    // Cancelling the client must not release mutation serialization while
-    // the detached blocking job is still pruning the previous generations.
-    collector.abort();
-    let _ = collector.await;
     let next_mutation = tokio::spawn({
         let live = live.clone();
         async move {
@@ -849,20 +851,29 @@ async fn blocked_collection_keeps_status_and_readiness_responsive() {
             .await
         }
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let serialized = !next_mutation.is_finished();
+    let responsive = tokio::time::timeout(Duration::from_millis(500), async {
+        status.await.unwrap().unwrap();
+        next_mutation.await.unwrap().unwrap();
+        ready.await.unwrap().unwrap()
+    })
+    .await;
+    // Only release the writer after collection and the next mutation had their
+    // opportunity to finish. A blocking collection fails the bounded check.
     let _ = release.send(());
     writer.join().unwrap();
-    next_mutation.await.unwrap().unwrap();
+    let collected = collected
+        .expect("collection waited for the cache writer")
+        .unwrap()
+        .unwrap();
+    assert_eq!(collected["disk_collection_deferred"], true);
+    assert_eq!(collected["disk_freed_bytes"], 0);
     assert!(
         responsive.is_ok(),
-        "disk collection blocked status/readiness"
+        "collection blocked control or readiness"
     );
     assert_eq!(responsive.unwrap().status(), StatusCode::OK);
-    assert!(
-        serialized,
-        "cancelled collection allowed a mutation to race pruning"
-    );
+    let collected = live.command(Command::Collect).await.unwrap();
+    assert_eq!(collected["disk_collection_deferred"], false);
 }
 
 /// A blocked publication write must not occupy the async executor. The FIFO

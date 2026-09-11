@@ -26,6 +26,8 @@ the guarded recent-01 upgrade passed at 14:24:23 UTC. The loaded qualification o
 at 14:34:16 UTC on public freshness. Collection waited 10.405 seconds for the runtime
 cache writer lock; loading then took 1.256 seconds. The full failure evidence is
 preserved with the candidate record. No replacement acceptance run is active.
+A [deferred-collection candidate](evidence/productionize-m1-deferred-collection-2026-09-11/README.md)
+passes full local and Linux validation and is ready for guarded recent-01 deployment.
 **M1 remains open.** The supervisor is terminal and no replacement acceptance
 run has started. Failed-run time does not count toward acceptance.
 

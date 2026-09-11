@@ -310,6 +310,22 @@ impl DiskCache {
     /// Called only after rollout verification, with all active and rollback
     /// revision digests (including retained revisions), under the writer lock.
     pub fn prune(&self, keep: &std::collections::HashSet<String>) -> io::Result<u64> {
+        self.prune_with_lock(keep, true)
+            .map(|bytes| bytes.expect("blocking lock"))
+    }
+
+    /// Live collection may defer optional cache reclamation while a snapshot is
+    /// being written. The writer still enforces max_bytes under the same lock;
+    /// it refuses new saves when full rather than evicting retained revisions.
+    pub fn try_prune(&self, keep: &std::collections::HashSet<String>) -> io::Result<Option<u64>> {
+        self.prune_with_lock(keep, false)
+    }
+
+    fn prune_with_lock(
+        &self,
+        keep: &std::collections::HashSet<String>,
+        wait: bool,
+    ) -> io::Result<Option<u64>> {
         let started = std::time::Instant::now();
         let lock = OpenOptions::new()
             .create(true)
@@ -317,7 +333,18 @@ impl DiskCache {
             .read(true)
             .write(true)
             .open(self.directory.join(".lock"))?;
-        lock.lock()?;
+        if wait {
+            lock.lock()?;
+        } else {
+            match lock.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    tracing::info!("runtime disk collection deferred: snapshot writer busy");
+                    return Ok(None);
+                }
+                Err(std::fs::TryLockError::Error(error)) => return Err(error),
+            }
+        }
         let lock_wait_seconds = started.elapsed().as_secs_f64();
         let pruning_started = std::time::Instant::now();
         let prefixes: std::collections::HashSet<_> = keep
@@ -343,7 +370,7 @@ impl DiskCache {
             freed_bytes = freed,
             "runtime disk collection stages"
         );
-        Ok(freed)
+        Ok(Some(freed))
     }
 }
 
@@ -498,6 +525,49 @@ mod tests {
     use super::*;
     use crate::shardset::Table;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
+
+    #[test]
+    fn busy_collection_defers_then_prunes_only_unretained_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let disk = DiskCache::new(dir.path().join("cache"), 1024).unwrap();
+        let digest = "ab".repeat(32);
+        let prefix = hex::encode(Sha256::digest(digest.as_bytes()));
+        let retained = disk.directory.join(format!("{prefix}-table.runtime"));
+        let stale = disk.directory.join("unretained-table.runtime");
+        let partial = disk.directory.join("writer.partial");
+        for path in [&retained, &stale, &partial] {
+            fs::write(path, b"data").unwrap();
+        }
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(disk.directory.join(".lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        let keep: std::collections::HashSet<_> = [digest].into_iter().collect();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let collector = std::thread::spawn({
+            let disk = disk.clone();
+            let keep = keep.clone();
+            move || {
+                let _ = tx.send(disk.try_prune(&keep));
+            }
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(1));
+        let untouched = [&retained, &stale, &partial]
+            .iter()
+            .all(|path| path.exists());
+        drop(lock);
+        collector.join().unwrap();
+        assert_eq!(result.expect("collection waited for writer").unwrap(), None);
+        assert!(untouched, "deferred collection removed files");
+        assert_eq!(disk.try_prune(&keep).unwrap(), Some(8));
+        assert!(retained.exists());
+        assert!(!stale.exists());
+        assert!(!partial.exists());
+        assert_eq!(disk.used_bytes().unwrap(), 4);
+    }
 
     #[test]
     fn incremental_snapshot_preserves_bytes_and_checksum_across_writeback() {
