@@ -33,6 +33,14 @@ class GateTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 M.validate_gate({**self.gate, **changed}, 'binary', 'script', 'config', 'roster')
 
+    def test_gate_binds_the_headless_helper_when_required(self):
+        with self.assertRaises(ValueError):
+            M.validate_gate(self.gate, 'binary', 'script', 'config', 'roster', 'helper')
+        gate={**self.gate,'headless_helper_sha256':'helper'}
+        M.validate_gate(gate, 'binary', 'script', 'config', 'roster', 'helper')
+        with self.assertRaises(ValueError):
+            M.validate_gate(gate, 'binary', 'script', 'config', 'roster', 'changed')
+
     def test_guard_preserves_other_services_and_withdraws_parent_artifacts(self):
         config = '''example.test {
  handle @transparent_publication {

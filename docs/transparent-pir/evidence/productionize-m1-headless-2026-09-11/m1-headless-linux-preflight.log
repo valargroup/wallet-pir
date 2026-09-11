@@ -1,0 +1,9 @@
+{"serial_console_enabled": true, "framebuffers": ["0 virtio_gpudrmfb"], "bindings": [{"path": "/sys/class/vtconsole/vtcon0/bind", "bound": false}], "helper_sha256": "1daa5418f1dc9a510e839f032c2aed6b062395bd855d5b6a729db563f4cf44df"}
+Traceback (most recent call last):
+  File "/tmp/m1-headless-console.py", line 78, in <module>
+    main()
+  File "/tmp/m1-headless-console.py", line 71, in main
+    check_persistence(unit)
+  File "/tmp/m1-headless-console.py", line 57, in check_persistence
+    raise RuntimeError('worker lacks the loaded headless ExecStartPre')
+RuntimeError: worker lacks the loaded headless ExecStartPre

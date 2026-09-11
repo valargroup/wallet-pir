@@ -253,6 +253,22 @@ hard limit; cache and transient allocation admission remain separate. The
 tradeoff and failed lower threshold. Other workers retain their installed
 settings until their rollout.
 
+The optional `headless_console: true` fleet setting installs
+`transparent-headless-console.py` as a privileged worker `ExecStartPre`. It
+unbinds a virtio framebuffer console after requiring an enabled serial console;
+it refuses unknown framebuffer drivers. Preflight is read-only. The worker must
+be enabled across boot, and acceptance checks the loaded pre-start command,
+helper digest and unbound state every worker sample. The full-fleet gate also
+requires the matching helper digest. See [status](status.md) for deployment state.
+This prevents the virtual GPU console-update path observed during the M1
+investigation from running console refresh work on worker CPUs; sustained
+availability still requires the full gate below.
+
+Binary rollback restores the previous worker unit and any saved helper. It does
+not rebind the framebuffer at runtime. Disabling the option removes the managed
+pre-start line on the next installation; restoring graphics is a separate,
+explicit host operation. Serial-console configuration is never changed.
+
 Run `ops/scripts/observe-transparent-hardening.py` on the coordinator with the
 expected worker binary digest and release `soak-query` executable. Its defaults
 require **both six hours and 300 new blocks**, two sustained query clients with

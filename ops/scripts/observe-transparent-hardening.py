@@ -72,6 +72,16 @@ def routing_failure(baseline, current):
     return None
 
 
+def headless_failure(value, expected):
+    if value.get('helper_sha256') != expected:
+        return 'headless helper identity changed'
+    if value.get('persistent') is not True or value.get('serial_console_enabled') is not True:
+        return 'headless console configuration is not persistent with serial access'
+    if not isinstance(value.get('bindings'), list) or any(not isinstance(b, dict) or b.get('bound') is not False for b in value['bindings']):
+        return 'framebuffer console binding is not verified disabled'
+    return None
+
+
 async def observe(args):
     spec = importlib.util.spec_from_file_location('fleet', args.fleet_script)
     module = importlib.util.module_from_spec(spec)
@@ -83,6 +93,10 @@ async def observe(args):
                       roster_sha256=hashlib.sha256(Path(fleet.c['roster']).read_bytes()).hexdigest(),
                       public_budget_seconds=args.freshness_seconds,
                       replica_budget_seconds=args.replica_freshness_seconds)
+    headless_sha = None
+    if fleet.c.get('headless_console', False):
+        headless_sha = hashlib.sha256((Path(__file__).parent/'transparent-headless-console.py').read_bytes()).hexdigest()
+        provenance['headless_helper_sha256'] = headless_sha
     worker = next(w for w in fleet.roster if w['id'] == args.worker)
     began = time.monotonic()
     baseline = None
@@ -180,6 +194,13 @@ async def observe(args):
             if now >= next_worker:
                 raw = await fleet.ssh(worker['ssh_host'], 'systemctl show transparent-shard-server -p NRestarts -p ExecMainStartTimestampMonotonic -p MemoryCurrent -p MemoryPeak; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.events; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.stat; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.pressure; cat /proc/meminfo')
                 current = facts(raw.decode())
+                headless = None
+                if headless_sha:
+                    headless = json.loads(await fleet.ssh(worker['ssh_host'],
+                        'python3 /usr/local/lib/transparent-pir/headless-console.py --check'))
+                    failure = headless_failure(headless, headless_sha)
+                    if failure:
+                        raise RuntimeError(failure)
                 ready = json.loads(await asyncio.to_thread(fetch, 'http://'+worker['upstream']+'/v1/ready'))
                 async with fleet.lock('routing'):
                     control = await fleet.control(worker, {'operation':'status'})
@@ -191,7 +212,7 @@ async def observe(args):
                 if baseline is None:
                     baseline = current
                 reason = worker_failure(baseline, current)
-                emit('worker', facts=current, ready=ready, control=control)
+                emit('worker', facts=current, ready=ready, control=control, headless=headless)
                 if reason:
                     raise RuntimeError(reason)
                 samples += 1

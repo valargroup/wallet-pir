@@ -114,6 +114,10 @@ def route_coordinator():
     execute(['systemctl','reload','caddy'])
 
 
+HEADLESS_PATH = '/usr/local/lib/transparent-pir/headless-console.py'
+HEADLESS_PRESTART = 'ExecStartPre=+/usr/bin/python3 '+HEADLESS_PATH+' --apply'
+
+
 async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_seconds=1800):
     host=worker['ssh_host']
     before=read_json('http://'+worker['upstream']+'/v1/ready')
@@ -159,8 +163,18 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
         # ~46 GiB anonymous working set, exceeding the cgroup headroom gate.
         high = 5905580032 if worker['role'] == 'recent-replica' else 51539607552
         new_unit=new_unit.replace('[Service]',f'[Service]\nMemoryHigh={high}',1)
+    headless = fleet.c.get('headless_console', False)
+    if type(headless) is not bool:
+        raise ValueError('headless_console must be a boolean')
+    new_unit='\n'.join(line for line in new_unit.splitlines() if line != HEADLESS_PRESTART)+'\n'
+    if headless:
+        new_unit=new_unit.replace('[Service]', '[Service]\n'+HEADLESS_PRESTART, 1)
     remote='/opt/transparent-publisher/staged'
     await fleet.ssh(host,'mkdir -p '+remote+' '+shlex.quote(rollback))
+    if headless:
+        helper=(SCRIPT/'transparent-headless-console.py').read_bytes()
+        await fleet.ssh(host,'cat > '+remote+'/headless-console.py',helper)
+        await fleet.ssh(host,'python3 '+remote+'/headless-console.py --preflight')
     for name in ['transparent-shard-server','shard-control']:
         await LIVE.run(['rsync','-a','-e',shlex.join(fleet.ssh_args),str(artifacts/name),'root@'+host+':'+remote+'/'+name],timeout=120)
     verify=[remote+'/transparent-shard-server']+args[1:]+['--verify-only']
@@ -168,12 +182,15 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
     await fleet.ssh(host,'cat > '+remote+'/worker.service',new_unit.encode())
     if stage_only:
         return
+    headless_install = ('install -Dm755 '+remote+'/headless-console.py '+HEADLESS_PATH) if headless else ':'
     command=f'''set -eu
 if [ ! -f {shlex.quote(rollback)}/worker.service ]; then
  cp /etc/systemd/system/transparent-shard-server.service {shlex.quote(rollback)}/worker.service
  cp /usr/local/bin/transparent-shard-server {shlex.quote(rollback)}/transparent-shard-server
  cp /usr/local/bin/shard-control {shlex.quote(rollback)}/shard-control
+ if [ -f {HEADLESS_PATH} ]; then cp {HEADLESS_PATH} {shlex.quote(rollback)}/headless-console.py; fi
 fi
+{headless_install}
 install -m755 {remote}/transparent-shard-server /usr/local/bin/transparent-shard-server.next
 mv /usr/local/bin/transparent-shard-server.next /usr/local/bin/transparent-shard-server
 install -m755 {remote}/shard-control /usr/local/bin/shard-control
@@ -191,6 +208,10 @@ systemctl restart transparent-shard-server
                 status=await fleet.control(worker,{'operation':'status'})
                 if status['active']['map_sha256']!=ready['map_sha256'] or not status['warm']:
                     continue
+                if headless:
+                    evidence=json.loads(await fleet.ssh(host,'python3 '+HEADLESS_PATH+' --check'))
+                    if evidence.get('helper_sha256') != hashlib.sha256(helper).hexdigest() or evidence.get('persistent') is not True:
+                        raise RuntimeError('headless helper does not attest the installed configuration')
                 print(worker['id']+': warm with publication control',flush=True)
                 return
         except Exception:
