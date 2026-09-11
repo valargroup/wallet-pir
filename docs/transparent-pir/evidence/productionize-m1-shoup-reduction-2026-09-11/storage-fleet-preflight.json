@@ -1,0 +1,62 @@
+{
+  "transparent-pir-recent-01": {
+    "mount": {
+      "target": "/",
+      "source": "/dev/vda1",
+      "fstype": "ext4",
+      "options": "rw,relatime,errors=remount-ro,commit=30"
+    },
+    "online_discard": false,
+    "helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff"
+  },
+  "transparent-pir-recent-02": {
+    "mount": {
+      "target": "/",
+      "source": "/dev/vda1",
+      "fstype": "ext4",
+      "options": "rw,relatime,discard,errors=remount-ro,commit=30"
+    },
+    "online_discard": true,
+    "helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff"
+  },
+  "transparent-pir-recent-03": {
+    "mount": {
+      "target": "/",
+      "source": "/dev/vda1",
+      "fstype": "ext4",
+      "options": "rw,relatime,discard,errors=remount-ro,commit=30"
+    },
+    "online_discard": true,
+    "helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff"
+  },
+  "transparent-pir-recent-04": {
+    "mount": {
+      "target": "/",
+      "source": "/dev/vda1",
+      "fstype": "ext4",
+      "options": "rw,relatime,discard,errors=remount-ro,commit=30"
+    },
+    "online_discard": true,
+    "helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff"
+  },
+  "transparent-pir-archive-01": {
+    "mount": {
+      "target": "/",
+      "source": "/dev/vda1",
+      "fstype": "ext4",
+      "options": "rw,relatime,discard,errors=remount-ro,commit=30"
+    },
+    "online_discard": true,
+    "helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff"
+  },
+  "transparent-pir-archive-02": {
+    "mount": {
+      "target": "/",
+      "source": "/dev/vda1",
+      "fstype": "ext4",
+      "options": "rw,relatime,discard,errors=remount-ro,commit=30"
+    },
+    "online_discard": true,
+    "helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff"
+  }
+}

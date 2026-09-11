@@ -1,4 +1,5 @@
 """Mount policy must fail closed and preserve unrelated durability settings."""
+import json
 import importlib.util
 from pathlib import Path
 import unittest
@@ -16,6 +17,13 @@ class StorageTests(unittest.TestCase):
     def setUp(self):
         self.before=dict(target='/',source='/dev/vda1',fstype='ext4',options='rw,relatime,discard,commit=30,errors=remount-ro')
         self.after={**self.before,'options':'rw,relatime,commit=30,errors=remount-ro'}
+
+    def test_missing_cache_preflight_uses_existing_parent_without_creating_it(self):
+        raw=json.dumps({'filesystems':[self.before]})
+        with patch.object(H.Path,'exists',lambda path: str(path) != H.PATHS[1]), patch.object(H.subprocess,'check_output',return_value=raw) as query, patch.object(H.Path,'mkdir') as mkdir:
+            self.assertEqual(H.inspect(),self.before)
+            self.assertEqual(query.call_args_list[-1].args[0],['findmnt','-J','-T','/srv/transparent-pir'])
+            mkdir.assert_not_called()
 
     def test_preflight_and_check_never_remount(self):
         with patch.object(H,'inspect',return_value=self.before),patch.object(H.subprocess,'run') as run:

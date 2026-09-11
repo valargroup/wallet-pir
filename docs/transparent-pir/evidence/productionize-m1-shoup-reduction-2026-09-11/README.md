@@ -266,3 +266,12 @@ It does not edit fstab, fsync calls, barriers or scheduled fstrim.
 operations/report/docs checks. The [final 110 operations tests](storage-policy-ops-tests.log)
 include the subsequent rollback-helper correction and installation tests.
 The implementation remains undeployed at this source checkpoint.
+
+Fleet preflight caught a missing optional runtime-cache directory on recent-02
+before any persistent configuration change or rollout start. The helper now
+resolves the nearest existing ancestor without creating directories and still
+requires a shared writable ext4 root. The regression and
+[repeated full check](storage-parent-make-check.log) pass;
+[read-only preflight on all six workers](storage-fleet-preflight.json) succeeds.
+The original experiment restoration timer completed successfully and online
+discard is restored on recent-01, ready for a clean managed-policy rollout.

@@ -34,7 +34,13 @@ def validate_mounts(mounts):
 def inspect():
     mounts = []
     for path in PATHS:
-        value = json.loads(subprocess.check_output(['findmnt', '-J', '-T', path], text=True))
+        # Older workers may not have created the optional runtime cache yet.
+        # Resolve its existing ancestor without creating a directory; subsequent
+        # checks inspect the actual cache once it exists.
+        probe = Path(path)
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        value = json.loads(subprocess.check_output(['findmnt', '-J', '-T', str(probe)], text=True))
         if len(value['filesystems']) != 1:
             raise RuntimeError('ambiguous worker filesystem')
         mounts.append(value['filesystems'][0])
