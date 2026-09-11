@@ -56,3 +56,22 @@ RuntimeMaxSec is 1,900 and Restart is no. The first live sample had 29.48% host
 memory available and both query streams producing exact results. This short
 screen has no M1 acceptance credit and no automatic fleet rollout. If it passes,
 start a fresh matching six-hour/300-block canary.
+
+## Terminal qualification failure
+
+The screen failed at 2026-09-11 14:34:16 UTC after 496.804 seconds:
+`public freshness exceeded at block 3479763: 30.342s exceeds 30s`.
+The [full failed screen](failed-qualification.tar.gz) contains 7,294 exact
+responses, zero mismatches, three retries and seven completed blocks. Minimum
+sampled host memory headroom was 26.498%, with no new routing withdrawals.
+The screen unit is terminal; its time earns no acceptance credit.
+
+The [worker log](failure-worker.log) records a 10.405-second wait for the runtime
+cache writer lock in collection, followed by loading of 1.256 seconds and warming
+of 5.168 seconds for map
+`7314cfbdb501364e58019752c9ebd692e6897f945ffae036965ab44a95b808ae`.
+The [controller log](failure-controller.log) records publication at 14:34:17 UTC
+with freshness 30.443 seconds. The background-advice change did not eliminate
+this separate collection wait. Investigate deferring optional collection when
+its writer lock is busy without weakening writer capacity bounds or revision
+retention guarantees. No acceptance canary has been started.
