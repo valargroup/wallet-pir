@@ -194,3 +194,29 @@ identifies publication persistence in the failing path, but does not by itself
 establish why the filesystem stalled or prove a particular correction.
 The original kernel/disk sampler and this supplementary sampler continue to
 their bounded deadlines; preserve complete captures on termination.
+
+### Bounded online-discard experiment: 09:26:58 UTC
+
+Both runtime cache and publication record resolve to `/dev/vda1`, ext4 root
+with `discard,commit=30`. Disk counters during the reproduced failure show
+outstanding requests without completions and large accumulated write/flush
+latencies. Online discard is a hypothesis, not an established cause.
+[Kernel documentation](https://www.kernel.org/doc/html/v6.6/admin-guide/ext4.html)
+defines discard as issuing TRIM when blocks are freed;
+[util-linux documentation](https://kernel.googlesource.com/pub/scm/utils/util-linux/util-linux/+/refs/heads/master/sys-utils/fstrim.8.adoc)
+notes that unqueued trim can penalize other disk operations.
+
+The [guarded trial](nodiscard-trial.py) temporarily remounted recent-01 root
+with `nodiscard`, retaining the other observed options, at 09:26:58 UTC.
+[Before/after output](nodiscard-trial.log) records the change. It changes no
+file flush, durability barrier, worker binary or persistent fstab.
+`transparent-m1-discard-restore.timer` was installed first and restores
+`discard` 30 minutes later, approximately 09:56:58 UTC. Do not leave a full
+acceptance run spanning that change.
+
+`transparent-m1-nodiscard-diagnostic.service` runs a separate 900-second
+two-client diagnostic with unchanged 30/60-second budgets, zero minimum
+blocks, and a 17-minute process ceiling. Output is
+`/opt/transparent-publisher-build/shoup-release-20260911/nodiscard-diagnostic`.
+This is neither a canary restart nor acceptance credit. Assess its result and
+retain the raw captures before deciding on persistent configuration changes.
