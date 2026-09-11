@@ -1,0 +1,72 @@
+
+/opt/transparent-publisher-build/shoup-reduction-20260911/artifacts/worker-integration-tests:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000065072a <valar_spiral_rs::ntt::avx2::ntt_forward+0x39a>:
+  65072a:	mov    (%rax,%rcx,8),%r15
+  65072e:	mov    0x70(%rsp),%rdx
+  650733:	mulx   %r15,%r9,%r10
+  650738:	mov    0x8(%rax,%rcx,8),%r14
+  65073d:	mulx   %r14,%r13,%r11
+  650742:	mov    0x10(%rax,%rcx,8),%rbx
+  650747:	mulx   %rbx,%rsi,%r8
+  65074c:	mov    0x18(%rax,%rcx,8),%rdi
+  650751:	mulx   %rdi,%rax,%r12
+  650756:	mov    0x68(%rsp),%rdx
+  65075b:	mulx   %rdi,%rdi,%rdi
+  650760:	mulx   %rbx,%rbx,%rbx
+  650765:	mulx   %r14,%r14,%r14
+  65076a:	mulx   %r15,%rdx,%rdx
+  65076f:	mulx   %rbp,%r15,%rdx
+  650774:	mov    %r15,0x98(%rsp)
+  65077c:	mov    %rdx,0x18(%rsp)
+  650781:	mov    %r14,%rdx
+  650784:	mulx   %rbp,%r14,%rdx
+  650789:	mov    %rdx,0x90(%rsp)
+  650791:	mov    %rbx,%rdx
+  650794:	mulx   %rbp,%r15,%rbx
+  650799:	mov    %rdi,%rdx
+  65079c:	mulx   %rbp,%rdi,%rdx
+  6507a1:	sub    %rdi,%rax
+  6507a4:	sbb    %rdx,%r12
+  6507a7:	sub    %r15,%rsi
+  6507aa:	sbb    %rbx,%r8
+  6507ad:	sub    %r14,%r13
+  6507b0:	sbb    0x90(%rsp),%r11
+  6507b8:	sub    0x98(%rsp),%r9
+  6507c0:	sbb    0x18(%rsp),%r10
+  6507c5:	cmp    %rbp,%r9
+  6507c8:	sbb    $0x0,%r10
+  6507cc:	mov    $0x0,%edx
+  6507d1:	jb     6507d6 <valar_spiral_rs::ntt::avx2::ntt_forward+0x446>
+  6507d3:	mov    %rbp,%rdx
+  6507d6:	mov    0x20(%rsp),%r14
+  6507db:	vmovdqu (%r14,%rcx,8),%ymm4
+  6507e1:	cmp    %rbp,%r13
+  6507e4:	sbb    $0x0,%r11
+  6507e8:	mov    $0x0,%edi
+  6507ed:	jae    650820 <valar_spiral_rs::ntt::avx2::ntt_forward+0x490>
+  6507ef:	cmp    %rbp,%rsi
+  6507f2:	sbb    $0x0,%r8
+  6507f6:	mov    $0x0,%r8d
+  6507fc:	jae    650832 <valar_spiral_rs::ntt::avx2::ntt_forward+0x4a2>
+  6507fe:	cmp    %rbp,%rax
+  650801:	sbb    $0x0,%r12
+  650805:	mov    $0x0,%r10d
+  65080b:	jb     6506c0 <valar_spiral_rs::ntt::avx2::ntt_forward+0x330>
+  650811:	jmp    650848 <valar_spiral_rs::ntt::avx2::ntt_forward+0x4b8>
+  650813:	data16 data16 data16 cs nopw 0x0(%rax,%rax,1)
+  650820:	mov    %rbp,%rdi
+  650823:	cmp    %rbp,%rsi
+  650826:	sbb    $0x0,%r8
+  65082a:	mov    $0x0,%r8d
+  650830:	jb     6507fe <valar_spiral_rs::ntt::avx2::ntt_forward+0x46e>
+  650832:	mov    %rbp,%r8
+  650835:	cmp    %rbp,%rax
+  650838:	sbb    $0x0,%r12
+  65083c:	mov    $0x0,%r10d
+  650842:	jb     6506c0 <valar_spiral_rs::ntt::avx2::ntt_forward+0x330>
+  650848:	mov    %rbp,%r10
+  65084b:	jmp    6506c0 <valar_spiral_rs::ntt::avx2::ntt_forward+0x330>

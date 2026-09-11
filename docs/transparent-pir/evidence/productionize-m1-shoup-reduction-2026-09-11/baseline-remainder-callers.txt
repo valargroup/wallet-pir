@@ -1,0 +1,138 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+# symbol: __umodti3
+#
+# Total Lost Samples: 0
+#
+# Samples: 22K of event 'cpu-clock'
+# Event count (approx.): 225606058350
+#
+# Overhead  Command          Shared Object
+# ........  ...............  .............
+#
+    51.97%  tokio-rt-worker  burst-test   
+            |          
+            |--35.21%--0xffffffffffffffff
+            |          |          
+            |          |--11.75%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |          rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |          |          
+            |          |           --11.23%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                     rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                     |          
+            |          |                      --11.22%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                |          
+            |          |                                 --11.22%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                           rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                           rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                           core::ops::function::impls::<impl core::ops::function::FnMut<A> for &F>::call_mut
+            |          |                                           valar_spiral_rs::poly::to_ntt
+            |          |                                           valar_spiral_rs::ntt::avx2::ntt_forward
+            |          |                                           __umodti3
+            |          |          
+            |          |--5.83%--tokio::runtime::task::raw::poll
+            |          |          transparent_shard_server::runtime::TableRuntime::build
+            |          |          |          
+            |          |           --5.81%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                     |          
+            |          |                     |--3.03%--valar_spiral_rs::poly::from_ntt_alloc
+            |          |                     |          valar_spiral_rs::poly::from_ntt
+            |          |                     |          __umodti3
+            |          |                     |          
+            |          |                      --2.78%--valar_spiral_rs::poly::to_ntt_alloc
+            |          |                                valar_spiral_rs::poly::to_ntt
+            |          |                                valar_spiral_rs::ntt::avx2::ntt_forward
+            |          |                                __umodti3
+            |          |          
+            |          |--5.33%--rayon_core::registry::WorkerThread::wait_until_cold
+            |          |          |          
+            |          |           --4.93%--<rayon_core::job::StackJob<L,F,R> as rayon_core::job::Job>::execute
+            |          |                     rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                     rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                     |          
+            |          |                      --4.92%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                |          
+            |          |                                 --4.92%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                           rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                           rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                           core::ops::function::impls::<impl core::ops::function::FnMut<A> for &F>::call_mut
+            |          |                                           valar_spiral_rs::poly::multiply
+            |          |                                           __umodti3
+            |          |          
+            |          |--2.74%--rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |          |          
+            |          |           --2.50%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                     rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                     |          
+            |          |                      --2.47%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                |          
+            |          |                                 --2.46%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                           rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                           rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                           rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |          |                                           rayon::iter::plumbing::bridge_producer_consumer::helper
+            |          |                                           core::ops::function::impls::<impl core::ops::function::FnMut<A> for &F>::call_mut
+            |          |          
+            |          |--2.58%--std::sys::backtrace::__rust_begin_short_backtrace
+            |          |          rayon_core::registry::WorkerThread::wait_until_cold
+            |          |          
+            |           --2.32%--<rayon_core::job::StackJob<L,F,R> as rayon_core::job::Job>::execute
+            |                     rayon::iter::plumbing::bridge_producer_consumer::helper
+            |                     rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |                     |          
+            |                      --2.32%--rayon::iter::plumbing::bridge_producer_consumer::helper
+            |                                rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |                                rayon::iter::plumbing::bridge_producer_consumer::helper
+            |                                rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |                                rayon::iter::plumbing::bridge_producer_consumer::helper
+            |                                rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hf8e3d6a961ac4481
+            |                                rayon::iter::plumbing::bridge_producer_consumer::helper
+            |                                core::ops::function::impls::<impl core::ops::function::FnMut<A> for &F>::call_mut
+            |                                valar_spiral_rs::poly::from_ntt
+            |                                __umodti3
+            |          
+             --16.75%--0x755c82329d6b
+                       0x755c8229cb83
+                       std::sys::thread::unix::Thread::new::thread_start
+                       |          
+                        --16.74%--core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h6ec2e2297fe2e21f
+                                  std::sys::backtrace::__rust_begin_short_backtrace
+                                  rayon_core::registry::WorkerThread::wait_until_cold
+                                  |          
+                                  |--8.17%--<rayon_core::job::StackJob<L,F,R> as rayon_core::job::Job>::execute
+                                  |          rayon_core::join::join_context::_$u7b$$u7b$closure$u7d$$u7d$::hc99d1d92a8465bed
+                                  |          inspiring::preprocess_reuse::collapse_half
+                                  |          |          
+                                  |          |--5.05%--inspiring::key_switching::ks_digits_ntt_from_c1
+                                  |          |          |          
+                                  |          |           --3.68%--valar_spiral_rs::poly::to_ntt_alloc
+                                  |          |                     valar_spiral_rs::poly::to_ntt
+                                  |          |                     valar_spiral_rs::ntt::avx2::ntt_forward
+                                  |          |                     __umodti3
+                                  |          |          
+                                  |           --3.12%--valar_spiral_rs::poly::multiply
+                                  |                     __umodti3
+                                  |          
+                                   --8.08%--<rayon_core::job::StackJob<L,F,R> as rayon_core::job::Job>::execute
+                                             inspiring::preprocess_reuse::collapse_half
+                                             |          
+                                             |--5.25%--inspiring::key_switching::ks_digits_ntt_from_c1
+                                             |          |          
+                                             |           --3.89%--valar_spiral_rs::poly::to_ntt_alloc
+                                             |                     valar_spiral_rs::poly::to_ntt
+                                             |                     valar_spiral_rs::ntt::avx2::ntt_forward
+                                             |                     __umodti3
+                                             |          
+                                              --2.83%--valar_spiral_rs::poly::multiply
+                                                        __umodti3
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

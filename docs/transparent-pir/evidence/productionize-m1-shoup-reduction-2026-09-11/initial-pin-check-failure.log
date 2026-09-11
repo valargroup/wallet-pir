@@ -1,0 +1,303 @@
+ops/scripts/check-jq-contracts.sh
+== shell syntax and lint
+  ops/scripts/check-jq-contracts.sh  ok
+  ops/scripts/deploy-enhance-pir.sh  ok
+  ops/scripts/deploy-transparent-filter.sh ok
+  ops/scripts/deploy-transparent-shard.sh ok
+  ops/scripts/transparent-fleet-state.sh ok
+== ops/scripts/deploy-transparent-shard.sh: compile and evaluate
+  JQ_MAP_SHARD_COUNT                 ok against shards.json
+  JQ_MAP_DIGESTS                     ok against shards.json
+  JQ_MAP_FIRST_DIGEST                ok against shards.json
+  JQ_MAP_GEOMETRIES                  ok against shards.json
+  JQ_HEALTH_SERVING                  ok against health.json
+  JQ_HEALTH_SHARDS                   ok against health.json
+  JQ_HEALTH_ASSIGNED                 ok against health.json
+  JQ_READY_OK                        ok against ready.json
+  JQ_READY_MAP                       ok against ready.json
+  JQ_READY_ASSIGNMENT                ok against ready.json
+  JQ_READY_WARM                      ok against ready.json
+  JQ_READY_REASON                    ok against ready.json
+  JQ_READY_BINARY                    ok against ready.json
+  JQ_READY_WORKER_ASSIGNMENT         ok against ready.json
+  JQ_INIT_COMPLETE                   ok against init.json
+  JQ_INIT_GEOMETRY_NAMES             ok against init.json
+  JQ_INIT_SHARDS                     ok against init.json
+  JQ_INIT_HAS_GEOMETRIES             ok against init.json
+  JQ_INIT_MAP                        ok against init.json
+  JQ_INIT_ASSIGNED                   ok against init.json
+  JQ_INIT_GEOMETRY_COMPLETE          ok against init.json
+  JQ_INIT_SUMMARY                    ok against init.json
+== ops/scripts/deploy-enhance-pir.sh: compile only (no fixtures yet)
+  JQ_ENHANCE_WORKER_HOSTS            compiles
+  JQ_ENHANCE_WORKER_NAMES            compiles
+  JQ_ENHANCE_GROUP_COUNT             compiles
+  JQ_ENHANCE_GENERATION              compiles
+  JQ_ENHANCE_WORKER_OK               compiles
+  JQ_ENHANCE_COORDINATOR_SERVING     compiles
+  JQ_ENHANCE_HEALTH_WORKERS          compiles
+  JQ_ENHANCE_INIT_COMPLETE           compiles
+  JQ_ENHANCE_NOT_REGRESSED           compiles
+== ops/scripts/deploy-transparent-filter.sh: compile only (no fixtures yet)
+  JQ_FILTER_CHECK_MAP                compiles
+  JQ_FILTER_CHECK_SUMMARY            compiles
+  JQ_FILTER_HEALTH_SERVING           compiles
+== ops/scripts/deploy-transparent-shard.sh validate, against the real fixture
+  validate                           accepts the published fixture
+
+all ops contract checks passed
+python3 ops/tests/test_transparent_parents.py
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.014s
+
+OK
+python3 ops/tests/test_transparent_fleet.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 1.964s
+
+OK
+python3 ops/tests/test_transparent_publication.py
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "activate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "invalidate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "prepare", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+.....{"event": "fleet_command", "tool": "sh", "seconds": 0.558874, "exit_code": 0}
+...{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "activate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+.{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3488738.059654125}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 1.5082769095897675e-05}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 3488738.059687791}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 1.1667143553495407e-05}
+{"event": "worker_stage", "worker": "a2", "host": "10.0.0.2", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3488738.059792541}
+{"event": "worker_stage", "worker": "a2", "host": "10.0.0.2", "map_sha256": "new", "phase": "activate", "state": "RuntimeError", "seconds": 1.3084150850772858e-05}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3488738.059901791}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 8.958857506513596e-06}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 3488738.05991825}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 8.707866072654724e-06}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3488738.06005175}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 1.9083265215158463e-05}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 3488738.060083583}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 1.0624993592500687e-05}
+a2: owner lost during activation
+...{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+..{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "TimeoutError", "retry": false}
+..........{"event": "control_session_started", "worker": "a1", "pid": 123}
+{"event": "control_session_exited", "worker": "a1", "exit_code": 255}
+{"event": "control_session_started", "worker": "a1", "pid": 123}
+.{"event": "fleet_command", "tool": "sh", "seconds": 0.50472, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.013965, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.025344, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.025837, "exit_code": 0}
+.a2: revocation failed
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 500: 'RPC error'>
+  _warnings.warn(self.warn_message, ResourceWarning)
+..
+----------------------------------------------------------------------
+Ran 28 tests in 5.349s
+
+OK
+python3 ops/tests/test_transparent_burst.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 2.903s
+
+OK
+python3 -m unittest discover -s ops/tests -p 'test_transparent_stage_timing.py'
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.006s
+
+OK
+tools/check-doc-links.sh
+check-doc-links: 100 files, no broken links
+python3 -m unittest discover -s server/transparent-loadtest/tests -p 'test_*.py'
+........Measured wave did not start; opening its preparation results.
+.
+----------------------------------------------------------------------
+Ran 9 tests in 11.067s
+
+OK
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+    Checking valar-spiral-rs v0.5.2 (https://github.com/valargroup/spiral-rs.git?rev=584fee3893b1d2d17b5d774c83bd801fb70d5ace#584fee38)
+   Compiling transparent-loadtest v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-loadtest)
+    Checking inspiring v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+    Checking simplepir-kernel v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+    Checking ipir-sp v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+    Checking enhance-pir v0.1.0 (/Users/roman/projects/spendability-pir/pir/enhance)
+    Checking transparent-spend-pir v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-spend)
+    Checking transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet)
+    Checking transparent-history-pir v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-history)
+    Checking enhance-pir-load-test v0.1.0 (/Users/roman/projects/spendability-pir/pir/load-test)
+    Checking enhance-pir-server v0.1.0 (/Users/roman/projects/spendability-pir/server/enhance-pir-server)
+    Checking transparent-blocks v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-blocks)
+    Checking transparent-wallet-store v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet-store)
+    Checking transparent-regression v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-regression)
+    Checking transparent-block-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-block-server)
+    Checking transparent-shard-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-shard-server)
+    Checking transparent-history-server v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-history-server)
+error[E0308]: mismatched types
+   --> server/transparent-shard-server/src/runtime/disk.rs:153:17
+    |
+153 |                 collapse_a_final_ntt,
+    |                 ^^^^^^^^^^^^^^^^^^^^ expected `valar_spiral_rs::poly::PolyMatrixNTT<'_>`, found a different `valar_spiral_rs::poly::PolyMatrixNTT<'_>`
+    |
+note: two different versions of crate `valar_spiral_rs` are being used; two types coming from two different versions of the same crate are different types even if they look the same
+   --> /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/6f5b66c/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the found type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/584fee3/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the expected type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: server/transparent-shard-server/src/runtime/disk.rs:6:5
+    |
+  6 | use inspiring::QueryPackPreprocessed;
+    |     --------- one version of crate `valar_spiral_rs` used here, as a dependency of crate `inspiring`
+  7 | use sha2::{Digest, Sha256};
+  8 | use spiral_rs::poly::{PolyMatrix, PolyMatrixNTT};
+    |     --------- one version of crate `valar_spiral_rs` used here, as a direct dependency of the current crate
+    = help: you can use `cargo tree` to explore your dependency tree
+
+error[E0308]: mismatched types
+   --> server/transparent-shard-server/src/runtime/disk.rs:154:17
+    |
+149 |                 digits_ntt.push(reader.matrix(shared, shared.rlwe.gadget.ell, 1)?);
+    |                 ----------      ------------------------------------------------- this argument has type `valar_spiral_rs::poly::PolyMatrixNTT<'_>`...
+    |                 |
+    |                 ... which causes `digits_ntt` to have type `std::vec::Vec<valar_spiral_rs::poly::PolyMatrixNTT<'_>>`
+...
+154 |                 digits_ntt,
+    |                 ^^^^^^^^^^ expected `valar_spiral_rs::poly::PolyMatrixNTT<'_>`, found a different `valar_spiral_rs::poly::PolyMatrixNTT<'_>`
+    |
+note: two different versions of crate `valar_spiral_rs` are being used; two types coming from two different versions of the same crate are different types even if they look the same
+   --> /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/6f5b66c/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the found type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/584fee3/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the expected type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: server/transparent-shard-server/src/runtime/disk.rs:6:5
+    |
+  6 | use inspiring::QueryPackPreprocessed;
+    |     --------- one version of crate `valar_spiral_rs` used here, as a dependency of crate `inspiring`
+  7 | use sha2::{Digest, Sha256};
+  8 | use spiral_rs::poly::{PolyMatrix, PolyMatrixNTT};
+    |     --------- one version of crate `valar_spiral_rs` used here, as a direct dependency of the current crate
+    = help: you can use `cargo tree` to explore your dependency tree
+
+error[E0308]: mismatched types
+   --> server/transparent-shard-server/src/runtime/disk.rs:225:31
+    |
+225 |                 writer.matrix(&pre.collapse_a_final_ntt)?;
+    |                        ------ ^^^^^^^^^^^^^^^^^^^^^^^^^ expected `valar_spiral_rs::poly::PolyMatrixNTT<'_>`, found a different `valar_spiral_rs::poly::PolyMatrixNTT<'_>`
+    |                        |
+    |                        arguments to this method are incorrect
+    |
+note: two different versions of crate `valar_spiral_rs` are being used; two types coming from two different versions of the same crate are different types even if they look the same
+   --> /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/6f5b66c/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the expected type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/584fee3/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the found type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: server/transparent-shard-server/src/runtime/disk.rs:6:5
+    |
+  6 | use inspiring::QueryPackPreprocessed;
+    |     --------- one version of crate `valar_spiral_rs` used here, as a dependency of crate `inspiring`
+  7 | use sha2::{Digest, Sha256};
+  8 | use spiral_rs::poly::{PolyMatrix, PolyMatrixNTT};
+    |     --------- one version of crate `valar_spiral_rs` used here, as a direct dependency of the current crate
+    = help: you can use `cargo tree` to explore your dependency tree
+note: method defined here
+   --> server/transparent-shard-server/src/runtime/disk.rs:457:8
+    |
+457 |     fn matrix(&mut self, matrix: &PolyMatrixNTT<'_>) -> io::Result<()> {
+    |        ^^^^^^            --------------------------
+
+error[E0308]: mismatched types
+   --> server/transparent-shard-server/src/runtime/disk.rs:227:35
+    |
+227 |                     writer.matrix(matrix)?;
+    |                            ------ ^^^^^^ expected `valar_spiral_rs::poly::PolyMatrixNTT<'_>`, found a different `valar_spiral_rs::poly::PolyMatrixNTT<'_>`
+    |                            |
+    |                            arguments to this method are incorrect
+    |
+note: two different versions of crate `valar_spiral_rs` are being used; two types coming from two different versions of the same crate are different types even if they look the same
+   --> /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/6f5b66c/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the expected type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/584fee3/src/poly.rs:88:1
+    |
+ 88 | pub struct PolyMatrixNTT<'a> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the found type `valar_spiral_rs::poly::PolyMatrixNTT`
+    |
+   ::: server/transparent-shard-server/src/runtime/disk.rs:6:5
+    |
+  6 | use inspiring::QueryPackPreprocessed;
+    |     --------- one version of crate `valar_spiral_rs` used here, as a dependency of crate `inspiring`
+  7 | use sha2::{Digest, Sha256};
+  8 | use spiral_rs::poly::{PolyMatrix, PolyMatrixNTT};
+    |     --------- one version of crate `valar_spiral_rs` used here, as a direct dependency of the current crate
+    = help: you can use `cargo tree` to explore your dependency tree
+note: method defined here
+   --> server/transparent-shard-server/src/runtime/disk.rs:457:8
+    |
+457 |     fn matrix(&mut self, matrix: &PolyMatrixNTT<'_>) -> io::Result<()> {
+    |        ^^^^^^            --------------------------
+
+error[E0308]: mismatched types
+   --> server/transparent-shard-server/src/runtime/disk.rs:376:46
+    |
+376 |         let mut matrix = PolyMatrixNTT::zero(&shared.rlwe.spiral, rows, cols);
+    |                          ------------------- ^^^^^^^^^^^^^^^^^^^ expected `valar_spiral_rs::params::Params`, found a different `valar_spiral_rs::params::Params`
+    |                          |
+    |                          arguments to this function are incorrect
+    |
+note: two different versions of crate `valar_spiral_rs` are being used; two types coming from two different versions of the same crate are different types even if they look the same
+   --> /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/6f5b66c/src/params.rs:55:1
+    |
+ 55 | pub struct Params {
+    | ^^^^^^^^^^^^^^^^^ this is the expected type `valar_spiral_rs::params::Params`
+    |
+   ::: /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/584fee3/src/params.rs:55:1
+    |
+ 55 | pub struct Params {
+    | ^^^^^^^^^^^^^^^^^ this is the found type `valar_spiral_rs::params::Params`
+    |
+   ::: server/transparent-shard-server/src/runtime/disk.rs:6:5
+    |
+  6 | use inspiring::QueryPackPreprocessed;
+    |     --------- one version of crate `valar_spiral_rs` used here, as a dependency of crate `inspiring`
+  7 | use sha2::{Digest, Sha256};
+  8 | use spiral_rs::poly::{PolyMatrix, PolyMatrixNTT};
+    |     --------- one version of crate `valar_spiral_rs` used here, as a direct dependency of the current crate
+    = help: you can use `cargo tree` to explore your dependency tree
+note: associated function defined here
+   --> /Users/roman/.cargo/git/checkouts/spiral-rs-a266a2fedc9d6988/6f5b66c/src/poly.rs:21:8
+    |
+ 21 |     fn zero(params: &'a Params, rows: usize, cols: usize) -> Self;
+    |        ^^^^
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `transparent-shard-server` (lib) due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `transparent-shard-server` (lib test) due to 5 previous errors
+make: *** [check] Error 101

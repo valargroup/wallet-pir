@@ -1,0 +1,6 @@
+{
+  "source_sha": "3d13da6",
+  "scope": "CPU profiling only; instrumentation overhead excludes performance acceptance",
+  "binary_sha256": "51ca0d56589f22a563cdad9b7075044178d87573aaa5e0ac95ecca486d0379f5",
+  "wrapper_sha256": "ee5583d042e3263d171ac18a263c6e40ae7cc7ce56bb27769ee72187463a6ab6"
+}

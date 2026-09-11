@@ -1,0 +1,48 @@
+ Downloading crates ...
+  Downloaded cpufeatures v0.2.5
+  Downloaded subtle v2.4.1
+  Downloaded block-buffer v0.10.3
+  Downloaded itoa v1.0.1
+  Downloaded digest v0.10.6
+  Downloaded ppv-lite86 v0.2.16
+  Downloaded getrandom v0.2.8
+  Downloaded sha2 v0.10.6
+  Downloaded rand_core v0.6.3
+  Downloaded generic-array v0.14.6
+  Downloaded ryu v1.0.9
+  Downloaded typenum v1.15.0
+  Downloaded serde v1.0.137
+  Downloaded serde_json v1.0.80
+  Downloaded libc v0.2.137
+   Compiling libc v0.2.137
+   Compiling typenum v1.15.0
+   Compiling version_check v0.9.4
+   Compiling cfg-if v1.0.0
+   Compiling serde v1.0.137
+   Compiling serde_json v1.0.80
+   Compiling ppv-lite86 v0.2.16
+   Compiling itoa v1.0.1
+   Compiling ryu v1.0.9
+   Compiling fastrand v2.0.1
+   Compiling subtle v2.4.1
+   Compiling generic-array v0.14.6
+   Compiling getrandom v0.2.8
+   Compiling cpufeatures v0.2.5
+   Compiling rand_core v0.6.3
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.5
+   Compiling block-buffer v0.10.3
+   Compiling crypto-common v0.1.6
+   Compiling digest v0.10.6
+   Compiling sha2 v0.10.6
+   Compiling valar-spiral-rs v0.5.2 (/Users/roman/projects/spendability-workspace/spiral-rs-m1-reduction)
+    Finished `release` profile [optimized] target(s) in 5.12s
+     Running unittests src/lib.rs (target/release/deps/valar_spiral_rs-7192ec251cf0d2ed)
+
+running 3 tests
+test ntt::alt::reduction_tests::transform_product_matches_direct_negacyclic_convolution ... ok
+test ntt::alt::reduction_tests::precomputed_root_product_matches_wide_remainder ... ok
+test ntt::alt::reduction_tests::transforms_match_division_reference_at_boundaries_and_dense_inputs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 68 filtered out; finished in 0.01s
+

@@ -1,0 +1,31 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 22K of event 'cpu-clock'
+# Event count (approx.): 225606058350
+#
+# Overhead  Symbol                                                                                                               IPC   [IPC Coverage]
+# ........  ...................................................................................................................  ....................
+#
+    51.97%  [.] __umodti3                                                                                                        -      -            
+    12.95%  [.] valar_spiral_rs::ntt::avx2::ntt_forward                                                                          -      -            
+    11.66%  [.] sha2::sha256::compress256                                                                                        -      -            
+     4.91%  [.] valar_spiral_rs::poly::from_ntt                                                                                  -      -            
+     2.60%  [.] transparent_shard_server::runtime::TableRuntime::build                                                           -      -            
+     2.34%  [.] rayon::iter::plumbing::bridge_producer_consumer::helper                                                          -      -            
+     1.69%  [.] valar_spiral_rs::poly::multiply                                                                                  -      -            
+     1.45%  [.] ipir_sp::bits::read_bits                                                                                         -      -            
+     1.18%  [k] clear_page_erms                                                                                                  -      -            
+     0.96%  [.] rayon::iter::plumbing::bridge_producer_consumer::helper                                                          -      -            
+     0.61%  [.] valar_spiral_rs::poly::to_ntt                                                                                    -      -            
+     0.60%  [.] rayon::iter::plumbing::bridge_producer_consumer::helper                                                          -      -            
+     0.60%  [.] rayon::iter::plumbing::bridge_producer_consumer::helper                                                          -      -            
+     0.55%  [k] do_user_addr_fault                                                                                               -      -            
+     0.52%  [.] 0x00000000001995ba                                                                                               -      -            
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

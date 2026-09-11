@@ -1,0 +1,79 @@
+   Compiling valar-spiral-rs v0.5.2 (/Users/roman/projects/spendability-workspace/spiral-rs-m1-reduction)
+    Finished `release` profile [optimized] target(s) in 0.80s
+     Running unittests src/lib.rs (target/release/deps/valar_spiral_rs-7192ec251cf0d2ed)
+
+running 71 tests
+test arith::test::add_uint_mod_correct ... ok
+test arith::test::div2_uint_mod_correct ... ok
+test arith::test::barrett_reduction_u128_raw_correct ... ok
+test arith::test::divide_uint192_inplace_correct ... ok
+test arith::test::barrett_raw_u64_correct ... ok
+test arith::test::get_barrett_crs_correct ... ok
+test arith::test::multiply_add_modular_single_crt_includes_accumulator ... ok
+test client::test::init_is_correct ... ok
+test client::test::generate_secret_keys_produces_small_norm_keys ... ok
+test client::test::get_sk_reg_matches_internal_key ... ok
+test client::test::encrypt_decrypt_reg_round_trip_scalar ... ok
+test client::test::encrypt_decrypt_reg_round_trip_max_value ... ok
+test discrete_gaussian::test::cdf_table_has_correct_length ... ok
+test client::test::encrypt_decrypt_reg_round_trip_zero ... ok
+test client::test::encrypt_decrypt_scaled_reg_round_trip ... ok
+test client::test::encrypt_decrypt_reg_round_trip_full_polynomial ... ok
+test discrete_gaussian::test::cdf_table_is_monotonically_nondecreasing ... ok
+test discrete_gaussian::test::cdf_table_last_entry_near_u64_max ... ok
+test discrete_gaussian::test::cdf_table_seems_okay ... ok
+test discrete_gaussian::test::cdf_table_symmetric_around_center ... ok
+test discrete_gaussian::test::different_seeds_produce_different_sequences ... ok
+test discrete_gaussian::test::fast_sample_is_deterministic_with_same_seed ... ok
+test discrete_gaussian::test::fast_sample_output_always_in_modulus_range ... ok
+test discrete_gaussian::test::max_val_scales_with_noise_width ... ok
+test client::test::encrypt_decrypt_reg_multiple_columns ... ok
+test client::test::generate_secret_keys_from_different_seeds_differ ... ok
+test client::test::generate_secret_keys_from_seed_is_deterministic ... ok
+test discrete_gaussian::test::sample_with_rng_returning_high_values ... ok
+test discrete_gaussian::test::sample_with_rng_returning_zero ... ok
+test discrete_gaussian::test::very_small_noise_width ... ok
+test discrete_gaussian::test::large_noise_width ... ok
+test discrete_gaussian::test::sample_is_deterministic_with_same_seed ... ok
+test discrete_gaussian::test::sample_output_always_in_modulus_range ... ok
+test key_value::test::row_from_key_is_correct ... ok
+test ntt::alt::reduction_tests::transform_product_matches_direct_negacyclic_convolution ... ok
+test noise_estimate::test::get_noise_from_paramset_correct ... ok
+test discrete_gaussian::test::dg_seems_okay ... ok
+test ntt::test::alt_ntt_correct ... ok
+test discrete_gaussian::test::sample_matrix_fills_all_entries ... ok
+test ntt::test::build_ntt_tables_correct ... ok
+test ntt::test::ntt_forward_correct ... ok
+test discrete_gaussian::test::sample_matrix_values_in_modulus_range ... ok
+test gadget::test::gadget_invert_is_correct ... ok
+test poly::test::alt_full_multiply_correctness ... ok
+test ntt::test::ntt_inverse_correct ... ok
+test poly::test::alt_full_multiply_correctness_larger_dimensions ... ok
+test poly::test::alt_full_multiply_correctness_inner_dim_3 ... ok
+test poly::test::alt_full_multiply_correctness_2x2 ... ok
+test discrete_gaussian::test::sample_and_fast_sample_produce_similar_distributions ... ok
+test poly::test::automorph_poly_zero_coeff_maps_to_zero ... ok
+test poly::test::automorph_poly_uncrtd_zero_coeff_maps_to_zero ... ok
+test poly::test::full_multiply_correctness ... ok
+test poly::test::full_multiply_correctness_larger_dimensions ... ok
+test poly::test::multiply_correctness ... ok
+test poly::test::invert_is_self_inverse ... ok
+test poly::test::invert_poly_zero_coeff_maps_to_zero ... ok
+test poly::test::sets_all_zeros ... ok
+test util::test::test_decompose_calc_correct ... ok
+test util::test::test_read_write_arbitrary_bits ... ok
+test poly::test::to_vec_correctness ... ok
+test util::test::params_from_json_correct ... ok
+test ntt::alt::reduction_tests::precomputed_root_product_matches_wide_remainder ... ok
+test ntt::alt::reduction_tests::transforms_match_division_reference_at_boundaries_and_dense_inputs ... ok
+test client::test::keygen_is_correct ... ok
+test client::test::query_serialization_is_correct ... ok
+test client::test::public_parameters_serialization_is_correct ... ok
+test client::test::real_public_parameters_serialization_is_correct ... ok
+test client::test::real_public_parameters_2_serialization_is_correct ... ok
+test client::test::no_expansion_query_serialization_is_correct ... ok
+test client::test::no_expansion_public_parameters_serialization_is_correct ... ok
+test ntt::test::ntt_correct ... ok
+
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
