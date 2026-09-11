@@ -1,0 +1,84 @@
+{"utc": "2026-09-11T09:21:50.643848+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:51.661807+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:52.689074+00:00", "pid": "792204", "blocked": [{"tid": "801402", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] __x64_sys_fdatasync+0x52/0xa0\n[<0>] x64_sys_call+0xcfd/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 75, "fd": 13, "path": "/srv/transparent-pir/runtime-cache/52b4d3fe302ac44b85f8aeb7b62b0e7aba056ca1369caf06a52aa1d44f0bcc8c-948233f59c505cc38a664f2f51499d2eb5831c2891e1352c10d7f56646903bcd.partial"}]}
+{"utc": "2026-09-11T09:21:53.718637+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:54.741938+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:55.760632+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:56.778060+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:57.799345+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:58.816072+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:21:59.837978+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:00.856110+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:01.875414+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:02.902445+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:03.919305+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:04.955673+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:05.975907+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:06.995477+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:08.016324+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:09.046064+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:10.066368+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:11.090588+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:12.111023+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:13.130350+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:14.146717+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:15.163124+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:16.178097+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:17.204078+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:18.222813+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:19.240494+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:20.260622+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:21.276928+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:22.293386+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:23.309303+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:24.326962+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:25.353899+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:26.377356+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:27.394479+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:28.410238+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:29.432334+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:30.452908+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:31.474684+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:32.491658+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:33.507731+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:34.524846+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:35.544904+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:36.561230+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:37.579454+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:38.598790+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:39.622178+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:40.653864+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:41.670123+00:00", "pid": "792204", "blocked": [{"tid": "800841", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] vfs_fsync_range+0x4b/0xa0\n[<0>] __x64_sys_fsync+0x3c/0x70\n[<0>] x64_sys_call+0x2550/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 74, "fd": 18, "path": "/opt/transparent-publisher/active.invalid.tmp"}]}
+{"utc": "2026-09-11T09:22:42.693466+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:43.709943+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:44.726729+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:45.751375+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:46.771734+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:47.787786+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:48.802657+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:49.820192+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:50.840584+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:51.856628+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:52.873513+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:53.890494+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:54.905832+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:55.926454+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:56.942438+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:57.957994+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:58.973889+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:22:59.989431+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:01.009686+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:02.029176+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:03.050047+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:04.079950+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:05.103478+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:06.120049+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:07.147452+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:08.167032+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:09.192862+00:00", "pid": "792204", "blocked": []}
+{"utc": "2026-09-11T09:23:10.208392+00:00", "pid": "792204", "blocked": [{"tid": "801108", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] __x64_sys_fdatasync+0x52/0xa0\n[<0>] x64_sys_call+0xcfd/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 75, "fd": 14, "path": "/srv/transparent-pir/runtime-cache/60afc489bea17979ed08818fd5515fe7f4cb336074b487c4109c802b19b13e77-13ae80cb740ca3d79fda35ee1ca4a45d56936998e5015a52f7dbe54fe2c12265.partial"}]}
+{"utc": "2026-09-11T09:23:11.229919+00:00", "pid": "792204", "blocked": [{"tid": "800841", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] vfs_fsync_range+0x4b/0xa0\n[<0>] __x64_sys_fsync+0x3c/0x70\n[<0>] x64_sys_call+0x2550/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 74, "fd": 21, "path": "/opt/transparent-publisher/active.tmp"}, {"tid": "801108", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] __x64_sys_fdatasync+0x52/0xa0\n[<0>] x64_sys_call+0xcfd/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 75, "fd": 14, "path": "/srv/transparent-pir/runtime-cache/60afc489bea17979ed08818fd5515fe7f4cb336074b487c4109c802b19b13e77-13ae80cb740ca3d79fda35ee1ca4a45d56936998e5015a52f7dbe54fe2c12265.partial"}]}
+{"utc": "2026-09-11T09:23:12.252820+00:00", "pid": "792204", "blocked": [{"tid": "800841", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] vfs_fsync_range+0x4b/0xa0\n[<0>] __x64_sys_fsync+0x3c/0x70\n[<0>] x64_sys_call+0x2550/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 74, "fd": 21, "path": "/opt/transparent-publisher/active.tmp"}, {"tid": "801108", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] __x64_sys_fdatasync+0x52/0xa0\n[<0>] x64_sys_call+0xcfd/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 75, "fd": 14, "path": "/srv/transparent-pir/runtime-cache/60afc489bea17979ed08818fd5515fe7f4cb336074b487c4109c802b19b13e77-13ae80cb740ca3d79fda35ee1ca4a45d56936998e5015a52f7dbe54fe2c12265.partial"}]}
+{"utc": "2026-09-11T09:23:13.268296+00:00", "pid": "792204", "blocked": [{"tid": "800841", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] vfs_fsync_range+0x4b/0xa0\n[<0>] __x64_sys_fsync+0x3c/0x70\n[<0>] x64_sys_call+0x2550/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 74, "fd": 21, "path": "/opt/transparent-publisher/active.tmp"}, {"tid": "801108", "wchan": "folio_wait_bit_common", "stack": "[<0>] folio_wait_bit_common+0x136/0x330\n[<0>] folio_wait_bit+0x18/0x30\n[<0>] folio_wait_writeback+0x2b/0xa0\n[<0>] __filemap_fdatawait_range+0x93/0x110\n[<0>] file_write_and_wait_range+0x93/0xc0\n[<0>] ext4_sync_file+0x8d/0x380\n[<0>] __x64_sys_fdatasync+0x52/0xa0\n[<0>] x64_sys_call+0xcfd/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 75, "fd": 14, "path": "/srv/transparent-pir/runtime-cache/60afc489bea17979ed08818fd5515fe7f4cb336074b487c4109c802b19b13e77-13ae80cb740ca3d79fda35ee1ca4a45d56936998e5015a52f7dbe54fe2c12265.partial"}]}
+{"utc": "2026-09-11T09:23:57.211142+00:00", "pid": "792204", "blocked": [{"tid": "800841", "wchan": "jbd2_log_wait_commit", "stack": "[<0>] jbd2_log_wait_commit+0xd9/0x150\n[<0>] jbd2_complete_transaction+0x73/0xb0\n[<0>] ext4_fc_commit+0x1c7/0x1f0\n[<0>] ext4_sync_file+0x34e/0x380\n[<0>] vfs_fsync_range+0x4b/0xa0\n[<0>] __x64_sys_fsync+0x3c/0x70\n[<0>] x64_sys_call+0x2550/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 74, "fd": 21, "path": "/opt/transparent-publisher/active.tmp"}, {"tid": "801108", "wchan": "jbd2_log_wait_commit", "stack": "[<0>] jbd2_log_wait_commit+0xd9/0x150\n[<0>] jbd2_complete_transaction+0x73/0xb0\n[<0>] ext4_fc_commit+0x1c7/0x1f0\n[<0>] ext4_sync_file+0x34e/0x380\n[<0>] __x64_sys_fdatasync+0x52/0xa0\n[<0>] x64_sys_call+0xcfd/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 75, "fd": 14, "path": "/srv/transparent-pir/runtime-cache/60afc489bea17979ed08818fd5515fe7f4cb336074b487c4109c802b19b13e77-13ae80cb740ca3d79fda35ee1ca4a45d56936998e5015a52f7dbe54fe2c12265.partial"}]}
+{"utc": "2026-09-11T09:23:58.231725+00:00", "pid": "792204", "blocked": [{"tid": "800841", "wchan": "jbd2_log_wait_commit", "stack": "[<0>] jbd2_log_wait_commit+0xd9/0x150\n[<0>] jbd2_complete_transaction+0x73/0xb0\n[<0>] ext4_fc_commit+0x1c7/0x1f0\n[<0>] ext4_sync_file+0x34e/0x380\n[<0>] vfs_fsync_range+0x4b/0xa0\n[<0>] __x64_sys_fsync+0x3c/0x70\n[<0>] x64_sys_call+0x2550/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 74, "fd": 21, "path": "/opt/transparent-publisher/active.tmp"}, {"tid": "801108", "wchan": "jbd2_log_wait_commit", "stack": "[<0>] jbd2_log_wait_commit+0xd9/0x150\n[<0>] jbd2_complete_transaction+0x73/0xb0\n[<0>] ext4_fc_commit+0x1c7/0x1f0\n[<0>] ext4_sync_file+0x34e/0x380\n[<0>] __x64_sys_fdatasync+0x52/0xa0\n[<0>] x64_sys_call+0xcfd/0x25a0\n[<0>] do_syscall_64+0x7f/0x180\n[<0>] entry_SYSCALL_64_after_hwframe+0x78/0x80\n", "syscall_number": 75, "fd": 14, "path": "/srv/transparent-pir/runtime-cache/60afc489bea17979ed08818fd5515fe7f4cb336074b487c4109c802b19b13e77-13ae80cb740ca3d79fda35ee1ca4a45d56936998e5015a52f7dbe54fe2c12265.partial"}]}

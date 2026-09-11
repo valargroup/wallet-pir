@@ -171,3 +171,26 @@ Investigation sequence:
    canary before fleet expansion and the separate 24-hour observation.
 
 No timeout or acceptance requirement has been relaxed.
+
+### Loaded diagnostic reproduces durable-record blocking
+
+`transparent-m1-activation-diagnostic.service` ran the same two exact-query
+clients on the installed release with a diagnostic 600-second duration, zero
+minimum blocks and unchanged freshness budgets. It failed at 09:23:29 UTC
+(232.853 seconds) on block 3479518 age 30.190 seconds. It grants no acceptance
+credit. The [controller journal](activation-diagnostic-controller.log) records
+an activation timeout of 25.105 seconds at 09:23:35 and routing withdrawal,
+then recovery through height 3479519 at 09:23:53 with 74.275-second freshness.
+A reorg interrupted the preceding candidate; it must be distinguished from the
+subsequent durable-record stall.
+
+The additional [file-descriptor sampler](activation-fd-sampler.py), bounded to
+600 seconds with an 11-minute systemd ceiling, identifies blocked flush files.
+Its [partial capture](activation-fd-partial.ndjson) shows `active.tmp` and a
+runtime-cache `.partial` file waiting on file writeback at 09:23:11–13, and
+both waiting on journal commit at 09:23:57–58. The sampling gap is preserved;
+it does not prove uninterrupted blocking throughout the gap. This directly
+identifies publication persistence in the failing path, but does not by itself
+establish why the filesystem stalled or prove a particular correction.
+The original kernel/disk sampler and this supplementary sampler continue to
+their bounded deadlines; preserve complete captures on termination.
