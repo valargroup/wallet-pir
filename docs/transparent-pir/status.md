@@ -20,8 +20,8 @@ reproduce the stall and has no acceptance credit. A separate four-hour instrumen
 diagnostic began at 14:00:52 UTC on the same binary, with no automatic rollout; see [diagnostic provenance](evidence/productionize-m1-loading-diagnostics-2026-09-11/README.md).
 See [deployment and terminal failure evidence](evidence/productionize-m1-cancel-prepare-2026-09-11/README.md).
 A [background cache-advice candidate](evidence/productionize-m1-cache-advice-2026-09-11/README.md)
-passes local full checks and Linux library tests; integration tests and actual-worker
-qualification remain pending. It has not been deployed.
+passes local full checks, 38 Linux library tests and 26 Linux integration tests;
+actual-worker qualification remains pending. It has not been deployed.
 **M1 remains open.** The supervisor is terminal and no replacement acceptance
 run has started. Failed-run time does not count toward acceptance.
 

@@ -1,0 +1,42 @@
+   Compiling transparent-shard-server v0.1.0 (/opt/transparent-publisher-build/cache-advice-20260911/server/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 1m 58s
+     Running tests/assignment.rs (/opt/transparent-publisher-build/6e0c65c/target/release/deps/assignment-3e3ebfdcf31138ec)
+
+running 8 tests
+test a_hand_written_assignment_round_trips_and_checks_shape ... ok
+test retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable ... ok
+test the_plan_balances_owners_and_the_router_matches_the_golden_file ... ok
+test an_assignment_for_another_map_is_refused ... ok
+test a_subset_loads_only_assigned_tables_and_keeps_global_ids ... ok
+test a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_served_for_all ... ok
+test an_assignment_that_does_not_fit_the_cache_is_refused_in_warm_mode ... ok
+test ready_waits_for_every_assigned_runtime_in_warm_mode_and_not_in_pilot_mode ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.86s
+
+     Running tests/revisions_and_cache.rs (/opt/transparent-publisher-build/6e0c65c/target/release/deps/revisions_and_cache-026edfaa1433a9d4)
+
+running 20 tests
+test a_set_holding_a_superseded_revision_loads ... ok
+test a_revision_ahead_of_the_map_is_refused ... ok
+test a_pruned_revision_is_refused_with_the_current_map_digest ... ok
+test burst::drained_external_errors_and_truncated_records_still_fail ... ok
+test burst::external_query_clients ... ignored, manual external burst clients; started by the burst runner
+test burst::external_records_drain_inflight_completion_after_stop ... ok
+test burst::publication_burst_under_exact_load ... ignored, manual recent-8k burst benchmark; use make transparent-burst
+test a_segment_corrupted_after_loading_fails_its_build ... ok
+test a_request_that_cannot_fit_the_budget_is_refused_retryably ... ok
+test blocked_invalidation_refuses_without_blocking_executor ... ok
+test blocked_collection_keeps_status_and_readiness_responsive ... ok
+test superseded_revisions_beyond_the_bound_are_refused ... ok
+test the_served_map_matches_its_advertised_digest ... ok
+test concurrent_cold_requests_build_once ... ok
+test a_second_runtime_evicts_the_first_rather_than_exceeding_the_budget ... ok
+test a_runtime_in_use_is_not_evicted_to_make_room ... ok
+test blocked_activation_keeps_executor_responsive ... ok
+test each_revision_is_answered_under_its_own_identity ... ok
+test live_prepare_activate_and_invalidate ... ok
+test revision_churn_bounds_runtimes_and_collects_idle_snapshots ... ok
+
+test result: ok. 18 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 25.58s
+

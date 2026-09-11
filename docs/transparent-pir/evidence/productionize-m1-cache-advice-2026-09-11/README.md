@@ -13,6 +13,8 @@ This bounds background work and descriptor retention, not kernel file-cache
 residency. Actual-worker memory headroom and publication latency still need
 qualification. A slow background call can delay reclamation, and skipped advice
 leaves eviction to the kernel. This is not yet a deployed fix or M1 acceptance.
+All 321 manifest hashes were verified against committed source
+`be1e5759d89e62fc5801944cfd8d635626cb1199`; see [source identity](source-commit.json).
 
 The [build bundle](build.tar.gz) records the hashes of all 321 source files,
 Linux build/test commands and resulting artifact hashes. The worker binary is
@@ -26,10 +28,9 @@ zero failed, two ignored, plus the remaining required checks.
 The added tests hold the advice action blocked while checking caller completion
 and queue saturation, check descriptor identity across removal/replacement, and
 exercise actual Linux advice for unchanged contents and file position.
-The Linux `assignment` and `revisions_and_cache` integration suites are still
-running under `transparent-m1-cache-advice-integration.service`, PID 3839289,
-with output at
-`/opt/transparent-publisher-build/cache-advice-20260911/linux-integration.log`.
+The [Linux integration suites](linux-integration.log) passed: `assignment` had
+eight passes, and `revisions_and_cache` had 18 passes with two manual burst
+benchmarks ignored. The integration unit exited successfully.
 
 The longer diagnostic remains on the prior instrumented binary; this candidate
 has not been deployed. Its Linux build and integration compilation ran on the
