@@ -81,3 +81,17 @@ Activation/attestation timings now identify each worker and router separately.
 [worker fsync trace](worker-activation-fsync.bt) targets PID 695393 for fifteen
 minutes and reports calls longer than ten milliseconds with their opened paths.
 No full rollout started, and the failed diagnostic contributes no acceptance.
+
+The [activation-timing diagnostic](activation-timing-diagnostic.tar.gz) completed
+at 02:50:53 UTC on source `2932a60`: 600.026 seconds, five blocks and 9,362
+exact queries. Maximum public visibility was 20.574 seconds. It did not
+reproduce the long activation and does not establish a fix. The first traced
+activations were 23 and 84 ms on recent-01; the initial router update took
+1.357 seconds.
+
+The fsync trace and [additional record-I/O trace](worker-record-io-v2.bt) remain
+bounded diagnostics, confirmed active under PIDs 715873 and 717106. The latter
+covers slow open/write/rename calls. Its first version failed program loading;
+this simplified version attached nine probes successfully. Initial active-record
+fsync observations reached 579 ms, but have not reproduced the earlier 9.782
+seconds. Final trace collection and further attribution remain outstanding.
