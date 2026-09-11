@@ -20,9 +20,12 @@ diagnostic completed at 07:50 UTC: 17 blocks, 12,320 exact queries and maximum
 public visibility 23.991 seconds, with no acceptance credit. Three Amsterdam
 repetitions per setting favor retaining two build slots for publication latency. See
 [diagnostic evidence](evidence/productionize-m1-collection-timing-2026-09-11/README.md).
-A single-CRT NTT reduction candidate completed three isolated loaded runs at
-5.33–5.95 seconds versus the 8.05–9.12-second baseline. The final dependency
-pins are being qualified; no new release has been deployed. See
+The single-CRT NTT reduction release `2c4a250` is now installed on recent-01,
+following three isolated loaded runs at 5.33–5.95 seconds versus the
+8.05–9.12-second baseline and passing final workspace/Linux checks. A fresh
+loaded canary started around 08:35:38 UTC; its 08:37:02 checkpoint records
+3 new blocks and 1,179 exact queries with no mismatches. The other five workers
+remain gated; this is not M1 acceptance. See
 [reduction evidence](evidence/productionize-m1-shoup-reduction-2026-09-11/README.md).
 M1 remains open; [remaining work](remaining-work.md) owns its acceptance gates.
 

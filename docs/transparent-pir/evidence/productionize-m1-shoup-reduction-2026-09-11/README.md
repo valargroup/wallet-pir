@@ -75,26 +75,43 @@ test; their logs are included in the final-candidate archive. The pinned
 zero failures and one ignored. Build procedures and dependency manifests for
 each candidate remain in this directory.
 
-## Final release qualification in progress
+## Final release and live canary
 
-The root workspace now consistently pins the two published dependency commits.
-The [initial root check](initial-pin-check-failure.log) caught one old direct
-spiral-rs pin, causing type mismatches; it was corrected. The lockfile changes
-only the four intended git source identities, and
-`cargo metadata --locked --offline` validates the resulting graph. The fresh
+Root source `2c4a2507523a39e76aef8a6db3076c40d54026ae` consistently pins both
+dependency revisions. The [initial root check](initial-pin-check-failure.log)
+caught an old direct spiral-rs pin and was corrected. The subsequent
 [full make check](make-check.log) passed: 591 Rust tests, zero failures, two
-ignored, plus formatting, Clippy, operations, reports and documentation checks.
-The failed initial check is not counted as validation.
+ignored, plus formatting, Clippy, operations, report and documentation checks.
+The lockfile changes only the four intended git source identities.
 
-The [release build](build-release.py) runs on the coordinator under
-`transparent-m1-shoup-release-build.service`, root
-`/opt/transparent-publisher-build/shoup-release-20260911`. It verifies the
-[321-file source manifest](release-source-manifest.json), uses committed git
-dependencies rather than a path patch, executes the worker library and default
-integration suites, and builds the worker, control tool and query client.
-Before deployment, every source file must also match the final root commit,
-all checks must pass, and final release assembly must be inspected.
+The [release build procedure](build-release.py) verified a
+[321-file source manifest](release-source-manifest.json), with every file
+subsequently [verified against the final commit](release-source-commit.json).
+The [release verification archive](release-verification.tar.gz) contains source
+binding, binary digests, build flags, target assembly review and executed Linux
+suites: 36 library tests and 18 integration tests passed, with two integration
+tests ignored. Final [forward](release-forward.asm) and
+[inverse](release-inverse.asm) reduction selection was inspected again: no new
+coefficient-dependent jumps, with the same fixed-address barrier and masks.
 
-No new worker has been deployed and no full acceptance canary is running.
-M1 remains open under the unchanged six-hour/300-block canary, gated fleet
-upgrade and 24-hour fleet observation requirements.
+Final worker SHA256:
+`cc6dabbd03ea2b1bccbe2d92d547e10bb9433e1d96215b7cd240c03dab9c8ec9`.
+The [guarded start procedure](start-rollout.py) required successful build/tests,
+matching source/artifact hashes, assembly approval for this exact binary,
+unchanged predecessor identities and no other rollout supervisor.
+
+The [single-worker upgrade](canary-upgrade.tar.gz) passed and public service reopened. The fresh loaded
+canary began at approximately 08:35:38 UTC under
+`transparent-m1-shoup-rollout.service`, root
+`/opt/transparent-publisher-build/shoup-release-20260911/rollout` on the
+coordinator. The [08:37:02 checkpoint](initial-canary-checkpoint.json) confirms
+active PID 3286669 in canary observation: 3 new blocks, 1,179 exact queries,
+zero retries/mismatches, maximum public visibility 12.655 seconds, replica
+visibility 12.658 seconds and minimum sampled available memory 28.811%.
+Routing availability baseline is 16 and the service is available. These are
+initial samples, not acceptance. The [status helper](canary-status.py) reads the
+current supervisor and its evidence without altering the run.
+
+The other five workers remain gated on this canary. M1 still requires both
+six hours and 300 new blocks, then the matching fleet upgrade and 24-hour fleet
+observation. No prior diagnostic, failed or interrupted run time counts.
