@@ -1,0 +1,79 @@
+{"phase": "failed", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source", "error": "installed canary does not match the selected warm managed binary"}
+{"phase": "canary_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "failed", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source", "error": "new gate failed"}
+{"phase": "canary_upgrade", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "canary_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "fleet_upgrade", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "fleet_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "complete", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "canary_upgrade", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "canary_observation", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source"}
+{"phase": "failed", "binary_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d", "source_sha": "source", "error": "freshness exceeded"}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "prepared", "monotonic": 3493842.072159416, "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "staging", "monotonic": 3493842.192496416}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "prepared", "monotonic": 3493842.194732833, "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "seconds": 0.0019935830496251583}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "phase": "staging", "monotonic": 3493842.195742083}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "phase": "prepared", "monotonic": 3493842.196206833, "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "seconds": 3.6874786019325256e-05}
+{"event": "worker_preparation", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "recovering", "monotonic": 3493842.210481833, "running": {"map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "phase": "warming"}}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "membership_status_failed", "worker": "recent", "error_type": "RuntimeError"}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+{"event": "membership_status_failed", "worker": "recent", "error_type": "RuntimeError"}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "worker_private_progress", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "height": 2, "public_map_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "recent", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+{"event": "membership_canonical_check_failed", "worker": "recent", "error": "node unavailable"}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "eligible": false}
+{"event": "worker_membership", "worker": "recent", "map_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "eligible": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "activate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "invalidate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "prepare", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.220075, "exit_code": 0}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "activate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3493842.687605916}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 1.874985173344612e-05}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 3493842.687637708}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 1.295795664191246e-05}
+{"event": "worker_stage", "worker": "a2", "host": "10.0.0.2", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3493842.687744333}
+{"event": "worker_stage", "worker": "a2", "host": "10.0.0.2", "map_sha256": "new", "phase": "activate", "state": "RuntimeError", "seconds": 1.49579718708992e-05}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3493842.687851166}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 9.750016033649445e-06}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 3493842.68786875}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 8.916016668081284e-06}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 3493842.687963}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 1.2499745935201645e-05}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 3493842.687982583}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 8.082948625087738e-06}
+a2: owner lost during activation
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "TimeoutError", "retry": false}
+{"event": "control_session_started", "worker": "a1", "pid": 123}
+{"event": "control_session_exited", "worker": "a1", "exit_code": 255}
+{"event": "control_session_started", "worker": "a1", "pid": 123}
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 500: 'RPC error'>
+  _warnings.warn(self.warn_message, ResourceWarning)
+{"event": "fleet_command", "tool": "sh", "seconds": 0.445145, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.011495, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.022283, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.020306, "exit_code": 0}
+a2: revocation failed
+{"event": "replica_catch_up_failed", "worker": "slow", "error": "catch-up did not attest current warm revision"}
+{"event": "replica_catch_up_failed", "worker": "slow", "error": "catch-up publication is no longer canonical"}
+recent: warm with publication control
+recent: warm with publication control
+recent: warm with publication control
+----------------------------------------------------------------------
+Ran 110 tests in 10.869s
+
+OK

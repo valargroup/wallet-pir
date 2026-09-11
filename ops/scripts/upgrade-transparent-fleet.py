@@ -28,10 +28,12 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def validate_gate(result, binary, script, config, roster, headless_helper=None):
+def validate_gate(result, binary, script, config, roster, headless_helper=None, storage_helper=None):
     expected = dict(binary_sha256=binary, fleet_script_sha256=script, fleet_config_sha256=config, roster_sha256=roster)
     if headless_helper is not None:
         expected['headless_helper_sha256'] = headless_helper
+    if storage_helper is not None:
+        expected['storage_helper_sha256'] = storage_helper
     if result.get('passed') is not True or any(result.get(k) != v for k, v in expected.items()):
         raise ValueError('canary result is unsuccessful or does not match this deployment')
     if (result.get('worker') != 'transparent-pir-recent-01' or result.get('seconds', 0) < 21600
@@ -207,7 +209,8 @@ async def upgrade(args):
             raise ValueError('full fleet upgrade requires --canary-result')
         validate_gate(json.loads(args.canary_result.read_text()), binary,
                       sha(HERE/'transparent-live-fleet.py'), sha(args.fleet_config), sha(fleet.c['roster']),
-                      sha(HERE/'transparent-headless-console.py') if fleet.c.get('headless_console', False) else None)
+                      sha(HERE/'transparent-headless-console.py') if fleet.c.get('headless_console', False) else None,
+                      sha(HERE/'transparent-storage-policy.py') if fleet.c.get('storage_nodiscard', False) else None)
     args.out.mkdir(parents=True, exist_ok=False)
     D.atomic_bytes(args.out/'fleet.json', args.fleet_config.read_bytes())
     before = {w['id']: (await asyncio.to_thread(D.read_json, 'http://'+w['upstream']+'/v1/ready'))['binary_sha256'] for w in workers}
@@ -262,6 +265,8 @@ if [ -f {backup}/worker.service ]; then
  mv /usr/local/bin/transparent-shard-server.rollback /usr/local/bin/transparent-shard-server
  install -m755 {backup}/shard-control /usr/local/bin/shard-control
  if [ -f {backup}/headless-console.py ]; then install -Dm755 {backup}/headless-console.py /usr/local/lib/transparent-pir/headless-console.py; fi
+ if [ -f {backup}/storage-mount-options ]; then python3 {backup}/restore-storage-policy.py --restore-options-file {backup}/storage-mount-options; fi
+ if [ -f {backup}/storage-policy.py ]; then install -Dm755 {backup}/storage-policy.py /usr/local/lib/transparent-pir/storage-policy.py; fi
  install -m644 {backup}/worker.service /etc/systemd/system/transparent-shard-server.service
  systemctl daemon-reload
  systemctl restart transparent-shard-server

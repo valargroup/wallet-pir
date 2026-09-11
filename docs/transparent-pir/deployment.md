@@ -271,6 +271,17 @@ not rebind the framebuffer at runtime. Disabling the option removes the managed
 pre-start line on the next installation; restoring graphics is a separate,
 explicit host operation. Serial-console configuration is never changed.
 
+The optional `storage_nodiscard` fleet setting installs a privileged worker
+prestart that disables online discard on the shared ext4 root used by the
+runtime cache and publication record. It validates both paths before remounting,
+preserves all other mount options, and changes neither fstab nor file flushes,
+journaling, barriers or scheduled fstrim. The enabled worker unit reapplies the
+policy at boot. The observer verifies the loaded hook, current mount and helper
+hash; the full-fleet gate requires that same helper identity. Upgrade rollback
+restores the saved discard setting without reverting unrelated mount options.
+This policy is qualified initially on a single worker; see the
+[bounded disk-stall experiment](evidence/productionize-m1-shoup-reduction-2026-09-11/README.md).
+
 Run `ops/scripts/observe-transparent-hardening.py` on the coordinator with the
 expected worker binary digest and release `soak-query` executable. Its defaults
 require **both six hours and 300 new blocks**, two sustained query clients with

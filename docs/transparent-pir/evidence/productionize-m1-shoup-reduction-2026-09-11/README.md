@@ -249,3 +249,20 @@ the qualified policy on the canary before a fresh six-hour/300-block run.
 Do not modify publication fsync or relax any gate. The temporary restoration
 timer remains scheduled for approximately 09:56:58 UTC; let it restore the
 original mount unless a qualified persistent transition explicitly supersedes it.
+
+### Managed storage policy: source qualification
+
+The worker installer now accepts `storage_nodiscard`, stages the helper with a
+read-only preflight, and installs an enabled worker prestart. The helper only
+supports the observed shared writable ext4 root, preserves other mount options,
+and verifies its effect. The observer checks mount state, loaded prestart and
+helper hash; the full-fleet gate binds the same helper identity. Rollback saves
+the original discard option and a restoration helper before installation, so
+restoration does not depend on successful installation of the new helper.
+It does not edit fstab, fsync calls, barriers or scheduled fstrim.
+
+[Full make check](storage-policy-make-check.log) completed successfully with
+591 Rust tests passed, zero failed and two ignored, plus formatting, Clippy,
+operations/report/docs checks. The [final 110 operations tests](storage-policy-ops-tests.log)
+include the subsequent rollback-helper correction and installation tests.
+The implementation remains undeployed at this source checkpoint.

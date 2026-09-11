@@ -82,6 +82,14 @@ def headless_failure(value, expected):
     return None
 
 
+def storage_failure(value, expected):
+    if value.get('helper_sha256') != expected:
+        return 'storage helper identity changed'
+    if value.get('persistent') is not True or value.get('online_discard') is not False:
+        return 'persistent nodiscard storage policy is not verified'
+    return None
+
+
 async def observe(args):
     spec = importlib.util.spec_from_file_location('fleet', args.fleet_script)
     module = importlib.util.module_from_spec(spec)
@@ -93,6 +101,10 @@ async def observe(args):
                       roster_sha256=hashlib.sha256(Path(fleet.c['roster']).read_bytes()).hexdigest(),
                       public_budget_seconds=args.freshness_seconds,
                       replica_budget_seconds=args.replica_freshness_seconds)
+    storage_sha = None
+    if fleet.c.get('storage_nodiscard', False):
+        storage_sha = hashlib.sha256((Path(__file__).parent/'transparent-storage-policy.py').read_bytes()).hexdigest()
+        provenance['storage_helper_sha256'] = storage_sha
     headless_sha = None
     if fleet.c.get('headless_console', False):
         headless_sha = hashlib.sha256((Path(__file__).parent/'transparent-headless-console.py').read_bytes()).hexdigest()
@@ -194,6 +206,13 @@ async def observe(args):
             if now >= next_worker:
                 raw = await fleet.ssh(worker['ssh_host'], 'systemctl show transparent-shard-server -p NRestarts -p ExecMainStartTimestampMonotonic -p MemoryCurrent -p MemoryPeak; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.events; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.stat; cat /sys/fs/cgroup/system.slice/transparent-shard-server.service/memory.pressure; cat /proc/meminfo')
                 current = facts(raw.decode())
+                storage = None
+                if storage_sha:
+                    storage = json.loads(await fleet.ssh(worker['ssh_host'],
+                        'python3 /usr/local/lib/transparent-pir/storage-policy.py --check'))
+                    failure = storage_failure(storage, storage_sha)
+                    if failure:
+                        raise RuntimeError(failure)
                 headless = None
                 if headless_sha:
                     headless = json.loads(await fleet.ssh(worker['ssh_host'],
@@ -212,7 +231,7 @@ async def observe(args):
                 if baseline is None:
                     baseline = current
                 reason = worker_failure(baseline, current)
-                emit('worker', facts=current, ready=ready, control=control, headless=headless)
+                emit('worker', facts=current, ready=ready, control=control, headless=headless, storage=storage)
                 if reason:
                     raise RuntimeError(reason)
                 samples += 1
