@@ -230,3 +230,22 @@ four do. Workload and block-arrival differences prevent attributing that
 comparison solely to discard. The original disk sampler spans the failure
 and remount as well; the mount-change timestamp must be used when analyzing it.
 The separate nodiscard diagnostic remains in progress at this checkpoint.
+
+### Online-discard diagnostic completed successfully
+
+The [complete nodiscard diagnostic](nodiscard-diagnostic-complete.tar.gz)
+passed at 09:42:02 UTC after 900.878 seconds and nine new blocks, with 13,682
+exact queries, three retries, maximum public freshness 16.509 seconds, replica
+freshness 14.444 seconds, and minimum available host memory 26.955%. The
+process terminated successfully. No restart/OOM/routing withdrawal was recorded.
+This small live comparison warrants advancing the mount configuration to
+properly managed qualification; it does not prove discard was the sole cause
+or satisfy the full acceptance gate.
+
+Next: implement a guarded persistent mount-policy helper and read-only
+verification, cover option preservation and rollback, integrate it into the
+existing staged worker rollout and observation, run required checks, and apply
+the qualified policy on the canary before a fresh six-hour/300-block run.
+Do not modify publication fsync or relax any gate. The temporary restoration
+timer remains scheduled for approximately 09:56:58 UTC; let it restore the
+original mount unless a qualified persistent transition explicitly supersedes it.
