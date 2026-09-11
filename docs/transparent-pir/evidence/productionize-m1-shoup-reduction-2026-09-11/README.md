@@ -132,3 +132,42 @@ after 1,827 seconds, confirms the same active supervisor: 21 new blocks,
 remains 15.655 seconds, replica visibility 15.658 seconds and minimum sampled
 available memory 26.604%. Routing withdrawals remain at baseline 16; no cache
 write failures are recorded. This is partial observation, not M1 acceptance.
+
+## Terminal canary failure: 09:13:59 UTC
+
+The [complete failed canary](failed-canary.tar.gz) stopped after 2,301.911
+seconds and 26 visible blocks: block 3479507 exceeded the 30-second public
+freshness budget at 30.084 seconds. Clients completed 34,183 exact queries,
+19 retries and zero mismatches. Minimum available host memory was 26.604%.
+No elapsed time from this run counts toward M1; all-five expansion remains gated.
+
+The [controller journal](failure-controller.log) identifies a 25.032-second
+recent-01 activation timeout for candidate `9475606e…`. The fleet withdrew
+routing after losing activation quorum, then recovered through recent-04 at
+09:14:22.434 UTC with height 3479508 and recorded freshness 52.468 seconds.
+Thus the observation's 30.084-second age was not the eventual delay.
+
+The [worker journal](failure-worker.log) records candidate loading 1.049 seconds
+and warming 3.614 seconds, completed at 09:13:37.438. A later collection at
+09:14:54.769 waited 9.613 seconds for the runtime disk lock. The
+[host check](failure-host.txt) confirms the same PID 792204, start 08:34:45 UTC
+and zero restarts; historical sar returned no samples for the requested window.
+The [control-session journal](failure-sessions.log) contains no events for this
+window. None of these proves which operation stalled activation.
+
+Investigation sequence:
+
+1. Preserve the terminal report, raw queries, samples and journals (above).
+2. Capture blocked worker thread kernel stacks, disk counters and I/O pressure
+   during normal publication using the [bounded sampler](activation-sampler.py).
+   `transparent-m1-activation-sampler.service` on recent-01 runs for 15 minutes
+   with a 16-minute systemd ceiling; it changes no worker configuration.
+3. Correlate any stalls with activation, persistence and cache writes. Add
+   focused stage instrumentation only if the capture cannot distinguish them.
+4. Correct the demonstrated blocking path while retaining durable publication,
+   restart/reorg correctness and verified activation quorum. Reproduce the
+   failure under controlled load and run the relevant regressions and root checks.
+5. Qualify the resulting release, then start a fresh matching six-hour/300-block
+   canary before fleet expansion and the separate 24-hour observation.
+
+No timeout or acceptance requirement has been relaxed.

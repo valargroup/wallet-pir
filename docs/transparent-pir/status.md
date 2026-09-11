@@ -27,6 +27,13 @@ loaded canary started around 08:35:38 UTC; its 08:37:02 checkpoint records
 3 new blocks and 1,179 exact queries with no mismatches. The other five workers
 remain gated; this is not M1 acceptance. See
 [reduction evidence](evidence/productionize-m1-shoup-reduction-2026-09-11/README.md).
+This canary failed at 09:13:59 UTC after 38.4 minutes and 26 blocks. A
+25-second recent-01 activation timeout led to routing withdrawal; publication
+recovered through recent-04 with 52.468-second recorded freshness. There were
+34,183 exact queries and no mismatches. Preparation was fast in this event;
+a later disk-lock wait makes storage contention an unproven lead. Raw failure
+evidence and the bounded diagnostic plan are in the reduction evidence above.
+No replacement acceptance run or fleet expansion has started.
 M1 remains open; [remaining work](remaining-work.md) owns its acceptance gates.
 
 ## M3 wallet correctness, fixture scope: source-verified 2026-09-10
