@@ -54,27 +54,26 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
-## M1 persistent headless canary: observed 2026-09-11, 01:04 UTC
+## M1 headless canary failure: observed 2026-09-11, 02:02 UTC
 
-The [qualified implementation and deployment evidence](evidence/productionize-m1-headless-2026-09-11/README.md)
-records operations source `f383b01` and unchanged worker source `043c051`.
-Recent-01 restarted successfully with a privileged pre-start helper that
-unbinds the virtio framebuffer console while requiring enabled serial access.
-The loaded hook, boot enablement, helper digest and unbound console are verified
-on installation and during observation. The upgrade passed 39 exact queries.
-No host reboot was performed; the other five workers have not been promoted.
+The [complete canary and failure evidence](evidence/productionize-m1-headless-2026-09-11/README.md)
+records operations `f383b01`, worker `043c051`, and persistent headless
+installation. The run began at 00:59:10 UTC and failed at 02:01:57 UTC after
+3,767.108 seconds, 44 accepted new blocks and 54,932 exact queries. There were
+39 retries and no mismatches or new routing withdrawals. The supervisor is
+terminal failed; no fleet promotion or replacement gate has started.
 
-The fresh loaded canary started at **00:59:10 UTC**, height 3,479,113, under
-`transparent-m1-headless-rollout.service`; it was confirmed active at capture.
-Its durable availability baseline is six prior events; any new withdrawal
-fails the gate. The runtime experiment's twelve-minute clean window motivates
-this candidate, but contributes no acceptance time. Older diagnostic probes
-are stopped; a fresh local HTTP/Unix probe supports diagnosis of this run.
+Block 3,479,158 was observed publicly at 30.001 seconds, beyond the 30-second
+limit. The controller recorded its activation at 28.613 seconds. Closely spaced
+blocks accumulated delay through sequential publication; staging commands also
+took multiple seconds. These measurements require further attribution, not a
+threshold waiver. Local HTTP/Unix probes stayed fast through the failure with
+no errors, so this is not evidence of a recurrent worker-local readiness stall.
 
-**M1 remains open:** both six hours and 300 new blocks must pass, followed by
-the matching six-worker rollout and 24-hour observation. Qualification passed
-97 operations tests and the full `make check` (590 Rust tests, zero failures,
-two ignored). No acceptance threshold changed.
+**M1 remains open.** Attribute queueing, host staging and external observation
+latency, qualify the correction, then pass a fresh six-hour/300-block canary,
+matching six-worker rollout and 24-hour observation. The first-hour checkpoint
+is historical evidence only; no failed-run samples count toward acceptance.
 
 ## M1 control-path failure: observed 2026-09-11, 00:08 UTC
 

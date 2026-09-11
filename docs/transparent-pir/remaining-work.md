@@ -42,9 +42,11 @@ complete M0 or supersede earlier gate results.
   [persistent mitigation](evidence/productionize-m1-headless-2026-09-11/README.md)
   (`f383b01`, unchanged worker `043c051`) passed 97 operations tests and full
   `make check`, then recent-01 installation and 39 exact verification queries.
-  A fresh canary began 2026-09-11 00:59:10 UTC and was confirmed active at
-  01:04 UTC. No other worker has been promoted. The diagnostic window does
-  not count toward acceptance.
+  The fresh canary began 2026-09-11 00:59:10 UTC and failed at 02:01:57
+  after 3,767 seconds: public visibility for block 3,479,158 was 30.001 seconds.
+  No mismatches or new routing withdrawals occurred; local probes stayed fast.
+  Attribute sequential-publication and staging delays before a qualified fresh
+  run. No other worker has been promoted, and no failed-run time counts.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.

@@ -67,3 +67,28 @@ Across 119 worker samples, minimum available host memory is 26.07%, with no
 restarts or OOM kills. The routing counter remains at its baseline of six.
 This checkpoint is a summary of a running observation, not an acceptance result
 or a replacement for the final raw logs. The full gates above remain open.
+
+
+## Final outcome: failed at 02:01:57 UTC
+
+The [complete failed canary archive](failed-canary.tar.gz) supersedes the
+running checkpoints: 3,767.108 seconds, 44 accepted new blocks, 54,932 exact
+queries, 39 retries, no mismatches. Block 3,479,158 was first observed publicly
+at 30.001 seconds, exceeding the unchanged 30-second limit. No fleet promotion
+occurred. The routing withdrawal counter remained at six, its baseline.
+
+The [controller/reconciler journal](failure-journal.log) shows three successive
+activations: height 3,479,156 at 02:01:27.852 (19.850-second controller freshness),
+3,479,157 at 02:01:43.532 (22.510 seconds), and 3,479,158 at 02:01:56.693
+(28.613 seconds). The observer rejected the last at 02:01:57.650. Controller
+activation and external observation are different measurements; the earlier
+activation does not retrospectively prove the public visibility gate passed.
+Several staging SSH/rsync operations took multiple seconds while closely spaced
+blocks awaited sequential publication.
+
+[Local probes during 02:01:00–02:02:10](failure-local-probes.json) remained fast:
+140 Unix samples (maximum 10.94 ms), 139 HTTP samples (maximum 8.32 ms), no
+errors. This failure does not reproduce a worker-local readiness stall.
+The next investigation must attribute staging and activation delays by host,
+separate queueing from preparation, and measure public read timing. Qualify a
+correction before a fresh complete gate; no time from this failed run counts.
