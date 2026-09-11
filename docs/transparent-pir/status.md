@@ -54,6 +54,18 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 unpublished-candidate withdrawal: observed 2026-09-11, 03:32 UTC
+
+The incremental-writeback canary failed after 1,112.910 seconds and 21 blocks
+when public routing was withdrawn; 16,101 queries were exact with six retries.
+The supervisor is terminal failed and the other five workers were not promoted.
+A one-block reorg invalidated a candidate at height 3,479,237; the last served
+endpoint at 3,479,236 matches the subsequent canonical-hash check. Source
+invalidation unconditionally withdraws routing even for journal-only forks.
+[Evidence and regression plan](evidence/productionize-m1-incremental-writeback-2026-09-11/README.md)
+separate this issue from the earlier fsync stall. Service recovered, but M1
+remains open and no prior observation time counts toward its next attempt.
+
 ## M1 incremental-writeback canary: observed 2026-09-11, 03:14 UTC
 
 Source `7621c34` passed local and Linux tests and all three Amsterdam burst

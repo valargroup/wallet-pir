@@ -63,3 +63,44 @@ visibility was 29.059 seconds, close to the 30-second ceiling. Minimum sampled
 available-memory fraction was 27.171%; two pending cache saves were observed and
 had drained by the latest sample, with no write failures. The [capture script](capture-checkpoint.py)
 reads the live unit and raw monitor data; this partial checkpoint is not a pass.
+
+## Terminal canary failure: unpublished candidate reorg
+
+The [complete run](failed-canary.tar.gz) failed at 03:32:05 UTC after
+1,112.910 seconds and 21 new blocks: public routing was unavailable. The unit
+is terminal failed (MainPID 0, ExecMainStatus 1). It completed 16,101 exact
+queries with six retries and no mismatches. Routing withdrawal count increased
+from 8 to 9; service subsequently recovered. No fleet promotion occurred and
+none of this run counts toward a replacement acceptance gate.
+
+The [controller journal](failure-journal.log) shows preparation of height
+3,479,237 followed by `candidate invalidated while preparing`; controller status
+reported a reorg depth of one. The last observed served endpoint was 3,479,236.
+A subsequent [canonical-hash check](served-endpoint-canonical.json) matches its
+recorded hash exactly. This supports an unpublished-suffix reorg, not evidence
+of the earlier slow-fsync incident. The later hash check alone cannot prove the
+absence of transient intermediate forks; preserve that timing limitation.
+
+Source inspection finds two unconditional withdrawal decisions:
+`controller::invalidate` marks the authority withdrawn even for journal-only
+forks, and fleet `_invalidate` routes to an empty set before selective revision
+revocation. The existing worker invalidation supports retaining canonical
+revisions and invalidating the preparation epoch. The next correction must
+separate cancellation of orphaned candidates from withdrawal of invalid served
+coverage, without creating an activation race.
+
+Execution path:
+
+1. Add deterministic regressions for a fork strictly above served coverage,
+   including one during preparation. Assert continued canonical public coverage
+   and refusal to activate the orphaned candidate.
+2. Keep a separate regression for a fork touching the served endpoint: immediate
+   withdrawal and durable orphan refusal remain mandatory. Cover failed remote
+   revocation/retry and a reorg racing activation.
+3. Coordinate controller invalidation, fleet routing and worker epochs. Preserve
+   routing only after validating the publication being retained under the
+   relevant mutation locks; uncertainty must still fail closed. Do not bypass
+   the routing audit or relax acceptance thresholds.
+4. Run controller, fleet and worker regressions plus full qualification, then
+   deploy matching artifacts and begin a fresh canary. Keep this failed run as
+   evidence; no automatic retry of the unchanged failed gate has been started.
