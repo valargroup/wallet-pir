@@ -54,6 +54,24 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 virtual-console experiment: observed 2026-09-11, 00:28–00:39 UTC
+
+The [stack trace and runtime experiment](evidence/productionize-m1-control-path-failure-2026-09-11/README.md)
+identified CPU sampling gaps ending in the virtual GPU framebuffer-update path.
+At 00:28:36 UTC, recent-01's framebuffer console was unbound at runtime after
+verifying its serial console remained registered. Worker source and query load
+were unchanged. The first minute of post-change samples had no errors; this
+short window does not establish a fix or M1 acceptance. The console change is
+not yet persistent across reboot or installed on the other workers.
+
+Subsequent coordinator SSH and public-origin connection attempts from the
+operator machine timed out. The DigitalOcean API reports the fleet active and
+no recent coordinator power/reboot action; that does not prove service health.
+Current remote diagnostic process state and the complete post-change results
+remain unverified. Some remote evidence transfers are pending; missing/empty
+capture references were corrected explicitly. No replacement acceptance run or
+fleet promotion has started. **M1 remains open.**
+
 ## M1 control-path failure: observed 2026-09-11, 00:08 UTC
 
 The [publication-I/O canary failed](evidence/productionize-m1-control-path-failure-2026-09-11/README.md)
