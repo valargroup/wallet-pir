@@ -55,3 +55,11 @@ at 03:14:19 confirms the supervisor active in canary observation, 730 exact
 queries, no retries or mismatches, and no result yet. These are startup facts,
 not a sustained pass. Initial restoration had 28 cache hits, no misses or write
 failures and no pending saves.
+
+At the [15-minute checkpoint](quarter-hour-checkpoint.json), the same supervisor
+remained active after 928 seconds: 19 new blocks, 13,378 exact queries, five
+retries, no mismatches and unchanged routing withdrawal baseline. Maximum public
+visibility was 29.059 seconds, close to the 30-second ceiling. Minimum sampled
+available-memory fraction was 27.171%; two pending cache saves were observed and
+had drained by the latest sample, with no write failures. The [capture script](capture-checkpoint.py)
+reads the live unit and raw monitor data; this partial checkpoint is not a pass.
