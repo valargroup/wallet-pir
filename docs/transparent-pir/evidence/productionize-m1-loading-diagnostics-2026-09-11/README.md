@@ -78,3 +78,21 @@ logs and sampled thread stacks before selecting a fix. If it finishes without a
 recurrence, preserve that limited result rather than claiming the stall resolved.
 The first live poll at 14:01:04 UTC showed both query streams producing exact
 responses, unchanged routing availability, and the expected worker binary.
+
+### First observed publication: cache advice blocked on write submission
+
+At 14:09:54 UTC, publication
+`c63709263519396cf65ab66e80af1d6c41284803a3c87541ed592e79a9c2dcc7`
+began loading. The [worker log](long-first-publication-worker.log) records
+5.098 seconds loading, including 3.771 seconds in cache advice on fd 12,
+then 5.985 seconds warming. The [thread samples](long-first-publication-threads.ndjson)
+at 14:09:56–59 show the same worker thread in syscall 221 on that publication's
+`pages.0.bin`: `generic_fadvise` → `filemap_fdatawrite_wbc` → `ext4_writepages`
+→ `blk_mq_submit_bio` → `wbt_wait` → `rq_qos_wait`.
+
+This directly locates this shorter loading delay in cache advice and write
+submission. It does not establish the cause of the previous 59-second stall.
+The publication met both freshness limits (public 16.899 seconds, replica
+15.872 seconds). The longer diagnostic remains live. Investigate moving optional
+cache advice out of the readiness path while preserving bounded memory use,
+file integrity verification and durable publication semantics.
