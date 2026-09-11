@@ -115,3 +115,12 @@ current supervisor and its evidence without altering the run.
 The other five workers remain gated on this canary. M1 still requires both
 six hours and 300 new blocks, then the matching fleet upgrade and 24-hour fleet
 observation. No prior diagnostic, failed or interrupted run time counts.
+
+
+The [quarter-hour checkpoint](quarter-hour-checkpoint.json), captured at
+08:50:59 UTC after 921 seconds, confirms the same active supervisor and source:
+10 new blocks, 13,569 exact queries, seven retries and zero mismatches. Maximum
+public visibility is 15.655 seconds, replica visibility 15.658 seconds, minimum
+sampled available memory 26.604%, and routing withdrawals remain at baseline 16.
+No cache write failures were recorded. This is partial observation, not M1
+acceptance; no source, binary or configuration was changed during this interval.
