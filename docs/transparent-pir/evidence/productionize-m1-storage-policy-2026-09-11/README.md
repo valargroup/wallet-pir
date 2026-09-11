@@ -49,3 +49,11 @@ freshness budgets, two exact clients, no OOM/restart/routing withdrawal and
 20% available memory before full-fleet upgrade. It then requires a separate
 matching 24-hour all-six-worker observation. The earliest six-hour boundary is
 around 16:00 UTC today; the block requirement can extend that time.
+
+## Fifteen-minute checkpoint
+
+The [checkpoint](quarter-hour-checkpoint.json) at 2026-09-11T10:15:42.293074+00:00 confirms
+the same supervisor is active, with 12 new public blocks and 13792 exact
+queries, zero mismatches, unchanged routing and verified storage policy.
+Maximum public freshness is 14.499 seconds; minimum available
+memory is 27.128%. This partial window does not satisfy M1.
