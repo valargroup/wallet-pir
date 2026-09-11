@@ -1,0 +1,47 @@
+{
+  "utc": "2026-09-11T03:57:19.956244+00:00",
+  "unit": "MainPID=2877535\nExecMainStatus=0\nActiveState=active\n",
+  "status": {
+    "phase": "canary_observation",
+    "binary_sha256": "b2da68f289e4eebd3eafbc5b763963fa87c3daf347b8b2d312e1ac64ea97a38c",
+    "source_sha": "862239c"
+  },
+  "events": {
+    "routing_availability_baseline": 1,
+    "start": 1,
+    "worker": 2
+  },
+  "elapsed_seconds": 38.040277,
+  "max_public_seconds": 0,
+  "max_replica_seconds": 0,
+  "minimum_available_memory_fraction": 0.266636824901805,
+  "maximum_pending_saves": 1,
+  "latest_runtime_cache": {
+    "bytes": 5635771008,
+    "hits": 28,
+    "limit_bytes": 10737418240,
+    "misses": 78,
+    "pending_saves": 0,
+    "restore_slots": 4,
+    "write_failures": 0
+  },
+  "queries": [
+    {
+      "exact": 316,
+      "retries": 0,
+      "mismatches": 0
+    },
+    {
+      "exact": 314,
+      "retries": 0,
+      "mismatches": 0
+    }
+  ],
+  "routing": {
+    "schema": 1,
+    "epoch": "b1a6acc302ca4bf88b6532837e3c5435",
+    "unavailable_events": 9,
+    "available": true
+  },
+  "result": null
+}

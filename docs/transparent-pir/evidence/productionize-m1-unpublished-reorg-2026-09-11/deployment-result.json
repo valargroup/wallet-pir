@@ -1,0 +1,58 @@
+{
+  "source_sha": "862239c",
+  "worker_source_sha": "7621c34",
+  "started_utc": "2026-09-11T03:56:15.324941+00:00",
+  "before": {
+    "transparent-publish-controller": "a9ca07ee752b54e17e7dc854c2a8af5bb5338be9e36c3ebe965b6be9462488ab",
+    "transparent-live-fleet.py": "b31402a14c85f3a10beba6f58e76f5cc72134154671c6ba1b32aa2e44fb95427",
+    "controller.json": "02f6277149ecc965a68b637afbc523c1ea77d8747721d335612c44fda56bf2ff"
+  },
+  "worker_binary_sha256": "b2da68f289e4eebd3eafbc5b763963fa87c3daf347b8b2d312e1ac64ea97a38c",
+  "fleet_config_sha256": "ad6048bd12d3472fa5a9632ff275544b360e9509334ddc0a7934580fae22015f",
+  "completed_utc": "2026-09-11T03:56:41.691334+00:00",
+  "after": {
+    "transparent-publish-controller": "b191c25abb027378b564d32d62c23c3aee52c300b5506cc0ab259cde57eddcf4",
+    "transparent-live-fleet.py": "291b01f320267aa140a00e6b17369481aeb4299af483a94de17b87614fba6e5c",
+    "controller.json": "5ce43599786b177bb26bfdb991ae07eafa880855294c8053a0fada38d73c7da3"
+  },
+  "status": {
+    "candidate_height": 3479256,
+    "cycle_seconds": 10.640149627,
+    "freshness_seconds": 16.762880083,
+    "journal_height": 3479256,
+    "map_sha256": "9c3d2f473a19bcda298175f9db77644e0d9b8051d167115fa5ef8d1911cc4b17",
+    "node_hash": "000000000059e10ee749f95ea1b0668877b71cd177b6d3ec1a1f62ea9d71b4c5",
+    "node_height": 3479256,
+    "phase": "serving",
+    "public_hash": "000000000059e10ee749f95ea1b0668877b71cd177b6d3ec1a1f62ea9d71b4c5",
+    "public_height": 3479256,
+    "ready_replicas": 1
+  },
+  "ready": {
+    "assigned_shards": 14,
+    "assignment_sha256": "022385bbe3a8294cb3c06192ed763f2b7d8c3edae684212c214ae17c7adf7f45",
+    "binary_sha256": "b2da68f289e4eebd3eafbc5b763963fa87c3daf347b8b2d312e1ac64ea97a38c",
+    "map_sha256": "9c3d2f473a19bcda298175f9db77644e0d9b8051d167115fa5ef8d1911cc4b17",
+    "mode": "warm",
+    "prewarm_failed": 0,
+    "prewarm_finished": true,
+    "prewarm_seconds": 6.252019,
+    "ready": true,
+    "replica_group": "recent",
+    "role": "recent-replica",
+    "runtime_cache": {
+      "bytes": 5505772128,
+      "hits": 28,
+      "limit_bytes": 10737418240,
+      "misses": 78,
+      "pending_saves": 1,
+      "restore_slots": 4,
+      "write_failures": 0
+    },
+    "shards": 174,
+    "target_runtimes": 28,
+    "warm_runtimes": 28,
+    "worker_assignment_sha256": "df02d1ca7122496d747f7fd6c25a58a24dfc2bb2a84bb5b7ceb2139fbfb1c984",
+    "worker_id": "transparent-pir-recent-01"
+  }
+}

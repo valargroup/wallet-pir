@@ -42,3 +42,30 @@ full gate is required after deployment. This correction does not establish
 resolution of the separate close-block freshness margin.
 
 [Full make check](make-check.log) passed: 591 Rust tests, zero failures, two ignored, with formatting, Clippy, operations and documentation checks. The separate final 101-test operations run covers the final fleet changes. Linux qualification remains outstanding.
+
+## Linux qualification and deployment
+
+[Linux controller tests](linux-controller-tests.log) passed, including the
+concurrent unpublished-fork and deep-reorg regression. The build completed
+successfully at 03:54:56 UTC. [Artifact digests](artifact-sha256.json) bind the
+release controller to the staged source manifest.
+
+The [deployment procedure](deploy-qualified.py) verified staged hashes and
+predecessors, backed up the controller, fleet script and controller config,
+restarted only the controller and reconciler, and required equal public maps,
+a warm matching recent-01 and a served endpoint matching the node's current tip.
+It retained rollback handling until verification succeeded. The
+[deployment result](deployment-result.json) records both predecessor and installed
+identities. Controller source/config source is `862239c`; the unchanged worker
+remains the qualified `7621c34` writeback binary. The deployment unit completed
+successfully and started a fresh supervisor.
+
+[Start samples](start-samples.ndjson) establish the new canary at 03:56:41 UTC,
+with routing withdrawal baseline 9. The [initial checkpoint](initial-checkpoint.json)
+at 03:57:19 confirms `transparent-m1-unpublished-reorg-rollout.service` active
+under PID 2877535 in canary observation, with 630 exact queries and no retries
+or mismatches. No new block had yet been counted at that checkpoint; zero timing
+maxima are absence of samples, not zero publication latency. Raw output is under
+`/opt/transparent-publisher-build/unpublished-reorg-20260911/rollout/`.
+No failed-run time is reused. Both six hours and 300 new blocks, the matching
+fleet rollout and 24-hour fleet observation remain mandatory and incomplete.

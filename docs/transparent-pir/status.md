@@ -54,6 +54,21 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 unpublished-reorg canary: observed 2026-09-11, 03:57 UTC
+
+Linux controller qualification passed and source `862239c` is deployed on the
+coordinator with the matching fleet script. Recent-01 retains the qualified
+`7621c34` writeback worker. Both public endpoints matched the canonical tip and
+warm worker identity before the replacement canary began at 03:56:41 UTC.
+[Deployment and startup evidence](evidence/productionize-m1-unpublished-reorg-2026-09-11/README.md)
+binds the new controller, configuration, operations and worker identities.
+
+`transparent-m1-unpublished-reorg-rollout.service` was confirmed active with
+PID 2877535; routing withdrawal baseline is 9. Initial queries are exact, but
+no sustained acceptance is claimed. M1 remains open pending both six hours and
+300 blocks, then the gated fleet rollout and 24-hour observation. The earlier
+failed run does not count.
+
 ## M1 unpublished-reorg correction: qualified source, 2026-09-11
 
 The controller and fleet now distinguish invalidating a candidate above served
