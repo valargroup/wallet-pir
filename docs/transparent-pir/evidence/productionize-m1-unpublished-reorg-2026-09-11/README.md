@@ -78,3 +78,11 @@ visibility 24.834 seconds; minimum sampled available memory is 26.664%. One cach
 save was pending in the latest sample, with zero write failures. The observer
 recorded one publication change between endpoint reads without a stable mismatch.
 This remains partial observation, not M1 acceptance.
+
+The [half-hour checkpoint](half-hour-checkpoint.json), captured at 04:27:20 UTC
+after 1,838 seconds, confirms the same active supervisor and source identity:
+26 new blocks, 27,386 exact queries, 25 retries and zero mismatches. Routing
+withdrawals remain at baseline 9. Maximum public and canary visibility remain
+22.106 and 24.834 seconds respectively. The latest cache sample has no pending
+saves and zero write failures. This checkpoint does not satisfy the six-hour,
+300-block canary gate or the subsequent all-worker observation.
