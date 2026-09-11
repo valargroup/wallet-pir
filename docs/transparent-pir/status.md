@@ -2,6 +2,20 @@
 
 Source inspection: 2026-09-09 through worker/qualification correction `f2f351c` and fleet burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
+## M1 managed storage-policy canary: observed 2026-09-11, 10:00 UTC
+
+Operations source `864f741` passed all-six-worker storage preflight and full
+checks, then upgraded recent-01 through the guarded workflow. The worker
+binary remains `2c4a250` / `cc6dabbd…`; the new helper reapplies nodiscard before
+startup and is verified by the observer. The temporary experiment timer
+restored its setting before this managed deployment and is no longer active.
+A fresh six-hour/300-block acceptance run began at approximately 10:00:09 UTC
+under `transparent-m1-storage-policy-rollout.service`, followed only on success
+by fleet upgrade and a separate 24-hour observation. The initial checkpoint
+records 531 exact queries and verified storage policy, with no new blocks yet.
+See [deployment and provenance](evidence/productionize-m1-storage-policy-2026-09-11/README.md).
+**M1 remains open.** This is a fresh run, not reuse of the passing short diagnostic.
+
 ## M1 observation restarted after host maintenance: observed 2026-09-11
 
 Unattended package maintenance interrupted the prior loaded canary at 06:36 UTC.
