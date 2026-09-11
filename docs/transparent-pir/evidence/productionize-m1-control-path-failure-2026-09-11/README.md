@@ -117,11 +117,11 @@ restarted, and no deployment setting changed.
 
 ## Virtual framebuffer experiment, 00:28 UTC
 
-The stack-enabled trace (observed tool output; remote capture pending)
+The [completed stack-enabled trace](framebuffer-experiment/kernel-stacks-final.txt)
 captured two further CPU sampling gaps (364 and 445 ms) ending in
 `iowrite16 → virtqueue_notify → virtio_gpu_notify →
 virtio_gpu_primary_plane_update → drm_fb_helper_damage_work`. Separately, the
-raw HTTP probe (observed tool output; remote capture pending) captured a
+[raw HTTP probe](framebuffer-experiment/m1-framebuffer-coordinator.tar.gz) captured a
 four-second **connect-stage** timeout at 00:21:26, followed by a connection
 requiring 2.676 seconds before the response arrived promptly. This distinguishes
 that event from time spent executing the HTTP readiness handler.
@@ -136,7 +136,7 @@ documents the bind interface; restoring this host's previous binding is
 `echo 1 > /sys/class/vtconsole/vtcon0/bind`. This experiment is not yet persistent
 across reboot and is not an accepted fleet setting.
 
-The early coordinator comparison (observed tool output; remote capture pending)
+The [captured comparison](framebuffer-experiment/final-comparison.json)
 is split by request start time at the exact change boundary. Before the change,
 both shared and dedicated status tunnels had timed out; therefore a dedicated
 SSH tunnel alone is not a demonstrated fix. The short post-change window had
@@ -144,9 +144,21 @@ no errors. Its smaller sample size cannot establish production reliability.
 Continue matched load and kernel/endpoint observation before making a durable
 headless-host change and restarting acceptance. No new M1 gate is running.
 
-The remote evidence copy subsequently failed because coordinator SSH connections
-timed out. Empty capture placeholders were removed; the figures above were
-observed in successful tool output before the transfer failure. The durable
-remote experiment record and complete traces still need to be retrieved. A
-temporary documentation commit linked not-yet-transferred files; those links
-are corrected rather than representing missing files as preserved evidence.
+The initial remote evidence copy failed because coordinator SSH connections
+timed out. Empty capture placeholders and incomplete links were corrected.
+After access returned, the [durable change record](framebuffer-experiment/change.json),
+[worker snapshot](framebuffer-experiment/m1-framebuffer-worker.tar.gz) and
+[coordinator snapshot](framebuffer-experiment/m1-framebuffer-coordinator.tar.gz)
+were retrieved and validated. Their capture metadata distinguishes completed
+bounded traces/load from still-running endpoint probe snapshots.
+
+The captured post-change window exceeds twelve minutes: 1,489 local status and
+HTTP samples each, and 1,501 shared-status, dedicated-status and direct-HTTP
+samples each, all without errors. Maxima were 12.625 ms local Unix, 22.031 ms
+local HTTP, 23.307 ms shared forwarding, 30.728 ms dedicated forwarding and
+27.290 ms remote HTTP. The completed v3 trace records two GPU-stack sampling
+gaps before unbinding and none after. The fifteen-minute load spanning the
+change completed 12,999 exact queries with 18 retries and both clients exiting
+zero. Unequal before/after durations and this short window limit causal and
+reliability conclusions. The result supports qualifying a durable headless-host
+mitigation; it is not a passing M1 canary.

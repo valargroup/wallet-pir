@@ -36,9 +36,11 @@ complete M0 or supersede earlier gate results.
   The [fresh loaded gate](evidence/productionize-m1-publication-io-canary-2026-09-11/README.md)
   began 2026-09-11 00:01:23 UTC and failed at 00:08:24 on another withdrawal.
   [Worker-local probes remained fast](evidence/productionize-m1-control-path-failure-2026-09-11/README.md)
-  while coordinator status timed out. Resolve that control-path failure using
-  the running independent forwarding probes and reconciler fsync trace before
-  starting another acceptance run.
+  while coordinator status timed out. Further diagnostics found virtual-GPU
+  framebuffer-update stacks at CPU sampling gaps. The runtime console-unbind
+  comparison has over twelve minutes without probe errors. Make this candidate
+  mitigation durable and auditable, qualify it, then start a fresh matching run;
+  do not treat the short diagnostic window as acceptance.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.
