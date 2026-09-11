@@ -13,7 +13,9 @@ The run failed after 6,590.864 seconds: recent-01 exceeded the 60-second replica
 freshness limit at block 3479699. It recorded 96,160 exact responses with zero
 mismatches and no in-run routing withdrawals. Worker preparation spent 58.918
 seconds loading and 5.901 seconds warming. The underlying loading stall remains
-under investigation; local diagnostic timings have not yet been deployed.
+under investigation. Diagnostic source `8e3de82` was subsequently deployed to
+recent-01 through the guarded upgrade. A bounded loaded diagnostic with thread
+sampling is running; see [diagnostic provenance](evidence/productionize-m1-loading-diagnostics-2026-09-11/README.md).
 See [deployment and terminal failure evidence](evidence/productionize-m1-cancel-prepare-2026-09-11/README.md).
 **M1 remains open.** The supervisor is terminal and no replacement acceptance
 run has started. Failed-run time does not count toward acceptance.
