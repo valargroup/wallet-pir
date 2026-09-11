@@ -14,6 +14,22 @@ SPEC.loader.exec_module(M)
 
 
 class StageTimingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_control_timings_exclude_other_response_and_request_fields(self):
+        fleet = object.__new__(M.Fleet)
+        fleet.c = {}
+        details = {'loading_seconds': 1.25, 'warming_seconds': 2.5,
+                   'unrelated': 'private response payload'}
+        fleet.ssh = AsyncMock(return_value=json.dumps({'ok': True, 'result': details}).encode())
+        output = io.StringIO()
+        with redirect_stderr(output):
+            result = await fleet.control({'id': 'a', 'ssh_host': 'worker'},
+                                         {'operation': 'prepare', 'unrelated': 'private request payload'})
+        self.assertEqual(result, details)
+        self.assertEqual(json.loads(output.getvalue()),
+                         {'event': 'worker_control_timing', 'worker': 'a', 'operation': 'prepare',
+                          'loading_seconds': 1.25, 'warming_seconds': 2.5})
+        self.assertNotIn('private', output.getvalue())
+
     async def test_concurrent_stages_keep_worker_and_revision_identity(self):
         fleet = object.__new__(M.Fleet)
         entered = asyncio.Event()

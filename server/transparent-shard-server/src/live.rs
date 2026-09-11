@@ -257,7 +257,7 @@ impl LiveService {
                 self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
                 next.spawn_prewarm().await.map_err(|e| e.to_string())?;
                 let warming_seconds = warming_started.elapsed().as_secs_f64();
-                tracing::debug!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
+                tracing::info!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
                 if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
                     return Err("reorg invalidated preparation".into());
                 }
@@ -336,6 +336,7 @@ impl LiveService {
                 .map_err(|e| e.to_string())?
             }
             Command::Collect => {
+                let collection_started = std::time::Instant::now();
                 let service = self.clone();
                 tokio::task::spawn_blocking(move || {
                     // The job owns serialization even if its control caller is
@@ -389,7 +390,11 @@ impl LiveService {
                     drop(retired);
                     drop(candidate);
                     drop(removed);
+                    let snapshot_seconds = collection_started.elapsed().as_secs_f64();
+                    let disk_started = std::time::Instant::now();
                     let disk_freed_bytes = state.prune_disk(&runtime_digests)?;
+                    let disk_seconds = disk_started.elapsed().as_secs_f64();
+                    let directories_started = std::time::Instant::now();
                     // Only controller-created, digest-named generations are ours.
                     // Keep the newest three unused directories across restarts too.
                     let mut unused: Vec<_> = std::fs::read_dir(root)
@@ -408,7 +413,9 @@ impl LiveService {
                     for entry in unused.into_iter().skip(3) {
                         std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
                     }
-                    Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes}))
+                    let directory_seconds = directories_started.elapsed().as_secs_f64();
+                    tracing::info!(snapshot_seconds, disk_seconds, directory_seconds, disk_freed_bytes, "publication collection stages");
+                    Ok(serde_json::json!({"collected":true,"disk_freed_bytes":disk_freed_bytes,"snapshot_seconds":snapshot_seconds,"disk_seconds":disk_seconds,"directory_seconds":directory_seconds}))
                 })
                 .await
                 .map_err(|e| format!("collection task failed: {e}"))?

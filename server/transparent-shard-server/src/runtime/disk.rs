@@ -310,6 +310,7 @@ impl DiskCache {
     /// Called only after rollout verification, with all active and rollback
     /// revision digests (including retained revisions), under the writer lock.
     pub fn prune(&self, keep: &std::collections::HashSet<String>) -> io::Result<u64> {
+        let started = std::time::Instant::now();
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -317,6 +318,8 @@ impl DiskCache {
             .write(true)
             .open(self.directory.join(".lock"))?;
         lock.lock()?;
+        let lock_wait_seconds = started.elapsed().as_secs_f64();
+        let pruning_started = std::time::Instant::now();
         let prefixes: std::collections::HashSet<_> = keep
             .iter()
             .map(|digest| hex::encode(Sha256::digest(digest.as_bytes())))
@@ -334,6 +337,12 @@ impl DiskCache {
                 fs::remove_file(entry.path())?;
             }
         }
+        tracing::info!(
+            lock_wait_seconds,
+            pruning_seconds = pruning_started.elapsed().as_secs_f64(),
+            freed_bytes = freed,
+            "runtime disk collection stages"
+        );
         Ok(freed)
     }
 }

@@ -316,6 +316,15 @@ class Fleet:
         result = json.loads(raw)
         if not result.get('ok'):
             raise RuntimeError(f'{worker["id"]}: {result.get("error")}')
+        # Export only known duration fields, never arbitrary control payloads.
+        details = result['result']
+        timings = {key: details[key] for key in
+                   ('loading_seconds', 'warming_seconds', 'snapshot_seconds',
+                    'disk_seconds', 'directory_seconds')
+                   if isinstance(details, dict) and key in details}
+        if timings:
+            print(json.dumps({'event':'worker_control_timing', 'worker':worker['id'],
+                              'operation':operation, **timings}), file=sys.stderr)
         return result['result']
 
     def quorum(self, ids):
