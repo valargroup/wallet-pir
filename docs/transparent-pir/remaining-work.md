@@ -38,9 +38,13 @@ complete M0 or supersede earlier gate results.
   [Worker-local probes remained fast](evidence/productionize-m1-control-path-failure-2026-09-11/README.md)
   while coordinator status timed out. Further diagnostics found virtual-GPU
   framebuffer-update stacks at CPU sampling gaps. The runtime console-unbind
-  comparison has over twelve minutes without probe errors. Make this candidate
-  mitigation durable and auditable, qualify it, then start a fresh matching run;
-  do not treat the short diagnostic window as acceptance.
+  comparison has over twelve minutes without probe errors. The
+  [persistent mitigation](evidence/productionize-m1-headless-2026-09-11/README.md)
+  (`f383b01`, unchanged worker `043c051`) passed 97 operations tests and full
+  `make check`, then recent-01 installation and 39 exact verification queries.
+  A fresh canary began 2026-09-11 00:59:10 UTC and was confirmed active at
+  01:04 UTC. No other worker has been promoted. The diagnostic window does
+  not count toward acceptance.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.

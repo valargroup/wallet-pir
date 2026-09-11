@@ -54,24 +54,27 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
-## M1 virtual-console experiment: observed 2026-09-11, 00:41 UTC
+## M1 persistent headless canary: observed 2026-09-11, 01:04 UTC
 
-The [stack trace and runtime experiment](evidence/productionize-m1-control-path-failure-2026-09-11/README.md)
-identified CPU sampling gaps ending in the virtual GPU framebuffer-update path.
-At 00:28:36 UTC, recent-01's framebuffer console was unbound at runtime after
-verifying its serial console remained registered. Worker source and query load
-were unchanged. The first minute of post-change samples had no errors; this
-short window does not establish a fix or M1 acceptance. The console change is
-not yet persistent across reboot or installed on the other workers.
+The [qualified implementation and deployment evidence](evidence/productionize-m1-headless-2026-09-11/README.md)
+records operations source `f383b01` and unchanged worker source `043c051`.
+Recent-01 restarted successfully with a privileged pre-start helper that
+unbinds the virtio framebuffer console while requiring enabled serial access.
+The loaded hook, boot enablement, helper digest and unbound console are verified
+on installation and during observation. The upgrade passed 39 exact queries.
+No host reboot was performed; the other five workers have not been promoted.
 
-After a temporary operator-connectivity interruption, remote evidence was
-retrieved. The captured post-change window exceeds twelve minutes with no
-probe errors and maxima below 31 ms across local HTTP/Unix, direct HTTP and
-both SSH status paths. The completed stack trace has no CPU sampling gap after
-unbinding. The diagnostic load spanning the change completed 12,999 exact
-queries. This supports further qualification, not production acceptance. Make
-the headless-host mitigation durable and auditable before a fresh matching gate;
-no replacement acceptance run or fleet promotion has started. **M1 remains open.**
+The fresh loaded canary started at **00:59:10 UTC**, height 3,479,113, under
+`transparent-m1-headless-rollout.service`; it was confirmed active at capture.
+Its durable availability baseline is six prior events; any new withdrawal
+fails the gate. The runtime experiment's twelve-minute clean window motivates
+this candidate, but contributes no acceptance time. Older diagnostic probes
+are stopped; a fresh local HTTP/Unix probe supports diagnosis of this run.
+
+**M1 remains open:** both six hours and 300 new blocks must pass, followed by
+the matching six-worker rollout and 24-hour observation. Qualification passed
+97 operations tests and the full `make check` (590 Rust tests, zero failures,
+two ignored). No acceptance threshold changed.
 
 ## M1 control-path failure: observed 2026-09-11, 00:08 UTC
 
@@ -83,13 +86,13 @@ throughout that window stayed below 1.7 ms for Unix status and 7 ms for HTTP,
 with no errors. This incident is narrowed to the coordinator/control path;
 it does not reproduce the earlier worker-wide pause.
 
-The supervisor is terminal failed; no fleet promotion or replacement gate is
-running. Independent forwarded-status/direct-HTTP probes and a bounded
-reconciler-thread fsync trace are active. Synchronous reconciler persistence is
-a candidate cause, not yet confirmed. Subsequent diagnostics caught local and
+That supervisor is terminal failed. Subsequent independent status/HTTP probes
+and a bounded reconciler fsync trace investigated the cause; the trace did not
+establish synchronous reconciler persistence as the cause. Subsequent diagnostics caught local and
 remote HTTP timeouts together while local Unix status stayed responsive, so SSH
-alone does not explain all delays. TCP-stage timing and CPU sampling-gap probes
-are active; their limits and raw observations are recorded in the same evidence.
+alone does not explain all delays. Completed TCP-stage timing and CPU
+sampling-gap probes are recorded in the same evidence; virtual-GPU stack
+findings led to the replacement canary above.
 **M1 remains open.**
 
 ## M1 publication I/O canary: observed 2026-09-11, 00:02 UTC
