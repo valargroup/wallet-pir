@@ -2,6 +2,17 @@
 
 Source inspection: 2026-09-09 through worker/qualification correction `f2f351c` and fleet burst-progress correction `7754d6c`. Live state is observed separately below; [remaining work](remaining-work.md) owns the outstanding release and capacity gates.
 
+## M1 observation restarted after host maintenance: observed 2026-09-11
+
+Unattended package maintenance interrupted the prior loaded canary at 06:36 UTC.
+Its raw evidence is preserved; its time does not count toward acceptance.
+A fresh matching canary started at 06:43:38 UTC after canonical readiness and
+release identity checks, under `transparent-m1-post-maintenance-rollout.service`.
+Automatic package upgrades have a bounded 36-hour deferral on the nine involved
+hosts, with verified automatic restoration. See the
+[interruption and restart evidence](evidence/productionize-m1-unpublished-reorg-2026-09-11/README.md).
+M1 remains open; [remaining work](remaining-work.md) owns its acceptance gates.
+
 ## M3 wallet correctness, fixture scope: source-verified 2026-09-10
 
 The [M3 evidence](evidence/productionize-m3-2026-09-10/README.md) records the

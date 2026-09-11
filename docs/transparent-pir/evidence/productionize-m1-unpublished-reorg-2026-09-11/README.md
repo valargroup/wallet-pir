@@ -105,3 +105,41 @@ and canary visibility is 25.967 seconds. Minimum sampled available memory is
 Two publication changes between endpoint reads have been recorded. This remains
 partial evidence: both six hours and 300 new blocks, followed by the matching
 fleet rollout and 24-hour observation, are still required.
+
+
+## Interrupted by unattended host maintenance; fresh observation
+
+At 2026-09-11 06:36:25 UTC unattended Ubuntu upgrades of libc and Python
+restarted coordinator services, including the observation supervisor. Its
+replacement refused the existing output directory with `FileExistsError`.
+The [complete interrupted run](interrupted-canary.tar.gz) and
+[host journal](maintenance-interruption-journal.log) preserve this event.
+This was not a completed acceptance result: 124 blocks and 142,940 exact
+queries had been recorded, with 179 retries and zero mismatches. The preceding
+[freshness interval](freshness-peak-journal.log) reached 28.043 seconds public
+and 29.081 seconds canary visibility. No elapsed time is reused.
+
+The worker's own package upgrade completed at 06:39:50 UTC. Automatic upgrades
+are deferred for 36 hours on the coordinator, six workers, router and Amsterdam
+load generator using runtime service masks. Each host has a verified active
+`transparent-m1-maintenance-restore.timer`; it unmasks the upgrade service and
+starts the enabled upgrade timer again at approximately September 12 18:41 UTC.
+A reboot clears the runtime deferral. This is a bounded qualification window,
+not a permanent security-update policy. Restore earlier after terminal
+qualification if no new observation is needed; do not extend silently.
+The initial [preflight refusal](maintenance-window.ndjson) made no changes
+because the worker upgrade was active. The [successful application](maintenance-window-retry.ndjson)
+and [restoration correction](maintenance-window-restore-correction.ndjson)
+record all nine hosts. Executed scripts are preserved alongside these records.
+
+The [post-maintenance preflight](post-maintenance-preflight.json) verified
+unchanged source/configuration/controller identities, a warm matching worker,
+equal public maps, canonical hash and node-tip catch-up at height 3479389.
+`transparent-m1-post-maintenance-rollout.service` started a fresh observation
+at approximately 06:43:38 UTC, PID 3188555, source `862239c`, output
+`/opt/transparent-publisher-build/unpublished-reorg-20260911/rollout-post-maintenance`.
+At 06:44:04 UTC it was active with 412 exact queries, zero retries/mismatches
+and 27.704% sampled available memory. Routing unavailability baseline is now
+10 after maintenance; the earlier baseline of 9 has not been reset. Both six
+hours and 300 new blocks, then matching six-worker rollout and 24-hour
+observation, remain required.

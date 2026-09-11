@@ -1,0 +1,52 @@
+{
+  "utc": "2026-09-11T06:43:37.956757+00:00",
+  "digests": {
+    "/usr/local/bin/transparent-publish-controller": "b191c25abb027378b564d32d62c23c3aee52c300b5506cc0ab259cde57eddcf4",
+    "/opt/transparent-publisher/transparent-live-fleet.py": "291b01f320267aa140a00e6b17369481aeb4299af483a94de17b87614fba6e5c",
+    "/opt/transparent-publisher/fleet.json": "ad6048bd12d3472fa5a9632ff275544b360e9509334ddc0a7934580fae22015f",
+    "/opt/transparent-publisher/controller.json": "5ce43599786b177bb26bfdb991ae07eafa880855294c8053a0fada38d73c7da3"
+  },
+  "status": {
+    "candidate_height": 3479389,
+    "cycle_seconds": 12.757580066,
+    "freshness_seconds": 19.917738856,
+    "journal_height": 3479389,
+    "map_sha256": "28e54b0ececa172ee85bbcc69c876b53393d9a0da36819f21f68093610ba6f05",
+    "node_hash": "000000000019aee6f9fdb6d2f021da3840e99d89140d0e9cab3b476ee87095de",
+    "node_height": 3479389,
+    "phase": "serving",
+    "public_hash": "000000000019aee6f9fdb6d2f021da3840e99d89140d0e9cab3b476ee87095de",
+    "public_height": 3479389,
+    "ready_replicas": 1
+  },
+  "ready": {
+    "assigned_shards": 14,
+    "assignment_sha256": "51d041b0b8990e66310381ef7720d2d2da2a3378f223491eddb6ef7bbdffb985",
+    "binary_sha256": "b2da68f289e4eebd3eafbc5b763963fa87c3daf347b8b2d312e1ac64ea97a38c",
+    "map_sha256": "28e54b0ececa172ee85bbcc69c876b53393d9a0da36819f21f68093610ba6f05",
+    "mode": "warm",
+    "prewarm_failed": 0,
+    "prewarm_finished": true,
+    "prewarm_seconds": 6.780435,
+    "ready": true,
+    "replica_group": "recent",
+    "role": "recent-replica",
+    "runtime_cache": {
+      "bytes": 5635771008,
+      "hits": 28,
+      "limit_bytes": 10737418240,
+      "misses": 340,
+      "pending_saves": 0,
+      "restore_slots": 4,
+      "write_failures": 0
+    },
+    "shards": 174,
+    "target_runtimes": 28,
+    "warm_runtimes": 28,
+    "worker_assignment_sha256": "658ce0f12e78458cbf71d831b541e817f18219e71ef4842e39854f2be9faf12a",
+    "worker_id": "transparent-pir-recent-01"
+  },
+  "prior_run": "rollout",
+  "out": "rollout-post-maintenance",
+  "source_sha": "862239c"
+}
