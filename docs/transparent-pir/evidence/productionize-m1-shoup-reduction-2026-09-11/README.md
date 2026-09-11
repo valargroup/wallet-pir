@@ -124,3 +124,11 @@ public visibility is 15.655 seconds, replica visibility 15.658 seconds, minimum
 sampled available memory 26.604%, and routing withdrawals remain at baseline 16.
 No cache write failures were recorded. This is partial observation, not M1
 acceptance; no source, binary or configuration was changed during this interval.
+
+
+The [half-hour checkpoint](half-hour-checkpoint.json), captured at 09:06:04 UTC
+after 1,827 seconds, confirms the same active supervisor: 21 new blocks,
+27,170 exact queries, 14 retries and zero mismatches. Maximum public visibility
+remains 15.655 seconds, replica visibility 15.658 seconds and minimum sampled
+available memory 26.604%. Routing withdrawals remain at baseline 16; no cache
+write failures are recorded. This is partial observation, not M1 acceptance.
