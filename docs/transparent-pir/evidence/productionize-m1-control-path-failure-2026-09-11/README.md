@@ -42,3 +42,21 @@ are not acceptance tests and do not modify the running worker or fleet source.
 Compare independent forwarding with direct HTTP and worker-local timings, and
 correlate any reconciler-thread fsync delay before selecting the next fix. Do
 not weaken health-check timeouts or restart acceptance to seek a lucky run.
+
+At 00:13:58 UTC, a dedicated status-only SSH connection was also active as
+`transparent-m1-dedicated-status-tunnel.service` (PID 2608617), with forwarding
+through root-only `/run/transparent-reconciler-probe/dedicated.sock`. It uses the
+existing deploy key and known-hosts file, strict host checking, no multiplexing,
+and a 3,700-second lifetime. `transparent-m1-dedicated-control-probe.service`
+(PID 2608713) samples it separately every 0.5 seconds. Compare it with the
+existing status connection shared with mutation commands; this is diagnostic
+only and no production client has switched to the dedicated tunnel.
+
+A ten-minute two-client diagnostic load is active as
+`transparent-m1-control-path-load.service` (PID 2608879), using the installed
+candidate's soak-query artifact against the private worker. Logs are under
+`/opt/transparent-publisher-build/publication-io-20260910/control-path-load`.
+The first observed queries are exact. This restores query load for the transport
+comparison without restarting acceptance or enabling promotion. The fsync trace
+had no over-10-ms event at this capture; that is not proof that persistence can
+never delay the reconciler.
