@@ -143,3 +143,12 @@ and 27.704% sampled available memory. Routing unavailability baseline is now
 10 after maintenance; the earlier baseline of 9 has not been reset. Both six
 hours and 300 new blocks, then matching six-worker rollout and 24-hour
 observation, remain required.
+
+
+The [post-maintenance quarter-hour checkpoint](post-maintenance-quarter-hour.json)
+at 06:58:56 UTC confirms the same active supervisor after 918.6 seconds:
+11 new blocks, 13,386 exact queries, 17 retries and zero mismatches.
+Maximum public and replica visibility are 25.968 and 34.196 seconds;
+minimum sampled available memory is 26.403%. Routing unavailable events remain
+at the new baseline of 10. Pending cache saves have returned to zero with no
+write failures. This is partial observation only and does not satisfy M1.
