@@ -29,7 +29,7 @@ The [thread sampler](thread-sampler.py) runs for 30 minutes on recent-01 as
 for read, write, pread, fsync, fdatasync and fadvise syscalls. Early samples show
 table reads waiting in the file-page path and cache writes awaiting journal
 commits. A cache-advice call took 216 ms; this does not establish the cause of
-the earlier 59-second loading stall. The diagnostic remains in progress.
+the earlier 59-second loading stall. The diagnostic completed successfully; terminal results follow below.
 
 At 2026-09-11T13:40:46.007824+00:00, the [checkpoint](checkpoint.json) confirmed the same live PID
 after 753.5 seconds, with 10,374 exact responses and zero
@@ -38,3 +38,19 @@ mismatches. The [partial thread samples](thread-samples-checkpoint.ndjson) conta
 shows subsecond cache-advice delays and ordinary loading around one second;
 it does not reproduce or explain the earlier 59-second stall. These files are
 intermediate snapshots, not terminal diagnostic evidence.
+
+## Terminal diagnostic result
+
+The observer exited successfully at 2026-09-11 13:58:12 UTC after 1,800.388 seconds.
+The [full diagnostic bundle](diagnostic.tar.gz) contains the terminal result,
+all 60 worker samples and both query streams: 25,298 exact responses, 19 retries,
+zero mismatches, and 26 public/replica blocks. Maximum public visibility was
+19.591 seconds and replica visibility 18.626 seconds. Available host RAM never
+fell below 26.989%; routing availability remained unchanged from the baseline.
+
+The [complete thread samples](thread-samples.ndjson) and [worker journal](worker.log)
+cover this diagnostic. Background cache writes waited on storage after preparation
+finished. This does not establish the cause of the previous loading stall.
+The 30-minute window did not reproduce that stall and earns no M1 acceptance
+credit. The next investigation needs a longer instrumented observation, since the
+prior failure occurred after approximately 110 minutes. No fleet rollout was triggered.
