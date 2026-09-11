@@ -86,3 +86,12 @@ withdrawals remain at baseline 9. Maximum public and canary visibility remain
 22.106 and 24.834 seconds respectively. The latest cache sample has no pending
 saves and zero write failures. This checkpoint does not satisfy the six-hour,
 300-block canary gate or the subsequent all-worker observation.
+
+The [first-hour checkpoint](hour-checkpoint.json), captured at 04:57:06 UTC
+after 3,625 seconds, confirms the same active supervisor and source identity:
+45 new blocks, 54,700 exact queries, 55 retries and zero mismatches. Routing
+withdrawals remain at baseline 9. Maximum public and canary visibility remain
+22.106 and 24.834 seconds respectively. Minimum sampled available memory is
+26.038%; the latest cache sample has no pending saves and zero write failures.
+This is partial evidence only: the six-hour/300-block canary and subsequent
+all-worker rollout and 24-hour observation remain incomplete.
