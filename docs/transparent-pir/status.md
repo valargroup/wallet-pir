@@ -17,11 +17,12 @@ under investigation. Diagnostic source `8e3de82` was subsequently deployed to
 recent-01 through the guarded upgrade. A 30-minute loaded diagnostic with thread
 sampling passed at 13:58 UTC (25,298 exact responses, zero mismatches), but did not
 reproduce the stall and has no acceptance credit. A separate four-hour instrumented
-diagnostic began at 14:00:52 UTC on the same binary, with no automatic rollout; see [diagnostic provenance](evidence/productionize-m1-loading-diagnostics-2026-09-11/README.md).
+diagnostic began at 14:00:52 UTC on the same binary and was intentionally interrupted
+after capturing cache advice blocking write submission, to qualify a tested candidate; see [diagnostic provenance](evidence/productionize-m1-loading-diagnostics-2026-09-11/README.md).
 See [deployment and terminal failure evidence](evidence/productionize-m1-cancel-prepare-2026-09-11/README.md).
 A [background cache-advice candidate](evidence/productionize-m1-cache-advice-2026-09-11/README.md)
 passes local full checks, 38 Linux library tests and 26 Linux integration tests;
-actual-worker qualification remains pending. It has not been deployed.
+the guarded recent-01 upgrade is in progress, with actual-worker qualification pending.
 **M1 remains open.** The supervisor is terminal and no replacement acceptance
 run has started. Failed-run time does not count toward acceptance.
 

@@ -93,6 +93,19 @@ at 14:09:56–59 show the same worker thread in syscall 221 on that publication'
 This directly locates this shorter loading delay in cache advice and write
 submission. It does not establish the cause of the previous 59-second stall.
 The publication met both freshness limits (public 16.899 seconds, replica
-15.872 seconds). The longer diagnostic remains live. Investigate moving optional
+15.872 seconds). The longer diagnostic was subsequently interrupted as recorded below. Investigate moving optional
 cache advice out of the readiness path while preserving bounded memory use,
 file integrity verification and durable publication semantics.
+
+### Intentional interruption for candidate qualification
+
+At 2026-09-11T14:22:26.041865+00:00, after approximately 1293.5 seconds, the operator stopped
+both the observer and sampler to qualify the tested background-advice candidate.
+This was an intentional change of experiment after capturing the blocking call;
+it was not a completed four-hour observation and has no acceptance credit.
+Both service PIDs were verified zero and their states inactive before upgrade.
+The [full interrupted run](interrupted-long-diagnostic.tar.gz),
+[thread samples](interrupted-long-threads.ndjson) and
+[worker journal](interrupted-long-worker.log) preserve the evidence.
+See the [candidate qualification](../productionize-m1-cache-advice-2026-09-11/README.md)
+for the replacement experiment.

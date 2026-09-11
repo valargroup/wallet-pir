@@ -32,6 +32,15 @@ The [Linux integration suites](linux-integration.log) passed: `assignment` had
 eight passes, and `revisions_and_cache` had 18 passes with two manual burst
 benchmarks ignored. The integration unit exited successfully.
 
-The longer diagnostic remains on the prior instrumented binary; this candidate
-has not been deployed. Its Linux build and integration compilation ran on the
+The longer diagnostic on the prior binary was intentionally interrupted after
+capturing the blocking call, to begin candidate qualification. Its Linux build and integration compilation ran on the
 coordinator concurrently with that reproduction experiment, not on recent-01.
+
+## Guarded upgrade in progress
+
+The [deployment script](deploy.py) checks source/artifact identities, completed
+Linux validation and the prior observer's terminal state before upgrading only
+recent-01. Unit `transparent-m1-cache-advice-deploy.service`, PID 3849428, is
+running on the coordinator. Output is under
+`/opt/transparent-publisher-build/cache-advice-20260911/candidate-upgrade`.
+The upgrade result and subsequent loaded qualification remain pending.
