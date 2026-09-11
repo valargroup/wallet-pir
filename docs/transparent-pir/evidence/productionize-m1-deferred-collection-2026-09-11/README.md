@@ -79,5 +79,41 @@ Its installed unit lacked a persistent runtime cache and used one build slot;
 it had reached 117/160 warm runtimes at 21:26:55 without prewarm failures.
 At 21:33:47 the supervisor was still live in rollback verification, and
 archive-02 was rebuilding on its predecessor binary at 47/160 runtimes.
-The final upgrade/rollback result is pending. No 24-hour fleet observation
-has started, and this canary pass does not close M1.
+The [first upgrade's terminal evidence](failed-fleet-upgrade.tar.gz) records
+failure with maintenance still enabled. The automated rollback verification
+also exhausted its deadline. [Recovery evidence](rollback-recovery.tar.gz)
+records the subsequent verification-only recovery of the original serving set.
+The initial recovery check incorrectly required all six workers to match the
+restored canary-only configuration; old unmanaged recent workers could not
+attest the newer preparation protocol. The original configuration was restored,
+and recovery verified its three serving members before reopening. That recovery
+was not an all-six-worker acceptance result.
+
+## Corrected fleet upgrade and full observation
+
+Operations commit `d0ae00e` adds persistent disk-cache flags to legacy worker
+units that lack them and gives cold installation/warm-up and rollback explicit,
+bounded budgets. Explicit existing cache configuration is preserved. The
+[full check](archive-upgrade-make-check.log) passed. Worker source remains
+`a5f79ed760e458b873b5382a1e4243dda632d1f7`; operations changes did not rebuild it.
+
+The [upgrade and observation-start bundle](fleet-upgrade-and-observation-start.tar.gz)
+records successful upgrade of all six workers at approximately 22:10:59 UTC.
+Archive-02 populated its new persistent cache during cold warm-up. All four
+recent workers now participate in managed preparation. The successful upgrade
+verified readiness and exact queries before reopening public routing.
+
+A separate 24-hour observation began at 22:12:40 UTC on September 11 under
+`transparent-m1-archive-cache-observation.service`, PID 418647. Output is
+`/opt/transparent-publisher-build/archive-cache-upgrade-20260911/observation`.
+The bundled launch script reuses the existing rollout command supervisor and
+unchanged observer, checks the successful matching upgrade and all-six ready
+binary identities, then runs six monitors together with two sustained query
+clients on recent-01. Each monitor requires 86,400 seconds and 300 new blocks.
+At 22:13:12 UTC the process was active, all six had ready samples, both query
+streams had exact responses, and no terminal result had been emitted.
+
+The existing September 12 maintenance restoration remains scheduled and can
+overlap this run. No freshness, restart, memory or routing gate is exempted.
+Earliest completion is approximately September 12 at 22:13 UTC. This launch
+record is not a passed observation; M1 remains open.

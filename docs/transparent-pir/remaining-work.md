@@ -45,10 +45,16 @@ complete M0 or supersede earlier gate results.
   The fresh canary began 2026-09-11 00:59:10 UTC and failed at 02:01:57
   after 3,767 seconds: public visibility for block 3,479,158 was 30.001 seconds.
   No mismatches or new routing withdrawals occurred; local probes stayed fast.
-  Attribute sequential-publication and staging delays before a qualified fresh
-  run. No other worker has been promoted, and no failed-run time counts.
-  Require both six hours and 300 new blocks, followed by the matching fleet batch
-  and 24-hour observation. No earlier samples count toward the new gate.
+  Later investigation and fixes are recorded in the
+  [deferred-collection evidence](evidence/productionize-m1-deferred-collection-2026-09-11/README.md).
+  The matching canary passed on September 11 at 21:10:44 UTC: 22,572 seconds,
+  300 new blocks and 336,603 exact responses. After a failed first upgrade and
+  verified recovery, corrected operations `d0ae00e` completed the all-six-worker
+  upgrade at 22:10:59 UTC on unchanged worker `a5f79ed`.
+  The separate 24-hour observation began at 22:12:40 UTC, with all six monitors
+  and two query clients confirmed live. Require its complete duration and block
+  counts, inspect all six final results and audit source/configuration identity.
+  No failed-run or canary time counts toward the fleet observation.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.
   [2026-09-09 evidence](evidence/productionize-m2-2026-09-09/README.md): wallet
   branch `m2/macos-recovery-beta` from `b6aa1f97f`, final source
@@ -255,6 +261,6 @@ Each completed gate links source commits, exact commands and evidence. Update st
 - [x] Give the reconciler persistent ownership of managed recent preparation and reattest recovered jobs; distinguish active validity from retained reorg revocations (`1f82093`).
 - [x] Retry transient prewarm admission pressure without losing assigned targets; keep both public transparent origins guarded until the controller listener and canonical fleet are verified. Deploy corrected worker `d5fea93` and operations `45d066c` to the recent-01 canary; 106 worker and 26 portable Linux tests passed; the subsequent operations corrections pass 61 tests.
 - [x] Preserve canonical intermediate progress on unrouted replicas during publication bursts (`7754d6c`); reject future/orphaned candidates and retain exact-current public membership.
-- [ ] Pass both six hours and 300 new blocks with two sustained exact private-query clients, the separate public/replica budgets in [deployment](deployment.md), no OOM/restart, canonical endpoints and 20% host memory headroom. The third prior soak failed after 572.605 seconds; none of the three previous runs satisfies this gate. The second managed attempt also failed replica freshness; `transparent-managed-hardening-rollout-3.service`, started 2026-09-09 00:55:04 UTC, also failed after 2,090.910 seconds and 23 blocks on public freshness. Its [full evidence is preserved](evidence/productionize-m1-2026-09-09/README.md); superseded by the qualified `d778c62` candidate and fresh loaded canary described above; prior samples do not count.
-- [ ] After acceptance, perform the approved coordinated six-worker maintenance batch on existing hardware, enable managed preparation for all recent replicas, and verify all advertised workers warm on the current publication before reopening both public transparent origins.
+- [x] Pass both six hours and 300 new blocks with two sustained exact private-query clients, the separate public/replica budgets in [deployment](deployment.md), no OOM/restart, canonical endpoints and 20% host memory headroom. The [September 11 matching canary](evidence/productionize-m1-deferred-collection-2026-09-11/README.md) passed with 336,603 exact responses; prior failed runs earn no credit.
+- [x] Perform the coordinated six-worker maintenance batch, enable managed preparation for all recent replicas, and verify all advertised workers warm on the current publication before reopening both public transparent origins. The corrected upgrade passed at 22:10:59 UTC on September 11; its raw evidence is linked above.
 - [ ] Complete 24-hour post-rollout monitoring and the remaining failure/rollback rehearsals; do not promote the short smoke or deterministic reorg tests to live fleet acceptance.

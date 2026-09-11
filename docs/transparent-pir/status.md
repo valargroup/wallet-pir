@@ -33,10 +33,17 @@ The matching fresh six-hour/300-block canary passed at 21:10:44 UTC after
 `transparent-m1-defer-collection-rollout.service` then attempted fleet upgrade,
 which entered guarded rollback around 21:27 UTC before archive-02 finished
 its cold build. That worker's unit lacked a persistent runtime cache.
-At 21:34:57 UTC rollback verification was still live; archive-02 was at
-61/160 warm runtimes on its predecessor binary. Fleet upgrade has not passed
-and the separate 24-hour observation has not started.
-**M1 remains open.** The earlier supervisor is terminal. Failed-run time does not count toward acceptance.
+The first upgrade and automated rollback verification failed; a separate
+verification-only recovery restored the original serving set and reopened it.
+Operations fix `d0ae00e` supplies missing legacy cache configuration and bounded
+cold-start budgets. The corrected all-six-worker upgrade passed at 22:10:59 UTC,
+on unchanged worker source `a5f79ed760e458b873b5382a1e4243dda632d1f7`.
+A separate 24-hour observation started at 22:12:40 UTC under
+`transparent-m1-archive-cache-observation.service`, PID 418647. At 22:13:12 UTC
+it was active, all six workers had ready samples and both sustained query clients
+were producing exact responses. Failed-run time does not count. **M1 remains
+open pending the full observation and completion audit.** See the linked
+deferred-collection evidence for raw failure, recovery, upgrade and launch records.
 
 ## M1 managed storage-policy canary: failed 2026-09-11, 11:10 UTC
 
