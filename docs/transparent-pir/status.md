@@ -15,8 +15,10 @@ The fresh run failed at 07:15:30 UTC on public freshness at block 3479412
 (30.387 seconds against 30 seconds); no query mismatches were recorded.
 Consecutive publication cycles are under investigation.
 Diagnostic source `3d13da6` is deployed on recent-01 and the fleet timing adapter
-as of 07:34 UTC; warm service and 36 exact queries were verified. A short loaded
-diagnostic is running, with no acceptance credit. See
+as of 07:34 UTC; warm service and 36 exact queries were verified. The short loaded
+diagnostic completed at 07:50 UTC: 17 blocks, 12,320 exact queries and maximum
+public visibility 23.991 seconds, with no acceptance credit. Three Amsterdam
+repetitions per setting favor retaining two build slots for publication latency. See
 [diagnostic evidence](evidence/productionize-m1-collection-timing-2026-09-11/README.md).
 M1 remains open; [remaining work](remaining-work.md) owns its acceptance gates.
 
