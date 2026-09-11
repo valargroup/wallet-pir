@@ -54,6 +54,21 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 incremental-writeback canary: observed 2026-09-11, 03:14 UTC
+
+Source `7621c34` passed local and Linux tests and all three Amsterdam burst
+qualifications: maximum worker visibility 8.876 seconds and minimum corrected
+modeled host headroom 25.963%. The [evidence](evidence/productionize-m1-incremental-writeback-2026-09-11/README.md)
+preserves raw runs and explains the stricter host-overhead recalculation.
+
+Recent-01 now runs binary `b2da68f289e4eebd3eafbc5b763963fa87c3daf347b8b2d312e1ac64ea97a38c`.
+A fresh loaded canary began 03:13:32 UTC at node height 3,479,215 under
+`transparent-m1-incremental-writeback-rollout.service` (PID 2836142 confirmed
+active). Routing withdrawal baseline is 8 after planned upgrade maintenance.
+Initial queries were exact and service warm; no sustained pass is claimed.
+The other five workers remain gated on both six hours and 300 new blocks,
+followed by the separate 24-hour all-worker observation. M1 remains open.
+
 ## M1 durable-write attribution: observed 2026-09-11, 02:49 UTC
 
 The [completed traces](evidence/productionize-m1-stage-timing-2026-09-11/README.md)

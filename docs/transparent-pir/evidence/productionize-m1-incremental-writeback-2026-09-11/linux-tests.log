@@ -1,0 +1,50 @@
+
+running 3 tests
+test blocked_collection_keeps_status_and_readiness_responsive ... ok
+test blocked_invalidation_refuses_without_blocking_executor ... ok
+test blocked_activation_keeps_executor_responsive ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 3.17s
+
+
+running 1 test
+test live_prepare_activate_and_invalidate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 10.76s
+
+
+running 7 tests
+test memory::tests::cancelled_waiter_cannot_release_blocking_work_reservation ... ok
+test memory::tests::cancelling_a_queued_builder_releases_its_turn ... ok
+test memory::tests::admitted_query_waits_for_memory_without_exceeding_the_budget ... ok
+test memory::tests::expired_or_cancelled_query_wait_does_not_leave_a_reservation ... ok
+
+thread 'memory::tests::phase_handoff_retains_remaining_work_and_other_owners' (2834836) panicked at server/transparent-shard-server/src/memory.rs:135:9:
+a reservation cannot grow without admission
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test memory::tests::phase_handoff_retains_remaining_work_and_other_owners ... ok
+test memory::tests::simultaneous_work_and_resident_memory_share_headroom ... ok
+test memory::tests::cold_builders_keep_fifo_order_until_memory_is_released ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.20s
+
+
+running 2 tests
+test runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory ... ok
+test runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 5.83s
+
+
+running 4 tests
+test runtime::disk::tests::batched_reader_checks_boundaries_truncation_and_canonical_words ... ok
+test runtime::disk::tests::batched_words_preserve_legacy_bytes_across_buffer_boundaries ... ok
+test runtime::disk::tests::incremental_snapshot_preserves_bytes_and_checksum_across_writeback ... ok
+recent-8k directory build=1.159753926s restore=470.773617ms bytes=134185024
+recent-8k pages build=1.133304861s restore=473.407065ms bytes=134185024
+archive-wide directory build=2.266934699s restore=866.11575ms bytes=234848320
+archive-wide pages build=3.973703574s restore=1.403034744s bytes=369066048
+test runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 23.33s
+
