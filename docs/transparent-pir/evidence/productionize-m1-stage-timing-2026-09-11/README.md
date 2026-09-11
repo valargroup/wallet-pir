@@ -19,3 +19,12 @@ publication; correlate those durations with controller queueing and public-read
 timing; change the measured bottleneck; qualify the correction before starting
 a fresh matching acceptance gate. Diagnostic observations never count as soak
 acceptance, and no timing threshold is relaxed.
+
+[Deployment](deployment.json) at 02:11:55 UTC installed source `58a5db4`
+on the coordinator and restarted only the reconciler (PID 2777929). Worker
+binaries and fleet configuration were unchanged. The previous fleet script is
+backed up under `/opt/transparent-publisher-build/stage-timing-20260911/`.
+The ten-minute `transparent-m1-stage-timing-diagnostic.service` uses the existing
+observer and two query clients with the unchanged freshness limits; its output
+is `stage-timing-20260911/diagnostic` under the same build root. It is diagnostic
+only and cannot satisfy the six-hour gate.
