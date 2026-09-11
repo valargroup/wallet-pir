@@ -69,3 +69,12 @@ maxima are absence of samples, not zero publication latency. Raw output is under
 `/opt/transparent-publisher-build/unpublished-reorg-20260911/rollout/`.
 No failed-run time is reused. Both six hours and 300 new blocks, the matching
 fleet rollout and 24-hour fleet observation remain mandatory and incomplete.
+
+The [quarter-hour checkpoint](quarter-hour-checkpoint.json), captured at
+04:12:44 UTC after 962 seconds, confirms the same active supervisor: 13 new
+blocks, 14,419 exact queries, 13 retries, no mismatches and unchanged routing
+withdrawal baseline 9. Maximum public visibility is 22.106 seconds and canary
+visibility 24.834 seconds; minimum sampled available memory is 26.664%. One cache
+save was pending in the latest sample, with zero write failures. The observer
+recorded one publication change between endpoint reads without a stable mismatch.
+This remains partial observation, not M1 acceptance.
