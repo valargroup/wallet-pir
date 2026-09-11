@@ -65,3 +65,14 @@ the same supervisor remains active with 19 new blocks, 27459 exact queries and
 14 retries, zero mismatches, unchanged routing and verified persistent storage
 policy. Maximum public freshness is 14.499 seconds and minimum available memory
 is 27.128%. This remains a partial acceptance window.
+
+## One-hour checkpoint
+
+The [checkpoint](hour-checkpoint.json) at 2026-09-11T11:00:41.995263+00:00 confirms
+the same supervisor is active after 3,633 seconds, with 35 new blocks, 54,689
+exact queries and 24 retries, zero mismatches and no in-run routing withdrawals.
+Maximum public freshness is 15.504 seconds, maximum replica freshness is
+15.507 seconds and minimum available memory is 26.734%. The persistent storage
+policy and helper identity remain verified; the latest pending-save count is
+zero and no cache write failures are recorded. This is a partial acceptance
+window, not a completed canary or M1 pass.
