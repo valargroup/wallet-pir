@@ -28,3 +28,19 @@ The ten-minute `transparent-m1-stage-timing-diagnostic.service` uses the existin
 observer and two query clients with the unchanged freshness limits; its output
 is `stage-timing-20260911/diagnostic` under the same build root. It is diagnostic
 only and cannot satisfy the six-hour gate.
+
+## Candidate: reuse supervised SSH connections for staging
+
+File staging previously used independently expiring 60-second automatic SSH
+masters even when the fleet already supervised authenticated worker connections.
+The candidate selects the supervised connection for worker shell operations and
+rsync whenever `control_sessions` is enabled. A missing master fails without
+silent fresh-login fallback. Explicit direct mode and non-worker destinations
+retain their previous connection selection. Multiplexed staging output uses
+private temporary files so cancellation does not wait on master-owned pipes.
+
+[Candidate operations tests](transfer-reuse-operations-tests.log) pass all 100
+tests, including worker selection, explicit direct mode, disabled sessions,
+non-worker destinations and no fallback on failure. [Candidate make check](transfer-reuse-make-check.log)
+passes all 590 Rust tests with two ignored. This is qualified source; a live
+comparison and fresh acceptance run are still required.

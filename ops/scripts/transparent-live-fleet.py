@@ -159,9 +159,19 @@ class Fleet:
             await self.control(worker,{'operation':'invalidate','expected':status['active']['map_sha256'],'from_height':from_height,'keep_digests':keep})
         return keep
 
+    def transfer_ssh_args(self, host):
+        """Reuse a supervised worker connection; never silently replace a dead master."""
+        if self.c.get('control_sessions'):
+            worker = next((w for w in self.roster if w['ssh_host'] == host), None)
+            if worker is not None:
+                return self.control_session_args(worker)
+        return self.ssh_args
+
     async def ssh(self, host, command, data=None, timeout=25, multiplex=True):
-        args = self.ssh_args if multiplex else self.direct_ssh_args + [
+        args = self.transfer_ssh_args(host) if multiplex else self.direct_ssh_args + [
             '-oControlMaster=no', '-oControlPersist=no', '-oControlPath=none']
+        if multiplex:
+            return await run(args + ['root@' + host, command], data, timeout, file_output=True)
         return await run(args + ['root@' + host, command], data, timeout)
 
     def control_path(self, worker):
@@ -393,7 +403,8 @@ class Fleet:
                 listing.write('\n'.join(files)+'\n'); listing.flush()
                 async with self.stage_timing(worker, req, 'transfer'):
                     await run(['rsync', '-a', '--ignore-existing', '--files-from', listing.name,
-                               '-e', shlex.join(self.ssh_args), str(source)+'/', 'root@'+worker['ssh_host']+':'+remote_dir+'/'])
+                               '-e', shlex.join(self.transfer_ssh_args(worker['ssh_host'])), str(source)+'/',
+                               'root@'+worker['ssh_host']+':'+remote_dir+'/'], file_output=True)
             async with self.stage_timing(worker, req, 'assignment'):
                 await self.ssh(worker['ssh_host'], 'cat > ' + shlex.quote(remote_assignment), assignment.read_bytes())
             publication = {'directory': remote_dir, 'assignment': remote_assignment, 'map_sha256': digest}
