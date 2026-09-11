@@ -32,6 +32,26 @@ requires exactly the same eight retained files after collection. It passed both
 local and Linux validation. This adjusts the test to explicit deferral without
 loosening eventual cleanup or capacity assertions.
 
-The candidate has not yet been deployed. Actual-worker qualification and the
-complete matching M1 canary/fleet observation remain required. Prior failed or
-interrupted observations earn no acceptance credit.
+## Deployment and fresh acceptance
+
+Source `a5f79ed760e458b873b5382a1e4243dda632d1f7` matches all 321 build-source
+hashes. The [deployment bundle](deployment.tar.gz) records the source identity,
+guarded recent-01 upgrade, query/warm-state verification and acceptance launch.
+The upgrade passed and public endpoints reopened. Only recent-01 has received
+this candidate so far.
+
+A fresh supervised acceptance run started at approximately 14:54:32 UTC under
+`transparent-m1-defer-collection-rollout.service`, PID 3869401, with output at
+`/opt/transparent-publisher-build/defer-collection-v2-20260911/rollout`.
+The [status helper](status.py) targets that run. It reuses the just-verified
+installed binary, but no prior samples: the supervisor requires both six hours
+and 300 new blocks with two exact-query clients before permitting the fleet
+upgrade, then a separate 24-hour fleet observation. RuntimeMaxSec is 172,800;
+Restart is no. The first live poll confirmed the canary-observation phase and
+both query streams producing exact answers.
+
+The existing bounded maintenance deferral was not extended. Its scheduled
+restoration may occur during full-fleet observation; do not describe the entire
+run as protected from maintenance. All normal restart, freshness and identity
+gates remain in force. M1 remains open; prior failed or interrupted observations
+earn no acceptance credit.
