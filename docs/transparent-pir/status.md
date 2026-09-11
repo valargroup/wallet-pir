@@ -11,6 +11,9 @@ release identity checks, under `transparent-m1-post-maintenance-rollout.service`
 Automatic package upgrades have a bounded 36-hour deferral on the nine involved
 hosts, with verified automatic restoration. See the
 [interruption and restart evidence](evidence/productionize-m1-unpublished-reorg-2026-09-11/README.md).
+The fresh run failed at 07:15:30 UTC on public freshness at block 3479412
+(30.387 seconds against 30 seconds); no query mismatches were recorded.
+Consecutive publication cycles are under investigation.
 M1 remains open; [remaining work](remaining-work.md) owns its acceptance gates.
 
 ## M3 wallet correctness, fixture scope: source-verified 2026-09-10

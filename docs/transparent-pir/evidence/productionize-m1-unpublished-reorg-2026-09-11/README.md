@@ -161,3 +161,25 @@ Maximum public and replica visibility remain 25.968 and 34.196 seconds;
 minimum sampled available memory remains 26.403%. Routing unavailable events
 remain at baseline 10. The latest cache sample has no pending saves or write
 failures. This remains partial evidence; M1 acceptance is not established.
+
+
+## Post-maintenance canary failed public freshness
+
+The [complete failed run](post-maintenance-failed-canary.tar.gz) records failure
+at 07:15:30.806 UTC after 1,912.667 seconds and 22 counted blocks:
+`public freshness exceeded at block 3479412: 30.387s exceeds 30.0s`.
+There were 28,086 exact queries, 33 retries and zero mismatches. The supervisor
+exited 1. Routing unavailable events remained 10. This run does not qualify.
+
+The [publication journal](post-maintenance-freshness-failure.log) shows height
+3479411 activated at 07:15:15.145 after a 16.965-second cycle, then height
+3479412 activated at 07:15:33.230 after an 18.058-second cycle with controller
+freshness 32.063 seconds. The second block waited behind the first publication.
+For the second map, recent-04 preparation took 13.419 seconds, while recent-01
+collection took 9.295 seconds and preparation another 8.514 seconds. The selected
+recent-04 activation took 0.019 seconds. These measurements identify consecutive
+preparation cycles as the immediate cause; they do not yet identify why each
+preparation/collection stage took that long. Investigate those stages and the
+publication scheduling before deploying another candidate. Do not relax the
+30-second gate or reuse this elapsed time. The maintenance deferral still expires
+at approximately September 12 18:41 UTC; it is not extended by this failure.
