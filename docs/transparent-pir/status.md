@@ -54,6 +54,21 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 staging connection candidate: observed 2026-09-11, 02:25 UTC
+
+The [stage-timing investigation](evidence/productionize-m1-stage-timing-2026-09-11/README.md)
+now attributes file staging by worker and phase. The ten-minute baseline finished
+with nine blocks and 8,646 exact queries. Candidate `9e674d3` reuses supervised
+worker SSH connections for staging instead of expiring automatic connections;
+missing masters fail without silent login fallback. All 100 operations tests
+and full `make check` passed (590 Rust tests, two ignored).
+
+The candidate is installed on the coordinator; only the reconciler restarted.
+Worker binaries are unchanged. `transparent-m1-transfer-reuse-diagnostic.service`
+was confirmed active under PID 2797229. This is a separate ten-minute comparison,
+not a full acceptance run. **M1 remains open**; the failed headless canary below
+contributes no acceptance time and no fleet promotion has occurred.
+
 ## M1 headless canary failure: observed 2026-09-11, 02:02 UTC
 
 The [complete canary and failure evidence](evidence/productionize-m1-headless-2026-09-11/README.md)

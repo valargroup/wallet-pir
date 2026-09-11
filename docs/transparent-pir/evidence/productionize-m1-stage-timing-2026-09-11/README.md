@@ -44,3 +44,16 @@ tests, including worker selection, explicit direct mode, disabled sessions,
 non-worker destinations and no fallback on failure. [Candidate make check](transfer-reuse-make-check.log)
 passes all 590 Rust tests with two ignored. This is qualified source; a live
 comparison and fresh acceptance run are still required.
+
+The [complete baseline diagnostic](baseline-diagnostic.tar.gz) finished at
+02:22:48 UTC: 600.299 seconds, nine blocks, 8,646 exact queries, maximum
+public visibility 20.733 seconds. It is a ten-minute diagnostic only.
+
+[Candidate deployment](transfer-reuse-deployment.json) at 02:24:43 UTC installed
+source `9e674d3` and restarted only the reconciler. The live fleet script digest
+is `d1001a2039e9e92dcd4268efa2b086868393f2f7a4d9a90562d3dec7bb9c17f6`.
+The unchanged worker runs under a new ten-minute diagnostic,
+`transparent-m1-transfer-reuse-diagnostic.service` (PID 2797229 confirmed active).
+Output is `/opt/transparent-publisher-build/transfer-reuse-20260911/diagnostic`.
+Compare stage durations and readiness under load before a new full gate; no
+acceptance time is reused.
