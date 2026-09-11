@@ -34,8 +34,11 @@ complete M0 or supersede earlier gate results.
   It is stopped; no promotion occurred. Durable withdrawal auditing and the
   qualified publication-I/O correction `043c051` are now deployed on the canary.
   The [fresh loaded gate](evidence/productionize-m1-publication-io-canary-2026-09-11/README.md)
-  began 2026-09-11 00:01:23 UTC. Validate sustained behavior; investigate any
-  recurrence rather than treating the source correction as proof of resolution.
+  began 2026-09-11 00:01:23 UTC and failed at 00:08:24 on another withdrawal.
+  [Worker-local probes remained fast](evidence/productionize-m1-control-path-failure-2026-09-11/README.md)
+  while coordinator status timed out. Resolve that control-path failure using
+  the running independent forwarding probes and reconciler fsync trace before
+  starting another acceptance run.
   Require both six hours and 300 new blocks, followed by the matching fleet batch
   and 24-hour observation. No earlier samples count toward the new gate.
 - [x] M2 — Deliver the isolated native macOS recovery application; sending disabled.

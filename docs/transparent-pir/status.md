@@ -54,6 +54,21 @@ public transparent services with one fresh synthetic wallet
 (`birthday 3,477,808, complete accepted target 3,477,838, 5.0 s first sync and 3.5 s resume with identical coverage after reopen`). This does not make PIR balances authoritative; M3 owns
 that gate. M2 closes with the limits listed in the evidence.
 
+## M1 control-path failure: observed 2026-09-11, 00:08 UTC
+
+The [publication-I/O canary failed](evidence/productionize-m1-control-path-failure-2026-09-11/README.md)
+after 421.021 seconds, nine new blocks and 5,705 exact queries. Two coordinator
+status timeouts removed recent-01 at 00:08:24; membership recovered at 00:08:28.
+The durable audit correctly rejected this withdrawal. Worker-local probes
+throughout that window stayed below 1.7 ms for Unix status and 7 ms for HTTP,
+with no errors. This incident is narrowed to the coordinator/control path;
+it does not reproduce the earlier worker-wide pause.
+
+The supervisor is terminal failed; no fleet promotion or replacement gate is
+running. Independent forwarded-status/direct-HTTP probes and a bounded
+reconciler-thread fsync trace are active. Synchronous reconciler persistence is
+a candidate cause, not yet confirmed. **M1 remains open.**
+
 ## M1 publication I/O canary: observed 2026-09-11, 00:02 UTC
 
 The [new deployment and start evidence](evidence/productionize-m1-publication-io-canary-2026-09-11/README.md)

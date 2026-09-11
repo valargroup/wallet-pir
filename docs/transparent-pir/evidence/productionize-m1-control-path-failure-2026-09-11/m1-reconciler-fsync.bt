@@ -1,0 +1,11 @@
+BEGIN { printf("{\"event\":\"start\",\"monotonic_ns\":%llu,\"pid\":2594424}\n",nsecs); }
+tracepoint:syscalls:sys_enter_fsync /pid == 2594424/
+{ @started[tid]=nsecs; @fd[tid]=args->fd; }
+tracepoint:syscalls:sys_exit_fsync /pid == 2594424 && @started[tid]/
+{
+ $elapsed=nsecs-@started[tid];
+ if ($elapsed > 10000000) { printf("{\"event\":\"fsync\",\"monotonic_ns\":%llu,\"tid\":%d,\"fd\":%d,\"nanoseconds\":%llu,\"return\":%d}\n",nsecs,tid,@fd[tid],$elapsed,args->ret); }
+ delete(@started[tid]);delete(@fd[tid]);
+}
+interval:s:900 { exit(); }
+END { printf("{\"event\":\"end\",\"monotonic_ns\":%llu}\n",nsecs);clear(@started);clear(@fd); }
