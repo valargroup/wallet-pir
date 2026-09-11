@@ -55,3 +55,12 @@ restoration may occur during full-fleet observation; do not describe the entire
 run as protected from maintenance. All normal restart, freshness and identity
 gates remain in force. M1 remains open; prior failed or interrupted observations
 earn no acceptance credit.
+
+## Early acceptance checkpoint
+
+At 15:10:14 UTC, the [checkpoint](fifteen-minute-checkpoint.json) confirmed the
+same supervisor PID 3869401 live in canary observation after 942.646 seconds.
+It recorded 12 new blocks, 14,298 exact responses, zero mismatches and nine
+retries. Maximum public/replica visibility was 15.215/13.463 seconds; minimum
+available host RAM was 25.605%, with no new routing withdrawals. This is an
+intermediate checkpoint, not a completed canary result.

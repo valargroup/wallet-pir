@@ -1,0 +1,60 @@
+{
+  "utc": "2026-09-11T15:10:14.491140+00:00",
+  "unit": "MainPID=3869401\nExecMainStatus=0\nActiveState=active\n",
+  "supervisor": {
+    "phase": "canary_observation",
+    "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+    "source_sha": "a5f79ed760e458b873b5382a1e4243dda632d1f7"
+  },
+  "events": {
+    "routing_availability_baseline": 1,
+    "start": 1,
+    "worker": 32,
+    "canary_block_visible": 12,
+    "block_visible": 12
+  },
+  "elapsed_seconds": 942.646319,
+  "max_public_seconds": 15.214635501033626,
+  "max_replica_seconds": 13.462692087050527,
+  "minimum_available_memory_fraction": 0.25605021286852325,
+  "maximum_pending_saves": 2,
+  "latest_runtime_cache": {
+    "bytes": 5635771008,
+    "hits": 28,
+    "limit_bytes": 10737418240,
+    "misses": 26,
+    "pending_saves": 0,
+    "restore_slots": 4,
+    "write_failures": 0
+  },
+  "latest_storage": {
+    "mount": {
+      "target": "/",
+      "source": "/dev/vda1",
+      "fstype": "ext4",
+      "options": "rw,relatime,errors=remount-ro,commit=30"
+    },
+    "online_discard": false,
+    "persistent": true,
+    "helper_sha256": "f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff"
+  },
+  "queries": [
+    {
+      "exact": 7135,
+      "retries": 6,
+      "mismatches": 0
+    },
+    {
+      "exact": 7163,
+      "retries": 3,
+      "mismatches": 0
+    }
+  ],
+  "routing": {
+    "schema": 1,
+    "epoch": "b1a6acc302ca4bf88b6532837e3c5435",
+    "unavailable_events": 32,
+    "available": true
+  },
+  "result": null
+}
