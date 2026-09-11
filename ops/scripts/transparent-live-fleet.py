@@ -342,21 +342,42 @@ class Fleet:
             await asyncio.gather(*tasks, return_exceptions=True)
         return done_values
 
+    @asynccontextmanager
+    async def stage_timing(self, worker, req, phase):
+        """Attribute staging time without logging commands, credentials or payloads."""
+        started = time.monotonic()
+        event = dict(event='worker_stage', worker=worker['id'], host=worker['ssh_host'],
+                     map_sha256=req['map_sha256'], phase=phase)
+        print(json.dumps({**event, 'state':'started', 'monotonic':started}), file=sys.stderr)
+        outcome = 'completed'
+        try:
+            yield
+        except BaseException as error:
+            outcome = type(error).__name__
+            raise
+        finally:
+            print(json.dumps({**event, 'state':outcome,
+                              'seconds':time.monotonic()-started}), file=sys.stderr)
+
     async def stage(self, worker, req, assignment):
         source = Path(req['directory']).resolve(strict=True)
         digest = req['map_sha256']
         remote_dir = self.c.get('worker_root', '/srv/transparent-pir/publications') + '/' + digest
         remote_assignment = remote_dir + '/assignment.json'
         async with self.lock('worker-' + worker['id'], wait=False):
-            status = await self.control(worker, {'operation': 'status'})
+            async with self.stage_timing(worker, req, 'status'):
+                status = await self.control(worker, {'operation': 'status'})
             before = status['active']
             current_digests = {e['manifest_digest'] for e in json.loads((source/'shards.json').read_text())['shards']}
-            await self.revoke_orphans(worker,status,known=current_digests)
-            await self.control(worker, {'operation':'collect'})
+            async with self.stage_timing(worker, req, 'revoke_orphans'):
+                await self.revoke_orphans(worker,status,known=current_digests)
+            async with self.stage_timing(worker, req, 'collect'):
+                await self.control(worker, {'operation':'collect'})
             if worker['id'] in self.managed_ids():
                 self.job(worker, req, 'transferring')
-            files = (await run([self.c['assign_binary'], 'files', '--shard-dir', source,
-                                '--assignment', assignment, '--worker-id', worker['id']])).decode().splitlines()
+            async with self.stage_timing(worker, req, 'inventory'):
+                files = (await run([self.c['assign_binary'], 'files', '--shard-dir', source,
+                                    '--assignment', assignment, '--worker-id', worker['id']])).decode().splitlines()
             # Only hard-link the digest directories this worker is assigned.
             # This also preserves inode identity for worker verification reuse.
             directories = sorted({f.split('/')[0] for f in files if '/' in f})
@@ -366,16 +387,20 @@ class Fleet:
                     raise ValueError('unexpected artifact path')
                 old, new = str(Path(before['directory']) / d), remote_dir + '/' + d
                 commands.append(f'if [ ! -e {shlex.quote(new)} ] && [ -d {shlex.quote(old)} ]; then cp -al {shlex.quote(old)} {shlex.quote(new)}; fi')
-            await self.ssh(worker['ssh_host'], 'sh -s', ('\n'.join(commands)+'\n').encode())
+            async with self.stage_timing(worker, req, 'hardlink'):
+                await self.ssh(worker['ssh_host'], 'sh -s', ('\n'.join(commands)+'\n').encode())
             with tempfile.NamedTemporaryFile(mode='w') as listing:
                 listing.write('\n'.join(files)+'\n'); listing.flush()
-                await run(['rsync', '-a', '--ignore-existing', '--files-from', listing.name,
-                           '-e', shlex.join(self.ssh_args), str(source)+'/', 'root@'+worker['ssh_host']+':'+remote_dir+'/'])
-            await self.ssh(worker['ssh_host'], 'cat > ' + shlex.quote(remote_assignment), assignment.read_bytes())
+                async with self.stage_timing(worker, req, 'transfer'):
+                    await run(['rsync', '-a', '--ignore-existing', '--files-from', listing.name,
+                               '-e', shlex.join(self.ssh_args), str(source)+'/', 'root@'+worker['ssh_host']+':'+remote_dir+'/'])
+            async with self.stage_timing(worker, req, 'assignment'):
+                await self.ssh(worker['ssh_host'], 'cat > ' + shlex.quote(remote_assignment), assignment.read_bytes())
             publication = {'directory': remote_dir, 'assignment': remote_assignment, 'map_sha256': digest}
             if worker['id'] in self.managed_ids():
                 self.job(worker, req, 'warming')
-            await self.control(worker, {'operation':'prepare','expected':before['map_sha256'],'publication':publication})
+            async with self.stage_timing(worker, req, 'prepare'):
+                await self.control(worker, {'operation':'prepare','expected':before['map_sha256'],'publication':publication})
             return {'expected':before['map_sha256'], 'publication':publication}
 
     async def prepare(self, req):

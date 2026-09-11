@@ -32,6 +32,7 @@ check-ops:
 	python3 ops/tests/test_transparent_fleet.py
 	python3 ops/tests/test_transparent_publication.py
 	python3 ops/tests/test_transparent_burst.py
+	python3 -m unittest discover -s ops/tests -p 'test_transparent_stage_timing.py'
 
 .PHONY: check-reports
 check-reports:
