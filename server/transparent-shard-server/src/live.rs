@@ -236,9 +236,14 @@ impl LiveService {
                 let config = self.0.config;
                 let loading_started = std::time::Instant::now();
                 let next = tokio::task::spawn_blocking(move || {
+                    tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
+                    let eviction_started = std::time::Instant::now();
                     old.evict_unpinned();
+                    tracing::info!(map = %digest, seconds = eviction_started.elapsed().as_secs_f64(), "publication runtime eviction finished");
+                    let open_started = std::time::Instant::now();
                     let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
                         .map_err(|e| e.to_string())?;
+                    tracing::info!(map = %digest, seconds = open_started.elapsed().as_secs_f64(), "publication shard loading finished");
                     if set.map_digest != digest {
                         return Err("candidate map digest mismatch".into());
                     }
@@ -248,7 +253,10 @@ impl LiveService {
                     {
                         return Err("candidate changes publication identity".into());
                     }
-                    ServiceState::build_reusing(set, config, None, Some(&old))
+                    let build_started = std::time::Instant::now();
+                    let state = ServiceState::build_reusing(set, config, None, Some(&old));
+                    tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
+                    state
                 })
                 .await
                 .map_err(|e| e.to_string())??;

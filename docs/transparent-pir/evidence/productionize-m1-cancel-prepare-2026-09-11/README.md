@@ -59,3 +59,29 @@ withdrawals. Maximum public freshness is 21.460 seconds, maximum replica freshne
 is 20.437 seconds, and minimum available RAM is 26.500%. Persistent storage policy
 and helper identity remain verified; no cache write failures are recorded.
 This remains a partial acceptance window.
+
+## One-hour checkpoint
+
+The [checkpoint](one-hour-checkpoint.json) at 2026-09-11T12:23:21.740032+00:00
+confirms the same supervisor remains active after 3,620.499 seconds, with 45 new
+blocks, 53,205 exact queries and 39 retries, zero mismatches and no in-run routing
+withdrawals. Maximum public freshness is 22.031 seconds, maximum replica freshness
+is 22.034 seconds, and minimum available RAM is 26.500%. Persistent storage policy
+and helper identity remain verified; no cache write failures are recorded.
+This remains a partial acceptance window, not an M1 pass.
+
+## Terminal failure
+
+This run failed at 2026-09-11T13:12:52.089430+00:00 after 6,590.864 seconds.
+The [raw final run](failed-canary.tar.gz) records replica recent-01 freshness
+exceeding 60 seconds at block 3479699 (60.466 seconds). It contains 96,160 exact
+query results, 77 retries and zero mismatches. No in-run routing withdrawal was
+recorded. This run does not qualify M1 and must not be resumed for acceptance credit.
+
+The [reconciler log](failure-reconciler.log) isolates preparation of map
+`3d82a3f77e8bc0fedc2431027d082539ae3f75583808d08a37f075d75b87eeb0`
+to 58.918 seconds loading and 5.901 seconds warming, completing at 13:13:00 UTC.
+The [controller log](failure-controller.log) records subsequent successful
+publication of height 3479701 at 13:13:37 UTC. Its recent-01 preparation loaded
+in 1.169 seconds and warmed in 4.485 seconds. The underlying cause of the
+intermittent loading stall remains under investigation.

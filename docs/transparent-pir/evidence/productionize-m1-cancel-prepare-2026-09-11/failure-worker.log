@@ -1,0 +1,22 @@
+2026-09-11T13:11:53+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:11:53.447931Z  INFO transparent_shard_server::runtime::disk: runtime disk collection stages lock_wait_seconds=4.1973e-5 pruning_seconds=0.000321288 freed_bytes=268370048
+2026-09-11T13:11:53+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:11:53.462233Z  INFO transparent_shard_server::live: publication collection stages snapshot_seconds=0.00095026 disk_seconds=0.001451024 directory_seconds=0.013211796 disk_freed_bytes=268370048
+2026-09-11T13:11:54+00:00 transparent-pir-recent-01 sshd[853376]: Accepted publickey for root from 10.142.0.3 port 39688 ssh2: ED25519 SHA256:uJpggjTWPrl9yipLHkd3ytJIASymytnZUqnt8SkAOzk
+2026-09-11T13:11:54+00:00 transparent-pir-recent-01 sshd[853376]: pam_unix(sshd:session): session opened for user root(uid=0) by root(uid=0)
+2026-09-11T13:11:54+00:00 transparent-pir-recent-01 systemd-logind[913]: New session 80364 of user root.
+2026-09-11T13:11:54+00:00 transparent-pir-recent-01 systemd[1]: Started session-80364.scope - Session 80364 of User root.
+2026-09-11T13:11:55+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:11:55.661600Z  INFO transparent_shard_server::runtime: retired runtime memory reclaimed rss_before=5261246464 rss_after=4703375360
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:13:00.385892Z  INFO transparent_shard_server::service: prewarm finished warm=28 target=28 failed=0 seconds=5.9010821799999995
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:13:00.385951Z  INFO transparent_shard_server::live: publication preparation stages map=3d82a3f77e8bc0fedc2431027d082539ae3f75583808d08a37f075d75b87eeb0 loading_seconds=58.918333558 warming_seconds=5.901160112
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 sshd[853376]: Received disconnect from 10.142.0.3 port 39688:11: disconnected by user
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 sshd[853376]: Disconnected from user root 10.142.0.3 port 39688
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 sshd[853376]: pam_unix(sshd:session): session closed for user root
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 systemd[1]: session-80364.scope: Deactivated successfully.
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 systemd-logind[913]: Session 80364 logged out. Waiting for processes to exit.
+2026-09-11T13:13:00+00:00 transparent-pir-recent-01 systemd-logind[913]: Removed session 80364.
+2026-09-11T13:13:04+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:13:04.735779Z  INFO transparent_shard_server::runtime::disk: runtime disk collection stages lock_wait_seconds=3.295470346 pruning_seconds=0.000513394 freed_bytes=268370048
+2026-09-11T13:13:04+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:13:04.753310Z  INFO transparent_shard_server::live: publication collection stages snapshot_seconds=0.001162764 disk_seconds=3.296062415 directory_seconds=0.017455258 disk_freed_bytes=268370048
+2026-09-11T13:13:07+00:00 transparent-pir-recent-01 sshd[853640]: Accepted publickey for root from 10.142.0.3 port 51484 ssh2: ED25519 SHA256:uJpggjTWPrl9yipLHkd3ytJIASymytnZUqnt8SkAOzk
+2026-09-11T13:13:07+00:00 transparent-pir-recent-01 sshd[853640]: pam_unix(sshd:session): session opened for user root(uid=0) by root(uid=0)
+2026-09-11T13:13:07+00:00 transparent-pir-recent-01 systemd-logind[913]: New session 80365 of user root.
+2026-09-11T13:13:07+00:00 transparent-pir-recent-01 systemd[1]: Started session-80365.scope - Session 80365 of User root.
+2026-09-11T13:13:08+00:00 transparent-pir-recent-01 transparent-shard-server[812955]: 2026-09-11T13:13:08.332081Z  INFO transparent_shard_server::runtime: retired runtime memory reclaimed rss_before=5150720000 rss_after=4712140800

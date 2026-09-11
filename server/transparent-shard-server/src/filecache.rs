@@ -6,8 +6,20 @@
 
 pub(crate) fn consumed(file: &std::fs::File) {
     #[cfg(target_os = "linux")]
-    if let Err(error) = rustix::fs::fadvise(file, 0, None, rustix::fs::Advice::DontNeed) {
-        tracing::debug!(%error, "public artifact cache advice unavailable");
+    {
+        let started = std::time::Instant::now();
+        if let Err(error) = rustix::fs::fadvise(file, 0, None, rustix::fs::Advice::DontNeed) {
+            tracing::debug!(%error, "public artifact cache advice unavailable");
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= std::time::Duration::from_millis(100) {
+            use std::os::fd::AsRawFd;
+            tracing::warn!(
+                fd = file.as_raw_fd(),
+                seconds = elapsed.as_secs_f64(),
+                "public artifact cache advice delayed"
+            );
+        }
     }
     #[cfg(not(target_os = "linux"))]
     let _ = file;
