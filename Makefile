@@ -34,6 +34,7 @@ check-ops:
 	python3 ops/tests/test_transparent_burst.py
 	python3 ops/tests/test_regression_recut.py
 	python3 ops/tests/test_regression_fixture_compare.py
+	python3 ops/tests/test_observation_audit.py
 	python3 -m unittest discover -s ops/tests -p 'test_transparent_stage_timing.py'
 
 .PHONY: check-reports

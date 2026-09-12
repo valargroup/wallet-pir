@@ -365,6 +365,33 @@ replica coverage. Future candidates and withdrawn/orphaned publications cannot
 use this path.
 
 
+Audit a closed observation with `ops/scripts/audit-transparent-observation.py`
+against the extracted bundle. The supervisor cannot certify a gate shorter than
+the one it was launched with, and a monitor that fails writes a thin result with
+no provenance, so acceptance is a separate audit rather than an exit code. Every
+threshold is a flag defaulting to the gate above; the report names each one that
+departs from the default or from the value the run was launched with, so a
+relaxed gate is visible in the evidence. It reads a directory, contacts no host
+and changes nothing.
+
+```sh
+python3 ops/scripts/audit-transparent-observation.py \
+  --observation <extracted>/observation \
+  --canary-result <canary>/result.json --upgrade-result <upgrade>/result.json \
+  --out <evidence>/audit.json
+```
+
+Cross-stage reconciliation compares the worker binary and roster digests, which
+must agree across the canary, the upgrade and the observation. It deliberately
+does not compare `fleet_config_sha256` across stages: the canary and the full
+fleet legitimately run different configurations, and that digest is instead
+required to agree among the six observation workers. A worker whose result
+reports identity its own `/v1/ready` attestation contradicts fails.
+
+A freshness sample at or just past its budget records the monitor abandoning the
+read. It bounds the true recovery time from below and is never a catch-up
+measurement; establish the actual time from the worker log before quoting one.
+
 The hardening observer performs at most two attempts for a read-only
 HTTP GET after a reset, broken pipe, remote disconnect or unexpected TLS EOF.
 Both attempts share the original eight-second budget; the retry waits 50 ms.
