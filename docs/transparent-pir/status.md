@@ -46,10 +46,17 @@ responses, zero mismatches and 84 retries. The router and recent-03 had no servi
 restarts; membership additions caused router reloads during the failure.
 An isolated four-client test reproduced connection resets on installed Caddy
 2.6.2 (12 failed requests across 100 reloads). Caddy 2.11.4 alone also failed
-its isolated reload test; neither a router upgrade nor the proposed bounded
-observer read retry has been deployed. Qualification is ongoing. Failed-run
-time does not count. **M1 remains open pending a fresh full observation and
-completion audit.** See the linked
+its isolated reload test. The combined Caddy 2.11.4 and bounded observer retry
+passed 100 isolated reloads with 2,051 successful requests, 117 recorded recoveries
+and zero unrecovered errors. Full repository checks passed for operations commit
+`0e2c003`. The guarded router upgrade passed September 12 at 00:48:57 UTC and
+verified the running binary before reopening canonical public service.
+A fresh observation started at 00:49:59 UTC under
+`transparent-m1-http-retry-observation.service`, PID 697911. All six monitors
+were active and advancing at 00:50 UTC. Worker binaries and fleet configuration
+are unchanged. See [HTTP qualification and deployment evidence](evidence/productionize-m1-http-retry-2026-09-12/README.md).
+Failed-run time does not count. **M1 remains open pending the fresh full
+observation and completion audit.** See the linked
 deferred-collection evidence for raw failure, recovery, upgrade and launch records.
 
 ## M1 managed storage-policy canary: failed 2026-09-11, 11:10 UTC

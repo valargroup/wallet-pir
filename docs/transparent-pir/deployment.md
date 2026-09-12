@@ -365,7 +365,7 @@ replica coverage. Future candidates and withdrawn/orphaned publications cannot
 use this path.
 
 
-The candidate hardening observer performs at most two attempts for a read-only
+The hardening observer performs at most two attempts for a read-only
 HTTP GET after a reset, broken pipe, remote disconnect or unexpected TLS EOF.
 Both attempts share the original eight-second budget; the retry waits 50 ms.
 It records each caught failure and recovery and includes all elapsed time in

@@ -48,8 +48,27 @@ Every caught transport failure and recovery is recorded. HTTP status errors,
 certificate validation failures, arbitrary TLS alerts, timeouts and malformed
 content are not retried. Publication identity, routing withdrawal and freshness
 checks are unchanged; elapsed retry time is included in freshness. Results record
-the monitor hash and retry policy. This is a candidate, not deployed acceptance.
+the monitor hash and retry policy. The deployed observer uses this policy; acceptance is still pending.
 
 Ten focused monitor tests and the [full repository check](make-check.log) passed.
-The [guarded upgrade script](upgrade-router.py) is prepared; deployment is pending.
-M1 remains open.
+The [guarded upgrade script](upgrade-router.py) completed successfully at
+00:48:57 UTC on September 12. [Deployment and observation-start evidence](upgrade-and-observation-start.tar.gz)
+contains the saved configuration, original unit, running-binary verification,
+terminal upgrade result, supervisor, initial readiness and provenance.
+
+Caddy 2.11.4 runs via `/etc/systemd/system/caddy.service.d/transparent-version.conf`
+from `/usr/local/lib/transparent-router/caddy-2.11.4`. The packaged `/usr/bin/caddy`
+2.6.2 remains intact for rollback; the override pins both start and reload.
+The initial restart was guarded. Canonical warm advertised service was verified
+before reopening, followed by public-origin verification.
+
+The fresh all-six-worker observation began at `2026-09-12T00:49:59.418333+00:00`,
+unit `transparent-m1-http-retry-observation.service`, initial PID 697911.
+Operations commit is `0e2c003`; worker source remains `a5f79ed` and worker binary
+remains `200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62`.
+Monitor SHA-256 is `16be140a77dec3d3e67b76acf6a7f5b424f65c6f362a7becb3f6253ad896d23b`.
+All six monitors advanced at 00:50 UTC. The supervisor requires 86,400 seconds
+and 300 canonical blocks per monitor. Existing maintenance restoration remains
+scheduled with no exemptions. Earliest finish is September 13 at approximately
+00:50 UTC (September 12, 18:50 Edmonton). M1 remains open pending completion
+and audit; the failed observation is not credited.
