@@ -365,6 +365,16 @@ replica coverage. Future candidates and withdrawn/orphaned publications cannot
 use this path.
 
 
+The candidate hardening observer performs at most two attempts for a read-only
+HTTP GET after a reset, broken pipe, remote disconnect or unexpected TLS EOF.
+Both attempts share the original eight-second budget; the retry waits 50 ms.
+It records each caught failure and recovery and includes all elapsed time in
+freshness. HTTP rejection, certificate validation failures, arbitrary TLS alerts,
+timeouts and malformed content are not retried. Routing withdrawal and exactness
+checks remain mandatory. The result records monitor identity and retry policy.
+See [qualification evidence](evidence/productionize-m1-http-retry-2026-09-12/README.md)
+and [status](status.md) for deployment state.
+
 ## Opt-in archive parent filters
 
 The user approved publishing the evaluated archive configuration after accepting the large-script overhead. Use **8 consecutive sealed archive shards per parent, M=100, P=6**. Keep recent and provisional filters direct. Parent-enabled clients accept the coarse-activity leakage described in the contract. The production manifest URL is `https://enhance-pir.valargroup.dev/v1/filters/parents/archive-wide.json`.

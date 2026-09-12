@@ -46,3 +46,63 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNotNone(M.routing_failure(baseline, {**baseline, 'unavailable_events':0}))
         self.assertIsNotNone(M.routing_failure(baseline, {**baseline, 'epoch':'b'*32}))
         self.assertIsNotNone(M.routing_failure(None, {**baseline, 'available':False}))
+
+class ObservedReadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reset_retry_shares_deadline_and_is_recorded(self):
+        from unittest.mock import patch, AsyncMock
+        clock = [0.0]
+        budgets = []
+        events = []
+        async def read(fn, url, timeout):
+            budgets.append(timeout)
+            clock[0] += 3
+            if len(budgets) == 1:
+                raise M.urllib.error.URLError(ConnectionResetError('reload'))
+            return b'publication'
+        async def sleep(seconds):
+            clock[0] += seconds
+        with patch.object(M.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(M.asyncio, 'to_thread', side_effect=read), \
+             patch.object(M.asyncio, 'sleep', side_effect=sleep):
+            value = await M.fetch_observed('https://example.test/v1/shards', lambda event, **v: events.append((event, v)))
+        self.assertEqual(value, b'publication')
+        self.assertEqual(budgets, [8, 4.95])
+        self.assertEqual([e[0] for e in events], ['http_transport_failure', 'http_transport_recovered'])
+        self.assertTrue(events[0][1]['retry'])
+        self.assertAlmostEqual(events[1][1]['elapsed_seconds'], 6.05)
+        # A successful retry cannot hide a block that arrived after its deadline.
+        with self.assertRaisesRegex(RuntimeError, 'arrived late'):
+            M.completed_blocks({1: -25}, {}, 1, clock[0], 30)
+
+    async def test_second_disconnect_fails(self):
+        from unittest.mock import patch, AsyncMock
+        events = []
+        with patch.object(M.asyncio, 'to_thread', new=AsyncMock(side_effect=M.http.client.RemoteDisconnected('closed'))) as read, \
+             patch.object(M.asyncio, 'sleep', new=AsyncMock()):
+            with self.assertRaises(M.http.client.RemoteDisconnected):
+                await M.fetch_observed('https://example.test', lambda e, **v: events.append(v))
+        self.assertEqual(read.await_count, 2)
+        self.assertEqual([e['retry'] for e in events], [True, False])
+
+    async def test_rejections_validation_and_timeouts_are_not_retried(self):
+        from unittest.mock import patch, AsyncMock
+        errors = [M.urllib.error.HTTPError('https://example.test', 503, 'unavailable', {}, None),
+                  M.urllib.error.URLError(M.ssl.SSLCertVerificationError('certificate')),
+                  TimeoutError('read timed out'), ValueError('invalid content')]
+        for error in errors:
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(M.asyncio, 'to_thread', new=AsyncMock(side_effect=error)) as read:
+                with self.assertRaises(type(error)):
+                    await M.fetch_observed('https://example.test', lambda *a, **k: None)
+                self.assertEqual(read.await_count, 1)
+
+    async def test_late_read_is_rejected_even_if_transport_returns_success(self):
+        from unittest.mock import patch
+        clock = [0]
+        async def read(*args):
+            clock[0] = 9
+            return b'late'
+        with patch.object(M.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(M.asyncio, 'to_thread', side_effect=read):
+            with self.assertRaises(TimeoutError):
+                await M.fetch_observed('https://example.test', lambda *a, **k: None)

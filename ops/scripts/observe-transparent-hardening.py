@@ -9,16 +9,55 @@ import asyncio
 import datetime
 import importlib.util
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import time
 import subprocess
+import ssl
+import urllib.error
 import urllib.request
 
 
-def fetch(url):
-    with urllib.request.urlopen(url, timeout=8) as response:
+def fetch(url, timeout=8):
+    with urllib.request.urlopen(url, timeout=timeout) as response:
         return response.read()
+
+
+async def fetch_observed(url, emit):
+    """Retry one disconnected GET without resetting its elapsed-time budget.
+
+    A router reload can disconnect a handshake or an idle HTTP connection.
+    HTTP rejection, certificate validation, malformed content and timeouts are
+    not retryable here. Callers still validate publication identity and charge
+    the entire read (including retry) against block freshness.
+    """
+    started = time.monotonic()
+    deadline = started + 8
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('publication read exceeded eight-second budget')
+        try:
+            value = await asyncio.to_thread(fetch, url, remaining)
+        except (urllib.error.URLError, ConnectionError, http.client.RemoteDisconnected, ssl.SSLEOFError) as error:
+            reason = error.reason if isinstance(error, urllib.error.URLError) else error
+            retryable = not isinstance(error, urllib.error.HTTPError) and isinstance(
+                reason, (ConnectionResetError, BrokenPipeError, http.client.RemoteDisconnected, ssl.SSLEOFError))
+            retry = retryable and attempt == 0 and time.monotonic() + 0.05 < deadline
+            emit('http_transport_failure', url=url, attempt=attempt+1,
+                 error_type=type(reason).__name__, error=str(reason),
+                 elapsed_seconds=time.monotonic()-started, retry=retry)
+            if not retry:
+                raise
+            await asyncio.sleep(0.05)
+            continue
+        if time.monotonic() > deadline:
+            raise TimeoutError('publication read exceeded eight-second budget')
+        if attempt:
+            emit('http_transport_recovered', url=url, attempts=attempt+1,
+                 elapsed_seconds=time.monotonic()-started)
+        return value
 
 
 def facts(raw):
@@ -96,6 +135,8 @@ async def observe(args):
     spec.loader.exec_module(module)
     fleet = module.Fleet(json.loads(Path(args.fleet_config).read_text()))
     provenance = dict(worker=args.worker, binary_sha256=args.binary_sha256,
+                      monitor_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                      http_read_policy=dict(attempts=2, total_budget_seconds=8, retry_delay_seconds=0.05),
                       fleet_script_sha256=hashlib.sha256(Path(args.fleet_script).read_bytes()).hexdigest(),
                       fleet_config_sha256=hashlib.sha256(Path(args.fleet_config).read_bytes()).hexdigest(),
                       roster_sha256=hashlib.sha256(Path(fleet.c['roster']).read_bytes()).hexdigest(),
@@ -172,10 +213,10 @@ async def observe(args):
                 raise RuntimeError('node tip changed during sampling; restart with a coherent chain observation')
             # Re-read A to distinguish a normal activation between two HTTP
             # reads from origins that disagree while publication is stable.
-            a = await asyncio.to_thread(fetch, args.filter_origin+'/v1/filters/shards')
-            b = await asyncio.to_thread(fetch, args.shard_origin+'/v1/shards')
+            a = await fetch_observed(args.filter_origin+'/v1/filters/shards', emit)
+            b = await fetch_observed(args.shard_origin+'/v1/shards', emit)
             if a != b:
-                again = await asyncio.to_thread(fetch, args.filter_origin+'/v1/filters/shards')
+                again = await fetch_observed(args.filter_origin+'/v1/filters/shards', emit)
                 if b != again:
                     raise RuntimeError('public origins disagree across a stable re-read')
                 emit('publication_changed_between_reads')
@@ -188,7 +229,7 @@ async def observe(args):
             visible.update(completed)
             for height, latency in completed.items():
                 emit('block_visible', height=height, seconds=latency, public_height=tail['end_height'])
-            canary_map = json.loads(await asyncio.to_thread(fetch, 'http://'+worker['upstream']+'/v1/shards'))
+            canary_map = json.loads(await fetch_observed('http://'+worker['upstream']+'/v1/shards', emit))
             canary_tail = canary_map['shards'][-1]
             if await fleet.canonical_hash(canary_tail['end_height']) != canary_tail['terminal_block_hash']:
                 raise RuntimeError('canary endpoint is not canonical')

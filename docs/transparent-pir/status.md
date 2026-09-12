@@ -39,10 +39,17 @@ Operations fix `d0ae00e` supplies missing legacy cache configuration and bounded
 cold-start budgets. The corrected all-six-worker upgrade passed at 22:10:59 UTC,
 on unchanged worker source `a5f79ed760e458b873b5382a1e4243dda632d1f7`.
 A separate 24-hour observation started at 22:12:40 UTC under
-`transparent-m1-archive-cache-observation.service`, PID 418647. At 22:13:12 UTC
-it was active, all six workers had ready samples and both sustained query clients
-were producing exact responses. Failed-run time does not count. **M1 remains
-open pending the full observation and completion audit.** See the linked
+`transparent-m1-archive-cache-observation.service`. It failed on September 12 at
+00:31:21 UTC after 8,320 seconds when a public metadata TLS handshake was reset.
+The supervisor stopped all monitors. Closed query logs contain 127,133 exact
+responses, zero mismatches and 84 retries. The router and recent-03 had no service
+restarts; membership additions caused router reloads during the failure.
+An isolated four-client test reproduced connection resets on installed Caddy
+2.6.2 (12 failed requests across 100 reloads). Caddy 2.11.4 alone also failed
+its isolated reload test; neither a router upgrade nor the proposed bounded
+observer read retry has been deployed. Qualification is ongoing. Failed-run
+time does not count. **M1 remains open pending a fresh full observation and
+completion audit.** See the linked
 deferred-collection evidence for raw failure, recovery, upgrade and launch records.
 
 ## M1 managed storage-policy canary: failed 2026-09-11, 11:10 UTC
