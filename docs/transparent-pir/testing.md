@@ -74,6 +74,47 @@ necessary for ingest conformance. Fixed-script birthdays do not establish an
 address derivation or gap-limit policy, and coinbase recovery does not establish
 spendability.
 
+## Re-cutting the fixture for a new publication
+
+The runner compares the served map byte for byte with `map_sha256` and refuses
+before any private query, so a fixture frozen against one publication cannot
+gate a later one. Continuous publication moves the anchor and, because
+`shard-cutoff` derives the cutoff from the anchor header's time rather than a
+fixed height, it moves the tier cutoff too.
+
+A re-cut is therefore not a substitution of the terminal height. Each checkpoint
+keeps, or follows, whichever boundary it was chosen against: heights taken from a
+script's actual history stay put; tier-boundary probes at C-1, C and C+1 follow
+the new cutoff; the terminal sync and `recent-birthday`'s A-1 follow the new
+anchor. `ops/scripts/recut-regression-cases.py` records that classification and
+proves it with `--self-check`, which regenerates the previous specification from
+the previous anchor and cutoff and refuses unless it matches the frozen file.
+
+```sh
+python3 ops/scripts/recut-regression-cases.py \
+  --previous-cases server/transparent-regression/fixtures/mainnet-cases.json \
+  --self-check --cutoff-json /path/to/publication/cutoff.json \
+  --out cases-next.json
+```
+
+It samples `--tail-checkpoints` heights from the span published since the last
+cut, so the gate covers revisions continuous publication produced rather than one
+static full-chain publication. It writes a case specification only: it runs no
+export, reads no journal and contacts no service.
+
+Then export against the accepted publication, review, and freeze. Three
+conditions only a journal replay settles, which the tool prints before the run:
+`recent-birthday`'s birthday moves with the cutoff and the export refuses if any
+of its scripts were active in the span it moved across; the unused cases must
+still have no activity at the new anchor; and the coinbase checkpoints stay at
+their real heights, so that case stops probing a near-tip coinbase. Compare the
+exported expectations with the previous fixture before freezing — a case whose
+event count or balance changed character needs review, not acceptance.
+
+Run `regression-export` from a committed revision. The 2026-09-08 fixture was
+cut with an uncommitted working-tree build and says so; a release gate should not
+repeat that.
+
 ## Local conformance checks
 
 The [accepted-anchor HTTP tests](../../server/transparent-shard-server/tests/wallet_anchor.rs)
