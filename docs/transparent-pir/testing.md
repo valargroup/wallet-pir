@@ -102,14 +102,29 @@ cut, so the gate covers revisions continuous publication produced rather than on
 static full-chain publication. It writes a case specification only: it runs no
 export, reads no journal and contacts no service.
 
-Then export against the accepted publication, review, and freeze. Three
-conditions only a journal replay settles, which the tool prints before the run:
+Then export against the accepted publication and compare the result with the
+fixture it replaces before freezing:
+
+```sh
+python3 ops/scripts/compare-regression-fixtures.py \
+  --previous server/transparent-regression/fixtures/mainnet.json \
+  --next fixture-next.json --out compare.json
+```
+
+It separates two findings. A checkpoint present at the same height in both
+fixtures must reduce to the same events, UTXOs, spends, history and balance,
+because both derive from a read-only replay of the same journal; a difference
+means sealed history was rewritten or ingest changed what it records, and it
+exits non-zero. Separately it reports cases whose character changed -- a profile
+whose meaning no longer holds, a script set that moved, an anchor state that
+moved by more than the tolerance. Those are decisions to make, not failures.
+
+Three further conditions only a journal replay settles, which the re-cut tool
+prints before the run:
 `recent-birthday`'s birthday moves with the cutoff and the export refuses if any
 of its scripts were active in the span it moved across; the unused cases must
 still have no activity at the new anchor; and the coinbase checkpoints stay at
-their real heights, so that case stops probing a near-tip coinbase. Compare the
-exported expectations with the previous fixture before freezing — a case whose
-event count or balance changed character needs review, not acceptance.
+their real heights, so that case stops probing a near-tip coinbase.
 
 Run `regression-export` from a committed revision. The 2026-09-08 fixture was
 cut with an uncommitted working-tree build and says so; a release gate should not
