@@ -38,6 +38,13 @@ Selection checked full histories before assigning labels: an assumed-unused
 repeated-byte P2SH script was active and was replaced; the coinbase case was
 selected from actual recent coinbase outputs and bounded to 1,643 events.
 
-The deployed suite must see this exact publication at both origins. A fixture
-passing offline validation does not mean the deployed service passed recovery.
-Run instructions and oracle limitations are in [testing](../../../docs/transparent-pir/testing.md).
+Both origins must still serve this set identity and these 173 sealed entries
+byte for byte. Shard 173 is the unsealed tail and is not pinned that way: it has
+been republished on every block since the export, so it is checked for
+continuity — same shard id, geometry, start height and parent hash, and a range
+that only grew — and the wallet syncs against the served map. The fixture bytes
+therefore stay valid across publications and are not reissued when the tail
+moves. Its own `map_sha256` records the export-time whole-map digest as
+provenance; it is not the gate. A fixture passing offline validation does not
+mean the deployed service passed recovery. Run instructions, the exact pinning
+rule and oracle limitations are in [testing](../../../docs/transparent-pir/testing.md).

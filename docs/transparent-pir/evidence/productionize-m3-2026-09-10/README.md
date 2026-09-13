@@ -323,5 +323,7 @@ tests as the client half of the outage rehearsals; and the `interrupted`
 completion word for the runbook's account of what a wallet shows after a
 crash.
 
-M6 inherits the two public-service gates above, the banner and label change
+All three gates above are required for M3, including the kill against the
+public services: the loopback kill recorded here establishes the library's
+behaviour, not the deployed services'. M6 inherits the banner and label change
 once M3 through M5 pass, and any non-blocking reviewer finding deferred there.

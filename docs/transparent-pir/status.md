@@ -136,10 +136,12 @@ scripts the tables cannot index is persisted and shown, a wallet reopened
 mid-run reads `interrupted`, and discovery keeps widening while a spend is
 unresolved. An independent reviewer's finding is part of the record.
 
-**M3 is not closed.** The deployed accepted-anchor regression suite and the
-application-level comparison on public paths are unexecuted because M1 is
-open; no private query was sent to the public services. Opt-in PIR balances
-remain non-authoritative and labelled so.
+**M3 is not closed.** Three gates are unexecuted because M1 is open: the
+deployed accepted-anchor regression suite, the application-level comparison on
+public paths, and the kill through the release library against the public
+services. No private query was sent to the public services; the recorded kills
+ran through the loopback bridge. Opt-in PIR balances remain non-authoritative
+and labelled so.
 
 ## M2 recovery application: source-verified 2026-09-09
 

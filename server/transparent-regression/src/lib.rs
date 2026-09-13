@@ -52,7 +52,7 @@ pub struct Case {
     pub required_from: u64,
     pub checkpoints: Vec<Checkpoint>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fixture {
     pub schema: String,

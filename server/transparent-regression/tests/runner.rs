@@ -4,6 +4,7 @@ mod common;
 use common::*;
 use sha2::{Digest, Sha256};
 use transparent_regression::{reference, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
+use transparent_shard::layout::RECENT_8K;
 use transparent_wallet::Anchor;
 #[tokio::test(flavor = "multi_thread")]
 async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
@@ -75,15 +76,15 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     std::fs::write(&input, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
     let output = temp.path().join("results");
     let executable = env!("CARGO_BIN_EXE_transparent-regression");
-    let make = |out: &std::path::Path| {
+    let make = |out: &std::path::Path, origin: &str| {
         let mut c = std::process::Command::new(executable);
         c.args([
             "--fixture",
             input.to_str().unwrap(),
             "--shard-url",
-            &base,
+            origin,
             "--filter-url",
-            &base,
+            origin,
             "--out-dir",
             out.to_str().unwrap(),
             "--source-sha",
@@ -95,7 +96,7 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
         ]);
         c
     };
-    let mut command = make(&output);
+    let mut command = make(&output, &base);
     let result = tokio::task::spawn_blocking(move || command.output().unwrap())
         .await
         .unwrap();
@@ -117,20 +118,88 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     );
     assert!(output.join("junit.xml").exists());
     assert!(output.join("paged/wallet.sqlite").exists());
-    // Drift is a failed run with every required case accounted for.
-    let mut changed = fixture;
-    changed.map_sha256 = "00".repeat(32);
-    std::fs::write(&input, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
-    let drift = temp.path().join("drift");
-    let mut command = make(&drift);
+    // A republished tail is not drift. The service now serves the same set with
+    // the tail at revision 1 under a new manifest digest, which is what a
+    // continuously publishing origin does between any two fetches; the fixture
+    // still pins its sealed entries and the run must still pass.
+    let moved = tempfile::tempdir().unwrap();
+    let republished = publish_with(moved.path(), &all, |_| &RECENT_8K, 1, "", hash_at);
+    assert!(
+        !republished.shards.last().unwrap().sealed,
+        "the synthetic set must end in an unsealed tail"
+    );
+    assert_ne!(
+        republished.shards.last().unwrap().manifest_digest,
+        fixture.map.shards.last().unwrap().manifest_digest
+    );
+    assert_eq!(
+        republished.shards[..republished.shards.len() - 1],
+        fixture.map.shards[..fixture.map.shards.len() - 1],
+        "republishing the tail must leave every sealed entry untouched"
+    );
+    let (moved_base, _) = serve_traced(moved.path()).await;
+    let advanced = temp.path().join("advanced");
+    let mut command = make(&advanced, &moved_base);
+    let result = tokio::task::spawn_blocking(move || command.output().unwrap())
+        .await
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "a republished tail must not read as drift: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(advanced.join("report.json")).unwrap()).unwrap();
+    assert_eq!(report["passed"], true);
+    assert_eq!(report["preflight"]["tail"]["revision"], 1u64);
+    assert_eq!(report["sealed_prefix_shards"], SHARDS - 1);
+
+    // Drift is a failed run with every required case accounted for. Each of
+    // these is a change the tail's block cadence cannot account for.
+    for (label, break_it) in [
+        (
+            "sealed",
+            Box::new(|f: &mut Fixture| f.map.shards[0].manifest_digest = "00".repeat(32))
+                as Box<dyn Fn(&mut Fixture)>,
+        ),
+        (
+            "shrunk-tail",
+            Box::new(|f: &mut Fixture| {
+                f.map.shards.last_mut().unwrap().end_height += 1;
+            }),
+        ),
+        (
+            "lineage",
+            Box::new(|f: &mut Fixture| f.map.range_envelope_version += 1),
+        ),
+    ] {
+        let mut changed = fixture.clone();
+        break_it(&mut changed);
+        std::fs::write(&input, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
+        let drift = temp.path().join(format!("drift-{label}"));
+        let mut command = make(&drift, &base);
+        let result = tokio::task::spawn_blocking(move || command.output().unwrap())
+            .await
+            .unwrap();
+        assert!(!result.status.success(), "{label} should have failed");
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(drift.join("report.json")).unwrap()).unwrap();
+        assert_eq!(report["passed"], false, "{label}");
+        assert_eq!(report["cases"].as_array().unwrap().len(), 1, "{label}");
+    }
+    // A tail that names another parent cannot be expressed as a well formed
+    // map at all: `check_shape` refuses the fixture before a request is sent,
+    // so there is no evidence directory to preserve.
+    let mut reparented = fixture.clone();
+    reparented.map.shards.last_mut().unwrap().parent_block_hash = "11".repeat(32);
+    std::fs::write(&input, serde_json::to_vec_pretty(&reparented).unwrap()).unwrap();
+    let refused = temp.path().join("refused");
+    let mut command = make(&refused, &base);
     let result = tokio::task::spawn_blocking(move || command.output().unwrap())
         .await
         .unwrap();
     assert!(!result.status.success());
-    let report: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(drift.join("report.json")).unwrap()).unwrap();
-    assert_eq!(report["passed"], false);
-    assert_eq!(report["cases"].as_array().unwrap().len(), 1);
+    assert!(!refused.exists(), "a malformed fixture must not open a run");
     let requests = requests.lock().unwrap();
     assert!(requests.iter().any(|r| r.contains("/query/pages")));
     for request in requests.iter() {

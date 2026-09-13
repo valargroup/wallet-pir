@@ -73,10 +73,13 @@ complete M0 or supersede earlier gate results.
   `7937d48df`. Fixture scope established: exact comparison of every
   required history with an independent block reducer, forks and reorgs, the
   interruption matrix, process kills including the real bridge, the shadow
-  comparison, a real-chain sample and an independent review. Still required
-  before M3 closes: the deployed accepted-anchor regression suite after M1
-  acceptance, and the application-level comparison on public paths in a window
-  agreed with the M1 operator.
+  comparison, a real-chain sample and an independent review. Those kills ran
+  through the `fixture-loopback` bridge, not the public services. Still
+  required before M3 closes, all three: the deployed accepted-anchor regression
+  suite after M1 acceptance; the application-level comparison on public paths;
+  and the kill through the release library against the public services
+  (`kill_recovery_test.dart`, `ZAKURA_KILL=1`). The last two share one window
+  agreed with the M1 operator. M6 inherits none of them.
 - [ ] M4 — Measure matched whole-wallet workflows and additional transparent traffic.
 - [ ] M5 — Accept capacity, alerts and bounded failure recovery on existing hardware.
 - [ ] M6 — Complete release review and the limited-beta observation.
@@ -216,6 +219,7 @@ Each completed gate links source commits, exact commands and evidence. Update st
 ## Accepted-anchor regression rollout
 
 - [ ] Record the first complete deployed run of the [accepted-anchor regression suite](testing.md) against its frozen full-chain fixture after fleet activation. Local conformance and source implementation do not establish this live gate. The [2026-09-08 preflight](evidence/regression-2026-09-08/README.md) refused the still-served three-shard pilot before any private queries.
+- [x] Resolve the runner's whole-map pin against a continuously publishing origin. The suite required both origins to serve the fixture's exact map bytes, but the map always ends in one unsealed tail republished on every block, so the pin could only ever hold against a frozen publication; the fixture's own tail revision has also long been withdrawn. The runner now pins the set identity and every sealed entry byte for byte, requires only continuity and growth from the tail, holds the tail on one parent for the length of a run, and syncs against the served map. The repeat checkpoint's no-private-query rule now applies where the anchor's shard is sealed and, where it is provisional, requires the same ledger from a re-derivation that reads nothing but the tail. Rule and evidence fields in [testing](testing.md); the frozen fixture is unchanged.
 
 ## Deployment-time improvements — 2026-09-08
 

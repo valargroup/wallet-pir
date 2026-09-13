@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -18,6 +18,26 @@ pub struct StageTotals {
     http_409: u64,
     http_503: u64,
     failures: u64,
+}
+
+/// Every shard id the recorded routes addressed, across all stages.
+///
+/// Read back out of the routes the report already carries rather than tracked
+/// separately, so this can never disagree with the evidence. `/v1/shards/init`
+/// and the filter routes have no shard id in that position and drop out.
+pub fn addressed_shards(stages: &BTreeMap<&'static str, StageTotals>) -> BTreeSet<u64> {
+    stages
+        .values()
+        .flat_map(|totals| totals.routes.iter())
+        .filter_map(|route| {
+            route
+                .strip_prefix("/v1/shards/")?
+                .split('/')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .collect()
 }
 
 /// The bytes a (payload, cost) reply carried, or its error.

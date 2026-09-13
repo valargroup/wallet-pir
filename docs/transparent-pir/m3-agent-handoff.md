@@ -40,10 +40,12 @@ Before M1 closes, the following can proceed against local fixtures:
   service.
 - The shadow-profile comparison harness and its isolation checks.
 
-After M1 closes: the deployed accepted-anchor regression suite
-([testing](testing.md)) against the accepted fleet, and the application-level
-comparison on public paths. Do not substitute the 20-wallet benchmark or the
-M2 live check for either.
+After M1 closes, all three: the deployed accepted-anchor regression suite
+([testing](testing.md)) against the accepted fleet, the application-level
+comparison on public paths, and the kill through the release library against
+the public services (`kill_recovery_test.dart`, `ZAKURA_KILL=1`). Do not
+substitute the 20-wallet benchmark, the M2 live check or the loopback kill for
+any of them.
 
 ## Read first
 
@@ -142,5 +144,5 @@ Deliver reviewable commits, an immutable evidence bundle with source
 revisions, commands, raw failures and a pass/fail result, and a
 requirement-by-requirement record. Identify anything that could not be
 validated and why. List what M4 and M5 inherit separately; do not mark M3
-complete while any mandatory fixture or the deployed regression suite is
-missing.
+complete while any mandatory fixture, the deployed regression suite, the
+public-path comparison or the public-services kill is missing.

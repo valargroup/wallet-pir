@@ -14,7 +14,35 @@ directory for each run. The manually dispatched
 [workflow](../../.github/workflows/transparent-regression.yml) provides the same
 post-deployment release check. It does not deploy or restart anything.
 
-Both origins must serve the fixture's canonical compact map bytes and revision identities. The source publication file has a separate checksum because it may use pretty JSON.
+## What a fixture pins in a live publication
+
+A publication always ends in one unsealed tail shard, republished on a block
+cadence under a new revision and manifest digest, so a whole-map digest pins a
+publication that stopped existing a block after the export. What the fixture
+pins is therefore the set identity and **every sealed entry, byte for byte**:
+sealed contents are immutable, so those entries carry the guarantee. Both
+origins are checked against it before any wallet is opened and again after each
+case's last checkpoint.
+
+The tail may only have grown, keeping its shard id, geometry, start height and
+parent hash; it may since have sealed, and shards may have been appended after
+it. A tail that shrank, was re-parented or was renumbered is drift and fails,
+as does any change to a sealed entry or to the set identity. Within one run the
+tail must also stay on the same parent and never go backwards, and a seal may
+only append the next shard — that is what the run holds in place of the digest.
+
+The wallet is handed the *served* map, not the fixture's: the fixture's own tail
+revision was withdrawn many republications ago and only the sealed entries it
+pins are still fetchable. The fixture says what must not have changed and what
+the ledger must come out as.
+
+`report.json` records, for each pin, both origins' observed map digests, the
+tail's shard id, revision, seal state, end height and manifest digest, and the
+skew in blocks between the two origins. It also records the fixture's
+`sealed_prefix_sha256` and `sealed_prefix_shards`. The export-time `map_sha256`
+and the source publication file's separate checksum (it may use pretty JSON)
+are kept as provenance, not as the gate.
+
 Publication drift, unavailability, a deadline, any incomplete sync, or an
 unexecuted required case fails the run. Fixtures never update themselves to
 match a service response. Run after deployment reaches a stable publication;
@@ -25,6 +53,15 @@ a claim about wallet population frequencies. Its sequence of exact block
 heights includes checkpoints within shards. The runner syncs, closes SQLite,
 reopens it and compares the saved state at every checkpoint. It then repeats
 the final checkpoint and separately restores it from an empty store.
+
+The repeat is where an idempotent re-sync is checked, and the rule depends on
+the anchor's coverage. When the shard covering the anchor is sealed, the repeat
+must issue no private query at all. When the anchor lies in the unsealed tail,
+coverage there is provisional and the contract has the wallet re-derive it
+whenever the tail is republished, so requiring no query would be requiring the
+tail to stand still; what must hold instead is that the repeat reaches the same
+ledger and reads nothing but the tail, leaving settled coverage below it
+unpaid for a second time. Each checkpoint records which rule applied.
 
 `report.json` records case outcomes, exact anchors, stage counts, payload bytes,
 and elapsed time; `junit.xml` supports CI reporting. A mismatch writes both
