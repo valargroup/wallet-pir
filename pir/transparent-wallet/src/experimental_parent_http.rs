@@ -41,8 +41,7 @@ impl ParentExperiment {
             0,
             None,
             &source.observer,
-            source.attempts,
-            source.retry_overload,
+            source.retry,
         )
     }
     pub fn prepare(

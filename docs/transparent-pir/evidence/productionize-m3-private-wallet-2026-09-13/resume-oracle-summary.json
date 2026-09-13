@@ -1,0 +1,14 @@
+{
+  "blocks": 2323,
+  "start": 3480000,
+  "anchor": 3482322,
+  "chain_contiguous": true,
+  "anchor_corroborated": true,
+  "compact_transactions": 10221,
+  "transparent_outputs": 18788,
+  "transparent_inputs": 28491,
+  "expected_receives": 3,
+  "expected_spends": 2,
+  "watched_scripts": 17,
+  "scope": "block-based independent reducer; watched script inputs from wallet derivation; birthday supplied by operator; no wallet events read"
+}

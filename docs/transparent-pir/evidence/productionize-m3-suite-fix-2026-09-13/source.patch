@@ -1,0 +1,596 @@
+diff --git a/pir/transparent-wallet/src/experimental_parent_http.rs b/pir/transparent-wallet/src/experimental_parent_http.rs
+index 9117e8c..722442f 100644
+--- a/pir/transparent-wallet/src/experimental_parent_http.rs
++++ b/pir/transparent-wallet/src/experimental_parent_http.rs
+@@ -41,8 +41,7 @@ impl ParentExperiment {
+             0,
+             None,
+             &source.observer,
+-            source.attempts,
+-            source.retry_overload,
++            source.retry,
+         )
+     }
+     pub fn prepare(
+diff --git a/pir/transparent-wallet/src/http.rs b/pir/transparent-wallet/src/http.rs
+index 1cc1e0f..975bc63 100644
+--- a/pir/transparent-wallet/src/http.rs
++++ b/pir/transparent-wallet/src/http.rs
+@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
+ /// How the reference clients are built.
+ #[derive(Clone, Debug)]
+ pub struct HttpOptions {
++    /// Total budget for one HTTP call, including every attempt and backoff.
+     pub timeout: Duration,
+     pub user_agent: String,
+ }
+@@ -114,21 +115,35 @@ pub struct HttpObservation {
+ /// Optional local observer. Called once per attempt, including transport errors.
+ pub type HttpObserver = Arc<dyn Fn(HttpObservation) + Send + Sync>;
+ 
+-/// Opt-in retries for transient transport failures. The observer records every
+-/// attempt; callers must still impose an overall recovery deadline.
++#[derive(Clone, Copy)]
++struct RetryPolicy {
++    attempts: usize,
++    overload: bool,
++    timeout: Duration,
++}
++
++/// Opt-in retries replay the same buffered request within one shared deadline.
++/// Application decoding and revision validation occur after this function and
++/// are never retried here. The observer records every attempt; callers must
++/// still impose an overall recovery deadline.
+ fn execute(
+     request: reqwest::blocking::RequestBuilder,
+     stage: &'static str,
+     bytes_up: u64,
+     binding: Option<(u64, &str)>,
+     observer: &Option<HttpObserver>,
+-    attempts: usize,
+-    retry_overload: bool,
++    policy: RetryPolicy,
+ ) -> Result<Vec<u8>, BoxError> {
+     static REQUEST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+     let request_id = REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+-    let attempts = attempts.max(1);
++    let attempts = policy.attempts.max(1);
++    let retry_overload = policy.overload;
++    let started = Instant::now();
+     for attempt in 0..attempts {
++        let remaining = policy.timeout.saturating_sub(started.elapsed());
++        if remaining.is_zero() {
++            return Err("HTTP call deadline exhausted".into());
++        }
+         let observed = observer.as_ref().map(|observer| {
+             let observer = observer.clone();
+             Arc::new(move |mut event: HttpObservation| {
+@@ -139,7 +154,8 @@ fn execute(
+         });
+         let copy = request
+             .try_clone()
+-            .ok_or("HTTP request cannot be retried")?;
++            .ok_or("HTTP request cannot be retried")?
++            .timeout(remaining);
+         let result = execute_once(copy, stage, bytes_up, binding, &observed);
+         let delay = result.as_ref().err().and_then(|error| {
+             if !retry_overload
+@@ -186,7 +202,12 @@ fn execute(
+         if attempt + 1 == attempts || delay.is_none() {
+             return result;
+         }
+-        std::thread::sleep(delay.unwrap());
++        let delay = delay.unwrap();
++        if delay >= policy.timeout.saturating_sub(started.elapsed()) {
++            // Return the last refusal/error without oversleeping its budget.
++            return result;
++        }
++        std::thread::sleep(delay);
+     }
+     unreachable!("attempts is positive")
+ }
+@@ -213,13 +234,6 @@ fn execute_once(
+     binding: Option<(u64, &str)>,
+     observer: &Option<HttpObserver>,
+ ) -> Result<Vec<u8>, BoxError> {
+-    if observer.is_none() {
+-        let response = request.send()?;
+-        return match binding {
+-            Some((shard, revision)) => checked(response, shard, revision),
+-            None => response_body(response.error_for_status()?, stage),
+-        };
+-    }
+     let started = Instant::now();
+     let mut status = None;
+     let mut bytes_down = 0;
+@@ -253,6 +267,15 @@ fn execute_once(
+                 return Err(status_error(code, shard, revision, &body));
+             }
+         } else if let Some(error) = public_error {
++            if let Some(overloaded) =
++                crate::transport::Overloaded::from_http(code.as_u16(), retry_after.as_deref())
++            {
++                return Err(Box::new(HttpStatusError {
++                    status: code.as_u16(),
++                    message: overloaded.to_string(),
++                    cause: Some(Box::new(overloaded)),
++                }));
++            }
+             return Err(Box::new(error) as BoxError);
+         }
+         Ok(body)
+@@ -290,7 +313,7 @@ fn execute_once(
+ pub struct HttpResourceClient {
+     client: reqwest::blocking::Client,
+     observer: Option<HttpObserver>,
+-    attempts: usize,
++    retry: RetryPolicy,
+ }
+ impl HttpResourceClient {
+     pub fn new(
+@@ -308,7 +331,11 @@ impl HttpResourceClient {
+                 .no_zstd()
+                 .build()?,
+             observer,
+-            attempts: attempts.clamp(1, 3),
++            retry: RetryPolicy {
++                attempts: attempts.clamp(1, 3),
++                overload: false,
++                timeout: options.timeout,
++            },
+         })
+     }
+     pub fn get(&self, url: &str, stage: &'static str) -> Result<Vec<u8>, BoxError> {
+@@ -322,8 +349,7 @@ impl HttpResourceClient {
+             0,
+             None,
+             &self.observer,
+-            self.attempts,
+-            false,
++            self.retry,
+         )
+     }
+ }
+@@ -333,8 +359,7 @@ pub struct HttpShardTransport {
+     base: String,
+     client: reqwest::blocking::Client,
+     observer: Option<HttpObserver>,
+-    attempts: usize,
+-    retry_overload: bool,
++    retry: RetryPolicy,
+ }
+ 
+ impl HttpShardTransport {
+@@ -343,23 +368,26 @@ impl HttpShardTransport {
+             base: base_url.into().trim_end_matches('/').to_string(),
+             client: build(options)?,
+             observer: None,
+-            attempts: 1,
+-            retry_overload: true,
++            retry: RetryPolicy {
++                attempts: 1,
++                overload: true,
++                timeout: options.timeout,
++            },
+         })
+     }
+ 
+     /// Opt into a bounded number of attempts per HTTP call (1–3). This is
+     /// separate from wallet-level overload retries and defaults to one attempt.
+     pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
+-        self.attempts = attempts.clamp(1, 3);
++        self.retry.attempts = attempts.clamp(1, 3);
+         self
+     }
+ 
+     /// Retry transient gateway/upload/connection failures without layering
+     /// additional overload retries on the wallet's refusal policy.
+     pub fn with_transient_retry_attempts(mut self, attempts: usize) -> Self {
+-        self.attempts = attempts.clamp(1, 3);
+-        self.retry_overload = false;
++        self.retry.attempts = attempts.clamp(1, 3);
++        self.retry.overload = false;
+         self
+     }
+ 
+@@ -384,8 +412,7 @@ impl ShardTransport for HttpShardTransport {
+             0,
+             None,
+             &self.observer,
+-            self.attempts,
+-            self.retry_overload,
++            self.retry,
+         )?;
+         let len = bytes.len() as u64;
+         Ok((bytes, len))
+@@ -401,8 +428,7 @@ impl ShardTransport for HttpShardTransport {
+             0,
+             Some((shard_id, revision)),
+             &self.observer,
+-            self.attempts,
+-            self.retry_overload,
++            self.retry,
+         )?;
+         let len = bytes.len() as u64;
+         Ok((bytes, len))
+@@ -428,8 +454,7 @@ impl ShardTransport for HttpShardTransport {
+             0,
+             Some((shard_id, revision)),
+             &self.observer,
+-            self.attempts,
+-            self.retry_overload,
++            self.retry,
+         )?;
+         let len = bytes.len() as u64;
+         Ok((bytes, len))
+@@ -457,8 +482,7 @@ impl ShardTransport for HttpShardTransport {
+             body.len() as u64,
+             Some((shard_id, revision)),
+             &self.observer,
+-            self.attempts,
+-            self.retry_overload,
++            self.retry,
+         )
+     }
+ }
+@@ -473,8 +497,7 @@ pub struct HttpFilterSource {
+     base: String,
+     client: reqwest::blocking::Client,
+     observer: Option<HttpObserver>,
+-    attempts: usize,
+-    retry_overload: bool,
++    retry: RetryPolicy,
+ }
+ 
+ impl HttpFilterSource {
+@@ -492,23 +515,26 @@ impl HttpFilterSource {
+             base: base_url.into().trim_end_matches('/').to_string(),
+             client: build(options)?,
+             observer: None,
+-            attempts: 1,
+-            retry_overload: true,
++            retry: RetryPolicy {
++                attempts: 1,
++                overload: true,
++                timeout: options.timeout,
++            },
+         })
+     }
+ 
+     /// Opt into a bounded number of attempts per HTTP call (1–3). This is
+     /// separate from wallet-level overload retries and defaults to one attempt.
+     pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
+-        self.attempts = attempts.clamp(1, 3);
++        self.retry.attempts = attempts.clamp(1, 3);
+         self
+     }
+ 
+     /// Retry transient gateway/upload/connection failures without layering
+     /// additional overload retries on the wallet's refusal policy.
+     pub fn with_transient_retry_attempts(mut self, attempts: usize) -> Self {
+-        self.attempts = attempts.clamp(1, 3);
+-        self.retry_overload = false;
++        self.retry.attempts = attempts.clamp(1, 3);
++        self.retry.overload = false;
+         self
+     }
+ 
+@@ -569,8 +595,7 @@ impl FilterSource for HttpFilterSource {
+             0,
+             None,
+             &self.observer,
+-            self.attempts,
+-            self.retry_overload,
++            self.retry,
+         )?;
+         let len = bytes.len() as u64;
+         Ok((bytes, len))
+@@ -584,8 +609,7 @@ impl FilterSource for HttpFilterSource {
+             0,
+             None,
+             &self.observer,
+-            self.attempts,
+-            self.retry_overload,
++            self.retry,
+         )?;
+         let len = bytes.len() as u64;
+         Ok((bytes, len))
+@@ -598,6 +622,98 @@ mod observation_tests {
+     use std::io::{Read, Write};
+     use std::sync::Mutex;
+ 
++    fn read_headers(stream: &mut std::net::TcpStream) {
++        stream
++            .set_read_timeout(Some(Duration::from_secs(5)))
++            .unwrap();
++        let mut headers = Vec::new();
++        while !headers.ends_with(b"\r\n\r\n") {
++            let mut byte = [0];
++            stream.read_exact(&mut byte).unwrap();
++            headers.push(byte[0]);
++            assert!(headers.len() < 8192);
++        }
++    }
++
++    #[test]
++    fn retry_after_cannot_extend_the_deadline_on_public_or_bound_requests() {
++        for bound in [false, true] {
++            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++            let address = listener.local_addr().unwrap();
++            let server = std::thread::spawn(move || {
++                let (mut stream, _) = listener.accept().unwrap();
++                read_headers(&mut stream);
++                stream.write_all(b"HTTP/1.1 503 Busy\r\nRetry-After: 10\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
++            });
++            let events = Arc::new(Mutex::new(Vec::new()));
++            let saved = events.clone();
++            let mut client = HttpShardTransport::new(
++                format!("http://{address}"),
++                &HttpOptions {
++                    timeout: Duration::from_millis(500),
++                    user_agent: "deadline-test".into(),
++                },
++            )
++            .unwrap()
++            .with_retry_attempts(3)
++            .with_observer(Arc::new(move |e| saved.lock().unwrap().push(e)));
++            let started = Instant::now();
++            let result = if bound {
++                client.manifest(1, "revision")
++            } else {
++                client.init()
++            };
++            let error = result.unwrap_err();
++            assert!(crate::transport::Overloaded::found_in(&error).is_some());
++            assert!(started.elapsed() < Duration::from_secs(1));
++            server.join().unwrap();
++            assert_eq!(events.lock().unwrap().len(), 1);
++        }
++    }
++
++    #[test]
++    fn retries_share_one_deadline_including_backoff_and_response_reads() {
++        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++        let address = listener.local_addr().unwrap();
++        let server = std::thread::spawn(move || {
++            let (mut first, _) = listener.accept().unwrap();
++            read_headers(&mut first);
++            first
++                .write_all(b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
++                .unwrap();
++            drop(first);
++            let (mut second, _) = listener.accept().unwrap();
++            read_headers(&mut second);
++            // Longer than the remaining budget, but shorter than a fresh one.
++            std::thread::sleep(Duration::from_millis(900));
++            let _ = second.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
++        });
++        let events = Arc::new(Mutex::new(Vec::new()));
++        let saved = events.clone();
++        let mut client = HttpShardTransport::new(
++            format!("http://{address}"),
++            &HttpOptions {
++                timeout: Duration::from_millis(1500),
++                user_agent: "deadline-test".into(),
++            },
++        )
++        .unwrap()
++        .with_retry_attempts(3)
++        .with_observer(Arc::new(move |e| saved.lock().unwrap().push(e)));
++        let started = Instant::now();
++        assert!(
++            client.init().is_err(),
++            "second attempt must not receive a fresh timeout"
++        );
++        let elapsed = started.elapsed();
++        server.join().unwrap();
++        assert!(elapsed < Duration::from_millis(1850), "{elapsed:?}");
++        let events = events.lock().unwrap();
++        assert_eq!(events.len(), 2);
++        assert_eq!(events[0].status, Some(503));
++        assert!(events.iter().all(|e| e.failed));
++    }
++
+     #[test]
+     fn retries_established_connection_failures_with_bounded_attempts() {
+         // Exercise both public GETs and private POSTs, with and without telemetry.
+@@ -669,8 +785,11 @@ mod observation_tests {
+                         if private { 7 } else { 0 },
+                         private.then_some((1, "revision")),
+                         &observer,
+-                        attempts,
+-                        false,
++                        RetryPolicy {
++                            attempts,
++                            overload: false,
++                            timeout: Duration::from_secs(30),
++                        },
+                     );
+                     server.join().unwrap();
+                     assert_eq!(
+@@ -745,8 +864,11 @@ mod observation_tests {
+                 0,
+                 Some((1, "revision")),
+                 &Some(observer),
+-                3,
+-                retry_overload,
++                RetryPolicy {
++                    attempts: 3,
++                    overload: retry_overload,
++                    timeout: Duration::from_secs(30),
++                },
+             );
+             assert_eq!(result.is_ok(), success);
+             server.join().unwrap();
+diff --git a/server/transparent-regression/src/main.rs b/server/transparent-regression/src/main.rs
+index 7d5c0ff..e15b3f5 100644
+--- a/server/transparent-regression/src/main.rs
++++ b/server/transparent-regression/src/main.rs
+@@ -1,5 +1,6 @@
+ //! Sequential deployed correctness checks. Each case runs in a deadline-bounded child.
+ mod counting;
++mod http_evidence;
+ use anyhow::{bail, Context, Result};
+ use clap::Parser;
+ use counting::{addressed_shards, Counting, CountingFilters};
+@@ -36,6 +37,9 @@ struct Args {
+     request_timeout_secs: u64,
+     #[arg(long, default_value_t = 1800)]
+     case_timeout_secs: u64,
++    /// Attempts share request_timeout_secs; every attempt is recorded.
++    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(1..=3))]
++    http_attempts: u8,
+     #[arg(long)]
+     source_sha: String,
+     #[arg(long, hide = true)]
+@@ -206,7 +210,10 @@ fn pinned(
+ ) -> Result<(transparent_filter::ShardMap, u64, Value)> {
+     let mut seen: Vec<Origin> = vec![];
+     for url in [&a.filter_url, &a.shard_url] {
+-        let mut origin = HttpFilterSource::new(url, &options(a)).map_err(anyhow::Error::msg)?;
++        let mut origin = HttpFilterSource::new(url, &options(a))
++            .map_err(anyhow::Error::msg)?
++            .with_retry_attempts(usize::from(a.http_attempts))
++            .with_observer(http_evidence::observer(a)?);
+         let (raw, bytes) = origin.shard_map().map_err(anyhow::Error::msg)?;
+         let map: transparent_filter::ShardMap = serde_json::from_slice(&raw)?;
+         agrees(&f.map, &map).with_context(|| format!("publication drift at {url}"))?;
+@@ -316,11 +323,16 @@ fn run_case(a: &Args, f: &Fixture, case: &Case, stages: &mut Vec<Value>) -> Resu
+         let counts = Arc::new(Mutex::new(BTreeMap::new()));
+         let mut transport = Counting {
+             inner: HttpShardTransport::new(&a.shard_url, &options(a))
+-                .map_err(anyhow::Error::msg)?,
++                .map_err(anyhow::Error::msg)?
++                .with_retry_attempts(usize::from(a.http_attempts))
++                .with_observer(http_evidence::observer(a)?),
+             stages: counts.clone(),
+         };
+         let mut filters = CountingFilters {
+-            inner: HttpFilterSource::new(&a.filter_url, &options(a)).map_err(anyhow::Error::msg)?,
++            inner: HttpFilterSource::new(&a.filter_url, &options(a))
++                .map_err(anyhow::Error::msg)?
++                .with_retry_attempts(usize::from(a.http_attempts))
++                .with_observer(http_evidence::observer(a)?),
+             stages: counts.clone(),
+         };
+         let (init, _) = transport.init().map_err(anyhow::Error::msg)?;
+@@ -441,7 +453,7 @@ fn main() -> Result<()> {
+         std::fs::write(
+             a.out_dir.join(format!("{id}.json")),
+             serde_json::to_vec_pretty(
+-                &json!({"id":id,"profile":case.profile,"passed":result.is_ok(),"error":result.as_ref().err().map(ToString::to_string),"checkpoints":stages}),
++                &json!({"id":id,"profile":case.profile,"passed":result.is_ok(),"error":result.as_ref().err().map(ToString::to_string),"checkpoints":stages,"http":http_evidence::summary(&a)?}),
+             )?,
+         )?;
+         return result;
+@@ -466,7 +478,7 @@ fn main() -> Result<()> {
+     let runner_binary_sha256 =
+         hex::encode(Sha256::digest(std::fs::read(std::env::current_exe()?)?));
+     let (sealed_prefix_shards, sealed_prefix_sha256) = sealed_prefix_digest(&f.map);
+-    let report = json!({"runner_binary_sha256":runner_binary_sha256,"passed":passed,"source_sha":a.source_sha,"fixture_sha256":hex::encode(Sha256::digest(&raw)),"map_sha256":f.map_sha256,"sealed_prefix_shards":sealed_prefix_shards,"sealed_prefix_sha256":sealed_prefix_sha256,"preflight":preflight.as_ref().ok().map(|(_,_,sample)| sample.clone()),"preflight_error":preflight.as_ref().err().map(ToString::to_string),"cases":results});
++    let report = json!({"runner_binary_sha256":runner_binary_sha256,"passed":passed,"source_sha":a.source_sha,"fixture_sha256":hex::encode(Sha256::digest(&raw)),"map_sha256":f.map_sha256,"sealed_prefix_shards":sealed_prefix_shards,"sealed_prefix_sha256":sealed_prefix_sha256,"preflight":preflight.as_ref().ok().map(|(_,_,sample)| sample.clone()),"preflight_error":preflight.as_ref().err().map(ToString::to_string),"cases":results,"http":http_evidence::summary(&a)?,"http_policy":{"maximum_attempts":a.http_attempts,"request_deadline_seconds":a.request_timeout_secs,"case_deadline_seconds":a.case_timeout_secs,"same_buffered_request":true}});
+     std::fs::write(
+         a.out_dir.join("report.json"),
+         serde_json::to_vec_pretty(&report)?,
+@@ -513,6 +525,8 @@ fn child(a: &Args, id: &str) -> Result<Value> {
+         .arg(&a.source_sha)
+         .arg("--worker-case")
+         .arg(id)
++        .arg("--http-attempts")
++        .arg(a.http_attempts.to_string())
+         .arg("--request-timeout-secs")
+         .arg(a.request_timeout_secs.to_string())
+         .stdout(Stdio::from(std::fs::File::create(
+diff --git a/server/transparent-regression/tests/runner.rs b/server/transparent-regression/tests/runner.rs
+index 5e71fa1..c7da44f 100644
+--- a/server/transparent-regression/tests/runner.rs
++++ b/server/transparent-regression/tests/runner.rs
+@@ -118,6 +118,47 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
+     );
+     assert!(output.join("junit.xml").exists());
+     assert!(output.join("paged/wallet.sqlite").exists());
++    // Recover a transient service refusal, retaining the failed attempt. Then
++    // prove a persistent refusal still fails instead of manufacturing a pass.
++    for (label, failures, passes, attempts) in [
++        ("transient", 1, true, 2),
++        ("persistent", usize::MAX, false, 3),
++    ] {
++        let (flaky_base, _) = serve_traced_failures(dir.path(), failures).await;
++        let out = temp.path().join(label);
++        let mut command = make(&out, &flaky_base);
++        let result = tokio::task::spawn_blocking(move || command.output().unwrap())
++            .await
++            .unwrap();
++        assert_eq!(
++            result.status.success(),
++            passes,
++            "{}",
++            String::from_utf8_lossy(&result.stderr)
++        );
++        let report: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(out.join("report.json")).unwrap()).unwrap();
++        assert_eq!(report["passed"], passes);
++        assert_eq!(report["http_policy"]["maximum_attempts"], 3);
++        assert_eq!(
++            report["cases"][0]["http"]["recovered_requests"],
++            usize::from(passes)
++        );
++        let raw = std::fs::read_to_string(out.join("case-paged.http.ndjson")).unwrap();
++        let init: Vec<serde_json::Value> = raw
++            .lines()
++            .map(|l| serde_json::from_str(l).unwrap())
++            .filter(|e: &serde_json::Value| e["stage"] == "init")
++            .collect();
++        let first_id = init[0]["request_id"].clone();
++        let first: Vec<_> = init
++            .iter()
++            .filter(|e| e["request_id"] == first_id)
++            .collect();
++        assert_eq!(first.len(), attempts);
++        assert_eq!(first[0]["status"], 503);
++        assert_eq!(first.last().unwrap()["failed"], !passes);
++    }
+     // A republished tail is not drift. The service now serves the same set with
+     // the tail at revision 1 under a new manifest digest, which is what a
+     // continuously publishing origin does between any two fetches; the fixture
+@@ -212,6 +253,13 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
+ 
+ async fn serve_traced(
+     dir: &std::path::Path,
++) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
++    serve_traced_failures(dir, 0).await
++}
++
++async fn serve_traced_failures(
++    dir: &std::path::Path,
++    failures: usize,
+ ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+     use transparent_shard_server::{
+         service::{router, ServiceConfig, ServiceState},
+@@ -224,10 +272,26 @@ async fn serve_traced(
+     .unwrap();
+     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+     let capture = requests.clone();
++    let remaining = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(failures));
+     let app = router(state).layer(axum::middleware::from_fn(
+         move |request: axum::extract::Request, next: axum::middleware::Next| {
+             let capture = capture.clone();
++            let remaining = remaining.clone();
+             async move {
++                if request.uri().path() == "/v1/shards/init"
++                    && remaining
++                        .fetch_update(
++                            std::sync::atomic::Ordering::SeqCst,
++                            std::sync::atomic::Ordering::SeqCst,
++                            |n| n.checked_sub(1),
++                        )
++                        .is_ok()
++                {
++                    return axum::response::IntoResponse::into_response((
++                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
++                        "test unavailable",
++                    ));
++                }
+                 capture
+                     .lock()
+                     .unwrap()

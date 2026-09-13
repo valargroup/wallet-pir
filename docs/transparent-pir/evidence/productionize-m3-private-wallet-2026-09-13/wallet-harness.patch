@@ -1,0 +1,324 @@
+diff --git a/zakura/wallet-app/bindings/test/kill_fixture_child_test.dart b/zakura/wallet-app/bindings/test/kill_fixture_child_test.dart
+index 85f2464ca..3e47d73dc 100644
+--- a/zakura/wallet-app/bindings/test/kill_fixture_child_test.dart
++++ b/zakura/wallet-app/bindings/test/kill_fixture_child_test.dart
+@@ -15,47 +15,58 @@ import 'package:zakura_bindings/zakura_bindings.dart';
+ void main() {
+   final env = Platform.environment;
+   final library = env['ZAKURA_BRIDGE_LIBRARY'];
+-  final phrase = env['ZAKURA_FIXTURE_PHRASE'];
++  final phrasePath = env['ZAKURA_PHRASE_FILE'];
++  final phrase = phrasePath == null
++      ? env['ZAKURA_FIXTURE_PHRASE']
++      : File(phrasePath).readAsStringSync().trim();
+   final dir = env['ZAKURA_FIXTURE_WALLET_DIR'];
+   final skip = library == null || phrase == null || dir == null
+       ? 'run by kill_fixture_test.dart'
+       : null;
+ 
+-  test('the wallet under test syncs until it is killed', () async {
+-    // The parent kills this process by this identifier.
+-    stdout.writeln('CHILD_PID=$pid');
+-    await stdout.flush();
+-    final bindings = await NativeBindings.load(libraryPath: library!);
+-    await bindings.open(
+-      directory: dir!,
+-      lightwalletdUrl: env['ZAKURA_FIXTURE_LWD']!,
+-      mainnet: true,
+-      transparentFiltersUrl: env['ZAKURA_FIXTURE_FILTERS']!,
+-      transparentShardsUrl: env['ZAKURA_FIXTURE_SHARDS']!,
+-    );
+-    final birthday = int.parse(env['ZAKURA_FIXTURE_BIRTHDAY']!);
+-    final id = await bindings.importAccount(phrase: phrase!, birthday: birthday);
+-    stdout.writeln('CHILD_ACCOUNT=$id');
+-    await bindings.startSync();
+-    stdout.writeln('CHILD_SYNCING');
+-    await stdout.flush();
+-    final deadline = DateTime.now().add(const Duration(minutes: 10));
+-    while (DateTime.now().isBefore(deadline)) {
+-      final progress = await bindings.progress();
+-      final balance = await bindings.balance(id);
+-      stdout.writeln(
+-        'CHILD phase=${progress.phase.name} scanned_to=${progress.scannedTo} '
+-        'tip=${progress.tip} completion=${balance.coverage.completion} '
+-        'anchor=${balance.coverage.anchorHeight} failed=${progress.failed}',
++  test(
++    'the wallet under test syncs until it is killed',
++    () async {
++      // The parent kills this process by this identifier.
++      stdout.writeln('CHILD_PID=$pid');
++      await stdout.flush();
++      final bindings = await NativeBindings.load(libraryPath: library!);
++      await bindings.open(
++        directory: dir!,
++        lightwalletdUrl: env['ZAKURA_FIXTURE_LWD']!,
++        mainnet: true,
++        transparentFiltersUrl: env['ZAKURA_FIXTURE_FILTERS']!,
++        transparentShardsUrl: env['ZAKURA_FIXTURE_SHARDS']!,
++      );
++      final birthday = int.parse(env['ZAKURA_FIXTURE_BIRTHDAY']!);
++      final id = await bindings.importAccount(
++        phrase: phrase!,
++        birthday: birthday,
+       );
++      stdout.writeln('CHILD_ACCOUNT=$id');
++      await bindings.startSync();
++      stdout.writeln('CHILD_SYNCING');
+       await stdout.flush();
+-      if (progress.failed) {
+-        final failure = await bindings.syncFailure();
+-        stdout.writeln('CHILD_FAILED ${failure ?? ''}');
++      final deadline = DateTime.now().add(const Duration(minutes: 10));
++      while (DateTime.now().isBefore(deadline)) {
++        final progress = await bindings.progress();
++        final balance = await bindings.balance(id);
++        stdout.writeln(
++          'CHILD phase=${progress.phase.name} scanned_to=${progress.scannedTo} '
++          'tip=${progress.tip} completion=${balance.coverage.completion} '
++          'anchor=${balance.coverage.anchorHeight} failed=${progress.failed}',
++        );
+         await stdout.flush();
+-        break;
++        if (progress.failed) {
++          final failure = await bindings.syncFailure();
++          stdout.writeln('CHILD_FAILED recorded=${failure != null}');
++          await stdout.flush();
++          break;
++        }
++        await Future<void>.delayed(const Duration(milliseconds: 250));
+       }
+-      await Future<void>.delayed(const Duration(milliseconds: 250));
+-    }
+-  }, skip: skip, timeout: const Timeout(Duration(minutes: 12)));
++    },
++    skip: skip,
++    timeout: const Timeout(Duration(minutes: 12)),
++  );
+ }
+diff --git a/zakura/wallet-app/bindings/test/kill_recovery_test.dart b/zakura/wallet-app/bindings/test/kill_recovery_test.dart
+index 92891bbb8..a0620f8a2 100644
+--- a/zakura/wallet-app/bindings/test/kill_recovery_test.dart
++++ b/zakura/wallet-app/bindings/test/kill_recovery_test.dart
+@@ -1,9 +1,10 @@
+ @Tags(['native', 'live', 'kill'])
+ library;
+ 
+-// The process dies in the middle of a private query, through the release
+-// bridge library, against the public services, with a wallet that has real
+-// transparent history.
++// The process dies during the observed transparent sync phase, through the
++// release bridge library against public services. Phase polling does not prove
++// a request was in flight at the instant of SIGKILL. Retain the profile for an
++// independent ledger comparison before claiming exact resumed recovery.
+ //
+ // Not run by default, and not run in M3: it sends private queries to the
+ // public services, which needs a window agreed with the M1 operator, and it
+@@ -30,7 +31,8 @@ import 'package:zakura_bindings/zakura_bindings.dart';
+ void main() {
+   final root = Directory.current.path.split('/zakura/wallet-app').first;
+   final env = Platform.environment;
+-  final library = env['ZAKURA_BRIDGE_LIBRARY'] ??
++  final library =
++      env['ZAKURA_BRIDGE_LIBRARY'] ??
+       '$root/target/release/libzakura_wallet_bridge.dylib';
+   final filters = env['ZAKURA_TRANSPARENT_FILTERS'];
+   final shards = env['ZAKURA_TRANSPARENT_SHARDS'];
+@@ -41,15 +43,15 @@ void main() {
+   final skip = env['ZAKURA_LIVE'] != '1' || env['ZAKURA_KILL'] != '1'
+       ? 'set ZAKURA_LIVE=1 and ZAKURA_KILL=1, in a window agreed with the operator'
+       : !File(library).existsSync()
+-          ? 'run: cargo build -p zakura_wallet_bridge --release'
+-          : filters == null || shards == null
+-              ? 'set ZAKURA_TRANSPARENT_FILTERS and ZAKURA_TRANSPARENT_SHARDS'
+-              : phraseFile == null || birthday == null
+-                  ? 'set ZAKURA_PHRASE_FILE and ZAKURA_BIRTHDAY'
+-                  : null;
++      ? 'run: cargo build -p zakura_wallet_bridge --release'
++      : filters == null || shards == null
++      ? 'set ZAKURA_TRANSPARENT_FILTERS and ZAKURA_TRANSPARENT_SHARDS'
++      : phraseFile == null || birthday == null
++      ? 'set ZAKURA_PHRASE_FILE and ZAKURA_BIRTHDAY'
++      : null;
+ 
+   test(
+-    'a wallet with history killed during a private query reopens interrupted and resumes',
++    'a wallet killed during transparent sync reopens interrupted and resumes',
+     () async {
+       final notes = <String>[];
+       void note(String line) {
+@@ -58,19 +60,41 @@ void main() {
+         print('LIVE $line');
+       }
+ 
+-      final walletDir = Directory.systemTemp.createTempSync('zakura-kill-live-');
+-      addTearDown(() => walletDir.deleteSync(recursive: true));
+-      final phrase = File(phraseFile!).readAsStringSync().trim();
++      final retainedPath = env['ZAKURA_KILL_PROFILE'];
++      final walletDir = retainedPath == null
++          ? Directory.systemTemp.createTempSync('zakura-kill-live-')
++          : Directory(retainedPath);
++      if (retainedPath == null) {
++        addTearDown(() => walletDir.deleteSync(recursive: true));
++      } else {
++        if (walletDir.existsSync()) fail('refusing an existing profile');
++        walletDir.createSync();
++        File('${walletDir.path}/profile.json').writeAsStringSync(
++          jsonEncode({
++            'namespace': 'org.valargroup.zakura-recovery-beta',
++            'mode': 'shadow',
++            'purpose': 'public release-library interruption validation',
++          }),
++        );
++      }
+ 
+       // The wallet under test, in its own process, through the same child
+       // the loopback rehearsal uses.
+       final child = await Process.start(
+         'fvm',
+-        ['flutter', 'test', '-r', 'expanded', '--tags', 'fixture-child', 'test/kill_fixture_child_test.dart'],
++        [
++          'flutter',
++          'test',
++          '-r',
++          'expanded',
++          '--tags',
++          'fixture-child',
++          'test/kill_fixture_child_test.dart',
++        ],
+         workingDirectory: Directory.current.path,
+         environment: {
+           'ZAKURA_BRIDGE_LIBRARY': library,
+-          'ZAKURA_FIXTURE_PHRASE': phrase,
++          'ZAKURA_PHRASE_FILE': phraseFile!,
+           'ZAKURA_FIXTURE_WALLET_DIR': walletDir.path,
+           'ZAKURA_FIXTURE_LWD': lightwalletd,
+           'ZAKURA_FIXTURE_FILTERS': filters!,
+@@ -79,37 +103,64 @@ void main() {
+         },
+       );
+       int? childPid;
++      addTearDown(() async {
++        if (childPid != null) Process.killPid(childPid!, ProcessSignal.sigkill);
++        child.kill(ProcessSignal.sigkill);
++        try {
++          await child.exitCode.timeout(const Duration(seconds: 10));
++        } catch (_) {}
++      });
+       final named = Completer<void>();
+       final querying = Completer<void>();
+       var lastChildLine = '';
+       final pidLine = RegExp(r'CHILD_PID=(\d+)');
+-      child.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+-        final m = pidLine.firstMatch(line);
+-        if (m != null && childPid == null) {
+-          childPid = int.parse(m.group(1)!);
+-          named.complete();
+-        }
+-        if (line.contains('CHILD ')) lastChildLine = line;
+-        // The shielded scan has reached the tip and the transparent run is
+-        // in progress: private queries are in flight from here on.
+-        if (line.contains('completion=sync-in-progress') &&
+-            line.contains('phase=idle') &&
+-            !querying.isCompleted) {
+-          querying.complete();
+-        }
+-      });
+-      child.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((_) {});
++      child.stdout
++          .transform(utf8.decoder)
++          .transform(const LineSplitter())
++          .listen((line) {
++            final m = pidLine.firstMatch(line);
++            if (m != null && childPid == null) {
++              childPid = int.parse(m.group(1)!);
++              named.complete();
++            }
++            if (line.contains('CHILD ')) lastChildLine = line;
++            // The shielded scan has reached the tip and the transparent run is
++            // in progress. This is phase evidence, not request instrumentation.
++            if (line.contains('completion=sync-in-progress') &&
++                line.contains('phase=idle') &&
++                !querying.isCompleted) {
++              querying.complete();
++            }
++          });
++      child.stderr
++          .transform(utf8.decoder)
++          .transform(const LineSplitter())
++          .listen((_) {});
+       await named.future.timeout(const Duration(minutes: 5));
+-      await querying.future.timeout(const Duration(minutes: 20), onTimeout: () {
+-        fail('the transparent run never started; last line: $lastChildLine');
+-      });
+-      // Let a query or two go out, then kill.
+-      await Future<void>.delayed(const Duration(seconds: 2));
++      await querying.future.timeout(
++        const Duration(minutes: 20),
++        onTimeout: () {
++          fail('the transparent run never started; last line: $lastChildLine');
++        },
++      );
++      // Kill as soon as the sampled transparent phase is observed. This is
++      // phase evidence, not proof that an HTTP request is in flight.
+       expect(Process.killPid(childPid!, ProcessSignal.sigkill), isTrue);
+       await child.exitCode.timeout(const Duration(minutes: 2));
+-      note('child killed with SIGKILL during the transparent run; last line: ${lastChildLine.replaceAll(RegExp(r'^.*CHILD '), '')}');
++      childPid = null;
++      note(
++        'child killed with SIGKILL during the transparent run; last line: ${lastChildLine.replaceAll(RegExp(r'^.*CHILD '), '')}',
++      );
+ 
+       final bindings = await NativeBindings.load(libraryPath: library);
++      addTearDown(() async {
++        try {
++          await bindings.stopSync();
++        } catch (_) {}
++        try {
++          await bindings.close();
++        } catch (_) {}
++      });
+       await bindings.open(
+         directory: walletDir.path,
+         lightwalletdUrl: lightwalletd,
+@@ -119,8 +170,10 @@ void main() {
+       );
+       final id = (await bindings.accounts()).single.id;
+       final reopened = await bindings.balance(id);
+-      note('reopened completion=${reopened.coverage.completion} anchor=${reopened.coverage.anchorHeight} '
+-          'covered=${reopened.coverage.coveredThrough} pending=${reopened.coverage.pendingPages}');
++      note(
++        'reopened completion=${reopened.coverage.completion} anchor=${reopened.coverage.anchorHeight} '
++        'covered=${reopened.coverage.coveredThrough} pending=${reopened.coverage.pendingPages}',
++      );
+       expect(reopened.coverage.completion, 'interrupted');
+       expect(reopened.coverage.synchronized, isFalse);
+ 
+@@ -137,15 +190,23 @@ void main() {
+         progress = await bindings.progress();
+         balance = await bindings.balance(id);
+       }
+-      expect(progress.failed, isFalse, reason: await bindings.syncFailure());
++      expect(
++        progress.failed,
++        isFalse,
++        reason: 'a private sync failure was recorded',
++      );
+       final history = await bindings.history(id, 1000);
+-      note('resumed in ${DateTime.now().difference(resumed).inMilliseconds} ms: completion=${balance.coverage.completion} '
+-          'anchor=${balance.coverage.anchorHeight} synchronized=${balance.coverage.synchronized} '
+-          'history_entries=${history.length}');
++      note(
++        'resumed in ${DateTime.now().difference(resumed).inMilliseconds} ms: completion=${balance.coverage.completion} '
++        'anchor=${balance.coverage.anchorHeight} synchronized=${balance.coverage.synchronized} '
++        'history_entries=${history.length}',
++      );
+       await bindings.stopSync();
+       await bindings.close();
+       final report = env['ZAKURA_LIVE_REPORT'];
+-      if (report != null) File(report).writeAsStringSync('${notes.join('\n')}\n');
++      if (report != null) {
++        File(report).writeAsStringSync('${notes.join('\n')}\n');
++      }
+     },
+     skip: skip,
+     timeout: const Timeout(Duration(minutes: 60)),

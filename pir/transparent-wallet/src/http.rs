@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 /// How the reference clients are built.
 #[derive(Clone, Debug)]
 pub struct HttpOptions {
+    /// Total budget for one HTTP call, including every attempt and backoff.
     pub timeout: Duration,
     pub user_agent: String,
 }
@@ -114,21 +115,35 @@ pub struct HttpObservation {
 /// Optional local observer. Called once per attempt, including transport errors.
 pub type HttpObserver = Arc<dyn Fn(HttpObservation) + Send + Sync>;
 
-/// Opt-in retries for transient transport failures. The observer records every
-/// attempt; callers must still impose an overall recovery deadline.
+#[derive(Clone, Copy)]
+struct RetryPolicy {
+    attempts: usize,
+    overload: bool,
+    timeout: Duration,
+}
+
+/// Opt-in retries replay the same buffered request within one shared deadline.
+/// Application decoding and revision validation occur after this function and
+/// are never retried here. The observer records every attempt; callers must
+/// still impose an overall recovery deadline.
 fn execute(
     request: reqwest::blocking::RequestBuilder,
     stage: &'static str,
     bytes_up: u64,
     binding: Option<(u64, &str)>,
     observer: &Option<HttpObserver>,
-    attempts: usize,
-    retry_overload: bool,
+    policy: RetryPolicy,
 ) -> Result<Vec<u8>, BoxError> {
     static REQUEST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let request_id = REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let attempts = attempts.max(1);
+    let attempts = policy.attempts.max(1);
+    let retry_overload = policy.overload;
+    let started = Instant::now();
     for attempt in 0..attempts {
+        let remaining = policy.timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err("HTTP call deadline exhausted".into());
+        }
         let observed = observer.as_ref().map(|observer| {
             let observer = observer.clone();
             Arc::new(move |mut event: HttpObservation| {
@@ -139,7 +154,8 @@ fn execute(
         });
         let copy = request
             .try_clone()
-            .ok_or("HTTP request cannot be retried")?;
+            .ok_or("HTTP request cannot be retried")?
+            .timeout(remaining);
         let result = execute_once(copy, stage, bytes_up, binding, &observed);
         let delay = result.as_ref().err().and_then(|error| {
             if !retry_overload
@@ -186,7 +202,12 @@ fn execute(
         if attempt + 1 == attempts || delay.is_none() {
             return result;
         }
-        std::thread::sleep(delay.unwrap());
+        let delay = delay.unwrap();
+        if delay >= policy.timeout.saturating_sub(started.elapsed()) {
+            // Return the last refusal/error without oversleeping its budget.
+            return result;
+        }
+        std::thread::sleep(delay);
     }
     unreachable!("attempts is positive")
 }
@@ -213,13 +234,6 @@ fn execute_once(
     binding: Option<(u64, &str)>,
     observer: &Option<HttpObserver>,
 ) -> Result<Vec<u8>, BoxError> {
-    if observer.is_none() {
-        let response = request.send()?;
-        return match binding {
-            Some((shard, revision)) => checked(response, shard, revision),
-            None => response_body(response.error_for_status()?, stage),
-        };
-    }
     let started = Instant::now();
     let mut status = None;
     let mut bytes_down = 0;
@@ -253,6 +267,15 @@ fn execute_once(
                 return Err(status_error(code, shard, revision, &body));
             }
         } else if let Some(error) = public_error {
+            if let Some(overloaded) =
+                crate::transport::Overloaded::from_http(code.as_u16(), retry_after.as_deref())
+            {
+                return Err(Box::new(HttpStatusError {
+                    status: code.as_u16(),
+                    message: overloaded.to_string(),
+                    cause: Some(Box::new(overloaded)),
+                }));
+            }
             return Err(Box::new(error) as BoxError);
         }
         Ok(body)
@@ -290,7 +313,7 @@ fn execute_once(
 pub struct HttpResourceClient {
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
-    attempts: usize,
+    retry: RetryPolicy,
 }
 impl HttpResourceClient {
     pub fn new(
@@ -308,7 +331,11 @@ impl HttpResourceClient {
                 .no_zstd()
                 .build()?,
             observer,
-            attempts: attempts.clamp(1, 3),
+            retry: RetryPolicy {
+                attempts: attempts.clamp(1, 3),
+                overload: false,
+                timeout: options.timeout,
+            },
         })
     }
     pub fn get(&self, url: &str, stage: &'static str) -> Result<Vec<u8>, BoxError> {
@@ -322,8 +349,7 @@ impl HttpResourceClient {
             0,
             None,
             &self.observer,
-            self.attempts,
-            false,
+            self.retry,
         )
     }
 }
@@ -333,8 +359,7 @@ pub struct HttpShardTransport {
     base: String,
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
-    attempts: usize,
-    retry_overload: bool,
+    retry: RetryPolicy,
 }
 
 impl HttpShardTransport {
@@ -343,23 +368,26 @@ impl HttpShardTransport {
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
             observer: None,
-            attempts: 1,
-            retry_overload: true,
+            retry: RetryPolicy {
+                attempts: 1,
+                overload: true,
+                timeout: options.timeout,
+            },
         })
     }
 
     /// Opt into a bounded number of attempts per HTTP call (1–3). This is
     /// separate from wallet-level overload retries and defaults to one attempt.
     pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
-        self.attempts = attempts.clamp(1, 3);
+        self.retry.attempts = attempts.clamp(1, 3);
         self
     }
 
     /// Retry transient gateway/upload/connection failures without layering
     /// additional overload retries on the wallet's refusal policy.
     pub fn with_transient_retry_attempts(mut self, attempts: usize) -> Self {
-        self.attempts = attempts.clamp(1, 3);
-        self.retry_overload = false;
+        self.retry.attempts = attempts.clamp(1, 3);
+        self.retry.overload = false;
         self
     }
 
@@ -384,8 +412,7 @@ impl ShardTransport for HttpShardTransport {
             0,
             None,
             &self.observer,
-            self.attempts,
-            self.retry_overload,
+            self.retry,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -401,8 +428,7 @@ impl ShardTransport for HttpShardTransport {
             0,
             Some((shard_id, revision)),
             &self.observer,
-            self.attempts,
-            self.retry_overload,
+            self.retry,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -428,8 +454,7 @@ impl ShardTransport for HttpShardTransport {
             0,
             Some((shard_id, revision)),
             &self.observer,
-            self.attempts,
-            self.retry_overload,
+            self.retry,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -457,8 +482,7 @@ impl ShardTransport for HttpShardTransport {
             body.len() as u64,
             Some((shard_id, revision)),
             &self.observer,
-            self.attempts,
-            self.retry_overload,
+            self.retry,
         )
     }
 }
@@ -473,8 +497,7 @@ pub struct HttpFilterSource {
     base: String,
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
-    attempts: usize,
-    retry_overload: bool,
+    retry: RetryPolicy,
 }
 
 impl HttpFilterSource {
@@ -492,23 +515,26 @@ impl HttpFilterSource {
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
             observer: None,
-            attempts: 1,
-            retry_overload: true,
+            retry: RetryPolicy {
+                attempts: 1,
+                overload: true,
+                timeout: options.timeout,
+            },
         })
     }
 
     /// Opt into a bounded number of attempts per HTTP call (1–3). This is
     /// separate from wallet-level overload retries and defaults to one attempt.
     pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
-        self.attempts = attempts.clamp(1, 3);
+        self.retry.attempts = attempts.clamp(1, 3);
         self
     }
 
     /// Retry transient gateway/upload/connection failures without layering
     /// additional overload retries on the wallet's refusal policy.
     pub fn with_transient_retry_attempts(mut self, attempts: usize) -> Self {
-        self.attempts = attempts.clamp(1, 3);
-        self.retry_overload = false;
+        self.retry.attempts = attempts.clamp(1, 3);
+        self.retry.overload = false;
         self
     }
 
@@ -569,8 +595,7 @@ impl FilterSource for HttpFilterSource {
             0,
             None,
             &self.observer,
-            self.attempts,
-            self.retry_overload,
+            self.retry,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -584,8 +609,7 @@ impl FilterSource for HttpFilterSource {
             0,
             None,
             &self.observer,
-            self.attempts,
-            self.retry_overload,
+            self.retry,
         )?;
         let len = bytes.len() as u64;
         Ok((bytes, len))
@@ -597,6 +621,98 @@ mod observation_tests {
     use super::*;
     use std::io::{Read, Write};
     use std::sync::Mutex;
+
+    fn read_headers(stream: &mut std::net::TcpStream) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            headers.push(byte[0]);
+            assert!(headers.len() < 8192);
+        }
+    }
+
+    #[test]
+    fn retry_after_cannot_extend_the_deadline_on_public_or_bound_requests() {
+        for bound in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                read_headers(&mut stream);
+                stream.write_all(b"HTTP/1.1 503 Busy\r\nRetry-After: 10\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            });
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let saved = events.clone();
+            let mut client = HttpShardTransport::new(
+                format!("http://{address}"),
+                &HttpOptions {
+                    timeout: Duration::from_millis(500),
+                    user_agent: "deadline-test".into(),
+                },
+            )
+            .unwrap()
+            .with_retry_attempts(3)
+            .with_observer(Arc::new(move |e| saved.lock().unwrap().push(e)));
+            let started = Instant::now();
+            let result = if bound {
+                client.manifest(1, "revision")
+            } else {
+                client.init()
+            };
+            let error = result.unwrap_err();
+            assert!(crate::transport::Overloaded::found_in(&error).is_some());
+            assert!(started.elapsed() < Duration::from_secs(1));
+            server.join().unwrap();
+            assert_eq!(events.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn retries_share_one_deadline_including_backoff_and_response_reads() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut first, _) = listener.accept().unwrap();
+            read_headers(&mut first);
+            first
+                .write_all(b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            drop(first);
+            let (mut second, _) = listener.accept().unwrap();
+            read_headers(&mut second);
+            // Longer than the remaining budget, but shorter than a fresh one.
+            std::thread::sleep(Duration::from_millis(900));
+            let _ = second.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        });
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let saved = events.clone();
+        let mut client = HttpShardTransport::new(
+            format!("http://{address}"),
+            &HttpOptions {
+                timeout: Duration::from_millis(1500),
+                user_agent: "deadline-test".into(),
+            },
+        )
+        .unwrap()
+        .with_retry_attempts(3)
+        .with_observer(Arc::new(move |e| saved.lock().unwrap().push(e)));
+        let started = Instant::now();
+        assert!(
+            client.init().is_err(),
+            "second attempt must not receive a fresh timeout"
+        );
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        assert!(elapsed < Duration::from_millis(1850), "{elapsed:?}");
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].status, Some(503));
+        assert!(events.iter().all(|e| e.failed));
+    }
 
     #[test]
     fn retries_established_connection_failures_with_bounded_attempts() {
@@ -669,8 +785,11 @@ mod observation_tests {
                         if private { 7 } else { 0 },
                         private.then_some((1, "revision")),
                         &observer,
-                        attempts,
-                        false,
+                        RetryPolicy {
+                            attempts,
+                            overload: false,
+                            timeout: Duration::from_secs(30),
+                        },
                     );
                     server.join().unwrap();
                     assert_eq!(
@@ -745,8 +864,11 @@ mod observation_tests {
                 0,
                 Some((1, "revision")),
                 &Some(observer),
-                3,
-                retry_overload,
+                RetryPolicy {
+                    attempts: 3,
+                    overload: retry_overload,
+                    timeout: Duration::from_secs(30),
+                },
             );
             assert_eq!(result.is_ok(), success);
             server.join().unwrap();

@@ -1,0 +1,30 @@
+cargo run --locked --release -p transparent-regression --bin transparent-regression -- \
+		--fixture "server/transparent-regression/fixtures/mainnet.json" \
+		--shard-url "https://transparent-pir.valargroup.dev" \
+		--filter-url "https://enhance-pir.valargroup.dev" \
+		--source-sha "$(git rev-parse HEAD)" \
+		--out-dir "/tmp/transparent-m3-live-20260913/regression"
+   Compiling valar-spiral-rs v0.5.2 (https://github.com/valargroup/spiral-rs.git?rev=584fee3893b1d2d17b5d774c83bd801fb70d5ace#584fee38)
+   Compiling transparent-filter v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-filter)
+   Compiling inspiring v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling transparent-shard v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-shard)
+   Compiling simplepir-kernel v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling ipir-sp v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet-store)
+   Compiling transparent-regression v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-regression)
+    Finished `release` profile [optimized] target(s) in 29.62s
+     Running `target/release/transparent-regression --fixture server/transparent-regression/fixtures/mainnet.json --shard-url 'https://transparent-pir.valargroup.dev' --filter-url 'https://enhance-pir.valargroup.dev' --source-sha e98286bf345718b29e22ef81076cd22633405d83 --out-dir /tmp/transparent-m3-live-20260913/regression`
+checking unused-p2pkh (unused)
+checking unused-p2sh (unused-p2sh)
+checking small-active (small-active)
+checking zero-balance (zero-balance)
+checking old-receive-recent-spend (cross-tier)
+checking offline-receive-spend (offline)
+checking active-p2sh (p2sh)
+checking reused-pages (reused-script)
+checking multi-script-self-transfer (multi-script)
+checking recent-birthday (recent-restore)
+checking coinbase (coinbase)
+Error: 5 regression cases failed; see /tmp/transparent-m3-live-20260913/regression
+make: *** [transparent-regression] Error 1

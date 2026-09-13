@@ -1,0 +1,60 @@
+{
+  "filters": {
+    "sha256": "e0157189f10cce74aa42891e95eda9eab162881d8ac96d2b4f2231d419aa3521",
+    "keys": [
+      "genesis_hash",
+      "network",
+      "profile",
+      "range_envelope_version",
+      "start_height",
+      "seal",
+      "shards"
+    ],
+    "tail": {
+      "shard_id": 173,
+      "geometry": "recent-8k",
+      "start_height": 3473055,
+      "end_height": 3482264,
+      "parent_block_hash": "00000000003e455005fade71c0add35ab5d19ccfbf22a7651c721827be389c3f",
+      "terminal_block_hash": "00000000007133b4035bda281ddb00e09af6a9c8ac7c10715d836da08cad3dbe",
+      "filter_hash": "a7be77132999a1c052395cd7d5cf192d9c215b810b4cb405cf929a87d270468e",
+      "scripts": 42026,
+      "page_rows": 6077,
+      "txids": 61851,
+      "directory_segments": 1,
+      "page_segments": 1,
+      "manifest_digest": "9a382e527454ab71528669a0c13fb10f90443d397d67dcf007138773bc30aaa2",
+      "revision": 5842,
+      "sealed": false
+    }
+  },
+  "shards": {
+    "sha256": "e0157189f10cce74aa42891e95eda9eab162881d8ac96d2b4f2231d419aa3521",
+    "keys": [
+      "genesis_hash",
+      "network",
+      "profile",
+      "range_envelope_version",
+      "start_height",
+      "seal",
+      "shards"
+    ],
+    "tail": {
+      "shard_id": 173,
+      "geometry": "recent-8k",
+      "start_height": 3473055,
+      "end_height": 3482264,
+      "parent_block_hash": "00000000003e455005fade71c0add35ab5d19ccfbf22a7651c721827be389c3f",
+      "terminal_block_hash": "00000000007133b4035bda281ddb00e09af6a9c8ac7c10715d836da08cad3dbe",
+      "filter_hash": "a7be77132999a1c052395cd7d5cf192d9c215b810b4cb405cf929a87d270468e",
+      "scripts": 42026,
+      "page_rows": 6077,
+      "txids": 61851,
+      "directory_segments": 1,
+      "page_segments": 1,
+      "manifest_digest": "9a382e527454ab71528669a0c13fb10f90443d397d67dcf007138773bc30aaa2",
+      "revision": 5842,
+      "sealed": false
+    }
+  }
+}

@@ -118,6 +118,47 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     );
     assert!(output.join("junit.xml").exists());
     assert!(output.join("paged/wallet.sqlite").exists());
+    // Recover a transient service refusal, retaining the failed attempt. Then
+    // prove a persistent refusal still fails instead of manufacturing a pass.
+    for (label, failures, passes, attempts) in [
+        ("transient", 1, true, 2),
+        ("persistent", usize::MAX, false, 3),
+    ] {
+        let (flaky_base, _) = serve_traced_failures(dir.path(), failures).await;
+        let out = temp.path().join(label);
+        let mut command = make(&out, &flaky_base);
+        let result = tokio::task::spawn_blocking(move || command.output().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            result.status.success(),
+            passes,
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out.join("report.json")).unwrap()).unwrap();
+        assert_eq!(report["passed"], passes);
+        assert_eq!(report["http_policy"]["maximum_attempts"], 3);
+        assert_eq!(
+            report["cases"][0]["http"]["recovered_requests"],
+            usize::from(passes)
+        );
+        let raw = std::fs::read_to_string(out.join("case-paged.http.ndjson")).unwrap();
+        let init: Vec<serde_json::Value> = raw
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .filter(|e: &serde_json::Value| e["stage"] == "init")
+            .collect();
+        let first_id = init[0]["request_id"].clone();
+        let first: Vec<_> = init
+            .iter()
+            .filter(|e| e["request_id"] == first_id)
+            .collect();
+        assert_eq!(first.len(), attempts);
+        assert_eq!(first[0]["status"], 503);
+        assert_eq!(first.last().unwrap()["failed"], !passes);
+    }
     // A republished tail is not drift. The service now serves the same set with
     // the tail at revision 1 under a new manifest digest, which is what a
     // continuously publishing origin does between any two fetches; the fixture
@@ -213,6 +254,13 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
 async fn serve_traced(
     dir: &std::path::Path,
 ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    serve_traced_failures(dir, 0).await
+}
+
+async fn serve_traced_failures(
+    dir: &std::path::Path,
+    failures: usize,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
     use transparent_shard_server::{
         service::{router, ServiceConfig, ServiceState},
         shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS},
@@ -224,10 +272,26 @@ async fn serve_traced(
     .unwrap();
     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let capture = requests.clone();
+    let remaining = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(failures));
     let app = router(state).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             let capture = capture.clone();
+            let remaining = remaining.clone();
             async move {
+                if request.uri().path() == "/v1/shards/init"
+                    && remaining
+                        .fetch_update(
+                            std::sync::atomic::Ordering::SeqCst,
+                            std::sync::atomic::Ordering::SeqCst,
+                            |n| n.checked_sub(1),
+                        )
+                        .is_ok()
+                {
+                    return axum::response::IntoResponse::into_response((
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        "test unavailable",
+                    ));
+                }
                 capture
                     .lock()
                     .unwrap()

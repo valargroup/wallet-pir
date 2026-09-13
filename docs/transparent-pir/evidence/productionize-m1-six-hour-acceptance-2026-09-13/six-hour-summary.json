@@ -1,0 +1,116 @@
+[
+  {
+    "worker": "transparent-pir-archive-01",
+    "start": "2026-09-12T00:49:59.565349+00:00",
+    "end": "2026-09-12T06:49:59.565349+00:00",
+    "public_blocks": 300,
+    "replica_blocks": 300,
+    "maximum_public_seconds": 19.689913163078018,
+    "maximum_replica_seconds": 18.666359724011272,
+    "minimum_memory_headroom": 0.2501599311714312,
+    "restart_identities": 1,
+    "max_restarts": 0,
+    "max_oom": 0,
+    "samples": 701,
+    "binary_digests": [
+      "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62"
+    ],
+    "http_failures": 9,
+    "http_recoveries": 9
+  },
+  {
+    "worker": "transparent-pir-archive-02",
+    "start": "2026-09-12T00:49:59.538368+00:00",
+    "end": "2026-09-12T06:49:59.538368+00:00",
+    "public_blocks": 300,
+    "replica_blocks": 300,
+    "maximum_public_seconds": 19.823747306945734,
+    "maximum_replica_seconds": 19.82628743594978,
+    "minimum_memory_headroom": 0.248777288077441,
+    "restart_identities": 1,
+    "max_restarts": 0,
+    "max_oom": 0,
+    "samples": 702,
+    "binary_digests": [
+      "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62"
+    ],
+    "http_failures": 11,
+    "http_recoveries": 11
+  },
+  {
+    "worker": "transparent-pir-recent-01",
+    "start": "2026-09-12T00:49:59.540480+00:00",
+    "end": "2026-09-12T06:49:59.540480+00:00",
+    "public_blocks": 300,
+    "replica_blocks": 300,
+    "maximum_public_seconds": 19.714045461965725,
+    "maximum_replica_seconds": 19.716962628997862,
+    "minimum_memory_headroom": 0.24387083762718617,
+    "restart_identities": 1,
+    "max_restarts": 0,
+    "max_oom": 0,
+    "samples": 716,
+    "binary_digests": [
+      "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62"
+    ],
+    "http_failures": 10,
+    "http_recoveries": 10
+  },
+  {
+    "worker": "transparent-pir-recent-02",
+    "start": "2026-09-12T00:49:59.507983+00:00",
+    "end": "2026-09-12T06:49:59.507983+00:00",
+    "public_blocks": 300,
+    "replica_blocks": 300,
+    "maximum_public_seconds": 20.079975293017924,
+    "maximum_replica_seconds": 21.108150212094188,
+    "minimum_memory_headroom": 0.25117944656643443,
+    "restart_identities": 1,
+    "max_restarts": 0,
+    "max_oom": 0,
+    "samples": 716,
+    "binary_digests": [
+      "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62"
+    ],
+    "http_failures": 7,
+    "http_recoveries": 7
+  },
+  {
+    "worker": "transparent-pir-recent-03",
+    "start": "2026-09-12T00:49:59.546339+00:00",
+    "end": "2026-09-12T06:49:59.546339+00:00",
+    "public_blocks": 300,
+    "replica_blocks": 300,
+    "maximum_public_seconds": 19.786022989079356,
+    "maximum_replica_seconds": 22.91439812106546,
+    "minimum_memory_headroom": 0.256070872551889,
+    "restart_identities": 1,
+    "max_restarts": 0,
+    "max_oom": 0,
+    "samples": 716,
+    "binary_digests": [
+      "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62"
+    ],
+    "http_failures": 12,
+    "http_recoveries": 12
+  },
+  {
+    "worker": "transparent-pir-recent-04",
+    "start": "2026-09-12T00:49:59.508801+00:00",
+    "end": "2026-09-12T06:49:59.508801+00:00",
+    "public_blocks": 300,
+    "replica_blocks": 300,
+    "maximum_public_seconds": 19.714103172067553,
+    "maximum_replica_seconds": 19.71732673002407,
+    "minimum_memory_headroom": 0.2517731665145884,
+    "restart_identities": 1,
+    "max_restarts": 0,
+    "max_oom": 0,
+    "samples": 712,
+    "binary_digests": [
+      "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62"
+    ],
+    "http_failures": 11,
+    "http_recoveries": 11
+  }
+]

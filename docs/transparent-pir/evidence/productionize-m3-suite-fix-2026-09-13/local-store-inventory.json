@@ -1,0 +1,115 @@
+{
+  "local_root": "/tmp/transparent-suite-fix-20260913/accepted",
+  "files": [
+    {
+      "path": "active-p2sh/fresh.sqlite",
+      "bytes": 63733760,
+      "sha256": "eb68e466ad1a7239977513d064876bf132c69e365944b765ae5a81ac24901f89"
+    },
+    {
+      "path": "active-p2sh/wallet.sqlite",
+      "bytes": 63733760,
+      "sha256": "580ebe7e5024f588d2fdceb2ed28726e1fe92716d71a44be893da921dad7c371"
+    },
+    {
+      "path": "coinbase/fresh.sqlite",
+      "bytes": 64495616,
+      "sha256": "c223d731c6122fc55b2ae242a71b656973d2adc8ea09c61f7475081abeec55a9"
+    },
+    {
+      "path": "coinbase/wallet.sqlite",
+      "bytes": 64499712,
+      "sha256": "c68784db77f786705848d459eeecf715c8f116667b4615bad37d3a67b032827f"
+    },
+    {
+      "path": "multi-script-self-transfer/fresh.sqlite",
+      "bytes": 66928640,
+      "sha256": "16832391450d106a325fc68e33e35769afedf889104a7fbbc3adb234776f0196"
+    },
+    {
+      "path": "multi-script-self-transfer/wallet.sqlite",
+      "bytes": 66932736,
+      "sha256": "62d880556344b41ebd8f1f76ef0754a43fc92001fdef62647e6e67951be6c35c"
+    },
+    {
+      "path": "offline-receive-spend/fresh.sqlite",
+      "bytes": 63733760,
+      "sha256": "9c851d3e16b8b02c93cb39d651f4ffaea94f2412ca91e880534183425f0b9dff"
+    },
+    {
+      "path": "offline-receive-spend/wallet.sqlite",
+      "bytes": 63733760,
+      "sha256": "9698ae8659d80b70c8caff9861d2fd26f12cc450ecaf9160f1c520fcffb047cd"
+    },
+    {
+      "path": "old-receive-recent-spend/fresh.sqlite",
+      "bytes": 63733760,
+      "sha256": "9e7c3def851cb89c87768aed3c74c71701898772c1ebb5b9f8f96c975e05f4c2"
+    },
+    {
+      "path": "old-receive-recent-spend/wallet.sqlite",
+      "bytes": 63733760,
+      "sha256": "3af459594a2b3ee6699038258c7a29dfb85d5a33a4b33a6955e9c5b4d63a403b"
+    },
+    {
+      "path": "recent-birthday/fresh.sqlite",
+      "bytes": 1630208,
+      "sha256": "698775e9c906069d78d7fb9db50753ca640414c19817e28b241b4feb2e606789"
+    },
+    {
+      "path": "recent-birthday/wallet.sqlite",
+      "bytes": 1650688,
+      "sha256": "5bc3887e6ead32a6906f592aa5b519d0e6c1ac0b4ebaab29700c76158b65aba3"
+    },
+    {
+      "path": "reused-pages/fresh.sqlite",
+      "bytes": 421888,
+      "sha256": "f6227b9addc25460098846b7f5be3a37d73adbacf3f39c821aedd49bba664fe0"
+    },
+    {
+      "path": "reused-pages/wallet.sqlite",
+      "bytes": 421888,
+      "sha256": "89b4762ff7f5543f8639e7e3b7629c4a1572bc480837fafa7e913d20f4930bbb"
+    },
+    {
+      "path": "small-active/fresh.sqlite",
+      "bytes": 63709184,
+      "sha256": "4a6b04a94bfd9d174a72b4bb5679932755ce7d9e078d182ae03872b3f3ac3642"
+    },
+    {
+      "path": "small-active/wallet.sqlite",
+      "bytes": 63709184,
+      "sha256": "e67efb7099533dc9fe8a80810161f11dcf7913c5eaecb327e48613ec69218532"
+    },
+    {
+      "path": "unused-p2pkh/fresh.sqlite",
+      "bytes": 63868928,
+      "sha256": "dacca0162a338aebb234152274e4bcdbcfe8653e6f843440da512174c3bb2561"
+    },
+    {
+      "path": "unused-p2pkh/wallet.sqlite",
+      "bytes": 63868928,
+      "sha256": "b319bd3cfe765ba415298187d641972a2e645b2d96ead1ff79e267ff0d52c1e9"
+    },
+    {
+      "path": "unused-p2sh/fresh.sqlite",
+      "bytes": 63692800,
+      "sha256": "4dc6f8ccb724f1fa35ba83955125b8f72503a477ad44f3bb40b5cc376b3d5755"
+    },
+    {
+      "path": "unused-p2sh/wallet.sqlite",
+      "bytes": 63692800,
+      "sha256": "1d85c70fe3ef63b4bde29a6affd6e3497050dcc3919340b222e7c4ec6e2a764b"
+    },
+    {
+      "path": "zero-balance/fresh.sqlite",
+      "bytes": 63733760,
+      "sha256": "fb66abaa49b96e4e639ed48abf2d75ebb72d76970aa839ed5719ce3fcb7b94e0"
+    },
+    {
+      "path": "zero-balance/wallet.sqlite",
+      "bytes": 63733760,
+      "sha256": "3b7b405eb5a34bba922c635c94e1198fd9d6df5af41774fb7a9c6cc5fb61a3a1"
+    }
+  ]
+}

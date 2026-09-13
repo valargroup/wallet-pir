@@ -325,8 +325,23 @@ Rollback preserves current publication records and revocations and reopens only
 after verification. Unverified recovery keeps the maintenance response.
 
 `run-transparent-hardening-rollout.py` supervises the canary upgrade, the loaded
-gate, the whole-fleet batch and 24-hour observation of all six workers. It stops
-on failure. The full-fleet gate must match the tested binary, fleet script, configuration
+gate, the whole-fleet batch and observation of all six workers.
+The M1 post-rollout requirement is **six continuous hours and at least 300 new
+canonical blocks per worker**, confirmed by Roman on 2026-09-13 as the updated
+requirement under which the fleet observation had passed. This supersedes the
+previously documented twelve-hour requirement. The initial loaded canary
+remains six hours and 300 blocks. Correctness, freshness, routing, memory,
+restart/OOM and provenance requirements remain unchanged.
+
+For the September 12 observation, accept the first six-hour window ending
+approximately 06:49:59 UTC under the separate
+[dated transition record](evidence/productionize-m1-six-hour-acceptance-2026-09-13/README.md). Preserve the original 24-hour launch
+and its later failed terminal result; do not relabel that command successful.
+The later freshness incident remains an M5 follow-up before beta. This specific
+operator-confirmed transition does not permit arbitrary successful prefixes to
+be selected from future failed observations. Future runs must be launched with
+the approved duration and preserve complete results and query logs.
+The full-fleet gate must match the tested binary, fleet script, configuration
 and roster digest; elapsed time alone is insufficient. The foreground adapter and
 reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
 recent-01 at the canary stage and all four recent replicas after their upgrade.
@@ -369,14 +384,16 @@ Audit a closed observation with `ops/scripts/audit-transparent-observation.py`
 against the extracted bundle. The supervisor cannot certify a gate shorter than
 the one it was launched with, and a monitor that fails writes a thin result with
 no provenance, so acceptance is a separate audit rather than an exit code. Every
-threshold is a flag defaulting to the gate above; the report names each one that
+threshold is a flag. The current audit still defaults to the historical
+twelve-hour duration, so pass `--seconds 21600` for the six-hour requirement.
+The report names each threshold that
 departs from the default or from the value the run was launched with, so a
 relaxed gate is visible in the evidence. It reads a directory, contacts no host
 and changes nothing.
 
 ```sh
 python3 ops/scripts/audit-transparent-observation.py \
-  --observation <extracted>/observation \
+  --observation <extracted>/observation --seconds 21600 \
   --canary-result <canary>/result.json --upgrade-result <upgrade>/result.json \
   --out <evidence>/audit.json
 ```

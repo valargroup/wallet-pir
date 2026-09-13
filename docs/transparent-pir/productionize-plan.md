@@ -68,34 +68,27 @@ from matching evidence or explicitly unverified. Documentation alone cannot pass
 
 **Execute**
 
-- Close the isolated preparation diagnostic before another soak: prove complete
-  initial residency, separate query clients, trace admission and runtime stages,
-  and qualify against a worker budget that leaves room for fleet overhead.
-  The [admission evidence](evidence/productionize-m1-admission-2026-09-09/README.md)
-  closes the diagnosis with a startup correction and rejects a build-slot-only
-  promotion. The [construction experiment](evidence/productionize-m1-construction-2026-09-09/README.md)
-  now passes the timing screen with two slots but fails query availability.
-  The [query-tail qualification](evidence/productionize-m1-query-tails-2026-09-09/README.md)
-  subsequently passes all three two-slot repetitions after memory phase handling,
-  Linux file-cache advice and batched snapshot reads. Source `d778c62` was installed
-  on recent-01 with full warm verification. The matching loaded canary began
-  2026-09-09 20:00:53 UTC under `transparent-m1-qualified-rollout.service`.
-  It failed after 78.576 s on public freshness. The generator's AVX-512 path does
-  not match the recent host's portable backend. The
-  [target CPU diagnosis](evidence/productionize-m1-target-cpu-2026-09-09/README.md)
-  records this difference; forcing the portable path alone did not reproduce
-  the target slowdown. The [bounded-wait candidate](evidence/productionize-m1-query-wait-2026-09-09/README.md)
-  removes optional snapshot persistence from readiness and bounds query memory
-  waits. All three two-slot portable-backend screens pass at 8.856–9.721 s.
-  Source `f2f351c` is the next actual-hardware canary candidate. Preserve failed
-  runs and require the complete live duration and block counts.
-- Reuse `ops/scripts/run-transparent-hardening-rollout.py` and its observer/upgrade
-  helpers. Reuse acceptance only when binary, operations code and configuration match.
-- Follow the [hardening rollout gate](deployment.md#hardening-rollout-gate): loaded
-  canary, coordinated maintenance rollout, then full-fleet observation.
-- Verify managed preparation, runtime-cache reclamation, revision retention and
-  readiness while publication continues. Collect metrics inside Amsterdam without
-  dependence on the operator's laptop connection.
+- M1 is accepted under the user-confirmed six-hour post-rollout requirement;
+  see [current status](status.md#m1-accepted-observation)
+  and the [dated acceptance record](evidence/productionize-m1-six-hour-acceptance-2026-09-13/README.md). The matching loaded canary,
+  corrected six-worker rollout and first six hours/300 blocks per worker passed.
+  The original 24-hour supervisor's later failure is preserved as an M5 follow-up.
+  Apply the [hardening rollout gate](deployment.md#hardening-rollout-gate)
+  to future release-affecting changes; do not restart the completed run.
+- On failure, preserve the closed raw samples, query logs, terminal results and
+  component identities. Diagnose and qualify the correction before restarting
+  the affected acceptance stage. Failed, interrupted and diagnostic runs earn
+  no acceptance credit outside the explicitly recorded six-hour transition; bounded HTTP retries do not extend freshness deadlines.
+- On success, audit all six terminal results and both sustained query-client logs.
+  Verify freshness, exactness, canonical readiness, routing withdrawals, memory,
+  restarts/OOMs, managed preparation, cache reclamation and revision retention.
+  Reconcile worker source/binary, operations, router, monitor and configuration
+  provenance across the canary, rollout and observation; do not infer matching
+  acceptance from a successful exit code alone.
+- Preserve the final raw evidence, record conclusions in status and close the
+  applicable [remaining-work gates](remaining-work.md). Keep capacity and failure
+  rehearsals assigned to their original milestones; this observation does not
+  establish the M5 operating envelope or authorize general production availability.
 
 **Definition of done:** the complete canary duration and block-count gates pass,
 followed by the complete all-worker observation. Public and replica freshness,

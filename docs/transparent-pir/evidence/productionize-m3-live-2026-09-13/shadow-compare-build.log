@@ -1,0 +1,5 @@
+   Compiling zakura-wallet-store v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-store)
+   Compiling zakura-wallet-sync v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-sync)
+   Compiling zakura-wallet-lwd v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-lwd)
+   Compiling zakura-wallet-transparent v0.1.0 (/Users/roman/projects/wallet-libraries-m3-correctness/zakura/wallet-transparent)
+    Finished `release` profile [optimized] target(s) in 9.35s

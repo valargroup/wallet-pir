@@ -1,0 +1,21 @@
+{
+  "recorded_utc": "2026-09-13T18:52:25.653868+00:00",
+  "pir_source": "e98286bf345718b29e22ef81076cd22633405d83",
+  "wallet_source": "7937d48dfd03f905f2029318d0820db46867d8cf",
+  "files": {
+    "runner": {
+      "path": "target/release/transparent-regression",
+      "sha256": "d858a3ebf0238deed61b9de1b784725767c18d3b717ece4d0de222d3f8df31df"
+    },
+    "fixture": {
+      "path": "server/transparent-regression/fixtures/mainnet.json",
+      "sha256": "e926b8f809faf7ab32065b7cbab5c1ffaa78bbc2af569bd091fd175d60e2c541"
+    },
+    "release_bridge": {
+      "path": "/Users/roman/projects/wallet-libraries/target/release/libzakura_wallet_bridge.dylib",
+      "sha256": "52a51b5797916b05595cb5e82e1162b1689a6a8282b2b3d64c6126efdff5d802"
+    }
+  },
+  "operator_scope": "Roman authorized beginning M3 validation in this conversation; sequential public fixture regression, no fleet mutation. Coordinator SSH timed out/reset; current private fleet readiness unverified.",
+  "application_gates": "Awaiting isolated history-bearing validation profile/credential path and birthday; no existing wallet opened."
+}

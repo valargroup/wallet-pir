@@ -1,5 +1,9 @@
 # M1 public HTTP disconnect qualification
 
+Current disposition: [M1 accepted for the user-confirmed six-hour window](../productionize-m1-six-hour-acceptance-2026-09-13/README.md).
+The original 24-hour supervisor later failed; the launch and checkpoint records
+below retain the information available at their timestamps.
+
 The all-worker observation started September 11 at 22:12:40 UTC and failed
 September 12 at 00:31:21 UTC. The recent-03 monitor received a connection reset
 in the TLS handshake for the public `/v1/shards` GET. The supervisor cancelled
@@ -72,3 +76,19 @@ and 300 canonical blocks per monitor. Existing maintenance restoration remains
 scheduled with no exemptions. Earliest finish is September 13 at approximately
 00:50 UTC (September 12, 18:50 Edmonton). M1 remains open pending completion
 and audit; the failed observation is not credited.
+
+## Operator checkpoint: 2026-09-12, 03:31 UTC
+
+Read-only SSH checks of the coordinator confirmed the existing systemd unit
+active with `MainPID=697911` and `ExecMainStatus=0`. All six `samples.ndjson`
+logs advanced between checks; their latest timestamps were 03:31:21 UTC.
+No worker `result.json` existed. This checkpoint was reported in the operator
+session; it is not a closed raw acceptance bundle or proof of a completed pass.
+Raw ongoing output remains under
+`/opt/transparent-publisher-build/caddy-http-retry-20260912/observation`.
+
+The operator subsequently requested checks once every two hours. The next check
+is due at 05:31 UTC; continuous server-side monitoring, failure handling and
+acceptance thresholds are unchanged. Preserve and audit the closed raw output
+before claiming completion. No new fleet poll was made for this documentation
+update; the checkpoint above is explicitly the last verified state.

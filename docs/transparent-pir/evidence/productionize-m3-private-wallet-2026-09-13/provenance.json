@@ -1,0 +1,11 @@
+{
+  "recorded_utc": "2026-09-13",
+  "wallet_source": "7937d48dfd03f905f2029318d0820db46867d8cf",
+  "bridge_sha256": "52a51b5797916b05595cb5e82e1162b1689a6a8282b2b3d64c6126efdff5d802",
+  "harness_patch_sha256": "335cd2523465bd54e12ae98878b371b9841e3dda1fa6d6de585a8dbc1acb49a5",
+  "secrets_in_evidence": false,
+  "release_application_exercised": false,
+  "request_in_flight_at_kill_proven": false,
+  "private_profile_root": "/Users/roman/Library/Application Support/transparent-m3-validation",
+  "scope": "Native library live recovery, independent compact-block reducer comparison, process interruption during sampled transparent phase and exact resumed comparison. Not M3 acceptance."
+}

@@ -1,0 +1,22 @@
+cargo run --locked --release -p transparent-regression --bin transparent-regression -- \
+		--fixture "server/transparent-regression/fixtures/mainnet.json" \
+		--shard-url "https://transparent-pir.valargroup.dev" \
+		--filter-url "https://enhance-pir.valargroup.dev" \
+		--source-sha "$(git rev-parse HEAD)" \
+		--out-dir "/tmp/transparent-suite-fix-20260913/live"
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/spendability-pir/pir/transparent-wallet-store)
+   Compiling transparent-regression v0.1.0 (/Users/roman/projects/spendability-pir/server/transparent-regression)
+    Finished `release` profile [optimized] target(s) in 28.93s
+     Running `target/release/transparent-regression --fixture server/transparent-regression/fixtures/mainnet.json --shard-url 'https://transparent-pir.valargroup.dev' --filter-url 'https://enhance-pir.valargroup.dev' --source-sha e98286bf345718b29e22ef81076cd22633405d83 --out-dir /tmp/transparent-suite-fix-20260913/live`
+checking unused-p2pkh (unused)
+checking unused-p2sh (unused-p2sh)
+checking small-active (small-active)
+checking zero-balance (zero-balance)
+checking old-receive-recent-spend (cross-tier)
+checking offline-receive-spend (offline)
+checking active-p2sh (p2sh)
+checking reused-pages (reused-script)
+checking multi-script-self-transfer (multi-script)
+checking recent-birthday (recent-restore)
+checking coinbase (coinbase)

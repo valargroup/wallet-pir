@@ -67,8 +67,28 @@ unpaid for a second time. Each checkpoint records which rule applied.
 and elapsed time; `junit.xml` supports CI reporting. A mismatch writes both
 expected and actual ledger snapshots. SQLite databases and worker logs remain
 beside the report. Transport/TLS overhead and server capacity are not inferred
-from payload counters. Cases run sequentially with a 60-second request timeout
-and a 30-minute process deadline, configurable through the runner CLI.
+from payload counters. Cases run sequentially with a 60-second total HTTP-call
+budget and a 30-minute per-case process deadline, configurable through the runner CLI.
+
+The runner uses at most three attempts per HTTP call (`--http-attempts 1` restores
+strict single-attempt diagnostics). Backoff and all attempts share the same
+request deadline; an overload delay that cannot fit returns the refusal. Retries
+replay the same buffered request against the same origin and revision, without
+regenerating private query material. The shared client's existing retry categories
+cover transport failures and HTTP 408/502/503/504; application decoding, publication
+drift and ledger differences are not retried. Exhausted retries or incomplete
+recovery still fail the case. The wallet client's default remains one attempt;
+a suite pass does not silently change deployed wallet behavior.
+
+`preflight.http.ndjson` and `case-<id>.http.ndjson` retain every attempt, including
+status, elapsed time, request ID, attempt number and transport failure. Reports
+summarize failed attempts, recovered requests and failed requests and record the
+selected retry/deadline policy. These logs contain no query bodies or keys.
+Logical per-stage counters retain their previous meaning; use attempt logs to
+inspect retries. Submitted payload size is not proof of socket delivery, and
+completed-body bytes omit partial bodies lost on a read error. They are not
+wire-traffic measurements. A case recovered by retries is correctness evidence
+under this explicit policy, not an outage-free service observation.
 
 ## Fixture generation and oracle
 
@@ -342,3 +362,11 @@ Reports record `kernel_policy` and the runner records CPU information; pinning
 four CPUs on the Amsterdam generator does not reproduce the older four-vCPU
 worker's performance. Qualification on the generator is a screening step before
 the actual loaded canary.
+
+## Latest productionization validation
+
+The [September 13 frozen-executable run](evidence/productionize-m3-suite-fix-2026-09-13/README.md)
+passed all eleven deployed cases under the documented bounded retry policy.
+Its evidence preserves the original failures, the exact source/binary identity,
+full repository checks and every HTTP attempt. Application-level M3 closure and
+service availability remain separately tracked in [remaining work](remaining-work.md).

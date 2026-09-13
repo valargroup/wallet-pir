@@ -1,0 +1,3 @@
+child killed with SIGKILL during the transparent run; last line: phase=idle scanned_to=3482319 tip=3482319 completion=sync-in-progress anchor=null failed=false
+reopened completion=interrupted anchor=null covered=null pending=0
+resumed in 50853 ms: completion=complete anchor=3482322 synchronized=true history_entries=5

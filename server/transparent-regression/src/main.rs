@@ -1,5 +1,6 @@
 //! Sequential deployed correctness checks. Each case runs in a deadline-bounded child.
 mod counting;
+mod http_evidence;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use counting::{addressed_shards, Counting, CountingFilters};
@@ -36,6 +37,9 @@ struct Args {
     request_timeout_secs: u64,
     #[arg(long, default_value_t = 1800)]
     case_timeout_secs: u64,
+    /// Attempts share request_timeout_secs; every attempt is recorded.
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(1..=3))]
+    http_attempts: u8,
     #[arg(long)]
     source_sha: String,
     #[arg(long, hide = true)]
@@ -206,7 +210,10 @@ fn pinned(
 ) -> Result<(transparent_filter::ShardMap, u64, Value)> {
     let mut seen: Vec<Origin> = vec![];
     for url in [&a.filter_url, &a.shard_url] {
-        let mut origin = HttpFilterSource::new(url, &options(a)).map_err(anyhow::Error::msg)?;
+        let mut origin = HttpFilterSource::new(url, &options(a))
+            .map_err(anyhow::Error::msg)?
+            .with_retry_attempts(usize::from(a.http_attempts))
+            .with_observer(http_evidence::observer(a)?);
         let (raw, bytes) = origin.shard_map().map_err(anyhow::Error::msg)?;
         let map: transparent_filter::ShardMap = serde_json::from_slice(&raw)?;
         agrees(&f.map, &map).with_context(|| format!("publication drift at {url}"))?;
@@ -316,11 +323,16 @@ fn run_case(a: &Args, f: &Fixture, case: &Case, stages: &mut Vec<Value>) -> Resu
         let counts = Arc::new(Mutex::new(BTreeMap::new()));
         let mut transport = Counting {
             inner: HttpShardTransport::new(&a.shard_url, &options(a))
-                .map_err(anyhow::Error::msg)?,
+                .map_err(anyhow::Error::msg)?
+                .with_retry_attempts(usize::from(a.http_attempts))
+                .with_observer(http_evidence::observer(a)?),
             stages: counts.clone(),
         };
         let mut filters = CountingFilters {
-            inner: HttpFilterSource::new(&a.filter_url, &options(a)).map_err(anyhow::Error::msg)?,
+            inner: HttpFilterSource::new(&a.filter_url, &options(a))
+                .map_err(anyhow::Error::msg)?
+                .with_retry_attempts(usize::from(a.http_attempts))
+                .with_observer(http_evidence::observer(a)?),
             stages: counts.clone(),
         };
         let (init, _) = transport.init().map_err(anyhow::Error::msg)?;
@@ -441,7 +453,7 @@ fn main() -> Result<()> {
         std::fs::write(
             a.out_dir.join(format!("{id}.json")),
             serde_json::to_vec_pretty(
-                &json!({"id":id,"profile":case.profile,"passed":result.is_ok(),"error":result.as_ref().err().map(ToString::to_string),"checkpoints":stages}),
+                &json!({"id":id,"profile":case.profile,"passed":result.is_ok(),"error":result.as_ref().err().map(ToString::to_string),"checkpoints":stages,"http":http_evidence::summary(&a)?}),
             )?,
         )?;
         return result;
@@ -466,7 +478,7 @@ fn main() -> Result<()> {
     let runner_binary_sha256 =
         hex::encode(Sha256::digest(std::fs::read(std::env::current_exe()?)?));
     let (sealed_prefix_shards, sealed_prefix_sha256) = sealed_prefix_digest(&f.map);
-    let report = json!({"runner_binary_sha256":runner_binary_sha256,"passed":passed,"source_sha":a.source_sha,"fixture_sha256":hex::encode(Sha256::digest(&raw)),"map_sha256":f.map_sha256,"sealed_prefix_shards":sealed_prefix_shards,"sealed_prefix_sha256":sealed_prefix_sha256,"preflight":preflight.as_ref().ok().map(|(_,_,sample)| sample.clone()),"preflight_error":preflight.as_ref().err().map(ToString::to_string),"cases":results});
+    let report = json!({"runner_binary_sha256":runner_binary_sha256,"passed":passed,"source_sha":a.source_sha,"fixture_sha256":hex::encode(Sha256::digest(&raw)),"map_sha256":f.map_sha256,"sealed_prefix_shards":sealed_prefix_shards,"sealed_prefix_sha256":sealed_prefix_sha256,"preflight":preflight.as_ref().ok().map(|(_,_,sample)| sample.clone()),"preflight_error":preflight.as_ref().err().map(ToString::to_string),"cases":results,"http":http_evidence::summary(&a)?,"http_policy":{"maximum_attempts":a.http_attempts,"request_deadline_seconds":a.request_timeout_secs,"case_deadline_seconds":a.case_timeout_secs,"same_buffered_request":true}});
     std::fs::write(
         a.out_dir.join("report.json"),
         serde_json::to_vec_pretty(&report)?,
@@ -513,6 +525,8 @@ fn child(a: &Args, id: &str) -> Result<Value> {
         .arg(&a.source_sha)
         .arg("--worker-case")
         .arg(id)
+        .arg("--http-attempts")
+        .arg(a.http_attempts.to_string())
         .arg("--request-timeout-secs")
         .arg(a.request_timeout_secs.to_string())
         .stdout(Stdio::from(std::fs::File::create(

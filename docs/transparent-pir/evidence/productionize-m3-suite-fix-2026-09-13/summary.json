@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "cases": 11,
+  "checkpoints": 68,
+  "http": {
+    "requests": 4320,
+    "attempts": 4324,
+    "failed_attempts": 4,
+    "recovered_requests": 4,
+    "failed_requests": 0
+  },
+  "runner_binary_sha256": "dff0244a9464a0107df637268e27f05d74c7f0bb003db2119ba01616a8fdc9e7",
+  "fixture_sha256": "e926b8f809faf7ab32065b7cbab5c1ffaa78bbc2af569bd091fd175d60e2c541",
+  "source_manifest": "source.json",
+  "policy": {
+    "case_deadline_seconds": 1800,
+    "maximum_attempts": 3,
+    "request_deadline_seconds": 60,
+    "same_buffered_request": true
+  }
+}

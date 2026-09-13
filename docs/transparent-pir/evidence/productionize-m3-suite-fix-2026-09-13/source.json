@@ -1,0 +1,13 @@
+{
+  "base": "e98286bf345718b29e22ef81076cd22633405d83",
+  "working_tree_changes": true,
+  "sources": {
+    "pir/transparent-wallet/src/http.rs": "f3a6f2b1c80794722719fa403625dc8db7aa00e364ee9af8814408b71fd6fd75",
+    "pir/transparent-wallet/src/experimental_parent_http.rs": "38b33698a13fddce437de7ad126e0d0740d6cf7e7efcdee53f0b9b60b60942d6",
+    "server/transparent-regression/src/main.rs": "64d4780466d012abf908630d2633ea38fa786ebac48d57ce8a1e740387fe19a5",
+    "server/transparent-regression/src/http_evidence.rs": "75cd477e4de6f0dbe8460ce3e408b45b26066cccf7915d5ac32b90792341b455",
+    "server/transparent-regression/tests/runner.rs": "736bb44371ec54029b5a677e538c722638618278e2688a57561aee2cef26daaa"
+  },
+  "runner_sha256_at_start": "696599dc3c7d3716b53b8dd6e3dabba8c786d1fac5c326a5d92390249d9b0223",
+  "initial_live_provenance_note": "Concurrent workspace checks replaced target/release/transparent-regression during the initial all-pass run. The early sampled hash is not a reliable run-wide binary identity; both measurements are retained. Repeat acceptance uses a frozen copy after checks."
+}

@@ -1,6 +1,6 @@
 # Transparent PIR documentation
 
-Updated 2026-09-09. The accepted target is four small recent replicas and two larger archive workers. Deployment observations and continuous-publication verification are recorded in [status](status.md); they do not establish sustained fleet capacity.
+Updated 2026-09-13. The accepted target is four small recent replicas and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
 
 ## Reading order and authority
 

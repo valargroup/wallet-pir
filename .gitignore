@@ -18,3 +18,7 @@ monitor.sh
 
 # Go build output from the BIP 158 cross-check generator.
 /pir/transparent-filter/tests/crosscheck/crosscheck
+
+# Local OS metadata and Python test caches
+.DS_Store
+__pycache__/
