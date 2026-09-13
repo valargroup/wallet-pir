@@ -113,11 +113,16 @@ spendability.
 
 ## Re-cutting the fixture for a new publication
 
-The runner compares the served map byte for byte with `map_sha256` and refuses
-before any private query, so a fixture frozen against one publication cannot
-gate a later one. Continuous publication moves the anchor and, because
-`shard-cutoff` derives the cutoff from the anchor header's time rather than a
-fixed height, it moves the tier cutoff too.
+A fixture stays runnable while its sealed entries are still served, so a re-cut
+is not what makes a later publication gateable; it is what keeps the gate
+*representative*. Every checkpoint in a fixture ages into settled territory, and
+a fixture never re-cut would go on proving the same sealed history forever while
+covering none of the revisions continuous publication has produced since.
+Re-cut when the gate should reach the newer span, when the tier cutoff has moved
+enough to matter, or when a case's character no longer holds — not merely
+because the anchor advanced. Continuous publication moves the anchor and,
+because `shard-cutoff` derives the cutoff from the anchor header's time rather
+than a fixed height, it moves the tier cutoff too.
 
 A re-cut is therefore not a substitution of the terminal height. Each checkpoint
 keeps, or follows, whichever boundary it was chosen against: heights taken from a
@@ -166,6 +171,10 @@ their real heights, so that case stops probing a near-tip coinbase.
 Run `regression-export` from a committed revision. The 2026-09-08 fixture was
 cut with an uncommitted working-tree build and says so; a release gate should not
 repeat that.
+
+A re-cut fixture is pinned the same way as any other: its own tail entry is
+unsealed at export and is checked for continuity rather than equality, so the
+new fixture does not have to be frozen against a publication that stood still.
 
 ## Local conformance checks
 
