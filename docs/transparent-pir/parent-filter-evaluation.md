@@ -1,6 +1,6 @@
 # Parent-filter evaluation
 
-This implements an opt-in experiment. The user subsequently approved [production artifact hosting](evidence/parent-filters-production-2026-09-08/README.md); the full paired performance benchmark remains incomplete. Recent catch-up bandwidth is the primary objective. The existing mixed-20 synthetic weights are secondary; these are not wallet population frequencies.
+This implements an opt-in experiment. The user subsequently approved [production artifact hosting](../../evidence/transparent/parent-filters-production-2026-09-08/README.md); the full paired performance benchmark remains incomplete. Recent catch-up bandwidth is the primary objective. The existing mixed-20 synthetic weights are secondary; these are not wallet population frequencies.
 
 ## Reproduce
 
@@ -18,7 +18,7 @@ target/release-fast/hierarchical-filter-eval extract \
 target/release-fast/hierarchical-filter-eval sweep \
   --dataset /path/to/evaluation/dataset --out /path/to/evaluation/sweep
 
-python3 tools/transparent_parent_evaluate.py select /path/to/evaluation/sweep
+python3 tools/parent-filters/transparent_parent_evaluate.py select /path/to/evaluation/sweep
 ```
 
 Extraction verifies the sample's chain anchor, every shard endpoint, and every reconstructed child filter against both the map digest and published bytes. Complete filter element sets include scripts excluded from private directory rows. It preserves raw per-shard sets for exact cross-shard deduplication. A failed extraction does not write the complete provenance marker.
@@ -45,22 +45,22 @@ The default wallet/filter behavior is unchanged. Explicit scenario configuration
 These are example matrix entries, not selected production parameters. Serve the sweep directory from an isolated static HTTP origin; manifests refer to digest-addressed `artifacts/<hash>.bin` relative to their directory. Run `parent-evaluation-server --shard-dir /path/to/frozen/publication` on the frozen publication. This loopback-only server omits whole-set background prewarming; the driver runs a baseline warm-up for each seed before the measured variants. Bind experimental services to loopback and access them through SSH forwarding if needed.
 
 ```sh
-python3 tools/transparent_parent_evaluate.py waves \
+python3 tools/parent-filters/transparent_parent_evaluate.py waves \
   --evaluation /path/to/evaluation/sweep \
-  --scenario server/transparent-loadtest/scenarios/mixed-20-wave.json \
+  --scenario tools/transparent-loadtest/scenarios/mixed-20-wave.json \
   --sample /path/to/sample.json \
   --shard-url http://127.0.0.1:18092 \
   --filter-url http://127.0.0.1:18092 \
   --parent-origin http://127.0.0.1:18095 \
   --out /path/to/evaluation/http
 
-python3 tools/transparent_parent_evaluate.py summarize-http \
+python3 tools/parent-filters/transparent_parent_evaluate.py summarize-http \
   /path/to/evaluation/http /path/to/evaluation/sweep
 ```
 
 The runner uses held-out wallets only, seeds 1–10, and a saved shuffled variant order.
 
-For repeated experiments, first run `python3 tools/transparent_parent_evaluate.py held-out /path/to/sample.json /path/to/evaluation/sweep /path/to/held-out-sample.json`. Then `hierarchical-filter-eval seeds --data-dir /path/to/journal --map /path/to/dataset/map.json --sample /path/to/held-out-sample.json --out /path/to/journal-seeds` exports prior ledgers in one journal pass. It checks every wallet's measured-window digest/count and runs the independent prior-ledger reducer. The driver generates the same held-out bytes. Pass `--journal-seeds /path/to/journal-seeds` to `waves`. The explicit `experimental_journal_seeds` scenario field requires a frozen publication. File hashes, map/sample/anchor identity, script scope and prior-ledger consistency are rechecked before import. Reports label this `journal-verified`, not an HTTP preparation recovery. Filters, setup caches and measured coverage remain cold. The complete manifest is written only after all wallets pass verification.
+For repeated experiments, first run `python3 tools/parent-filters/transparent_parent_evaluate.py held-out /path/to/sample.json /path/to/evaluation/sweep /path/to/held-out-sample.json`. Then `hierarchical-filter-eval seeds --data-dir /path/to/journal --map /path/to/dataset/map.json --sample /path/to/held-out-sample.json --out /path/to/journal-seeds` exports prior ledgers in one journal pass. It checks every wallet's measured-window digest/count and runs the independent prior-ledger reducer. The driver generates the same held-out bytes. Pass `--journal-seeds /path/to/journal-seeds` to `waves`. The explicit `experimental_journal_seeds` scenario field requires a frozen publication. File hashes, map/sample/anchor identity, script scope and prior-ledger consistency are rechecked before import. Reports label this `journal-verified`, not an HTTP preparation recovery. Filters, setup caches and measured coverage remain cold. The complete manifest is written only after all wallets pass verification.
 
 Each recovery has an independent cold client cache; preparation traffic is excluded and baseline preparation uses no parent experiment. Use identical server hardware, cache limits and warm-up procedures across variants, recording these and source/binary hashes beside results. A failed wave stops the run and preserves its report and logs. Do not treat missing waves as successful observations.
 
@@ -80,4 +80,4 @@ Opting in accepts disclosure of probable activity in coarse chain intervals thro
 
 ## Recorded experiment
 
-The [2026-09-08 evidence](evidence/parent-filters-2026-09-08/README.md) contains the complete full-journal offline sweep, frozen finalists, stress results and HTTP validation outcome.
+The [2026-09-08 evidence](../../evidence/transparent/parent-filters-2026-09-08/README.md) contains the complete full-journal offline sweep, frozen finalists, stress results and HTTP validation outcome.

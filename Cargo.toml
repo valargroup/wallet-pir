@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    # Protocol libraries, clients and stores.
     "pir/enhance",
     "pir/transparent-events",
     "pir/transparent-blocks",
@@ -8,18 +9,18 @@ members = [
     "pir/transparent-shard",
     "pir/transparent-wallet",
     "pir/transparent-wallet-store",
-    "pir/transparent-history",
     "pir/transparent-spend",
-    "pir/load-test",
+    # Services and operational dashboard.
     "server/enhance-pir-server",
     "server/pir-apm",
     "server/transparent-filter-server",
     "server/transparent-block-server",
-    "server/transparent-history-server",
-    "server/transparent-loadtest",
-    "server/transparent-regression",
-    "server/transparent-measure",
     "server/transparent-shard-server",
+    # Development and validation tools; package/binary names stay stable.
+    "tools/enhance-loadtest",
+    "tools/transparent-loadtest",
+    "tools/transparent-regression",
+    "tools/transparent-measure",
 ]
 exclude = ["demos/legacy-spendability"]
 

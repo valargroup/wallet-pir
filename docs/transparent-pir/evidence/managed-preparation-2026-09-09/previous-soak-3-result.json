@@ -1,8 +1,0 @@
-{
-  "utc": "2026-09-08T23:24:55.305704+00:00",
-  "event": "result",
-  "passed": false,
-  "seconds": 572.6052603010321,
-  "blocks": 6,
-  "error": "publication freshness exceeded at block 3476738"
-}

@@ -427,7 +427,7 @@ impl CoordinatorState {
     /// Unreachable in this build: the transparent-spend tables are not
     /// published and the endpoint that called this is gone. Retained with the
     /// rest of the spend code so reviving the feature is rewiring rather than
-    /// rewriting. See "Transparent-spend deprecation" in `docs/architecture.md`.
+    /// rewriting. See "Transparent-spend deprecation" in `docs/enhance-pir/architecture.md`.
     pub fn transparent_spend_session(&self) -> Option<TransparentSpendSession> {
         let snapshot = self.newest()?;
         let cold_end_height = snapshot.manifest.anchor_height.saturating_sub(WARM_BLOCKS);

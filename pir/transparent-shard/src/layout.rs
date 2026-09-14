@@ -38,7 +38,7 @@ pub const PAGE_ROW_BYTES: usize = 3_584;
 /// Named profiles below may use other row counts. At 14 slots per row, this
 /// baseline has capacity for 114,688 script entries before placement slack.
 /// Deployment decisions and coverage-matched evidence are maintained in
-/// `docs/transparent-pir/deployment.md` and `docs/transparent-pir/evidence/README.md`.
+/// `docs/transparent-pir/deployment.md` and `evidence/transparent/README.md`.
 pub const DIRECTORY_ROWS: usize = 8_192;
 
 /// Page rows per segment for the baseline `recent-8k` geometry.

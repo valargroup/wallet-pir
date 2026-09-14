@@ -1,8 +1,0 @@
-{
-  "unit": "transparent-m1-publication-io-build.service",
-  "observed_pid": 2591997,
-  "started_utc": "2026-09-10T23:50:00Z",
-  "directory": "/opt/transparent-publisher-build/publication-io-20260910",
-  "source_archive_sha256": "bf046fcef7905e8f7349e67df0cc4d57da77f9d210e3716fd7cffb7ca4be1554",
-  "deployed": false
-}

@@ -10,12 +10,12 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 | Milestone | Result and evidence | Scope and limits |
 |---|---|---|
-| M0 — Baseline | [Accepted September 9](evidence/productionize-m0-2026-09-09/README.md): source, native/UI capability and checkpoint-write inventory | The later M1 record resolves the baseline's fleet unknowns |
-| M1 — Fleet | [Accepted six-hour window](evidence/productionize-m1-six-hour-acceptance-2026-09-13/README.md), reconciled with Roman's updated requirement | Matching loaded canary, corrected rollout and six-hour observation; later freshness failure remains an M5 incident |
-| M2 — macOS recovery | [Accepted September 9](evidence/productionize-m2-2026-09-09/README.md), wallet source `0ce6d158f` | Real native recovery-only application, isolated profile, sending disabled; not a signed distribution or beta acceptance |
-| M3 — Correctness | [Fixture validation](evidence/productionize-m3-2026-09-10/README.md) at wallet `7937d48df`; [real-wallet native recovery and resume](evidence/productionize-m3-private-wallet-2026-09-13/README.md) compare exactly with independent reduction | Release-app UI and stronger live interruption evidence remain outstanding; public regression passed as recorded below |
-| M4 — Whole-wallet benefit | [80 exact paired recoveries](evidence/block-comparison-2026-09-09/README.md) give a derived 99.19% reduction in additional transparent payload | Representation-size comparison is not whole-wallet incremental latency or capacity |
-| M5 — Capacity and recovery | Historical [fleet series](evidence/runs/fleet-series-2026-09-08-r1/README.md) and M1 observations exist | No accepted sustained beta operating envelope or complete failure-recovery rehearsal |
+| M0 — Baseline | [Accepted September 9](../../evidence/transparent/productionize-m0-2026-09-09/README.md): source, native/UI capability and checkpoint-write inventory | The later M1 record resolves the baseline's fleet unknowns |
+| M1 — Fleet | [Accepted six-hour window](../../evidence/transparent/productionize-m1-six-hour-acceptance-2026-09-13/README.md), reconciled with Roman's updated requirement | Matching loaded canary, corrected rollout and six-hour observation; later freshness failure remains an M5 incident |
+| M2 — macOS recovery | [Accepted September 9](../../evidence/transparent/productionize-m2-2026-09-09/README.md), wallet source `0ce6d158f` | Real native recovery-only application, isolated profile, sending disabled; not a signed distribution or beta acceptance |
+| M3 — Correctness | [Fixture validation](../../evidence/transparent/productionize-m3-2026-09-10/README.md) at wallet `7937d48df`; [real-wallet native recovery and resume](../../evidence/transparent/productionize-m3-private-wallet-2026-09-13/README.md) compare exactly with independent reduction | Release-app UI and stronger live interruption evidence remain outstanding; public regression passed as recorded below |
+| M4 — Whole-wallet benefit | [80 exact paired recoveries](../../evidence/transparent/block-comparison-2026-09-09/README.md) give a derived 99.19% reduction in additional transparent payload | Representation-size comparison is not whole-wallet incremental latency or capacity |
+| M5 — Capacity and recovery | Historical [fleet series](../../evidence/transparent/runs/fleet-series-2026-09-08-r1/README.md) and M1 observations exist | No accepted sustained beta operating envelope or complete failure-recovery rehearsal |
 | M6 — Release and beta | No acceptance evidence | Review, versioned distribution and tester observation follow M3–M5 |
 
 ## M1 accepted observation
@@ -32,7 +32,7 @@ six-hour requirement on September 13.
 Worker source `a5f79ed`, binary
 `200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62`,
 operations `0e2c003`, router and monitor identities, query logs and all worker
-samples are retained in the [acceptance bundle](evidence/productionize-m1-six-hour-acceptance-2026-09-13/README.md).
+samples are retained in the [acceptance bundle](../../evidence/transparent/productionize-m1-six-hour-acceptance-2026-09-13/README.md).
 The fleet comprises four recent replicas and two archive owners in Amsterdam;
 this observation does not measure its sustainable wallet throughput.
 
@@ -42,11 +42,11 @@ budget; the other monitors were cancelled. That command remains failed. The
 six-hour decision is a retrospective operator acceptance of the completed window,
 not a rewritten terminal result. The later failure must receive an M5 disposition.
 Earlier failed canaries and their corrections remain in the
-[evidence ledger](evidence/README.md); they earn no additional acceptance credit.
+[evidence ledger](../../evidence/transparent/README.md); they earn no additional acceptance credit.
 
 ## M3 public regression and HTTP correction
 
-The [first September 13 deployed run](evidence/productionize-m3-live-2026-09-13/README.md)
+The [first September 13 deployed run](../../evidence/transparent/productionize-m3-live-2026-09-13/README.md)
 attempted all eleven cases: six passed, five failed on transient public-path
 transport or availability. It found no ledger mismatch in completed comparisons.
 The repaired runner explicitly uses up to three attempts for eligible HTTP
@@ -55,7 +55,7 @@ requests and a record of every failed and successful attempt. Identity checks,
 fixture contents, accepted-anchor comparisons and case deadlines are unchanged.
 See [testing](testing.md) for the policy and its limits.
 
-The [frozen-executable repaired run](evidence/productionize-m3-suite-fix-2026-09-13/README.md)
+The [frozen-executable repaired run](../../evidence/transparent/productionize-m3-suite-fix-2026-09-13/README.md)
 passed **all eleven cases and 68 checkpoints**. Its 4,320 logical requests used
 4,324 attempts: 4 failed attempts, 4 recovered requests, zero terminal request
 failures and no ledger mismatch. The source/binary manifests, full checks and
@@ -81,7 +81,7 @@ unresolved spends. Independent compact-block reduction matched exact events,
 UTXOs and balance. A second fresh profile was killed during the reported
 transparent sync phase, reopened as interrupted, resumed to **3,482,322** in
 **50.853 s**, and again matched independent reduction. The first profile stayed
-unchanged. [Sanitized evidence and reproducible harness](evidence/productionize-m3-private-wallet-2026-09-13/README.md).
+unchanged. [Sanitized evidence and reproducible harness](../../evidence/transparent/productionize-m3-private-wallet-2026-09-13/README.md).
 
 This exercised native code and Dart bindings, not the release application's
 screens. The kill was phase-observed, not directly proven to occur during an
@@ -118,28 +118,28 @@ index completeness. No mnemonic, private ledger or raw wallet log is published.
 Relevant sources: [store](../../pir/transparent-wallet/src/store.rs), [publisher](../../server/transparent-filter-server/src/bin/shard-publish.rs), [census](../../server/transparent-filter-server/src/bin/shard-census.rs), [service](../../server/transparent-shard-server/src/service.rs), [runtime](../../server/transparent-shard-server/src/runtime.rs), [loader](../../server/transparent-shard-server/src/shardset.rs), [wallet](../../pir/transparent-wallet/src/sync.rs).
 
 
-The [September 8 continuous-publication rollout](evidence/continuous-publication-2026-09-08/README.md)
+The [September 8 continuous-publication rollout](../../evidence/transparent/continuous-publication-2026-09-08/README.md)
 established mainnet publication from a journal starting at height zero, mixed
 archive/recent geometry, both public origins and warm fleet routing. Its exact
 174-shard inventory, cutoff, IPs, memory measurements and component versions are
 historical snapshots; M1 above is the later accepted operational record.
-The [inventory](evidence/inventory-2026-09-08/README.md),
-[census](evidence/census-2026-09-08/README.md) and
-[publication verification](evidence/publication-2026-09-08/README.md) retain the
+The [inventory](../../evidence/transparent/inventory-2026-09-08/README.md),
+[census](../../evidence/transparent/census-2026-09-08/README.md) and
+[publication verification](../../evidence/transparent/publication-2026-09-08/README.md) retain the
 dataset and independent spot-check provenance.
 
 The native adapter at `bca43b343`, client `22e6bec`, established accepted-anchor
 persistence, exact rollback, atomic balance/coverage and safe old-layout refusal;
-its [hardening evidence](evidence/hardening-2026-09-08/README.md) precedes M2/M3.
+its [hardening evidence](https://github.com/valargroup/enhance-pir/blob/42b5f9c145cc3f2a400c428938c566d2cc9699db/docs/transparent-pir/evidence/hardening-2026-09-08/README.md) precedes M2/M3.
 M2 closed the measured append amplification, misleading near-tip completion and
 demo-fallback/custody findings. Its application artifact was ad-hoc signed and
 not distributed through an accepted release channel.
 
 Persistent runtime caches, managed preparation and revision-aware collection
-progressed from the [cache canaries](evidence/deployment-runtime-live-2026-09-08/README.md)
-through the [matching M1 rollout](evidence/productionize-m1-deferred-collection-2026-09-11/README.md).
+progressed from the [cache canaries](https://github.com/valargroup/enhance-pir/blob/42b5f9c145cc3f2a400c428938c566d2cc9699db/docs/transparent-pir/evidence/deployment-runtime-live-2026-09-08/README.md)
+through the [matching M1 rollout](../../evidence/transparent/productionize-m1-deferred-collection-2026-09-11/README.md).
 Those old canary-only configuration notes are not today's rollout checklist.
 A sub-ten-minute compatible fleet update and failed-batch rollback still need
 separate timing/recovery evidence. The optional
-[parent-filter artifact rollout](evidence/parent-filters-production-2026-09-08/README.md)
+[parent-filter artifact rollout](../../evidence/transparent/parent-filters-production-2026-09-08/README.md)
 passed a bounded canary; its heavy-wallet performance comparison did not finish.

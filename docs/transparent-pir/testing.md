@@ -154,7 +154,7 @@ the previous anchor and cutoff and refuses unless it matches the frozen file.
 
 ```sh
 python3 ops/scripts/recut-regression-cases.py \
-  --previous-cases server/transparent-regression/fixtures/mainnet-cases.json \
+  --previous-cases tools/transparent-regression/fixtures/mainnet-cases.json \
   --self-check --cutoff-json /path/to/publication/cutoff.json \
   --out cases-next.json
 ```
@@ -169,7 +169,7 @@ fixture it replaces before freezing:
 
 ```sh
 python3 ops/scripts/compare-regression-fixtures.py \
-  --previous server/transparent-regression/fixtures/mainnet.json \
+  --previous tools/transparent-regression/fixtures/mainnet.json \
   --next fixture-next.json --out compare.json
 ```
 
@@ -223,7 +223,7 @@ hash as well as a height; it never puts a shard-end hash on a clipped range.
 
 ## Concurrent recovery simulation
 
-The [scenario runner](../../server/transparent-loadtest/README.md) runs saved
+The [scenario runner](../../tools/transparent-loadtest/README.md) runs saved
 20-user mixed recovery waves and sustained concurrent load through the reference
 HTTP adapters, with independent SQLite stores, hard per-recovery deadlines, exact
 event verification, and saved HTML/JSON reports with worker APM and per-wallet
@@ -365,7 +365,7 @@ the actual loaded canary.
 
 ## Latest productionization validation
 
-The [September 13 frozen-executable run](evidence/productionize-m3-suite-fix-2026-09-13/README.md)
+The [September 13 frozen-executable run](../../evidence/transparent/productionize-m3-suite-fix-2026-09-13/README.md)
 passed all eleven deployed cases under the documented bounded retry policy.
 Its evidence preserves the original failures, the exact source/binary identity,
 full repository checks and every HTTP attempt. Application-level M3 closure and

@@ -1,7 +1,7 @@
 name: CI full
 
-# The whole workspace: Enhance, the transparent crates and the retained
-# research crates, linted and tested the way `make check` does locally. Not
+# The whole workspace: Enhance, the transparent crates and their development
+# tools, linted and tested the way `make check` does locally. Not
 # the transparent deploy gate (ci.yml is, and is smaller so a deploy is not
 # held behind crates it does not ship); the Enhance deploy gates on this one.
 

@@ -1,3 +1,3 @@
 # Preserve unified-diff context lines and original SSH capture line endings.
-docs/transparent-pir/evidence/**/*.patch whitespace=-blank-at-eol
-docs/transparent-pir/evidence/productionize-m3-live-2026-09-13/coordinator-check.log whitespace=cr-at-eol
+evidence/transparent/**/*.patch whitespace=-blank-at-eol
+evidence/transparent/productionize-m3-live-2026-09-13/coordinator-check.log whitespace=cr-at-eol

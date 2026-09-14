@@ -1,16 +1,23 @@
-# Transparent PIR tools and research
+# Development tools
 
-Start at [the current transparent PIR index](../docs/transparent-pir/README.md).
-The active shard tools are Rust binaries: `shard-census` and `shard-publish` in
-`server/transparent-filter-server`, and `shard-residency` / `shard-scaling` in
-`server/transparent-shard-server`. Read their current CLI help before use.
+Production protocol libraries live in `pir/`; service implementations live in
+`server/`. Tools use the same libraries and keep their existing Cargo package
+names and CLI flags.
 
-The Python `transparent_pir_*` collection/evaluation/replay tools and the
-`transparent-pir-reuse-bench` package preserve earlier studies. In particular,
-incremental, HTTP, reuse and navigation results use research layouts/backends;
-they do not specify the active shard schema, deployment geometry or capacity.
-Filter build/validate/measure and cross-check tools retain their format-specific
-purpose; consult the active filter reference and matching tests.
+| Location | Purpose | Entry point |
+|---|---|---|
+| `enhance-loadtest/` | Enhance encrypted-query load generation | `make load-test` |
+| [transparent-loadtest](transparent-loadtest/README.md) | Wallet simulations, block comparison and interactive reports | `make transparent-sim-help` |
+| [transparent-regression](transparent-regression/fixtures/README.md) | Frozen accepted-anchor correctness fixtures and parent-filter conformance | `make transparent-regression` |
+| `transparent-measure/` | Current-shard recovery measurement used by the backfill workflow | `cargo run --release -p transparent-measure -- --help` |
+| [filters](filters/README.md) | Sample collection, filter encoding and format-specific validation | Python CLI help |
+| [parent-filters](parent-filters/README.md) | Active opt-in parent-filter selection and paired HTTP evaluation | Python CLI help |
+| `check-doc-links.sh` | Documentation/evidence links and heading anchors | `make check-docs` |
 
-Reproduce an old run only with its recorded source, backend, journal range and
-parameters. Record new results using the [evidence metadata](../docs/transparent-pir/evidence/README.md).
+`transparent-measure` compares exact recovery against an independent journal
+traversal; its compact baseline is an explicitly labelled extrapolation. It is
+not the removed transparent-history research backend.
+
+Record measurements using the [evidence requirements](../evidence/README.md).
+Historical research tools remain available at the revision in the
+[cleanup ledger](../docs/cleanup-2026-09-14.md).

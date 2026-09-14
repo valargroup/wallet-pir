@@ -11,8 +11,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 files=()
-while IFS= read -r f; do files+=("$f"); done < <(
-  git ls-files --cached --others --exclude-standard -- '*.md' ':!docs/archive/**' ':!demos/**' ':!target/**' \
+while IFS= read -r f; do
+  if [ -f "$f" ]; then files+=("$f"); fi
+done < <(
+  git ls-files --cached --others --exclude-standard -- '*.md' ':!demos/**' ':!target/**' \
   | grep -v '/node_modules/' | sort
 )
 

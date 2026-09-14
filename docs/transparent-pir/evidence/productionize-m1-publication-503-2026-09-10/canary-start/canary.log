@@ -1,6 +1,0 @@
-{"event": "fleet_command", "tool": "ssh", "seconds": 0.047704, "exit_code": 0}
-{"event": "fleet_command", "tool": "ssh", "seconds": 0.451606, "exit_code": 0}
-{"event": "fleet_command", "tool": "ssh", "seconds": 0.035126, "exit_code": 0}
-{"event": "fleet_command", "tool": "ssh", "seconds": 0.321289, "exit_code": 0}
-{"event": "fleet_command", "tool": "ssh", "seconds": 0.038399, "exit_code": 0}
-{"event": "fleet_command", "tool": "ssh", "seconds": 0.33987, "exit_code": 0}

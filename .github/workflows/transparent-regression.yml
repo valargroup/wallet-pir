@@ -4,7 +4,7 @@ on:
     inputs:
       fixture:
         description: Repository path to a frozen regression fixture
-        default: server/transparent-regression/fixtures/mainnet.json
+        default: tools/transparent-regression/fixtures/mainnet.json
         required: true
         type: string
       shard_url:

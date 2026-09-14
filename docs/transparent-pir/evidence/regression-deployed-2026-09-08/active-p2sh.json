@@ -1,7 +1,0 @@
-{
-  "checkpoints": [],
-  "error": "HTTP status server error (502 Bad Gateway) for url (https://transparent-pir.valargroup.dev/v1/filters/shards)",
-  "id": "active-p2sh",
-  "passed": false,
-  "profile": "p2sh"
-}

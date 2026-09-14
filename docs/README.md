@@ -1,8 +1,11 @@
-# Documentation index
+# Documentation
 
-- [Transparent PIR](transparent-pir/README.md): authoritative recovery contract, architecture, accepted deployment target, source/live status, remaining work and evidence.
-- [Enhance architecture](architecture.md) and [deployment](enhance-pir-deploy.md): private Ironwood transaction enhancement.
-- [Transparent filter API](transparent_filter_api.md) and [range envelope](transparent_filter_envelope.md): active detailed filter references.
-- [Archive](archive/README.md): historical designs and operational snapshots, not current instructions.
+- [Enhance PIR](enhance-pir/README.md): Ironwood protocol, architecture, deployment and qualification.
+- [Transparent PIR](transparent-pir/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
+- [Evidence](../evidence/README.md): retained measurements and their provenance.
+- [Repository cleanup](cleanup-2026-09-14.md): removed material, retained dependencies and historical source revision.
 
-`roman_notes.md` contains personal working notes, not normative transparent PIR deployment parameters. Dated benchmark records are evidence for their recorded backend, workload and coverage only. Follow the product index before using search results to choose implementation or fleet settings.
+`roman_notes.md` is preserved personal working material, including local edits.
+It is not a protocol specification or a source of deployment parameters; its
+historical paths may refer to the pre-cleanup revision. Follow the product
+indexes when implementing or operating a service.

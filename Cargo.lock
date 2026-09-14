@@ -4084,46 +4084,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "transparent-history-pir"
-version = "0.1.0"
-dependencies = [
- "base64",
- "hex",
- "ipir-sp",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "transparent-history-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64",
- "clap",
- "enhance-pir-server",
- "hex",
- "inspiring",
- "ipir-sp",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower 0.5.3",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "transparent-history-pir",
-]
-
-[[package]]
 name = "transparent-loadtest"
 version = "0.1.0"
 dependencies = [

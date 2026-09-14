@@ -15,8 +15,8 @@ jobs:
   # The deploy gate. deploy-transparent-shard.yml and deploy-transparent-
   # filter.yml refuse a ref without a successful run of this workflow, so it
   # is kept to what those deploys ship: the transparent crates, linted and
-  # tested in two parallel jobs. The whole workspace, Enhance and the research
-  # crates included, runs in ci-full.yml, which the Enhance deploy gates on.
+  # tested in two parallel jobs. The whole workspace, Enhance and the development
+  # tools included, runs in ci-full.yml, which the Enhance deploy gates on.
   transparent-lint:
     name: Transparent lint
     runs-on: ubuntu-latest
@@ -43,9 +43,9 @@ jobs:
       - run: cargo fmt --all --check
       - name: Test simulation report helpers
         run: |
-          node --test server/transparent-loadtest/tests/apm.test.cjs
-          python3 server/transparent-loadtest/tests/test_open_report.py
-          python3 server/transparent-loadtest/tests/test_compare.py
+          node --test tools/transparent-loadtest/tests/apm.test.cjs
+          python3 tools/transparent-loadtest/tests/test_open_report.py
+          python3 tools/transparent-loadtest/tests/test_compare.py
       - run: >-
           cargo clippy --all-targets --all-features
           -p transparent-events -p transparent-filter -p transparent-shard
@@ -91,6 +91,8 @@ jobs:
       # `validate` invocations below cannot: they reach only the three programs
       # that read shards.json, and neither of the two bugs that shipped on
       # 2026-09-07 was in those three.
+      - name: Check documentation and development utilities
+        run: make check-docs check-tools
       - name: Check ops contracts
         run: ops/scripts/check-jq-contracts.sh
       - name: Test Enhance capacity and qualification gates

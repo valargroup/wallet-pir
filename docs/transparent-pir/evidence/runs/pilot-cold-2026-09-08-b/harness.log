@@ -1,4 +1,0 @@
-== step: 2 concurrent clients for 4m
-   4 syncs, 2 completed, 2 exact, 2 failed; 0.01 completed/s; error rate 0.500; 503 rate 0.000; worst p99 380.7s
-   saturation: error rate 0.500 above 0.05; not stepping further
-EXIT=0

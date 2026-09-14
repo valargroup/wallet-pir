@@ -1,0 +1,20 @@
+{
+  "pre_cleanup_revision": "42b5f9c145cc3f2a400c428938c566d2cc9699db",
+  "repository": "https://github.com/valargroup/enhance-pir",
+  "prefixes": {
+    "docs/transparent-pir/evidence/": "evidence/transparent/",
+    "docs/transparent-pir-evaluation/": "evidence/transparent/baselines/",
+    "server/transparent-loadtest/": "tools/transparent-loadtest/",
+    "server/transparent-regression/": "tools/transparent-regression/",
+    "server/transparent-measure/": "tools/transparent-measure/",
+    "pir/load-test/": "tools/enhance-loadtest/"
+  },
+  "note": "Prefix mappings resolve retained files only. Removed files and historical source manifests belong to the recorded Git revision; captured host paths are not local repository paths.",
+  "original_checksum_manifests": {
+    "docs/transparent-pir/evidence/continuous-publication-2026-09-08/SHA256SUMS": "evidence/transparent/continuous-publication-2026-09-08/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m0-2026-09-09/SHA256SUMS": "evidence/transparent/productionize-m0-2026-09-09/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m2-2026-09-09/SHA256SUMS": "evidence/transparent/productionize-m2-2026-09-09/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m3-2026-09-10/SHA256SUMS": "evidence/transparent/productionize-m3-2026-09-10/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m3-suite-fix-2026-09-13/SHA256SUMS": "evidence/transparent/productionize-m3-suite-fix-2026-09-13/SHA256SUMS.original"
+  }
+}

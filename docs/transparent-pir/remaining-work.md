@@ -1,25 +1,46 @@
 # Remaining work for the transparent PIR recovery beta
 
-Updated 2026-09-13. This is the authoritative outstanding checklist for the
-[execution plan](productionize-plan.md). [Status](status.md) summarizes accepted
+Updated 2026-09-14. This owns milestone definitions, execution order and the
+authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [Status](status.md) summarizes accepted
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate
 numbers are reconciled below rather than retained as a second release checklist.
+
+## Release boundary
+
+Use the existing native adapter and Flutter example in Roman's
+`/Users/roman/projects/wallet-libraries` checkout of `zakura-core/wallet-libraries`.
+The beta supports import/restore, synchronization, balances and history. Sending,
+existing-database migration, mobile releases and general production availability
+are separate gates. Existing wallet databases and unrelated working changes must
+be preserved. Use the existing Amsterdam generator and six-worker fleet; this
+plan does not require additional infrastructure.
+
+Use explicit development-demo, validation/shadow and opt-in PIR modes. Native-load
+failure must be an actionable error, not a simulated balance. Keep independent
+shadow state authoritative until correctness acceptance. Do not persist mnemonic
+material or expose secrets in diagnostics; sending stays disabled in UI and API.
 
 ## macOS recovery beta milestones
 
 | Milestone | Current disposition | Next dependency |
 |---|---|---|
-| M0 — Baseline | Accepted; [evidence](evidence/productionize-m0-2026-09-09/README.md) | None |
-| M1 — Fleet | Accepted under the revised six-hour requirement; [decision and raw samples](evidence/productionize-m1-six-hour-acceptance-2026-09-13/README.md) | Later freshness incident belongs to M5 |
-| M2 — Recovery app | Accepted; [evidence](evidence/productionize-m2-2026-09-09/README.md) | Distribution is M6 |
+| M0 — Baseline | Accepted; [evidence](../../evidence/transparent/productionize-m0-2026-09-09/README.md) | None |
+| M1 — Fleet | Accepted under the revised six-hour requirement; [decision and raw samples](../../evidence/transparent/productionize-m1-six-hour-acceptance-2026-09-13/README.md) | Later freshness incident belongs to M5 |
+| M2 — Recovery app | Accepted; [evidence](../../evidence/transparent/productionize-m2-2026-09-09/README.md) | Distribution is M6 |
 | M3 — Correctness | Public regression, fixture and native real-wallet comparisons passed; application/lifecycle acceptance incomplete | Finish the concrete work below before authoritative opt-in PIR |
 | M4 — Incremental benefit | Open | M3 |
 | M5 — Capacity and recovery | Open | M1 + M3 |
 | M6 — Release and limited beta | Open | M2–M5 |
 
+Assign named owners in each run: integration/operator for M0, operator for M1,
+wallet engineer for M2, wallet engineer and correctness reviewer for M3,
+performance/wallet engineers for M4, operator/performance engineer for M5, and
+reviewer/release engineer/beta operator for M6. M4 and M5 may proceed independently
+after M3; this ordering does not itself authorize parallel agents.
+
 ## M3 — Finish the release-candidate validation
 
-The [frozen-executable public regression](evidence/productionize-m3-suite-fix-2026-09-13/README.md)
+The [frozen-executable public regression](../../evidence/transparent/productionize-m3-suite-fix-2026-09-13/README.md)
 passed all eleven cases. Its original five failures and every repaired-run HTTP
 attempt are preserved; this public-fixture subgate no longer blocks M3.
 
@@ -38,7 +59,7 @@ attempt are preserved; this public-fixture subgate no longer blocks M3.
   validation profile. Compare exact events, UTXOs and history with independent
   reconstruction at the same accepted anchor. Verify a partial/unavailable
   result never appears synchronized and sending remains disabled. The
-  [existing real-wallet run](evidence/productionize-m3-private-wallet-2026-09-13/README.md)
+  [existing real-wallet run](../../evidence/transparent/productionize-m3-private-wallet-2026-09-13/README.md)
   exercised the library and bindings, not application screens.
 - [ ] Start from a profile with a committed nonempty transparent ledger; observe
   direct request activity, kill during that activity, reopen and resume, then
@@ -47,7 +68,7 @@ attempt are preserved; this public-fixture subgate no longer blocks M3.
   not this stronger lifecycle condition. Keep fault injection against controlled
   infrastructure; do not manipulate mainnet.
 - [ ] Reconcile the final release candidate with the
-  [fixture correctness/review record](evidence/productionize-m3-2026-09-10/README.md)
+  [fixture correctness/review record](../../evidence/transparent/productionize-m3-2026-09-10/README.md)
   and [adapter contract](wallet-adapter.md). Confirm discovery, imported and
   unsupported scripts, fork/reorg and persistence coverage still apply after the
   client change. Publish a requirement-by-requirement M3 acceptance decision.
@@ -59,18 +80,36 @@ The supplied wallet is sufficient for this recent-history trial; broader history
 and discovery coverage comes from the mandatory fixtures. M3 closes only when
 all required comparisons and lifecycle checks pass on identified artifacts.
 
+**Definition of done:** every mandatory fixture passes without unexplained event,
+UTXO or history differences. Restart/resume is idempotent, reorgs remove orphaned
+state, and incomplete results preserve progress without committing completion.
+Discovery follows actual wallet derivation rules without silently raising birthday.
+Unsupported scripts are explicit; no plaintext address/outpoint fallback occurs.
+Only passing shadow validation enables opt-in PIR as the synchronized transparent
+balance source. Review against the [adapter contract](wallet-adapter.md).
+
 ## M4 — Measure whole-wallet benefit
 
 - [ ] Freeze identical wallets, discovery rules and accepted chain inputs for
   shielded-only, combined compact-block and shielded-only-plus-PIR workflows.
   Measure clean restore and retained-store catch-up through enhancement and
   durable complete coverage; keep stores independent.
-- [ ] Run the plan's alternating-order repetitions on macOS and the concurrent
-  Amsterdam reference workload. Capture actual bytes in both directions, time,
+- [ ] Verify the compact baseline uses the same discovery rescans and actually
+  omits `vin`/`vout` when requested; report residual bytes otherwise.
+- [ ] Run five alternating-order repetitions per fixture on macOS and repeat the
+  concurrent Amsterdam reference workload. Capture actual bytes in both directions, time,
   CPU, sampled memory, writes, cache conditions, errors and incomplete work.
 - [ ] Publish exact ledger equality and the disposition of each regression.
-  The [80-recovery comparison](evidence/block-comparison-2026-09-09/README.md)
+  The [80-recovery comparison](../../evidence/transparent/block-comparison-2026-09-09/README.md)
   supports derived additional-payload savings only; it does not close this gate.
+
+**Definition of done:** combined and PIR workflows recover identical transparent
+and shielded results. Reports separate actual transport from representation-size
+arithmetic. Use `1 − PIR traffic / (combined bytes − shielded-only bytes)` only
+where shared work cancels; otherwise show measured whole-workflow totals. Never
+present standalone latency ratios as incremental wallet speedup. Record the cause
+and disposition of every regression before beta; do not require a predetermined
+performance win to make the measurement valid.
 
 ## M5 — Qualify the existing fleet and failure recovery
 
@@ -106,6 +145,14 @@ all required comparisons and lifecycle checks pass on identified artifacts.
   alert evidence and all unresolved findings. Reapply affected M1 gates if a
   release-affecting fleet correction changes its accepted source/configuration.
 
+**Definition of done:** the selected operating point meets the ordinary-profile
+thresholds, exact recovery requirements and demand headroom. Queues, retained
+request bodies, caches and disk remain bounded. Temporary overload is explicit
+and resumable; failed work stays in the denominator. Every outage rehearsal
+restores canonical service and exact completion within the beta recovery budget.
+Archive-owner loss remains explicit temporary unavailability in this topology.
+Failure blocks beta until corrected; it does not authorize new infrastructure.
+
 ## M6 — Review, distribute and observe the beta
 
 - [ ] Obtain independent review of the final query/revision binding, completeness
@@ -123,12 +170,19 @@ all required comparisons and lifecycle checks pass on identified artifacts.
   release-affecting fix. Keep sending, existing-profile migration and mobile out
   of this release's scope.
 
+**Definition of done:** no unresolved release-blocking correctness/security finding;
+no known mismatch, false completion, data loss or secret-bearing diagnostics.
+Each tester completes restore, restart/resume and subsequent catch-up. Every
+recovery failure is explained and reproducibly resolved. Release-affecting fixes
+restart observation. Final acceptance records source, supported workloads,
+capacity, outage limitations, trust assumptions and excluded features.
+
 ## Earlier technical gates and deferred work
 
 Inventory/spot-check/cutoff (Gate 0), mixed census and publication (Gates 1–2),
 identity/admission (Gate 3), assignment/publication (Gate 4), and persisted wallet
 continuation (Gate 5) have implementation and dated evidence linked from
-[status](status.md) and the [evidence index](evidence/README.md). The remaining
+[status](status.md) and the [evidence index](../../evidence/transparent/README.md). The remaining
 live ledger/application checks map to M3; measured residency, publication
 coexistence, host scaling and sustained load map to M4/M5; infrastructure and
 rollback (former Gates 6–7) map to M5. This removes stale instructions to provision
@@ -154,3 +208,19 @@ The following remain separately scoped; they do not block this recovery beta:
 Close each item with source/configuration identity, commands, preserved failures
 and an acceptance artifact. Update target values only in deployment; delete
 superseded prose and validate links. Keep private wallet material outside Git.
+
+## Interfaces, checks and evidence
+
+Extend existing facade/bindings only where needed for recovery mode, explicit
+unavailable/incomplete state, cancellation and measurements. Reuse
+`TransparentProgress` and store contracts; do not duplicate synchronization state
+in Flutter. Keep compact scanning/oracle adapters benchmark-only. No PIR wire
+format, geometry change or existing-database migration is required.
+
+Each milestone produces an immutable bundle under `evidence/transparent/` containing exact
+source/configuration identities, commands, expected/actual outcomes, raw failures,
+metrics coverage and a pass/fail result. For private wallet trials publish only
+sanitized evidence; never commit wallet secrets or private histories. Code changes
+run repository-required checks. Wallet changes additionally run native tests,
+generated-binding checks, Flutter tests and a macOS release build. Documentation
+changes run `make check-docs`.

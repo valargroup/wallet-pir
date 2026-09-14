@@ -1,3 +1,0 @@
-== step: 8 concurrent clients for 3m
-   219 syncs, 170 completed, 170 exact, 0 failed; 0.25 completed/s; error rate 0.224; 503 rate 0.000; worst p99 568.3s
-   saturation: error rate 0.224 above 0.05; not stepping further

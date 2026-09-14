@@ -47,9 +47,9 @@ Losing an archive host makes its range unavailable until recovery. Recent replic
 ## Proposed wallet objectives from the 2026-09-08 fleet series
 
 Proposed, not adopted: they come from three repetitions of the load series
-against the activated fleet ([r1](evidence/runs/fleet-series-2026-09-08-r1/README.md),
-[r2](evidence/runs/fleet-series-2026-09-08-r2/README.md),
-[r3](evidence/runs/fleet-series-2026-09-08-r3/README.md)) at 8 and 32
+against the activated fleet ([r1](../../evidence/transparent/runs/fleet-series-2026-09-08-r1/README.md),
+[r2](../../evidence/transparent/runs/fleet-series-2026-09-08-r2/README.md),
+[r3](../../evidence/transparent/runs/fleet-series-2026-09-08-r3/README.md)) at 8 and 32
 concurrent wallets from a client inside the VPC over plain HTTP, and a
 wallet over the internet pays TLS and its own client work on top. The 128-
 and 512-wallet steps are not yet cleanly measured (owner restarts by hand
@@ -176,7 +176,7 @@ existing workers and unchanged routing; deferred workers retain their state and
 are verified afterwards. Clear the input for the fleet rollout, then repeat with compatible cache entries and verify the wallet
 regression. Record peak RSS/cgroup memory, disk use, errors and warm/cold filesystem
 cache state alongside phase timings. See [remaining work](remaining-work.md) for
-open rollout gates and [evidence](evidence/README.md) for recorded measurements.
+open rollout gates and [evidence](../../evidence/transparent/README.md) for recorded measurements.
 
 ## Ingest, infrastructure and aging
 
@@ -265,7 +265,7 @@ only in the controller's root-readable runtime credential directory.
 Continuous-publication recent worker upgrades preserve the 5.5 GiB MemoryHigh
 setting in both deployment paths. It triggers file-cache reclamation below the
 hard limit; cache and transient allocation admission remain separate. The
-[canary evidence](evidence/hardening-2026-09-08/README.md) records the observed
+[canary evidence](https://github.com/valargroup/enhance-pir/blob/42b5f9c145cc3f2a400c428938c566d2cc9699db/docs/transparent-pir/evidence/hardening-2026-09-08/README.md) records the observed
 tradeoff and failed lower threshold. Other workers retain their installed
 settings until their rollout.
 
@@ -294,7 +294,7 @@ policy at boot. The observer verifies the loaded hook, current mount and helper
 hash; the full-fleet gate requires that same helper identity. Upgrade rollback
 restores the saved discard setting without reverting unrelated mount options.
 This policy is qualified initially on a single worker; see the
-[bounded disk-stall experiment](evidence/productionize-m1-shoup-reduction-2026-09-11/README.md).
+[bounded disk-stall experiment](../../evidence/transparent/productionize-m1-shoup-reduction-2026-09-11/README.md).
 
 Run `ops/scripts/observe-transparent-hardening.py` on the coordinator with the
 expected worker binary digest and release `soak-query` executable. Its defaults
@@ -335,7 +335,7 @@ restart/OOM and provenance requirements remain unchanged.
 
 For the September 12 observation, accept the first six-hour window ending
 approximately 06:49:59 UTC under the separate
-[dated transition record](evidence/productionize-m1-six-hour-acceptance-2026-09-13/README.md). Preserve the original 24-hour launch
+[dated transition record](../../evidence/transparent/productionize-m1-six-hour-acceptance-2026-09-13/README.md). Preserve the original 24-hour launch
 and its later failed terminal result; do not relabel that command successful.
 The later freshness incident remains an M5 follow-up before beta. This specific
 operator-confirmed transition does not permit arbitrary successful prefixes to
@@ -416,7 +416,7 @@ It records each caught failure and recovery and includes all elapsed time in
 freshness. HTTP rejection, certificate validation failures, arbitrary TLS alerts,
 timeouts and malformed content are not retried. Routing withdrawal and exactness
 checks remain mandatory. The result records monitor identity and retry policy.
-See [qualification evidence](evidence/productionize-m1-http-retry-2026-09-12/README.md)
+See [qualification evidence](../../evidence/transparent/productionize-m1-http-retry-2026-09-12/README.md)
 and [status](status.md) for deployment state.
 
 ## Opt-in archive parent filters
@@ -427,14 +427,14 @@ The public bundle contains only `archive-wide.json` and `artifacts/<sha256>.bin`
 
 The coordinator Caddy template routes `/v1/filters/parents/*` to `/srv/transparent-parent-filters/public` with a five-minute HTTP cache lifetime. Point that symlink to the staged immutable release atomically. When first adding the route, preserve existing routing, validate the candidate Caddyfile before installation, save the predecessor, reload Caddy, and verify the manifest and every parent digest through public HTTPS. Restore the predecessor on activation failure. Do not restart the PIR fleet to publish static parent artifacts.
 
-The bundle is tied to exact sealed child revisions. Refresh it after archive membership or revisions change; wallets reject stale parent descriptors and fall back to children. To withdraw a release, unlink its public symlink after checking the current target. Existing validated client caches can remain usable for unchanged child revisions. See the [production evidence](evidence/parent-filters-production-2026-09-08/README.md) for the deployed release, canary and rollback record.
+The bundle is tied to exact sealed child revisions. Refresh it after archive membership or revisions change; wallets reject stale parent descriptors and fall back to children. To withdraw a release, unlink its public symlink after checking the current target. Existing validated client caches can remain usable for unchanged child revisions. See the [production evidence](../../evidence/transparent/parent-filters-production-2026-09-08/README.md) for the deployed release, canary and rollback record.
 
 Reference clients opt in with `HttpFilterSource::with_parent_experiment(manifest_url, "archive-wide".into())`; loadtest scenarios use `experimental_parent_manifests.archive-wide`. Hosting the bundle does not change already-installed wallet applications. No script-count bypass is enabled.
 
 ## macOS recovery beta acceptance targets
 
 Agreed planning targets, 2026-09-09; **not measured acceptance or a general
-production SLO**. The [execution plan](productionize-plan.md) defines the bounded,
+production SLO**. The [execution plan](remaining-work.md) defines the bounded,
 recovery-only beta. Existing hardening/publication gates above still apply.
 
 - Capacity protocol: 8, 20 and 40 concurrent wallets; advance to 80 only if 40

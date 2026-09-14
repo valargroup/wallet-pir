@@ -1,8 +1,0 @@
-{
-  "utc": "2026-09-10T22:46:54.614737+00:00",
-  "event": "result",
-  "passed": false,
-  "seconds": 3941.405014510965,
-  "blocks": 51,
-  "error": "HTTP Error 503: Service Unavailable"
-}

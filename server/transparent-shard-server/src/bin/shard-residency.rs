@@ -182,7 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         other.as_str(),
     );
     // Shard counts measured over the complete genesis-to-tip journal, per
-    // geometry, in `docs/transparent-pir-evaluation/shard-utilisation/`. The
+    // geometry, in `evidence/transparent/baselines/shard-utilisation/`. The
     // extrapolation used to read "genesis journal, 511 shards" at every
     // geometry: 511 is the partial census covering 9.4% of chain height, and
     // the whole chain is 1,091 at this geometry. Extrapolating held memory from

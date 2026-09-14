@@ -30,7 +30,7 @@ There is no BIP 157 peer verification and no service signalling here.
   `tests/crosscheck/README.md` for pinned versions and regeneration. Go is not
   needed to run the Rust tests.
 - `tests/golden_envelope.rs` — envelope bytes derived by hand from
-  `docs/transparent_filter_envelope.md`.
+  `docs/transparent-pir/filter-envelope.md`.
 
 ## Dependency note
 

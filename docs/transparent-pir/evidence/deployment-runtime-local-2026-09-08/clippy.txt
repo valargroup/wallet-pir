@@ -1,9 +1,0 @@
-    Checking transparent-filter v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/pir/transparent-filter)
-    Checking transparent-spend-pir v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/pir/transparent-spend)
-    Checking enhance-pir v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/pir/enhance)
-    Checking enhance-pir-server v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/server/enhance-pir-server)
-    Checking transparent-shard v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/pir/transparent-shard)
-    Checking transparent-wallet v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/pir/transparent-wallet)
-    Checking transparent-wallet-store v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/pir/transparent-wallet-store)
-    Checking transparent-shard-server v0.1.0 (/Users/roman/projects/spendability-pir-deployment-time/server/transparent-shard-server)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.80s

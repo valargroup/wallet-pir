@@ -1,35 +1,29 @@
 # Repository guidance
 
-The root workspace includes Enhance PIR, active transparent shard recovery, and
-retained research crates. For Enhance, keep protocol-facing
-types and the client in `pir/enhance`; keep ingestion, persistence, HTTP, and
-worker orchestration in `server/enhance-pir-server`.
+The root workspace contains Enhance PIR, transparent shard recovery and their
+validation tools. Keep protocol/client code in `pir/`, production services in
+`server/`, Rust/Python development harnesses in `tools/`, and operations in `ops/`.
+`transparent-spend` remains an Enhance journal/type dependency but is not served.
+`tools/transparent-measure` uses the current shard stack and remains part of the
+backfill workflow; its extrapolated baseline is not a whole-wallet measurement.
 
 Run `make check` before submitting changes. Release mode is required for the
-full-shard cryptographic tests.
+full-shard cryptographic tests. Preserve Cargo package/binary names when moving tools.
 
-`demos/legacy-spendability` contains inactive nullifier and witness demos. It
-is excluded from the root workspace and CI. Do not introduce dependencies from
-active crates to it. Check it manually with `make demo-check` only when editing
-the archived demos.
+`demos/legacy-spendability` is a preserved independent workspace, excluded from
+root CI. Do not introduce active dependencies on it. Use `make demo-check` when
+editing the demos. Preserve the production workflow's legacy service rollback path.
 
-`docs/archive` is historical context and does not specify current behavior.
-Operational files belong under `ops/`. The production workflow performs a
-coordinated rollout and must preserve the one-time legacy service rollback path.
+## Documentation and evidence
 
-## Transparent PIR documentation authority
+Start at `docs/README.md` and the relevant product index. Contracts own requirements,
+architecture describes source, deployment owns operating targets, status owns dated
+observations and unresolved conflicts, and remaining work owns acceptance gates.
+Never infer a live deployment from code or a workflow default.
 
-Before transparent PIR design, sizing, implementation or deployment work, read
-`docs/transparent-pir/README.md` and the relevant linked document. The contract
-owns requirements; deployment owns accepted target parameters; status separates
-source-verified implementation from observed live state; remaining-work owns the
-unchecked gates; evidence owns measurement provenance. Report conflicts rather
-than choosing an old recommendation from a search result.
-
-`pir/transparent-history`, `server/transparent-history-server`,
-`server/transparent-measure` and older Python retrieval/reuse/navigation tools
-are retained research, not the active transparent-shard protocol. Do not derive
-fleet sizing from their demos, fixtures or partial-journal measurements.
-Superseded transparent prose is deleted; update inbound links rather than making
-archive copies or forwarding stubs. Version control retains design history.
-Preserve raw measurement provenance and distinguish projections from measurements.
+Evidence belongs under `evidence/<product>/`. Retain acceptance results, significant
+failures, unresolved incidents and their supporting raw inputs/provenance. Delete
+superseded diagnostics only when no retained claim or executable fixture needs them;
+record the deletion and historical source revision. Keep retained raw bytes immutable.
+Update documentation links instead of creating forwarding stubs or archive copies.
+See `evidence/README.md` for metadata and historical-path rules.

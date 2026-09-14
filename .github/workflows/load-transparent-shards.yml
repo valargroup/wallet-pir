@@ -37,7 +37,7 @@ on:
       sample_path:
         description: Workload sample, relative to the checkout
         required: false
-        default: docs/transparent-pir/evidence/workload-sample-2026-09-08/sample.json
+        default: evidence/transparent/workload-sample-2026-09-08/sample.json
         type: string
       steps:
         description: Concurrency steps, comma separated

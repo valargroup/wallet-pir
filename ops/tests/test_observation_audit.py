@@ -339,7 +339,7 @@ class AuditTest(unittest.TestCase):
 
     def test_the_real_failed_bundle_fails(self):
         # The strongest check available: a real observation with a known verdict.
-        bundle = ROOT / ('docs/transparent-pir/evidence/'
+        bundle = ROOT / ('evidence/transparent/'
                          'productionize-m1-http-retry-2026-09-12/'
                          'failed-observation-20260912T003121Z.tar.gz')
         if not bundle.exists():

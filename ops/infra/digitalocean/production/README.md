@@ -1,7 +1,7 @@
 # Ironwood PIR production infrastructure
 
 The c-4/16-shard target below is not yet production-qualified or deployed.
-Follow the [migration and qualification gates](../../../../docs/enhance-autoscaling.md); do not apply this root to the legacy pair without the state moves described there.
+Follow the [migration and qualification gates](../../../../docs/enhance-pir/deployment.md#capacity-expansion-target); do not apply this root to the legacy pair without the state moves described there.
 
 This Terraform root manages the Enhance PIR production fleet in the
 `enhance-pir` DigitalOcean project:

@@ -773,7 +773,7 @@ fn main() -> Result<(), BoxError> {
 
     // Provenance, printed before anything derived from it. An archived census
     // whose coverage is not on its face gets read as whatever the reader
-    // assumes: the genesis-range runs under `docs/transparent-pir-evaluation`
+    // assumes: the genesis-range runs under `evidence/transparent/baselines`
     // cover 9.4% of chain height and were taken for full-chain results in later
     // work. The anchor hash is what makes a run identifiable at all, since two
     // journals can cover the same heights on different branches.
@@ -1318,7 +1318,7 @@ mod tests {
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 
     /// At the compiled geometry the sweep must be exactly the absolute targets
-    /// the archived censuses under `docs/transparent-pir-evaluation/` were taken
+    /// the archived censuses under `evidence/transparent/baselines/` were taken
     /// at, or every comparison against them is silently rebased.
     #[test]
     fn the_default_sweep_is_unchanged_at_the_compiled_geometry() {

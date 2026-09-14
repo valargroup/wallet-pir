@@ -6,7 +6,7 @@
 //! against each other at all.
 //!
 //! The numbers pinned below are calibrated against
-//! `docs/transparent-pir-evaluation/shard-utilisation/measurement-v4.json`,
+//! `evidence/transparent/baselines/shard-utilisation/measurement-v4.json`,
 //! which measured 96,264 bytes for a directory query, 19,325 for a published
 //! setup (14,336 bytes base64-encoded, plus its JSON envelope), and an average
 //! of 127,863 for the largest history's mix of directory and page queries.
@@ -108,7 +108,7 @@ fn evaluation_keys_dominate_every_query_whatever_the_geometry() {
 ///
 /// Both recent-8k tables have 8,192 rows and upload 128,008 bytes per query.
 /// This is a wire-size check, not a complete wallet-sync measurement; see
-/// `docs/transparent-pir/evidence/README.md` for dataset-scoped comparisons.
+/// `evidence/transparent/README.md` for dataset-scoped comparisons.
 #[test]
 fn the_pinned_geometry_costs_what_it_did() {
     // Each table is costed at *its own* width. They agree across the whole

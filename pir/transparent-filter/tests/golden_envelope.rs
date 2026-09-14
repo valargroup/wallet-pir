@@ -1,7 +1,7 @@
 //! A golden envelope fixture.
 //!
 //! The expected bytes were derived by hand from the format specification in
-//! `docs/transparent_filter_envelope.md`, not printed from this crate's
+//! `docs/transparent-pir/filter-envelope.md`, not printed from this crate's
 //! encoder, so the test compares the encoder against the written spec.
 //!
 //! They are written out in full so that a change to the serialization

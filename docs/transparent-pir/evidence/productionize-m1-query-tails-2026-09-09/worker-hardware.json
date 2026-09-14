@@ -1,8 +1,0 @@
-{
-  "model": "DO-Regular",
-  "avx512f": false,
-  "avx2": true,
-  "build_slots": [
-    "2"
-  ]
-}
