@@ -34,7 +34,12 @@ whichever checkout ran the last apply; move `terraform.tfstate`,
 `terraform.tfstate.backup`, and `.terraform/` into `production/` before the
 next plan.
 
-The committed `backend.tf` enables remote state and native S3 locking.
+The committed `backend.tf` enables versioned remote state. Spaces did not
+enforce conditional lock writes in the rollout test; native S3 locking is
+disabled. All writes must execute under the coordinator's
+`/run/lock/enhance-production.lock`, shared with deployment and autoscaling.
+Use `ops/scripts/enhance-terraform.sh` on the coordinator for manual operations;
+do not run a direct apply from another host.
 For an existing local checkout, migrate once after backing up and reconciling
 its state; fresh checkouts use plain `terraform init`:
 

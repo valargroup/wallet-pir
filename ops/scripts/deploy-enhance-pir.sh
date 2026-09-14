@@ -364,7 +364,7 @@ REMOTE
 }
 
 # Keep the worker/qualification release on the coordinator beyond CI artifact expiry.
-for artifact in enhance-pir-worker enhance-pir-qualify enhance-pir-cli SHA256SUMS revision enhance-autoscale.py enhance-autoscale.service enhance-autoscale.timer autoscale.example.json enhance-infra.tar.gz; do
+for artifact in enhance-pir-worker enhance-pir-qualify enhance-pir-cli SHA256SUMS revision enhance-autoscale.py enhance-terraform.sh enhance-autoscale.service enhance-autoscale.timer autoscale.example.json enhance-infra.tar.gz; do
   stage_file "$ENHANCE_ARTIFACT_DIR/$artifact" "$ENHANCE_COORDINATOR_HOST" "$artifact"
 done
 stage_file "$ENHANCE_WORKER_SERVICE_FILE" "$ENHANCE_COORDINATOR_HOST" enhance-pir-worker.service
@@ -555,6 +555,7 @@ for artifact in SHA256SUMS revision enhance-pir-worker.service; do
 done
 as_root install -d -m 0755 /opt/enhance-pir/ops /opt/enhance-pir/infra/production
 as_root install -m 0755 "$stage/enhance-autoscale.py" /opt/enhance-pir/ops/enhance-autoscale.py
+as_root install -m 0755 "$stage/enhance-terraform.sh" /opt/enhance-pir/ops/enhance-terraform.sh
 as_root install -m 0644 "$stage/enhance-autoscale.service" /etc/systemd/system/enhance-autoscale.service
 as_root install -m 0644 "$stage/enhance-autoscale.timer" /etc/systemd/system/enhance-autoscale.timer
 as_root tar -xzf "$stage/enhance-infra.tar.gz" --strip-components=4 -C /opt/enhance-pir/infra/production

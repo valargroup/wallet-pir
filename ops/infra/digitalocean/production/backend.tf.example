@@ -3,7 +3,9 @@
 # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (see README.md).
 terraform {
   backend "s3" {
-    use_lockfile                = true
+    # Spaces did not enforce conditional S3 lock writes in the rollout test.
+    # Every writer must hold /run/lock/enhance-production.lock on the coordinator.
+    use_lockfile                = false
     bucket                      = "enhance-pir-terraform"
     key                         = "production/terraform.tfstate"
     region                      = "us-east-1" # ignored by Spaces, required by the backend

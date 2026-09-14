@@ -30,8 +30,11 @@ candidate so failed publication cannot evict a still-published generation.
    transparent-fleet inputs, DNS and volume identities.
 2. Create the private Spaces backend described in the infrastructure README,
    copy `backend.tf.example` to `backend.tf`, and migrate state using runtime
-   Infisical credentials. Use Terraform >=1.10 and `use_lockfile=true`. Verify
-   a second writer cannot acquire the lock and verify another no-change plan.
+   Infisical credentials. Use Terraform >=1.10. The tested Spaces endpoint does not enforce native
+   conditional S3 lock writes, so `use_lockfile=false` is intentional. Every
+   writer must hold the coordinator's `/run/lock/enhance-production.lock`;
+   verify a second writer cannot acquire that host lock and verify another
+   no-change plan.
    All production entrypoints must use this backend; retire stale local state
    from operational use, retaining private backups.
 3. Hold `/run/lock/enhance-production.lock` on the coordinator for the entire
