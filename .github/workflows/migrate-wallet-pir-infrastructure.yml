@@ -80,6 +80,9 @@ jobs:
               'digitalocean_vpc.wallet',
               'digitalocean_tag.coordinator',
               'digitalocean_droplet.coordinator',
+              'digitalocean_firewall.enhance_worker',
+              'digitalocean_firewall.transparent_router',
+              'digitalocean_firewall.transparent_worker',
               'digitalocean_project_resources.wallet',
           }
           changes = json.load(open(sys.argv[1]))['resource_changes']
@@ -103,5 +106,60 @@ jobs:
           printf 'Remote state backup: %s\n' "$backup"
           if [[ "$apply" == true ]]; then
             terraform -chdir="$work" apply -input=false "$plan"
+            terraform -chdir="$work" plan -input=false -lock-timeout=60s \
+              -var-file="$work/production.tfvars" -var="enhance_group_count=$count" \
+              -detailed-exitcode
+
+            project_response="$(curl --fail --silent --show-error \
+              --request PATCH \
+              --header "Authorization: Bearer $DO_TOKEN_NEW_ORG" \
+              --header 'Content-Type: application/json' \
+              --data '{"name":"wallet-pir"}' \
+              'https://api.digitalocean.com/v2/projects/85639967-fecb-4c8d-88be-c0e3dee3f86c')"
+            jq -e '.project.name == "wallet-pir"' <<<"$project_response" >/dev/null
+
+            credential="$(mktemp /tmp/wallet-pir-runtime.XXXXXX)"
+            python3 - <<'PY' | systemd-creds encrypt --name=runtime - "$credential"
+          import json
+          import os
+          import sys
+
+          names = {
+              'DO_TOKEN_NEW_ORG': 'DO_TOKEN_NEW_ORG',
+              'CF_API_TOKEN': 'CF_API_TOKEN',
+              'WALLET_PIR_TF_STATE_ACCESS_KEY': 'ENHANCE_TF_STATE_ACCESS_KEY',
+              'WALLET_PIR_TF_STATE_SECRET_KEY': 'ENHANCE_TF_STATE_SECRET_KEY',
+              'WALLET_PIR_DEPLOY_SSH_KEY': 'ENHANCE_DEPLOY_SSH_KEY',
+              'PIR_APM_SLACK_WEBHOOK_URL': 'PIR_APM_SLACK_WEBHOOK_URL',
+          }
+          json.dump({target: os.environ[source] for target, source in names.items()},
+                    sys.stdout)
+          PY
+            install -m 0600 "$credential" /etc/credstore.encrypted/enhance-pir-runtime
+            rm -f "$credential"
+
+            install -d -m 0755 /opt/enhance-pir/ops /opt/enhance-pir/infra
+            install -m 0755 "$checkout/ops/scripts/wallet-pir-runtime.py" \
+              /opt/enhance-pir/ops/wallet-pir-runtime.py
+            install -m 0755 "$checkout/ops/scripts/wallet-pir-terraform.sh" \
+              /opt/enhance-pir/ops/wallet-pir-terraform.sh
+            install -m 0755 "$checkout/enhance/ops/scripts/enhance-autoscale.py" \
+              /opt/enhance-pir/ops/enhance-autoscale.py
+            install -m 0644 "$checkout/enhance/ops/deploy/enhance-autoscale.service" \
+              /etc/systemd/system/enhance-autoscale.service
+            install -m 0644 "$checkout/enhance/ops/deploy/enhance-autoscale.timer" \
+              /etc/systemd/system/enhance-autoscale.timer
+            if [[ -f /etc/enhance-pir/autoscale.json ]]; then
+              sed -Ei 's#/run/lock/enhance-production\.lock#/run/lock/wallet-pir-production.lock#g' \
+                /etc/enhance-pir/autoscale.json
+            fi
+            install -m 0600 "$work/production.tfvars" /etc/enhance-pir/production.tfvars
+            rm -f "$work/production.tfvars" "$work/plan.json" "$plan"
+            previous="/opt/enhance-pir/infra/production.before-wallet-pir-$(date -u +%Y%m%dT%H%M%SZ)"
+            mv /opt/enhance-pir/infra/production "$previous"
+            mv "$work" /opt/enhance-pir/infra/production
+            work=''
+            systemctl daemon-reload
+            systemctl try-restart enhance-autoscale.timer
           fi
           SCRIPT
