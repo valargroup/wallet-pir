@@ -138,6 +138,20 @@ def observe(state, topology, health, now):
     return fresh and state['trigger_samples'] >= 3 and groups < MAX_GROUPS and now - state.get('last_success', 0) >= 3600
 
 
+def operator_acceptance(receipt, revision):
+    """An explicit, release-bound waiver never represents completed qualification."""
+    return (
+        receipt.get('acceptance') == 'operator'
+        and receipt.get('revision') == revision
+        and receipt.get('worker_size') == 'c-4'
+        and receipt.get('shards_per_group') == 16
+        and receipt.get('waive_qualification') is True
+        and receipt.get('waive_initial_observation') is True
+        and all(isinstance(receipt.get(key), str) and receipt[key].strip()
+                for key in ('authorized_by', 'authorized_at', 'reason'))
+    )
+
+
 class Controller:
     def __init__(self, config):
         self.config = config
@@ -214,12 +228,12 @@ class Controller:
             if hashlib.sha256((artifacts / name).read_bytes()).hexdigest() != checksums.get(name):
                 raise RuntimeError('artifact checksum mismatch')
         receipt = json.loads(Path(self.config['qualification_receipt']).read_text())
-        if not (receipt.get('passed') is True and receipt.get('revision') == revision and receipt.get('worker_size') == 'c-4'
+        if not operator_acceptance(receipt, revision) and not (receipt.get('passed') is True and receipt.get('revision') == revision and receipt.get('worker_size') == 'c-4'
                 and receipt.get('shards_per_group') == 16 and receipt.get('full_capacity') is True
                 and receipt.get('failover') is True and receipt.get('online_append') is True
                 and receipt.get('memory') is True and receipt.get('seconds', 0) >= 21600
                 and receipt.get('publications', 0) >= 300):
-            raise RuntimeError('matching full qualification receipt is required')
+            raise RuntimeError('matching qualification or explicit operator acceptance is required')
         return revision
 
     def check_existing(self, topology):
@@ -269,9 +283,10 @@ class Controller:
                 self.notify('ceiling', 'Eight-worker ceiling reached; operator action required.')
             if not self.config.get('enabled', False) or not trigger:
                 return
-            if now - self.state['healthy_since'] < 86400:
-                raise RuntimeError('24 hours of healthy observation required before automatic provisioning')
             revision = self.verify_release()
+            receipt = json.loads(Path(self.config['qualification_receipt']).read_text())
+            if now - self.state['healthy_since'] < 86400 and not operator_acceptance(receipt, revision):
+                raise RuntimeError('24 hours of healthy observation required before automatic provisioning')
             operation = {'id': f"expand-{topology['revision']}-{len(topology['groups']) + 1}",
                          'step': 'planned', 'old_groups': topology['groups'], 'revision': topology['revision'],
                          'release': revision, 'attempts': 0, 'created': now, 'positions': health['ironwood_tree_size']}
