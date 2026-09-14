@@ -2,12 +2,27 @@
 
 ## Status and scope
 
-Implemented target, **not yet hardware-qualified or deployed**. Coordinator SSH
-access was restored on 2026-09-13 by removing its DigitalOcean firewall and
-disabling UFW at boot, as requested by the operator. The Terraform definition
-no longer creates a coordinator firewall. No autoscaling state migration,
-Droplet creation, Slack message or fleet activation has been performed. The
-six-hour c-4 qualification and 24-hour initial observation remain mandatory gates.
+Implemented target, **not yet qualified for production or activated**. As of
+2026-09-13 (America/Edmonton), the versioned Spaces state migration and creation
+of the new c-4 pair are complete. A full Terraform plan after creation showed
+no changes. The old pair continues serving production and remains available
+for rollback. Coordinator SSH access was restored by removing its DigitalOcean
+firewall and disabling UFW at boot, as requested by the operator; Terraform
+no longer creates that firewall.
+
+The isolated short hardware preflight at revision
+`2338dcdac3ea71838c7388b49a19fe360784cbbb` passed with 16 shards, 12
+publications, 1,316 exact-answer queries including retained sessions, and a
+303-ms paired-client p99. Peak cgroup memory was 5.51/5.62 GiB, with zero swap
+and OOM events. Cold preparation took 53.5 seconds; the longest subsequent
+publication took 8.2 seconds. This preliminary run does not qualify another
+revision or replace the six-hour qualification, online expansion rehearsal,
+or 24-hour production observation.
+
+The autoscaler is disabled. Its narrowly scoped Infisical machine identity is
+pending: the current Infisical plan rejected custom-role creation. Resolve
+that access arrangement before enabling unattended infrastructure operations;
+do not grant broad access to unrelated production secrets as a workaround.
 
 Each ordered group owns 16 consecutive 8,192-row shards: 1,179,648 Ironwood
 positions, two identical replicas, $168/month worker compute at the verified
