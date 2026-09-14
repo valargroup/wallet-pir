@@ -17,6 +17,17 @@ def plan():
 
 
 class PlanSafety(unittest.TestCase):
+    def test_computed_worker_tag_counts_do_not_block_next_expansion(self):
+        candidate = plan()
+        candidate['resource_drift'] = [{'address': 'digitalocean_tag.worker', 'change': {
+            'actions': ['update'],
+            'before': {'name': 'enhance-pir-worker', 'droplets_count': 2, 'total_resource_count': 2},
+            'after': {'name': 'enhance-pir-worker', 'droplets_count': 4, 'total_resource_count': 4}}}]
+        module.validate_plan(candidate, 1)
+        candidate['resource_drift'][0]['change']['after']['name'] = 'unexpected-tag'
+        with self.assertRaises(ValueError):
+            module.validate_plan(candidate, 1)
+
     def test_only_next_pair(self):
         module.validate_plan(plan(), 1)
 

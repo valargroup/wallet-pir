@@ -80,8 +80,18 @@ def validate_plan(plan, current_groups, existing_workers=()):
     if not created.issubset(expected):
         raise ValueError("partial operation contains unexpected workers")
     for drift in plan.get('resource_drift', []):
-        if drift['change']['actions'] != ['no-op']:
-            raise ValueError('infrastructure drift must be reconciled before expansion')
+        if drift['change']['actions'] == ['no-op']:
+            continue
+        before = drift['change'].get('before') or {}
+        after = drift['change'].get('after') or {}
+        changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
+        # DO refreshes these computed counters after creating a tagged worker.
+        # They are observations, not edits to a tag or to another resource.
+        if (drift.get('address') == 'digitalocean_tag.worker'
+                and before.get('name') == after.get('name') == 'enhance-pir-worker'
+                and changed <= {'total_resource_count', 'droplets_count'}):
+            continue
+        raise ValueError('infrastructure drift must be reconciled before expansion')
     for resource in plan.get('resource_changes', []):
         change = resource['change']
         actions = change['actions']
