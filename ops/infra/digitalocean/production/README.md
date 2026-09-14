@@ -25,20 +25,22 @@ are deliberately not built.
 ## State
 
 State is not committed. `.gitignore` excludes `terraform.tfstate*`, `*.tfplan`,
-and populated `*.tfvars`. Until the remote backend below is adopted, the state
-file lives in the operator's checkout under this directory. When this root was
+and populated `*.tfvars`. The production backend is the private, versioned Spaces bucket
+`enhance-pir-terraform`, key `production/terraform.tfstate`, in `ams3`.
+Use the bucket-scoped `ENHANCE_TF_STATE_ACCESS_KEY` and
+`ENHANCE_TF_STATE_SECRET_KEY` from Infisical production. When this root was
 renamed from `memo-poc`, the untracked state stayed in the old directory of
 whichever checkout ran the last apply; move `terraform.tfstate`,
 `terraform.tfstate.backup`, and `.terraform/` into `production/` before the
 next plan.
 
-Remote state on DigitalOcean Spaces is the intended end state. Copy
-`backend.tf.example` to `backend.tf` (it holds no secrets and can be committed
-once the bucket exists), create the bucket, and migrate:
+The committed `backend.tf` enables remote state and native S3 locking.
+For an existing local checkout, migrate once after backing up and reconciling
+its state; fresh checkouts use plain `terraform init`:
 
 ```bash
 infisical run --projectId=40862c6d-a089-4355-b405-0477be0ee3b1 --env=prod --path=/ -- \
-  sh -c 'export AWS_ACCESS_KEY_ID="$DO_SPACES_KEY" AWS_SECRET_ACCESS_KEY="$DO_SPACES_SECRET"; terraform init -migrate-state'
+  sh -c 'export AWS_ACCESS_KEY_ID="$ENHANCE_TF_STATE_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$ENHANCE_TF_STATE_SECRET_KEY"; terraform init -migrate-state'
 ```
 
 ## Plan and apply

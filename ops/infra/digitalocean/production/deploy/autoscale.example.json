@@ -3,8 +3,8 @@
   "runtime_env_aliases": {
     "TF_VAR_digitalocean_token": "DO_TOKEN_NEW_ORG",
     "TF_VAR_cloudflare_api_token": "CF_API_TOKEN",
-    "AWS_ACCESS_KEY_ID": "DO_SPACES_KEY",
-    "AWS_SECRET_ACCESS_KEY": "DO_SPACES_SECRET"
+    "AWS_ACCESS_KEY_ID": "ENHANCE_TF_STATE_ACCESS_KEY",
+    "AWS_SECRET_ACCESS_KEY": "ENHANCE_TF_STATE_SECRET_KEY"
   },
   "state_dir": "/srv/enhance-pir/autoscale",
   "control_socket": "/run/enhance-pir/control.sock",
