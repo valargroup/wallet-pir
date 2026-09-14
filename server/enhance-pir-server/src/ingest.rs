@@ -91,7 +91,7 @@ mod tests {
         let block = CanonicalBlock {
             height: 3_428_143,
             hash: "01".repeat(32),
-            records: vec![EnhanceRecord([7; enhance_pir::RECORD_BYTES])],
+            records: vec![EnhanceRecord::from_bytes([0; enhance_pir::RECORD_BYTES]).unwrap()],
             transparent_spends: vec![],
             tree_size: 1,
         };

@@ -46,6 +46,7 @@ fn record(position: u64) -> EnhanceRecord {
         out_ciphertext: [41; 80],
         has_transparent_inputs: false,
         has_transparent_outputs: false,
+        metadata: enhance_pir::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
     })
 }
 
@@ -63,7 +64,7 @@ async fn query(
     let row = session
         .decode(query, &response)
         .map_err(|e| e.to_string())?;
-    if record_in_row(&row, slot) != record(position) {
+    if record_in_row(&row, slot).map_err(|e| e.to_string())? != record(position) {
         return Err("incorrect PIR answer".into());
     }
     Ok(())

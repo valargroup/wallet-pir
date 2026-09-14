@@ -518,9 +518,9 @@ mod tests {
 
     #[test]
     fn enhance_rows_use_two_ipir_instances() {
-        // A 6,525-byte row is 52,200 bits and fits two 28,672-bit instances.
+        // A 6,633-byte row is 53,064 bits and fits two 28,672-bit instances.
         // Ten 725-byte records would exceed their combined capacity.
-        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 6_525);
+        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 6_633);
         let (_, params) = shard_parameters(&crate::types::ENHANCE_LAYOUT).expect("params");
         assert_eq!(params.instances, 2);
         assert_eq!(params.db_cols, 4_096);

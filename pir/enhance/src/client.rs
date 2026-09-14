@@ -214,12 +214,17 @@ impl QuerySession {
     }
 }
 
-pub fn record_in_row(row: &[u8], slot: usize) -> EnhanceRecord {
+pub fn record_in_row(row: &[u8], slot: usize) -> Result<EnhanceRecord, ClientError> {
+    if slot >= RECORDS_PER_ROW {
+        return Err(ClientError::Response("record slot outside row".into()));
+    }
     let start = slot * RECORD_BYTES;
-    let bytes: [u8; RECORD_BYTES] = row[start..start + RECORD_BYTES]
+    let bytes = row
+        .get(start..start + RECORD_BYTES)
+        .ok_or_else(|| ClientError::Response("record outside decoded row".into()))?
         .try_into()
-        .expect("validated Enhance row bounds");
-    EnhanceRecord(bytes)
+        .expect("fixed record length");
+    EnhanceRecord::from_bytes(bytes).map_err(|e| ClientError::Response(e.to_string()))
 }
 
 pub struct EnhancePirClient {
@@ -258,7 +263,7 @@ impl EnhancePirClient {
     pub async fn query_position(&self, position: u64) -> Result<EnhanceRecord, ClientError> {
         let (query, slot) = self.session.prepare_position(position)?;
         let row = self.send(query).await?;
-        Ok(record_in_row(&row, slot))
+        record_in_row(&row, slot)
     }
 
     pub async fn query_position_with_timing(
@@ -277,7 +282,7 @@ impl EnhancePirClient {
 
         let decode_started = Instant::now();
         let row = self.session.decode(query, &response)?;
-        let record = record_in_row(&row, slot);
+        let record = record_in_row(&row, slot)?;
         let decode = decode_started.elapsed();
 
         Ok((

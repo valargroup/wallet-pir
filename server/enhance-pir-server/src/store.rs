@@ -5,9 +5,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-// Version 5 is the 725-byte schema-v6 Enhance record. Older journals are retained
-// under a superseded directory and re-derived from the archive chain.
-const STORE_VERSION: u16 = 5;
+// Version 6 stores 737-byte schema-v7 records. Rebuild in a separate directory.
+const STORE_VERSION: u16 = 6;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -35,6 +34,10 @@ fn default_table() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct StoreManifest {
     version: u16,
+    #[serde(default)]
+    record_bytes: usize,
+    #[serde(default)]
+    records_per_row: usize,
     #[serde(default = "default_table")]
     table: String,
     tree_size: u64,
@@ -45,6 +48,8 @@ struct StoreManifest {
 /// commitment-tree position from zero. Position to offset is
 /// `position * layout.record_bytes`.
 pub struct RecordJournal {
+    // Hold an exclusive writer lock for the lifetime of this journal.
+    _lock: File,
     dir: PathBuf,
     records_path: PathBuf,
     name: String,
@@ -81,10 +86,20 @@ impl RecordJournal {
     ) -> Result<Self, StoreError> {
         let dir = path.to_path_buf();
         fs::create_dir_all(&dir)?;
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.join("journal.lock"))?;
+        lock.try_lock()
+            .map_err(|error| StoreError::Invariant(format!("journal is already open: {error}")))?;
         let records_path = dir.join("records.bin");
         let manifest_path = dir.join("manifest.json");
         let fresh = || StoreManifest {
             version: STORE_VERSION,
+            record_bytes: layout.record_bytes,
+            records_per_row: layout.records_per_row,
             table: name.to_string(),
             tree_size: 0,
             blocks: Vec::new(),
@@ -92,26 +107,15 @@ impl RecordJournal {
         let manifest = if manifest_path.exists() {
             let bytes = fs::read(&manifest_path)?;
             let parsed: StoreManifest = serde_json::from_slice(&bytes)?;
-            if parsed.version != STORE_VERSION || parsed.table != name {
-                // An older or foreign journal holds a different record layout and
-                // cannot be converted. Set it aside rather than refuse to start: the
-                // archive node re-derives everything, and a restart must not need an
-                // operator on the host.
-                let superseded =
-                    dir.join(format!("superseded-v{}-{}", parsed.version, parsed.table));
-                fs::create_dir_all(&superseded)?;
-                fs::rename(&records_path, superseded.join("records.bin"))?;
-                fs::rename(&manifest_path, superseded.join("manifest.json"))?;
-                File::open(&dir)?.sync_all()?;
-                tracing::warn!(
-                    found = parsed.version,
-                    found_table = %parsed.table,
-                    expected = STORE_VERSION,
-                    table = name,
-                    path = %superseded.display(),
-                    "set aside an incompatible journal; re-ingesting from activation"
-                );
-                fresh()
+            if parsed.version != STORE_VERSION
+                || parsed.table != name
+                || parsed.record_bytes != layout.record_bytes
+                || parsed.records_per_row != layout.records_per_row
+            {
+                return Err(StoreError::Invariant(format!(
+                    "incompatible journal version/table: {}/{}; expected {}/{}; rebuild in a separate data directory",
+                    parsed.version, parsed.table, STORE_VERSION, name
+                )));
             } else {
                 parsed
             }
@@ -137,6 +141,7 @@ impl RecordJournal {
         records.set_len(expected_len)?;
 
         let store = Self {
+            _lock: lock,
             dir,
             records_path,
             name: name.to_string(),
@@ -335,7 +340,11 @@ mod tests {
     use crate::types::{EnhanceRecord, ENHANCE_LAYOUT, RECORD_BYTES};
 
     fn record(byte: u8) -> EnhanceRecord {
-        EnhanceRecord([byte; RECORD_BYTES])
+        {
+            let mut bytes = [byte; RECORD_BYTES];
+            bytes[724..].fill(0);
+            EnhanceRecord::from_bytes(bytes).unwrap()
+        }
     }
 
     fn open(dir: &Path) -> RecordJournal {
@@ -356,9 +365,18 @@ mod tests {
         assert_eq!(store.shard_ids(), 0..=0);
         let shard = store.read_shard_rows(0).expect("shard");
         assert_eq!(shard.len(), ENHANCE_LAYOUT.shard_bytes());
-        assert_eq!(&shard[..RECORD_BYTES], &[1; RECORD_BYTES]);
-        assert_eq!(&shard[RECORD_BYTES..2 * RECORD_BYTES], &[2; RECORD_BYTES]);
+        assert_eq!(&shard[..RECORD_BYTES], record(1).as_bytes());
+        assert_eq!(&shard[RECORD_BYTES..2 * RECORD_BYTES], record(2).as_bytes());
         assert!(shard[2 * RECORD_BYTES..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn journal_refuses_concurrent_writers() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = open(dir.path());
+        assert!(RecordJournal::open(dir.path(), DatabaseId::Enhance, ENHANCE_LAYOUT).is_err());
+        drop(first);
+        assert!(RecordJournal::open(dir.path(), DatabaseId::Enhance, ENHANCE_LAYOUT).is_ok());
     }
 
     #[test]
@@ -371,41 +389,27 @@ mod tests {
     }
 
     #[test]
-    fn older_or_foreign_journals_are_set_aside_and_restarted_empty() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(
-            dir.path().join("manifest.json"),
-            br#"{"version":1,"base_position":0,"tree_size":2,"blocks":[{"height":5,"hash":"aa","first_position":0,"action_count":2}]}"#,
-        )
-        .expect("write manifest");
-        std::fs::write(dir.path().join("records.bin"), vec![7u8; 2 * 612]).expect("write records");
-
-        let store = open(dir.path());
-        assert_eq!(store.tree_size(), 0);
-        assert!(store.last_block().is_none());
-        assert_eq!(
-            std::fs::read(dir.path().join("superseded-v1-action/records.bin")).expect("kept"),
-            vec![7u8; 2 * 612]
-        );
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(dir.path().join("manifest.json")).expect("new"))
-                .expect("json");
-        assert_eq!(manifest["version"], 5);
-        assert_eq!(manifest["table"], "enhance");
-    }
-
-    #[test]
-    fn unnamed_action_journals_are_preserved_and_restarted() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(
-            dir.path().join("manifest.json"),
-            br#"{"version":3,"tree_size":1,"blocks":[{"height":5,"hash":"aa","first_position":0,"action_count":1}]}"#,
-        )
-        .expect("write manifest");
-        std::fs::write(dir.path().join("records.bin"), vec![9u8; RECORD_BYTES]).expect("records");
-        let store = open(dir.path());
-        assert_eq!(store.tree_size(), 0);
-        assert!(dir.path().join("superseded-v3-action/records.bin").exists());
+    fn incompatible_journals_are_rejected_without_mutation() {
+        for version in [1, 3, 5] {
+            let dir = tempfile::tempdir().unwrap();
+            let manifest = serde_json::to_vec(&serde_json::json!({
+                "version": version, "table": "enhance", "tree_size": 2,
+                "blocks": [{"height": 5, "hash": "aa", "first_position": 0, "action_count": 2}]
+            }))
+            .unwrap();
+            let records = vec![7u8; 2 * 725];
+            std::fs::write(dir.path().join("manifest.json"), &manifest).unwrap();
+            std::fs::write(dir.path().join("records.bin"), &records).unwrap();
+            assert!(RecordJournal::open(dir.path(), DatabaseId::Enhance, ENHANCE_LAYOUT).is_err());
+            assert_eq!(
+                std::fs::read(dir.path().join("manifest.json")).unwrap(),
+                manifest
+            );
+            assert_eq!(
+                std::fs::read(dir.path().join("records.bin")).unwrap(),
+                records
+            );
+        }
     }
 
     #[test]
@@ -421,6 +425,9 @@ mod tests {
         assert_eq!(store.last_block().unwrap().hash, "aa");
         store.append_block(11, "cc".into(), &[record(4)]).unwrap();
         assert_eq!(store.tree_size(), 2);
-        assert_eq!(store.read_records(1, 1).unwrap(), vec![4; RECORD_BYTES]);
+        assert_eq!(
+            store.read_records(1, 1).unwrap(),
+            record(4).as_bytes().to_vec()
+        );
     }
 }

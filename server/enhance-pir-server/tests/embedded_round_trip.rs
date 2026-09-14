@@ -39,6 +39,7 @@ fn record(position: u64) -> EnhanceRecord {
         out_ciphertext: out,
         has_transparent_inputs: false,
         has_transparent_outputs: false,
+        metadata: enhance_pir::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
     })
 }
 
@@ -89,7 +90,7 @@ async fn fetch(state: &CoordinatorState, session: &QuerySession, position: u64) 
         .await
         .expect("answered");
     let row = session.decode(query, &response).expect("decodes");
-    record_in_row(&row, slot)
+    record_in_row(&row, slot).unwrap()
 }
 
 fn hash(height: u64) -> String {
@@ -328,7 +329,7 @@ async fn previous_generation_is_still_answered_after_a_publish() {
         .await
         .expect("previous generation still served");
     let row = old_session.decode(old_query, &response).expect("decodes");
-    assert_eq!(record_in_row(&row, slot), record(5));
+    assert_eq!(record_in_row(&row, slot).unwrap(), record(5));
 
     // The first generation stays answerable until RETAINED_GENERATIONS newer
     // ones have been published, then its queries are refused.
@@ -472,5 +473,5 @@ async fn enhance_v1_routes_expose_only_the_current_generation() {
     let (status, v1) = post(&app, "/v1/enhance/query", query.body().to_vec()).await;
     assert_eq!(status, StatusCode::OK);
     let row = session.decode(query, &v1).expect("decodes");
-    assert_eq!(record_in_row(&row, slot), record(7));
+    assert_eq!(record_in_row(&row, slot).unwrap(), record(7));
 }

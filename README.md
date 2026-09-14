@@ -9,7 +9,7 @@ Ironwood transaction enhancement lets a wallet
 use an output position to recover the encrypted data needed to complete a note
 without revealing the position to the server.
 
-The active Enhance protocol has one fixed-width, 725-byte record:
+The active Enhance protocol has one fixed-width, 737-byte record:
 
 | Field | Bytes | Purpose |
 | --- | ---: | --- |
@@ -17,7 +17,9 @@ The active Enhance protocol has one fixed-width, 725-byte record:
 | `encCiphertext` | 580 | Note and authenticated memo |
 | `cv_net` | 32 | OVK-based outgoing recovery |
 | `outCiphertext` | 80 | OVK-based outgoing recovery |
-| flags | 1 | Presence of transaction-wide transparent inputs/outputs |
+| flags | 1 | Transparent inputs/outputs and fee presence |
+| expiry height | 4 | Exact transaction expiry; zero disables expiry |
+| fee | 8 | Actual paid fee in zatoshis when present |
 
 ## Repository layout
 

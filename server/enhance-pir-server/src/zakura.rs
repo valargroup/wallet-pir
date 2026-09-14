@@ -124,24 +124,26 @@ impl ZakuraClient {
         let block = Block::zcash_deserialize(raw.as_slice())
             .map_err(|error| ZakuraError::Block(error.to_string()))?;
         let hash = block.hash().to_string();
-        let records = block
-            .transactions
-            .iter()
-            .flat_map(|transaction| {
-                let has_transparent_inputs = transaction.has_transparent_inputs();
-                let has_transparent_outputs = transaction.has_transparent_outputs();
-                transaction.ironwood_actions().map(move |action| {
-                    EnhanceRecord::from_parts(EnhanceRecordParts {
-                        ephemeral_key: <[u8; 32]>::from(&action.ephemeral_key),
-                        enc_ciphertext: action.enc_ciphertext.into(),
-                        cv_net: action.cv.into(),
-                        out_ciphertext: action.out_ciphertext.into(),
-                        has_transparent_inputs,
-                        has_transparent_outputs,
-                    })
+        let mut records = Vec::new();
+        for transaction in &block.transactions {
+            if transaction.ironwood_actions().next().is_none() {
+                continue;
+            }
+            let has_transparent_inputs = transaction.has_transparent_inputs();
+            let has_transparent_outputs = transaction.has_transparent_outputs();
+            let metadata = transaction_metadata(transaction)?;
+            records.extend(transaction.ironwood_actions().map(|action| {
+                EnhanceRecord::from_parts(EnhanceRecordParts {
+                    ephemeral_key: <[u8; 32]>::from(&action.ephemeral_key),
+                    enc_ciphertext: action.enc_ciphertext.into(),
+                    cv_net: action.cv.into(),
+                    out_ciphertext: action.out_ciphertext.into(),
+                    has_transparent_inputs,
+                    has_transparent_outputs,
+                    metadata,
                 })
-            })
-            .collect();
+            }));
+        }
         let spend_height = u32::try_from(height)
             .map_err(|_| ZakuraError::Block(format!("block height {height} exceeds u32")))?;
         let mut transparent_spends = Vec::new();
@@ -198,5 +200,53 @@ impl ZakuraClient {
             return Err(ZakuraError::Rpc(error.code, error.message));
         }
         response.result.ok_or(ZakuraError::MissingResult)
+    }
+}
+
+/// Derive metadata from canonical transaction data, never from a fee estimate.
+fn transaction_metadata(
+    transaction: &zakura_chain::transaction::Transaction,
+) -> Result<enhance_pir::EnhanceTransactionMetadata, ZakuraError> {
+    let has_transparent_inputs = transaction.has_transparent_inputs();
+    let has_transparent_outputs = transaction.has_transparent_outputs();
+    let pure_ironwood = !has_transparent_inputs
+        && !has_transparent_outputs
+        && transaction.sapling_spends_per_anchor().next().is_none()
+        && transaction.sapling_outputs().next().is_none()
+        && transaction.orchard_actions().next().is_none();
+    let fee = if pure_ironwood {
+        let value: i64 = transaction
+            .ironwood_value_balance()
+            .ironwood_amount()
+            .into();
+        Some(
+            u64::try_from(value)
+                .map_err(|_| ZakuraError::Block("negative Ironwood-only fee".into()))?,
+        )
+    } else {
+        None
+    };
+    // For Ironwood's v6 format, None from this accessor means encoded zero.
+    let expiry = transaction.expiry_height().map_or(0, |height| height.0);
+    enhance_pir::EnhanceTransactionMetadata::new(expiry, fee)
+        .map_err(|error| ZakuraError::Block(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn canonical_ironwood_transaction_has_actual_fee_and_expiry() {
+        let bytes =
+            hex::decode(include_str!("../tests/fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
+        let tx =
+            zakura_chain::transaction::Transaction::zcash_deserialize(bytes.as_slice()).unwrap();
+        assert_eq!(
+            tx.hash().to_string(),
+            "f337d9675817668120ae626021f61e5350ff5412beeb5e42b67bd412452b8d13"
+        );
+        let metadata = transaction_metadata(&tx).unwrap();
+        assert_eq!(metadata.expiry_height(), 3483371);
+        assert_eq!(metadata.fee_zatoshis(), Some(10000));
     }
 }

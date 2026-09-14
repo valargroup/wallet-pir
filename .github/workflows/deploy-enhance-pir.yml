@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      prepare_only:
+        description: Rebuild schema-v7 journal beside production without changing services
+        required: false
+        default: false
+        type: boolean
       allow_topology_change:
         description: Accept a non-append worker inventory change
         required: false
@@ -29,7 +34,7 @@ jobs:
   deploy:
     name: Deploy production fleet
     runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.prepare_only && 360 || 60 }}
     environment: production
     permissions:
       actions: read
@@ -129,8 +134,14 @@ jobs:
           ENHANCE_CADDYFILE: ${{ github.workspace }}/artifact/Caddyfile
           ENHANCE_APM_ENVIRONMENT: production
           ENHANCE_ALLOW_TOPOLOGY_CHANGE: ${{ inputs.allow_topology_change }}
+          ENHANCE_PREPARE_ONLY: ${{ inputs.prepare_only }}
           PIR_APM_SLACK_WEBHOOK_URL: ${{ secrets.PIR_APM_SLACK_WEBHOOK_URL }}
-        run: flock -n /run/lock/enhance-production.lock ops/scripts/deploy-enhance-pir.sh deploy
+        run: |
+          if [[ "$ENHANCE_PREPARE_ONLY" == "true" ]]; then
+            flock -n /run/lock/enhance-production.lock ops/scripts/prepare-enhance-pir.sh
+          else
+            flock -n /run/lock/enhance-production.lock ops/scripts/deploy-enhance-pir.sh deploy
+          fi
       - name: Deployment summary
         if: always()
         run: |

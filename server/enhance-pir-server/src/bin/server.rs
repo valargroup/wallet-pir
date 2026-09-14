@@ -30,6 +30,9 @@ enum Mode {
 struct Cli {
     #[arg(long, value_enum, default_value_t = Mode::Distributed)]
     mode: Mode,
+    /// Rebuild/catch up the journal and exit without serving or contacting workers.
+    #[arg(long)]
+    prepare_only: bool,
     #[arg(long, default_value = "127.0.0.1:8080")]
     listen: SocketAddr,
     #[arg(long, default_value = "http://127.0.0.1:8232")]
@@ -184,6 +187,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
     let cli = Cli::parse();
+    if cli.prepare_only {
+        prepare(&cli).await.map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     let setups = match cli.mode {
         Mode::Distributed => remote_worker_setups(&cli)?,
         Mode::Embedded => {
@@ -256,6 +263,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
     tracing::info!(listen = %cli.listen, mode = ?cli.mode, "Enhance PIR coordinator started");
     axum::serve(listener, router(state)).await?;
+    Ok(())
+}
+
+/// Resume canonical ingestion in an explicitly selected schema-v7 directory.
+async fn prepare(cli: &Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
+    let mut journal = EnhanceJournal::open(&cli.data_dir)?;
+    let target = zakura.tip_height().await?;
+    if target < ACTIVATION_HEIGHT {
+        return Err("chain has not reached Ironwood activation".into());
+    }
+    reconcile(&zakura, &mut journal.records, target).await?;
+    let next = journal
+        .committed_height()
+        .map_or(ACTIVATION_HEIGHT, |h| h + 1);
+    for height in next..=target {
+        journal.append_block(&zakura.block(height).await?)?;
+        if height % 1000 == 0 {
+            tracing::info!(height, target, "preparing schema-v7 journal");
+        }
+    }
+    let (height, hash) = journal.highest_committed().ok_or("empty journal")?;
+    if height != target
+        || zakura.block_hash(height).await? != hash
+        || zakura.tree_size(height).await? != journal.records.tree_size()
+    {
+        return Err("preparation anchor changed; rerun to reconcile".into());
+    }
+    tracing::info!(
+        height,
+        hash,
+        positions = journal.records.tree_size(),
+        "schema-v7 journal prepared"
+    );
     Ok(())
 }
 
@@ -383,6 +424,7 @@ mod tests {
 
     fn cli(worker_config: Option<PathBuf>, worker_urls: Vec<String>) -> Cli {
         Cli {
+            prepare_only: false,
             mode: Mode::Distributed,
             listen: "127.0.0.1:8080".parse().unwrap(),
             zakura_rpc_url: "http://127.0.0.1:8232".to_string(),

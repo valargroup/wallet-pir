@@ -101,6 +101,7 @@ while IFS=$'\t' read -r -d '' name program; do
   # compile error, and an unused one is harmless, so one set serves all of them.
   if output="$(jq -n \
       --arg coordinator x \
+      --arg revision x \
       --argjson enhance '[]' \
       --argjson old '{}' \
       --argjson new '{}' \

@@ -43,7 +43,10 @@ readonly JQ_ENHANCE_COORDINATOR_SERVING='.phase.phase == "serving"'
 # shellcheck disable=SC2016
 readonly JQ_ENHANCE_HEALTH_WORKERS='.phase.phase == "serving" and .tables.enhance.workers == $expected'
 # shellcheck disable=SC2016
-readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.network == "main") and
+readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.schema_version == 7) and
+    (.generation.protocol_revision == "ironwood-enhance-pir-v2") and
+    (.generation.record_bytes == 737) and (.generation.row_bytes == 6633) and
+    (.generation.network == "main") and
     (.generation.pool == "ironwood") and
     (.generation.setup_seed | type == "number") and
     ([.generation.shards[].worker] | unique | length) <= $expected and
@@ -54,6 +57,16 @@ readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.network == "main") and
 readonly JQ_ENHANCE_NOT_REGRESSED='.anchor_height >= $old.anchor_height and
     .ironwood_tree_size >= $old.ironwood_tree_size'
 
+# A waiver is an explicit, exact-release operator decision, never evidence of passed tests.
+# This is the same acceptance contract used by enhance-autoscale.py.
+# shellcheck disable=SC2016
+readonly JQ_ENHANCE_RELEASE_ACCEPTED='.revision == $revision and .worker_size == "c-4" and .shards_per_group == 16 and (
+    (.passed == true and .full_capacity == true and .failover == true and
+     .online_append == true and .memory == true and .seconds >= 21600 and .publications >= 300)
+    or (.acceptance == "operator" and .waive_qualification == true and .waive_initial_observation == true and
+        ([.authorized_by, .authorized_at, .reason] | all(.[]; type == "string" and test("\\S"))))
+)'
+
 # Emitted as NUL-terminated NAME<TAB>PROGRAM records for the contract checker.
 # NUL rather than newline because a program may itself span lines, and a
 # line-delimited format would split one in half. Not meant to be read by eye.
@@ -63,7 +76,7 @@ jq_programs() {
   local name
   for name in JQ_ENHANCE_WORKER_HOSTS JQ_ENHANCE_WORKER_NAMES JQ_ENHANCE_GROUP_COUNT \
     JQ_ENHANCE_GENERATION JQ_ENHANCE_WORKER_OK JQ_ENHANCE_COORDINATOR_SERVING \
-    JQ_ENHANCE_HEALTH_WORKERS JQ_ENHANCE_INIT_COMPLETE JQ_ENHANCE_NOT_REGRESSED; do
+    JQ_ENHANCE_HEALTH_WORKERS JQ_ENHANCE_INIT_COMPLETE JQ_ENHANCE_NOT_REGRESSED JQ_ENHANCE_RELEASE_ACCEPTED; do
     printf '%s\t%s\0' "$name" "${!name}"
   done
 }
@@ -274,23 +287,24 @@ for host in "${WORKER_HOSTS[@]}"; do
   preflight_host "$host"
 done
 
-# The c-4 / 16-shard target must earn acceptance before any serving process stops.
-remote "$ENHANCE_COORDINATOR_HOST" bash -s -- "$ENHANCE_RELEASE_SHA" <<'REMOTE'
+# A matching qualification or explicit operator acceptance is required before services stop.
+printf -v acceptance_arg '%q' "$JQ_ENHANCE_RELEASE_ACCEPTED"
+remote "$ENHANCE_COORDINATOR_HOST" bash -s -- "$ENHANCE_RELEASE_SHA" "$acceptance_arg" <<'REMOTE'
 set -euo pipefail
-jq -e --arg revision "$1" '
-  .passed == true and .revision == $revision and .worker_size == "c-4" and
-  .shards_per_group == 16 and .full_capacity == true and .failover == true and
-  .online_append == true and .memory == true and .seconds >= 21600 and
-  .publications >= 300
-' /etc/enhance-pir/qualification.json >/dev/null
+if ! jq -e --arg revision "$1" "$2" /etc/enhance-pir/qualification.json >/dev/null; then
+  echo "Deployment requires qualification or explicit operator acceptance for the exact target revision" >&2
+  exit 1
+fi
 REMOTE
 
 # Once online topology is installed, it is authoritative. Refuse stale CI
 # inventory before stopping any process; never override a committed append.
 durable_config="$(remote "$ENHANCE_COORDINATOR_HOST" bash -s <<'REMOTE'
 set -euo pipefail
-if [[ -r /srv/zakura/enhance-data/topology.json ]]; then
-  jq -e 'if .pending != null then error("topology activation pending") else {groups: .groups} end' /srv/zakura/enhance-data/topology.json
+topology=/srv/zakura/enhance-data-v7/topology.json
+[[ -r "$topology" ]] || topology=/srv/zakura/enhance-data/topology.json
+if [[ -r "$topology" ]]; then
+  jq -e 'if .pending != null then error("topology activation pending") else {groups: .groups} end' "$topology"
 fi
 REMOTE
 )"
@@ -342,7 +356,7 @@ render_caddyfile "$ENHANCE_CADDYFILE" "$caddyfile_rendered"
   echo "PIR_APM_LATENCY_P99_OVERRIDES=query=5.0,init=2.0"
   echo "PIR_APM_TITLE=Enhance PIR APM"
   echo "PIR_APM_ENVIRONMENT=$ENHANCE_APM_ENVIRONMENT"
-  echo "PIR_APM_DATA_DIR=/srv/zakura/enhance-data"
+  echo "PIR_APM_DATA_DIR=/srv/zakura/enhance-data-v7"
   if [[ -n "${PIR_APM_SLACK_WEBHOOK_URL:-}" ]]; then
     echo "PIR_APM_SLACK_WEBHOOK_URL=$PIR_APM_SLACK_WEBHOOK_URL"
   fi
@@ -636,6 +650,22 @@ old_metadata="$(jq -c "$JQ_ENHANCE_GENERATION" <<<"$old_session" 2>/dev/null || 
 if [[ -z "$old_metadata" || "$old_metadata" == "null" ]]; then
   # A rollback may still be serving the split setup API during migration.
   old_metadata="$(curl --fail --silent --show-error "$ENHANCE_PUBLIC_URL/v1/enhance/generation" || true)"
+fi
+
+# An actual schema transition needs this release's isolated preparation receipt.
+# Later compatible schema-7 releases resume the journal already held by production.
+old_schema=$(jq -r '.schema_version // 0' <<<"${old_metadata:-null}" 2>/dev/null || echo 0)
+if [[ "$old_schema" != "7" ]]; then
+remote "$ENHANCE_COORDINATOR_HOST" bash -s -- "$ENHANCE_RELEASE_SHA" <<'REMOTE'
+set -euo pipefail
+as_root() { if [[ "$(id -u)" -eq 0 ]]; then "$@"; else sudo -n "$@"; fi; }
+[[ "$(as_root cat /srv/zakura/enhance-data-v7/prepared-release)" == "$1" ]]
+as_root test -s /srv/zakura/enhance-data-v7/enhance/manifest.json
+# Preserve append-only topology across the data-format transition.
+if as_root test -f /srv/zakura/enhance-data/topology.json && ! as_root test -f /srv/zakura/enhance-data-v7/topology.json; then
+  as_root cp /srv/zakura/enhance-data/topology.json /srv/zakura/enhance-data-v7/topology.json
+fi
+REMOTE
 fi
 
 if ! coordinator_service stop; then
