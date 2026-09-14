@@ -252,3 +252,19 @@ placement explicitly. Such a run tests the protocol transition, not the second
 pair's full-capacity hardware qualification or the cloud provisioning controller.
 The supervisor samples only the original c-4 pair. Preserve process uptime and
 controller lifecycle evidence separately before attesting the combined receipt.
+
+
+## Explicit operator acceptance
+
+An operator may explicitly accept a deployed release without completing the
+qualification and initial observation periods. Record that decision in the
+configured qualification receipt using `acceptance: "operator"`, the exact
+running `revision`, `worker_size: "c-4"`, `shards_per_group: 16`, both
+`waive_qualification: true` and `waive_initial_observation: true`, and nonempty
+`authorized_by`, `authorized_at`, and `reason` fields. Keep the file root-only.
+This receipt must not claim that waived tests passed. It applies only to the
+named release; a subsequent binary revision requires its own acceptance.
+
+Operator acceptance leaves release checksum verification, removal of legacy
+workers, live chain/replica checks, three capacity samples, cooldown, the fleet
+ceiling, additive-plan validation, and new-worker bootstrap checks in force.

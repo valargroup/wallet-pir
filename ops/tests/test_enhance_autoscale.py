@@ -1,3 +1,5 @@
+import hashlib
+import json
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -167,6 +169,64 @@ class OperationSafety(unittest.TestCase):
         self.controller.flush_notifications = Mock()
         self.controller.tick()
         self.assertEqual(self.controller.advance.call_args.args[0]['step'], 'observing')
+
+
+class OperatorAcceptance(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        self.revision = 'a' * 40
+        self.receipt = {'acceptance': 'operator', 'revision': self.revision,
+            'worker_size': 'c-4', 'shards_per_group': 16,
+            'waive_qualification': True, 'waive_initial_observation': True,
+            'authorized_by': 'operator', 'authorized_at': '2026-09-14T00:00:00Z',
+            'reason': 'Explicitly accepted deployment without the soak'}
+        self.path = root / 'acceptance.json'
+        self.path.write_text(json.dumps(self.receipt))
+        self.controller = module.Controller({'state_dir': str(root),
+            'artifact_dir': str(root), 'current_release_file': str(root / 'current'),
+            'qualification_receipt': str(self.path), 'enabled': True})
+        self.controller.terraform = Mock(return_value='0')
+        for name in ('revision', 'current'):
+            (root / name).write_text(self.revision)
+        checksums = []
+        for name in ('enhance-pir-worker', 'enhance-pir-qualify', 'enhance-pir-cli', 'enhance-pir-worker.service'):
+            (root / name).write_bytes(b'fixture artifact')
+            checksums.append(hashlib.sha256(b'fixture artifact').hexdigest() + '  ./' + name)
+        (root / 'SHA256SUMS').write_text('\n'.join(checksums))
+
+    def test_acceptance_is_release_bound_and_does_not_claim_passed_tests(self):
+        self.assertNotIn('passed', self.receipt)
+        self.assertEqual(self.controller.verify_release(), self.revision)
+        self.assertFalse(module.operator_acceptance(self.receipt, 'b' * 40))
+        for key in ('waive_qualification', 'waive_initial_observation', 'reason', 'authorized_by'):
+            modified = dict(self.receipt)
+            modified.pop(key)
+            self.assertFalse(module.operator_acceptance(modified, self.revision))
+
+    def test_acceptance_never_bypasses_checksums_or_legacy_retirement(self):
+        self.controller.terraform.return_value = '2'
+        with self.assertRaisesRegex(RuntimeError, 'legacy'):
+            self.controller.verify_release()
+        self.controller.terraform.return_value = '0'
+        (Path(self.directory.name) / 'enhance-pir-worker').write_text('changed')
+        with self.assertRaisesRegex(RuntimeError, 'checksum'):
+            self.controller.verify_release()
+
+    def test_explicit_acceptance_waives_only_initial_observation(self):
+        c = self.controller
+        c.flush_notifications = Mock()
+        c.topology = Mock(return_value={'revision': 0, 'groups': [{}]})
+        c.check_existing = Mock(return_value={'phase': {'phase': 'serving'},
+            'ironwood_tree_size': 950000, 'tables': {'enhance': {'workers': 2}}})
+        c.advance = Mock()
+        c.state.update(healthy_since=10000, trigger_samples=2,
+            sample={'time': 10300, 'positions': 950000, 'revision': 0})
+        with patch.object(module.time, 'time', return_value=10600):
+            c.tick()
+        self.assertEqual(c.state['operation']['release'], self.revision)
+        self.assertEqual(c.advance.call_count, 1)
 
 
 if __name__ == '__main__':
