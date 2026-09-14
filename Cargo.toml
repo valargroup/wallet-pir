@@ -59,9 +59,10 @@ opt-level = 3
 [profile.test]
 opt-level = 1
 
-# Release-quality codegen without the fat-LTO link, for local runs of the slow
-# tier. Not used for deploy artifacts.
+# Optimized codegen without whole-program LTO, for local and CI runs of the
+# slow test tier. Not used for deploy artifacts.
 [profile.release-fast]
 inherits = "release"
-lto = "thin"
+lto = false
 codegen-units = 16
+incremental = true
