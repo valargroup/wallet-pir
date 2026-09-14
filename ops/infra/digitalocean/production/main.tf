@@ -100,6 +100,10 @@ resource "digitalocean_droplet" "worker" {
   user_data = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
     packages = jsonencode(local.common_packages)
   })
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 # One-time migration holding addresses. Move worker[0/1] here in state BEFORE
@@ -441,7 +445,7 @@ resource "digitalocean_firewall" "transparent_loadgen" {
   tags = [digitalocean_tag.transparent_loadgen.name]
 
   dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
+    for_each = toset(concat(var.allowed_ssh_cidrs, var.transparent_loadgen_extra_ssh_cidrs))
     content {
       protocol         = "tcp"
       port_range       = "22"

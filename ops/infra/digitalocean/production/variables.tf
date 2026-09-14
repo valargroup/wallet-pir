@@ -232,3 +232,9 @@ variable "enhance_legacy_worker_count" {
     error_message = "Retain either zero or both legacy workers."
   }
 }
+
+variable "transparent_loadgen_extra_ssh_cidrs" {
+  description = "Additional existing load-generator SSH sources, preserved during shared-state Enhance expansion."
+  type        = list(string)
+  default     = []
+}
