@@ -141,6 +141,12 @@ async fn scrape_loop(
                 .map(|snapshot| snapshot.worker_groups.clone())
                 .unwrap_or_default(),
         );
+        alerts.set_tables(
+            rolling
+                .latest()
+                .map(|snapshot| snapshot.tables.clone())
+                .unwrap_or_default(),
+        );
         alerts.set_workers(
             rolling
                 .latest()

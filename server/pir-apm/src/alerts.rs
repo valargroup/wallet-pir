@@ -27,6 +27,7 @@ pub struct AlertEngine {
     ready_failed_since: Option<Instant>,
     worker_groups: BTreeMap<String, BTreeMap<String, BTreeMap<String, f64>>>,
     workers: BTreeMap<String, BTreeMap<String, f64>>,
+    tables: BTreeMap<String, BTreeMap<String, f64>>,
 }
 
 pub struct AlertInput<'a> {
@@ -47,6 +48,7 @@ impl AlertEngine {
             ready_failed_since: None,
             worker_groups: BTreeMap::new(),
             workers: BTreeMap::new(),
+            tables: BTreeMap::new(),
         }
     }
 
@@ -55,6 +57,10 @@ impl AlertEngine {
         worker_groups: BTreeMap<String, BTreeMap<String, BTreeMap<String, f64>>>,
     ) {
         self.worker_groups = worker_groups;
+    }
+
+    pub fn set_tables(&mut self, tables: BTreeMap<String, BTreeMap<String, f64>>) {
+        self.tables = tables;
     }
 
     pub fn set_workers(&mut self, workers: BTreeMap<String, BTreeMap<String, f64>>) {
@@ -174,6 +180,42 @@ impl AlertEngine {
             ),
         );
 
+        for (table, gauges) in &self.tables {
+            if let (Some(positions), Some(groups), Some(shards), Some(per_shard)) = (
+                gauges.get("positions"),
+                gauges.get("pool_workers"),
+                gauges.get("shards_per_worker"),
+                gauges.get("shard_positions"),
+            ) {
+                let capacity = groups * shards * per_shard;
+                if capacity > 0.0 {
+                    for (suffix, threshold) in [("warning", 0.75), ("critical", 0.90)] {
+                        conditions.insert(
+                            format!("capacity_{table}_{suffix}"),
+                            (
+                                positions / capacity >= threshold,
+                                format!(
+                                    "{positions:.0}/{capacity:.0} positions ({:.1}%)",
+                                    positions / capacity * 100.0
+                                ),
+                                format!(
+                                    ">= {:.0}% of configured range capacity",
+                                    threshold * 100.0
+                                ),
+                            ),
+                        );
+                    }
+                    conditions.insert(
+                        format!("capacity_{table}_ceiling"),
+                        (
+                            *groups >= 4.0 && positions / capacity >= 0.80,
+                            format!("{groups:.0} groups; automatic fleet ceiling reached"),
+                            "four groups at >= 80%".into(),
+                        ),
+                    );
+                }
+            }
+        }
         for (table, groups) in &self.worker_groups {
             for (group, gauges) in groups {
                 let configured = gauges.get("configured_replicas").copied().unwrap_or(0.0);
@@ -259,6 +301,48 @@ mod tests {
             disk_used_ratio: 0.5,
             data_dir: "/data".into(),
         }
+    }
+
+    #[test]
+    fn capacity_counts_groups_not_replicas_and_recovers_after_append() {
+        let mut engine = AlertEngine::new(Schema::enhance_default());
+        let host = healthy_host();
+        let endpoints = BTreeMap::new();
+        let gauges = |groups| {
+            BTreeMap::from([(
+                "enhance".into(),
+                BTreeMap::from([
+                    ("positions".into(), 1_100_000.0),
+                    ("pool_workers".into(), groups),
+                    ("shards_per_worker".into(), 16.0),
+                    ("shard_positions".into(), 73728.0),
+                ]),
+            )])
+        };
+        engine.set_tables(gauges(1.0));
+        let events = engine.evaluate(AlertInput {
+            now: Instant::now(),
+            scrape_ok: true,
+            ready_ok: true,
+            endpoints: &endpoints,
+            host: &host,
+        });
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .all(|e| matches!(e, AlertTransition::Fired(_))));
+        engine.set_tables(gauges(2.0));
+        let events = engine.evaluate(AlertInput {
+            now: Instant::now(),
+            scrape_ok: true,
+            ready_ok: true,
+            endpoints: &endpoints,
+            host: &host,
+        });
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .all(|e| matches!(e, AlertTransition::Recovered(_))));
     }
 
     #[test]

@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use transparent_spend_pir::{
     ShardDescriptor as SpendShardDescriptor, TransparentSpendGeneration, TransparentSpendSession,
     TransparentSpendTableSession, NETWORK as SPEND_NETWORK,
@@ -214,6 +214,8 @@ type Generations = Vec<Arc<GenerationSnapshot>>;
 #[derive(Clone)]
 pub struct CoordinatorState {
     tables: Arc<BTreeMap<DatabaseId, TableState>>,
+    topology: Option<Arc<crate::topology::TopologyStore>>,
+    publication: Arc<Mutex<()>>,
     http: reqwest::Client,
     live: Arc<ArcSwap<Generations>>,
     status: Arc<RwLock<CoordinatorStatus>>,
@@ -329,6 +331,8 @@ impl CoordinatorState {
             .map_err(|e| e.to_string())?;
         Ok(Self {
             tables: Arc::new(tables),
+            topology: None,
+            publication: Arc::new(Mutex::new(())),
             http,
             live: Arc::new(ArcSwap::from_pointee(Vec::new())),
             status: Arc::new(RwLock::new(CoordinatorStatus {
@@ -339,6 +343,34 @@ impl CoordinatorState {
                 non_serving_since: Some(Instant::now()),
             })),
         })
+    }
+
+    pub fn with_topology(mut self, topology: Arc<crate::topology::TopologyStore>) -> Self {
+        self.topology = Some(topology);
+        self
+    }
+
+    pub fn has_pending_topology(&self) -> bool {
+        self.topology
+            .as_ref()
+            .is_some_and(|t| t.status().pending.is_some())
+    }
+
+    fn groups(&self, table: DatabaseId) -> Vec<WorkerGroup> {
+        if table == DatabaseId::Enhance {
+            if let Some(topology) = &self.topology {
+                return topology
+                    .status()
+                    .groups
+                    .iter()
+                    .map(|g| g.target())
+                    .collect();
+            }
+        }
+        self.tables
+            .get(&table)
+            .map(|s| s.setup.groups.clone())
+            .unwrap_or_default()
     }
 
     pub async fn set_phase(&self, phase: CoordinatorPhase) {
@@ -449,14 +481,13 @@ impl CoordinatorState {
     }
 
     /// Every distinct replica across all pools, in first-seen group order.
-    fn workers(&self) -> Vec<WorkerTarget> {
+    fn workers(groups: &BTreeMap<DatabaseId, Vec<WorkerGroup>>) -> Vec<WorkerTarget> {
         let mut seen = HashSet::new();
-        self.tables
+        groups
             .values()
-            .flat_map(|table| table.setup.groups.iter())
-            .flat_map(|group| group.replicas.iter())
+            .flat_map(|groups| groups.clone())
+            .flat_map(|group| group.replicas.into_iter())
             .filter(|worker| seen.insert(worker.name().to_string()))
-            .cloned()
             .collect()
     }
 
@@ -465,6 +496,11 @@ impl CoordinatorState {
     /// worker shows up on the dashboard without slowing the scrape down.
     pub async fn observe(&self) -> metrics::Observation {
         let phase = self.status.read().await.phase.clone();
+        let groups_by_table: BTreeMap<_, _> = self
+            .tables
+            .keys()
+            .map(|table| (*table, self.groups(*table)))
+            .collect();
         let retained = self.live.load();
         let newest = retained.first();
         let manifest = newest.map(|snapshot| &snapshot.manifest);
@@ -479,7 +515,7 @@ impl CoordinatorState {
                     registered: state.is_some(),
                     // Retain the existing metric field name, but report
                     // logical groups so capacity is not doubled by replicas.
-                    pool_workers: state.map_or(0, |t| t.setup.groups.len() as u64),
+                    pool_workers: groups_by_table[&table].len() as u64,
                     query_slots_available: state
                         .map_or(0, |t| t.query_slots.available_permits() as u64),
                     positions: published.map_or(0, |t| t.positions),
@@ -493,19 +529,19 @@ impl CoordinatorState {
             .collect();
 
         let mut probes = tokio::task::JoinSet::new();
-        for (index, worker) in self.workers().into_iter().enumerate() {
+        for (index, worker) in Self::workers(&groups_by_table).into_iter().enumerate() {
             let name = worker.name().to_string();
             let shares: Vec<(DatabaseId, u64, u64, u64)> = self
                 .tables
                 .iter()
-                .filter_map(|(table, state)| {
-                    let (pool_index, group) =
-                        state.setup.groups.iter().enumerate().find(|(_, group)| {
-                            group
-                                .replicas
-                                .iter()
-                                .any(|candidate| candidate.name() == name)
-                        })?;
+                .filter_map(|(table, _state)| {
+                    let groups = &groups_by_table[table];
+                    let (pool_index, group) = groups.iter().enumerate().find(|(_, group)| {
+                        group
+                            .replicas
+                            .iter()
+                            .any(|candidate| candidate.name() == name)
+                    })?;
                     let assigned: Vec<&ShardDescriptor> = manifest
                         .and_then(|m| m.tables.get(table))
                         .map(|t| t.shards.iter().filter(|s| s.worker == group.name).collect())
@@ -575,26 +611,44 @@ impl CoordinatorState {
             }
         }
         worker_details.sort_by_key(|(index, _)| *index);
-        let worker_details = worker_details
+        let worker_details: Vec<metrics::WorkerObservation> = worker_details
             .into_iter()
             .map(|(_, observation)| observation)
             .collect();
         let worker_groups = self
             .tables
-            .iter()
-            .flat_map(|(table, state)| {
-                state.setup.groups.iter().map(move |group| {
-                    let ready_replicas = newest
-                        .and_then(|snapshot| snapshot.tables.get(table))
-                        .and_then(|snapshot| snapshot.ready_groups.get(&group.name))
-                        .map_or(0, |ready| ready.replicas.len() as u64);
-                    metrics::WorkerGroupObservation {
-                        table: *table,
-                        name: group.name.clone(),
-                        configured_replicas: group.replicas.len() as u64,
-                        ready_replicas,
-                    }
-                })
+            .keys()
+            .flat_map(|table| {
+                groups_by_table[table]
+                    .clone()
+                    .into_iter()
+                    .map(|group| {
+                        let assigned = newest
+                            .and_then(|snapshot| snapshot.tables.get(table))
+                            .and_then(|snapshot| snapshot.ready_groups.get(&group.name));
+                        // Empty ranges are standby capacity: use health, not a nonexistent generation.
+                        let ready_replicas = assigned.map_or_else(
+                            || {
+                                group
+                                    .replicas
+                                    .iter()
+                                    .filter(|replica| {
+                                        worker_details.iter().any(|worker| {
+                                            worker.name == replica.name() && worker.up
+                                        })
+                                    })
+                                    .count() as u64
+                            },
+                            |ready| ready.replicas.len() as u64,
+                        );
+                        metrics::WorkerGroupObservation {
+                            table: *table,
+                            name: group.name,
+                            configured_replicas: group.replicas.len() as u64,
+                            ready_replicas,
+                        }
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
         metrics::Observation {
@@ -636,6 +690,22 @@ impl CoordinatorState {
         sources: &[&dyn TableSource],
         anchor: Anchor,
     ) -> Result<(), String> {
+        self.publish_checked(sources, anchor, || async { Ok(()) })
+            .await
+    }
+
+    pub async fn publish_checked<F, Fut>(
+        &self,
+        sources: &[&dyn TableSource],
+        anchor: Anchor,
+        validate_anchor: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        let _publication = self.publication.lock().await;
+        let pending = self.topology.as_ref().and_then(|t| t.status().pending);
         let sources: Vec<&dyn TableSource> = sources
             .iter()
             .copied()
@@ -643,6 +713,30 @@ impl CoordinatorState {
             .collect();
         if sources.is_empty() {
             return Err("nothing to publish".to_string());
+        }
+        // Reject exhausted placement before preparing anything on the serving replicas.
+        for source in &sources {
+            let groups = if source.table() == DatabaseId::Enhance {
+                pending
+                    .as_ref()
+                    .map(|p| p.groups.iter().map(|g| g.target()).collect())
+                    .unwrap_or_else(|| self.groups(source.table()))
+            } else {
+                self.groups(source.table())
+            };
+            let capacity = groups.len() as u64
+                * crate::types::SHARDS_PER_GROUP
+                * crate::types::SHARD_POSITIONS as u64;
+            let embedded = groups.iter().all(|g| {
+                g.replicas
+                    .iter()
+                    .all(|r| matches!(r, WorkerTarget::Embedded { .. }))
+            });
+            if !embedded && source.positions() > capacity {
+                return Err(
+                    "Enhance capacity exhausted; retained generations remain available".into(),
+                );
+            }
         }
         let anchor_height = anchor.height;
         self.set_phase(CoordinatorPhase::Building { anchor_height })
@@ -667,11 +761,29 @@ impl CoordinatorState {
         let mut manifests = BTreeMap::new();
         for source in sources {
             let table = source.table();
-            let snapshot = self.build_table(source, generation).await?;
+            let groups = if table == DatabaseId::Enhance {
+                pending
+                    .as_ref()
+                    .map(|p| p.groups.iter().map(|g| g.target()).collect())
+                    .unwrap_or_else(|| self.groups(table))
+            } else {
+                self.groups(table)
+            };
+            let snapshot = match self.build_table(source, generation, &groups).await {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    if let (Some(store), Some(pending)) = (&self.topology, &pending) {
+                        store.finish(&pending.operation_id, Some(error.clone()))?;
+                    }
+                    return Err(error);
+                }
+            };
             manifests.insert(table, snapshot.manifest.clone());
             snapshots.insert(table, Arc::new(snapshot));
         }
 
+        // Recheck canonicality after potentially long worker preparation, before exposure.
+        validate_anchor().await?;
         let manifest = GenerationManifest {
             anchor_height,
             anchor_block_hash: anchor.hash,
@@ -693,6 +805,9 @@ impl CoordinatorState {
                 retained.push(previous.clone());
             }
         }
+        if let (Some(store), Some(pending)) = (&self.topology, &pending) {
+            store.finish(&pending.operation_id, None)?;
+        }
         self.live.store(Arc::new(retained));
         self.set_phase(CoordinatorPhase::Serving).await;
         Ok(())
@@ -705,6 +820,7 @@ impl CoordinatorState {
         &self,
         journal: &dyn TableSource,
         generation: u64,
+        groups: &[WorkerGroup],
     ) -> Result<TableSnapshot, String> {
         let table = journal.table();
         let state = self.table(table)?;
@@ -727,7 +843,6 @@ impl CoordinatorState {
             ));
         }
         let rlwe = state.rlwe;
-        let groups = &state.setup.groups;
 
         let mut candidates: BTreeMap<String, BTreeMap<String, (WorkerTarget, Vec<ActivateShard>)>> =
             groups
@@ -748,7 +863,17 @@ impl CoordinatorState {
         let mut descriptors = Vec::new();
         let mut combined_crs: Option<Vec<CrsBlock>> = None;
         for shard_id in journal.shard_ids() {
-            let group_index = group_index_for_shard(shard_id, groups.len()).ok_or_else(|| {
+            let embedded = groups.len() == 1
+                && groups[0]
+                    .replicas
+                    .iter()
+                    .all(|r| matches!(r, WorkerTarget::Embedded { .. }));
+            let group_index = (if embedded {
+                Some(0)
+            } else {
+                group_index_for_shard(shard_id, groups.len())
+            })
+            .ok_or_else(|| {
                 format!(
                     "{table} shard {shard_id} exceeds the capacity of {} worker groups",
                     groups.len()
@@ -876,7 +1001,19 @@ impl CoordinatorState {
                 let mut tables = BTreeMap::new();
                 tables.insert(table, shards);
                 match self
-                    .activate_worker(&replica, ActivateRequest { generation, tables })
+                    .activate_worker(
+                        &replica,
+                        ActivateRequest {
+                            generation,
+                            tables,
+                            retained_generations: self
+                                .live
+                                .load()
+                                .iter()
+                                .map(|s| s.manifest.generation)
+                                .collect(),
+                        },
+                    )
                     .await
                 {
                     Ok(()) => ready_replicas.push(replica),
@@ -1484,17 +1621,16 @@ async fn health(State(state): State<CoordinatorState>) -> Response {
     let status = health_status(&phase, non_serving_for);
     let tables = state
         .tables
-        .iter()
-        .map(|(table, table_state)| {
+        .keys()
+        .map(|table| {
             (
                 *table,
                 TableHealth {
                     shards: newest
                         .and_then(|snapshot| snapshot.manifest.tables.get(table))
                         .map_or(0, |manifest| manifest.shards.len()),
-                    workers: table_state
-                        .setup
-                        .groups
+                    workers: state
+                        .groups(*table)
                         .iter()
                         .map(|group| group.replicas.len())
                         .sum(),

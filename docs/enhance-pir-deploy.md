@@ -37,16 +37,17 @@ ENHANCE_WORKERS_JSON='[{"name":"shard-group-01","replicas":[{"name":"worker-01a"
 ops/scripts/deploy-enhance-pir.sh validate
 ```
 
-Each ordered shard group owns six shards and has exactly two active-active
+Each ordered shard group owns 16 shards and has exactly two active-active
 replicas. Group order is append-only because it determines shard placement;
 replicas inside an existing group may be replaced without moving shards. A
 generation publishes once at least one replica in every used group is ready.
 The first rollout from the legacy flat inventory is an intentional topology
 format migration and requires `ENHANCE_ALLOW_TOPOLOGY_CHANGE=true`; later
 replica replacements do not require that override.
-Each Enhance worker service is cgroup-limited to 2 GiB, with swap disabled. A
-replica that exceeds the limit is restarted by systemd; its peer continues
-serving the group while it rebuilds on the next publication.
+Each c-4 worker uses MemoryHigh=6G, MemoryMax=7G and MemorySwapMax=2G.
+The host has a 2-GiB swap file for transient peaks, not additional serving
+capacity. These settings and the 16-shard range require full qualification
+before production adoption. See [automatic expansion](enhance-autoscaling.md).
 
 Current runtime paths are `/etc/enhance-pir`, `/opt/enhance-pir`,
 `/srv/zakura/enhance-data`, and `/srv/enhance-pir/artifacts`. Active

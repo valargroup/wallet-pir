@@ -40,5 +40,6 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 runcmd:
+  - [sh, -c, "if command -v ufw >/dev/null 2>&1; then ufw disable && systemctl disable --now ufw; fi"]
   - systemctl daemon-reload
   - systemctl enable --now mount-zakura-volume.service

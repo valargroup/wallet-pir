@@ -38,6 +38,7 @@ pub struct WorkerState {
     active: Arc<RwLock<BTreeMap<u64, ActiveGeneration>>>,
     artifact_dir: Arc<PathBuf>,
     evaluation_slots: Arc<Semaphore>,
+    preparation_slots: Arc<Semaphore>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -74,6 +75,9 @@ struct PrepareQuery {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ActivateRequest {
     pub generation: u64,
+    /// Published generations pinned by the coordinator, plus this candidate.
+    #[serde(default)]
+    pub retained_generations: Vec<u64>,
     pub tables: BTreeMap<DatabaseId, Vec<ActivateShard>>,
 }
 
@@ -139,6 +143,7 @@ impl WorkerState {
             active: Arc::new(RwLock::new(BTreeMap::new())),
             artifact_dir: Arc::new(artifact_dir),
             evaluation_slots: Arc::new(Semaphore::new(evaluation_slots.max(1))),
+            preparation_slots: Arc::new(Semaphore::new(1)),
         })
     }
 
@@ -155,6 +160,11 @@ impl WorkerState {
         rows_sha256: String,
         rows: Vec<u8>,
     ) -> Result<bool, String> {
+        let _preparation = self
+            .preparation_slots
+            .acquire()
+            .await
+            .map_err(|e| e.to_string())?;
         if RecordJournal::rows_digest(&rows) != rows_sha256 {
             return Err("row digest mismatch".to_string());
         }
@@ -206,6 +216,11 @@ impl WorkerState {
         query_row_start: usize,
         rows_sha256: String,
     ) -> Result<(), String> {
+        let _preparation = self
+            .preparation_slots
+            .acquire()
+            .await
+            .map_err(|e| e.to_string())?;
         let key = ShardKey {
             table,
             shard_id,
@@ -239,6 +254,9 @@ impl WorkerState {
     /// Activates a generation and evicts every runtime no retained generation
     /// references, so memory holds exactly the shards that can still be asked.
     pub async fn activate_local(&self, request: ActivateRequest) -> Result<(), String> {
+        if request.retained_generations.len() > RETAINED_GENERATIONS {
+            return Err("too many retained generations".into());
+        }
         if request.tables.values().all(Vec::is_empty) {
             return Err("an active generation needs at least one shard".to_string());
         }
@@ -287,7 +305,18 @@ impl WorkerState {
                 },
             );
         }
-        while active.len() > RETAINED_GENERATIONS {
+        if !request.retained_generations.is_empty() {
+            active.retain(|generation, _| {
+                *generation == request.generation
+                    || request.retained_generations.contains(generation)
+            });
+        }
+        let retention = if request.retained_generations.is_empty() {
+            RETAINED_GENERATIONS
+        } else {
+            RETAINED_GENERATIONS + 1
+        };
+        while active.len() > retention {
             let oldest = *active.keys().next().expect("nonempty generation map");
             active.remove(&oldest);
         }
@@ -581,6 +610,7 @@ mod tests {
         let state = WorkerState::new(dir.path().to_path_buf()).expect("worker");
         assert!(state
             .activate_local(ActivateRequest {
+                retained_generations: vec![],
                 generation: 1,
                 tables: BTreeMap::new(),
             })
@@ -596,6 +626,7 @@ mod tests {
         );
         let error = state
             .activate_local(ActivateRequest {
+                retained_generations: vec![],
                 generation: 1,
                 tables,
             })

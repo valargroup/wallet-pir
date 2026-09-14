@@ -93,6 +93,8 @@ jobs:
       # 2026-09-07 was in those three.
       - name: Check ops contracts
         run: ops/scripts/check-jq-contracts.sh
+      - name: Test Enhance capacity and qualification gates
+        run: python3 -m unittest discover -s ops/tests -p 'test_enhance_*.py'
       - name: Test continuous publication fleet failures
         run: python3 ops/tests/test_transparent_publication.py
       - name: Validate example inventory

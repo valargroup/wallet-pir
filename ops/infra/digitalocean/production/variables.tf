@@ -39,9 +39,9 @@ variable "coordinator_size" {
 }
 
 variable "worker_size" {
-  description = "Worker Droplet size. Four-vCPU workers use the closest AMS3 bundled size; keep process RSS below 2 GiB."
+  description = "Enhance worker size: four dedicated vCPUs and 8 GiB RAM."
   type        = string
-  default     = "s-4vcpu-8gb"
+  default     = "c-4"
 }
 
 # Transparent PIR shard workers. A separate fleet from the Enhance workers
@@ -95,7 +95,7 @@ variable "ssh_key_ids" {
 }
 
 variable "allowed_ssh_cidrs" {
-  description = "Operator CIDRs allowed to SSH to all three hosts."
+  description = "Operator CIDRs allowed to SSH to firewalled workers and auxiliary hosts; the coordinator has no cloud firewall."
   type        = list(string)
 }
 
@@ -211,4 +211,40 @@ variable "transparent_loadgen_size" {
   description = "Load generator size: dedicated CPU, so the client's own PIR work does not bound what the fleet is measured at."
   type        = string
   default     = "c-16"
+}
+
+variable "enhance_group_count" {
+  description = "Desired Enhance range count; use the autoscale state wrapper for every plan/apply."
+  type        = number
+  default     = 1
+  validation {
+    condition     = var.enhance_group_count >= 1 && var.enhance_group_count <= 4 && floor(var.enhance_group_count) == var.enhance_group_count
+    error_message = "Enhance supports one to four groups (two replicas each)."
+  }
+}
+
+variable "enhance_legacy_worker_count" {
+  description = "Initial c-4 migration only: retain the two original Basic workers after moving their state addresses. Return to zero only after rollout acceptance."
+  type        = number
+  default     = 0
+  validation {
+    condition     = contains([0, 2], var.enhance_legacy_worker_count)
+    error_message = "Retain either zero or both legacy workers."
+  }
+}
+
+variable "transparent_loadgen_extra_ssh_cidrs" {
+  description = "Additional existing load-generator SSH sources, preserved during shared-state Enhance expansion."
+  type        = list(string)
+  default     = []
+}
+
+variable "enhance_worker_deploy_public_key" {
+  description = "Public deployment key installed on new Enhance workers; the private key stays in Infisical."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.enhance_worker_deploy_public_key == "" || can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-) ", var.enhance_worker_deploy_public_key))
+    error_message = "Supply an OpenSSH public key, never a private key."
+  }
 }

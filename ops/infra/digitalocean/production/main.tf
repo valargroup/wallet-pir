@@ -8,17 +8,11 @@ locals {
   # change with nothing to do with it. When the coordinator daemon lands and
   # there is more than one worker, fronting moves there and this record follows.
   transparent_public_hostname = "transparent-pir.valargroup.dev"
-  # Group order is stable shard placement. Replica membership may change
-  # without moving shards; append groups before the next six-shard boundary.
-  worker_groups = [
-    {
-      name = "shard-group-01"
-      replicas = [
-        "enhance-pir-worker-01",
-        "enhance-pir-worker-02",
-      ]
-    },
-  ]
+  # Append-only 16-shard ranges. Preserve existing worker addresses and names.
+  worker_groups = [for group in range(var.enhance_group_count) : {
+    name     = format("shard-group-%02d", group + 1)
+    replicas = [for replica in range(2) : format("enhance-pir-worker-%02d", group * 2 + replica + 1)]
+  }]
   worker_names    = flatten([for group in local.worker_groups : group.replicas])
   common_packages = ["ca-certificates", "curl", "jq", "htop"]
 }
@@ -104,8 +98,33 @@ resource "digitalocean_droplet" "worker" {
   ipv6       = true
 
   user_data = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
-    packages = jsonencode(local.common_packages)
+    packages          = jsonencode(local.common_packages)
+    deploy_public_key = var.enhance_worker_deploy_public_key
   })
+
+  lifecycle {
+    ignore_changes = [user_data]
+  }
+}
+
+# One-time migration holding addresses. Move worker[0/1] here in state BEFORE
+# planning c-4 creation; this preserves the old pair for the 24-hour rollback
+# window instead of attempting an in-place disk downsize or destroying them.
+resource "digitalocean_droplet" "enhance_legacy_worker" {
+  count      = var.enhance_legacy_worker_count
+  name       = format("enhance-pir-worker-%02d", count.index + 1)
+  image      = var.image
+  region     = var.region
+  size       = "s-4vcpu-8gb"
+  ssh_keys   = var.ssh_key_ids
+  vpc_uuid   = digitalocean_vpc.enhance.id
+  tags       = [digitalocean_tag.worker.name]
+  monitoring = true
+  backups    = var.enable_backups
+  ipv6       = true
+  lifecycle {
+    ignore_changes = [user_data, image, ssh_keys, size]
+  }
 }
 
 # Transparent PIR shard workers.
@@ -260,52 +279,8 @@ resource "digitalocean_volume_attachment" "zakura" {
   volume_id  = digitalocean_volume.zakura.id
 }
 
-resource "digitalocean_firewall" "coordinator" {
-  name = "enhance-pir-coordinator"
-  tags = [digitalocean_tag.coordinator.name]
-
-  dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
-    content {
-      protocol         = "tcp"
-      port_range       = "22"
-      source_addresses = [inbound_rule.value]
-    }
-  }
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "8233"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
+# The coordinator intentionally has no cloud firewall. SSH must remain reachable
+# when operator/VPN source addresses change. Keep private services bound to loopback.
 
 resource "digitalocean_firewall" "worker" {
   name = "enhance-pir-workers"
@@ -471,7 +446,7 @@ resource "digitalocean_firewall" "transparent_loadgen" {
   tags = [digitalocean_tag.transparent_loadgen.name]
 
   dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
+    for_each = toset(concat(var.allowed_ssh_cidrs, var.transparent_loadgen_extra_ssh_cidrs))
     content {
       protocol         = "tcp"
       port_range       = "22"
@@ -499,13 +474,21 @@ resource "digitalocean_project_resources" "enhance" {
   project = var.project_id
   resources = concat(
     [digitalocean_droplet.coordinator.urn, digitalocean_volume.zakura.urn],
-    [for worker in digitalocean_droplet.worker : worker.urn],
+    [for worker in slice(digitalocean_droplet.worker, 0, 2) : worker.urn],
+    [for worker in digitalocean_droplet.enhance_legacy_worker : worker.urn],
     [for worker in digitalocean_droplet.transparent_worker : worker.urn],
     [for worker in digitalocean_droplet.transparent_recent : worker.urn],
     [for worker in digitalocean_droplet.transparent_archive : worker.urn],
     [for router in digitalocean_droplet.transparent_router : router.urn],
     [for host in digitalocean_droplet.transparent_loadgen : host.urn],
   )
+}
+
+# Additive membership avoids rewriting the shared project resource set on expansion.
+resource "digitalocean_project_resources" "enhance_added_workers" {
+  count     = length(local.worker_names) - 2
+  project   = var.project_id
+  resources = [digitalocean_droplet.worker[count.index + 2].urn]
 }
 
 resource "cloudflare_dns_record" "enhance" {

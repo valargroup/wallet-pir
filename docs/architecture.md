@@ -27,7 +27,9 @@ layouts.
 
 ## Worker topology
 
-The coordinator assigns consecutive ranges of six shards to stable logical
+The 16-shard c-4 configuration is implemented but not yet production-qualified or deployed. See [automatic expansion](enhance-autoscaling.md) for rollout gates.
+
+The coordinator assigns consecutive ranges of 16 shards to stable logical
 worker groups. Each group has two active-active replicas holding identical
 rows, CRS material, and retained generations. Different groups evaluate in
 parallel; within a group, one ready replica evaluates a query and its peer is

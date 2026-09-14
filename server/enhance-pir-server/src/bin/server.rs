@@ -42,6 +42,8 @@ struct Cli {
     worker_urls: Vec<String>,
     #[arg(long, conflicts_with = "worker_urls")]
     worker_config: Option<PathBuf>,
+    #[arg(long)]
+    control_socket: Option<PathBuf>,
     #[arg(long, default_value_t = 10)]
     poll_seconds: u64,
 }
@@ -202,7 +204,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect()
         }
     };
-    let state = CoordinatorState::new(setups)?;
+    let mut state = CoordinatorState::new(setups.clone())?;
+    if let Some(socket) = cli.control_socket.clone() {
+        use enhance_pir_server::topology::{Group, Replica, TopologyStore};
+        let groups = setups[0]
+            .groups
+            .iter()
+            .map(|g| {
+                Ok(Group {
+                    name: g.name.clone(),
+                    replicas: g
+                        .replicas
+                        .iter()
+                        .map(|r| match r {
+                            WorkerTarget::Remote { name, base_url } => Ok(Replica {
+                                name: name.clone(),
+                                url: base_url.clone(),
+                            }),
+                            _ => Err("control socket requires distributed workers"),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                })
+            })
+            .collect::<Result<Vec<_>, &str>>()?;
+        let topology = std::sync::Arc::new(TopologyStore::open(
+            cli.data_dir.join("topology.json"),
+            groups,
+        )?);
+        state = state.with_topology(topology.clone());
+        tokio::spawn(async move {
+            if let Err(error) = enhance_pir_server::topology::serve(socket, topology).await {
+                tracing::error!(%error, "topology control socket stopped");
+            }
+        });
+    }
     let ingest_state = state.clone();
     let ingest_cli = cli.clone();
     tokio::spawn(async move {
@@ -260,7 +295,9 @@ async fn ingest(
             manifest.anchor_height == target
                 && current_hash.as_deref() == Some(manifest.anchor_block_hash.as_str())
         });
-        if enhance.committed_height() == Some(target) && !already_published {
+        if enhance.committed_height() == Some(target)
+            && (!already_published || state.has_pending_topology())
+        {
             // Do not publish a height that ceased to be the best-chain tip
             // while its mutable tail shards were being assembled.
             if zakura.tip_height().await? != target {
@@ -271,15 +308,39 @@ async fn ingest(
                 continue;
             }
             let enhance_table = TableJournal::new(DatabaseId::Enhance, &enhance.records)?;
-            state
-                .publish(
+            let candidate_append = state.has_pending_topology();
+            if let Err(error) = state
+                .publish_checked(
                     &[&enhance_table],
                     Anchor {
                         height: target,
-                        hash,
+                        hash: hash.clone(),
+                    },
+                    || async {
+                        if zakura.tip_height().await.map_err(|e| e.to_string())? != target
+                            || zakura.block_hash(target).await.map_err(|e| e.to_string())? != hash
+                        {
+                            Err("publication anchor changed during preparation".into())
+                        } else {
+                            Ok(())
+                        }
                     },
                 )
-                .await?;
+                .await
+            {
+                tracing::error!(%error, "publication failed; preserving retained queries and retrying");
+                if (candidate_append || error == "publication anchor changed during preparation")
+                    && state.manifest().is_some()
+                {
+                    state.set_phase(CoordinatorPhase::Serving).await;
+                } else {
+                    state
+                        .set_phase(CoordinatorPhase::Failed { reason: error })
+                        .await;
+                }
+                tokio::time::sleep(Duration::from_secs(cli.poll_seconds)).await;
+                continue;
+            }
             tracing::info!(
                 tip_height = target,
                 positions = enhance.records.tree_size(),
@@ -329,6 +390,7 @@ mod tests {
             data_dir: PathBuf::from("data"),
             worker_urls,
             worker_config,
+            control_socket: None,
             poll_seconds: 10,
         }
     }
