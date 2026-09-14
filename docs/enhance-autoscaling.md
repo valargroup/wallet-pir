@@ -230,3 +230,16 @@ Its `summary.json` evaluates memory, exact answers and failover; it is not the
 combined deployment receipt. Real online-expansion and production publication
 lag still require separate evidence. The raw hardware samples and publication
 progress remain in the run directory even if the fixture fails.
+
+
+For a combined range-boundary rehearsal, pass two additional isolated worker
+origins as repeated `--append-worker-url http://HOST:PORT` arguments to either
+the fixture or supervisor. After its retention/load phase, the fixture fills
+shard 15, requests an append-only second group, and publishes the first position
+in shard 16 while continuously verifying an earlier session. It then verifies
+old and new sessions across the boundary and records `online_append` evidence.
+The two additional processes may run on an isolated test host; record that
+placement explicitly. Such a run tests the protocol transition, not the second
+pair's full-capacity hardware qualification or the cloud provisioning controller.
+The supervisor samples only the original c-4 pair. Preserve process uptime and
+controller lifecycle evidence separately before attesting the combined receipt.

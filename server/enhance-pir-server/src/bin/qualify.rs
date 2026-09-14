@@ -5,10 +5,12 @@ use enhance_pir::client::{record_in_row, QuerySession};
 use enhance_pir_server::{
     coordinator::{CoordinatorState, TableSetup, WorkerGroup, WorkerTarget},
     store::RecordJournal,
+    topology::{Append, Group, Replica, TopologyStore},
     types::{DatabaseId, EnhanceRecord, EnhanceRecordParts, ENHANCE_LAYOUT, SHARD_POSITIONS},
 };
 use std::{
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -16,6 +18,9 @@ use std::{
 struct Cli {
     #[arg(long, required = true)]
     worker_url: Vec<String>,
+    /// Optional isolated second pair for a 16-to-17-shard online append rehearsal.
+    #[arg(long)]
+    append_worker_url: Vec<String>,
     #[arg(long, default_value_t = 1)]
     shards: u64,
     #[arg(long, default_value_t = 10)]
@@ -76,11 +81,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("requires --isolated-workers, 1..16 shards and one or two workers".into());
     }
+    if !cli.append_worker_url.is_empty()
+        && (cli.shards != 16 || cli.worker_url.len() != 2 || cli.append_worker_url.len() != 2)
+    {
+        return Err("online append requires 16 shards and two distinct worker pairs".into());
+    }
     if cli.work_dir.exists() {
         return Err("qualification work directory must be new".into());
     }
     std::fs::create_dir_all(&cli.work_dir)?;
-    let state = CoordinatorState::new(vec![TableSetup {
+    let mut state = CoordinatorState::new(vec![TableSetup {
         table: DatabaseId::Enhance,
         groups: vec![WorkerGroup {
             name: "qualification".into(),
@@ -95,6 +105,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect(),
         }],
     }])?;
+    let groups: Vec<_> = [&cli.worker_url, &cli.append_worker_url]
+        .into_iter()
+        .enumerate()
+        .map(|(group, urls)| Group {
+            name: format!("qualification-{group}"),
+            replicas: urls
+                .iter()
+                .enumerate()
+                .map(|(replica, url)| Replica {
+                    name: format!("qualify-{group}-{replica}"),
+                    url: url.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    let topology = if cli.append_worker_url.is_empty() {
+        None
+    } else {
+        enhance_pir_server::topology::validate(&groups)?;
+        let topology = Arc::new(TopologyStore::open(
+            cli.work_dir.join("topology.json"),
+            vec![groups[0].clone()],
+        )?);
+        state = CoordinatorState::new(vec![TableSetup {
+            table: DatabaseId::Enhance,
+            groups: vec![groups[0].target()],
+        }])?
+        .with_topology(topology.clone());
+        Some(topology)
+    };
     let mut store = RecordJournal::open(&cli.work_dir, DatabaseId::Enhance, ENHANCE_LAYOUT)?;
     let count = cli.shards * SHARD_POSITIONS as u64 - cli.min_publications.max(1);
     let mut height = 3_428_143;
@@ -164,16 +204,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             last_publish = Instant::now();
         }
     }
+    let mut online_append = None;
+    if let Some(topology) = topology {
+        // Fill the last row before crossing both ownership and query-domain boundaries.
+        let boundary = 16 * SHARD_POSITIONS as u64;
+        if position_count < boundary {
+            height += 1;
+            let tail: Vec<_> = (position_count..boundary).map(record).collect();
+            store.append_block(height, format!("{height:064x}"), &tail)?;
+            state
+                .publish_from_store(&store, height, format!("{height:064x}"))
+                .await?;
+            publications += 1;
+        }
+        let old = QuerySession::from_session(state.session().ok_or("no boundary session")?)?;
+        topology.append(Append {
+            operation_id: "qualification-append".into(),
+            expected_revision: 0,
+            groups,
+        })?;
+        height += 1;
+        store.append_block(height, format!("{height:064x}"), &[record(boundary)])?;
+        let append_started = Instant::now();
+        let publication = state.publish_from_store(&store, height, format!("{height:064x}"));
+        tokio::pin!(publication);
+        let mut during_append_queries = 0;
+        loop {
+            let before = Instant::now();
+            tokio::select! {
+                result = &mut publication => { result?; break; }
+                result = query(&state, &old, boundary - 1) => {
+                    result?;
+                    durations.push(before.elapsed().as_secs_f64());
+                    queries += 1;
+                    during_append_queries += 1;
+                }
+            }
+        }
+        publications += 1;
+        let current = QuerySession::from_session(state.session().ok_or("no expanded session")?)?;
+        query(&state, &old, boundary - 1).await?;
+        query(&state, &current, boundary - 1).await?;
+        query(&state, &current, boundary).await?;
+        queries += 3;
+        if topology.status().revision != 1 || during_append_queries == 0 {
+            return Err(
+                "online append did not commit with concurrent retained-session queries".into(),
+            );
+        }
+        online_append = Some(serde_json::json!({
+            "passed": true, "from_shards": 16, "to_shards": 17,
+            "seconds": append_started.elapsed().as_secs_f64(),
+            "during_append_queries": during_append_queries,
+            "old_and_new_session_answers_verified": true,
+        }));
+    }
     durations.sort_by(f64::total_cmp);
     let p99 = durations
         .get(durations.len().saturating_sub(1) * 99 / 100)
         .copied()
         .unwrap_or(0.0);
     let report = serde_json::json!({"passed": p99 <= 5.0, "shards": cli.shards, "queries": queries,
-        "mismatches": 0, "publications": publications, "seconds": started.elapsed().as_secs_f64(),
+        "mismatches": 0, "online_append": online_append, "publications": publications, "seconds": started.elapsed().as_secs_f64(),
         "serving_seconds": serving_started.elapsed().as_secs_f64(),
         "paired_client_p99_seconds": p99, "cold_prepare_seconds": cold_prepare_seconds,
-        "max_publication_seconds": max_publication_seconds, "retained_session_queries": true, "scope": "remote exact-answer fixture; memory, failover and online-append gates require separate evidence"});
+        "max_publication_seconds": max_publication_seconds, "retained_session_queries": true, "scope": "remote exact-answer fixture; memory, failover, process uptime and cloud lifecycle require separate evidence"});
     std::fs::write(&cli.output, serde_json::to_vec_pretty(&report)?)?;
     if p99 > 5.0 {
         return Err("qualification p99 exceeded five seconds".into());

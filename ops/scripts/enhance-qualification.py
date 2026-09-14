@@ -69,6 +69,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--isolated-workers', action='store_true', required=True)
     parser.add_argument('--worker', action='append', required=True)
+    parser.add_argument('--append-worker-url', action='append', default=[])
     parser.add_argument('--key', required=True)
     parser.add_argument('--known-hosts', required=True)
     parser.add_argument('--artifact-dir', type=Path, required=True)
@@ -77,6 +78,8 @@ def main():
     args = parser.parse_args()
     if len(set(args.worker)) != 2 or args.seconds < 21600:
         parser.error('requires two distinct new workers and at least six hours')
+    if args.append_worker_url and len(set(args.append_worker_url)) != 2:
+        parser.error('online append requires two additional isolated worker URLs')
     args.run_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     (args.run_dir / 'revision').write_text((args.artifact_dir / 'revision').read_text())
 
@@ -95,6 +98,8 @@ def main():
         '--work-dir', str(args.run_dir / 'fixture'), '--output', str(report)]
     for host in args.worker:
         command.extend(['--worker-url', f'http://{host}:8091'])
+    for url in args.append_worker_url:
+        command.extend(['--append-worker-url', url])
     started = time.time()
     stopped = False
     restarted = False
