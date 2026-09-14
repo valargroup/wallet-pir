@@ -201,7 +201,7 @@ if [[ ! "$ENHANCE_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "ENHANCE_RELEASE_SHA must be a full Git commit SHA" >&2
   exit 2
 fi
-for file in enhance-pir-server enhance-pir-worker enhance-pir-cli pir-apm transparent-filter-server; do
+for file in enhance-pir-server enhance-pir-worker enhance-pir-cli enhance-pir-qualify pir-apm transparent-filter-server; do
   if [[ ! -x "$ENHANCE_ARTIFACT_DIR/$file" ]]; then
     echo "missing executable deployment artifact: $file" >&2
     exit 2
@@ -274,6 +274,30 @@ for host in "${WORKER_HOSTS[@]}"; do
   preflight_host "$host"
 done
 
+# The c-4 / 16-shard target must earn acceptance before any serving process stops.
+remote "$ENHANCE_COORDINATOR_HOST" bash -s -- "$ENHANCE_RELEASE_SHA" <<'REMOTE'
+set -euo pipefail
+jq -e --arg revision "$1" '
+  .passed == true and .revision == $revision and .worker_size == "c-4" and
+  .shards_per_group == 16 and .full_capacity == true and .failover == true and
+  .online_append == true and .memory == true and .seconds >= 21600 and
+  .publications >= 300
+' /etc/enhance-pir/qualification.json >/dev/null
+REMOTE
+
+# Once online topology is installed, it is authoritative. Refuse stale CI
+# inventory before stopping any process; never override a committed append.
+durable_config="$(remote "$ENHANCE_COORDINATOR_HOST" bash -s <<'REMOTE'
+set -euo pipefail
+if [[ -r /srv/zakura/enhance-data/topology.json ]]; then
+  jq -e 'if .pending != null then error("topology activation pending") else {groups: .groups} end' /srv/zakura/enhance-data/topology.json
+fi
+REMOTE
+)"
+if [[ -n "$durable_config" ]] && ! jq -ne --argjson live "$durable_config" --argjson proposed "$SERVER_CONFIG" '$live.groups == $proposed.groups' >/dev/null; then
+  echo "Deployment inventory differs from committed online topology; refresh ENHANCE_WORKERS_JSON before deployment" >&2
+  exit 1
+fi
 existing_config="$(remote "$ENHANCE_COORDINATOR_HOST" bash -s <<'REMOTE'
 set -euo pipefail
 if [[ -r /etc/enhance-pir/workers.json ]]; then
@@ -339,6 +363,11 @@ chmod "$3" "$1"
 REMOTE
 }
 
+# Keep the worker/qualification release on the coordinator beyond CI artifact expiry.
+for artifact in enhance-pir-worker enhance-pir-qualify enhance-pir-cli SHA256SUMS revision enhance-autoscale.py enhance-autoscale.service enhance-autoscale.timer autoscale.example.json enhance-infra.tar.gz; do
+  stage_file "$ENHANCE_ARTIFACT_DIR/$artifact" "$ENHANCE_COORDINATOR_HOST" "$artifact"
+done
+stage_file "$ENHANCE_WORKER_SERVICE_FILE" "$ENHANCE_COORDINATOR_HOST" enhance-pir-worker.service
 stage_file "$ENHANCE_ARTIFACT_DIR/enhance-pir-server" "$ENHANCE_COORDINATOR_HOST" enhance-pir-server
 stage_file "$server_config_file" "$ENHANCE_COORDINATOR_HOST" workers.json
 stage_file "$ENHANCE_SERVER_SERVICE_FILE" "$ENHANCE_COORDINATOR_HOST" enhance-pir-server.service
@@ -518,6 +547,25 @@ release="/opt/enhance-pir/releases/$sha"
 rollback=/opt/enhance-pir/rollback
 as_root install -d -m 0755 "$release" "$rollback" /etc/enhance-pir
 as_root install -m 0755 "$stage/enhance-pir-server" "$release/enhance-pir-server"
+for artifact in enhance-pir-worker enhance-pir-qualify enhance-pir-cli; do
+  as_root install -m 0755 "$stage/$artifact" "$release/$artifact"
+done
+for artifact in SHA256SUMS revision enhance-pir-worker.service; do
+  as_root install -m 0644 "$stage/$artifact" "$release/$artifact"
+done
+as_root install -d -m 0755 /opt/enhance-pir/ops /opt/enhance-pir/infra/production
+as_root install -m 0755 "$stage/enhance-autoscale.py" /opt/enhance-pir/ops/enhance-autoscale.py
+as_root install -m 0644 "$stage/enhance-autoscale.service" /etc/systemd/system/enhance-autoscale.service
+as_root install -m 0644 "$stage/enhance-autoscale.timer" /etc/systemd/system/enhance-autoscale.timer
+as_root tar -xzf "$stage/enhance-infra.tar.gz" --strip-components=4 -C /opt/enhance-pir/infra/production
+if ! as_root test -e /etc/enhance-pir/autoscale.json; then
+  as_root install -m 0600 "$stage/autoscale.example.json" /etc/enhance-pir/autoscale.json
+fi
+# Timer activation is an explicit initial rollout gate, never a deploy side effect.
+# Atomic pointer; controller also verifies it matches current-coordinator-release.
+as_root ln -sfn "$release" /opt/enhance-pir/autoscale-release.next
+as_root mv -Tf /opt/enhance-pir/autoscale-release.next /opt/enhance-pir/autoscale-release
+
 [[ -x /usr/local/bin/enhance-pir-server ]] && as_root cp -L /usr/local/bin/enhance-pir-server "$rollback/enhance-pir-server"
 [[ -r /etc/systemd/system/enhance-pir-server.service ]] && as_root cp /etc/systemd/system/enhance-pir-server.service "$rollback/enhance-pir-server.service"
 [[ -r /etc/enhance-pir/workers.json ]] && as_root cp /etc/enhance-pir/workers.json "$rollback/workers.json"

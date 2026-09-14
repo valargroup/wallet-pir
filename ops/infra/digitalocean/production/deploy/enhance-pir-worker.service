@@ -10,8 +10,9 @@ Restart=on-failure
 RestartSec=3
 User=root
 LimitNOFILE=1048576
-MemoryMax=2G
-MemorySwapMax=0
+MemoryHigh=6G
+MemoryMax=7G
+MemorySwapMax=2G
 Environment=RUST_LOG=info
 
 [Install]

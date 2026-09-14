@@ -7,6 +7,11 @@ on:
         description: Full commit SHA on main with a successful CI run
         required: true
         type: string
+      artifact_only:
+        description: Build the tested release for isolated qualification without deploying
+        required: false
+        default: false
+        type: boolean
       allow_topology_change:
         description: Accept a non-append worker inventory change
         required: false
@@ -66,6 +71,7 @@ jobs:
           mkdir artifact
           install -m 0755 target/release/enhance-pir-server artifact/
           install -m 0755 target/release/enhance-pir-worker artifact/
+          install -m 0755 target/release/enhance-pir-qualify artifact/
           install -m 0755 target/release/enhance-pir-cli artifact/
           install -m 0755 target/release/pir-apm artifact/
           install -m 0755 target/release/transparent-filter-server artifact/
@@ -74,6 +80,11 @@ jobs:
           cp ops/infra/digitalocean/production/deploy/pir-apm.service artifact/
           cp ops/infra/digitalocean/production/deploy/transparent-filter-server.service artifact/
           cp ops/infra/digitalocean/production/deploy/Caddyfile artifact/
+          cp ops/scripts/enhance-autoscale.py artifact/
+          cp ops/infra/digitalocean/production/deploy/enhance-autoscale.service artifact/
+          cp ops/infra/digitalocean/production/deploy/enhance-autoscale.timer artifact/
+          cp ops/infra/digitalocean/production/deploy/autoscale.example.json artifact/
+          git ls-files -z ops/infra/digitalocean/production | tar --null -T - -czf artifact/enhance-infra.tar.gz
           printf '%s\n' '${{ inputs.ref }}' >artifact/revision
           (cd artifact && sha256sum ./* >SHA256SUMS)
       - uses: actions/upload-artifact@v4
@@ -83,6 +94,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Prepare ephemeral SSH material
+        if: ${{ !inputs.artifact_only }}
         env:
           DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ vars.ENHANCE_SSH_KNOWN_HOSTS }}
@@ -94,6 +106,7 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" >"$RUNNER_TEMP/enhance-pir-ssh/known_hosts"
           chmod 0600 "$RUNNER_TEMP/enhance-pir-ssh/key" "$RUNNER_TEMP/enhance-pir-ssh/known_hosts"
       - name: Deploy and verify
+        if: ${{ !inputs.artifact_only }}
         env:
           ENHANCE_COORDINATOR_HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
           ENHANCE_DEPLOY_USER: ${{ vars.ENHANCE_DEPLOY_USER }}
@@ -111,7 +124,7 @@ jobs:
           ENHANCE_APM_ENVIRONMENT: production
           ENHANCE_ALLOW_TOPOLOGY_CHANGE: ${{ inputs.allow_topology_change }}
           PIR_APM_SLACK_WEBHOOK_URL: ${{ secrets.PIR_APM_SLACK_WEBHOOK_URL }}
-        run: ops/scripts/deploy-enhance-pir.sh deploy
+        run: flock -n /run/lock/enhance-production.lock ops/scripts/deploy-enhance-pir.sh deploy
       - name: Deployment summary
         if: always()
         run: |

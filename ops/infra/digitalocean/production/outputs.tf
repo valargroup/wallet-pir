@@ -14,6 +14,10 @@ output "worker_public_ipv4" {
   value = [for worker in digitalocean_droplet.worker : worker.ipv4_address]
 }
 
+output "enhance_legacy_worker_count" {
+  value = length(digitalocean_droplet.enhance_legacy_worker)
+}
+
 output "worker_private_ipv4" {
   value = [for worker in digitalocean_droplet.worker : worker.ipv4_address_private]
 }

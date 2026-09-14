@@ -15,7 +15,7 @@ pub const SHARD_POSITIONS: usize = SHARD_ROWS * RECORDS_PER_ROW;
 /// Shards assigned to one logical worker group. Every replica in the group
 /// holds the complete assignment; replicas are alternatives, not additive
 /// contributors to a query.
-pub const SHARDS_PER_GROUP: u64 = 6;
+pub const SHARDS_PER_GROUP: u64 = 16;
 /// Backwards-compatible alias for callers compiled against the former
 /// single-owner placement terminology.
 pub const SHARDS_PER_WORKER: u64 = SHARDS_PER_GROUP;
@@ -203,9 +203,6 @@ pub fn logical_rows_for(used_rows: u64) -> u64 {
 pub fn group_index_for_shard(shard_id: u64, group_count: usize) -> Option<usize> {
     if group_count == 0 {
         return None;
-    }
-    if group_count == 1 {
-        return Some(0);
     }
     let index = usize::try_from(shard_id / SHARDS_PER_GROUP).ok()?;
     (index < group_count).then_some(index)

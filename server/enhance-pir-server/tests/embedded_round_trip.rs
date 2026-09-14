@@ -361,8 +361,10 @@ async fn previous_generation_is_still_answered_after_a_publish() {
         .answer_query(DatabaseId::Enhance, stale_query.body())
         .await
         .is_err());
-    // Every retained generation holds one frontier shard.
-    assert_eq!(worker.cached_shard_count().await, RETAINED_GENERATIONS);
+    // Activation pins all eight published generations plus its candidate.
+    // The extra previous frontier is reclaimed on the next activation; dropping
+    // it before publication would break the oldest still-published session.
+    assert_eq!(worker.cached_shard_count().await, RETAINED_GENERATIONS + 1);
 }
 
 #[tokio::test]

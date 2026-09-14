@@ -74,7 +74,9 @@ The public API:
 - `POST /v1/enhance/query`
 
 See [architecture](docs/architecture.md) and the
-[deployment runbook](docs/enhance-pir-deploy.md). No deployed wallet client
+[deployment runbook](docs/enhance-pir-deploy.md). The implemented c-4/16-shard
+[automatic expansion target](docs/enhance-autoscaling.md) still requires hardware
+qualification and production rollout. No deployed wallet client
 depends on the former memo/action API.
 
 The transparent-spend PIR tables are not served. The protocol crate and the

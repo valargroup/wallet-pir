@@ -1,6 +1,6 @@
 //! Worker-group migration and placement. Replica membership may change without
 //! moving shards; appending a group only claims shards at or beyond the stable
-//! six-shard capacity boundary.
+//! 16-shard capacity boundary.
 
 use enhance_pir::client::{record_in_row, QuerySession};
 use enhance_pir_server::coordinator::{CoordinatorState, TableSetup, WorkerGroup, WorkerTarget};
@@ -80,10 +80,11 @@ async fn fetch(state: &CoordinatorState, session: &QuerySession, position: u64) 
 
 #[test]
 fn placement_rule_for_the_migration_is_as_documented() {
-    // One logical group owns everything, however many shards exist.
-    for shard in 0..10 {
+    // Each logical group has a strict range, including the first.
+    for shard in 0..SHARDS_PER_GROUP {
         assert_eq!(group_index_for_shard(shard, 1), Some(0));
     }
+    assert_eq!(group_index_for_shard(SHARDS_PER_GROUP, 1), None);
     // Two groups: shards below the quantum stay, the rest move to the new one
     // and shards beyond its range are unowned until a third worker is appended.
     for shard in 0..SHARDS_PER_GROUP {

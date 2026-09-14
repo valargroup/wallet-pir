@@ -3,3 +3,8 @@ package_update: true
 packages: ${packages}
 runcmd:
   - mkdir -p /srv/enhance-pir/artifacts
+  - test -f /swapfile || (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile)
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - echo 'vm.swappiness=10' > /etc/sysctl.d/90-enhance-pir.conf
+  - sysctl -p /etc/sysctl.d/90-enhance-pir.conf

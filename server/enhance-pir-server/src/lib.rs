@@ -10,6 +10,7 @@ pub mod ipir;
 pub mod metrics;
 pub mod spend;
 pub mod store;
+pub mod topology;
 pub mod types;
 pub mod wire;
 pub mod worker;

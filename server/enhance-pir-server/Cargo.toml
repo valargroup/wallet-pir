@@ -15,6 +15,10 @@ path = "src/bin/server.rs"
 name = "enhance-pir-worker"
 path = "src/bin/worker.rs"
 
+[[bin]]
+name = "enhance-pir-qualify"
+path = "src/bin/qualify.rs"
+
 [dependencies]
 axum = "0.7"
 base64 = "0.22"

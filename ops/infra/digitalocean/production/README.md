@@ -1,15 +1,18 @@
 # Ironwood PIR production infrastructure
 
+The c-4/16-shard target below is not yet production-qualified or deployed.
+Follow the [migration and qualification gates](../../../../docs/enhance-autoscaling.md); do not apply this root to the legacy pair without the state moves described there.
+
 This Terraform root manages the Enhance PIR production fleet in the
 `enhance-pir` DigitalOcean project:
 
 - one `m-8vcpu-64gb-intel` coordinator with a 1 TiB XFS volume at
   `/srv/zakura`, running Zakura (archive), ingest, the coordinator, Caddy, and
   the `pir-apm` sidecar;
-- one logical shard group with two `s-4vcpu-8gb` private PIR replicas; and
+- one logical shard group with two `c-4` private PIR replicas; and
 - the unproxied Cloudflare DNS record `enhance-pir.valargroup.dev`; and
 - a dedicated VPC and firewalls. Only the coordinator may reach worker port
-  8091. SSH is restricted to `allowed_ssh_cidrs`.
+  8091. Worker SSH is restricted to `allowed_ssh_cidrs`; the coordinator has no firewall.
 
 That describes the Enhance shape only. Transparent shard resources also live in
 this Terraform root; use the [transparent deployment target](../../../../docs/transparent-pir/deployment.md)
@@ -58,19 +61,24 @@ has `prevent_destroy` because DigitalOcean cannot rename it in place.
 
 ## Capacity
 
-Each ordered shard group owns six shards and has two active-active replicas.
+Each ordered shard group owns 16 shards and has two active-active replicas.
 The coordinator sends a query to one ready replica per group and retries its
 peer on failure. Publication requires one ready replica in every used group;
 the second copy provides redundancy without contributing a duplicate PIR
 partial.
 
 Keep group order append-only. Add the next replica pair before the database
-crosses a six-shard boundary; adding or replacing a replica within an existing
-group does not move shards. Worker process RSS, including retained frontier
-generations and rebuild overlap, is enforced with a 2 GiB systemd cgroup limit
-and swap disabled. The bundled
-`s-4vcpu-8gb` size is the closest currently available AMS3 shape to the desired
-4-vCPU/4-GiB worker and leaves additional host memory headroom.
+crosses a 16-shard boundary; adding or replacing a replica within an existing
+group does not move shards. Worker memory includes retained frontier generations and rebuild overlap.
+The target c-4 service has a 6-GiB soft limit, 7-GiB hard limit and 2-GiB swap
+allowance. The full working set must fit RAM in qualification. Each pair costs
+$168/month in worker compute at the verified list price.
+
 
 The public origin and dashboard are served at
 `https://enhance-pir.valargroup.dev`.
+
+The Enhance coordinator intentionally has no DigitalOcean cloud firewall, so SSH
+access does not depend on the operator or VPN source IP. Private coordinator
+services must bind to loopback. Worker and auxiliary-host firewalls remain managed
+here; `allowed_ssh_cidrs` applies to those hosts.
