@@ -116,9 +116,14 @@ def validate_plan(plan, current_groups, existing_workers=()):
         raise ValueError('plan must create exactly the next two workers')
 
 
+def has_serving_snapshot(health):
+    phase = health.get('phase', {}).get('phase')
+    return phase == 'serving' or (phase == 'building' and (health.get('generation') or 0) > 0)
+
+
 def observe(state, topology, health, now):
     groups = len(topology['groups'])
-    fresh = health.get('phase', {}).get('phase') == 'serving'
+    fresh = has_serving_snapshot(health)
     fresh &= health.get('ironwood_tree_size') is not None
     fresh &= health.get('tables', {}).get('enhance', {}).get('workers') == groups * 2
     previous = state.get('sample', {})
@@ -219,7 +224,7 @@ class Controller:
 
     def check_existing(self, topology):
         health = http_json(self.config['coordinator_url'].rstrip('/') + '/v1/health')
-        if health.get('phase', {}).get('phase') != 'serving':
+        if not has_serving_snapshot(health):
             raise RuntimeError('coordinator is not serving')
         cookie = Path(self.config['zakura_cookie']).read_text().strip()
         request = urllib.request.Request(self.config['zakura_rpc_url'],

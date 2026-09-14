@@ -74,6 +74,16 @@ class Trigger(unittest.TestCase):
         self.health = {'phase': {'phase': 'serving'}, 'ironwood_tree_size': 950000,
                        'tables': {'enhance': {'workers': 2}}}
 
+    def test_normal_publication_keeps_the_healthy_observation_window(self):
+        module.observe(self.state, self.topology, self.health, 10000)
+        self.health.update(phase={'phase': 'building'}, generation=123)
+        module.observe(self.state, self.topology, self.health, 10300)
+        self.assertEqual(self.state['healthy_since'], 10000)
+        self.assertTrue(module.observe(self.state, self.topology, self.health, 10600))
+        self.health['generation'] = 0
+        self.assertFalse(module.observe(self.state, self.topology, self.health, 10900))
+        self.assertEqual(self.state['trigger_samples'], 0)
+
     def test_three_fresh_samples_and_cooldown(self):
         self.assertFalse(module.observe(self.state, self.topology, self.health, 10000))
         self.assertFalse(module.observe(self.state, self.topology, self.health, 10300))

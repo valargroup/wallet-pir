@@ -329,7 +329,9 @@ async fn ingest(
                 .await
             {
                 tracing::error!(%error, "publication failed; preserving retained queries and retrying");
-                if candidate_append && state.manifest().is_some() {
+                if (candidate_append || error == "publication anchor changed during preparation")
+                    && state.manifest().is_some()
+                {
                     state.set_phase(CoordinatorPhase::Serving).await;
                 } else {
                     state
