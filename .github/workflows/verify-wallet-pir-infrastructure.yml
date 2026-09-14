@@ -43,4 +43,4 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --max-time 15 "$ENHANCE_PUBLIC_URL/v1/health" >/dev/null
-          curl --fail --silent --show-error --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/health" >/dev/null
+          curl --fail --silent --show-error --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/filters/shards" >/dev/null
