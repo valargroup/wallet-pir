@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run on the coordinator using its encrypted systemd runtime credential.
 set -euo pipefail
+umask 077
 if [[ ! -d /opt/enhance-pir/infra/production ]]; then
   echo "Run this wrapper on the Enhance coordinator." >&2
   exit 1
@@ -9,6 +10,7 @@ fi
 # shellcheck disable=SC2016
 exec flock -n /run/lock/enhance-production.lock \
   systemd-run --quiet --wait --pipe --collect --working-directory="$PWD" \
+    --property=UMask=0077 \
     --property=LoadCredentialEncrypted=runtime:/etc/credstore.encrypted/enhance-pir-runtime \
     /usr/bin/python3 /opt/enhance-pir/ops/enhance-runtime.py \
   bash -c '
