@@ -1,0 +1,3 @@
+query_body_bytes=430088
+response_body_bytes=10256
+response_size_method=derived from validated params: 16 + 2 * ceil(2048 * 20 / 8)

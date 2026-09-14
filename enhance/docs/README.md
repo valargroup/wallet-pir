@@ -1,14 +1,28 @@
 # Enhance PIR
 
-Private Ironwood transaction enhancement recovers encrypted output data by
-position without revealing the selected position to the server.
+Enhance PIR retrieves the encrypted output data a wallet needs after scanning
+Ironwood compact actions. The wallet queries an output's position privately,
+then decrypts and validates the returned data using its existing transaction
+context. The service does not supply transaction history, witnesses, or a
+complete wallet sync.
 
-- [Protocol](protocol.md): schema-7 record, wire identifiers, and wallet integration.
-- [Architecture](architecture.md): client, ingestion, storage, workers, and compatibility code.
-- [Deployment](deployment.md): release procedures, expansion targets, and rollback.
-- [Status](status.md): dated observations and unresolved deployment claims.
-- [Remaining work](remaining-work.md): qualification and rollout gates.
-- [Evidence](../evidence/README.md): reported measurements and their limits.
+The current client and server implement schema 7 of `ironwood-enhance-pir-v2`.
+Start with the integration guide to use the service, or the deployment guide to
+operate it. The protocol describes the contract; status records what has
+actually been observed.
 
-Transparent script-history recovery is a separate product; start at its
-[index](../../transparent/docs/README.md).
+| Guide | Contents |
+|---|---|
+| [Integration](integration.md) | Rust client, CLI, wallet responsibilities, sessions and failures |
+| [Protocol](protocol.md) | Records, initialization, binary messages and validation |
+| [Architecture](architecture.md) | Repository layout, ingestion, storage, queries and replicas |
+| [Deployment](deployment.md) | Local operation, release preparation, cutover, rollback and monitoring |
+| [Capacity expansion](capacity-expansion.md) | Infrastructure migration, qualification and controller operation |
+| [Performance](performance.md) | Measured latency and throughput, benchmark evidence and reproduction |
+| [Status](status.md) | Dated public observations and unresolved deployment facts |
+| [Remaining work](remaining-work.md) | Evidence and acceptance still required |
+| [Evidence](../evidence/README.md) | Raw results, provenance and historical reports |
+
+[Transparent script-history recovery](../../transparent/docs/README.md) is a
+separate product. The retained `transparent-spend-pir` crate is also distinct:
+it is compatibility code and its tables are not served by Enhance.

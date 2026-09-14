@@ -1,22 +1,25 @@
-# Enhance remaining work
+# Remaining work
 
-This checklist tracks qualification of the implemented c-4 expansion target.
-The [deployment runbook](deployment.md) owns exact limits and procedures;
-[status](status.md) records the latest committed observations.
+Schema 7 is observable at the public origin as of September 14, 2026. The
+[status record](status.md) and [performance guide](performance.md) describe what
+that observation and the bounded load test establish. They do not close the
+following deployment and qualification gaps.
 
-- [ ] Identify the release artifact, deployed schema and intended wallet client;
-  verify schema-7 conformance and preparation receipts before any cutover.
-- [ ] Qualify the exact candidate on isolated c-4 workers for six hours and 300
-  publications, including memory/swap, exact answers, retained sessions,
-  replica failure, online range-boundary append, and publication lag.
-- [ ] Assemble the combined qualification receipt from the complete evidence.
-  A short preflight or fixture summary alone does not grant acceptance.
-- [ ] Perform the coordinated initial rollout with old inventory and binaries
-  available for rollback; complete the 24-hour production observation with
-  auto-provisioning disabled.
-- [ ] After acceptance, inspect the narrowly scoped legacy-worker retirement
-  plan, retire the old pair, and enable expansion only after its live prerequisites pass.
+- Reconcile the current binary SHA, host inventory, active data paths and release
+  receipts. Determine which migration steps have already been completed before
+  executing the [deployment](deployment.md) or [expansion](capacity-expansion.md) runbooks.
+- Record intended wallet-client conformance and adoption, including schema
+  validation, session refresh, authenticated recovery and mixed-transaction handling.
+- Recover existing acceptance evidence or qualify the exact candidate on isolated
+  c-4 workers for six hours and 300 publications. Cover memory/swap, exact answers,
+  retained sessions, replica failure, online range-boundary append and publication lag.
+- Assemble the combined acceptance receipt from that evidence and reconcile the
+  required 24-hour production observation, legacy-worker retirement and expansion
+  enablement prerequisites. A public baseline or short fixture report is insufficient.
+- For future performance comparisons, retain matched workload, coverage, geometry,
+  client environment and server identity. Add repeated measurements and isolated
+  server benchmarks before drawing saturation or hardware-capacity conclusions.
 
 If an operator explicitly waives qualification or initial observation, use the
-[documented operator-acceptance receipt](deployment.md#explicit-operator-acceptance).
-Record waived gates as waived, never as passing. This cleanup does not grant a waiver.
+[operator-acceptance receipt](capacity-expansion.md#explicit-operator-acceptance).
+Record waived gates as waived. This documentation update grants no waiver.

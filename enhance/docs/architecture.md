@@ -1,63 +1,125 @@
-# Enhance PIR architecture
+# Architecture
 
-Scope: Enhance PIR. For transparent script-history recovery, use the [current transparent PIR index](../../transparent/docs/README.md); the retained outpoint-keyed transparent-spend protocol is a different component.
+Enhance is a position-indexed database of Ironwood output records. A coordinator
+builds the database from canonical blocks and publishes consistent generations.
+Workers evaluate encrypted queries over their assigned shards; the coordinator
+combines their answers. The wallet selects the record within the decrypted row.
 
-Enhance PIR is split at the network boundary.
+```text
+Data publication
 
-- `enhance/crates/enhance-pir` defines the wire metadata, record layout, query preparation,
-  response decoding, and reference CLI. It has no server or chain-ingest code.
-- `enhance/crates/transparent-spend-pir` defines the outpoint-keyed two-tier spend lookup.
-  It is retained but not served; see "Transparent-spend deprecation" below.
-- `enhance/services/enhance-pir-server` ingests canonical Ironwood outputs, stores the
-  append-only record journal, seals PIR shards, coordinates workers, and serves
-  the Enhance v1 HTTP API.
-- `enhance/services/pir-apm` observes the running fleet.
+  Zakura archive RPC
+          |
+          v
+  Canonical ingest and record journal
+          |
+          v
+  Coordinator: prepare and publish generations
+          |
+          v
+  Worker groups: replicated shards
 
-Every logical output position maps to a 737-byte `EnhanceRecord`. Nine records
-form one 6,633-byte row. This is the maximum that fits in two PIR instances;
-ten records would require a third instance. A record contains `ephemeralKey`,
-`encCiphertext`, `cv_net`, `outCiphertext`, and a transaction-shape flag byte, expiry height, and optional actual fee.
-Bits 0 and 1 indicate transparent inputs and outputs; bit 2 indicates a present
-fee. Clients reject reserved bits and invalid metadata encodings.
+Query round trip
 
-The protocol identifier is `ironwood-enhance-pir-v2` and schema version is 7.
-Old memo/action endpoints and storage are not accepted as aliases. This is a
-breaking migration so that clients cannot accidentally mix incompatible record
-layouts.
+  Wallet compact scan
+          |
+          v
+       Client -- encrypted query --> Coordinator -- evaluate --> Worker groups
+              <-- encrypted row ---             <-- partials ---
+          |
+          v
+  Row decoding, record selection and wallet validation
+```
 
-## Worker topology
+## Repository layout
 
-The 16-shard c-4 configuration is implemented but not yet production-qualified or deployed. See [automatic expansion](deployment.md#capacity-expansion-target) for rollout gates.
+Paths below are relative to the repository root. Cargo package names remain the
+names used by build and run commands, even when directory names differ.
 
-The coordinator assigns consecutive ranges of 16 shards to stable logical
-worker groups. Each group has two active-active replicas holding identical
-rows, CRS material, and retained generations. Different groups evaluate in
-parallel; within a group, one ready replica evaluates a query and its peer is
-used for load balancing or retry. Only one partial per group is included in the
-combined answer.
+| Path | Responsibility |
+|---|---|
+| `enhance/crates/enhance-pir` | Public types, record validation, query preparation/decoding, HTTP client and `enhance-pir-cli` |
+| `enhance/services/enhance-pir-server` | Canonical ingestion, journal, coordinator, workers and qualification utility |
+| `enhance/services/pir-apm` | Metrics dashboard and operational alerts |
+| `enhance/tools/loadtest` | `enhance-pir-load-test`: closed-loop encrypted query measurements |
+| `enhance/ops` | Deployment scripts, service units, expansion controller and operations tests |
+| `enhance/docs`, `enhance/evidence` | Current documentation and retained measurements |
+| `enhance/crates/transparent-spend-pir` | Retained outpoint-keyed spend types/client, not an active service |
+| `ops/infra/digitalocean/production`, `ops/deploy/coordinator` | Shared infrastructure, archive-node and ingress configuration |
+| `.github/workflows/deploy-enhance-pir.yml` | Tested-revision artifact build, preparation and deployment |
 
-A generation is published when at least one replica in every used group has
-prepared and activated its complete assignment. Replica readiness is tracked
-per generation, so a recovering replica is not selected for generations it
-does not hold. Group order is append-only because it fixes shard ownership;
-replicas inside a group may be replaced without moving shards.
+The root Cargo workspace builds active products. `demos/legacy-spendability` is
+an independent preserved workspace, not an Enhance dependency or deployment.
 
-## Transparent-spend deprecation
+## Ingestion and storage
 
-The transparent-spend cold and warm tables were designed to share one dedicated
-worker, with cold covering genesis through `tip - 100000` and warm the remainder.
+The server reads canonical transactions through Zakura RPC starting at Ironwood
+activation height 3,428,143. It extracts one record per output position in chain
+order, checking continuity against the block's Ironwood tree size. The active
+journal stores fixed-width records in `enhance/records.bin` and committed block
+metadata in `enhance/manifest.json` beneath the configured data directory.
+The journal supports restart and rewind; it is not a finality guarantee.
 
-They were never deployed. No worker was ever provisioned, the production
-coordinator has only ever served the `enhance` table, and `/v1/transparent-spend/*`
-has never answered a request.
+Each record is 737 bytes. Nine records occupy a 6,633-byte row, which fits two
+PIR instances; a tenth record would require a third. A shard contains 8,192 rows,
+or 73,728 positions. Full shards are sealed; the partly filled frontier changes
+as blocks arrive. Row digests identify shard content for preparation and reuse.
+The logical database is padded to a power-of-two row count, at least 8,192.
+See the [protocol](protocol.md) for field offsets and public geometry.
 
-They are now unwired: the droplet, tag and firewall are gone from Terraform, the
-deploy path no longer requires a spend worker, the coordinator neither registers
-the tables nor exposes the endpoints, and the ingest loop no longer maintains
-the spend journal. That last change also removes a genesis-to-tip backfill that
-every first deploy previously had to complete.
+A reorg rewinds the journal to the common ancestor and appends the replacement
+chain. Publication validates its anchor before exposing the candidate. Generation
+IDs increase even across same-height reorgs, so they must not be treated as block
+heights. A wallet must still reconcile its scan context with the published anchor.
 
-`enhance/crates/transparent-spend-pir` and `enhance/services/enhance-pir-server/src/spend.rs` remain in
-the tree and still compile, so reviving the feature means rewiring rather than
-rewriting. `DatabaseId` keeps its two variants for that code; `DatabaseId::ALL`
-does not, because it drives worker directories, metrics and embedded setup.
+## Publication and queries
+
+Initialization returns a generation, PIR parameters and published public material
+in one response. This atomic snapshot prevents clients from mixing parameters
+from one generation with another. Each query names its generation; responses bind
+the generation and public-parameter epoch.
+
+The coordinator prepares the shards and combines their public hints. It activates
+replicas that completed their full assignment, then publishes the generation once
+at least one replica in every used group is ready. A failed candidate leaves the
+previous generation available. The coordinator retains eight generations;
+workers also pin the unpublished candidate so preparation cannot evict a still
+published snapshot. Retention is a count, not a fixed session lifetime.
+
+For a query, the coordinator sends encrypted coefficients to one ready replica
+in each populated group. Groups evaluate in parallel. Within a group, replicas
+are alternatives for load balancing and retry: only one answer contributes to
+the result. The coordinator combines these partial answers and returns one
+encrypted row. The client decodes it and extracts the requested slot locally.
+
+## Placement and capacity
+
+Ordered groups own consecutive ranges of 16 shards. A group therefore covers
+1,179,648 positions, with two production replicas holding the same assignment.
+Group order fixes shard ownership and is append-only; replicas can be replaced
+within a group. Readiness is tracked per generation, so a recovering replica is
+not selected for data it does not yet hold.
+
+Adding groups extends position coverage. It does not make each request cheaper:
+every query still evaluates every populated group. At range exhaustion, publication
+stops before allocating out-of-range shards. Retained generations remain answerable,
+but coverage stops advancing and health reports failure. Online append can make
+room for the backlog without restarting existing processes.
+
+The c-4 hardware limits, qualification gates and expansion controller are described
+in [capacity expansion](capacity-expansion.md). The [status record](status.md)
+distinguishes this implemented design from verified deployment facts.
+
+## Boundaries
+
+The active server exposes only the Enhance table. The outpoint-keyed
+transparent-spend implementation remains in the tree but is not registered,
+ingested or routed. It must not be confused with the active transparent
+script-history recovery product.
+
+PIR hides the selected position within the advertised database under the scheme's
+security assumptions. The service still observes network connections, request
+sizes, timing and generation IDs. Encoding checks and parameter hashes do not
+prove that a server's records came from the canonical chain. The wallet performs
+note authentication and chain-context checks; fee, expiry and transaction-shape
+metadata remain indexer assertions. See [integration](integration.md).

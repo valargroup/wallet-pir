@@ -1,0 +1,10 @@
+{
+  "source_commit": "536d1af8a27f6abfd3bf8a26cbb20b8287247d42",
+  "ipir_sp_revision": "accc424e879d8da425fa620aad80f0f2c4e0defd",
+  "input": "c1-init-before.json",
+  "helper": "payload-size.rs",
+  "command": "cargo run --offline --release --manifest-path target/docs-integration-check/Cargo.toml --target-dir target --bin payload-size -- enhance/evidence/public-baseline-2026-09-14/c1-init-before.json",
+  "method": "Compile helper in a temporary Cargo package with enhance-pir path dependency and serde_json; construct a query offline from retained init; no extra fleet traffic. Response size derived from pinned response encoder and captured scheme parameters.",
+  "query_bytes": 430088,
+  "response_bytes": 10256
+}

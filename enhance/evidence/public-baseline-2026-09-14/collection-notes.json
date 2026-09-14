@@ -1,0 +1,6 @@
+{
+  "client_background_work": "Repository make check operations tests and Markdown link checks briefly overlapped concurrency 4. It exited at missing in-progress performance.md; final checks ran after load collection.",
+  "server_revision": "not observed",
+  "replica_readiness": "Public worker count is configured replicas, not independent readiness probes.",
+  "cache_state": "10-second query warmup per step; server cache state not reset or independently measured."
+}

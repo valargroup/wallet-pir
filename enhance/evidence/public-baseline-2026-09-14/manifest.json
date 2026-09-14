@@ -1,0 +1,238 @@
+{
+  "run_id": "public-baseline-2026-09-14",
+  "started_utc": "2026-09-14T22:18:09.644277+00:00",
+  "origin": "https://enhance-pir.valargroup.dev",
+  "source_commit": "536d1af8a27f6abfd3bf8a26cbb20b8287247d42",
+  "build_command": "cargo build --locked --release -p enhance-pir-load-test -p enhance-pir --features enhance-pir/cli",
+  "tool_sha256": "f8ac67b803e70a8c8846c24d134dc08442e482cc149316601dfe9e1f4824d35b",
+  "cargo_lock_sha256": "aac070e941dfafb72e37f24e70e6a702fdab38f246ecef259b3c6b0140a34d84",
+  "rustc": "rustc 1.91.0 (f8297e351 2025-10-28)\nbinary: rustc\ncommit-hash: f8297e351a40c1439a467bbbb6879088047f50b3\ncommit-date: 2025-10-28\nhost: aarch64-apple-darwin\nrelease: 1.91.0\nLLVM version: 21.1.2",
+  "client_os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.2\nBuildVersion:\t\t25C56",
+  "client_cpu": "Apple M4 Max",
+  "client_ram_bytes": 137438953472,
+  "client_logical_cpus": 16,
+  "client_network": "Developer machine to public HTTPS origin; access link, route, and server region not independently measured.",
+  "server_revision": null,
+  "server_hardware": null,
+  "workload": "1024 seeded random positions, closed-loop queries, one initialized generation per step, fresh query randomness",
+  "seed": 42,
+  "warmup_seconds": 10,
+  "measured_seconds_per_step": 60,
+  "repetitions_per_step": 1,
+  "steps": [
+    {
+      "parallelism": 1,
+      "started_utc": "2026-09-14T22:18:10.899128+00:00",
+      "before": [
+        {
+          "time": "2026-09-14T22:18:09.695187+00:00",
+          "status": 200,
+          "file": "c1-health-before.json"
+        },
+        {
+          "time": "2026-09-14T22:18:10.243944+00:00",
+          "status": 200,
+          "file": "c1-init-before.json"
+        }
+      ],
+      "command": [
+        "/Users/roman/projects/wallet-pir/target/release/enhance-pir-load-test",
+        "--server",
+        "https://enhance-pir.valargroup.dev",
+        "--parallelism",
+        "1",
+        "--duration",
+        "60s",
+        "--warmup",
+        "10s",
+        "--seed",
+        "42",
+        "--max-error-rate",
+        "0",
+        "--slo-p99-ms",
+        "5000",
+        "--json-out",
+        "/Users/roman/projects/wallet-pir/enhance/evidence/public-baseline-2026-09-14/c1-summary.json"
+      ],
+      "exit_code": 0,
+      "elapsed_wall_seconds": 72.83136874999036,
+      "ended_utc": "2026-09-14T22:19:23.731070+00:00",
+      "after": [
+        {
+          "time": "2026-09-14T22:19:23.731081+00:00",
+          "status": 200,
+          "file": "c1-health-after.json"
+        },
+        {
+          "time": "2026-09-14T22:19:24.257990+00:00",
+          "status": 200,
+          "file": "c1-init-after.json"
+        }
+      ],
+      "result": "passed"
+    },
+    {
+      "parallelism": 2,
+      "started_utc": "2026-09-14T22:19:56.414704+00:00",
+      "before": [
+        {
+          "time": "2026-09-14T22:19:55.087249+00:00",
+          "status": 200,
+          "file": "c2-health-before.json"
+        },
+        {
+          "time": "2026-09-14T22:19:55.565217+00:00",
+          "status": 200,
+          "file": "c2-init-before.json"
+        }
+      ],
+      "command": [
+        "/Users/roman/projects/wallet-pir/target/release/enhance-pir-load-test",
+        "--server",
+        "https://enhance-pir.valargroup.dev",
+        "--parallelism",
+        "2",
+        "--duration",
+        "60s",
+        "--warmup",
+        "10s",
+        "--seed",
+        "42",
+        "--max-error-rate",
+        "0",
+        "--slo-p99-ms",
+        "5000",
+        "--json-out",
+        "/Users/roman/projects/wallet-pir/enhance/evidence/public-baseline-2026-09-14/c2-summary.json"
+      ],
+      "exit_code": 0,
+      "elapsed_wall_seconds": 73.16714641699218,
+      "ended_utc": "2026-09-14T22:21:09.581975+00:00",
+      "after": [
+        {
+          "time": "2026-09-14T22:21:09.581991+00:00",
+          "status": 200,
+          "file": "c2-health-after.json"
+        },
+        {
+          "time": "2026-09-14T22:21:10.241746+00:00",
+          "status": 200,
+          "file": "c2-init-after.json"
+        }
+      ],
+      "result": "passed"
+    },
+    {
+      "parallelism": 4,
+      "started_utc": "2026-09-14T22:21:42.403133+00:00",
+      "before": [
+        {
+          "time": "2026-09-14T22:21:40.884651+00:00",
+          "status": 200,
+          "file": "c4-health-before.json"
+        },
+        {
+          "time": "2026-09-14T22:21:41.573915+00:00",
+          "status": 200,
+          "file": "c4-init-before.json"
+        }
+      ],
+      "command": [
+        "/Users/roman/projects/wallet-pir/target/release/enhance-pir-load-test",
+        "--server",
+        "https://enhance-pir.valargroup.dev",
+        "--parallelism",
+        "4",
+        "--duration",
+        "60s",
+        "--warmup",
+        "10s",
+        "--seed",
+        "42",
+        "--max-error-rate",
+        "0",
+        "--slo-p99-ms",
+        "5000",
+        "--json-out",
+        "/Users/roman/projects/wallet-pir/enhance/evidence/public-baseline-2026-09-14/c4-summary.json"
+      ],
+      "exit_code": 0,
+      "elapsed_wall_seconds": 72.62742624999373,
+      "ended_utc": "2026-09-14T22:22:55.030630+00:00",
+      "after": [
+        {
+          "time": "2026-09-14T22:22:55.030639+00:00",
+          "status": 200,
+          "file": "c4-health-after.json"
+        },
+        {
+          "time": "2026-09-14T22:22:55.511777+00:00",
+          "status": 200,
+          "file": "c4-init-after.json"
+        }
+      ],
+      "result": "passed"
+    },
+    {
+      "parallelism": 8,
+      "started_utc": "2026-09-14T22:23:27.743001+00:00",
+      "before": [
+        {
+          "time": "2026-09-14T22:23:26.411320+00:00",
+          "status": 200,
+          "file": "c8-health-before.json"
+        },
+        {
+          "time": "2026-09-14T22:23:26.907257+00:00",
+          "status": 200,
+          "file": "c8-init-before.json"
+        }
+      ],
+      "command": [
+        "/Users/roman/projects/wallet-pir/target/release/enhance-pir-load-test",
+        "--server",
+        "https://enhance-pir.valargroup.dev",
+        "--parallelism",
+        "8",
+        "--duration",
+        "60s",
+        "--warmup",
+        "10s",
+        "--seed",
+        "42",
+        "--max-error-rate",
+        "0",
+        "--slo-p99-ms",
+        "5000",
+        "--json-out",
+        "/Users/roman/projects/wallet-pir/enhance/evidence/public-baseline-2026-09-14/c8-summary.json"
+      ],
+      "exit_code": 0,
+      "elapsed_wall_seconds": 72.88517783299903,
+      "ended_utc": "2026-09-14T22:24:40.628249+00:00",
+      "after": [
+        {
+          "time": "2026-09-14T22:24:40.628259+00:00",
+          "status": 200,
+          "file": "c8-health-after.json"
+        },
+        {
+          "time": "2026-09-14T22:24:41.315216+00:00",
+          "status": 200,
+          "file": "c8-init-after.json"
+        }
+      ],
+      "result": "passed"
+    }
+  ],
+  "limits": "No query errors; p99 <= 5000 ms; abort after two consecutive failed health probes. No deployment changes.",
+  "unmeasured": [
+    "server memory/CPU/disk",
+    "server SKU and region",
+    "transport overhead",
+    "exact canonical answer comparison",
+    "whole-wallet recovery",
+    "full-capacity qualification"
+  ],
+  "ended_utc": "2026-09-14T22:24:42.157918+00:00"
+}

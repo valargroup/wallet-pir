@@ -1,6 +1,6 @@
 # Documentation
 
-- [Enhance PIR](../enhance/docs/README.md): Ironwood protocol, architecture, deployment and qualification.
+- [Enhance PIR](../enhance/docs/README.md): Ironwood integration, architecture, deployment and measured performance.
 - [Transparent PIR](../transparent/docs/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
 - [Evidence](../evidence/README.md): retained measurements and their provenance.
 - [Repository cleanup](cleanup-2026-09-14.md): removed material, retained dependencies and historical source revision.

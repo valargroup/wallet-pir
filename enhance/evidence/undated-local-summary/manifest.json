@@ -1,0 +1,11 @@
+{
+  "capture_date": "2026-09-14",
+  "source_path": "load-test-summary.json",
+  "source_tracked_by_git": false,
+  "test_date": null,
+  "source_commit": null,
+  "server_hardware": null,
+  "client_hardware": null,
+  "method": "Byte-for-byte copy; capture date is not measurement date.",
+  "sha256": "772049d0d87638b3c47502881d9b4f10462ed680fac802ac78f696dcc0eed692"
+}
