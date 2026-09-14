@@ -1,5 +1,7 @@
 //! Client and protocol types for privately enhancing Ironwood compact actions.
 
+mod record;
+pub use record::{EnhanceTransactionMetadata, InvalidEnhanceRecord};
 pub mod client;
 pub mod types;
 

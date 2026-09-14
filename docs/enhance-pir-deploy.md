@@ -9,10 +9,10 @@ ancestor before a replacement generation is published.
 The transparent-spend tables are not served and no worker is provisioned for
 them; see `docs/architecture.md`.
 
-The production workflow builds and rolls out the Enhance coordinator, workers,
-and APM sidecar. Wallet clients were not deployed against the superseded API,
-so the server can move directly to Enhance schema 6, protocol
-`ironwood-enhance-pir-v1`, plus the `/v1/enhance/*` endpoints.
+The schema-7 release uses protocol `ironwood-enhance-pir-v2` at the existing
+`/v1/enhance/*` paths. This is a coordinated cutover: schema-6 clients reject it.
+Source support is not deployment evidence; record the activated SHA and public
+initialization metadata in the release evidence.
 
 The manual workflow accepts a full commit SHA that must be the current `main`
 revision and must already have a successful CI run. It builds and checksums:
@@ -60,3 +60,33 @@ The deploy verifies `GET /v1/health`, retrieves and validates the atomic
 public origin before declaring the rollout successful. It reads the former
 generation endpoint only when capturing rollback metadata from a legacy
 deployment.
+
+## Schema-7 preparation and cutover
+
+Build the tested current-main revision with `artifact_only=true`. Then dispatch
+`Deploy Enhance PIR` with `prepare_only=true` and `artifact_only=false`. Preparation
+replays canonical blocks from Ironwood activation into `/srv/zakura/enhance-data-v7`,
+resumes an interrupted journal, verifies its anchor and records the prepared release.
+It does not contact workers or stop production. The preparation job permits up to
+six hours; it is separate from the bounded deployment job.
+
+After qualification and client conformance pass, dispatch the same release with
+both switches false. Deployment requires its exact preparation receipt, uses
+`/srv/enhance-pir/artifacts-v7` on workers, and verifies schema, row width, health,
+and private queries. Preserve the old data directories. Rollback restores the old
+binaries and systemd units, whose paths select the untouched schema-6 data.
+Re-run preparation before retrying a changed schema-transition release. Later
+compatible schema-7 releases resume the active journal without preparation. Never point schema 7 at the
+old journal or manually change its manifest version: the metadata must be derived
+from canonical transactions.
+
+Direct preparation, on the archive host with the matching binary:
+
+```sh
+enhance-pir-server --prepare-only --zakura-cookie /root/.cache/zakura/.cookie \
+  --data-dir /srv/zakura/enhance-data-v7
+```
+
+Fee and expiry are trusted indexer metadata. A pure Ironwood fee is derived from
+its public value balance; mixed transactions encode an absent fee and keep the
+wallet's ordinary enhancement route. Expiry zero is preserved as a known value.

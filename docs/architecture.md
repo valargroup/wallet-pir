@@ -13,14 +13,14 @@ Enhance PIR is split at the network boundary.
   the Enhance v1 HTTP API.
 - `server/pir-apm` observes the running fleet.
 
-Every logical output position maps to a 725-byte `EnhanceRecord`. Nine records
-form one 6,525-byte row. This is the maximum that fits in two PIR instances;
+Every logical output position maps to a 737-byte `EnhanceRecord`. Nine records
+form one 6,633-byte row. This is the maximum that fits in two PIR instances;
 ten records would require a third instance. A record contains `ephemeralKey`,
-`encCiphertext`, `cv_net`, `outCiphertext`, and a transaction-shape flag byte.
-Bit 0 means transparent inputs are present and bit 1 means transparent outputs
-are present; clients reject all reserved bits.
+`encCiphertext`, `cv_net`, `outCiphertext`, and a transaction-shape flag byte, expiry height, and optional actual fee.
+Bits 0 and 1 indicate transparent inputs and outputs; bit 2 indicates a present
+fee. Clients reject reserved bits and invalid metadata encodings.
 
-The protocol identifier is `ironwood-enhance-pir-v1` and schema version is 6.
+The protocol identifier is `ironwood-enhance-pir-v2` and schema version is 7.
 Old memo/action endpoints and storage are not accepted as aliases. This is a
 breaking migration so that clients cannot accidentally mix incompatible record
 layouts.

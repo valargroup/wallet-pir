@@ -19,6 +19,7 @@ fn record(tag: u8) -> EnhanceRecord {
         out_ciphertext: [tag; 80],
         has_transparent_inputs: false,
         has_transparent_outputs: false,
+        metadata: enhance_pir::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
     })
 }
 
@@ -28,7 +29,7 @@ async fn fetch(state: &CoordinatorState, session: &QuerySession, position: u64) 
         .answer_query(DatabaseId::Enhance, query.body())
         .await
         .unwrap();
-    record_in_row(&session.decode(query, &answer).unwrap(), slot)
+    record_in_row(&session.decode(query, &answer).unwrap(), slot).unwrap()
 }
 
 #[tokio::test]

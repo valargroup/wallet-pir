@@ -29,6 +29,7 @@ fn record(position: u64) -> EnhanceRecord {
         out_ciphertext: [5; 80],
         has_transparent_inputs: false,
         has_transparent_outputs: false,
+        metadata: enhance_pir::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
     })
 }
 
@@ -75,7 +76,7 @@ async fn fetch(state: &CoordinatorState, session: &QuerySession, position: u64) 
         .await
         .expect("answered");
     let row = session.decode(query, &response).expect("decodes");
-    record_in_row(&row, slot)
+    record_in_row(&row, slot).unwrap()
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! The 725-byte Enhance record is the one layout that can never change cheaply:
+//! The 737-byte Enhance record is the one layout that can never change cheaply:
 //! widening it later rebuilds every sealed shard. Pin every offset here, and
 //! pin that a record survives the journal and the padded shard read unchanged.
 
@@ -16,6 +16,7 @@ fn sample(seed: u8) -> EnhanceRecord {
         out_ciphertext: [seed.wrapping_add(4); 80],
         has_transparent_inputs: true,
         has_transparent_outputs: false,
+        metadata: enhance_pir::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
     })
 }
 
@@ -23,12 +24,14 @@ fn sample(seed: u8) -> EnhanceRecord {
 fn field_offsets_are_pinned() {
     let record = sample(10);
     let bytes = record.as_bytes();
-    assert_eq!(bytes.len(), 725);
+    assert_eq!(bytes.len(), 737);
     assert_eq!(&bytes[0..32], &[11; 32]);
     assert_eq!(&bytes[32..612], &[12; 580][..]);
     assert_eq!(&bytes[612..644], &[13; 32]);
     assert_eq!(&bytes[644..724], &[14; 80][..]);
-    assert_eq!(bytes[724], 1);
+    assert_eq!(bytes[724], 5);
+    assert_eq!(&bytes[725..729], &0u32.to_le_bytes());
+    assert_eq!(&bytes[729..737], &0u64.to_le_bytes());
 }
 
 #[test]
