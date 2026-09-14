@@ -36,10 +36,10 @@ jobs:
           install -m 0600 -o root -g root "$updated" /etc/default/pir-apm
           systemctl restart pir-apm
           systemctl is-active --quiet pir-apm
-          set -a
-          source /etc/default/pir-apm
-          set +a
-          PIR_APM_ENVIRONMENT=production /usr/local/bin/pir-apm --send-test-alert
+          webhook="$(sed -n 's/^PIR_APM_SLACK_WEBHOOK_URL=//p' /etc/default/pir-apm)"
+          test -n "$webhook"
+          PIR_APM_ENVIRONMENT=production PIR_APM_SLACK_WEBHOOK_URL="$webhook" \
+            /usr/local/bin/pir-apm --send-test-alert
           curl --fail --silent --show-error --max-time 10 \
             http://127.0.0.1:3002/healthz >/dev/null
           SCRIPT
