@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interval = Duration::from_secs((cli.seconds / cli.min_publications.max(1)).max(1));
     while serving_started.elapsed().as_secs() < cli.seconds || publications < cli.min_publications {
         let before = Instant::now();
-        let a = if queries % 4 == 0 {
+        let a = if queries.is_multiple_of(4) {
             position_count - 1
         } else {
             queries.wrapping_mul(7919) % position_count
