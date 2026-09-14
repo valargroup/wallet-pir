@@ -98,7 +98,8 @@ resource "digitalocean_droplet" "worker" {
   ipv6       = true
 
   user_data = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
-    packages = jsonencode(local.common_packages)
+    packages          = jsonencode(local.common_packages)
+    deploy_public_key = var.enhance_worker_deploy_public_key
   })
 
   lifecycle {

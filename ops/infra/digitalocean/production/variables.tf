@@ -238,3 +238,13 @@ variable "transparent_loadgen_extra_ssh_cidrs" {
   type        = list(string)
   default     = []
 }
+
+variable "enhance_worker_deploy_public_key" {
+  description = "Public deployment key installed on new Enhance workers; the private key stays in Infisical."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.enhance_worker_deploy_public_key == "" || can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-) ", var.enhance_worker_deploy_public_key))
+    error_message = "Supply an OpenSSH public key, never a private key."
+  }
+}
