@@ -1,0 +1,88 @@
+{
+  "managed_by": "ad-hoc benchmark provisioning; not production Terraform",
+  "name": "transparent-sync-bench",
+  "droplet_id": 598869323,
+  "project_id": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+  "region": "ams3",
+  "size": "s-4vcpu-8gb",
+  "vcpus": 4,
+  "ram_gib": 8,
+  "root_disk_gib": 160,
+  "public_ip": "167.172.34.2",
+  "private_ip": "10.142.0.14",
+  "origin": "https://transparent-sync-bench.valargroup.dev",
+  "firewall_id": "a606a02e-cf02-437f-8c77-619e815e24ac",
+  "measurement_client_ipv4": "152.42.137.247",
+  "ssh_key_name": "roman",
+  "private_keys_copied": false,
+  "dataset_dir": "/srv/transparent-sync-bench/data",
+  "metrics_listener": "127.0.0.1:8097",
+  "dataset_ready": true,
+  "export_host_private_ipv4": "10.142.0.3",
+  "fresh_oracle_sample": "transparent-comparison-fresh-sample.json",
+  "fresh_oracle_sha256": "fde07f0fabedc0a3a651cd8470d1ecd648b377e769242bcf58c8ec0cb25efbf6",
+  "tls_smoke": {
+    "anchor_height": 999,
+    "concurrent_wallets": 20,
+    "exact_wallets": 20,
+    "pir_endpoint_available": false,
+    "scope": "first 1000 blocks; deployment smoke only, not the full comparison"
+  },
+  "measurement_client": {
+    "name": "transparent-pir-loadgen-01",
+    "region": "ams3",
+    "vcpus": 16,
+    "ram_gib": 32,
+    "scope": "Both methods use public TLS from the same Amsterdam host; colocated regional latency."
+  },
+  "large_batch_transport_smoke": {
+    "concurrent_downloads": 20,
+    "artifact_bytes": 157011096,
+    "all_checksums_match": true,
+    "elapsed_seconds": 13.400375127792358,
+    "scope": "One batch, transport diagnostic only; not full wallet recovery."
+  },
+  "paired_deployment_smoke": {
+    "anchor_height": 999,
+    "suites": [
+      "mixed",
+      "fresh"
+    ],
+    "methods": [
+      "pir",
+      "blocks"
+    ],
+    "wallets_per_run": 20,
+    "exact_per_run": 20,
+    "scope": "Supported scripts only, first 1000 blocks. A transient PIR preflight 503 was retained before a successful resumed run; not full-chain performance evidence."
+  },
+  "dataset_id": "3a9c03fa734acbf9eb21f3030ad71cc63113f1957d492702546b024df062a02d",
+  "anchor_height": 3473686,
+  "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+  "dataset_batches": 3474,
+  "dataset_artifact_bytes": 114896778048,
+  "dataset_totals": {
+    "combined.gzip": 26389207567,
+    "combined.identity": 30818781296,
+    "shielded.gzip": 17268404078,
+    "shielded.identity": 17743789543,
+    "transparent.gzip": 9252019442,
+    "transparent.identity": 13424576122
+  },
+  "dataset_manifest_sha256": "33935ba58c885d3c4d67507476de18f25329be2dabb4b8bcbcbd7f2f9dfd5ce9",
+  "extra_volume": null,
+  "free_bytes_after_copy": 48234639360,
+  "metrics_transport": {
+    "block": "loadgen 127.0.0.1:19097 forwards over private SSH to baseline 127.0.0.1:8097",
+    "filter": "coordinator 127.0.0.1:8090 reverse-forwards over private SSH to loadgen 127.0.0.1:19100",
+    "workers": "direct private VPC port 8093",
+    "operator_dependency": false
+  },
+  "full_comparison": {
+    "run_id": "full-20260909-private-apm",
+    "exact_recoveries": 80,
+    "expected_recoveries": 80,
+    "apm_scrapes": "all configured targets observed without gaps",
+    "evidence": "../../transparent/evidence/block-comparison-2026-09-09/README.md"
+  }
+}

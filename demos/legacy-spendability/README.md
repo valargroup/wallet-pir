@@ -1,6 +1,6 @@
 # Legacy spendability demos
 
-For current transparent script-history recovery and deployment, start at [the transparent PIR index](../../docs/transparent-pir/README.md). This document covers only the component named here.
+For current transparent script-history recovery and deployment, start at [the transparent PIR index](../../transparent/docs/README.md). This document covers only the component named here.
 
 This independent Cargo workspace preserves the original nullifier PIR, witness
 PIR, combined server, shared ingest code, and protobuf definitions. It is not

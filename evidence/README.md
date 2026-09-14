@@ -1,7 +1,7 @@
 # Evidence
 
-- [Transparent recovery](transparent/README.md): accepted milestones, correctness, fleet and filter measurements.
-- [Enhance](enhance/README.md): reported performance and preflight results, with provenance limits.
+- [Transparent recovery](../transparent/evidence/README.md): accepted milestones, correctness, fleet and filter measurements.
+- [Enhance](../enhance/evidence/README.md): reported performance and preflight results, with provenance limits.
 
 ## Retention and historical paths
 

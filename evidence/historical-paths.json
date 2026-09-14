@@ -1,20 +1,37 @@
 {
   "pre_cleanup_revision": "42b5f9c145cc3f2a400c428938c566d2cc9699db",
-  "repository": "https://github.com/valargroup/enhance-pir",
+  "repository": "https://github.com/valargroup/wallet-pir",
   "prefixes": {
-    "docs/transparent-pir/evidence/": "evidence/transparent/",
-    "docs/transparent-pir-evaluation/": "evidence/transparent/baselines/",
-    "server/transparent-loadtest/": "tools/transparent-loadtest/",
-    "server/transparent-regression/": "tools/transparent-regression/",
-    "server/transparent-measure/": "tools/transparent-measure/",
-    "pir/load-test/": "tools/enhance-loadtest/"
+    "docs/transparent-pir/evidence/": "transparent/evidence/",
+    "docs/transparent-pir/evaluation/": "transparent/evidence/baselines/",
+    "docs/enhance-pir/": "enhance/docs/",
+    "docs/transparent-pir/": "transparent/docs/",
+    "evidence/enhance/": "enhance/evidence/",
+    "evidence/transparent/": "transparent/evidence/",
+    "pir/enhance/": "enhance/crates/enhance-pir/",
+    "pir/transparent-spend/": "enhance/crates/transparent-spend-pir/",
+    "pir/transparent-events/": "transparent/crates/transparent-events/",
+    "pir/transparent-blocks/": "transparent/crates/transparent-blocks/",
+    "pir/transparent-filter/": "transparent/crates/transparent-filter/",
+    "pir/transparent-shard/": "transparent/crates/transparent-shard/",
+    "pir/transparent-wallet/": "transparent/crates/transparent-wallet/",
+    "pir/transparent-wallet-store/": "transparent/crates/transparent-wallet-store/",
+    "server/enhance-pir-server/": "enhance/services/enhance-pir-server/",
+    "server/pir-apm/": "enhance/services/pir-apm/",
+    "server/transparent-filter-server/": "transparent/services/transparent-filter-server/",
+    "server/transparent-block-server/": "transparent/services/transparent-block-server/",
+    "server/transparent-shard-server/": "transparent/services/transparent-shard-server/",
+    "server/transparent-loadtest/": "transparent/tools/transparent-loadtest/",
+    "server/transparent-regression/": "transparent/tools/transparent-regression/",
+    "server/transparent-measure/": "transparent/tools/transparent-measure/",
+    "pir/load-test/": "enhance/tools/loadtest/"
   },
   "note": "Prefix mappings resolve retained files only. Removed files and historical source manifests belong to the recorded Git revision; captured host paths are not local repository paths.",
   "original_checksum_manifests": {
-    "docs/transparent-pir/evidence/continuous-publication-2026-09-08/SHA256SUMS": "evidence/transparent/continuous-publication-2026-09-08/SHA256SUMS.original",
-    "docs/transparent-pir/evidence/productionize-m0-2026-09-09/SHA256SUMS": "evidence/transparent/productionize-m0-2026-09-09/SHA256SUMS.original",
-    "docs/transparent-pir/evidence/productionize-m2-2026-09-09/SHA256SUMS": "evidence/transparent/productionize-m2-2026-09-09/SHA256SUMS.original",
-    "docs/transparent-pir/evidence/productionize-m3-2026-09-10/SHA256SUMS": "evidence/transparent/productionize-m3-2026-09-10/SHA256SUMS.original",
-    "docs/transparent-pir/evidence/productionize-m3-suite-fix-2026-09-13/SHA256SUMS": "evidence/transparent/productionize-m3-suite-fix-2026-09-13/SHA256SUMS.original"
+    "docs/transparent-pir/evidence/continuous-publication-2026-09-08/SHA256SUMS": "transparent/evidence/continuous-publication-2026-09-08/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m0-2026-09-09/SHA256SUMS": "transparent/evidence/productionize-m0-2026-09-09/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m2-2026-09-09/SHA256SUMS": "transparent/evidence/productionize-m2-2026-09-09/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m3-2026-09-10/SHA256SUMS": "transparent/evidence/productionize-m3-2026-09-10/SHA256SUMS.original",
+    "docs/transparent-pir/evidence/productionize-m3-suite-fix-2026-09-13/SHA256SUMS": "transparent/evidence/productionize-m3-suite-fix-2026-09-13/SHA256SUMS.original"
   }
 }

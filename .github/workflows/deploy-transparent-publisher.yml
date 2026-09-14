@@ -19,12 +19,12 @@ on:
         type: string
 
 concurrency:
-  group: enhance-pir-deploy
+  group: wallet-pir-deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     environment: production
     timeout-minutes: 90
     permissions:
@@ -55,8 +55,8 @@ jobs:
 
       - name: Validate fleet control scripts
         run: |
-          python3 -m py_compile ops/scripts/transparent-live-fleet.py ops/scripts/deploy-transparent-publisher.py
-          python3 ops/tests/test_transparent_publication.py
+          python3 -m py_compile transparent/ops/scripts/transparent-live-fleet.py transparent/ops/scripts/deploy-transparent-publisher.py
+          python3 transparent/ops/tests/test_transparent_publication.py
 
       - name: Build immutable release artifacts
         if: inputs.mode == 'shadow'
@@ -71,7 +71,7 @@ jobs:
 
       - name: Install, verify or activate
         env:
-          ENHANCE_DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
+          WALLET_PIR_DEPLOY_SSH_KEY: ${{ secrets.WALLET_PIR_DEPLOY_SSH_KEY }}
           TRANSPARENT_SSH_KNOWN_HOSTS: ${{ vars.TRANSPARENT_SSH_KNOWN_HOSTS }}
           TRANSPARENT_FLEET_JSON: ${{ vars.TRANSPARENT_FLEET_JSON }}
           TRANSPARENT_ROUTER_HOST: ${{ vars.TRANSPARENT_ROUTER_HOST }}
@@ -81,8 +81,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p publisher-evidence
-          sudo --preserve-env=ENHANCE_DEPLOY_SSH_KEY,TRANSPARENT_SSH_KNOWN_HOSTS,TRANSPARENT_FLEET_JSON,TRANSPARENT_ROUTER_HOST \
-            python3 ops/scripts/deploy-transparent-publisher.py "$MODE" \
+          sudo --preserve-env=WALLET_PIR_DEPLOY_SSH_KEY,TRANSPARENT_SSH_KNOWN_HOSTS,TRANSPARENT_FLEET_JSON,TRANSPARENT_ROUTER_HOST \
+            python3 transparent/ops/scripts/deploy-transparent-publisher.py "$MODE" \
             --artifacts "$PWD/target/release" --initial-publication "$INITIAL" --source-sha "$SHA" \
             2>&1 | tee publisher-evidence/deploy.log
 

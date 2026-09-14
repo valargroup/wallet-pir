@@ -1,35 +1,35 @@
-output "coordinator_public_ipv4" {
+output "wallet_pir_coordinator_public_ipv4" {
   value = digitalocean_droplet.coordinator.ipv4_address
 }
 
-output "public_url" {
-  value = "https://${local.public_hostname}"
+output "enhance_public_url" {
+  value = "https://${local.enhance_public_hostname}"
 }
 
-output "coordinator_private_ipv4" {
+output "wallet_pir_coordinator_private_ipv4" {
   value = digitalocean_droplet.coordinator.ipv4_address_private
 }
 
-output "worker_public_ipv4" {
-  value = [for worker in digitalocean_droplet.worker : worker.ipv4_address]
+output "enhance_worker_public_ipv4" {
+  value = [for worker in digitalocean_droplet.enhance_worker : worker.ipv4_address]
 }
 
 output "enhance_legacy_worker_count" {
   value = length(digitalocean_droplet.enhance_legacy_worker)
 }
 
-output "worker_private_ipv4" {
-  value = [for worker in digitalocean_droplet.worker : worker.ipv4_address_private]
+output "enhance_worker_private_ipv4" {
+  value = [for worker in digitalocean_droplet.enhance_worker : worker.ipv4_address_private]
 }
 
-output "worker_groups" {
+output "enhance_worker_groups" {
   description = "Stable shard groups and the two replica Droplets in each group."
-  value = [for group in local.worker_groups : {
+  value = [for group in local.enhance_worker_groups : {
     name = group.name
     replicas = [for replica_name in group.replicas : {
       name         = replica_name
-      public_ipv4  = digitalocean_droplet.worker[index(local.worker_names, replica_name)].ipv4_address
-      private_ipv4 = digitalocean_droplet.worker[index(local.worker_names, replica_name)].ipv4_address_private
+      public_ipv4  = digitalocean_droplet.enhance_worker[index(local.enhance_worker_names, replica_name)].ipv4_address
+      private_ipv4 = digitalocean_droplet.enhance_worker[index(local.enhance_worker_names, replica_name)].ipv4_address_private
     }]
   }]
 }

@@ -18,8 +18,8 @@
 # shards.json -- none of the nine that read a served document.
 #
 # The programs come from the scripts themselves, via their `jq-programs` mode,
-# and the payloads come from `ops/fixtures/`, written by
-# server/transparent-shard-server/tests/operator_payloads.rs from the server's
+# and the payloads come from `transparent/ops/fixtures/`, written by
+# transparent/services/transparent-shard-server/tests/operator_payloads.rs from the server's
 # own types. Neither side transcribes the other, so a rename cannot leave one of
 # them agreeing with a stale copy of the other.
 #
@@ -32,7 +32,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-FIXTURES="ops/fixtures/transparent-shard"
+FIXTURES="transparent/ops/fixtures/transparent-shard"
 failures=0
 
 note() { printf '  %-34s %s\n' "$1" "$2"; }
@@ -44,7 +44,7 @@ for tool in jq shellcheck; do
 done
 
 echo "== shell syntax and lint"
-for script in ops/scripts/*.sh; do
+for script in ops/scripts/*.sh enhance/ops/scripts/*.sh transparent/ops/scripts/*.sh; do
   if ! bash -n "$script"; then
     bad "$script" "does not parse"
     continue
@@ -68,7 +68,7 @@ fixture_for() {
   esac
 }
 
-echo "== ops/scripts/deploy-transparent-shard.sh: compile and evaluate"
+echo "== transparent/ops/scripts/deploy-transparent-shard.sh: compile and evaluate"
 while IFS=$'\t' read -r -d '' name program; do
   if ! fixture="$(fixture_for "$name")"; then
     bad "$name" "no fixture: name it JQ_MAP_*, JQ_HEALTH_*, JQ_READY_* or JQ_INIT_*"
@@ -88,14 +88,14 @@ while IFS=$'\t' read -r -d '' name program; do
       *) bad "$name" "jq exited $status: ${output//$'\n'/ }" ;;
     esac
   fi
-done < <(ops/scripts/deploy-transparent-shard.sh jq-programs)
+done < <(transparent/ops/scripts/deploy-transparent-shard.sh jq-programs)
 
 # The enhance programs read the coordinator's payloads, and a fixture for those
 # means standing up enhance-pir-server. So they are compiled and not evaluated,
 # which still covers the quoting class -- two of them carry inner quotes that had
 # to be backslashed inside an ssh command string. Field-path drift there remains
 # uncovered, deliberately and visibly.
-echo "== ops/scripts/deploy-enhance-pir.sh: compile only (no fixtures yet)"
+echo "== enhance/ops/scripts/deploy-enhance-pir.sh: compile only (no fixtures yet)"
 while IFS=$'\t' read -r -d '' name program; do
   # A superset of the jq variables these programs take. An undefined $var is a
   # compile error, and an unused one is harmless, so one set serves all of them.
@@ -118,11 +118,11 @@ while IFS=$'\t' read -r -d '' name program; do
       note "$name" "compiles"
     fi
   fi
-done < <(ops/scripts/deploy-enhance-pir.sh jq-programs)
+done < <(enhance/ops/scripts/deploy-enhance-pir.sh jq-programs)
 
 # The filter-only deploy reads the filter service's own payloads, which have
 # no fixture here; compiled only, like the enhance programs.
-echo "== ops/scripts/deploy-transparent-filter.sh: compile only (no fixtures yet)"
+echo "== transparent/ops/scripts/deploy-transparent-filter.sh: compile only (no fixtures yet)"
 while IFS=$'\t' read -r -d '' name program; do
   if output="$(jq -n "$program" 2>&1 >/dev/null)"; then
     note "$name" "compiles"
@@ -134,7 +134,7 @@ while IFS=$'\t' read -r -d '' name program; do
       note "$name" "compiles"
     fi
   fi
-done < <(ops/scripts/deploy-transparent-filter.sh jq-programs)
+done < <(transparent/ops/scripts/deploy-transparent-filter.sh jq-programs)
 
 # The published fixture is a real ShardMap, so the script's own offline gate
 # should accept it -- CI's hand-written one carries no `geometry` key and only
@@ -142,23 +142,23 @@ done < <(ops/scripts/deploy-transparent-filter.sh jq-programs)
 # map names, so those are staged here rather than committed: their names are
 # manifest digests, which change with the payload, and a tree full of churning
 # empty directories would be worse than the check is good.
-echo "== ops/scripts/deploy-transparent-shard.sh validate, against the real fixture"
+echo "== transparent/ops/scripts/deploy-transparent-shard.sh validate, against the real fixture"
 staged="$(mktemp -d)"
 trap 'rm -rf "$staged"' EXIT
 cp "$FIXTURES/shards.json" "$staged/"
 while read -r digest; do
   mkdir -p "$staged/$digest"
-done < <(jq -er "$(ops/scripts/deploy-transparent-shard.sh jq-programs \
+done < <(jq -er "$(transparent/ops/scripts/deploy-transparent-shard.sh jq-programs \
   | tr '\0' '\n' | awk -F'\t' '$1 == "JQ_MAP_DIGESTS" { print $2 }')" "$FIXTURES/shards.json")
 
 if TRANSPARENT_WORKER_HOST=worker.example.net \
-  TRANSPARENT_DEPLOY_USER=deploy \
+  WALLET_PIR_DEPLOY_USER=deploy \
   TRANSPARENT_RELEASE_SHA=0000000000000000000000000000000000000000 \
   TRANSPARENT_ARTIFACT_DIR=/tmp/artifact \
   TRANSPARENT_SHARD_DIR=/srv/transparent-pir/shards \
   TRANSPARENT_PUBLIC_URL=https://transparent.example.net \
   TRANSPARENT_SHARD_SOURCE="$staged" \
-  ops/scripts/deploy-transparent-shard.sh validate >/dev/null; then
+  transparent/ops/scripts/deploy-transparent-shard.sh validate >/dev/null; then
   note "validate" "accepts the published fixture"
 else
   bad "validate" "rejected the fixture the server itself published"

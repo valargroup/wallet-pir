@@ -2,25 +2,25 @@
 resolver = "2"
 members = [
     # Protocol libraries, clients and stores.
-    "pir/enhance",
-    "pir/transparent-events",
-    "pir/transparent-blocks",
-    "pir/transparent-filter",
-    "pir/transparent-shard",
-    "pir/transparent-wallet",
-    "pir/transparent-wallet-store",
-    "pir/transparent-spend",
+    "enhance/crates/enhance-pir",
+    "transparent/crates/transparent-events",
+    "transparent/crates/transparent-blocks",
+    "transparent/crates/transparent-filter",
+    "transparent/crates/transparent-shard",
+    "transparent/crates/transparent-wallet",
+    "transparent/crates/transparent-wallet-store",
+    "enhance/crates/transparent-spend-pir",
     # Services and operational dashboard.
-    "server/enhance-pir-server",
-    "server/pir-apm",
-    "server/transparent-filter-server",
-    "server/transparent-block-server",
-    "server/transparent-shard-server",
+    "enhance/services/enhance-pir-server",
+    "enhance/services/pir-apm",
+    "transparent/services/transparent-filter-server",
+    "transparent/services/transparent-block-server",
+    "transparent/services/transparent-shard-server",
     # Development and validation tools; package/binary names stay stable.
-    "tools/enhance-loadtest",
-    "tools/transparent-loadtest",
-    "tools/transparent-regression",
-    "tools/transparent-measure",
+    "enhance/tools/loadtest",
+    "transparent/tools/transparent-loadtest",
+    "transparent/tools/transparent-regression",
+    "transparent/tools/transparent-measure",
 ]
 exclude = ["demos/legacy-spendability"]
 

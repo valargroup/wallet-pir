@@ -1,10 +1,11 @@
 # Repository guidance
 
-The root workspace contains Enhance PIR, transparent shard recovery and their
-validation tools. Keep protocol/client code in `pir/`, production services in
-`server/`, Rust/Python development harnesses in `tools/`, and operations in `ops/`.
-`transparent-spend` remains an Enhance journal/type dependency but is not served.
-`tools/transparent-measure` uses the current shard stack and remains part of the
+The root workspace contains Enhance PIR and transparent shard recovery as
+top-level components. Keep each product's crates, services, tools, operations,
+documentation and evidence under `enhance/` or `transparent/`; keep only shared
+infrastructure and checks at the root. `transparent-spend-pir` remains an Enhance
+journal/type dependency but is not served.
+`transparent/tools/transparent-measure` uses the current shard stack and remains part of the
 backfill workflow; its extrapolated baseline is not a whole-wallet measurement.
 
 Run `make check` before submitting changes. Release mode is required for the
@@ -21,7 +22,7 @@ architecture describes source, deployment owns operating targets, status owns da
 observations and unresolved conflicts, and remaining work owns acceptance gates.
 Never infer a live deployment from code or a workflow default.
 
-Evidence belongs under `evidence/<product>/`. Retain acceptance results, significant
+Evidence belongs under `<product>/evidence/`. Retain acceptance results, significant
 failures, unresolved incidents and their supporting raw inputs/provenance. Delete
 superseded diagnostics only when no retained claim or executable fixture needs them;
 record the deletion and historical source revision. Keep retained raw bytes immutable.

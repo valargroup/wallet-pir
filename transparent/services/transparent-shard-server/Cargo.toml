@@ -1,0 +1,67 @@
+[package]
+name = "transparent-shard-server"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "transparent_shard_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "transparent-shard-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "shard-scaling"
+path = "src/bin/shard-scaling.rs"
+
+[[bin]]
+name = "shard-residency"
+path = "src/bin/shard-residency.rs"
+
+[features]
+# Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
+portable-kernel = []
+
+[dependencies]
+spiral-rs = { package = "valar-spiral-rs", git = "https://github.com/valargroup/spiral-rs.git", rev = "584fee3893b1d2d17b5d774c83bd801fb70d5ace" }
+axum = "0.7"
+http-body = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+# Reused for deserialize_first_dim_query and RowPlaintextIter. A second copy of
+# the query and row encodings could drift from the one the deployed coordinator
+# uses, and a drift there decodes to the wrong row rather than failing.
+enhance-pir-server = { path = "../../../enhance/services/enhance-pir-server" }
+hex = "0.4"
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "accc424e879d8da425fa620aad80f0f2c4e0defd" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "accc424e879d8da425fa620aad80f0f2c4e0defd" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sysinfo = "0.36"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.5", features = ["limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+transparent-filter = { path = "../../crates/transparent-filter" }
+transparent-shard = { path = "../../crates/transparent-shard" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
+
+[dev-dependencies]
+base64 = "0.22"
+http-body = "1"
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3"
+transparent-events = { path = "../../crates/transparent-events" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "accc424e879d8da425fa620aad80f0f2c4e0defd" }
+tower = { version = "0.5", features = ["util"] }
+transparent-wallet = { path = "../../crates/transparent-wallet", features = ["reqwest"] }
+transparent-wallet-store = { path = "../../crates/transparent-wallet-store" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

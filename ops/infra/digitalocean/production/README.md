@@ -1,10 +1,10 @@
-# Ironwood PIR production infrastructure
+# Wallet PIR production infrastructure
 
 The c-4/16-shard target below is not yet production-qualified or deployed.
-Follow the [migration and qualification gates](../../../../docs/enhance-pir/deployment.md#capacity-expansion-target); do not apply this root to the legacy pair without the state moves described there.
+Follow the [migration and qualification gates](../../../../enhance/docs/deployment.md#capacity-expansion-target); do not apply this root to the legacy pair without the state moves described there.
 
-This Terraform root manages the Enhance PIR production fleet in the
-`enhance-pir` DigitalOcean project:
+This Terraform root manages the shared Wallet PIR production infrastructure in
+the `wallet-pir` DigitalOcean project:
 
 - one `m-8vcpu-64gb-intel` coordinator with a 1 TiB XFS volume at
   `/srv/zakura`, running Zakura (archive), ingest, the coordinator, Caddy, and
@@ -14,9 +14,10 @@ This Terraform root manages the Enhance PIR production fleet in the
 - a dedicated VPC and firewalls. Only the coordinator may reach worker port
   8091. Worker SSH is restricted to `allowed_ssh_cidrs`; the coordinator has no firewall.
 
-That describes the Enhance shape only. Transparent shard resources also live in
-this Terraform root; use the [transparent deployment target](../../../../docs/transparent-pir/deployment.md)
-and [verified-status record](../../../../docs/transparent-pir/status.md) before changing them.
+Enhance resources are grouped in `enhance.tf`, Transparent resources in
+`transparent.tf`, and the coordinator, network, volume, project membership and
+state-address moves in `shared.tf`. Use the [transparent deployment target](../../../../transparent/docs/deployment.md)
+and [verified-status record](../../../../transparent/docs/status.md) before changing them.
 The proposed transparent fleet is not established by this README. Worker pools per table, a second
 coordinator, a separate ingest host, and artifact publishing to Spaces are
 documented as a growth path in the historical `docs/archive/pir_deployment_architecture.md` §6 and
@@ -26,9 +27,10 @@ are deliberately not built.
 
 State is not committed. `.gitignore` excludes `terraform.tfstate*`, `*.tfplan`,
 and populated `*.tfvars`. The production backend is the private, versioned Spaces bucket
-`enhance-pir-terraform`, key `production/terraform.tfstate`, in `ams3`.
-Use the bucket-scoped `ENHANCE_TF_STATE_ACCESS_KEY` and
-`ENHANCE_TF_STATE_SECRET_KEY` from Infisical production. When this root was
+`enhance-pir-terraform`, key `production/terraform.tfstate`, in `ams3`. The
+bucket name is a documented historical exception and is not migrated for branding.
+Use the bucket-scoped `WALLET_PIR_TF_STATE_ACCESS_KEY` and
+`WALLET_PIR_TF_STATE_SECRET_KEY` from Infisical production. When this root was
 renamed from `memo-poc`, the untracked state stayed in the old directory of
 whichever checkout ran the last apply; move `terraform.tfstate`,
 `terraform.tfstate.backup`, and `.terraform/` into `production/` before the
@@ -37,15 +39,15 @@ next plan.
 The committed `backend.tf` enables versioned remote state. Spaces did not
 enforce conditional lock writes in the rollout test; native S3 locking is
 disabled. All writes must execute under the coordinator's
-`/run/lock/enhance-production.lock`, shared with deployment and autoscaling.
-Use `ops/scripts/enhance-terraform.sh` on the coordinator for manual operations;
+`/run/lock/wallet-pir-production.lock`, shared with deployment and autoscaling.
+Use `ops/scripts/wallet-pir-terraform.sh` on the coordinator for manual operations;
 do not run a direct apply from another host.
 For an existing local checkout, migrate once after backing up and reconciling
 its state; fresh checkouts use plain `terraform init`:
 
 ```bash
 infisical run --projectId=40862c6d-a089-4355-b405-0477be0ee3b1 --env=prod --path=/ -- \
-  sh -c 'export AWS_ACCESS_KEY_ID="$ENHANCE_TF_STATE_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$ENHANCE_TF_STATE_SECRET_KEY"; terraform init -migrate-state'
+  sh -c 'export AWS_ACCESS_KEY_ID="$WALLET_PIR_TF_STATE_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$WALLET_PIR_TF_STATE_SECRET_KEY"; terraform init -migrate-state'
 ```
 
 ## Plan and apply

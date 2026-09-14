@@ -33,7 +33,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy production fleet
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     timeout-minutes: ${{ inputs.prepare_only && 360 || 60 }}
     environment: production
     permissions:
@@ -83,19 +83,19 @@ jobs:
           install -m 0755 target/release/enhance-pir-cli artifact/
           install -m 0755 target/release/pir-apm artifact/
           install -m 0755 target/release/transparent-filter-server artifact/
-          cp ops/infra/digitalocean/production/deploy/enhance-pir-server.service artifact/
-          cp ops/infra/digitalocean/production/deploy/enhance-pir-worker.service artifact/
-          cp ops/infra/digitalocean/production/deploy/pir-apm.service artifact/
-          cp ops/infra/digitalocean/production/deploy/transparent-filter-server.service artifact/
-          cp ops/infra/digitalocean/production/deploy/Caddyfile artifact/
-          cp ops/scripts/enhance-autoscale.py artifact/
-          cp ops/scripts/enhance-terraform.sh artifact/
-          cp ops/scripts/enhance-runtime.py artifact/
-          cp ops/scripts/enhance-qualification.py artifact/
-          cp ops/infra/digitalocean/production/deploy/enhance-autoscale.service artifact/
-          cp ops/infra/digitalocean/production/deploy/enhance-autoscale.timer artifact/
-          cp ops/infra/digitalocean/production/deploy/autoscale.example.json artifact/
-          git ls-files -z ops/infra/digitalocean/production | tar --null -T - -czf artifact/enhance-infra.tar.gz
+          cp enhance/ops/deploy/enhance-pir-server.service artifact/
+          cp enhance/ops/deploy/enhance-pir-worker.service artifact/
+          cp enhance/ops/deploy/pir-apm.service artifact/
+          cp transparent/ops/deploy/transparent-filter-server.service artifact/
+          cp ops/deploy/coordinator/Caddyfile artifact/
+          cp enhance/ops/scripts/enhance-autoscale.py artifact/
+          cp ops/scripts/wallet-pir-terraform.sh artifact/
+          cp ops/scripts/wallet-pir-runtime.py artifact/
+          cp enhance/ops/scripts/enhance-qualification.py artifact/
+          cp enhance/ops/deploy/enhance-autoscale.service artifact/
+          cp enhance/ops/deploy/enhance-autoscale.timer artifact/
+          cp enhance/ops/deploy/autoscale.example.json artifact/
+          git ls-files -z ops/infra/digitalocean/production | tar --null -T - -czf artifact/wallet-pir-infra.tar.gz
           printf '%s\n' '${{ inputs.ref }}' >artifact/revision
           (cd artifact && sha256sum ./* >SHA256SUMS)
       - uses: actions/upload-artifact@v4
@@ -107,8 +107,8 @@ jobs:
       - name: Prepare ephemeral SSH material
         if: ${{ !inputs.artifact_only }}
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ vars.ENHANCE_SSH_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.WALLET_PIR_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.WALLET_PIR_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           : "${DEPLOY_SSH_KEY:?production deployment SSH key is empty}"
@@ -119,14 +119,14 @@ jobs:
       - name: Deploy and verify
         if: ${{ !inputs.artifact_only }}
         env:
-          ENHANCE_COORDINATOR_HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
-          ENHANCE_DEPLOY_USER: ${{ vars.ENHANCE_DEPLOY_USER }}
+          WALLET_PIR_COORDINATOR_HOST: ${{ vars.WALLET_PIR_COORDINATOR_HOST }}
+          WALLET_PIR_DEPLOY_USER: ${{ vars.WALLET_PIR_DEPLOY_USER }}
           ENHANCE_PUBLIC_URL: ${{ vars.ENHANCE_PUBLIC_URL }}
           ENHANCE_WORKERS_JSON: ${{ vars.ENHANCE_WORKERS_JSON }}
           ENHANCE_RELEASE_SHA: ${{ inputs.ref }}
           ENHANCE_ARTIFACT_DIR: ${{ github.workspace }}/artifact
-          ENHANCE_SSH_KEY_PATH: ${{ runner.temp }}/enhance-pir-ssh/key
-          ENHANCE_KNOWN_HOSTS_PATH: ${{ runner.temp }}/enhance-pir-ssh/known_hosts
+          WALLET_PIR_SSH_KEY_PATH: ${{ runner.temp }}/enhance-pir-ssh/key
+          WALLET_PIR_KNOWN_HOSTS_PATH: ${{ runner.temp }}/enhance-pir-ssh/known_hosts
           ENHANCE_SERVER_SERVICE_FILE: ${{ github.workspace }}/artifact/enhance-pir-server.service
           ENHANCE_WORKER_SERVICE_FILE: ${{ github.workspace }}/artifact/enhance-pir-worker.service
           ENHANCE_APM_SERVICE_FILE: ${{ github.workspace }}/artifact/pir-apm.service
@@ -138,9 +138,9 @@ jobs:
           PIR_APM_SLACK_WEBHOOK_URL: ${{ secrets.PIR_APM_SLACK_WEBHOOK_URL }}
         run: |
           if [[ "$ENHANCE_PREPARE_ONLY" == "true" ]]; then
-            flock -n /run/lock/enhance-production.lock ops/scripts/prepare-enhance-pir.sh
+            flock -n /run/lock/wallet-pir-production.lock enhance/ops/scripts/prepare-enhance-pir.sh
           else
-            flock -n /run/lock/enhance-production.lock ops/scripts/deploy-enhance-pir.sh deploy
+            flock -n /run/lock/wallet-pir-production.lock enhance/ops/scripts/deploy-enhance-pir.sh deploy
           fi
       - name: Deployment summary
         if: always()

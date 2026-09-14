@@ -48,7 +48,7 @@ concurrency:
 jobs:
   verify:
     name: verify ${{ inputs.shard_dir }}
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     timeout-minutes: 720
     environment: production
     permissions:

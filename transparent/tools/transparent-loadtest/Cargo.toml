@@ -1,0 +1,37 @@
+[package]
+name = "transparent-loadtest"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "transparent-loadtest"
+path = "src/main.rs"
+
+[dependencies]
+transparent-blocks = { path = "../../crates/transparent-blocks" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+hdrhistogram = "7"
+hex = "0.4"
+humantime = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
+transparent-events = { path = "../../crates/transparent-events" }
+transparent-filter = { path = "../../crates/transparent-filter" }
+transparent-wallet = { path = "../../crates/transparent-wallet", features = ["reqwest"] }
+transparent-wallet-store = { path = "../../crates/transparent-wallet-store" }
+
+sysinfo = "0.36"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util"] }
+tempfile = "3"
+axum = "0.7"
+transparent-shard = { path = "../../crates/transparent-shard" }
+transparent-shard-server = { path = "../../services/transparent-shard-server" }
+
+[build-dependencies]
+sha2 = "0.10"

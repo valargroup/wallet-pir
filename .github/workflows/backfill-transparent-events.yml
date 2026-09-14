@@ -219,7 +219,7 @@ env:
 jobs:
   backfill:
     name: ${{ inputs.action }} transparent event backfill
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     timeout-minutes: 120
     environment: production
     permissions:
@@ -488,8 +488,8 @@ jobs:
 
       - name: Prepare ephemeral SSH material
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ vars.ENHANCE_SSH_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.WALLET_PIR_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.WALLET_PIR_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           : "${DEPLOY_SSH_KEY:?production deployment SSH key is empty}"
@@ -501,8 +501,8 @@ jobs:
       - name: Stage the binary
         if: inputs.action == 'start'
         env:
-          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
-          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          HOST: ${{ vars.WALLET_PIR_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.WALLET_PIR_DEPLOY_USER }}
           SHA: ${{ inputs.ref }}
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
@@ -539,8 +539,8 @@ jobs:
       - name: Start the backfill
         if: inputs.action == 'start'
         env:
-          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
-          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          HOST: ${{ vars.WALLET_PIR_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.WALLET_PIR_DEPLOY_USER }}
           START: ${{ inputs.start_height }}
           STOP: ${{ inputs.stop_height }}
           CACHE: ${{ inputs.cache_outputs }}
@@ -623,8 +623,8 @@ jobs:
       - name: Report status
         if: inputs.action == 'status' || inputs.action == 'start'
         env:
-          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
-          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          HOST: ${{ vars.WALLET_PIR_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.WALLET_PIR_DEPLOY_USER }}
           DATA_DIR_INPUT: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
@@ -653,8 +653,8 @@ jobs:
       - name: Stop the backfill
         if: inputs.action == 'stop'
         env:
-          HOST: ${{ vars.ENHANCE_COORDINATOR_HOST }}
-          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          HOST: ${{ vars.WALLET_PIR_COORDINATOR_HOST }}
+          USER_NAME: ${{ vars.WALLET_PIR_DEPLOY_USER }}
         run: |
           set -euo pipefail
           SSH=(ssh -i "$RUNNER_TEMP/backfill-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes

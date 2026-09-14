@@ -37,7 +37,7 @@ on:
       sample_path:
         description: Workload sample, relative to the checkout
         required: false
-        default: evidence/transparent/workload-sample-2026-09-08/sample.json
+        default: transparent/evidence/workload-sample-2026-09-08/sample.json
         type: string
       steps:
         description: Concurrency steps, comma separated
@@ -99,7 +99,7 @@ concurrency:
 jobs:
   load:
     name: load ${{ inputs.run_id }} against ${{ inputs.shard_url }}
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     timeout-minutes: 300
     environment: production
     permissions:
@@ -197,7 +197,7 @@ jobs:
           ARGS=(--shard-url "$SHARD_URL" --sample "$SAMPLE" --steps "$STEPS"
             --step-duration "$STEP_DURATION" --min-completed-per-class "$MIN_COMPLETED"
             --run-id "$RUN_ID" --source-sha "$SHA" --host-region ams3
-            --client-label "enhance-pir-coordinator-01 (m-8vcpu-64gb-intel, shared with ingest), VPC, plain HTTP"
+            --client-label "wallet-pir-coordinator-01 (m-8vcpu-64gb-intel, shared with ingest), VPC, plain HTTP"
             --json-out "load/report.json")
           [[ -n "$FILTER_URL" ]] && ARGS+=(--filter-url "$FILTER_URL")
           [[ -n "$CLASSES" ]] && ARGS+=(--classes "$CLASSES")

@@ -27,21 +27,22 @@ check: check-ops check-docs check-reports check-tools
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
 check-ops:
-	python3 -m unittest discover -s ops/tests -p 'test_enhance_*.py'
+	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
+	python3 -m unittest discover -s ops/tests -p 'test_*.py'
 	ops/scripts/check-jq-contracts.sh
-	python3 ops/tests/test_transparent_parents.py
-	python3 ops/tests/test_transparent_fleet.py
-	python3 ops/tests/test_transparent_publication.py
-	python3 ops/tests/test_transparent_burst.py
-	python3 ops/tests/test_regression_recut.py
-	python3 ops/tests/test_regression_fixture_compare.py
-	python3 ops/tests/test_observation_audit.py
-	python3 -m unittest discover -s ops/tests -p 'test_transparent_stage_timing.py'
+	python3 transparent/ops/tests/test_transparent_parents.py
+	python3 transparent/ops/tests/test_transparent_fleet.py
+	python3 transparent/ops/tests/test_transparent_publication.py
+	python3 transparent/ops/tests/test_transparent_burst.py
+	python3 transparent/ops/tests/test_regression_recut.py
+	python3 transparent/ops/tests/test_regression_fixture_compare.py
+	python3 transparent/ops/tests/test_observation_audit.py
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_stage_timing.py'
 
 .PHONY: check-reports
 check-reports:
-	python3 -m unittest discover -s tools/transparent-loadtest/tests -p 'test_*.py'
-	node --test tools/transparent-loadtest/tests/apm.test.cjs
+	python3 -m unittest discover -s transparent/tools/transparent-loadtest/tests -p 'test_*.py'
+	node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
 
 # Every relative Markdown link must resolve. The transparent PIR documentation
 # rules delete superseded prose instead of leaving stubs, so a dangling link is
@@ -95,7 +96,7 @@ fmt:
 
 # Correctness at wallet-accepted anchors; each run preserves its SQLite stores
 # and exact mismatch evidence in a new output directory.
-TRANSPARENT_REGRESSION_FIXTURE ?= tools/transparent-regression/fixtures/mainnet.json
+TRANSPARENT_REGRESSION_FIXTURE ?= transparent/tools/transparent-regression/fixtures/mainnet.json
 TRANSPARENT_REGRESSION_OUT ?= transparent-regression-results
 TRANSPARENT_REGRESSION_FILTER_URL ?= https://enhance-pir.valargroup.dev
 .PHONY: transparent-regression
@@ -109,7 +110,7 @@ transparent-regression:
 
 # Mixed-wallet simulations. Leave URL overrides blank to use the scenario's
 # origins. Export options so the shell receives paths and labels as data.
-SIM_SCENARIO ?= tools/transparent-loadtest/scenarios/mixed-20-wave.json
+SIM_SCENARIO ?= transparent/tools/transparent-loadtest/scenarios/mixed-20-wave.json
 SIM_URL ?=
 SIM_FILTER_URL ?=
 SIM_METRICS ?=
@@ -124,9 +125,9 @@ export SIM_SCENARIO SIM_URL SIM_FILTER_URL SIM_METRICS SIM_OUT SIM_RUN_ID
 
 .PHONY: transparent-sim transparent-sim-wave transparent-sim-sustained transparent-sim-help transparent-sim-open
 
-transparent-sim-wave: SIM_SCENARIO = tools/transparent-loadtest/scenarios/mixed-20-wave.json
+transparent-sim-wave: SIM_SCENARIO = transparent/tools/transparent-loadtest/scenarios/mixed-20-wave.json
 
-transparent-sim-sustained: SIM_SCENARIO = tools/transparent-loadtest/scenarios/mixed-20-sustained.json
+transparent-sim-sustained: SIM_SCENARIO = transparent/tools/transparent-loadtest/scenarios/mixed-20-sustained.json
 
 # Each invocation gets a fresh report directory unless SIM_OUT is supplied.
 # SIM_METRICS is a space-separated list of NAME=http(s)://host/metrics entries.
@@ -147,11 +148,11 @@ transparent-sim transparent-sim-wave transparent-sim-sustained:
 	printf 'Scenario: %s\nReport directory: %s\n' "$$SIM_SCENARIO" "$$out"; \
 	sim_status=0; \
 	cargo run --locked --release -p transparent-loadtest -- "$$@" || sim_status=$$?; \
-	if [ -f "$$out/report.html" ]; then python3 tools/transparent-loadtest/open_report.py --remember "$$out" || :; printf '\nOpen report: %s/report.html\n' "$$out"; fi; \
+	if [ -f "$$out/report.html" ]; then python3 transparent/tools/transparent-loadtest/open_report.py --remember "$$out" || :; printf '\nOpen report: %s/report.html\n' "$$out"; fi; \
 	exit "$$sim_status"
 
 transparent-sim-open:
-	@python3 tools/transparent-loadtest/open_report.py
+	@python3 transparent/tools/transparent-loadtest/open_report.py
 
 transparent-sim-help:
 	@printf '%s\n' \
@@ -183,7 +184,7 @@ transparent-sim-help:
 # comes from sample-oracle's separate journal pass.
 BLOCK_DATASET ?= /srv/transparent-sync-bench/data
 BLOCK_URL ?= https://transparent-sync-bench.valargroup.dev
-BLOCK_FRESH_SAMPLE ?= ops/benchmarks/transparent-comparison-fresh-sample.json
+BLOCK_FRESH_SAMPLE ?= transparent/ops/benchmarks/transparent-comparison-fresh-sample.json
 BLOCK_METRICS_URL ?=
 BLOCK_ENCODING ?= gzip
 SIM_COMPARISON_METADATA ?=
@@ -201,7 +202,7 @@ transparent-sim-freeze:
 	cargo run --locked --release -p transparent-loadtest -- --scenario "$(SIM_SCENARIO)" --selected-sample "$(BLOCK_SELECTED_SAMPLE)"
 
 transparent-sim-compare:
-	@test -n "$(BLOCK_URL)" -a -n "$(BLOCK_FRESH_SAMPLE)" || { echo 'Set BLOCK_URL and BLOCK_FRESH_SAMPLE (see tools/transparent-loadtest/README.md)'; exit 1; }
+	@test -n "$(BLOCK_URL)" -a -n "$(BLOCK_FRESH_SAMPLE)" || { echo 'Set BLOCK_URL and BLOCK_FRESH_SAMPLE (see transparent/tools/transparent-loadtest/README.md)'; exit 1; }
 	cargo build --locked --release -p transparent-loadtest
 	@set -eu; \
 	out="$${SIM_OUT:-$${TMPDIR:-/tmp}/transparent-sim-compare-$$(date -u +%Y%m%dT%H%M%SZ)-$$$$}"; \
@@ -215,8 +216,8 @@ transparent-sim-compare:
 	if [ -n "$$SIM_COMPARISON_METADATA" ]; then set -- "$$@" --metadata "$$SIM_COMPARISON_METADATA"; fi; \
 	if [ -n "$$BLOCK_METRICS_URL" ]; then set -- "$$@" --block-metrics-url "$$BLOCK_METRICS_URL"; fi; \
 	set -f; for target in $$SIM_METRICS; do set -- "$$@" --pir-metrics "$$target"; done; \
-	status=0; python3 tools/transparent-loadtest/compare.py "$$@" || status=$$?; \
-	if [ -f "$$out/report.html" ]; then python3 tools/transparent-loadtest/open_report.py --remember "$$out"; fi; \
+	status=0; python3 transparent/tools/transparent-loadtest/compare.py "$$@" || status=$$?; \
+	if [ -f "$$out/report.html" ]; then python3 transparent/tools/transparent-loadtest/open_report.py --remember "$$out"; fi; \
 	exit "$$status"
 
 # Local-only worker-stage burst comparison; no fleet endpoints or live state.
@@ -226,7 +227,7 @@ TRANSPARENT_BURST_SYSTEMD ?= 0
 TRANSPARENT_BURST_EXTERNAL_CLIENTS ?= 0
 .PHONY: transparent-burst
 transparent-burst:
-	python3 ops/scripts/run-transparent-burst.py \
+	python3 transparent/ops/scripts/run-transparent-burst.py \
 		--repetitions "$(TRANSPARENT_BURST_REPETITIONS)" \
 		--build-slots $(TRANSPARENT_BURST_BUILD_SLOTS) \
 		$(if $(strip $(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)),--worker-budget-seconds "$(TRANSPARENT_BURST_WORKER_BUDGET_SECONDS)") \
@@ -239,6 +240,6 @@ transparent-burst:
 
 .PHONY: check-tools
 check-tools:
-	python3 -m unittest discover -s tools/filters -p 'test_*.py'
-	python3 -m unittest discover -s tools/parent-filters -p 'test_*.py'
+	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
+	python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'
 	python3 -m unittest discover -s tools/tests -p 'test_*.py'

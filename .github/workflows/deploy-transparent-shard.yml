@@ -95,7 +95,7 @@ concurrency:
 jobs:
   deploy:
     name: ${{ inputs.mode }} transparent shard worker
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     timeout-minutes: 60
     environment: production
     permissions:
@@ -159,8 +159,8 @@ jobs:
           install -m 0755 target/release/transparent-shard-server artifact/
           install -m 0755 target/release/shard-assign artifact/
           install -m 0755 target/release/shard-prune artifact/
-          cp ops/infra/digitalocean/production/deploy/transparent-shard-server.service artifact/
-          cp ops/infra/digitalocean/production/deploy/transparent-Caddyfile artifact/
+          cp transparent/ops/deploy/transparent-shard-server.service artifact/
+          cp transparent/ops/deploy/transparent-Caddyfile artifact/
           printf '%s\n' '${{ inputs.ref }}' >artifact/revision
           (cd artifact && rm -f SHA256SUMS && sha256sum ./* >SHA256SUMS)
           cat artifact/SHA256SUMS
@@ -208,7 +208,7 @@ jobs:
 
       - name: Prepare ephemeral SSH material
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_KEY: ${{ secrets.WALLET_PIR_DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ vars.TRANSPARENT_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
@@ -222,7 +222,7 @@ jobs:
       - name: Deploy and verify
         env:
           TRANSPARENT_WORKER_HOST: ${{ vars.TRANSPARENT_WORKER_HOST }}
-          TRANSPARENT_DEPLOY_USER: ${{ vars.ENHANCE_DEPLOY_USER }}
+          WALLET_PIR_DEPLOY_USER: ${{ vars.WALLET_PIR_DEPLOY_USER }}
           TRANSPARENT_RELEASE_SHA: ${{ inputs.ref }}
           TRANSPARENT_ARTIFACT_DIR: ${{ github.workspace }}/artifact
           TRANSPARENT_SHARD_SOURCE: ${{ inputs.shard_dir }}
@@ -246,7 +246,7 @@ jobs:
           TRANSPARENT_FORCE_REDEPLOY: ${{ inputs.force_redeploy }}
           TRANSPARENT_CANARY_WORKER_IDS: ${{ inputs.canary_worker_ids }}
           TRANSPARENT_ASSIGNMENT: ${{ github.workspace }}/artifact/assignment.json
-        run: ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
+        run: transparent/ops/scripts/deploy-transparent-shard.sh '${{ inputs.mode }}'
 
       - name: Preserve deployment decisions and timing
         if: always()

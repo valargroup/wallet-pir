@@ -43,9 +43,9 @@ jobs:
       - run: cargo fmt --all --check
       - name: Test simulation report helpers
         run: |
-          node --test tools/transparent-loadtest/tests/apm.test.cjs
-          python3 tools/transparent-loadtest/tests/test_open_report.py
-          python3 tools/transparent-loadtest/tests/test_compare.py
+          node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
+          python3 transparent/tools/transparent-loadtest/tests/test_open_report.py
+          python3 transparent/tools/transparent-loadtest/tests/test_compare.py
       - run: >-
           cargo clippy --all-targets --all-features
           -p transparent-events -p transparent-filter -p transparent-shard
@@ -96,35 +96,37 @@ jobs:
       - name: Check ops contracts
         run: ops/scripts/check-jq-contracts.sh
       - name: Test Enhance capacity and qualification gates
-        run: python3 -m unittest discover -s ops/tests -p 'test_enhance_*.py'
+        run: |
+          python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
+          python3 -m unittest discover -s ops/tests -p 'test_*.py'
       - name: Test continuous publication fleet failures
-        run: python3 ops/tests/test_transparent_publication.py
+        run: python3 transparent/ops/tests/test_transparent_publication.py
       - name: Validate example inventory
         env:
-          ENHANCE_COORDINATOR_HOST: coordinator.example.net
-          ENHANCE_DEPLOY_USER: deploy
+          WALLET_PIR_COORDINATOR_HOST: coordinator.example.net
+          WALLET_PIR_DEPLOY_USER: deploy
           ENHANCE_PUBLIC_URL: https://enhance.example.net
           ENHANCE_WORKERS_JSON: >-
             [{"name":"shard-group-01","replicas":[{"name":"worker-01a","ssh_host":"worker-01a.example.net","service_url":"http://10.0.0.2:8091"},{"name":"worker-01b","ssh_host":"worker-01b.example.net","service_url":"http://10.0.0.3:8091"}]}]
-          TRANSPARENT_FILTER_SERVICE_FILE: ops/infra/digitalocean/production/deploy/transparent-filter-server.service
-        run: ops/scripts/deploy-enhance-pir.sh validate
+          TRANSPARENT_FILTER_SERVICE_FILE: transparent/ops/deploy/transparent-filter-server.service
+        run: enhance/ops/scripts/deploy-enhance-pir.sh validate
       # A shard set the deploy would refuse: the map names two shards and only
       # one directory is present. `validate` is offline, so it exercises the
       # input and set checks without a host.
       - name: Validate transparent filter inputs
         env:
           TRANSPARENT_FILTER_HOST: coordinator.example.net
-          TRANSPARENT_DEPLOY_USER: deploy
+          WALLET_PIR_DEPLOY_USER: deploy
           TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-          TRANSPARENT_ARTIFACT_DIR: ops/infra/digitalocean/production/deploy
+          TRANSPARENT_ARTIFACT_DIR: transparent/ops/deploy
           TRANSPARENT_FILTER_SHARD_DIR: /srv/zakura/transparent-shards-v7
           ENHANCE_PUBLIC_URL: https://enhance-pir.example.net
-        run: ops/scripts/deploy-transparent-filter.sh validate
+        run: transparent/ops/scripts/deploy-transparent-filter.sh validate
 
       - name: Validate transparent shard inputs
         env:
           TRANSPARENT_WORKER_HOST: transparent-worker-01.example.net
-          TRANSPARENT_DEPLOY_USER: deploy
+          WALLET_PIR_DEPLOY_USER: deploy
           # Quoted, and hex containing letters: an unquoted run of digits is
           # read as the integer 0 and the validator rightly rejects it.
           TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
@@ -136,10 +138,10 @@ jobs:
           shard_set="$RUNNER_TEMP/shard-set"
           mkdir -p "$shard_set/aaa" "$shard_set/bbb"
           printf '%s\n' '{"shards":[{"shard_id":0,"manifest_digest":"aaa"},{"shard_id":1,"manifest_digest":"bbb"}]}' >"$shard_set/shards.json"
-          TRANSPARENT_SHARD_SOURCE="$shard_set" ops/scripts/deploy-transparent-shard.sh validate
+          TRANSPARENT_SHARD_SOURCE="$shard_set" transparent/ops/scripts/deploy-transparent-shard.sh validate
           # And the same set with a shard directory missing must be refused.
           rmdir "$shard_set/bbb"
-          if TRANSPARENT_SHARD_SOURCE="$shard_set" ops/scripts/deploy-transparent-shard.sh validate; then
+          if TRANSPARENT_SHARD_SOURCE="$shard_set" transparent/ops/scripts/deploy-transparent-shard.sh validate; then
             echo "an incomplete shard set was accepted" >&2
             exit 1
           fi
@@ -157,11 +159,11 @@ jobs:
           unit="$art/transparent-shard-server.service"
           export TRANSPARENT_ARTIFACT_DIR="$art" TRANSPARENT_SHARD_SOURCE="$shard_set"
 
-          cp ops/infra/digitalocean/production/deploy/transparent-shard-server.service "$unit"
-          ops/scripts/deploy-transparent-shard.sh validate
+          cp transparent/ops/deploy/transparent-shard-server.service "$unit"
+          transparent/ops/scripts/deploy-transparent-shard.sh validate
 
           refuses() {
-            if ops/scripts/deploy-transparent-shard.sh validate >/dev/null 2>&1; then
+            if transparent/ops/scripts/deploy-transparent-shard.sh validate >/dev/null 2>&1; then
               echo "a malformed unit was accepted: $1" >&2
               exit 1
             fi

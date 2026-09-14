@@ -4,7 +4,7 @@
 terraform {
   backend "s3" {
     # Spaces did not enforce conditional S3 lock writes in the rollout test.
-    # Every writer must hold /run/lock/enhance-production.lock on the coordinator.
+    # Every writer must hold /run/lock/wallet-pir-production.lock on the coordinator.
     use_lockfile                = false
     bucket                      = "enhance-pir-terraform"
     key                         = "production/terraform.tfstate"

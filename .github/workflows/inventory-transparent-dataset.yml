@@ -58,7 +58,7 @@ env:
 jobs:
   inventory:
     name: inventory transparent dataset
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     timeout-minutes: 120
     environment: production
     permissions:
@@ -177,9 +177,9 @@ jobs:
       - name: Inventory the retrieval worker
         env:
           WORKER: ${{ vars.TRANSPARENT_WORKER_HOST }}
-          USER_NAME: ${{ vars.ENHANCE_DEPLOY_USER }}
+          USER_NAME: ${{ vars.WALLET_PIR_DEPLOY_USER }}
           KNOWN_HOSTS: ${{ vars.TRANSPARENT_SSH_KNOWN_HOSTS }}
-          DEPLOY_SSH_KEY: ${{ secrets.ENHANCE_DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_KEY: ${{ secrets.WALLET_PIR_DEPLOY_SSH_KEY }}
           PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
           ENHANCE_URL: ${{ vars.ENHANCE_PUBLIC_URL }}
         run: |

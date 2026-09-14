@@ -78,7 +78,7 @@ concurrency:
 jobs:
   publish:
     name: publish ${{ inputs.output_dir }} through ${{ inputs.anchor_height }}
-    runs-on: [self-hosted, Linux, X64, enhance-pir-deploy]
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
     timeout-minutes: 720
     environment: production
     permissions:

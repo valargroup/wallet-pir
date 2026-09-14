@@ -1,9 +1,10 @@
 # Documentation
 
-- [Enhance PIR](enhance-pir/README.md): Ironwood protocol, architecture, deployment and qualification.
-- [Transparent PIR](transparent-pir/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
+- [Enhance PIR](../enhance/docs/README.md): Ironwood protocol, architecture, deployment and qualification.
+- [Transparent PIR](../transparent/docs/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
 - [Evidence](../evidence/README.md): retained measurements and their provenance.
 - [Repository cleanup](cleanup-2026-09-14.md): removed material, retained dependencies and historical source revision.
+- [Repository rename consumers](repository-rename-consumers.md): downstream URLs to update after the `wallet-pir` rename.
 
 `roman_notes.md` is preserved personal working material, including local edits.
 It is not a protocol specification or a source of deployment parameters; its

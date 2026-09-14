@@ -1,10 +1,10 @@
-# Enhance and transparent PIR
+# Wallet PIR
 
 This repository implements two private retrieval products for Zcash wallets:
 
-- **[Enhance PIR](docs/enhance-pir/README.md)** retrieves the encrypted Ironwood
+- **[Enhance PIR](enhance/docs/README.md)** retrieves the encrypted Ironwood
   output data needed to complete a note from its output position.
-- **[Transparent PIR](docs/transparent-pir/README.md)** combines public activity
+- **[Transparent PIR](transparent/docs/README.md)** combines public activity
   filters with private script-history recovery at a wallet-accepted chain anchor.
 
 Each product index links its protocol, architecture, deployment, dated status,
@@ -26,7 +26,7 @@ With the tested 32,768-row by 4,096-column configuration, each query uploads
 combined**. At the reported throughput, this corresponds to 5.60 MB/s upload and
 0.22 MB/s download, or 46.6 Mbit/s combined, excluding HTTP and TLS overhead.
 
-See the [measurement record](evidence/enhance/reported-performance/README.md)
+See the [measurement record](enhance/evidence/reported-performance/README.md)
 for provenance and limitations, and the
 [APM dashboard](https://enhance-pir.valargroup.dev/apm/) for live fleet performance.
 
@@ -34,12 +34,12 @@ for provenance and limitations, and the
 
 | Directory | Purpose |
 |---|---|
-| `pir/` | Protocol libraries, wallet clients and stores; retained Enhance spend compatibility types |
-| `server/` | Ingestion, publication, query services, block benchmark server and operational dashboard |
-| `tools/` | Load tests, regression and measurement harnesses, filter utilities and repository checks |
-| `ops/` | Deployment scripts, infrastructure, service configuration and operations tests |
-| `docs/` | Current product documentation and personal working notes |
-| `evidence/` | Curated dated measurements, acceptance records and reproducibility inputs |
+| `enhance/` | Enhance crates, services, tools, operations, documentation and evidence |
+| `transparent/` | Transparent crates, services, tools, operations, documentation and evidence |
+| `ops/` | Shared production infrastructure, coordinator configuration and deployment contracts |
+| `docs/` | Repository-wide indexes, migration records and personal working notes |
+| `evidence/` | Shared evidence policy, checksums and historical-path mappings |
+| `tools/` | Repository-wide documentation checks and their tests |
 | `demos/legacy-spendability/` | Preserved independent nullifier/witness workspace, excluded from root CI |
 
 See the [tooling index](tools/README.md) for development commands and the
@@ -54,14 +54,14 @@ cargo run --release -p enhance-pir --features cli --bin enhance-pir-cli -- --hel
 make transparent-sim-help
 ```
 
-Rust package and binary names are stable across the tooling reorganization.
+Rust package and binary names are stable across the repository reorganization.
 Full-shard cryptographic tests use release mode. The legacy demos remain
 independently buildable with `make demo-check`.
 
 ## Operations
 
-Use the [Enhance runbook](docs/enhance-pir/deployment.md) or
-[transparent runbook](docs/transparent-pir/deployment.md) for deployment.
+Use the [Enhance runbook](enhance/docs/deployment.md) or
+[transparent runbook](transparent/docs/deployment.md) for deployment.
 The [APM dashboard](https://enhance-pir.valargroup.dev/apm/) exposes observed
 Enhance fleet health and performance. Dated evidence describes only its recorded
 revision, workload and coverage; it does not establish present capacity.
