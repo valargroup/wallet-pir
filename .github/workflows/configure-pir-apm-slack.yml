@@ -1,0 +1,45 @@
+name: Configure PIR APM Slack alerts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wallet-pir-production
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    name: Configure and test production alerts
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Install webhook, restart sidecar, and send test alert
+        env:
+          PIR_APM_SLACK_WEBHOOK_URL: ${{ secrets.PIR_APM_SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          [[ "$PIR_APM_SLACK_WEBHOOK_URL" =~ ^https://[A-Za-z0-9./_-]+$ ]]
+          updated="$RUNNER_TEMP/pir-apm.env"
+          trap 'rm -f "$updated"' EXIT
+          sudo cat /etc/default/pir-apm |
+            awk '!/^PIR_APM_SLACK_WEBHOOK_URL=/' >"$updated"
+          printf 'PIR_APM_SLACK_WEBHOOK_URL=%s\n' "$PIR_APM_SLACK_WEBHOOK_URL" >>"$updated"
+          chmod 0600 "$updated"
+          sudo flock -n /run/lock/wallet-pir-production.lock bash -s -- "$updated" <<'SCRIPT'
+          set -euo pipefail
+          updated="$1"
+          test -x /usr/local/bin/pir-apm
+          install -m 0600 -o root -g root "$updated" /etc/default/pir-apm
+          systemctl restart pir-apm
+          systemctl is-active --quiet pir-apm
+          set -a
+          source /etc/default/pir-apm
+          set +a
+          PIR_APM_ENVIRONMENT=production /usr/local/bin/pir-apm --send-test-alert
+          curl --fail --silent --show-error --max-time 10 \
+            http://127.0.0.1:3002/healthz >/dev/null
+          SCRIPT

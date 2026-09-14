@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
@@ -15,8 +19,8 @@ jobs:
   # The deploy gate. deploy-transparent-shard.yml and deploy-transparent-
   # filter.yml refuse a ref without a successful run of this workflow, so it
   # is kept to what those deploys ship: the transparent crates, linted and
-  # tested in two parallel jobs. The whole workspace, Enhance and the development
-  # tools included, runs in ci-full.yml, which the Enhance deploy gates on.
+  # tested in two parallel jobs. Enhance runs independently in ci-full.yml,
+  # which the Enhance deploy gates on.
   transparent-lint:
     name: Transparent lint
     runs-on: ubuntu-latest
@@ -51,6 +55,7 @@ jobs:
           -p transparent-events -p transparent-filter -p transparent-shard
           -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
           -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
+          -p transparent-measure -p transparent-regression
           -- -D warnings
 
   transparent-test:
@@ -78,6 +83,7 @@ jobs:
           -p transparent-events -p transparent-filter -p transparent-shard
           -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
           -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
+          -p transparent-measure -p transparent-regression
 
   validate-ops:
     name: Validate Enhance operations
