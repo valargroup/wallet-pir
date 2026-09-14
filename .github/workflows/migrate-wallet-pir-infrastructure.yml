@@ -1,0 +1,107 @@
+name: Migrate Wallet PIR infrastructure names
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply the validated rename-only Terraform plan
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wallet-pir-infrastructure-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: ${{ inputs.apply && 'Apply' || 'Plan' }} production rename
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Plan or apply under the production locks
+        env:
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          sudo flock -n /run/lock/enhance-production.lock \
+            flock -n /run/lock/wallet-pir-production.lock \
+            systemd-run --quiet --wait --pipe --collect \
+              --property=UMask=0077 \
+              --property=LoadCredentialEncrypted=runtime:/etc/credstore.encrypted/enhance-pir-runtime \
+              /usr/bin/python3 /opt/enhance-pir/ops/enhance-runtime.py \
+              bash -s -- "$APPLY" "$GITHUB_WORKSPACE" <<'SCRIPT'
+          set -euo pipefail
+          apply="$1"
+          checkout="$2"
+          work="$(mktemp -d /tmp/wallet-pir-migration.XXXXXX)"
+          trap 'rm -rf "$work"' EXIT
+          cp -a "$checkout/ops/infra/digitalocean/production/." "$work/"
+          cp /etc/enhance-pir/production.tfvars "$work/production.tfvars"
+          sed -Ei \
+            -e 's/^([[:space:]]*)coordinator_dns_ipv4([[:space:]]*)=/\1wallet_pir_coordinator_dns_ipv4\2=/' \
+            -e 's/^([[:space:]]*)project_id([[:space:]]*)=/\1wallet_pir_project_id\2=/' \
+            -e 's/^([[:space:]]*)coordinator_size([[:space:]]*)=/\1wallet_pir_coordinator_size\2=/' \
+            -e 's/^([[:space:]]*)worker_size([[:space:]]*)=/\1enhance_worker_size\2=/' \
+            "$work/production.tfvars"
+
+          export TF_VAR_digitalocean_token="$DO_TOKEN_NEW_ORG"
+          export TF_VAR_cloudflare_api_token="$CF_API_TOKEN"
+          export AWS_ACCESS_KEY_ID="$ENHANCE_TF_STATE_ACCESS_KEY"
+          export AWS_SECRET_ACCESS_KEY="$ENHANCE_TF_STATE_SECRET_KEY"
+          export AWS_EC2_METADATA_DISABLED=true
+          terraform -chdir="$work" init -input=false -reconfigure
+          backup="/tmp/wallet-pir-production-state-backup-$(date -u +%Y%m%dT%H%M%SZ).tfstate"
+          terraform -chdir="$work" state pull >"$backup"
+          test -s "$backup"
+          if [[ -f /srv/enhance-pir/autoscale/state.json ]]; then
+            count="$(jq -er '.desired_groups' /srv/enhance-pir/autoscale/state.json)"
+          else
+            count="$(terraform -chdir="$work" output -json worker_groups | jq length)"
+          fi
+          [[ "$count" =~ ^[1-4]$ ]]
+          plan="$work/wallet-pir-rename.tfplan"
+          terraform -chdir="$work" plan -input=false -lock-timeout=60s \
+            -var-file="$work/production.tfvars" -var="enhance_group_count=$count" -out="$plan"
+          terraform -chdir="$work" show -json "$plan" >"$work/plan.json"
+          python3 - "$work/plan.json" <<'PY'
+          import json
+          import sys
+
+          allowed_updates = {
+              'digitalocean_vpc.wallet',
+              'digitalocean_tag.coordinator',
+              'digitalocean_droplet.coordinator',
+              'digitalocean_project_resources.wallet',
+          }
+          changes = json.load(open(sys.argv[1]))['resource_changes']
+          rejected = []
+          for change in changes:
+              address = change['address']
+              actions = change['change']['actions']
+              if actions in (['no-op'], ['read']):
+                  continue
+              if address == 'digitalocean_tag.coordinator' and set(actions) == {'create', 'delete'}:
+                  continue
+              if actions == ['update'] and address in allowed_updates:
+                  continue
+              rejected.append((address, actions))
+          if rejected:
+              for address, actions in rejected:
+                  print(f'rejected Terraform change: {address}: {actions}', file=sys.stderr)
+              raise SystemExit(1)
+          PY
+          terraform -chdir="$work" show -no-color "$plan"
+          printf 'Remote state backup: %s\n' "$backup"
+          if [[ "$apply" == true ]]; then
+            terraform -chdir="$work" apply -input=false "$plan"
+          fi
+          SCRIPT
