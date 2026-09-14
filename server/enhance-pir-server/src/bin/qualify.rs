@@ -44,9 +44,11 @@ fn record(position: u64) -> EnhanceRecord {
     })
 }
 
-async fn query(state: &CoordinatorState, position: u64) -> Result<(), String> {
-    let session = QuerySession::from_session(state.session().ok_or("no session")?)
-        .map_err(|e| e.to_string())?;
+async fn query(
+    state: &CoordinatorState,
+    session: &QuerySession,
+    position: u64,
+) -> Result<(), String> {
     let (query, slot) = session
         .prepare_position(position)
         .map_err(|e| e.to_string())?;
@@ -103,7 +105,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state
         .publish_from_store(&store, height, format!("{height:064x}"))
         .await?;
+    let cold_prepare_seconds = started.elapsed().as_secs_f64();
     let serving_started = Instant::now();
+    let mut retained = std::collections::VecDeque::from([(
+        QuerySession::from_session(state.session().ok_or("no session")?)?,
+        count,
+    )]);
+    let mut max_publication_seconds = 0.0f64;
     let mut publications = 1;
     let mut queries = 0u64;
     let mut durations = Vec::new();
@@ -112,9 +120,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interval = Duration::from_secs((cli.seconds / cli.min_publications.max(1)).max(1));
     while serving_started.elapsed().as_secs() < cli.seconds || publications < cli.min_publications {
         let before = Instant::now();
-        let a = queries.wrapping_mul(7919) % position_count;
-        let b = position_count - 1;
-        let (first, last) = tokio::join!(query(&state, a), query(&state, b));
+        let a = if queries % 4 == 0 {
+            position_count - 1
+        } else {
+            queries.wrapping_mul(7919) % position_count
+        };
+        let (old_session, old_count) = retained.front().ok_or("no retained session")?;
+        let (current_session, _) = retained.back().ok_or("no current session")?;
+        let (first, last) = tokio::join!(
+            query(&state, current_session, a),
+            query(&state, old_session, old_count - 1)
+        );
         first?;
         last?;
         queries += 2;
@@ -125,10 +141,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             height += 1;
             store.append_block(height, format!("{height:064x}"), &[record(position_count)])?;
             position_count += 1;
+            let publication_started = Instant::now();
             state
                 .publish_from_store(&store, height, format!("{height:064x}"))
                 .await?;
+            let publication_seconds = publication_started.elapsed().as_secs_f64();
+            max_publication_seconds = max_publication_seconds.max(publication_seconds);
+            retained.push_back((
+                QuerySession::from_session(state.session().ok_or("no session")?)?,
+                position_count,
+            ));
+            while retained.len() > enhance_pir_server::worker::RETAINED_GENERATIONS {
+                retained.pop_front();
+            }
             publications += 1;
+            println!(
+                "{}",
+                serde_json::json!({"event": "publication", "publications": publications,
+                "queries": queries, "serving_seconds": serving_started.elapsed().as_secs_f64(),
+                "publication_seconds": publication_seconds})
+            );
             last_publish = Instant::now();
         }
     }
@@ -140,7 +172,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = serde_json::json!({"passed": p99 <= 5.0, "shards": cli.shards, "queries": queries,
         "mismatches": 0, "publications": publications, "seconds": started.elapsed().as_secs_f64(),
         "serving_seconds": serving_started.elapsed().as_secs_f64(),
-        "paired_client_p99_seconds": p99, "scope": "remote exact-answer fixture; memory, failover and online-append gates require separate evidence"});
+        "paired_client_p99_seconds": p99, "cold_prepare_seconds": cold_prepare_seconds,
+        "max_publication_seconds": max_publication_seconds, "retained_session_queries": true, "scope": "remote exact-answer fixture; memory, failover and online-append gates require separate evidence"});
     std::fs::write(&cli.output, serde_json::to_vec_pretty(&report)?)?;
     if p99 > 5.0 {
         return Err("qualification p99 exceeded five seconds".into());

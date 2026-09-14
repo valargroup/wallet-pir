@@ -71,8 +71,8 @@ candidate so failed publication cannot evict a still-published generation.
      --output /srv/enhance-pir/qualification/run-001.json
    ```
 
-   This verifies exact answers with two concurrent query clients and changing
-   frontier data. It does **not** by itself certify memory, failover, online
+   This verifies exact answers with two concurrent query clients, retained
+   sessions and changing frontier data, and records publication duration. It does **not** by itself certify memory, failover, online
    activation or publication lag. Collect per-worker `memory.current`,
    `memory.peak`, `memory.events`, `memory.swap.current`, swap I/O, RSS,
    systemd restart counts and CPU during the run. Include cold/warm starts,
@@ -203,3 +203,15 @@ online-topology integration test verifies standby append, retained encrypted
 queries through repeatedly rejected candidates, and peer failover. Terraform
 format/validate is also required. These checks do not replace the c-4 hardware
 qualification or establish production deployment.
+
+## Supervised hardware evidence
+
+`ops/scripts/enhance-qualification.py` runs the six-hour/300-publication fixture
+on an isolated pair, samples each worker's cgroup memory and swap I/O every five
+seconds, and stops/restarts one replica for a controlled 90-second outage. Run
+it on the coordinator with the checksummed candidate artifact directory, the
+two new private addresses, a temporary deployment key and pinned known-hosts.
+Its `summary.json` evaluates memory, exact answers and failover; it is not the
+combined deployment receipt. Real online-expansion and production publication
+lag still require separate evidence. The raw hardware samples and publication
+progress remain in the run directory even if the fixture fails.

@@ -27,7 +27,7 @@ check: check-ops check-docs check-reports
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
 check-ops:
-	python3 -m unittest discover -s ops/tests -p 'test_enhance_autoscale.py'
+	python3 -m unittest discover -s ops/tests -p 'test_enhance_*.py'
 	ops/scripts/check-jq-contracts.sh
 	python3 ops/tests/test_transparent_parents.py
 	python3 ops/tests/test_transparent_fleet.py

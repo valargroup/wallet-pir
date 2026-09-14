@@ -82,6 +82,7 @@ jobs:
           cp ops/infra/digitalocean/production/deploy/Caddyfile artifact/
           cp ops/scripts/enhance-autoscale.py artifact/
           cp ops/scripts/enhance-terraform.sh artifact/
+          cp ops/scripts/enhance-qualification.py artifact/
           cp ops/infra/digitalocean/production/deploy/enhance-autoscale.service artifact/
           cp ops/infra/digitalocean/production/deploy/enhance-autoscale.timer artifact/
           cp ops/infra/digitalocean/production/deploy/autoscale.example.json artifact/

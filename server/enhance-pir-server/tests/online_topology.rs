@@ -33,6 +33,10 @@ async fn fetch(state: &CoordinatorState, session: &QuerySession, position: u64) 
 
 #[tokio::test]
 async fn online_append_and_aborted_candidates_preserve_retained_queries() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .try_init();
     let directory = tempfile::tempdir().unwrap();
     let mut servers = Vec::new();
     let mut groups = Vec::new();
@@ -134,6 +138,36 @@ async fn online_append_and_aborted_candidates_preserve_retained_queries() {
     // Losing one original replica must not affect the generation's query route.
     servers[0].abort();
     assert_eq!(fetch(&state, &old, 0).await, record(1));
+    // The rejection case above has its own retained window. Release it before
+    // the independent full-range case so CI need not host both working sets.
+    // Full-capacity retention under load belongs to the c-4 qualification run.
+    drop(old);
+    drop(state);
+    for server in servers.drain(..) {
+        server.abort();
+        let _ = server.await;
+    }
+    for (group_index, group) in groups.iter().enumerate() {
+        for (replica_index, replica) in group.replicas.iter().enumerate() {
+            if group_index == 0 && replica_index == 0 {
+                continue; // Keep the original peer offline for this case too.
+            }
+            let worker = WorkerState::new(directory.path().join(&replica.name)).unwrap();
+            let listener =
+                tokio::net::TcpListener::bind(replica.url.strip_prefix("http://").unwrap())
+                    .await
+                    .unwrap();
+            servers.push(tokio::spawn(async move {
+                axum::serve(listener, router(worker)).await.unwrap();
+            }));
+        }
+    }
+    let state = CoordinatorState::new(vec![TableSetup {
+        table: DatabaseId::Enhance,
+        groups: groups.iter().map(Group::target).collect(),
+    }])
+    .unwrap()
+    .with_topology(topology);
     // Cross the first group boundary and the power-of-two query-domain
     // boundary together. The newly used group must contribute its partial,
     // while a session opened before the transition retains its original domain.
