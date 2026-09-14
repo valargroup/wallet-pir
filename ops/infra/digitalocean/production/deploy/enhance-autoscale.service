@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=oneshot
 User=root
 UMask=0077
-# The host's narrowly scoped Infisical machine identity must be configured first.
-ExecStart=/usr/local/bin/infisical run --env=prod --projectId=40862c6d-a089-4355-b405-0477be0ee3b1 -- /usr/bin/python3 /opt/enhance-pir/ops/enhance-autoscale.py --config /etc/enhance-pir/autoscale.json tick
+LoadCredentialEncrypted=runtime:/etc/credstore.encrypted/enhance-pir-runtime
+ExecStart=/usr/bin/python3 /opt/enhance-pir/ops/enhance-runtime.py /usr/bin/python3 /opt/enhance-pir/ops/enhance-autoscale.py --config /etc/enhance-pir/autoscale.json tick
 TimeoutStartSec=50min
 Nice=10
 Environment=TF_IN_AUTOMATION=1

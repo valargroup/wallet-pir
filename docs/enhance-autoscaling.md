@@ -19,10 +19,9 @@ publication took 8.2 seconds. This preliminary run does not qualify another
 revision or replace the six-hour qualification, online expansion rehearsal,
 or 24-hour production observation.
 
-The autoscaler is disabled. Its narrowly scoped Infisical machine identity is
-pending: the current Infisical plan rejected custom-role creation. Resolve
-that access arrangement before enabling unattended infrastructure operations;
-do not grant broad access to unrelated production secrets as a workaround.
+The autoscaler is disabled. Its runtime credentials are delivered through
+systemd encrypted credentials; no Infisical custom role is required. Infisical
+remains the source of truth for rotation and recovery.
 
 Each ordered group owns 16 consecutive 8,192-row shards: 1,179,648 Ironwood
 positions, two identical replicas, $168/month worker compute at the verified
@@ -119,20 +118,28 @@ candidate so failed publication cannot evict a still-published generation.
 
 The normal deployment installs the controller, systemd service/timer and a
 disabled example config. It does not enable the timer or overwrite existing
-operator configuration. Install Terraform, Python 3, OpenSSH and Infisical on
-the coordinator before starting observation mode.
+operator configuration. Install Terraform, Python 3, OpenSSH and systemd with encrypted credential
+support on the coordinator before starting observation mode.
 
 Configure `/etc/enhance-pir/autoscale.json` from the supplied example. The
 Terraform directory must contain the initialized locked remote backend and
 complete current production inputs; tfvars must not contain credentials.
-Give the host a narrowly scoped Infisical machine identity in the correct
-Valargroup production project. The service runs through Infisical. Configure
+Install the six required production secrets as a JSON object encrypted with
+`systemd-creds encrypt --name=runtime - /etc/credstore.encrypted/enhance-pir-runtime`.
+Supply the JSON over stdin directly from the authorized secret source, never a
+checked-in file or terminal output. Keep the encrypted file root-owned mode
+0600 in a root-only directory. The host encryption key stays on the coordinator;
+recover or rotate by fetching the authoritative secrets and re-encrypting them.
+`LoadCredentialEncrypted` exposes the decrypted credential only to the service,
+and `enhance-runtime.py` injects an exact allowlist of six environment keys.
+This arrangement replaces the previously attempted custom Infisical role.
+Configure
 `runtime_env_aliases` to map existing project key names to Terraform/Spaces
 environment variables; these aliases contain names only. The notifier consumes
 `PIR_APM_SLACK_WEBHOOK_URL`, using the existing PIR destination. Do not copy
 secrets between projects or print secret values.
 
-Inject `ENHANCE_DEPLOY_SSH_KEY` through Infisical; the controller writes it to a
+Include `ENHANCE_DEPLOY_SSH_KEY` in the encrypted runtime credential; the controller writes it to a
 0600 temporary file for SSH and removes it on exit. The configured key path is
 a fallback for an existing operator-managed key. Set a root-private known-hosts file. The
 controller checks new Droplet IDs, c-4 size, region and VPC IP against the DO API,
@@ -158,7 +165,9 @@ python3 /opt/enhance-pir/ops/enhance-autoscale.py --config /etc/enhance-pir/auto
 python3 /opt/enhance-pir/ops/enhance-autoscale.py --config /etc/enhance-pir/autoscale.json plan
 ```
 
-Run credential-dependent commands through the configured Infisical identity.
+Run credential-dependent manual Terraform operations through
+`/opt/enhance-pir/ops/enhance-terraform.sh`; it holds the common lock and creates
+a transient systemd service with the same encrypted credential.
 The `plan` command obtains the persisted desired count, holds the common lock,
 and suppresses Terraform output to avoid leaking sensitive values. Do not run
 a bare apply with the default group count after automatic expansion.

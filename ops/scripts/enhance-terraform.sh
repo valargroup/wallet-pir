@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Run on the coordinator with its Infisical machine identity configured.
+# Run on the coordinator using its encrypted systemd runtime credential.
 set -euo pipefail
+umask 077
 if [[ ! -d /opt/enhance-pir/infra/production ]]; then
   echo "Run this wrapper on the Enhance coordinator." >&2
   exit 1
 fi
-# These variables expand in the child shell after Infisical injection.
+# These variables expand after runtime credential injection.
 # shellcheck disable=SC2016
 exec flock -n /run/lock/enhance-production.lock \
-  infisical run --env=prod --projectId=40862c6d-a089-4355-b405-0477be0ee3b1 -- \
+  systemd-run --quiet --wait --pipe --collect --working-directory="$PWD" \
+    --property=UMask=0077 \
+    --property=LoadCredentialEncrypted=runtime:/etc/credstore.encrypted/enhance-pir-runtime \
+    /usr/bin/python3 /opt/enhance-pir/ops/enhance-runtime.py \
   bash -c '
     export TF_VAR_digitalocean_token="$DO_TOKEN_NEW_ORG"
     export TF_VAR_cloudflare_api_token="$CF_API_TOKEN"
