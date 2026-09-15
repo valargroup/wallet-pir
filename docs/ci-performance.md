@@ -63,9 +63,8 @@ Fast runners execute same-repository PR code and have no production access or
 access to the build user's release caches or runner credentials. Fork PRs always use disposable
 hosted runners. Full CI on PRs also uses hosted runners; only main builds use the
 trusted persistent build pool. The fast service has CPU/I/O weight 1000 and a 6-GiB memory ceiling; the build
-service has weight 100, nice level 10 and a 9-GiB ceiling. Its 6-GiB
-`MemoryHigh` threshold reclaims compiler file cache before service tests reach
-their memory admission threshold (90% of the hard limit). Both limit Cargo to four
+service has weight 100, nice level 10 and a 9-GiB ceiling. Its 8-GiB
+`MemoryHigh` threshold leaves room for the retained-snapshot integration tests. Both limit Cargo to four
 build processes. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes full-CI jobs. Enhance and Transparent share
@@ -73,7 +72,11 @@ its `full-test` and `full-lint` lanes so common dependencies are compiled once
 per profile instead of once per product. Full tests run two test cases at a time
 (`RUST_TEST_THREADS=2`): the simulation fixtures each start multithreaded services,
 and eight simultaneous fixtures can trigger memory admission overloads inside
-the build service’s 9-GiB limit. Each test retains its internal concurrency.
+the build service’s 9-GiB limit. Each test retains its internal concurrency. `tools/ci/full-test.sh` compiles
+the suite first, then asks Linux to discard clean file-cache pages for Cargo
+outputs before running tests. Build artifacts remain on disk. This prevents
+compiler cache from consuming the memory headroom used by service admission
+checks without throttling the live integration fixtures.
 
 Bootstrap scripts: `tools/ci/bootstrap-runner.sh` installs tools and creates the
 users; `tools/ci/register-runners.py` accepts short-lived GitHub registration

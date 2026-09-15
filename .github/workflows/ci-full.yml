@@ -71,7 +71,7 @@ jobs:
       # not the fat-LTO single-codegen-unit link the deploy profile pays for,
       # which on a two-vCPU runner is most of the wall time.
       - run: >-
-          cargo test --locked --profile release-fast
+          tools/ci/full-test.sh --locked --profile release-fast
           -p transparent-events -p transparent-filter -p transparent-shard
           -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
           -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
@@ -211,7 +211,7 @@ jobs:
         with:
           lane: full-test
       - run: >-
-          cargo test --locked --profile release-fast
+          tools/ci/full-test.sh --locked --profile release-fast
           -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server
           -p pir-apm -p transparent-spend-pir
 

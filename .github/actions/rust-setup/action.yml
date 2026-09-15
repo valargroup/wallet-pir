@@ -38,6 +38,7 @@ runs:
         target="$HOME/.cache/wallet-pir/$RUNNER_NAME/$LANE/$fingerprint"
         mkdir -p "$target"
         echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
+        echo "WALLET_PIR_BUILD_CACHE_ROOT=$HOME/.cache/wallet-pir/$RUNNER_NAME" >> "$GITHUB_ENV"
         echo 'RUSTUP_TOOLCHAIN=1.91.0' >> "$GITHUB_ENV"
     - name: Restore hosted Cargo cache
       if: runner.environment != 'self-hosted'

@@ -44,9 +44,7 @@ def main():
             f'CPUWeight={1000 if fast else 100}\n'
             f'IOWeight={1000 if fast else 100}\n'
             f'Nice={0 if fast else 10}\n'
-            # Reclaim compiler file cache before service tests reach their
-            # admission threshold (90% of the cgroup's hard limit).
-            f'MemoryHigh={5 if fast else 6}G\n'
+            f'MemoryHigh={5 if fast else 8}G\n'
             f'MemoryMax={6 if fast else 9}G\n'
             'MemorySwapMax=0\n'
             'UMask=0077\n'
