@@ -68,7 +68,10 @@ build processes. A build cannot occupy the fast service's queue, but both servic
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes full-CI jobs. Enhance and Transparent share
 its `full-test` and `full-lint` lanes so common dependencies are compiled once
-per profile instead of once per product.
+per profile instead of once per product. Full tests run two test cases at a time
+(`RUST_TEST_THREADS=2`): the simulation fixtures each start multithreaded services,
+and eight simultaneous fixtures can trigger memory admission overloads inside
+the build service’s 9-GiB limit. Each test retains its internal concurrency.
 
 Bootstrap scripts: `tools/ci/bootstrap-runner.sh` installs tools and creates the
 users; `tools/ci/register-runners.py` accepts short-lived GitHub registration
@@ -122,7 +125,8 @@ clock green; measure warm routine rollouts before changing readiness behavior.
 Fast and deployment workflows include queue/job/step timing summaries. The last
 reporting step captures elapsed time through that step; use completed-run reports
 to include final cleanup. Queue figures include dependencies and environment
-waiting, not just runner scheduling.
+waiting, not just runner scheduling. Reruns are measured from the current attempt
+start, not the original workflow creation; the report includes its attempt number.
 
 ```sh
 python3 tools/ci/timings.py --run <run-id>

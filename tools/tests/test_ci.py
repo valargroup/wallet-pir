@@ -125,5 +125,17 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(result['jobs'][0]['job_seconds'], 20)
 
 
+    def test_rerun_uses_current_attempt_instead_of_original_creation(self):
+        run = dict(head_sha=SHA, status='completed', run_attempt=2,
+                   created_at='2026-09-14T00:00:00Z', run_started_at='2026-09-15T00:38:14Z')
+        jobs = {'jobs': [dict(name='test', started_at='2026-09-15T00:38:17Z', completed_at='2026-09-15T00:38:40Z', steps=[])]}
+        with patch.object(timings, 'api', side_effect=[run, jobs]) as api:
+            result = timings.report('org/repo', 1)
+        self.assertEqual(result['attempt'], 2)
+        self.assertEqual(result['dispatch_seconds'], 26)
+        self.assertEqual(result['jobs'][0]['dispatch_to_job_start_seconds'], 3)
+        api.assert_called_with('repos/org/repo/actions/runs/1/attempts/2/jobs?per_page=100')
+
+
 if __name__ == '__main__':
     unittest.main()

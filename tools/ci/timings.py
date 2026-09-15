@@ -40,22 +40,26 @@ def percentile95(values):
 
 def report(repo, run_id):
     run = api(f'repos/{repo}/actions/runs/{run_id}')
-    jobs = api(f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
+    attempt = run.get('run_attempt', 1)
+    jobs = api(f'repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100')['jobs']
+    # GitHub preserves created_at across reruns; run_started_at is reset when
+    # a new attempt is requested, including its wait for a runner.
+    started = run['run_started_at'] if attempt > 1 else run['created_at']
     now = datetime.now(timezone.utc).isoformat()
-    result = {'run': run_id, 'sha': run['head_sha'], 'status': run['status'], 'jobs': []}
+    result = {'run': run_id, 'attempt': attempt, 'timing_start': started, 'sha': run['head_sha'], 'status': run['status'], 'jobs': []}
     for job in jobs:
         if not job.get('started_at'):
             continue
         result['jobs'].append({
             'name': job['name'], 'runner': job.get('runner_name'),
-            'dispatch_to_job_start_seconds': elapsed(run['created_at'], job['started_at']),
+            'dispatch_to_job_start_seconds': elapsed(started, job['started_at']),
             'job_seconds': elapsed(job['started_at'], job.get('completed_at') or now),
             'steps': [{'name': s['name'], 'seconds': elapsed(s['started_at'], s['completed_at']), 'conclusion': s['conclusion']}
                       for s in job['steps'] if s.get('started_at') and s.get('completed_at') and s['status'] == 'completed'],
         })
     # completed_at is more precise than run.updated_at, which can change later.
     ends = [j['completed_at'] for j in jobs if j.get('completed_at')]
-    result['dispatch_seconds'] = elapsed(run['created_at'], max(ends) if run['status'] == 'completed' and ends else now)
+    result['dispatch_seconds'] = elapsed(started, max(ends) if run['status'] == 'completed' and ends else now)
     result['complete'] = run['status'] == 'completed'
     return result
 

@@ -58,6 +58,8 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
+      # Bound concurrent fixtures; each simulation still exercises internal concurrency.
+      RUST_TEST_THREADS: "2"
       CXXFLAGS: -mpclmul
       CFLAGS: -mpclmul
     steps:
@@ -199,6 +201,8 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
+      # Bound concurrent fixtures; each simulation still exercises internal concurrency.
+      RUST_TEST_THREADS: "2"
       CXXFLAGS: -mpclmul
       CFLAGS: -mpclmul
     steps:
