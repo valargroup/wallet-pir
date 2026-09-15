@@ -44,27 +44,6 @@ variable "enhance_worker_size" {
   default     = "c-4"
 }
 
-# Transparent PIR shard workers. A separate fleet from the Enhance workers
-# above: different binary, different tag, different firewall, and sized on a
-# measurement of its own rather than on the Enhance worker's 2 GiB.
-variable "transparent_worker_count" {
-  description = "Transparent PIR shard workers to provision. One serves the whole pilot set."
-  type        = number
-  default     = 1
-}
-
-variable "transparent_worker_size" {
-  description = <<-EOT
-    Transparent shard worker size. A shard costs ~257 MiB resident (128.5 MiB
-    per table segment: a 32 MiB u16 database plus three 32 MiB pack matrices),
-    so the 21-shard pilot needs 5.3 GiB and 16 GB leaves it room to double.
-    Evaluation is memory-bandwidth-bound and saturates at two threads, so this
-    buys memory rather than cores, from the $5.25/GB line.
-  EOT
-  type        = string
-  default     = "s-4vcpu-16gb-amd"
-}
-
 variable "transparent_worker_deploy_public_key" {
   description = <<-EOT
     Public half of the fleet deploy key, installed for root at first boot.
@@ -158,7 +137,7 @@ variable "transparent_archive_memory_max" {
 }
 
 variable "transparent_router_count" {
-  description = "Routers in front of the fleet: zero or one. The public DNS record follows the router when it exists, else the pilot worker."
+  description = "Routers in front of the fleet: zero or one. The public DNS record follows the router."
   type        = number
   default     = 0
 
@@ -172,22 +151,6 @@ variable "transparent_router_size" {
   description = "Router size: a 4 GiB Basic host; it proxies and terminates TLS only."
   type        = string
   default     = "s-2vcpu-4gb"
-}
-
-variable "transparent_public_dns_target" {
-  description = <<-EOT
-    Which host transparent-pir.valargroup.dev points at: "worker" keeps the
-    pilot worker serving while the fleet is provisioned and staged; "router"
-    is the activation, switched by the operator after fleet-deploy has the
-    router answering.
-  EOT
-  type        = string
-  default     = "worker"
-
-  validation {
-    condition     = contains(["worker", "router"], var.transparent_public_dns_target)
-    error_message = "Must be \"worker\" or \"router\"."
-  }
 }
 
 variable "transparent_archive_build_slots" {

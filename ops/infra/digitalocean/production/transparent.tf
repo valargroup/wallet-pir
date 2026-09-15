@@ -7,7 +7,8 @@ resource "digitalocean_tag" "transparent_worker" {
 }
 
 resource "digitalocean_tag" "transparent_loadgen" {
-  name = "transparent-pir-loadgen"
+  count = var.transparent_loadgen_count > 0 ? 1 : 0
+  name  = "transparent-pir-loadgen"
 
   lifecycle {
     create_before_destroy = true
@@ -22,40 +23,9 @@ resource "digitalocean_tag" "transparent_router" {
   }
 }
 
-# Transparent PIR shard workers.
-#
-# Serves a published transparent shard set over the VPC. Deliberately not
-# reachable from the internet: the wallet-facing API is not designed yet, and
-# the firewall below opens its port to the coordinator tag alone.
-resource "digitalocean_droplet" "transparent_worker" {
-  count      = var.transparent_worker_count
-  name       = format("transparent-pir-worker-%02d", count.index + 1)
-  image      = var.image
-  region     = var.region
-  size       = var.transparent_worker_size
-  ssh_keys   = var.ssh_key_ids
-  vpc_uuid   = digitalocean_vpc.wallet.id
-  tags       = [digitalocean_tag.transparent_worker.name]
-  monitoring = true
-  backups    = var.enable_backups
-  ipv6       = true
-
-  user_data = templatefile("${path.module}/transparent/cloud-init-transparent-worker.yaml.tftpl", {
-    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
-    deploy_public_key = var.transparent_worker_deploy_public_key
-  })
-
-  # cloud-init runs once, at first boot. A plan that renders the template
-  # without the deploy key must not read as a reason to rebuild the host.
-  lifecycle {
-    ignore_changes = [user_data]
-  }
-}
-
-# The transparent two-tier fleet. Same VPC, tag and firewall as the pilot
-# worker above, so the deploy reaches every worker the same way; roles differ
-# only in size and in the roster the outputs render. Names carry the role so
-# an assignment and a `/v1/ready` body read the same as the droplet list.
+# The transparent two-tier fleet. Both tiers share the worker tag and firewall;
+# roles differ in size and in the roster the outputs render. Names carry the
+# role so an assignment and a `/v1/ready` body read the same as the droplet list.
 resource "digitalocean_droplet" "transparent_recent" {
   count      = var.transparent_recent_count
   name       = format("transparent-pir-recent-%02d", count.index + 1)
@@ -113,7 +83,7 @@ resource "digitalocean_droplet" "transparent_loadgen" {
   size       = var.transparent_loadgen_size
   ssh_keys   = var.ssh_key_ids
   vpc_uuid   = digitalocean_vpc.wallet.id
-  tags       = [digitalocean_tag.transparent_loadgen.name]
+  tags       = [digitalocean_tag.transparent_loadgen[0].name]
   monitoring = true
   backups    = false
   ipv6       = false
@@ -176,27 +146,16 @@ resource "digitalocean_firewall" "transparent_worker" {
     }
   }
 
-  # The shard retrieval port itself stays private. The only things that reach
-  # 8093 are the coordinator, for deploy verification, the router, which
-  # proxies wallets to it, and Caddy on the pilot host over loopback, which a
-  # firewall does not govern.
+  # The shard retrieval port itself stays private. The coordinator verifies
+  # deployments, the router proxies wallets, and optional load generators
+  # exercise the fleet from inside the VPC.
   inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8093"
-    source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name, digitalocean_tag.transparent_loadgen.name]
-  }
-
-  # Public TLS for transparent-pir.valargroup.dev. Port 80 is needed for the
-  # ACME HTTP challenge and the redirect to 443; Caddy serves nothing else on it.
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
+    protocol   = "tcp"
+    port_range = "8093"
+    source_tags = concat(
+      [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name],
+      digitalocean_tag.transparent_loadgen[*].name,
+    )
   }
 
   outbound_rule {
@@ -231,9 +190,12 @@ resource "digitalocean_firewall" "transparent_router" {
   # site without TLS, for the load harness and deploy verification from the
   # coordinator before the public name points here. VPC only.
   inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8080"
-    source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_loadgen.name]
+    protocol   = "tcp"
+    port_range = "8080"
+    source_tags = concat(
+      [digitalocean_tag.coordinator.name],
+      digitalocean_tag.transparent_loadgen[*].name,
+    )
   }
 
   dynamic "inbound_rule" {
@@ -273,8 +235,9 @@ resource "digitalocean_firewall" "transparent_router" {
 }
 
 resource "digitalocean_firewall" "transparent_loadgen" {
-  name = "transparent-pir-loadgen"
-  tags = [digitalocean_tag.transparent_loadgen.name]
+  count = var.transparent_loadgen_count > 0 ? 1 : 0
+  name  = "transparent-pir-loadgen"
+  tags  = [digitalocean_tag.transparent_loadgen[0].name]
 
   dynamic "inbound_rule" {
     for_each = toset(concat(var.allowed_ssh_cidrs, var.transparent_loadgen_extra_ssh_cidrs))
@@ -301,29 +264,18 @@ resource "digitalocean_firewall" "transparent_loadgen" {
   }
 }
 
-# Taken from the droplet attribute rather than a hand-maintained variable, so a
-# rebuilt worker cannot leave the record pointing at an address nothing answers
+# Taken from the router attribute rather than a hand-maintained variable, so a
+# rebuilt router cannot leave the record pointing at an address nothing answers
 # on. The Enhance record predates this and still carries a hardcoded IP.
-#
-# The record moves to the router only when the operator says so: a router
-# that exists but has no Caddyfile yet must not take the public name from
-# the pilot that is serving it.
 resource "cloudflare_dns_record" "transparent" {
-  count   = var.transparent_router_count + var.transparent_worker_count > 0 ? 1 : 0
+  count   = var.transparent_router_count
   zone_id = var.cloudflare_zone_id
   name    = local.transparent_public_hostname
   type    = "A"
-  content = var.transparent_public_dns_target == "router" && var.transparent_router_count > 0 ? digitalocean_droplet.transparent_router[0].ipv4_address : digitalocean_droplet.transparent_worker[0].ipv4_address
+  content = digitalocean_droplet.transparent_router[0].ipv4_address
   ttl     = 300
   # Unproxied, so Caddy can answer the ACME challenge directly.
   proxied = false
-  comment = var.transparent_public_dns_target == "router" && var.transparent_router_count > 0 ? "Transparent PIR router; managed by Terraform" : "Transparent PIR shard worker; managed by Terraform"
-
-  lifecycle {
-    precondition {
-      condition     = var.transparent_public_dns_target != "router" || var.transparent_router_count > 0
-      error_message = "transparent_public_dns_target is \"router\" but no router is provisioned."
-    }
-  }
+  comment = "Transparent PIR router; managed by Terraform"
 }
 

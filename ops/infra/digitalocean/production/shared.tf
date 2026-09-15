@@ -81,7 +81,6 @@ resource "digitalocean_project_resources" "wallet" {
     [digitalocean_droplet.coordinator.urn, digitalocean_volume.zakura.urn],
     [for worker in slice(digitalocean_droplet.enhance_worker, 0, 2) : worker.urn],
     [for worker in digitalocean_droplet.enhance_legacy_worker : worker.urn],
-    [for worker in digitalocean_droplet.transparent_worker : worker.urn],
     [for worker in digitalocean_droplet.transparent_recent : worker.urn],
     [for worker in digitalocean_droplet.transparent_archive : worker.urn],
     [for router in digitalocean_droplet.transparent_router : router.urn],

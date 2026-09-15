@@ -38,10 +38,6 @@ output "zakura_volume_id" {
   value = digitalocean_volume.zakura.id
 }
 
-output "transparent_worker_private_ipv4" {
-  value = [for worker in digitalocean_droplet.transparent_worker : worker.ipv4_address_private]
-}
-
 # The fleet roster in the shape `TRANSPARENT_FLEET_JSON` takes: one entry per
 # worker with the budgets its unit is rendered with and the upstream the router
 # proxies to. Set the repository variable from this output rather than by hand,
