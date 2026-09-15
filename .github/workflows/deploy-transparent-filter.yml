@@ -23,14 +23,6 @@ on:
         required: true
         default: /srv/zakura/transparent-shards-v7
         type: string
-      tested_locally:
-        description: >-
-          Skip the requirement for a successful CI run of the ref. Only when
-          `make check` passed for the ref on the operator's machine and CI is
-          unavailable; the ref must still be on main. Recorded in the run.
-        required: false
-        default: false
-        type: boolean
       mode:
         description: preflight stages and verifies without activating
         required: true
@@ -59,7 +51,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.ref }}
-          TESTED_LOCALLY: ${{ inputs.tested_locally }}
           SHARD_DIR: ${{ inputs.shard_dir }}
         run: |
           set -euo pipefail
@@ -78,12 +69,8 @@ jobs:
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/compare/main...${SHA}" | jq -er '.status')"
           [[ "$status" == "identical" || "$status" == "behind" ]] \
             || { echo "$SHA is not on main (compare status: $status)"; exit 1; }
-          if [[ "$TESTED_LOCALLY" == "true" ]]; then
-            echo "::warning::CI requirement skipped for $SHA: operator states make check passed locally"
-            exit 0
-          fi
           successful="$(curl --fail --silent --show-error "${api_headers[@]}" \
-            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=success&per_page=1" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci-full.yml/runs?head_sha=${SHA}&status=success&per_page=1" \
             | jq -er '.workflow_runs | length')"
           [[ "$successful" -ge 1 ]]
 
@@ -92,36 +79,26 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.91.0
-
-      - name: Build the filter service
+      - name: Locate qualified release artifact
+        id: release
         env:
-          # See the backfill workflow: the node's RocksDB needs PCLMUL once
-          # SSE4.2 is on, and x86-64-v3 turns on only the latter.
-          RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
-        run: |
-          set -euo pipefail
-          nice -n 10 cargo build --locked --release \
-            -p transparent-filter-server --bin transparent-filter-server
-
-      - name: Assemble checksummed artifact
-        run: |
-          set -euo pipefail
-          mkdir artifact
-          install -m 0755 target/release/transparent-filter-server artifact/
-          cp transparent/ops/deploy/transparent-filter-server.service artifact/
-          printf '%s\n' '${{ inputs.ref }}' >artifact/revision
-          (cd artifact && sha256sum ./* >SHA256SUMS)
-          cat artifact/SHA256SUMS
-
-      - uses: actions/upload-artifact@v4
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.ref }}
+        run: python3 tools/ci/release.py resolve --sha "$SHA" --kind transparent-filter
+      - name: Clear previous artifact download
+        run: rm -rf "$RUNNER_TEMP/qualified-transparent-filter"
+      - uses: actions/download-artifact@v4
         with:
           name: transparent-filter-${{ inputs.ref }}
-          path: artifact/
-          if-no-files-found: error
-          retention-days: 14
+          run-id: ${{ steps.release.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/qualified-transparent-filter
+      - name: Verify and unpack release artifact
+        env:
+          SHA: ${{ inputs.ref }}
+        run: >-
+          python3 tools/ci/release.py extract --sha "$SHA" --kind transparent-filter
+          --archive "$RUNNER_TEMP/qualified-transparent-filter/transparent-filter.tar.gz" --output artifact
 
       - name: Prepare ephemeral SSH material
         env:
@@ -155,3 +132,10 @@ jobs:
       - name: Remove SSH material
         if: always()
         run: rm -rf "$RUNNER_TEMP/filter-ssh"
+
+      - name: Report queue and stage timings
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"

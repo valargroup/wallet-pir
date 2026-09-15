@@ -10,3 +10,5 @@
 It is not a protocol specification or a source of deployment parameters; its
 historical paths may refer to the pre-cleanup revision. Follow the product
 indexes when implementing or operating a service.
+
+- [CI and deployment latency](ci-performance.md): fast/full gates, warm runners, prepared artifacts and timing evidence.

@@ -65,7 +65,7 @@ make it match the starting assumptions of this procedure.
    and the deployment public key. No private GitHub key is needed on workers.
    Verify VPC/firewall membership, included disk, swap and cgroup configuration.
 5. Build the tested main revision with the deployment workflow input
-   `artifact_only=true`; this uploads the checksummed binaries without deploying.
+   `artifact_only=true`; this fetches and verifies the checksummed full-CI binaries without deploying. Download the release bundle from the successful CI full run for isolated qualification.
    Qualify the new pair with that exact release intended for the coordinator.
    Do not aim the fixture command at a serving worker: it activates synthetic
    generations and changes that worker's assignment. Use a new local work dir:

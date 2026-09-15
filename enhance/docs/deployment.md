@@ -55,7 +55,7 @@ The workflow has three operating modes:
 
 | Inputs | Effect |
 |---|---|
-| `artifact_only=true` | Build and retain artifacts for qualification without deploying |
+| `artifact_only=true` | Fetch and verify the full-CI artifact without deploying |
 | `artifact_only=false`, `prepare_only=true` | Prepare the schema-7 journal alongside the active data |
 | Both false | Deploy and verify the release |
 

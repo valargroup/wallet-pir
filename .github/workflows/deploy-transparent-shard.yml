@@ -76,14 +76,6 @@ on:
         required: false
         default: ""
         type: string
-      tested_locally:
-        description: >-
-          Skip the requirement for a successful CI run of the ref. Only when
-          `make check` passed for the ref on the operator's machine and CI is
-          unavailable; the ref must still be on main. Recorded in the run.
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -106,7 +98,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.ref }}
-          TESTED_LOCALLY: ${{ inputs.tested_locally }}
         run: |
           set -euo pipefail
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -123,12 +114,8 @@ jobs:
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/compare/main...${SHA}" | jq -er '.status')"
           [[ "$status" == "identical" || "$status" == "behind" ]] \
             || { echo "$SHA is not on main (compare status: $status)"; exit 1; }
-          if [[ "$TESTED_LOCALLY" == "true" ]]; then
-            echo "::warning::CI requirement skipped for $SHA: operator states make check passed locally"
-            exit 0
-          fi
           successful="$(curl --fail --silent --show-error "${api_headers[@]}" \
-            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=success&per_page=1" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci-full.yml/runs?head_sha=${SHA}&status=success&per_page=1" \
             | jq -er '.workflow_runs | length')"
           [[ "$successful" -ge 1 ]]
 
@@ -137,33 +124,26 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.91.0
-
-      # Niced, because the runner is also the production coordinator and is
-      # already sharing this host with a long-running backfill.
-      - name: Build the worker binary and fleet tools
+      - name: Locate qualified release artifact
+        id: release
         env:
-          RUSTFLAGS: -C target-cpu=x86-64-v3
-        run: |
-          set -euo pipefail
-          nice -n 10 cargo build --locked --release \
-            -p transparent-shard-server --bin transparent-shard-server \
-            --bin shard-assign --bin shard-prune
-
-      - name: Assemble checksummed artifact
-        run: |
-          set -euo pipefail
-          mkdir artifact
-          install -m 0755 target/release/transparent-shard-server artifact/
-          install -m 0755 target/release/shard-assign artifact/
-          install -m 0755 target/release/shard-prune artifact/
-          cp transparent/ops/deploy/transparent-shard-server.service artifact/
-          cp transparent/ops/deploy/transparent-Caddyfile artifact/
-          printf '%s\n' '${{ inputs.ref }}' >artifact/revision
-          (cd artifact && rm -f SHA256SUMS && sha256sum ./* >SHA256SUMS)
-          cat artifact/SHA256SUMS
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.ref }}
+        run: python3 tools/ci/release.py resolve --sha "$SHA" --kind transparent-shard
+      - name: Clear previous artifact download
+        run: rm -rf "$RUNNER_TEMP/qualified-transparent-shard"
+      - uses: actions/download-artifact@v4
+        with:
+          name: transparent-shard-${{ inputs.ref }}
+          run-id: ${{ steps.release.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/qualified-transparent-shard
+      - name: Verify and unpack release artifact
+        env:
+          SHA: ${{ inputs.ref }}
+        run: >-
+          python3 tools/ci/release.py extract --sha "$SHA" --kind transparent-shard
+          --archive "$RUNNER_TEMP/qualified-transparent-shard/transparent-shard.tar.gz" --output artifact
 
       # The assignment is planned here, on the runner that holds the set, and
       # kept with the artifact: it is the durable record of which worker was
@@ -261,3 +241,10 @@ jobs:
       - name: Remove SSH material
         if: always()
         run: rm -rf "$RUNNER_TEMP/transparent-ssh"
+
+      - name: Report queue and stage timings
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"

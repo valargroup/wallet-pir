@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       artifact_only:
-        description: Build the tested release for isolated qualification without deploying
+        description: Fetch the qualified release for isolated verification without deploying
         required: false
         default: false
         type: boolean
@@ -63,47 +63,27 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.91.0
-          components: rustfmt
-      - name: Build release binaries
+      - name: Locate qualified release artifact
+        id: release
         env:
-          RUSTFLAGS: -C target-cpu=x86-64-v3
-          CFLAGS: -mpclmul
-          CXXFLAGS: -mpclmul
-        run: cargo build --locked --release -p enhance-pir-server -p enhance-pir -p pir-apm -p transparent-filter-server --bins --features enhance-pir/cli
-      - name: Assemble checksummed artifact
-        run: |
-          set -euo pipefail
-          mkdir artifact
-          install -m 0755 target/release/enhance-pir-server artifact/
-          install -m 0755 target/release/enhance-pir-worker artifact/
-          install -m 0755 target/release/enhance-pir-qualify artifact/
-          install -m 0755 target/release/enhance-pir-cli artifact/
-          install -m 0755 target/release/pir-apm artifact/
-          install -m 0755 target/release/transparent-filter-server artifact/
-          cp enhance/ops/deploy/enhance-pir-server.service artifact/
-          cp enhance/ops/deploy/enhance-pir-worker.service artifact/
-          cp enhance/ops/deploy/pir-apm.service artifact/
-          cp transparent/ops/deploy/transparent-filter-server.service artifact/
-          cp ops/deploy/coordinator/Caddyfile artifact/
-          cp enhance/ops/scripts/enhance-autoscale.py artifact/
-          cp ops/scripts/wallet-pir-terraform.sh artifact/
-          cp ops/scripts/wallet-pir-runtime.py artifact/
-          cp enhance/ops/scripts/enhance-qualification.py artifact/
-          cp enhance/ops/deploy/enhance-autoscale.service artifact/
-          cp enhance/ops/deploy/enhance-autoscale.timer artifact/
-          cp enhance/ops/deploy/autoscale.example.json artifact/
-          git ls-files -z ops/infra/digitalocean/production | tar --null -T - -czf artifact/wallet-pir-infra.tar.gz
-          printf '%s\n' '${{ inputs.ref }}' >artifact/revision
-          (cd artifact && sha256sum ./* >SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.ref }}
+        run: python3 tools/ci/release.py resolve --sha "$SHA" --kind enhance-pir
+      - name: Clear previous artifact download
+        run: rm -rf "$RUNNER_TEMP/qualified-enhance-pir"
+      - uses: actions/download-artifact@v4
         with:
           name: enhance-pir-${{ inputs.ref }}
-          path: artifact/
-          if-no-files-found: error
-          retention-days: 14
+          run-id: ${{ steps.release.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/qualified-enhance-pir
+      - name: Verify and unpack release artifact
+        env:
+          SHA: ${{ inputs.ref }}
+        run: >-
+          python3 tools/ci/release.py extract --sha "$SHA" --kind enhance-pir
+          --archive "$RUNNER_TEMP/qualified-enhance-pir/enhance-pir.tar.gz" --output artifact
+
       - name: Prepare ephemeral SSH material
         if: ${{ !inputs.artifact_only }}
         env:
@@ -156,3 +136,10 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/enhance-pir-ssh/key" "$RUNNER_TEMP/enhance-pir-ssh/known_hosts"
           rmdir "$RUNNER_TEMP/enhance-pir-ssh" 2>/dev/null || true
+
+      - name: Report queue and stage timings
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"

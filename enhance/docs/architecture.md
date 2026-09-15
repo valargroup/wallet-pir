@@ -46,7 +46,7 @@ names used by build and run commands, even when directory names differ.
 | `enhance/docs`, `enhance/evidence` | Current documentation and retained measurements |
 | `enhance/crates/transparent-spend-pir` | Retained outpoint-keyed spend types/client, not an active service |
 | `ops/infra/digitalocean/production`, `ops/deploy/coordinator` | Shared infrastructure, archive-node and ingress configuration |
-| `.github/workflows/deploy-enhance-pir.yml` | Tested-revision artifact build, preparation and deployment |
+| `.github/workflows/deploy-enhance-pir.yml` | Qualified-artifact download, preparation and deployment |
 
 The root Cargo workspace builds active products. `demos/legacy-spendability` is
 an independent preserved workspace, not an Enhance dependency or deployment.

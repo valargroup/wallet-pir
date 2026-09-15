@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Assemble, locate and verify exact-SHA release artifacts from full CI."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import urllib.request
+import tarfile
+
+ROOT = Path(__file__).resolve().parents[2]
+BINARIES = {
+    'enhance-pir': ['enhance-pir-server', 'enhance-pir-worker', 'enhance-pir-qualify', 'enhance-pir-cli', 'pir-apm', 'transparent-filter-server'],
+    'transparent-filter': ['transparent-filter-server'],
+    'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
+    'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
+}
+FILES = {
+    'enhance-pir': [
+        'enhance/ops/deploy/enhance-pir-server.service', 'enhance/ops/deploy/enhance-pir-worker.service',
+        'enhance/ops/deploy/pir-apm.service', 'transparent/ops/deploy/transparent-filter-server.service',
+        'ops/deploy/coordinator/Caddyfile', 'enhance/ops/scripts/enhance-autoscale.py',
+        'ops/scripts/wallet-pir-terraform.sh', 'ops/scripts/wallet-pir-runtime.py',
+        'enhance/ops/scripts/enhance-qualification.py', 'enhance/ops/deploy/enhance-autoscale.service',
+        'enhance/ops/deploy/enhance-autoscale.timer', 'enhance/ops/deploy/autoscale.example.json',
+    ],
+    'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
+    'transparent-shard': ['transparent/ops/deploy/transparent-shard-server.service', 'transparent/ops/deploy/transparent-Caddyfile'],
+    'transparent-publisher': [],
+}
+
+
+def check_sha(sha):
+    if not re.fullmatch('[0-9a-f]{40}', sha):
+        raise ValueError('release revision must be a full lowercase commit SHA')
+
+
+def api(path):
+    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+    if token:
+        request = urllib.request.Request(
+            os.environ.get('GITHUB_API_URL', 'https://api.github.com') + '/' + path,
+            headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
+                     'X-GitHub-Api-Version': '2022-11-28'})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    return json.loads(subprocess.check_output(['gh', 'api', path]))
+
+
+def qualified(run, sha):
+    return (run['head_sha'] == sha and run['head_branch'] == 'main'
+            and run['event'] in ('push', 'workflow_dispatch')
+            and run['status'] == 'completed' and run['conclusion'] == 'success'
+            and run['path'] == '.github/workflows/ci-full.yml')
+
+
+def resolve(sha, kind):
+    check_sha(sha)
+    repo = os.environ['GITHUB_REPOSITORY']
+    # Eligibility is independently checked by each deploy workflow. This is an
+    # additional provenance gate: a successful fast/PR run cannot supply binaries.
+    runs = api(f'repos/{repo}/actions/workflows/ci-full.yml/runs?head_sha={sha}&status=success&per_page=100')['workflow_runs']
+    for run in runs:
+        if not qualified(run, sha):
+            continue
+        artifacts = api(f'repos/{repo}/actions/runs/{run["id"]}/artifacts?per_page=100')['artifacts']
+        if any(a['name'] == f'{kind}-{sha}' and not a['expired'] for a in artifacts):
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+                out.write(f'run-id={run["id"]}\n')
+            return
+    raise ValueError(f'no qualified, unexpired {kind} artifact for {sha}; run CI full on main first')
+
+
+def assemble(sha, target, output):
+    check_sha(sha)
+    output.mkdir(parents=True, exist_ok=False)
+    for kind, binaries in BINARIES.items():
+        directory = output / kind
+        directory.mkdir()
+        for name in binaries:
+            shutil.copy2(target / 'release' / name, directory / name)
+            (directory / name).chmod(0o755)
+        for source in FILES[kind]:
+            shutil.copy2(ROOT / source, directory / Path(source).name)
+        if kind == 'enhance-pir':
+            paths = subprocess.check_output(['git', 'ls-files', '-z', 'ops/infra/digitalocean/production'], cwd=ROOT).decode().split('\0')
+            with tarfile.open(directory / 'wallet-pir-infra.tar.gz', 'w:gz') as archive:
+                for path in filter(None, paths):
+                    archive.add(ROOT / path, arcname=path)
+        (directory / 'revision').write_text(sha + '\n')
+        (directory / 'SHA256SUMS').write_text(''.join(
+            f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
+            for p in sorted(directory.iterdir())))
+        with tarfile.open(output / f'{kind}.tar.gz', 'w:gz') as archive:
+            for path in sorted(directory.iterdir()):
+                archive.add(path, arcname=path.name)
+
+
+def extract(archive_path, destination, sha, kind):
+    check_sha(sha)
+    # Flat regular files only; no archive-controlled paths, links or duplicate
+    # members. Preserve executability explicitly (Actions zip downloads do not).
+    with tarfile.open(archive_path, 'r:gz') as archive:
+        members = archive.getmembers()
+        names = [m.name for m in members]
+        if len(names) != len(set(names)) or any(not m.isfile() or Path(m.name).name != m.name or m.name in ('.', '..') for m in members):
+            raise ValueError('release archive must contain unique flat regular files')
+        payload = {m.name: archive.extractfile(m).read() for m in members}
+    required = set(BINARIES[kind]) | {Path(p).name for p in FILES[kind]} | {'revision', 'SHA256SUMS'}
+    if kind == 'enhance-pir':
+        required.add('wallet-pir-infra.tar.gz')
+    if set(payload) != required:
+        raise ValueError('release archive contents differ from the required artifact inventory')
+    if payload['revision'].decode().strip() != sha:
+        raise ValueError('release revision mismatch')
+    checksums = {}
+    for line in payload['SHA256SUMS'].decode().splitlines():
+        match = re.fullmatch(r'([0-9a-f]{64})  ([A-Za-z0-9_.-]+)', line)
+        if not match or match[2] in checksums:
+            raise ValueError('invalid or duplicate checksum entry')
+        checksums[match[2]] = match[1]
+    if set(checksums) != set(payload) - {'SHA256SUMS'}:
+        raise ValueError('checksum inventory mismatch')
+    for name, digest in checksums.items():
+        if hashlib.sha256(payload[name]).hexdigest() != digest:
+            raise ValueError(f'checksum mismatch: {name}')
+    destination.mkdir(parents=True, exist_ok=False)
+    for name, data in payload.items():
+        path = destination / name
+        path.write_bytes(data)
+        # Ops scripts are launched through their interpreters or installed by
+        # deployment; binaries must be directly executable on download.
+        path.chmod(0o755 if name in BINARIES[kind] or name.endswith(('.py', '.sh')) else 0o644)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['assemble', 'resolve', 'extract'])
+    parser.add_argument('--sha', required=True)
+    parser.add_argument('--kind', choices=BINARIES)
+    parser.add_argument('--target', type=Path, default=Path(os.environ.get('CARGO_TARGET_DIR', 'target')))
+    parser.add_argument('--output', type=Path, default=Path('artifact'))
+    parser.add_argument('--archive', type=Path)
+    args = parser.parse_args()
+    if args.command == 'assemble':
+        head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        if head != args.sha:
+            raise ValueError('cannot label a build with a different checkout revision')
+        assemble(args.sha, args.target, args.output)
+    elif args.command == 'resolve':
+        resolve(args.sha, args.kind)
+    else:
+        extract(args.archive, args.output, args.sha, args.kind)
+
+
+if __name__ == '__main__':
+    main()

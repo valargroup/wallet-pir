@@ -7,187 +7,58 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: fast-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
+  CFLAGS: -mpclmul
+  CXXFLAGS: -mpclmul
 
 jobs:
-  # The deploy gate. deploy-transparent-shard.yml and deploy-transparent-
-  # filter.yml refuse a ref without a successful run of this workflow, so it
-  # is kept to what those deploys ship: the transparent crates, linted and
-  # tested in two parallel jobs. Enhance runs independently in ci-full.yml,
-  # which the Enhance deploy gates on.
-  transparent-lint:
-    name: Transparent lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      # librocksdb-sys turns on SSE4.2 for its CRC32C code from the host's
-      # features and cc-rs never adds -mpclmul, so the intrinsic that path
-      # uses fails to compile without it. Same fix as the coordinator builds.
-      CXXFLAGS: -mpclmul
-      CFLAGS: -mpclmul
+  fast:
+    name: Fast checks
+    # This pool is separate from release builders and has no production access.
+    # Fork PRs always use disposable hosted runners.
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.WALLET_PIR_FAST_RUNNER || '"ubuntu-24.04"') }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          shared-key: transparent-lint
-      # transparent-filter-server links the node's RocksDB through
-      # librocksdb-sys, whose build generates bindings with libclang.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev protobuf-compiler
-      - run: cargo fmt --all --check
-      - name: Test simulation report helpers
-        run: |
-          node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
-          python3 transparent/tools/transparent-loadtest/tests/test_open_report.py
-          python3 transparent/tools/transparent-loadtest/tests/test_compare.py
-      - run: >-
-          cargo clippy --all-targets --all-features
-          -p transparent-events -p transparent-filter -p transparent-shard
-          -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
-          -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
-          -p transparent-measure -p transparent-regression
-          -- -D warnings
-
-  transparent-test:
-    name: Transparent tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      CXXFLAGS: -mpclmul
-      CFLAGS: -mpclmul
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.91.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          shared-key: transparent-test
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev protobuf-compiler
-      # release-fast: the full-shard cryptographic tests need optimized code,
-      # not the fat-LTO single-codegen-unit link the deploy profile pays for,
-      # which on a two-vCPU runner is most of the wall time.
-      - run: >-
-          cargo test --profile release-fast
-          -p transparent-events -p transparent-filter -p transparent-shard
-          -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
-          -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
-          -p transparent-measure -p transparent-regression
-
-  validate-ops:
-    name: Validate Enhance operations
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # Parses and lints every ops script, compiles every jq program the deploy
-      # scripts run, and evaluates the transparent ones against payloads
-      # `operator_payloads.rs` serialized from the server's own types. This
-      # replaces the bare shellcheck runs it subsumes, and covers what the
-      # `validate` invocations below cannot: they reach only the three programs
-      # that read shards.json, and neither of the two bugs that shipped on
-      # 2026-09-07 was in those three.
-      - name: Check documentation and development utilities
-        run: make check-docs check-tools
-      - name: Check ops contracts
-        run: ops/scripts/check-jq-contracts.sh
-      - name: Test Enhance capacity and qualification gates
-        run: |
-          python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
-          python3 -m unittest discover -s ops/tests -p 'test_*.py'
-      - name: Test continuous publication fleet failures
-        run: python3 transparent/ops/tests/test_transparent_publication.py
-      - name: Validate example inventory
+          fetch-depth: 1
+      - name: Fetch comparison revision
         env:
-          WALLET_PIR_COORDINATOR_HOST: coordinator.example.net
-          WALLET_PIR_DEPLOY_USER: deploy
-          ENHANCE_PUBLIC_URL: https://enhance.example.net
-          ENHANCE_WORKERS_JSON: >-
-            [{"name":"shard-group-01","replicas":[{"name":"worker-01a","ssh_host":"worker-01a.example.net","service_url":"http://10.0.0.2:8091"},{"name":"worker-01b","ssh_host":"worker-01b.example.net","service_url":"http://10.0.0.3:8091"}]}]
-          TRANSPARENT_FILTER_SERVICE_FILE: transparent/ops/deploy/transparent-filter-server.service
-        run: enhance/ops/scripts/deploy-enhance-pir.sh validate
-      # A shard set the deploy would refuse: the map names two shards and only
-      # one directory is present. `validate` is offline, so it exercises the
-      # input and set checks without a host.
-      - name: Validate transparent filter inputs
-        env:
-          TRANSPARENT_FILTER_HOST: coordinator.example.net
-          WALLET_PIR_DEPLOY_USER: deploy
-          TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-          TRANSPARENT_ARTIFACT_DIR: transparent/ops/deploy
-          TRANSPARENT_FILTER_SHARD_DIR: /srv/zakura/transparent-shards-v7
-          ENHANCE_PUBLIC_URL: https://enhance-pir.example.net
-        run: transparent/ops/scripts/deploy-transparent-filter.sh validate
-
-      - name: Validate transparent shard inputs
-        env:
-          TRANSPARENT_WORKER_HOST: transparent-worker-01.example.net
-          WALLET_PIR_DEPLOY_USER: deploy
-          # Quoted, and hex containing letters: an unquoted run of digits is
-          # read as the integer 0 and the validator rightly rejects it.
-          TRANSPARENT_RELEASE_SHA: "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-          TRANSPARENT_ARTIFACT_DIR: artifact
-          TRANSPARENT_SHARD_DIR: /srv/transparent-pir/sets
-          TRANSPARENT_PUBLIC_URL: https://transparent-pir.example.net
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -euo pipefail
-          shard_set="$RUNNER_TEMP/shard-set"
-          mkdir -p "$shard_set/aaa" "$shard_set/bbb"
-          printf '%s\n' '{"shards":[{"shard_id":0,"manifest_digest":"aaa"},{"shard_id":1,"manifest_digest":"bbb"}]}' >"$shard_set/shards.json"
-          TRANSPARENT_SHARD_SOURCE="$shard_set" transparent/ops/scripts/deploy-transparent-shard.sh validate
-          # And the same set with a shard directory missing must be refused.
-          rmdir "$shard_set/bbb"
-          if TRANSPARENT_SHARD_SOURCE="$shard_set" transparent/ops/scripts/deploy-transparent-shard.sh validate; then
-            echo "an incomplete shard set was accepted" >&2
-            exit 1
+          if [[ -n "$BASE" && "$BASE" != 0000000000000000000000000000000000000000 ]]; then
+            [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags --depth=1 origin "$BASE"
           fi
-          mkdir -p "$shard_set/bbb"
+          git config --local --unset-all "http.${GITHUB_SERVER_URL}/.extraheader" || true
+      - name: Select affected packages
+        id: affected
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tools/ci/fast.py --base "$BASE" --select-only --github-output
+      - uses: ./.github/actions/rust-setup
+        if: steps.affected.outputs.rust == 'true'
+        with:
+          lane: fast
+      - name: Run affected fast checks
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tools/ci/fast.py --base "$BASE"
 
-          # The unit is executed by `systemctl enable --now` with nothing
-          # validating it first, so a malformed one is a failed start -- and a
-          # failed start is now a rollback. Written with printf one argument per
-          # line: a heredoc terminator has to sit at column 0, which ends a YAML
-          # block scalar, and escaped newlines inside a quoted string do not
-          # reliably survive YAML either. Both make a test pass for the wrong
-          # reason.
-          art="$RUNNER_TEMP/artifact"
-          mkdir -p "$art"
-          unit="$art/transparent-shard-server.service"
-          export TRANSPARENT_ARTIFACT_DIR="$art" TRANSPARENT_SHARD_SOURCE="$shard_set"
-
-          cp transparent/ops/deploy/transparent-shard-server.service "$unit"
-          transparent/ops/scripts/deploy-transparent-shard.sh validate
-
-          refuses() {
-            if transparent/ops/scripts/deploy-transparent-shard.sh validate >/dev/null 2>&1; then
-              echo "a malformed unit was accepted: $1" >&2
-              exit 1
-            fi
-          }
-
-          # A continuation leaves an argument stranded on its own line, which
-          # systemd reads as a second directive rather than as an error.
-          # shellcheck disable=SC1003
-          printf '%s\n' 'ExecStart=/usr/local/bin/x \' '  --shard-dir TRANSPARENT_SHARD_SET_PATH' >"$unit"
-          grep -qE '\\$' "$unit" || { echo "test fixture has no continuation" >&2; exit 1; }
-          refuses "line continuation"
-
-          # A hardcoded path nobody substituted: the unit would name a set the
-          # deploy did not ship.
-          printf '%s\n' 'ExecStart=/usr/local/bin/x --shard-dir /hardcoded' >"$unit"
-          refuses "unsubstituted token"
-
-          # Two ExecStart lines: systemd runs both.
-          printf '%s\n' 'ExecStart=/a --shard-dir TRANSPARENT_SHARD_SET_PATH' 'ExecStart=/b' >"$unit"
-          [[ "$(grep -c '^ExecStart=' "$unit")" -eq 2 ]] || { echo "test fixture has one ExecStart" >&2; exit 1; }
-          refuses "second ExecStart"
+      - name: Report queue and stage timings
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"

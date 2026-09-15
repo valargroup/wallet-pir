@@ -26,17 +26,40 @@ check: check-ops check-docs check-reports check-tools
 # through a green `check`: CI exercises the scripts only in `validate` mode,
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
-check-ops:
+.PHONY: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing
+check-ops: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing
+
+check-ops-enhance:
 	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
+
+check-ops-shared:
 	python3 -m unittest discover -s ops/tests -p 'test_*.py'
+
+check-ops-contracts:
 	ops/scripts/check-jq-contracts.sh
+
+check-ops-parents:
 	python3 transparent/ops/tests/test_transparent_parents.py
+
+check-ops-fleet:
 	python3 transparent/ops/tests/test_transparent_fleet.py
+
+check-ops-publication:
 	python3 transparent/ops/tests/test_transparent_publication.py
+
+check-ops-burst:
 	python3 transparent/ops/tests/test_transparent_burst.py
+
+check-ops-regression-recut:
 	python3 transparent/ops/tests/test_regression_recut.py
+
+check-ops-regression-fixtures:
 	python3 transparent/ops/tests/test_regression_fixture_compare.py
+
+check-ops-observation:
 	python3 transparent/ops/tests/test_observation_audit.py
+
+check-ops-stage-timing:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_stage_timing.py'
 
 .PHONY: check-reports
