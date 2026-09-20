@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEPLOY = ROOT / 'enhance/ops/scripts/deploy-enhance-pir.sh'
 PREPARE = ROOT / 'enhance/ops/scripts/prepare-enhance-pir.sh'
 AUTOSCALE = ROOT / 'enhance/ops/scripts/enhance-autoscale.py'
+ROLLOUT = ROOT / 'enhance/ops/scripts/rollout-schema8-ssh.sh'
 TYPES = ROOT / 'enhance/crates/enhance-pir/src/types.rs'
 
 
@@ -25,7 +26,7 @@ def rust_const(name, cast=int):
 
 
 def shell_const(path, name):
-    match = re.search(rf'^readonly {name}=(\S+)', path.read_text(), re.M)
+    match = re.search(rf'^(?:readonly )?{name}=(\S+)', path.read_text(), re.M)
     assert match, f'{name} not found in {path}'
     return match.group(1)
 
@@ -74,6 +75,22 @@ class ServedLayout(unittest.TestCase):
     def test_units_serve_the_directory_the_deploy_script_prepares(self):
         unit = (ROOT / 'enhance/ops/deploy/enhance-pir-server.service').read_text()
         self.assertIn(f'--data-dir {shell_const(DEPLOY, "ENHANCE_DATA_DIR")}', unit)
+
+    def test_ssh_rollout_targets_the_same_layout_and_directories(self):
+        """The direct rollout path bypasses CI, not the layout contract."""
+        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_SCHEMA')), self.schema)
+        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_RECORDS_PER_ROW')),
+                         self.records_per_row)
+        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_ROW_BYTES')), self.row_bytes)
+        self.assertEqual(shell_const(ROLLOUT, 'DATA_DIR'),
+                         shell_const(DEPLOY, 'ENHANCE_DATA_DIR'))
+        self.assertEqual(shell_const(ROLLOUT, 'PREVIOUS_DATA_DIR'),
+                         shell_const(DEPLOY, 'ENHANCE_PREVIOUS_DATA_DIR'))
+        text = ROLLOUT.read_text()
+        # The rollback is the old data. Nothing in this script may write to it.
+        for forbidden in ('rm -rf $PREVIOUS_DATA_DIR', 'rm -rf "$PREVIOUS_DATA_DIR"',
+                          'rm -rf $PREVIOUS_ARTIFACT_DIR'):
+            self.assertNotIn(forbidden, text)
 
     def test_autoscale_group_capacity_follows_the_layout(self):
         match = re.search(r'^GROUP_POSITIONS = (\d+) \* (\d+)', AUTOSCALE.read_text(), re.M)
