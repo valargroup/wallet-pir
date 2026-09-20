@@ -25,9 +25,24 @@ Measured on an isolated worker under the production cgroup (`MemoryHigh=6G`,
 `MemoryMax=7G`, `MemorySwapMax=2G`, `CPUQuota=400%`), ten publications each, in
 [the rollout evidence](../evidence/schema8-rollout-2026-09-20/README.md):
 
-| Shards in group | Peak | Against `MemoryHigh=6,144 MiB` |
-|---:|---:|---|
-| 3 | 5,760 MiB | fits, 384 MiB spare |
+| Shards in group | Peak | `memory.events` | Against `MemoryHigh=6,144 MiB` |
+|---:|---:|---|---|
+| 3 | 5,760 MiB | all zero | fits, 384 MiB spare |
+| 4 | 6,144 MiB | `high 2073` | **at the limit; the kernel is holding it there** |
+
+The four-shard peak is not a coincidence: it is exactly `MemoryHigh`. The
+workload wants more, and the kernel is reclaiming to keep it under the cap --
+2,073 reclaim events, no swap used and no OOM kill. Publication latency did not
+degrade in the fixture (10.0-11.4 s either way), so this is pressure rather than
+failure, but it consumes the margin that absorbs a burst, and `MemoryMax=7G` is
+the next thing to hit.
+
+**Three schema-8 shards is the working limit on `c-4`, and that is 712,704
+positions.** At 468,027 positions the fleet is 244,677 short of it: six days at
+the faster of the two growth samples taken on September 20, twenty at the
+slower. This is the number that decides whether schema 8 can ship to the current
+hardware, and it is weeks, not the fourteen months the earlier arithmetic in
+this file implied.
 
 For comparison, the production schema-7 workers peak at 3,539 MiB with seven
 shards. Schema 8 is roughly 1.5x that at fewer shards, and the peak climbs by
