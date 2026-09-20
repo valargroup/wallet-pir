@@ -1,0 +1,15 @@
+{
+  "cold_prepare_seconds": 22.690161322,
+  "max_publication_seconds": 11.407399513,
+  "mismatches": 0,
+  "online_append": null,
+  "paired_client_p99_seconds": 0.21914667,
+  "passed": true,
+  "publications": 10,
+  "queries": 4114,
+  "retained_session_queries": true,
+  "scope": "remote exact-answer fixture; memory, failover, process uptime and cloud lifecycle require separate evidence",
+  "seconds": 497.930667421,
+  "serving_seconds": 475.24050615,
+  "shards": 3
+}

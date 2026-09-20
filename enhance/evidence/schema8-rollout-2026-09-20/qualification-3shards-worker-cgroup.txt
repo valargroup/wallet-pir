@@ -1,0 +1,18 @@
+peak_bytes: 6040612864
+swap_current: 0
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+limits:
+CPUQuotaPerSecUSec=4s
+MemoryHigh=6442450944
+MemoryMax=7516192768
+MemorySwapMax=2147483648
+host:
+8
+model name	: DO-Premium-AMD
+               total        used        free      shared  buff/cache   available
+Mem:     16768643072  5625032704 11151998976    59346944   370380800 11143610368

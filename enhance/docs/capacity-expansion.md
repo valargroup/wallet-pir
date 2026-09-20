@@ -19,27 +19,37 @@ automatic ceiling is four groups/eight workers (historically $672/month).
 shard runtime holds a 192-MiB packed database and a 192-MiB partial CRS, three
 times the schema-7 figure, because the 21,373-byte row needs six PIR instances
 instead of two. Sealed shards hold one runtime each; the frontier holds one per
-retained generation plus the candidate. At eight retained generations that is
-`(shards - 1) + 9` runtimes of 384 MiB:
+retained generation plus the candidate.
 
-| Shards in group | Resident | Against `MemoryHigh=6G` / `MemoryMax=7G` |
+Measured on an isolated worker under the production cgroup (`MemoryHigh=6G`,
+`MemoryMax=7G`, `MemorySwapMax=2G`, `CPUQuota=400%`), ten publications each, in
+[the rollout evidence](../evidence/schema8-rollout-2026-09-20/README.md):
+
+| Shards in group | Peak | Against `MemoryHigh=6,144 MiB` |
 |---:|---:|---|
-| 2 (today's count) | 3.75 GiB | fits |
-| 8 | 5.63 GiB | fits `MemoryHigh` |
-| 10 | 6.375 GiB | over `MemoryHigh`, under `MemoryMax` |
-| 16 (full group) | 9.00 GiB | over both |
+| 3 | 5,760 MiB | fits, 384 MiB spare |
 
-That table is derived from the runtime shapes in `ipir.rs`, not measured, and it
-excludes the coordinator, the preparation slot and allocator overhead; treat it
-as an upper bound on what will fit, not a prediction of what will run. The
-schema-7 equivalent is 3.00 GiB at 16 shards, which is why the contract above was
-sound before this layout change and is not sound after it.
+For comparison, the production schema-7 workers peak at 3,539 MiB with seven
+shards. Schema 8 is roughly 1.5x that at fewer shards, and the peak climbs by
+roughly 200-400 MiB per publication until the retained window is full -- most of
+the growth happens after the eighth generation, so a short soak understates it.
+
+Arithmetic alone understates the peak badly: `(shards - 1 + 9) * 384 MiB` gives
+4,224 MiB for three shards against 5,760 MiB measured. The difference is the
+transient during a publication, when the worker builds a new frontier runtime --
+database, CRS and the encoded copy it persists -- while still holding every
+runtime a retained generation references. Size from the measurement, not the
+product.
+
+Extrapolating the measured slope, the full 16-shard group is far outside this
+budget, and the schema-7 equivalent at 16 shards is roughly 3 GiB. That is why
+the contract above was sound before this layout change and is not sound after
+it.
 
 Adding a group does not relieve the pressure. `group_index_for_shard` assigns
 shards to groups in fixed blocks of `SHARDS_PER_GROUP`, so a second group owns
 nothing until shard 16 exists -- past 3.8 million positions, and past the point
-where group one has already exceeded its memory limit. Expanding past roughly
-1.9 million positions therefore needs one of:
+where group one has already exceeded its memory limit. Expanding needs one of:
 
 - larger workers, sized from a measured schema-8 residency rather than this table;
 - `SHARDS_PER_GROUP` reduced to 8, which is a shard-ownership change: every

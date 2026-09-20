@@ -1,0 +1,10 @@
+{"event":"publication","publication_seconds":10.24487668,"publications":2,"queries":450,"serving_seconds":52.43772073}
+{"event":"publication","publication_seconds":9.965561339,"publications":3,"queries":906,"serving_seconds":104.55390787}
+{"event":"publication","publication_seconds":9.977101932,"publications":4,"queries":1370,"serving_seconds":156.614529934}
+{"event":"publication","publication_seconds":10.537307086,"publications":5,"queries":1820,"serving_seconds":209.229373856}
+{"event":"publication","publication_seconds":10.517264262,"publications":6,"queries":2282,"serving_seconds":261.796507059}
+{"event":"publication","publication_seconds":11.259251147,"publications":7,"queries":2762,"serving_seconds":315.275191918}
+{"event":"publication","publication_seconds":11.407399513,"publications":8,"queries":3214,"serving_seconds":368.860918503}
+{"event":"publication","publication_seconds":11.169031929,"publications":9,"queries":3670,"serving_seconds":422.061871614}
+{"event":"publication","publication_seconds":10.996292349,"publications":10,"queries":4114,"serving_seconds":475.240191046}
+{"cold_prepare_seconds":22.690161322,"max_publication_seconds":11.407399513,"mismatches":0,"online_append":null,"paired_client_p99_seconds":0.21914667,"passed":true,"publications":10,"queries":4114,"retained_session_queries":true,"scope":"remote exact-answer fixture; memory, failover, process uptime and cloud lifecycle require separate evidence","seconds":497.930667421,"serving_seconds":475.24050615,"shards":3}
