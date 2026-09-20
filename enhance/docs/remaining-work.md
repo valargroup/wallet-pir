@@ -17,16 +17,20 @@ work does and does not establish. The gaps below are open.
   receipt names both the release and `records-per-row=29`. The live
   `/srv/zakura/enhance-data-v7` journal and `/srv/enhance-pir/artifacts-v7` are the
   rollback data and must survive the cutover untouched.
-- Measure, on the fleet, what is currently only derived: worker residency across a
-  full retained window, publication time for a 384-MiB shard runtime, server query
-  time, and the actual public upload/response/init byte counts. The
-  [September 20 layout benchmark](../evidence/layout-benchmark-2026-09-20/REPORT.md)
-  was an isolated four-vCPU AMD host with synthetic records; it qualified neither
-  eight retained generations, nor publication, nor concurrent queries, nor 16 shards.
-- Decide the capacity question in [capacity expansion](capacity-expansion.md):
-  16 schema-8 shards per group need about 9 GiB against a 7-GiB `MemoryMax`, and a
-  second group takes no shards until the first is full. This is not urgent at
-  467,255 positions and it is not optional before roughly 1.9 million.
+- Measure, on the fleet, what isolated qualification cannot settle: server query
+  time on Intel `c-4` hardware, the real public upload/response/init byte counts,
+  and worker residency under production query load rather than a fixture. Worker
+  residency across a full retained window and publication time are now measured
+  in isolation -- 5,760 MiB peak and 11.4 s at three shards, in
+  [the rollout evidence](../evidence/schema8-rollout-2026-09-20/README.md) -- but
+  that run is an AMD host with synthetic records and is explicit that memory
+  under load, failover and process uptime need separate evidence. It is not the
+  six-hour, 300-publication qualification.
+- Decide the capacity question in [capacity expansion](capacity-expansion.md).
+  Three schema-8 shards measure 5,760 MiB against a 6,144-MiB `MemoryHigh`, so the
+  margin is about 380 MiB and the fourth shard is the one to watch. A second group
+  takes no shards until the first holds sixteen, so adding one buys nothing.
+  Not urgent at 467,912 positions; not optional for much longer.
 - Re-run `online_topology`'s full-group test somewhere it fits. Crossing the
   group boundary now means 32 schema-8 shard runtimes, which is roughly 12 GiB of
   resident preprocessing -- the same arithmetic as the capacity question above,
