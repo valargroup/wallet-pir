@@ -18,13 +18,15 @@ repository is a production measurement; the sizes in
 and the runtime shapes, and the September 20 layout benchmark was taken on an
 isolated four-vCPU AMD host, not on this fleet.
 
-Two facts dated here because they expire. At 467,255 positions and an observed
-35.4 positions per block, the schema-8 query holds its 196.0 KiB size only until
-475,136 positions -- roughly four to five hours from this reading -- after which
-it is 282.0 KiB. And the c-4 worker memory budget is reached at roughly eight
-schema-8 shards, about 1.9 million positions, which the group/autoscale design
-cannot expand past without one of the decisions listed in
-[capacity expansion](capacity-expansion.md).
+Two facts dated here because they expire. The schema-8 query holds its 196.0 KiB
+size only until 475,136 positions, after which it is 282.0 KiB; at 467,522
+positions that is 7,614 positions away. Do not convert that into a time from the
+samples taken here: two intervals the same morning gave 35.4 and 10.7 positions
+per block, so the honest statement is hours to days, and the count must be read
+again before the figure is quoted. The second fact is that the c-4 worker memory
+budget is reached at roughly eight schema-8 shards, about 1.9 million positions,
+which the group/autoscale design cannot expand past without one of the decisions
+listed in [capacity expansion](capacity-expansion.md).
 
 ## September 14, 2026: public origin
 

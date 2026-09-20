@@ -3,7 +3,8 @@
   "utc": "2026-09-20T06:20:00Z",
   "kind": "derivation and one read-only capture; not a performance run",
   "measured": [
-    "GET https://enhance-pir.valargroup.dev/v1/enhance/init at 2026-09-20 (HTTP 200, 40,474 bytes, anchor height 3,489,681, 467,255 positions)"
+    "GET https://enhance-pir.valargroup.dev/v1/enhance/init at 2026-09-20 (HTTP 200, 40,474 bytes, anchor height 3,489,681, 467,255 positions)",
+    "GET /v1/enhance/init re-read about ninety minutes later: height 3,489,706, 467,522 positions"
   ],
   "derived": [
     "schema-7 and schema-8 upload/response/public-material sizes",
@@ -36,13 +37,28 @@
     "generation": 3489681
   },
   "growth_sample": {
-    "from_height": 3489196,
-    "from_positions": 450081,
-    "to_height": 3489681,
-    "to_positions": 467255,
-    "blocks": 485,
-    "positions_per_block": 35.41,
-    "note": "one interval on one day; not a capacity planning rate"
+    "samples": [
+      {
+        "height": 3489196,
+        "positions": 450081,
+        "source": "evidence/live-pir-2026-09-20/enhance-init.json"
+      },
+      {
+        "height": 3489681,
+        "positions": 467255,
+        "source": "enhance-init-2026-09-20.json"
+      },
+      {
+        "height": 3489706,
+        "positions": 467522,
+        "source": "re-read, not retained separately"
+      }
+    ],
+    "positions_per_block": [
+      35.41,
+      10.68
+    ],
+    "note": "bursty at this timescale; not a rate. 475,136 was 7,614 positions away at the last reading"
   },
   "units": "bytes are exact; KiB and GiB are binary"
 }

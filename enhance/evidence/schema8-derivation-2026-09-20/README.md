@@ -34,12 +34,15 @@ latency, memory behaviour under load, or whether the fleet can serve the layout.
 
 ## Growth observed while deriving
 
-Two readings of `ironwood_tree_size` ten hours apart -- 450,081 at height
-3,489,196 (`evidence/live-pir-2026-09-20/enhance-init.json`) and 467,255 at
-height 3,489,681 -- give 35.4 positions per block across 485 blocks. That is one
-interval on one day, not a rate to plan capacity from, but it is enough to date
-the schema-8 boundary: 475,136 positions is about 222 blocks away, four to five
-hours after the reading.
+Three readings of `ironwood_tree_size`: 450,081 at height 3,489,196
+(`evidence/live-pir-2026-09-20/enhance-init.json`), 467,255 at height 3,489,681,
+and 467,522 at height 3,489,706. The first interval gives 35.4 positions per
+block across 485 blocks; the second gives 10.7 across 25. Arrival is bursty at
+this timescale and neither number is a rate. They are recorded because the
+schema-8 boundary at 475,136 positions was 7,614 positions away at the last
+reading, and because the first sample alone would have put it four to five hours
+out -- a precision these samples do not support. Read the count again before
+quoting either the boundary date or the 196.0 KiB figure.
 
 ## Worker residency
 
