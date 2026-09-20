@@ -25,17 +25,32 @@ Measured on an isolated worker under the production cgroup (`MemoryHigh=6G`,
 `MemoryMax=7G`, `MemorySwapMax=2G`, `CPUQuota=400%`), ten publications each, in
 [the rollout evidence](../evidence/schema8-rollout-2026-09-20/README.md):
 
-| Shards in group | Peak | `memory.events` | Against `MemoryHigh=6,144 MiB` |
-|---:|---:|---|---|
-| 3 | 5,760 MiB | all zero | fits, 384 MiB spare |
-| 4 | 6,144 MiB | `high 2073` | **at the limit; the kernel is holding it there** |
+| Shards in group | Publications | Peak | `memory.events` | Against `MemoryHigh=6,144 MiB` |
+|---:|---:|---:|---|---|
+| 3 | 10 of 10 | 5,760 MiB | all zero | fits, 384 MiB spare |
+| 4 | 9 of 10 (truncated) | 6,144 MiB | `high 2073` | **at the limit; the kernel is holding it there** |
 
-The four-shard peak is not a coincidence: it is exactly `MemoryHigh`. The
-workload wants more, and the kernel is reclaiming to keep it under the cap --
-2,073 reclaim events, no swap used and no OOM kill. Publication latency did not
-degrade in the fixture (10.0-11.4 s either way), so this is pressure rather than
-failure, but it consumes the margin that absorbs a burst, and `MemoryMax=7G` is
-the next thing to hit.
+The four-shard peak is exactly `MemoryHigh`, which is what being capped looks
+like: the workload wants more and the kernel reclaims to hold it there. 2,073
+reclaim events, no swap and no OOM kill in the worker's cgroup. Publication
+latency did not degrade (10.0-11.4 s either way), so this is pressure rather
+than failure, but it spends the margin that absorbs a burst and `MemoryMax=7G`
+is the next thing to hit.
+
+**That run did not finish, and the reason matters.** The `enhance-pir-qualify`
+harness -- not the worker -- was OOM-killed by the host kernel after the ninth
+publication, at 9.9 GiB RSS on a 16-GiB box that was already giving 6 GiB to the
+worker cgroup. The worker itself never OOMed and its measurement stands, but
+6,144 MiB is a **capped lower bound** from nine publications, not a settled peak
+from ten: the three-shard run gained 442 MiB over its last three publications,
+so the uncapped four-shard figure is higher than this table can say. Re-run it
+with the harness and the worker on separate hosts before treating 6,144 MiB as
+the number.
+
+Two things follow for production. The worker conclusion is unaffected, because
+production coordinators and workers are already on separate hosts. And the
+harness's 9.9 GiB is itself a data point: schema-8 coordinator-side memory is
+well up too, which the 64-GiB coordinator absorbs and a smaller one would not.
 
 **Three schema-8 shards is the working limit on `c-4`, and that is 712,704
 positions.** At 468,027 positions the fleet is 244,677 short of it: six days at

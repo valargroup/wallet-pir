@@ -1,0 +1,12 @@
+peak_bytes: 6443220992
+swap_current: 0
+low 0
+high 2073
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+--- worker health at truncation ---
+{"status":"ok","generation":3428151,"active_shards":{"enhance":4},"cached_shards":12,"total_memory_bytes":16768643072,"available_memory_bytes":10968231936,"process_rss_bytes":5056471040}
+--- host oom of the HARNESS (not the worker) ---
+[Sun Sep 20 07:27:00 2026] Out of memory: Killed process 196820 (enhance-pir-qua) total-vm:10795108kB, anon-rss:9898740kB, file-rss:2048kB, shmem-rss:0kB, UID:0 pgtables:19820kB oom_score_adj:0

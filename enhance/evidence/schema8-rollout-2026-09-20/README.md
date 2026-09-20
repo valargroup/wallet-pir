@@ -31,10 +31,26 @@ publications, synthetic records, no production worker involved.
 
 | Shards | Publications | Queries | Mismatches | Peak | `memory.events` | Swap |
 |---:|---:|---:|---:|---:|---|---:|
-| 3 | 10 | 4,114 | 0 | 6,040,612,864 B (5,760 MiB) | all zero | 0 |
+| 3 | 10 of 10 | 4,114 | 0 | 6,040,612,864 B (5,760 MiB) | all zero | 0 |
+| 4 | 9 of 10 | 3,576 | 0 | 6,443,220,992 B (6,144 MiB) | `high 2073` | 0 |
 
-Cold preparation 22.69 s, longest publication 11.41 s, paired-client p99
-0.219 s, retained-session queries answered. `passed: true` in
+The four-shard run is **incomplete and its peak is a capped lower bound**. The
+`enhance-pir-qualify` harness was OOM-killed by the host kernel after the ninth
+publication -- `Out of memory: Killed process 196820 (enhance-pir-qua)`,
+anon-rss 9,898,740 kB -- because the harness and the worker shared one 16-GiB
+host and the worker cgroup already held 6 GiB. There is no
+`result-4shards.json` and no `passed: true` for it; the log is retained as
+`qualification-4shards-INCOMPLETE.log`.
+
+The worker's own numbers survive that: its cgroup recorded `oom_kill 0`, it
+answered health at truncation with four active shards, and the 2,073 `high`
+events are real reclaim under the cap. But 6,144 MiB is exactly `MemoryHigh`,
+which is the value a capped cgroup reports rather than what the workload wanted,
+and the three-shard run gained 442 MiB across its last three publications. Re-run
+with the harness off-host before quoting a four-shard peak.
+
+For the three-shard run: cold preparation 22.69 s, longest publication 11.41 s,
+paired-client p99 0.219 s, retained-session queries answered. `passed: true` in
 `qualification-3shards-result.json`, whose own `scope` field is the honest
 limit: a remote exact-answer fixture. It is not the six-hour, 300-publication,
 full-capacity, failover qualification, and nothing here should be read as one.
