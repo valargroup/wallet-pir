@@ -1,5 +1,31 @@
 # Status
 
+## September 20, 2026: schema-8 implementation, not deployed
+
+The 29-record layout is implemented and tested locally at schema 8; **nothing
+has been deployed**. The public origin still served schema 7 when last read:
+737-byte records, nine records per row, 6,633-byte rows, 65,536 logical rows,
+467,255 Ironwood positions, seven shards, anchor height 3,489,681. That reading
+is retained in `enhance/ops/fixtures/enhance/init-schema7-nine-record.json`,
+where it also serves as the negative case for the deployment layout gate.
+
+Direct production access from the implementing session was refused by a local
+permission gate, so no host inventory, unit configuration, memory limit,
+preparation run or cutover was performed or observed. No schema-8 figure in this
+repository is a production measurement; the sizes in
+[performance](performance.md#derived-schema-8-sizes) and the residency table in
+[capacity expansion](capacity-expansion.md) are derived from the pinned encoder
+and the runtime shapes, and the September 20 layout benchmark was taken on an
+isolated four-vCPU AMD host, not on this fleet.
+
+Two facts dated here because they expire. At 467,255 positions and an observed
+35.4 positions per block, the schema-8 query holds its 196.0 KiB size only until
+475,136 positions -- roughly four to five hours from this reading -- after which
+it is 282.0 KiB. And the c-4 worker memory budget is reached at roughly eight
+schema-8 shards, about 1.9 million positions, which the group/autoscale design
+cannot expand past without one of the decisions listed in
+[capacity expansion](capacity-expansion.md).
+
 ## September 14, 2026: public origin
 
 A read-only observation of `https://enhance-pir.valargroup.dev` found schema 7,

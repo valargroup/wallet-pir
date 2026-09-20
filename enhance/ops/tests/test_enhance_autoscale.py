@@ -69,11 +69,18 @@ class PlanSafety(unittest.TestCase):
                 module.validate_plan(candidate, 1)
 
 
+# Just past the one-group scale-up threshold (0.8 * GROUP_POSITIONS). Derived
+# rather than written out, because the 9-to-29 record widening tripled
+# GROUP_POSITIONS and left the old literal far below the trigger, which turned
+# these tests green-by-accident in the wrong direction.
+OVER_ONE_GROUP = int(0.8 * module.GROUP_POSITIONS) + 1
+
+
 class Trigger(unittest.TestCase):
     def setUp(self):
         self.state = {}
         self.topology = {'revision': 0, 'groups': [{}]}
-        self.health = {'phase': {'phase': 'serving'}, 'ironwood_tree_size': 950000,
+        self.health = {'phase': {'phase': 'serving'}, 'ironwood_tree_size': OVER_ONE_GROUP,
                        'tables': {'enhance': {'workers': 2}}}
 
     def test_normal_publication_keeps_the_healthy_observation_window(self):
@@ -127,7 +134,7 @@ class OperationSafety(unittest.TestCase):
         self.controller.verify_release = Mock(return_value='a' * 40)
         self.controller.notify = Mock(return_value=True)
         self.controller.terraform = Mock()
-        self.operation = {'id': 'test', 'step': 'planned', 'release': 'a' * 40, 'old_groups': [{}], 'positions': 950000}
+        self.operation = {'id': 'test', 'step': 'planned', 'release': 'a' * 40, 'old_groups': [{}], 'positions': OVER_ONE_GROUP}
 
     def test_persisted_count_overrides_initial_tfvars_only_on_plan(self):
         self.controller.config['terraform_dir'] = '/fixture/terraform'
@@ -164,7 +171,7 @@ class OperationSafety(unittest.TestCase):
         self.controller.state['operation'] = {**self.operation, 'step': 'bootstrap'}
         self.controller.state['desired_groups'] = 2
         self.controller.topology = Mock(return_value={'revision': 1, 'groups': [{}, {}], 'last_operation': {'operation_id': 'test'}, 'error': None})
-        self.controller.check_existing = Mock(return_value={'phase': {'phase': 'serving'}, 'ironwood_tree_size': 950000, 'tables': {'enhance': {'workers': 4}}})
+        self.controller.check_existing = Mock(return_value={'phase': {'phase': 'serving'}, 'ironwood_tree_size': OVER_ONE_GROUP, 'tables': {'enhance': {'workers': 4}}})
         self.controller.advance = Mock()
         self.controller.flush_notifications = Mock()
         self.controller.tick()
@@ -219,10 +226,10 @@ class OperatorAcceptance(unittest.TestCase):
         c.flush_notifications = Mock()
         c.topology = Mock(return_value={'revision': 0, 'groups': [{}]})
         c.check_existing = Mock(return_value={'phase': {'phase': 'serving'},
-            'ironwood_tree_size': 950000, 'tables': {'enhance': {'workers': 2}}})
+            'ironwood_tree_size': OVER_ONE_GROUP, 'tables': {'enhance': {'workers': 2}}})
         c.advance = Mock()
         c.state.update(healthy_since=10000, trigger_samples=2,
-            sample={'time': 10300, 'positions': 950000, 'revision': 0})
+            sample={'time': 10300, 'positions': OVER_ONE_GROUP, 'revision': 0})
         with patch.object(module.time, 'time', return_value=10600):
             c.tick()
         self.assertEqual(c.state['operation']['release'], self.revision)

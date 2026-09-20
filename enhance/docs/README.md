@@ -6,7 +6,8 @@ then decrypts and validates the returned data using its existing transaction
 context. The service does not supply transaction history, witnesses, or a
 complete wallet sync.
 
-The current client and server implement schema 7 of `ironwood-enhance-pir-v2`.
+The current client and server implement schema 8 of `ironwood-enhance-pir-v2`,
+which packs 29 records into a 21,373-byte PIR row. Schema-7 clients reject it.
 Start with the integration guide to use the service, or the deployment guide to
 operate it. The protocol describes the contract; status records what has
 actually been observed.

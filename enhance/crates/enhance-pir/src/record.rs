@@ -211,6 +211,10 @@ mod tests {
         }
     }
     #[test]
+    /// The frozen vector is still named for schema 7 because the 737-byte
+    /// record encoding did not change in schema 8: only the number of records
+    /// packed into a PIR row did. Re-pointing this fixture would lose the
+    /// provenance of the bytes it froze.
     fn schema7_frozen_vector_and_metadata_validation() {
         let text = include_str!("../tests/fixtures/schema7-record.hex").trim();
         let bytes: Vec<u8> = (0..text.len())

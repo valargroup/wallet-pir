@@ -1,13 +1,20 @@
 use ipir_sp::YpirSchemeParams;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u16 = 7;
+// Schema 8 widens the PIR row from nine to twenty-nine 737-byte records. The
+// record encoding is unchanged; the row geometry, PIR parameters and every
+// derived artifact are not. Schema-7 clients reject schema 8 on sight, which is
+// the intended behaviour: interpreting a 21,373-byte row with 6,633-byte offsets
+// would silently return the wrong record. The protocol revision stays at v2
+// because the wire framing and endpoints are unchanged -- the same convention
+// the schema 6 -> 7 record-width transition used.
+pub const SCHEMA_VERSION: u16 = 8;
 pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v2";
 pub const NETWORK: &str = "main";
 pub const POOL: &str = "ironwood";
 pub const ACTIVATION_HEIGHT: u64 = 3_428_143;
 
-pub const RECORDS_PER_ROW: usize = 9;
+pub const RECORDS_PER_ROW: usize = 29;
 pub const ROW_BYTES: usize = RECORD_BYTES * RECORDS_PER_ROW;
 pub const SHARD_ROWS: usize = 8_192;
 pub const SHARD_POSITIONS: usize = SHARD_ROWS * RECORDS_PER_ROW;
@@ -123,7 +130,7 @@ mod tests {
             metadata: crate::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
         });
         assert_eq!(RECORD_BYTES, 737);
-        assert_eq!(ROW_BYTES, 6_633);
+        assert_eq!(ROW_BYTES, 21_373);
         assert_eq!(record.ephemeral_key(), &[1; 32]);
         assert_eq!(record.enc_ciphertext(), &[2; 580]);
         assert_eq!(record.cv_net(), &[3; 32]);
@@ -132,12 +139,87 @@ mod tests {
         assert!(!record.has_transparent_outputs());
     }
 
+    /// Slot arithmetic across a row boundary, and the row boundary the schema-8
+    /// layout actually has. A nine-record build passes the first two of these
+    /// and fails the rest, which is the point: the record-to-row mapping is the
+    /// part of this change a client cannot detect by reading the manifest.
+    #[test]
+    fn positions_map_to_the_expected_row_and_slot() {
+        let generation = |tree_size: u64, logical_rows: u64| EnhanceGeneration {
+            schema_version: SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.to_string(),
+            network: NETWORK.to_string(),
+            pool: POOL.to_string(),
+            anchor_height: ACTIVATION_HEIGHT,
+            anchor_block_hash: "00".repeat(32),
+            ironwood_tree_size: tree_size,
+            generation: 1,
+            record_bytes: RECORD_BYTES as u32,
+            records_per_row: RECORDS_PER_ROW as u32,
+            row_bytes: ROW_BYTES as u32,
+            shard_rows: SHARD_ROWS as u32,
+            used_rows: used_rows_for(tree_size),
+            logical_rows,
+            parameter_id: "test".to_string(),
+            setup_seed: ENHANCE_SETUP_SEED,
+            public_params_epoch: String::new(),
+            public_params_sha256: String::new(),
+            shards: vec![],
+        };
+
+        let wide = generation(1_000_000, 65_536);
+        // First slot, last slot of row zero, and the crossing into row one.
+        assert_eq!(wide.row_for_position(0), Some((0, 0)));
+        assert_eq!(wide.row_for_position(28), Some((0, 28)));
+        assert_eq!(wide.row_for_position(29), Some((1, 0)));
+        assert_eq!(wide.row_for_position(57), Some((1, 28)));
+        assert_eq!(wide.row_for_position(58), Some((2, 0)));
+        // First and last position of physical shard one.
+        assert_eq!(
+            wide.row_for_position(SHARD_POSITIONS as u64),
+            Some((SHARD_ROWS, 0))
+        );
+        assert_eq!(
+            wide.row_for_position(2 * SHARD_POSITIONS as u64 - 1),
+            Some((2 * SHARD_ROWS - 1, RECORDS_PER_ROW - 1))
+        );
+
+        // A position past the published tree size is outside coverage even
+        // though its row exists, and so is one past the logical database.
+        let partial = generation(30, 8_192);
+        assert_eq!(partial.row_for_position(29), Some((1, 0)));
+        assert_eq!(partial.row_for_position(30), None);
+        let narrow = generation(u64::MAX, 8_192);
+        assert_eq!(
+            narrow.row_for_position(8_192 * RECORDS_PER_ROW as u64 - 1),
+            Some((8_191, RECORDS_PER_ROW - 1))
+        );
+        assert_eq!(
+            narrow.row_for_position(8_192 * RECORDS_PER_ROW as u64),
+            None
+        );
+    }
+
+    /// Where the upload doubles. `logical_rows_for` rounds to a power of two, so
+    /// crossing 29 x 16,384 positions moves the query from 16,384 rows to
+    /// 32,768 -- about 88 KiB more upload per query, at no other cost. Pin the
+    /// exact position so the jump is a reviewed number rather than a surprise.
+    #[test]
+    fn logical_rows_double_at_the_published_boundary() {
+        const LAST_AT_16K: u64 = 29 * 16_384;
+        assert_eq!(LAST_AT_16K, 475_136);
+        assert_eq!(logical_rows_for(used_rows_for(LAST_AT_16K)), 16_384);
+        assert_eq!(logical_rows_for(used_rows_for(LAST_AT_16K + 1)), 32_768);
+        // And the floor: a nearly empty database still publishes 8,192 rows.
+        assert_eq!(logical_rows_for(used_rows_for(1)), 8_192);
+    }
+
     #[test]
     fn geometry_is_fixed_and_aligned() {
-        assert_eq!(SHARD_POSITIONS, 73_728);
+        assert_eq!(SHARD_POSITIONS, 237_568);
         assert_eq!(SHARD_ROWS % 2_048, 0);
-        assert_eq!(used_rows_for(9), 1);
-        assert_eq!(used_rows_for(10), 2);
+        assert_eq!(used_rows_for(29), 1);
+        assert_eq!(used_rows_for(30), 2);
         assert_eq!(logical_rows_for(0), 8_192);
     }
 }

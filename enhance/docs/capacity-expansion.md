@@ -10,9 +10,46 @@ steps may already have been completed. Routine releases are described in
 
 The following is the implemented target. See [dated status](status.md) for qualification and rollout state.
 
-Each ordered group owns 16 consecutive 8,192-row shards: 1,179,648 Ironwood
-positions, two identical replicas, historically $168/month worker compute at the recorded
-c-4 list price. The automatic ceiling is four groups/eight workers (historically $672/month).
+Each ordered group owns 16 consecutive 8,192-row shards: under schema 8 that is
+3,801,088 Ironwood positions (29 records per row), two identical replicas,
+historically $168/month worker compute at the recorded c-4 list price. The
+automatic ceiling is four groups/eight workers (historically $672/month).
+
+**The c-4 memory budget is reached long before a group is full.** A schema-8
+shard runtime holds a 192-MiB packed database and a 192-MiB partial CRS, three
+times the schema-7 figure, because the 21,373-byte row needs six PIR instances
+instead of two. Sealed shards hold one runtime each; the frontier holds one per
+retained generation plus the candidate. At eight retained generations that is
+`(shards - 1) + 9` runtimes of 384 MiB:
+
+| Shards in group | Resident | Against `MemoryHigh=6G` / `MemoryMax=7G` |
+|---:|---:|---|
+| 2 (today's count) | 3.75 GiB | fits |
+| 8 | 5.63 GiB | fits `MemoryHigh` |
+| 10 | 6.375 GiB | over `MemoryHigh`, under `MemoryMax` |
+| 16 (full group) | 9.00 GiB | over both |
+
+That table is derived from the runtime shapes in `ipir.rs`, not measured, and it
+excludes the coordinator, the preparation slot and allocator overhead; treat it
+as an upper bound on what will fit, not a prediction of what will run. The
+schema-7 equivalent is 3.00 GiB at 16 shards, which is why the contract above was
+sound before this layout change and is not sound after it.
+
+Adding a group does not relieve the pressure. `group_index_for_shard` assigns
+shards to groups in fixed blocks of `SHARDS_PER_GROUP`, so a second group owns
+nothing until shard 16 exists -- past 3.8 million positions, and past the point
+where group one has already exceeded its memory limit. Expanding past roughly
+1.9 million positions therefore needs one of:
+
+- larger workers, sized from a measured schema-8 residency rather than this table;
+- `SHARDS_PER_GROUP` reduced to 8, which is a shard-ownership change: every
+  persisted `topology.json` records `shards_per_group`, and `TopologyStore::open`
+  refuses a file that disagrees with the binary, deliberately, because the
+  change remaps which worker holds which shard;
+- fewer retained generations, which weakens the published retention promise and
+  is listed here only for completeness.
+
+This is an open decision, not a resolved plan. See [remaining work](remaining-work.md).
 Every query still evaluates every populated group; this is position-capacity
 expansion, not a throughput autoscaler. There is no recent/archive split.
 

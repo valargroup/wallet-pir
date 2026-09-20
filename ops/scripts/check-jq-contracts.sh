@@ -90,11 +90,15 @@ while IFS=$'\t' read -r -d '' name program; do
   fi
 done < <(transparent/ops/scripts/deploy-transparent-shard.sh jq-programs)
 
-# The enhance programs read the coordinator's payloads, and a fixture for those
-# means standing up enhance-pir-server. So they are compiled and not evaluated,
-# which still covers the quoting class -- two of them carry inner quotes that had
-# to be backslashed inside an ssh command string. Field-path drift there remains
-# uncovered, deliberately and visibly.
+# Most enhance programs read coordinator payloads a fixture cannot cheaply
+# stand in for, so they are compiled and not evaluated -- which still covers the
+# quoting class, since two of them carry inner quotes that had to be
+# backslashed inside an ssh command string.
+#
+# JQ_ENHANCE_INIT_COMPLETE is the exception, and it is evaluated below. It is
+# the gate that decides whether a rolled-out fleet is serving the layout the
+# release intended, and while it was only compiled it went on asserting
+# `row_bytes == 6633` through a change that made 6,633 the wrong answer.
 echo "== enhance/ops/scripts/deploy-enhance-pir.sh: compile only (no fixtures yet)"
 while IFS=$'\t' read -r -d '' name program; do
   # A superset of the jq variables these programs take. An undefined $var is a
@@ -119,6 +123,46 @@ while IFS=$'\t' read -r -d '' name program; do
     fi
   fi
 done < <(enhance/ops/scripts/deploy-enhance-pir.sh jq-programs)
+
+# The layout gate, evaluated both ways. `enhance/ops/fixtures/enhance/init.json`
+# is written by enhance-pir-server's own `operator_payloads` test; the schema-7
+# document beside it is the one the public origin served before the migration.
+#
+# The negative case is the point. A gate that accepts the layout it is replacing
+# cannot tell a successful cutover from a coordinator that never restarted, and
+# the deploy script's verification runs after the old service has been stopped.
+echo "== enhance layout gate, evaluated against served init documents"
+ENHANCE_FIXTURES="enhance/ops/fixtures/enhance"
+# Read the NUL-delimited records rather than splitting on newlines: this
+# program spans several lines, which is exactly why jq-programs emits NUL.
+init_gate=""
+while IFS=$'\t' read -r -d '' name program; do
+  [[ "$name" == "JQ_ENHANCE_INIT_COMPLETE" ]] && init_gate="$program"
+done < <(enhance/ops/scripts/deploy-enhance-pir.sh jq-programs)
+if [[ -z "$init_gate" ]]; then
+  bad "JQ_ENHANCE_INIT_COMPLETE" "not emitted by jq-programs"
+else
+  for case in "init.json:accepts" "init-schema7-nine-record.json:rejects"; do
+    fixture="$ENHANCE_FIXTURES/${case%%:*}"
+    want="${case##*:}"
+    if [[ ! -f "$fixture" ]]; then
+      bad "JQ_ENHANCE_INIT_COMPLETE" "missing $fixture -- run the operator_payloads test"
+      continue
+    fi
+    # `--argjson expected 1`: one worker group, which is what both fixtures name.
+    if jq -e --argjson expected 1 "$init_gate" "$fixture" >/dev/null 2>&1; then
+      got=accepts
+    else
+      [[ $? -eq 3 ]] && { bad "JQ_ENHANCE_INIT_COMPLETE" "does not compile"; break; }
+      got=rejects
+    fi
+    if [[ "$got" == "$want" ]]; then
+      note "JQ_ENHANCE_INIT_COMPLETE" "$got $(basename "$fixture")"
+    else
+      bad "JQ_ENHANCE_INIT_COMPLETE" "$got $(basename "$fixture"); expected it to $want it"
+    fi
+  done
+fi
 
 # The filter-only deploy reads the filter service's own payloads, which have
 # no fixture here; compiled only, like the enhance programs.

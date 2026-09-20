@@ -5,8 +5,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-// Version 6 stores 737-byte schema-v7 records. Rebuild in a separate directory.
-const STORE_VERSION: u16 = 6;
+// Version 6 stored 737-byte schema-v7 records in nine-record rows. Version 7 is
+// the same 737-byte record in a twenty-nine-record row: the records file is
+// byte-identical, but `records_per_row` is part of the manifest and every
+// derived shard, artifact and PIR parameter changes with it. Rebuild in a
+// separate directory; the version bump and the `records_per_row` check below
+// both refuse an in-place reuse of a v6 journal.
+const STORE_VERSION: u16 = 7;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

@@ -60,9 +60,9 @@ journal stores fixed-width records in `enhance/records.bin` and committed block
 metadata in `enhance/manifest.json` beneath the configured data directory.
 The journal supports restart and rewind; it is not a finality guarantee.
 
-Each record is 737 bytes. Nine records occupy a 6,633-byte row, which fits two
-PIR instances; a tenth record would require a third. A shard contains 8,192 rows,
-or 73,728 positions. Full shards are sealed; the partly filled frontier changes
+Each record is 737 bytes. Twenty-nine records occupy a 21,373-byte row, which
+fits six PIR instances with 131 bytes to spare; a thirtieth record would require
+a seventh. A shard contains 8,192 rows, or 237,568 positions. Full shards are sealed; the partly filled frontier changes
 as blocks arrive. Row digests identify shard content for preparation and reuse.
 The logical database is padded to a power-of-two row count, at least 8,192.
 See the [protocol](protocol.md) for field offsets and public geometry.
