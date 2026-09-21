@@ -216,18 +216,21 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          args=(
-            --locked --profile release-fast
-            -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server
-            -p pir-apm -p transparent-spend-pir
-          )
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            # A complete retained window is over 9 GiB at schema 8 and cannot
-            # run on GitHub's hosted PR runner. Main uses the qualified-build
-            # runner and must execute this test before publishing artifacts.
-            args+=(-- --skip previous_generation_is_still_answered_after_a_publish)
+            # The full-size embedded and topology fixtures exceed the hosted
+            # runner's memory at schema 8. Main uses the qualified-build runner
+            # and executes every integration target before publishing artifacts.
+            tools/ci/full-test.sh --locked --profile release-fast \
+              -p enhance-pir -p enhance-pir-load-test -p pir-apm -p transparent-spend-pir
+            tools/ci/full-test.sh --locked --profile release-fast \
+              -p enhance-pir-server --lib --bins \
+              --test operator_payloads --test record_layout \
+              --test sharded_vs_monolithic --test worker_migration
+          else
+            tools/ci/full-test.sh --locked --profile release-fast \
+              -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server \
+              -p pir-apm -p transparent-spend-pir
           fi
-          tools/ci/full-test.sh "${args[@]}"
 
   release:
     name: Prepare qualified release artifacts
