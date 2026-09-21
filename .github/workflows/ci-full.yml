@@ -201,8 +201,10 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
-      # Bound concurrent fixtures; each simulation still exercises internal concurrency.
-      RUST_TEST_THREADS: "2"
+      # Schema-8 integration fixtures each retain multiple six-instance shard
+      # generations. Run them serially so two fixtures cannot exhaust a hosted
+      # runner before either test reports its result.
+      RUST_TEST_THREADS: "1"
       CXXFLAGS: -mpclmul
       CFLAGS: -mpclmul
     steps:
