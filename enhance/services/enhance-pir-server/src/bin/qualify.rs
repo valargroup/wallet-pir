@@ -6,7 +6,10 @@ use enhance_pir_server::{
     coordinator::{CoordinatorState, TableSetup, WorkerGroup, WorkerTarget},
     store::RecordJournal,
     topology::{Append, Group, Replica, TopologyStore},
-    types::{DatabaseId, EnhanceRecord, EnhanceRecordParts, ENHANCE_LAYOUT, SHARD_POSITIONS},
+    types::{
+        DatabaseId, EnhanceRecord, EnhanceRecordParts, ENHANCE_LAYOUT, SHARDS_PER_GROUP,
+        SHARD_POSITIONS,
+    },
 };
 use std::{
     path::PathBuf,
@@ -18,7 +21,7 @@ use std::{
 struct Cli {
     #[arg(long, required = true)]
     worker_url: Vec<String>,
-    /// Optional isolated second pair for a 16-to-17-shard online append rehearsal.
+    /// Optional isolated second pair for a group-boundary online append rehearsal.
     #[arg(long)]
     append_worker_url: Vec<String>,
     #[arg(long, default_value_t = 1)]
@@ -74,18 +77,26 @@ async fn query(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     if !cli.isolated_workers
-        || !(1..=16).contains(&cli.shards)
+        || !(1..=SHARDS_PER_GROUP).contains(&cli.shards)
         || cli.worker_url.len() > 2
         || cli.min_publications == 0
         || cli.min_publications >= cli.shards * SHARD_POSITIONS as u64
         || cli.seconds == 0
     {
-        return Err("requires --isolated-workers, 1..16 shards and one or two workers".into());
+        return Err(format!(
+            "requires --isolated-workers, 1..={SHARDS_PER_GROUP} shards and one or two workers"
+        )
+        .into());
     }
     if !cli.append_worker_url.is_empty()
-        && (cli.shards != 16 || cli.worker_url.len() != 2 || cli.append_worker_url.len() != 2)
+        && (cli.shards != SHARDS_PER_GROUP
+            || cli.worker_url.len() != 2
+            || cli.append_worker_url.len() != 2)
     {
-        return Err("online append requires 16 shards and two distinct worker pairs".into());
+        return Err(format!(
+            "online append requires {SHARDS_PER_GROUP} shards and two distinct worker pairs"
+        )
+        .into());
     }
     if cli.work_dir.exists() {
         return Err("qualification work directory must be new".into());
@@ -208,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut online_append = None;
     if let Some(topology) = topology {
         // Fill the last row before crossing both ownership and query-domain boundaries.
-        let boundary = 16 * SHARD_POSITIONS as u64;
+        let boundary = SHARDS_PER_GROUP * SHARD_POSITIONS as u64;
         if position_count < boundary {
             height += 1;
             let tail: Vec<_> = (position_count..boundary).map(record).collect();

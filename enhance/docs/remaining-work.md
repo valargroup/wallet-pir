@@ -26,15 +26,15 @@ work does and does not establish. The gaps below are open.
   that run is an AMD host with synthetic records and is explicit that memory
   under load, failover and process uptime need separate evidence. It is not the
   six-hour, 300-publication qualification.
-- **Size the workers before schema 8 can stay.** Three schema-8 shards measure
+- **Add the next worker pair before shard four.** Three schema-8 shards measure
   5,760 MiB against a 6,144-MiB `MemoryHigh`; four measure 6,144 MiB with 2,073
   reclaim events. Three shards is 712,704 positions, which the chain reaches
   roughly six to twenty days after September 20. Larger workers, fewer retained
-  generations, or staying on schema 7 -- but not "monitor it". Adding a group
-  does not help: `group_index_for_shard` gives the second group no shards until
-  the first holds sixteen. See [capacity expansion](capacity-expansion.md).
+  generations, or staying on schema 7 -- but not "monitor it". The ownership
+  contract now assigns shard four to the second group. See
+  [capacity expansion](capacity-expansion.md).
 - Re-run `online_topology`'s full-group test somewhere it fits. Crossing the
-  group boundary now means 32 schema-8 shard runtimes, which is roughly 12 GiB of
+  group boundary now means six schema-8 shard runtimes across two pairs;
   resident preprocessing -- the same arithmetic as the capacity question above,
   and more than the shared CI runners have.
 

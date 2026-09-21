@@ -21,7 +21,10 @@ pub const SHARD_POSITIONS: usize = SHARD_ROWS * RECORDS_PER_ROW;
 /// Shards assigned to one logical worker group. Every replica in the group
 /// holds the complete assignment; replicas are alternatives, not additive
 /// contributors to a query.
-pub const SHARDS_PER_GROUP: u64 = 16;
+// Current c-4 workers are qualified for three schema-8 shards. Keeping this in
+// the ownership contract ensures shard four is assigned to a new replica pair
+// instead of silently exceeding the measured memory envelope.
+pub const SHARDS_PER_GROUP: u64 = 3;
 /// Backwards-compatible alias for callers compiled against the former
 /// single-owner placement terminology.
 pub const SHARDS_PER_WORKER: u64 = SHARDS_PER_GROUP;

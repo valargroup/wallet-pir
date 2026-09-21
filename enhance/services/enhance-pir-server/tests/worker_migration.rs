@@ -1,6 +1,6 @@
 //! Worker-group migration and placement. Replica membership may change without
 //! moving shards; appending a group only claims shards at or beyond the stable
-//! 16-shard capacity boundary.
+//! configured shard-group capacity boundary.
 
 use enhance_pir::client::{record_in_row, QuerySession};
 use enhance_pir_server::coordinator::{CoordinatorState, TableSetup, WorkerGroup, WorkerTarget};

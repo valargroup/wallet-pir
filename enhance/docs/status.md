@@ -24,9 +24,8 @@ positions that is 7,614 positions away. Do not convert that into a time from the
 samples taken here: two intervals the same morning gave 35.4 and 10.7 positions
 per block, so the honest statement is hours to days, and the count must be read
 again before the figure is quoted. The second fact is that the c-4 worker memory
-budget is reached at roughly eight schema-8 shards, about 1.9 million positions,
-which the group/autoscale design cannot expand past without one of the decisions
-listed in [capacity expansion](capacity-expansion.md).
+budget is reached at shard four. The three-shard group ownership contract places
+that shard on a new replica pair; see [capacity expansion](capacity-expansion.md).
 
 ## September 21, 2026: current-worker shard ceiling decision
 

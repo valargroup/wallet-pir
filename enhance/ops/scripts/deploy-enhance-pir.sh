@@ -76,7 +76,7 @@ readonly JQ_ENHANCE_NOT_REGRESSED='.anchor_height >= $old.anchor_height and
 # A waiver is an explicit, exact-release operator decision, never evidence of passed tests.
 # This is the same acceptance contract used by enhance-autoscale.py.
 # shellcheck disable=SC2016
-readonly JQ_ENHANCE_RELEASE_ACCEPTED='.revision == $revision and .worker_size == "c-4" and .shards_per_group == 16 and (
+readonly JQ_ENHANCE_RELEASE_ACCEPTED='.revision == $revision and .worker_size == "c-4" and .shards_per_group == 3 and (
     (.passed == true and .full_capacity == true and .failover == true and
      .online_append == true and .memory == true and .seconds >= 21600 and .publications >= 300)
     or (.acceptance == "operator" and .waive_qualification == true and .waive_initial_observation == true and

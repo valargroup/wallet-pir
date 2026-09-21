@@ -19,13 +19,11 @@ import tempfile
 import time
 import urllib.request
 
-# 16 shards of 8,192 rows at 29 records per row. This must track
+# Three shards of 8,192 rows at 29 records per row. This must track
 # enhance_pir::types::{SHARDS_PER_GROUP, SHARD_POSITIONS}; the schema-8 row
-# widened from 9 to 29 records, so a group now holds 3,801,088 positions
-# instead of 1,179,648. Capacity here is arithmetic: it is the placement the
-# coordinator will accept, not a statement that 16 schema-8 shards have been
-# qualified against a worker's memory limit.
-GROUP_POSITIONS = 16 * 237568
+# widened from 9 to 29 records. Three shards are the measured c-4 ceiling;
+# shard four must be placed on a new replica pair.
+GROUP_POSITIONS = 3 * 237568
 MAX_GROUPS = 4
 
 
@@ -150,7 +148,7 @@ def operator_acceptance(receipt, revision):
         receipt.get('acceptance') == 'operator'
         and receipt.get('revision') == revision
         and receipt.get('worker_size') == 'c-4'
-        and receipt.get('shards_per_group') == 16
+        and receipt.get('shards_per_group') == 3
         and receipt.get('waive_qualification') is True
         and receipt.get('waive_initial_observation') is True
         and all(isinstance(receipt.get(key), str) and receipt[key].strip()
@@ -235,7 +233,7 @@ class Controller:
                 raise RuntimeError('artifact checksum mismatch')
         receipt = json.loads(Path(self.config['qualification_receipt']).read_text())
         if not operator_acceptance(receipt, revision) and not (receipt.get('passed') is True and receipt.get('revision') == revision and receipt.get('worker_size') == 'c-4'
-                and receipt.get('shards_per_group') == 16 and receipt.get('full_capacity') is True
+                and receipt.get('shards_per_group') == 3 and receipt.get('full_capacity') is True
                 and receipt.get('failover') is True and receipt.get('online_append') is True
                 and receipt.get('memory') is True and receipt.get('seconds', 0) >= 21600
                 and receipt.get('publications', 0) >= 300):

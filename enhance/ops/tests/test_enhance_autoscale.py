@@ -185,7 +185,7 @@ class OperatorAcceptance(unittest.TestCase):
         root = Path(self.directory.name)
         self.revision = 'a' * 40
         self.receipt = {'acceptance': 'operator', 'revision': self.revision,
-            'worker_size': 'c-4', 'shards_per_group': 16,
+            'worker_size': 'c-4', 'shards_per_group': 3,
             'waive_qualification': True, 'waive_initial_observation': True,
             'authorized_by': 'operator', 'authorized_at': '2026-09-14T00:00:00Z',
             'reason': 'Explicitly accepted deployment without the soak'}

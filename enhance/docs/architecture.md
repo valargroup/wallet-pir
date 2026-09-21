@@ -94,8 +94,8 @@ encrypted row. The client decodes it and extracts the requested slot locally.
 
 ## Placement and capacity
 
-Ordered groups own consecutive ranges of 16 shards. A group therefore covers
-1,179,648 positions, with two production replicas holding the same assignment.
+Ordered groups own consecutive ranges of three schema-8 shards. A group therefore
+covers 712,704 positions, with two production replicas holding the same assignment.
 Group order fixes shard ownership and is append-only; replicas can be replaced
 within a group. Readiness is tracked per generation, so a recovering replica is
 not selected for data it does not yet hold.

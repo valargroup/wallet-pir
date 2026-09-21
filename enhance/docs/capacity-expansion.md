@@ -10,12 +10,12 @@ steps may already have been completed. Routine releases are described in
 
 The following is the implemented target. See [dated status](status.md) for qualification and rollout state.
 
-Each ordered group owns 16 consecutive 8,192-row shards: under schema 8 that is
-3,801,088 Ironwood positions (29 records per row), two identical replicas,
+Each ordered group owns three consecutive 8,192-row shards: under schema 8 that is
+712,704 Ironwood positions (29 records per row), two identical replicas,
 historically $168/month worker compute at the recorded c-4 list price. The
 automatic ceiling is four groups/eight workers (historically $672/month).
 
-**The c-4 memory budget is reached long before a group is full.** A schema-8
+**The c-4 memory budget determines the group boundary.** A schema-8
 shard runtime holds a 192-MiB packed database and a 192-MiB partial CRS, three
 times the schema-7 figure, because the 21,373-byte row needs six PIR instances
 instead of two. Sealed shards hold one runtime each; the frontier holds one per
@@ -71,25 +71,16 @@ database, CRS and the encoded copy it persists -- while still holding every
 runtime a retained generation references. Size from the measurement, not the
 product.
 
-Extrapolating the measured slope, the full 16-shard group is far outside this
-budget, and the schema-7 equivalent at 16 shards is roughly 3 GiB. That is why
-the contract above was sound before this layout change and is not sound after
-it.
+The previous 16-shard ownership contract was far outside this budget. Schema 8
+therefore sets `SHARDS_PER_GROUP=3`: a second pair owns shard four, beginning at
+position 712,705. Persisted `topology.json` records this value and deliberately
+rejects binaries with a different ownership contract.
 
-Adding a group does not relieve the pressure. `group_index_for_shard` assigns
-shards to groups in fixed blocks of `SHARDS_PER_GROUP`, so a second group owns
-nothing until shard 16 exists -- past 3.8 million positions, and past the point
-where group one has already exceeded its memory limit. Expanding needs one of:
-
-- larger workers, sized from a measured schema-8 residency rather than this table;
-- `SHARDS_PER_GROUP` reduced to 8, which is a shard-ownership change: every
-  persisted `topology.json` records `shards_per_group`, and `TopologyStore::open`
-  refuses a file that disagrees with the binary, deliberately, because the
-  change remaps which worker holds which shard;
-- fewer retained generations, which weakens the published retention promise and
-  is listed here only for completeness.
-
-This is an open decision, not a resolved plan. See [remaining work](remaining-work.md).
+Expansion requires provisioning and qualifying the next replica pair before
+that boundary. Larger workers remain an alternative, but changing the group
+width again would be another explicit topology migration. Fewer retained
+generations would weaken the published session promise and is not the selected
+capacity strategy.
 Every query still evaluates every populated group; this is position-capacity
 expansion, not a throughput autoscaler. There is no recent/archive split.
 
@@ -151,7 +142,7 @@ make it match the starting assumptions of this procedure.
    /path/to/downloaded-release/enhance-pir-qualify --isolated-workers \
      --worker-url http://NEW_PRIVATE_IP_A:8091 \
      --worker-url http://NEW_PRIVATE_IP_B:8091 \
-     --shards 16 --seconds 21600 --min-publications 300 \
+     --shards 3 --seconds 21600 --min-publications 300 \
      --work-dir /srv/enhance-pir/qualification/run-001 \
      --output /srv/enhance-pir/qualification/run-001.json
    ```
@@ -171,7 +162,7 @@ make it match the starting assumptions of this procedure.
 7. Preserve the raw evidence and create a private qualification receipt with
    `passed`, `full_capacity`, `failover`, `online_append`, and `memory` all true,
    the exact 40-character `revision`, `worker_size: "c-4"`,
-   `shards_per_group: 16`, `seconds >= 21600`, `publications >= 300`, and paths
+   `shards_per_group: 3`, `seconds >= 21600`, `publications >= 300`, and paths
    to the evidence. Install it at `/etc/enhance-pir/qualification.json`; the
    deployment helper verifies it before stopping any service. This receipt is operator attestation of the combined
    evidence, not output automatically granted by the fixture utility.
@@ -330,7 +321,7 @@ controller lifecycle evidence separately before attesting the combined receipt.
 An operator may explicitly accept a deployed release without completing the
 qualification and initial observation periods. Record that decision in the
 configured qualification receipt using `acceptance: "operator"`, the exact
-running `revision`, `worker_size: "c-4"`, `shards_per_group: 16`, both
+running `revision`, `worker_size: "c-4"`, `shards_per_group: 3`, both
 `waive_qualification: true` and `waive_initial_observation: true`, and nonempty
 `authorized_by`, `authorized_at`, and `reason` fields. Keep the file root-only.
 This receipt must not claim that waived tests passed. It applies only to the

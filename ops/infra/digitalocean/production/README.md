@@ -1,6 +1,6 @@
 # Wallet PIR production infrastructure
 
-The c-4/16-shard target below is not yet production-qualified or deployed.
+The c-4 three-shard target below is not yet production-deployed.
 Follow the [migration and qualification gates](../../../../enhance/docs/deployment.md#capacity-expansion-target); do not apply this root to the legacy pair without the state moves described there.
 
 This Terraform root manages the shared Wallet PIR production infrastructure in
@@ -70,14 +70,14 @@ has `prevent_destroy` because DigitalOcean cannot rename it in place.
 
 ## Capacity
 
-Each ordered shard group owns 16 shards and has two active-active replicas.
+Each ordered shard group owns three shards and has two active-active replicas.
 The coordinator sends a query to one ready replica per group and retries its
 peer on failure. Publication requires one ready replica in every used group;
 the second copy provides redundancy without contributing a duplicate PIR
 partial.
 
 Keep group order append-only. Add the next replica pair before the database
-crosses a 16-shard boundary; adding or replacing a replica within an existing
+crosses a three-shard boundary; adding or replacing a replica within an existing
 group does not move shards. Worker memory includes retained frontier generations and rebuild overlap.
 The target c-4 service has a 6-GiB soft limit, 7-GiB hard limit and 2-GiB swap
 allowance. The full working set must fit RAM in qualification. Each pair costs

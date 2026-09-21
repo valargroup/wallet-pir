@@ -163,7 +163,7 @@ in committed inputs or logs.
 
 ## Capacity expansion target
 
-The implemented target assigns 16 shards per c-4 replica, with two replicas per
+The implemented target assigns three shards per c-4 replica, with two replicas per
 group and a four-group ceiling. Qualification, initial migration, controller
 installation, online append, failure recovery and operator acceptance are covered
 in [capacity expansion](capacity-expansion.md). A short public load test does not
