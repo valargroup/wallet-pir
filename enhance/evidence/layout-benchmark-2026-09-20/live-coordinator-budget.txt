@@ -1,0 +1,6 @@
+MemoryCurrent=10256052224
+MemoryHigh=infinity
+MemoryMax=infinity
+MemTotal:       65847084 kB
+MemFree:          848020 kB
+MemAvailable:   48150928 kB

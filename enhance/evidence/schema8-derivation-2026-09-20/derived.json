@@ -1,0 +1,122 @@
+{
+  "payloads": [
+    {
+      "label": "schema 7, live count",
+      "positions": 467255,
+      "records_per_row": 9,
+      "row_bytes": 6633,
+      "logical_rows": 65536,
+      "query_bits": 42,
+      "instances": 2,
+      "upload_bytes": 430088,
+      "response_bytes": 10256,
+      "combined_bytes": 440344,
+      "combined_kib": 430.023,
+      "public_params_bytes": 28672
+    },
+    {
+      "label": "schema 8, live count",
+      "positions": 467255,
+      "records_per_row": 29,
+      "row_bytes": 21373,
+      "logical_rows": 16384,
+      "query_bits": 41,
+      "instances": 6,
+      "upload_bytes": 169992,
+      "response_bytes": 30736,
+      "combined_bytes": 200728,
+      "combined_kib": 196.023,
+      "public_params_bytes": 86016
+    },
+    {
+      "label": "schema 8, past its boundary",
+      "positions": 475137,
+      "records_per_row": 29,
+      "row_bytes": 21373,
+      "logical_rows": 32768,
+      "query_bits": 42,
+      "instances": 6,
+      "upload_bytes": 258056,
+      "response_bytes": 30736,
+      "combined_bytes": 288792,
+      "combined_kib": 282.023,
+      "public_params_bytes": 86016
+    },
+    {
+      "label": "schema 7, past its boundary",
+      "positions": 589825,
+      "records_per_row": 9,
+      "row_bytes": 6633,
+      "logical_rows": 131072,
+      "query_bits": 43,
+      "instances": 2,
+      "upload_bytes": 790536,
+      "response_bytes": 10256,
+      "combined_bytes": 800792,
+      "combined_kib": 782.023,
+      "public_params_bytes": 28672
+    }
+  ],
+  "worker_residency": [
+    {
+      "records_per_row": 9,
+      "shards": 2,
+      "shard_runtime_mib": 128,
+      "resident_gib": 1.25
+    },
+    {
+      "records_per_row": 9,
+      "shards": 7,
+      "shard_runtime_mib": 128,
+      "resident_gib": 1.875
+    },
+    {
+      "records_per_row": 9,
+      "shards": 8,
+      "shard_runtime_mib": 128,
+      "resident_gib": 2.0
+    },
+    {
+      "records_per_row": 9,
+      "shards": 10,
+      "shard_runtime_mib": 128,
+      "resident_gib": 2.25
+    },
+    {
+      "records_per_row": 9,
+      "shards": 16,
+      "shard_runtime_mib": 128,
+      "resident_gib": 3.0
+    },
+    {
+      "records_per_row": 29,
+      "shards": 2,
+      "shard_runtime_mib": 384,
+      "resident_gib": 3.75
+    },
+    {
+      "records_per_row": 29,
+      "shards": 7,
+      "shard_runtime_mib": 384,
+      "resident_gib": 5.625
+    },
+    {
+      "records_per_row": 29,
+      "shards": 8,
+      "shard_runtime_mib": 384,
+      "resident_gib": 6.0
+    },
+    {
+      "records_per_row": 29,
+      "shards": 10,
+      "shard_runtime_mib": 384,
+      "resident_gib": 6.75
+    },
+    {
+      "records_per_row": 29,
+      "shards": 16,
+      "shard_runtime_mib": 384,
+      "resident_gib": 9.0
+    }
+  ]
+}

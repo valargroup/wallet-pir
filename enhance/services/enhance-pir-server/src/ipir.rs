@@ -110,7 +110,9 @@ pub fn add_crs_blocks_assign_mod(
 // Version 3 used the former wider action record. Version 4 namespaced table
 // artifacts. Version 5 is the 724-byte Enhance record. Version 6 adds the
 // authenticated transaction-shape byte and invalidates the old preprocessing.
-const ARTIFACT_VERSION: u16 = 6;
+// Version 7 is the twenty-nine-record row: db_cols goes from 4,096 to 12,288,
+// so every persisted database and partial CRS from version 6 is the wrong shape.
+const ARTIFACT_VERSION: u16 = 7;
 
 #[derive(Serialize, Deserialize)]
 struct ArtifactMetadata {
@@ -493,7 +495,7 @@ mod tests {
     /// Every served layout, with the instance count its rows need. One instance
     /// carries d * log2(p) = 28,672 plaintext bits.
     const LAYOUTS: &[(&str, DatabaseLayout, usize)] =
-        &[("enhance", crate::types::ENHANCE_LAYOUT, 2)];
+        &[("enhance", crate::types::ENHANCE_LAYOUT, 6)];
 
     #[test]
     fn every_layout_has_the_expected_instance_count() {
@@ -517,12 +519,13 @@ mod tests {
     }
 
     #[test]
-    fn enhance_rows_use_two_ipir_instances() {
-        // A 6,633-byte row is 53,064 bits and fits two 28,672-bit instances.
-        // Ten 725-byte records would exceed their combined capacity.
-        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 6_633);
+    fn enhance_rows_use_six_ipir_instances() {
+        // A 21,373-byte row is 170,984 bits and fits six 28,672-bit instances
+        // with 1,048 bits to spare. Thirty 737-byte records need 176,880 bits
+        // and would spill into a seventh instance for one extra record.
+        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 21_373);
         let (_, params) = shard_parameters(&crate::types::ENHANCE_LAYOUT).expect("params");
-        assert_eq!(params.instances, 2);
-        assert_eq!(params.db_cols, 4_096);
+        assert_eq!(params.instances, 6);
+        assert_eq!(params.db_cols, 12_288);
     }
 }

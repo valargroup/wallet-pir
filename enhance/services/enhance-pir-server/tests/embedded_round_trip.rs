@@ -446,7 +446,20 @@ async fn enhance_v1_routes_expose_only_the_current_generation() {
     assert!(manifest.parameter_id.contains("-enhance-"));
     assert_eq!(wire.params, expected_session.params);
     let public_params = BASE64_STANDARD.decode(&wire.public_params_base64).unwrap();
-    assert_eq!(public_params.len(), 28_672);
+    // One published `c1` row per iPIR instance, at full `q` precision. Derived
+    // from the served parameters rather than written out: the nine-to-29-record
+    // row took this from two instances to six, and a literal here only records
+    // which layout the test was written against.
+    assert_eq!(wire.params.db_cols % wire.params.poly_len, 0);
+    assert_eq!(
+        public_params.len(),
+        (wire.params.db_cols / wire.params.poly_len)
+            * ipir_sp::modulus_switch::published_c1_len(
+                wire.params.poly_len,
+                ipir_sp::params::SINGLE_CRT_Q,
+            )
+    );
+    assert_eq!(wire.params.instances, 6, "29 x 737-byte records per row");
     assert_eq!(public_params, expected_public_params);
     assert_eq!(get(&app, "/v1/health").await.0, StatusCode::OK);
 

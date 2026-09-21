@@ -1,5 +1,43 @@
 # Status
 
+## September 20, 2026: schema-8 implementation, not deployed
+
+The 29-record layout is implemented and tested locally at schema 8; **nothing
+has been deployed**. The public origin still served schema 7 when last read:
+737-byte records, nine records per row, 6,633-byte rows, 65,536 logical rows,
+467,255 Ironwood positions, seven shards, anchor height 3,489,681. That reading
+is retained in `enhance/ops/fixtures/enhance/init-schema7-nine-record.json`,
+where it also serves as the negative case for the deployment layout gate.
+
+Direct production access from the implementing session was refused by a local
+permission gate, so no host inventory, unit configuration, memory limit,
+preparation run or cutover was performed or observed. No schema-8 figure in this
+repository is a production measurement; the sizes in
+[performance](performance.md#derived-schema-8-sizes) and the residency table in
+[capacity expansion](capacity-expansion.md) are derived from the pinned encoder
+and the runtime shapes, and the September 20 layout benchmark was taken on an
+isolated four-vCPU AMD host, not on this fleet.
+
+Two facts dated here because they expire. The schema-8 query holds its 196.0 KiB
+size only until 475,136 positions, after which it is 282.0 KiB; at 467,522
+positions that is 7,614 positions away. Do not convert that into a time from the
+samples taken here: two intervals the same morning gave 35.4 and 10.7 positions
+per block, so the honest statement is hours to days, and the count must be read
+again before the figure is quoted. The second fact is that the c-4 worker memory
+budget is reached at shard four. The three-shard group ownership contract places
+that shard on a new replica pair; see [capacity expansion](capacity-expansion.md).
+
+## September 21, 2026: current-worker shard ceiling decision
+
+Keep the existing `MemoryHigh=6G` and `MemoryMax=7G` limits and treat three
+schema-8 shards (712,704 positions) as the maximum supported placement on the
+current `c-4` workers. Do not activate a fourth shard on that hardware. The
+completed three-shard fixture peaked at 5,760 MiB with no memory events; the
+four-shard attempt reached the 6,144-MiB soft limit and recorded 2,073 reclaim
+events before the colocated harness was killed. Four shards require a larger
+worker and a new off-host qualification. This is an operational decision based
+on isolated evidence, not a claim that schema 8 has been deployed.
+
 ## September 14, 2026: public origin
 
 A read-only observation of `https://enhance-pir.valargroup.dev` found schema 7,

@@ -201,8 +201,10 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
-      # Bound concurrent fixtures; each simulation still exercises internal concurrency.
-      RUST_TEST_THREADS: "2"
+      # Schema-8 integration fixtures each retain multiple six-instance shard
+      # generations. Run them serially so two fixtures cannot exhaust a hosted
+      # runner before either test reports its result.
+      RUST_TEST_THREADS: "1"
       CXXFLAGS: -mpclmul
       CFLAGS: -mpclmul
     steps:
@@ -210,10 +212,25 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
-      - run: >-
-          tools/ci/full-test.sh --locked --profile release-fast
-          -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server
-          -p pir-apm -p transparent-spend-pir
+      - name: Run Enhance release tests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            # The full-size embedded and topology fixtures exceed the hosted
+            # runner's memory at schema 8. Main uses the qualified-build runner
+            # and executes every integration target before publishing artifacts.
+            tools/ci/full-test.sh --locked --profile release-fast \
+              -p enhance-pir -p enhance-pir-load-test -p pir-apm -p transparent-spend-pir
+            tools/ci/full-test.sh --locked --profile release-fast \
+              -p enhance-pir-server --lib --bins \
+              --test operator_payloads --test record_layout \
+              --test sharded_vs_monolithic --test worker_migration
+          else
+            tools/ci/full-test.sh --locked --profile release-fast \
+              -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server \
+              -p pir-apm -p transparent-spend-pir
+          fi
 
   release:
     name: Prepare qualified release artifacts

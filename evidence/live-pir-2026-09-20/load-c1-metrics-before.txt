@@ -1,0 +1,238 @@
+# HELP enhance_http_in_flight Requests received by the coordinator that have not produced a response.
+# TYPE enhance_http_in_flight gauge
+enhance_http_in_flight{endpoint="health"} 0
+enhance_http_in_flight{endpoint="init"} 0
+enhance_http_in_flight{endpoint="query"} 0
+# HELP enhance_http_processing_in_flight Requests with complete bodies currently queued or executing.
+# TYPE enhance_http_processing_in_flight gauge
+enhance_http_processing_in_flight{endpoint="query"} 0
+# HELP enhance_http_request_duration_seconds Time from the coordinator receiving request headers until the route produces a response. Includes request body receive and post-body server time, but excludes response transmission.
+# TYPE enhance_http_request_duration_seconds histogram
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="0.05"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="0.1"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="0.25"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="0.5"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="1"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="2"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="5"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="10"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="30"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="health",le="+Inf"} 51906
+enhance_http_request_duration_seconds_sum{endpoint="health"} 1.5145287109999999
+enhance_http_request_duration_seconds_count{endpoint="health"} 51906
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="0.05"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="0.1"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="0.25"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="0.5"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="1"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="2"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="5"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="10"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="30"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="init",le="+Inf"} 40
+enhance_http_request_duration_seconds_sum{endpoint="init"} 0.0029879390000000002
+enhance_http_request_duration_seconds_count{endpoint="init"} 40
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="0.05"} 3
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="0.1"} 47
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="0.25"} 2858
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="0.5"} 2947
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="1"} 4178
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="2"} 4210
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="5"} 4227
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="10"} 4230
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="30"} 4230
+enhance_http_request_duration_seconds_bucket{endpoint="query",le="+Inf"} 4230
+enhance_http_request_duration_seconds_sum{endpoint="query"} 1397.5496414180027
+enhance_http_request_duration_seconds_count{endpoint="query"} 4230
+# HELP enhance_http_request_processing_duration_seconds Time from complete request body availability until the route produces a response. Includes admission queueing, coordinator work, worker RPCs, and response construction.
+# TYPE enhance_http_request_processing_duration_seconds histogram
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.05"} 4202
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.1"} 4208
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.25"} 4208
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.5"} 4211
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="1"} 4228
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="2"} 4230
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="5"} 4230
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="10"} 4230
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="30"} 4230
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="+Inf"} 4230
+enhance_http_request_processing_duration_seconds_sum{endpoint="query"} 135.57883177000002
+enhance_http_request_processing_duration_seconds_count{endpoint="query"} 4230
+# HELP enhance_http_requests_total Enhance PIR API requests partitioned by allowlisted endpoint, method, and status.
+# TYPE enhance_http_requests_total counter
+enhance_http_requests_total{endpoint="health",method="GET",status="200"} 51906
+enhance_http_requests_total{endpoint="init",method="GET",status="200"} 40
+enhance_http_requests_total{endpoint="query",method="POST",status="200"} 4230
+# HELP enhance_layout_activation_height Height at which Ironwood activated; ingest starts here.
+# TYPE enhance_layout_activation_height gauge
+enhance_layout_activation_height 3428143
+# HELP enhance_layout_confirmations Confirmations a block needs before its actions are ingested.
+# TYPE enhance_layout_confirmations gauge
+enhance_layout_confirmations 0
+# HELP enhance_snapshot_anchor_height Anchor height of the snapshot currently being served (0 if none).
+# TYPE enhance_snapshot_anchor_height gauge
+enhance_snapshot_anchor_height 3489208
+# HELP enhance_snapshot_generation Generation of the snapshot currently being served (0 if none).
+# TYPE enhance_snapshot_generation gauge
+enhance_snapshot_generation 3489208
+# HELP enhance_snapshot_ironwood_tree_size Ironwood tree size covered by the served snapshot (0 if none).
+# TYPE enhance_snapshot_ironwood_tree_size gauge
+enhance_snapshot_ironwood_tree_size 450506
+# HELP enhance_snapshot_phase_code Coordinator phase: 0 syncing, 1 building, 2 serving, 3 failed.
+# TYPE enhance_snapshot_phase_code gauge
+enhance_snapshot_phase_code 2
+# HELP enhance_snapshot_retained_generations Generations still answerable (the newest plus the one before it).
+# TYPE enhance_snapshot_retained_generations gauge
+enhance_snapshot_retained_generations 8
+# HELP enhance_snapshot_sync_current_height Height reached by the current sync (0 unless syncing).
+# TYPE enhance_snapshot_sync_current_height gauge
+enhance_snapshot_sync_current_height 0
+# HELP enhance_snapshot_sync_target_height Height the current sync is aiming for (0 unless syncing).
+# TYPE enhance_snapshot_sync_target_height gauge
+enhance_snapshot_sync_target_height 0
+# HELP enhance_table_logical_rows Public database size in rows (power of two) in the newest generation.
+# TYPE enhance_table_logical_rows gauge
+enhance_table_logical_rows{table="enhance"} 65536
+# HELP enhance_table_pool_workers Logical shard groups in the table's ordered pool (legacy metric name).
+# TYPE enhance_table_pool_workers gauge
+enhance_table_pool_workers{table="enhance"} 1
+# HELP enhance_table_positions Positions published for the table in the newest generation.
+# TYPE enhance_table_positions gauge
+enhance_table_positions{table="enhance"} 450506
+# HELP enhance_table_query_slots_available Free concurrent query slots for the table; queries are shed with 503 at 0.
+# TYPE enhance_table_query_slots_available gauge
+enhance_table_query_slots_available{table="enhance"} 2
+# HELP enhance_table_record_bytes Bytes in one record.
+# TYPE enhance_table_record_bytes gauge
+enhance_table_record_bytes{table="enhance"} 737
+# HELP enhance_table_records_per_row Records packed into one PIR row.
+# TYPE enhance_table_records_per_row gauge
+enhance_table_records_per_row{table="enhance"} 9
+# HELP enhance_table_registered 1 if the coordinator serves this table, 0 if it is only planned.
+# TYPE enhance_table_registered gauge
+enhance_table_registered{table="enhance"} 1
+# HELP enhance_table_sealed_shards Published shards that are full and will never be rebuilt.
+# TYPE enhance_table_sealed_shards gauge
+enhance_table_sealed_shards{table="enhance"} 6
+# HELP enhance_table_shard_positions Positions (records) covered by one shard.
+# TYPE enhance_table_shard_positions gauge
+enhance_table_shard_positions{table="enhance"} 73728
+# HELP enhance_table_shard_rows PIR rows in one shard.
+# TYPE enhance_table_shard_rows gauge
+enhance_table_shard_rows{table="enhance"} 8192
+# HELP enhance_table_shards Shards published for the table in the newest generation.
+# TYPE enhance_table_shards gauge
+enhance_table_shards{table="enhance"} 7
+# HELP enhance_table_shards_per_worker Fixed number of shard ids each logical worker group owns (legacy metric name).
+# TYPE enhance_table_shards_per_worker gauge
+enhance_table_shards_per_worker{table="enhance"} 16
+# HELP enhance_table_used_rows Rows holding real records in the newest generation.
+# TYPE enhance_table_used_rows gauge
+enhance_table_used_rows{table="enhance"} 50057
+# HELP enhance_worker_available_memory_bytes Available RAM on the worker host, as reported by its health probe.
+# TYPE enhance_worker_available_memory_bytes gauge
+enhance_worker_available_memory_bytes{worker="enhance-pir-worker-01"} 5454528512
+enhance_worker_available_memory_bytes{worker="enhance-pir-worker-02"} 5369335808
+# HELP enhance_worker_generation Generation the worker reports as active (0 if unknown).
+# TYPE enhance_worker_generation gauge
+enhance_worker_generation{worker="enhance-pir-worker-01"} 3489208
+enhance_worker_generation{worker="enhance-pir-worker-02"} 3489208
+# HELP enhance_worker_group_configured_replicas Replicas configured for this logical shard group.
+# TYPE enhance_worker_group_configured_replicas gauge
+enhance_worker_group_configured_replicas{group="shard-group-01",table="enhance"} 2
+# HELP enhance_worker_group_ready_replicas Replicas ready for the newest published generation in this shard group.
+# TYPE enhance_worker_group_ready_replicas gauge
+enhance_worker_group_ready_replicas{group="shard-group-01",table="enhance"} 2
+# HELP enhance_worker_index Zero-based position of the worker across all pools, first seen first.
+# TYPE enhance_worker_index gauge
+enhance_worker_index{worker="enhance-pir-worker-01"} 0
+enhance_worker_index{worker="enhance-pir-worker-02"} 1
+# HELP enhance_worker_process_rss_bytes Resident memory of the worker process, as reported by its health probe.
+# TYPE enhance_worker_process_rss_bytes gauge
+enhance_worker_process_rss_bytes{worker="enhance-pir-worker-01"} 2259910656
+enhance_worker_process_rss_bytes{worker="enhance-pir-worker-02"} 2293129216
+# HELP enhance_worker_replica_in_flight Worker evaluation attempts currently in flight from the coordinator.
+# TYPE enhance_worker_replica_in_flight gauge
+enhance_worker_replica_in_flight{group="shard-group-01",replica="enhance-pir-worker-01"} 0
+enhance_worker_replica_in_flight{group="shard-group-01",replica="enhance-pir-worker-02"} 0
+# HELP enhance_worker_replica_request_duration_seconds Coordinator-observed duration of worker evaluation attempts.
+# TYPE enhance_worker_replica_request_duration_seconds histogram
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="0.05"} 2115
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="0.1"} 2116
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="0.25"} 2116
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="0.5"} 2116
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="1"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="2"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="5"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="10"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="30"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="60"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="120"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01",le="+Inf"} 2122
+enhance_worker_replica_request_duration_seconds_sum{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01"} 50.95057738499996
+enhance_worker_replica_request_duration_seconds_count{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01"} 2122
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="0.05"} 2098
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="0.1"} 2100
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="0.25"} 2100
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="0.5"} 2103
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="1"} 2107
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="2"} 2108
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="5"} 2108
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="10"} 2108
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="30"} 2108
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="60"} 2108
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="120"} 2108
+enhance_worker_replica_request_duration_seconds_bucket{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02",le="+Inf"} 2108
+enhance_worker_replica_request_duration_seconds_sum{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02"} 52.29280047099993
+enhance_worker_replica_request_duration_seconds_count{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02"} 2108
+# HELP enhance_worker_replica_requests_total Replica query attempts partitioned by logical group, replica, and outcome.
+# TYPE enhance_worker_replica_requests_total counter
+enhance_worker_replica_requests_total{group="shard-group-01",outcome="selected",replica="enhance-pir-worker-01"} 2122
+enhance_worker_replica_requests_total{group="shard-group-01",outcome="selected",replica="enhance-pir-worker-02"} 2108
+enhance_worker_replica_requests_total{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-01"} 2122
+enhance_worker_replica_requests_total{group="shard-group-01",outcome="succeeded",replica="enhance-pir-worker-02"} 2108
+# HELP enhance_worker_table_active_shards Shards of this table the worker reports active in its newest generation.
+# TYPE enhance_worker_table_active_shards gauge
+enhance_worker_table_active_shards{table="enhance",worker="enhance-pir-worker-01"} 7
+enhance_worker_table_active_shards{table="enhance",worker="enhance-pir-worker-02"} 7
+# HELP enhance_worker_table_assigned_shards Shards of this table the newest generation assigns to the worker.
+# TYPE enhance_worker_table_assigned_shards gauge
+enhance_worker_table_assigned_shards{table="enhance",worker="enhance-pir-worker-01"} 7
+enhance_worker_table_assigned_shards{table="enhance",worker="enhance-pir-worker-02"} 7
+# HELP enhance_worker_table_index Zero-based position of the worker's logical group in this table's pool.
+# TYPE enhance_worker_table_index gauge
+enhance_worker_table_index{table="enhance",worker="enhance-pir-worker-01"} 0
+enhance_worker_table_index{table="enhance",worker="enhance-pir-worker-02"} 0
+# HELP enhance_worker_table_populated_positions Positions held by the worker's shards of this table.
+# TYPE enhance_worker_table_populated_positions gauge
+enhance_worker_table_populated_positions{table="enhance",worker="enhance-pir-worker-01"} 450506
+enhance_worker_table_populated_positions{table="enhance",worker="enhance-pir-worker-02"} 450506
+# HELP enhance_worker_total_memory_bytes Total RAM on the worker host, as reported by its health probe.
+# TYPE enhance_worker_total_memory_bytes gauge
+enhance_worker_total_memory_bytes{worker="enhance-pir-worker-01"} 8326946816
+enhance_worker_total_memory_bytes{worker="enhance-pir-worker-02"} 8326955008
+# HELP enhance_worker_up 1 if the worker answered its health probe on the last scrape, else 0.
+# TYPE enhance_worker_up gauge
+enhance_worker_up{worker="enhance-pir-worker-01"} 1
+enhance_worker_up{worker="enhance-pir-worker-02"} 1
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 21256
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1048576
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 21
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 10068238336
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1789415130
+# HELP process_threads Number of OS threads in the process.
+# TYPE process_threads gauge
+process_threads 17
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 10936762368

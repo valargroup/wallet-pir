@@ -1,0 +1,72 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.26
+   Compiling quote v1.0.47
+   Compiling libc v0.2.189
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling memchr v2.8.3
+   Compiling cfg-if v1.0.5
+   Compiling zerocopy v0.8.57
+   Compiling crossbeam-utils v0.8.23
+   Compiling serde_core v1.0.229
+   Compiling crossbeam-epoch v0.9.21
+   Compiling zmij v1.0.23
+   Compiling crossbeam-deque v0.8.8
+   Compiling rayon-core v1.13.0
+   Compiling utf8parse v0.2.2
+   Compiling serde_json v1.0.151
+   Compiling anstyle-parse v1.0.0
+   Compiling thiserror v1.0.69
+   Compiling generic-array v0.14.7
+   Compiling anstyle-query v1.1.5
+   Compiling regex-syntax v0.8.11
+   Compiling itoa v1.0.18
+   Compiling aho-corasick v1.1.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling anstream v1.0.0
+   Compiling subtle v2.6.1
+   Compiling regex-automata v0.4.18
+   Compiling fastrand v2.5.0
+   Compiling either v1.18.0
+   Compiling clap_lex v1.1.1
+   Compiling serde v1.0.229
+   Compiling jiff-core v0.1.1
+   Compiling heck v0.5.0
+   Compiling log v0.4.34
+   Compiling regex v1.13.1
+   Compiling strsim v0.11.1
+   Compiling clap_builder v4.6.7
+   Compiling env_filter v2.0.0
+   Compiling jiff v0.2.37
+   Compiling thiserror v2.0.20
+   Compiling base64 v0.22.1
+   Compiling hex v0.4.3
+   Compiling env_logger v0.11.11
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling rayon v1.12.0
+   Compiling thiserror-impl v1.0.69
+   Compiling clap_derive v4.6.7
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling getrandom v0.2.17
+   Compiling cpufeatures v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling clap v4.6.7
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling sha1 v0.10.7
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.8
+   Compiling valar-spiral-rs v0.5.2 (https://github.com/valargroup/spiral-rs.git?rev=584fee3893b1d2d17b5d774c83bd801fb70d5ace#584fee38)
+   Compiling inspiring v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling simplepir-kernel v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling ipir-sp v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling enhance-layout-benchmark v0.1.0 (/Users/roman/projects/wallet-pir/enhance/evidence/layout-benchmark-2026-09-20)
+    Finished `release` profile [optimized] target(s) in 9.97s
+     Running `enhance/evidence/layout-benchmark-2026-09-20/target/release/hint-limit`

@@ -11,7 +11,7 @@ class DeploymentAcceptance(unittest.TestCase):
         programs = subprocess.check_output([str(ROOT / 'enhance/ops/scripts/deploy-enhance-pir.sh'), 'jq-programs']).decode()
         self.predicate = dict(row.split('\t', 1) for row in programs.split('\0') if row)['JQ_ENHANCE_RELEASE_ACCEPTED']
         self.revision = 'a' * 40
-        self.receipt = dict(revision=self.revision, worker_size='c-4', shards_per_group=16,
+        self.receipt = dict(revision=self.revision, worker_size='c-4', shards_per_group=3,
                             acceptance='operator', waive_qualification=True, waive_initial_observation=True,
                             authorized_by='test operator', authorized_at='2026-09-14T00:00:00Z', reason='test waiver')
 
@@ -33,7 +33,7 @@ class DeploymentAcceptance(unittest.TestCase):
         self.assertFalse(self.accepted())
 
     def test_qualified_receipts_still_require_all_evidence(self):
-        self.receipt = dict(revision=self.revision, worker_size='c-4', shards_per_group=16,
+        self.receipt = dict(revision=self.revision, worker_size='c-4', shards_per_group=3,
                             passed=True, full_capacity=True, failover=True, online_append=True, memory=True,
                             seconds=21600, publications=300)
         self.assertTrue(self.accepted())

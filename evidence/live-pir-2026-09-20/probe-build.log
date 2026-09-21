@@ -1,0 +1,97 @@
+    Updating crates.io index
+    Updating git repository `https://github.com/valargroup/ipir-sp.git`
+    Updating git repository `https://github.com/valargroup/spiral-rs.git`
+     Locking 209 packages to latest compatible versions
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding reqwest v0.12.28 (available: v0.13.5)
+      Adding sha2 v0.10.9 (available: v0.11.0)
+ Downloading crates ...
+  Downloaded zerofrom-derive v0.1.8
+  Downloaded synstructure v0.14.0
+  Downloaded yoke-derive v0.8.3
+  Downloaded cc v1.4.7
+  Downloaded find-msvc-tools v0.1.13
+   Compiling unicode-ident v1.0.26
+   Compiling cfg-if v1.0.5
+   Compiling find-msvc-tools v0.1.13
+   Compiling futures-sink v0.3.34
+   Compiling bitcoin-io v0.1.101
+   Compiling tokio v1.53.1
+   Compiling futures-task v0.3.34
+   Compiling futures-io v0.3.34
+   Compiling slab v0.4.12
+   Compiling arrayvec v0.7.8
+   Compiling hex_lit v0.1.1
+   Compiling clap_lex v1.1.1
+   Compiling bitcoin v0.32.102
+   Compiling bech32 v0.11.1
+   Compiling bitcoin-units v0.1.101
+   Compiling env_logger v0.11.11
+   Compiling getrandom v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling proc-macro2 v1.0.107
+   Compiling cc v1.4.7
+   Compiling hex-conservative v0.2.3
+   Compiling futures-util v0.3.34
+   Compiling futures-channel v0.3.34
+   Compiling clap_builder v4.6.7
+   Compiling rand_core v0.6.4
+   Compiling sha1 v0.10.7
+   Compiling rand_chacha v0.3.1
+   Compiling quote v1.0.47
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling rand v0.8.8
+   Compiling ring v0.17.14
+   Compiling secp256k1-sys v0.10.1
+   Compiling valar-spiral-rs v0.5.2 (https://github.com/valargroup/spiral-rs.git?rev=584fee3893b1d2d17b5d774c83bd801fb70d5ace#584fee38)
+   Compiling thiserror-impl v1.0.69
+   Compiling hyper v1.11.1
+   Compiling tower v0.5.3
+   Compiling thiserror v1.0.69
+   Compiling synstructure v0.14.0
+   Compiling hyper-util v0.1.20
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.3
+   Compiling zerovec-derive v0.11.6
+   Compiling displaydoc v0.2.7
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling bitcoin_hashes v0.14.101
+   Compiling clap_derive v4.6.7
+   Compiling zerofrom v0.1.8
+   Compiling thiserror v2.0.20
+   Compiling base58ck v0.1.101
+   Compiling clap v4.6.7
+   Compiling serde v1.0.229
+   Compiling inspiring v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling simplepir-kernel v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling yoke v0.8.3
+   Compiling transparent-events v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-events)
+   Compiling rustls v0.23.45
+   Compiling rustls-webpki v0.103.15
+   Compiling serde_urlencoded v0.7.1
+   Compiling ipir-sp v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=accc424e879d8da425fa620aad80f0f2c4e0defd#accc424e)
+   Compiling secp256k1 v0.29.1
+   Compiling zerovec v0.11.8
+   Compiling zerotrie v0.2.5
+   Compiling transparent-filter v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-filter)
+   Compiling transparent-shard v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-shard)
+   Compiling tinystr v0.8.4
+   Compiling potential_utf v0.1.6
+   Compiling icu_collections v2.3.0
+   Compiling icu_locale_core v2.3.0
+   Compiling tokio-rustls v0.26.5
+   Compiling hyper-rustls v0.27.9
+   Compiling icu_provider v2.3.1
+   Compiling icu_normalizer v2.3.0
+   Compiling icu_properties v2.3.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling tower-http v0.6.11
+   Compiling reqwest v0.12.28
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet)
+   Compiling live-pir-probe v0.1.0 (/Users/roman/projects/wallet-pir/evidence/live-pir-2026-09-20/probe)
+    Finished `release` profile [optimized] target(s) in 22.41s

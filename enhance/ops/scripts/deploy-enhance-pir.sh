@@ -12,6 +12,21 @@ case "$MODE" in
   *) usage ;;
 esac
 
+# ------------------------------------------------- target layout and paths
+#
+# The layout this release serves, and the directories that hold it. These are
+# the deployment-side copy of enhance_pir::types; a release whose public init
+# disagrees with them is refused before any service stops.
+#
+# Schema 8 (29 records per 21,373-byte row) is NOT readable from a schema-7
+# journal or its worker artifacts, so it gets its own directories. The old -v7
+# directories are deliberately left in place: they are the rollback data.
+readonly ENHANCE_TARGET_SCHEMA=8
+readonly ENHANCE_TARGET_RECORDS_PER_ROW=29
+readonly ENHANCE_TARGET_ROW_BYTES=21373
+readonly ENHANCE_DATA_DIR=/srv/zakura/enhance-data-r29
+readonly ENHANCE_PREVIOUS_DATA_DIR=/srv/zakura/enhance-data-v7
+
 # ------------------------------------------------------------- jq programs
 #
 # The jq programs on the rollout path, named so ops/scripts/check-jq-contracts.sh
@@ -43,9 +58,10 @@ readonly JQ_ENHANCE_COORDINATOR_SERVING='.phase.phase == "serving"'
 # shellcheck disable=SC2016
 readonly JQ_ENHANCE_HEALTH_WORKERS='.phase.phase == "serving" and .tables.enhance.workers == $expected'
 # shellcheck disable=SC2016
-readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.schema_version == 7) and
+readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.schema_version == 8) and
     (.generation.protocol_revision == "ironwood-enhance-pir-v2") and
-    (.generation.record_bytes == 737) and (.generation.row_bytes == 6633) and
+    (.generation.record_bytes == 737) and (.generation.records_per_row == 29) and
+    (.generation.row_bytes == 21373) and (.generation.shard_rows == 8192) and
     (.generation.network == "main") and
     (.generation.pool == "ironwood") and
     (.generation.setup_seed | type == "number") and
@@ -60,7 +76,7 @@ readonly JQ_ENHANCE_NOT_REGRESSED='.anchor_height >= $old.anchor_height and
 # A waiver is an explicit, exact-release operator decision, never evidence of passed tests.
 # This is the same acceptance contract used by enhance-autoscale.py.
 # shellcheck disable=SC2016
-readonly JQ_ENHANCE_RELEASE_ACCEPTED='.revision == $revision and .worker_size == "c-4" and .shards_per_group == 16 and (
+readonly JQ_ENHANCE_RELEASE_ACCEPTED='.revision == $revision and .worker_size == "c-4" and .shards_per_group == 3 and (
     (.passed == true and .full_capacity == true and .failover == true and
      .online_append == true and .memory == true and .seconds >= 21600 and .publications >= 300)
     or (.acceptance == "operator" and .waive_qualification == true and .waive_initial_observation == true and
@@ -299,9 +315,12 @@ REMOTE
 
 # Once online topology is installed, it is authoritative. Refuse stale CI
 # inventory before stopping any process; never override a committed append.
-durable_config="$(remote "$WALLET_PIR_COORDINATOR_HOST" bash -s <<'REMOTE'
+durable_config="$(remote "$WALLET_PIR_COORDINATOR_HOST" bash -s -- "$ENHANCE_DATA_DIR" "$ENHANCE_PREVIOUS_DATA_DIR" <<'REMOTE'
 set -euo pipefail
-topology=/srv/zakura/enhance-data-v7/topology.json
+# The heredoc is quoted, so the caller's paths arrive as positional arguments.
+# Newest layout first, then the previous layout, then the original location.
+topology="$1/topology.json"
+[[ -r "$topology" ]] || topology="$2/topology.json"
 [[ -r "$topology" ]] || topology=/srv/zakura/enhance-data/topology.json
 if [[ -r "$topology" ]]; then
   jq -e 'if .pending != null then error("topology activation pending") else {groups: .groups} end' "$topology"
@@ -356,7 +375,7 @@ render_caddyfile "$ENHANCE_CADDYFILE" "$caddyfile_rendered"
   echo "PIR_APM_LATENCY_P99_OVERRIDES=query=5.0,init=2.0"
   echo "PIR_APM_TITLE=Enhance PIR APM"
   echo "PIR_APM_ENVIRONMENT=$ENHANCE_APM_ENVIRONMENT"
-  echo "PIR_APM_DATA_DIR=/srv/zakura/enhance-data-v7"
+  echo "PIR_APM_DATA_DIR=$ENHANCE_DATA_DIR"
   if [[ -n "${PIR_APM_SLACK_WEBHOOK_URL:-}" ]]; then
     echo "PIR_APM_SLACK_WEBHOOK_URL=$PIR_APM_SLACK_WEBHOOK_URL"
   fi
@@ -652,19 +671,51 @@ if [[ -z "$old_metadata" || "$old_metadata" == "null" ]]; then
   old_metadata="$(curl --fail --silent --show-error "$ENHANCE_PUBLIC_URL/v1/enhance/generation" || true)"
 fi
 
-# An actual schema transition needs this release's isolated preparation receipt.
-# Later compatible schema-7 releases resume the journal already held by production.
+# A layout transition needs this release's isolated preparation receipt. The
+# gate is on LAYOUT COMPATIBILITY, not on schema equality: the 9-to-29 record
+# widening at one point lived inside schema 7, and a schema-equality test would
+# have waved it through onto a journal the new binary cannot read. Compare every
+# field that changes the on-disk and on-wire shape, and treat an unreadable live
+# init as incompatible rather than as "nothing to do".
 old_schema=$(jq -r '.schema_version // 0' <<<"${old_metadata:-null}" 2>/dev/null || echo 0)
-if [[ "$old_schema" != "7" ]]; then
-remote "$WALLET_PIR_COORDINATOR_HOST" bash -s -- "$ENHANCE_RELEASE_SHA" <<'REMOTE'
+old_records_per_row=$(jq -r '.records_per_row // 0' <<<"${old_metadata:-null}" 2>/dev/null || echo 0)
+old_row_bytes=$(jq -r '.row_bytes // 0' <<<"${old_metadata:-null}" 2>/dev/null || echo 0)
+if [[ "$old_schema" == "$ENHANCE_TARGET_SCHEMA" &&
+      "$old_records_per_row" == "$ENHANCE_TARGET_RECORDS_PER_ROW" &&
+      "$old_row_bytes" == "$ENHANCE_TARGET_ROW_BYTES" ]]; then
+  echo "Live layout already matches the target; resuming the existing journal at $ENHANCE_DATA_DIR"
+else
+  echo "Live layout is schema $old_schema / $old_records_per_row records per row / $old_row_bytes row bytes;"
+  echo "target is schema $ENHANCE_TARGET_SCHEMA / $ENHANCE_TARGET_RECORDS_PER_ROW / $ENHANCE_TARGET_ROW_BYTES."
+  echo "Requiring an isolated preparation receipt for $ENHANCE_RELEASE_SHA in $ENHANCE_DATA_DIR."
+  remote "$WALLET_PIR_COORDINATOR_HOST" bash -s -- "$ENHANCE_RELEASE_SHA" "$ENHANCE_DATA_DIR" \
+    "$ENHANCE_PREVIOUS_DATA_DIR" "$ENHANCE_TARGET_RECORDS_PER_ROW" <<'REMOTE'
 set -euo pipefail
 as_root() { if [[ "$(id -u)" -eq 0 ]]; then "$@"; else sudo -n "$@"; fi; }
-[[ "$(as_root cat /srv/zakura/enhance-data-v7/prepared-release)" == "$1" ]]
-as_root test -s /srv/zakura/enhance-data-v7/enhance/manifest.json
-# Preserve append-only topology across the data-format transition.
-if as_root test -f /srv/zakura/enhance-data/topology.json && ! as_root test -f /srv/zakura/enhance-data-v7/topology.json; then
-  as_root cp /srv/zakura/enhance-data/topology.json /srv/zakura/enhance-data-v7/topology.json
-fi
+release="$1"; data_dir="$2"; previous_dir="$3"; records_per_row="$4"
+# The receipt names the release AND the layout it was prepared for, so a receipt
+# left by some other transition cannot authorise this one.
+receipt="$(as_root cat "$data_dir/prepared-release")"
+[[ "$receipt" == "$release records-per-row=$records_per_row" ]] || {
+  echo "preparation receipt in $data_dir is $receipt, expected '$release records-per-row=$records_per_row'" >&2
+  exit 1
+}
+as_root test -s "$data_dir/enhance/manifest.json"
+# The prepared journal must actually carry the target layout. Reading it here
+# costs nothing and catches a receipt written next to the wrong journal.
+prepared_rpr="$(as_root jq -r '.records_per_row // 0' "$data_dir/enhance/manifest.json")"
+[[ "$prepared_rpr" == "$records_per_row" ]] || {
+  echo "prepared journal has $prepared_rpr records per row, expected $records_per_row" >&2
+  exit 1
+}
+# Preserve append-only topology across the data-format transition. Prefer the
+# directory the fleet is serving from now, then the original pre-v7 location.
+for source in "$previous_dir/topology.json" /srv/zakura/enhance-data/topology.json; do
+  if as_root test -f "$source" && ! as_root test -f "$data_dir/topology.json"; then
+    as_root cp "$source" "$data_dir/topology.json"
+    break
+  fi
+done
 REMOTE
 fi
 

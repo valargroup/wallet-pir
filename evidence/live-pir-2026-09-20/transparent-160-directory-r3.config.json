@@ -1,0 +1,51 @@
+{
+  "mode": "transparent",
+  "url": "https://transparent-pir.valargroup.dev",
+  "shard": 160,
+  "revision": "67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b",
+  "geometry": "recent-8k",
+  "table": "directory",
+  "segments": 1,
+  "init_file": "/Users/roman/projects/wallet-pir/evidence/live-pir-2026-09-20/transparent-worker-init.json",
+  "hashes": [
+    [
+      "ac126b16df43ca77fbd9354c2a94517067559e27751f8f4ed081e1e0bf8addb1",
+      "c1d47433c62c09d63b4917ad27d6e8d454061755b8752afef7d8b183b73112a7",
+      "79d83419e4a93abf4d1255f7eaadf2fa16136fa2f316885747e2df1e9b478356",
+      "66a43dd43b28b81cc009d4a687b3cda2ce54eb32bd85f0653e5d60f9706d5f90",
+      "5d735ba68a35b95a6c8b5453937240436441778c1f88b3c427563d6243908b6f",
+      "ad1b82add0cc8e3fe14dfcaa57c1a62449fe58e2ec8996137e3e09ada9dc9ca3",
+      "f385be1a8760fd057e6f5d4de22976e8380ab0bd74d3445e6706463f323ca2ab",
+      "33aac166b1619e4a56e40e52d20e9f1d25d509e9902a9cb9bfc2ad715c618b03",
+      "f31b1fbad0a0da0fd064bbe93f2e8cd79d3fad7293f1a5f55d131f90c30c95f2",
+      "4b01ad17a055b0f9c663c2e97039bbf1b4a48b6433fe9192ab98623bfa937c59",
+      "0d2f96d08e99c85ace66237dad33f684df406bd11f766ef779f8322eea9ad10a",
+      "89130bd6b8ef50fca7f9fb04b1c9e051e1ee16dfd05760615f5a52256d0d636d",
+      "7decff0011b40409878c97acb0f9990f39f60cc716af04b1108cc0be88bda830",
+      "0dd56b6108dbed2fd698f661cdf54e9c8dedf0c931c0c2c17cc8c3385f1a2153",
+      "0fe6c23ae2174fca5261cdd349f2bcf6a823822b72c023f5cc2482ce06a0dd53",
+      "850a2d0bd312f8e0f46852d9910baf68cd9ff66fd83742eb35de3ce8e4f629d2",
+      "cfd0d0a133c4bc24bb4dbfa08eae9f20f29fe581fdfb8e62c4e756b2e10cc09f",
+      "ad3c40d4af0aad598e077805ef7bc2beabec32c267139cda03cbf5a20d8e5206",
+      "6619bd773faa30306975f6db1db6f9aab72511c8dc97da5c8070348830d3b553",
+      "17fea5fc948863bbdeb97114d43c2aec8d4a56f45234ec68d5577242599e7e80",
+      "8372503d19f22ef9a4f5e8c29b2d84f0f0a688c19e302f57d8a86f75f64ff11c",
+      "cfa2129ad35aa3b1bf21c8fb9c063bf0f3b761ccd7bb900aabf99a08aa7161ca",
+      "2f2eed59a0567ee752bf5d21c08823db35763b7aa42b8ad22b23af858169c7d8",
+      "fb3bb9986319273cc6592f681361951da9971fa2523cafb3d042e0d2adebf0ab",
+      "3eb3745e188b947f74a6c234e06fd699f904fd7952069393c043e4fca314d684",
+      "6e4936f87eff0400b181572086a0f3648dd4265651fad9d1b2642b276f812477",
+      "5855ec0197638b57d9bf8a333b60cba61f7044a3bea4b06af12d1716887a12c5",
+      "9fb8fb1e28ddfc9c01840c3c9e09ae500d519e64fdc1e7d2e55b838ca8ce5b3f",
+      "225e1c0840baf40977e4b615f77872610e0118bb783acc2dd75842397e80bad1",
+      "eda8bd3cafbced41ee9755450a449ccd5af926966355fa199b98f6a71fff512f"
+    ]
+  ],
+  "metrics": [
+    "http://127.0.0.1:18093/metrics",
+    "http://127.0.0.1:18096/metrics",
+    "http://127.0.0.1:18097/metrics",
+    "http://127.0.0.1:18098/metrics"
+  ],
+  "count": 30
+}

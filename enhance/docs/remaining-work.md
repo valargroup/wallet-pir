@@ -1,9 +1,44 @@
 # Remaining work
 
-Schema 7 is observable at the public origin as of September 14, 2026. The
-[status record](status.md) and [performance guide](performance.md) describe what
-that observation and the bounded load test establish. They do not close the
-following deployment and qualification gaps.
+Schema 8 (29 records per 21,373-byte row) is implemented and tested locally.
+Schema 7 is what the public origin serves; see the
+[status record](status.md) for the September 20 reading and for what the local
+work does and does not establish. The gaps below are open.
+
+## Schema-8 cutover
+
+- **Deploy nothing until wallet consumers are ready.** Schema 8 and schema 7 have
+  no overlap: each client rejects the other's `init`. This repository publishes no
+  client package and has no FFI bindings, so its consumers are whoever pinned a
+  commit SHA and built `enhance-pir`. That set is not knowable from here. Either
+  enumerate and update them, or decide to serve both layouts from separate
+  origins, before the cutover -- not after.
+- Prepare the schema-8 journal into `/srv/zakura/enhance-data-r29` and confirm the
+  receipt names both the release and `records-per-row=29`. The live
+  `/srv/zakura/enhance-data-v7` journal and `/srv/enhance-pir/artifacts-v7` are the
+  rollback data and must survive the cutover untouched.
+- Measure, on the fleet, what isolated qualification cannot settle: server query
+  time on Intel `c-4` hardware, the real public upload/response/init byte counts,
+  and worker residency under production query load rather than a fixture. Worker
+  residency across a full retained window and publication time are now measured
+  in isolation -- 5,760 MiB peak and 11.4 s at three shards, in
+  [the rollout evidence](../evidence/schema8-rollout-2026-09-20/README.md) -- but
+  that run is an AMD host with synthetic records and is explicit that memory
+  under load, failover and process uptime need separate evidence. It is not the
+  six-hour, 300-publication qualification.
+- **Add the next worker pair before shard four.** Three schema-8 shards measure
+  5,760 MiB against a 6,144-MiB `MemoryHigh`; four measure 6,144 MiB with 2,073
+  reclaim events. Three shards is 712,704 positions, which the chain reaches
+  roughly six to twenty days after September 20. Larger workers, fewer retained
+  generations, or staying on schema 7 -- but not "monitor it". The ownership
+  contract now assigns shard four to the second group. See
+  [capacity expansion](capacity-expansion.md).
+- Re-run `online_topology`'s full-group test somewhere it fits. Crossing the
+  group boundary now means six schema-8 shard runtimes across two pairs;
+  resident preprocessing -- the same arithmetic as the capacity question above,
+  and more than the shared CI runners have.
+
+## Carried forward
 
 - Reconcile the current binary SHA, host inventory, active data paths and release
   receipts. Determine which migration steps have already been completed before

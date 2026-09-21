@@ -111,7 +111,44 @@ measurements. The [size check](../evidence/public-baseline-2026-09-14/payload-si
 records the helper, input and method.
 
 The older report's 258,056-byte upload applies to its reported 32,768-row geometry
-and encoding. It must not be presented as today's upload size. Express payload
+and encoding. It must not be presented as today's upload size.
+
+### Derived schema-8 sizes
+
+Every figure in this section above is a schema-7 measurement: nine records per
+6,633-byte row, two PIR instances. Schema 8 changes both terms. Widening the row
+to 29 records divides the logical row count by roughly three, which shrinks the
+upload; it also takes the row from two PIR
+instances to six, which triples the response and the published public material.
+The table below is **derived from the pinned encoder**, not measured: it is the
+same arithmetic as the formulas above, and it reproduces the measured schema-7
+sizes exactly, which is the only evidence offered for it.
+
+| Layout and count | Logical rows | Instances | Upload | Response | Combined | Public material |
+|---|---:|---:|---:|---:|---:|---:|
+| Schema 7, 467,255 records | 65,536 | 2 | 430,088 | 10,256 | 440,344 (430.0 KiB) | 28,672 |
+| Schema 8, 467,255 records | 16,384 | 6 | 169,992 | 30,736 | 200,728 (196.0 KiB) | 86,016 |
+| Schema 8, 475,137 records | 32,768 | 6 | 258,056 | 30,736 | 288,792 (282.0 KiB) | 86,016 |
+| Schema 7, 589,825 records | 131,072 | 2 | 790,536 | 10,256 | 800,792 (782.0 KiB) | 28,672 |
+
+The 196.0 KiB row is the narrowest the schema-8 layout is ever expected to be,
+and it is the shortest-lived. `logical_rows_for` rounds to a power of two, so
+crossing 29 x 16,384 = 475,136 positions doubles the logical row count and adds
+about 86 KiB to every query. Do not quote 196 KiB as the schema-8 query size
+without stating the count it holds at.
+
+The last row is why the comparison is still worth making. Schema 7 reaches its
+own power-of-two boundary at 9 x 65,536 = 589,824 positions, after which its
+query is larger than schema 8's will be for a long time. Between the two
+boundaries the saving is about 34%, not the 54% that a same-day comparison of the
+first two rows suggests.
+
+The public material is published once per generation and carried in the
+initialization response, which is base64-encoded: 86,016 raw bytes become roughly
+115 KiB of init body against roughly 40 KiB today. Session setup is therefore
+about three times more expensive under schema 8, and a client that refreshes its
+session often enough gives back the per-query saving. Budget setup and query
+traffic together for the session length the wallet actually uses. Express payload
 rates as measured or derived explicitly; MB is decimal, while KiB and GiB are
 binary units. PIR payload rate alone does not establish network-link utilization.
 

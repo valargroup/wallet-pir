@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use enhance_pir::types::ACTIVATION_HEIGHT;
+use enhance_pir::types::{ACTIVATION_HEIGHT, RECORDS_PER_ROW, SCHEMA_VERSION};
 use enhance_pir_server::coordinator::{
     router, Anchor, CoordinatorPhase, CoordinatorState, TableJournal, TableSetup, WorkerGroup,
     WorkerTarget,
@@ -266,7 +266,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Resume canonical ingestion in an explicitly selected schema-v7 directory.
+/// Resume canonical ingestion in an explicitly selected data directory.
+///
+/// The directory's journal decides the layout, not this binary: `EnhanceJournal::open`
+/// refuses a manifest whose record width or records-per-row differs from the
+/// build's. The schema is logged rather than written into the message so a
+/// preparation log says which layout it actually built.
 async fn prepare(cli: &Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
     let mut journal = EnhanceJournal::open(&cli.data_dir)?;
@@ -281,7 +286,7 @@ async fn prepare(cli: &Cli) -> Result<(), Box<dyn std::error::Error + Send + Syn
     for height in next..=target {
         journal.append_block(&zakura.block(height).await?)?;
         if height % 1000 == 0 {
-            tracing::info!(height, target, "preparing schema-v7 journal");
+            tracing::info!(height, target, schema = SCHEMA_VERSION, "preparing journal");
         }
     }
     let (height, hash) = journal.highest_committed().ok_or("empty journal")?;
@@ -295,7 +300,9 @@ async fn prepare(cli: &Cli) -> Result<(), Box<dyn std::error::Error + Send + Syn
         height,
         hash,
         positions = journal.records.tree_size(),
-        "schema-v7 journal prepared"
+        schema = SCHEMA_VERSION,
+        records_per_row = RECORDS_PER_ROW,
+        "journal prepared"
     );
     Ok(())
 }

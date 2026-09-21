@@ -8,7 +8,7 @@ locals {
   # change with nothing to do with it. When the coordinator daemon lands and
   # there is more than one worker, fronting moves there and this record follows.
   transparent_public_hostname = "transparent-pir.valargroup.dev"
-  # Append-only 16-shard ranges. Preserve existing worker addresses and names.
+  # Append-only three-shard ranges. Preserve existing worker addresses and names.
   enhance_worker_groups = [for group in range(var.enhance_group_count) : {
     name     = format("shard-group-%02d", group + 1)
     replicas = [for replica in range(2) : format("enhance-pir-worker-%02d", group * 2 + replica + 1)]

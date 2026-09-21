@@ -1,0 +1,53 @@
+{
+  "binary_sha256": "ea3c91e2815c83a900a8878fa1808691e8b2bde628812bcd577e8958f1b4697e",
+  "steps": [
+    {
+      "started_utc": "2026-09-19T20:21:22.503064+00:00",
+      "command": [
+        "/Users/roman/projects/wallet-pir/target/release/enhance-pir-load-test",
+        "--server",
+        "https://enhance-pir.valargroup.dev",
+        "--parallelism",
+        "1",
+        "--duration",
+        "60s",
+        "--warmup",
+        "10s",
+        "--seed",
+        "42",
+        "--max-error-rate",
+        "0",
+        "--slo-p99-ms",
+        "5000",
+        "--json-out",
+        "/Users/roman/projects/wallet-pir/evidence/live-pir-2026-09-20/load-c1-summary.json"
+      ],
+      "exit_code": 0,
+      "ended_utc": "2026-09-19T20:22:40.125681+00:00"
+    },
+    {
+      "started_utc": "2026-09-19T20:23:11.714666+00:00",
+      "command": [
+        "/Users/roman/projects/wallet-pir/target/release/enhance-pir-load-test",
+        "--server",
+        "https://enhance-pir.valargroup.dev",
+        "--parallelism",
+        "8",
+        "--duration",
+        "60s",
+        "--warmup",
+        "10s",
+        "--seed",
+        "42",
+        "--max-error-rate",
+        "0",
+        "--slo-p99-ms",
+        "5000",
+        "--json-out",
+        "/Users/roman/projects/wallet-pir/evidence/live-pir-2026-09-20/load-c8-summary.json"
+      ],
+      "exit_code": 0,
+      "ended_utc": "2026-09-19T20:24:28.065204+00:00"
+    }
+  ]
+}

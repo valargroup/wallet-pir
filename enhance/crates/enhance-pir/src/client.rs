@@ -389,6 +389,46 @@ mod tests {
         ));
     }
 
+    /// The compatibility direction that matters at cutover. The old fleet's
+    /// document is well-formed and internally consistent; only its layout is
+    /// wrong. Nothing but this check stands between a schema-8 client and a
+    /// 6,633-byte row read with 21,373-byte offsets, so it is checked against a
+    /// document shaped exactly like the one the public origin served.
+    #[test]
+    fn rejects_the_superseded_nine_record_session() {
+        let mut session = valid_session();
+        session.generation.schema_version = 7;
+        session.generation.records_per_row = 9;
+        session.generation.row_bytes = 9 * RECORD_BYTES as u32;
+        assert!(matches!(
+            QuerySession::from_session(session),
+            Err(ClientError::Generation(message))
+                if message == "wrong schema, protocol, network, or pool"
+        ));
+
+        // And with the schema field alone brought forward, so the rejection
+        // does not rest on the version number: the geometry must fail on its own.
+        let mut session = valid_session();
+        session.generation.records_per_row = 9;
+        session.generation.row_bytes = 9 * RECORD_BYTES as u32;
+        assert!(matches!(
+            QuerySession::from_session(session),
+            Err(ClientError::Generation(message)) if message == "invalid database geometry"
+        ));
+    }
+
+    /// `used_rows` is checked against the published tree size, so a server
+    /// cannot widen the answerable range by overstating it.
+    #[test]
+    fn rejects_a_used_row_count_that_does_not_follow_from_the_tree_size() {
+        let mut session = valid_session();
+        session.generation.ironwood_tree_size = RECORDS_PER_ROW as u64 + 1;
+        assert!(matches!(
+            QuerySession::from_session(session),
+            Err(ClientError::Generation(message)) if message == "invalid database geometry"
+        ));
+    }
+
     #[test]
     fn rejects_a_public_parameter_digest_mismatch() {
         let mut session = valid_session();

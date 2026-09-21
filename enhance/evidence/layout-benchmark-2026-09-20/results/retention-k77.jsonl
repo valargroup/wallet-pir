@@ -1,0 +1,6 @@
+{"event":"start","instances":16,"logical_rows":8192,"memory":{"VmHWM":3432448,"VmRSS":3432448},"query_bits":41,"records":450163,"records_per_row":77,"shard_rows":8192,"shards":1,"threads":4,"used_rows":5847}
+{"event":"shard_build","memory":{"VmHWM":1413095424,"VmRSS":1413095424},"seconds":10.320925175,"shard":0}
+{"event":"workers_ready","memory":{"VmHWM":1950117888,"VmRSS":1618702336},"seconds":11.096316308}
+{"event":"retention_baseline","memory":{"VmHWM":1950117888,"VmRSS":1413226496}}
+{"event":"retained_revision","extra":1,"memory":{"VmHWM":2492481536,"VmRSS":2492481536},"seconds":10.457939465}
+{"event":"retained_revision","extra":2,"memory":{"VmHWM":3567681536,"VmRSS":3567681536},"seconds":9.950740788}

@@ -1,0 +1,9 @@
+{"event":"start","instances":4,"logical_rows":32768,"memory":{"VmHWM":3649536,"VmRSS":3649536},"query_bits":42,"records":450163,"records_per_row":19,"shard_rows":8192,"shards":3,"threads":4,"used_rows":23693}
+{"event":"shard_build","memory":{"VmHWM":388485120,"VmRSS":388485120},"seconds":2.5789266360000003,"shard":0}
+{"event":"shard_build","memory":{"VmHWM":792739840,"VmRSS":792739840},"seconds":2.556798927,"shard":1}
+{"event":"shard_build","memory":{"VmHWM":1049628672,"VmRSS":1049628672},"seconds":2.802432368,"shard":2}
+{"event":"workers_ready","memory":{"VmHWM":1049300992,"VmRSS":947281920},"seconds":8.551937735}
+{"event":"retention_baseline","memory":{"VmHWM":1049300992,"VmRSS":947281920}}
+{"event":"retained_revision","extra":1,"memory":{"VmHWM":1216139264,"VmRSS":1216139264},"seconds":2.752940848}
+{"event":"retained_revision","extra":2,"memory":{"VmHWM":1484943360,"VmRSS":1484943360},"seconds":2.67171822}
+{"event":"retained_revision","extra":3,"memory":{"VmHWM":1753743360,"VmRSS":1753743360},"seconds":2.660577955}

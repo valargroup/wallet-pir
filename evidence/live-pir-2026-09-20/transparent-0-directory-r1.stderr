@@ -1,0 +1,1 @@
+Error: reqwest::Error { kind: Request, url: "https://transparent-pir.valargroup.dev/v1/shards/0/revisions/ea399174caaa0c70d571f08f6f15f4568cda30aae6fb474aa96077be81f11b8d/query/directory", source: hyper_util::client::legacy::Error(SendRequest, hyper::Error(BodyWrite, Os { code: 32, kind: BrokenPipe, message: "Broken pipe" })) }

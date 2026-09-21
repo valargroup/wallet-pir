@@ -19,7 +19,7 @@ Schema 7 stores exactly 737 bytes per output position:
 | 725 | 4 | expiry height | Little-endian u32; zero disables expiry |
 | 729 | 8 | fee | Little-endian u64 zatoshis; zero payload when absent |
 
-Nine consecutive records form a 6,633-byte PIR row. The client privately
+Twenty-nine consecutive records form a 21,373-byte PIR row. The client privately
 retrieves the row and selects the requested record locally. The active table
 does not contain txids, nullifiers, note commitments, mined heights, or witness data.
 
@@ -54,7 +54,7 @@ would be unsafe. Client conformance and adoption must be verified for the intend
 
 The network identifier is `main`, the pool is `ironwood`, and activation height is
 3,428,143. Logical rows are the next power of two at or above the used row count,
-with a minimum of 8,192. Used rows equal `ceil(ironwood_tree_size / 9)`.
+with a minimum of 8,192. Used rows equal `ceil(ironwood_tree_size / 29)`.
 
 The client regenerates expected scheme parameters from geometry, checks them for
 exact equality, checks the SHA-256 digest of the decoded public material, and

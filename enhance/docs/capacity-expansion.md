@@ -10,9 +10,77 @@ steps may already have been completed. Routine releases are described in
 
 The following is the implemented target. See [dated status](status.md) for qualification and rollout state.
 
-Each ordered group owns 16 consecutive 8,192-row shards: 1,179,648 Ironwood
-positions, two identical replicas, historically $168/month worker compute at the recorded
-c-4 list price. The automatic ceiling is four groups/eight workers (historically $672/month).
+Each ordered group owns three consecutive 8,192-row shards: under schema 8 that is
+712,704 Ironwood positions (29 records per row), two identical replicas,
+historically $168/month worker compute at the recorded c-4 list price. The
+automatic ceiling is four groups/eight workers (historically $672/month).
+
+**The c-4 memory budget determines the group boundary.** A schema-8
+shard runtime holds a 192-MiB packed database and a 192-MiB partial CRS, three
+times the schema-7 figure, because the 21,373-byte row needs six PIR instances
+instead of two. Sealed shards hold one runtime each; the frontier holds one per
+retained generation plus the candidate.
+
+Measured on an isolated worker under the production cgroup (`MemoryHigh=6G`,
+`MemoryMax=7G`, `MemorySwapMax=2G`, `CPUQuota=400%`), ten publications each, in
+[the rollout evidence](../evidence/schema8-rollout-2026-09-20/README.md):
+
+| Shards in group | Publications | Peak | `memory.events` | Against `MemoryHigh=6,144 MiB` |
+|---:|---:|---:|---|---|
+| 3 | 10 of 10 | 5,760 MiB | all zero | fits, 384 MiB spare |
+| 4 | 9 of 10 (truncated) | 6,144 MiB | `high 2073` | **at the limit; the kernel is holding it there** |
+
+The four-shard peak is exactly `MemoryHigh`, which is what being capped looks
+like: the workload wants more and the kernel reclaims to hold it there. 2,073
+reclaim events, no swap and no OOM kill in the worker's cgroup. Publication
+latency did not degrade (10.0-11.4 s either way), so this is pressure rather
+than failure, but it spends the margin that absorbs a burst and `MemoryMax=7G`
+is the next thing to hit.
+
+**That run did not finish, and the reason matters.** The `enhance-pir-qualify`
+harness -- not the worker -- was OOM-killed by the host kernel after the ninth
+publication, at 9.9 GiB RSS on a 16-GiB box that was already giving 6 GiB to the
+worker cgroup. The worker itself never OOMed and its measurement stands, but
+6,144 MiB is a **capped lower bound** from nine publications, not a settled peak
+from ten: the three-shard run gained 442 MiB over its last three publications,
+so the uncapped four-shard figure is higher than this table can say. Re-run it
+with the harness and the worker on separate hosts before treating 6,144 MiB as
+the number.
+
+Two things follow for production. The worker conclusion is unaffected, because
+production coordinators and workers are already on separate hosts. And the
+harness's 9.9 GiB is itself a data point: schema-8 coordinator-side memory is
+well up too, which the 64-GiB coordinator absorbs and a smaller one would not.
+
+**Three schema-8 shards is the working limit on `c-4`, and that is 712,704
+positions.** At 468,027 positions the fleet is 244,677 short of it: six days at
+the faster of the two growth samples taken on September 20, twenty at the
+slower. This is the number that decides whether schema 8 can ship to the current
+hardware, and it is weeks, not the fourteen months the earlier arithmetic in
+this file implied.
+
+For comparison, the production schema-7 workers peak at 3,539 MiB with seven
+shards. Schema 8 is roughly 1.5x that at fewer shards, and the peak climbs by
+roughly 200-400 MiB per publication until the retained window is full -- most of
+the growth happens after the eighth generation, so a short soak understates it.
+
+Arithmetic alone understates the peak badly: `(shards - 1 + 9) * 384 MiB` gives
+4,224 MiB for three shards against 5,760 MiB measured. The difference is the
+transient during a publication, when the worker builds a new frontier runtime --
+database, CRS and the encoded copy it persists -- while still holding every
+runtime a retained generation references. Size from the measurement, not the
+product.
+
+The previous 16-shard ownership contract was far outside this budget. Schema 8
+therefore sets `SHARDS_PER_GROUP=3`: a second pair owns shard four, beginning at
+position 712,705. Persisted `topology.json` records this value and deliberately
+rejects binaries with a different ownership contract.
+
+Expansion requires provisioning and qualifying the next replica pair before
+that boundary. Larger workers remain an alternative, but changing the group
+width again would be another explicit topology migration. Fewer retained
+generations would weaken the published session promise and is not the selected
+capacity strategy.
 Every query still evaluates every populated group; this is position-capacity
 expansion, not a throughput autoscaler. There is no recent/archive split.
 
@@ -74,7 +142,7 @@ make it match the starting assumptions of this procedure.
    /path/to/downloaded-release/enhance-pir-qualify --isolated-workers \
      --worker-url http://NEW_PRIVATE_IP_A:8091 \
      --worker-url http://NEW_PRIVATE_IP_B:8091 \
-     --shards 16 --seconds 21600 --min-publications 300 \
+     --shards 3 --seconds 21600 --min-publications 300 \
      --work-dir /srv/enhance-pir/qualification/run-001 \
      --output /srv/enhance-pir/qualification/run-001.json
    ```
@@ -94,7 +162,7 @@ make it match the starting assumptions of this procedure.
 7. Preserve the raw evidence and create a private qualification receipt with
    `passed`, `full_capacity`, `failover`, `online_append`, and `memory` all true,
    the exact 40-character `revision`, `worker_size: "c-4"`,
-   `shards_per_group: 16`, `seconds >= 21600`, `publications >= 300`, and paths
+   `shards_per_group: 3`, `seconds >= 21600`, `publications >= 300`, and paths
    to the evidence. Install it at `/etc/enhance-pir/qualification.json`; the
    deployment helper verifies it before stopping any service. This receipt is operator attestation of the combined
    evidence, not output automatically granted by the fixture utility.
@@ -238,8 +306,8 @@ progress remain in the run directory even if the fixture fails.
 For a combined range-boundary rehearsal, pass two additional isolated worker
 origins as repeated `--append-worker-url http://HOST:PORT` arguments to either
 the fixture or supervisor. After its retention/load phase, the fixture fills
-shard 15, requests an append-only second group, and publishes the first position
-in shard 16 while continuously verifying an earlier session. It then verifies
+shard 2, requests an append-only second group, and publishes the first position
+in shard 3 while continuously verifying an earlier session. It then verifies
 old and new sessions across the boundary and records `online_append` evidence.
 The two additional processes may run on an isolated test host; record that
 placement explicitly. Such a run tests the protocol transition, not the second
@@ -253,7 +321,7 @@ controller lifecycle evidence separately before attesting the combined receipt.
 An operator may explicitly accept a deployed release without completing the
 qualification and initial observation periods. Record that decision in the
 configured qualification receipt using `acceptance: "operator"`, the exact
-running `revision`, `worker_size: "c-4"`, `shards_per_group: 16`, both
+running `revision`, `worker_size: "c-4"`, `shards_per_group: 3`, both
 `waive_qualification: true` and `waive_initial_observation: true`, and nonempty
 `authorized_by`, `authorized_at`, and `reason` fields. Keep the file root-only.
 This receipt must not claim that waived tests passed. It applies only to the

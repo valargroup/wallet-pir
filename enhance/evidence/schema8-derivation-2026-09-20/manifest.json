@@ -1,0 +1,64 @@
+{
+  "run_id": "schema8-derivation-2026-09-20",
+  "utc": "2026-09-20T06:20:00Z",
+  "kind": "derivation and one read-only capture; not a performance run",
+  "measured": [
+    "GET https://enhance-pir.valargroup.dev/v1/enhance/init at 2026-09-20 (HTTP 200, 40,474 bytes, anchor height 3,489,681, 467,255 positions)",
+    "GET /v1/enhance/init re-read about ninety minutes later: height 3,489,706, 467,522 positions"
+  ],
+  "derived": [
+    "schema-7 and schema-8 upload/response/public-material sizes",
+    "worker resident bytes across a retained window"
+  ],
+  "projected": [],
+  "not_measured": [
+    "every schema-8 figure: no schema-8 code has run on the production fleet",
+    "latency, throughput, memory behaviour under load, publication time",
+    "host SKU, region, CPU, RAM, storage and OS of the production workers: private-host access was refused by a local permission gate in this session"
+  ],
+  "source_revision": "48c910c72f7349e69fe5d6d8631caad90e834221",
+  "source_revision_note": "the working tree also carries the uncommitted schema-8 implementation; derive.py depends on none of it",
+  "pinned_dependency": {
+    "ipir-sp": "accc424e879d8da425fa620aad80f0f2c4e0defd"
+  },
+  "commands": [
+    "curl -sS https://enhance-pir.valargroup.dev/v1/enhance/init",
+    "python3 derive.py > derived.json"
+  ],
+  "client_host": "Apple M4 Max, macOS 26.2; the capture is a single HTTPS GET and no timing is claimed from it",
+  "schema_observed": 7,
+  "schema_derived": 8,
+  "network": "main",
+  "pool": "ironwood",
+  "genesis_activation_height": 3428143,
+  "anchor": {
+    "height": 3489681,
+    "hash": "00000000002027af8e76d7052342d6a7280cb9a32d1e492a107f4f786b156124",
+    "generation": 3489681
+  },
+  "growth_sample": {
+    "samples": [
+      {
+        "height": 3489196,
+        "positions": 450081,
+        "source": "evidence/live-pir-2026-09-20/enhance-init.json"
+      },
+      {
+        "height": 3489681,
+        "positions": 467255,
+        "source": "enhance-init-2026-09-20.json"
+      },
+      {
+        "height": 3489706,
+        "positions": 467522,
+        "source": "re-read, not retained separately"
+      }
+    ],
+    "positions_per_block": [
+      35.41,
+      10.68
+    ],
+    "note": "bursty at this timescale; not a rate. 475,136 was 7,614 positions away at the last reading"
+  },
+  "units": "bytes are exact; KiB and GiB are binary"
+}

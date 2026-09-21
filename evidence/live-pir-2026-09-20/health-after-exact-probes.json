@@ -1,0 +1,203 @@
+{
+  "utc": "2026-09-19T20:24:13.715589+00:00",
+  "results": {
+    "enhance": {
+      "status": 200,
+      "body": {
+        "phase": {
+          "phase": "serving"
+        },
+        "generation": 3489209,
+        "retained_generations": 8,
+        "anchor_height": 3489209,
+        "ironwood_tree_size": 450573,
+        "tables": {
+          "enhance": {
+            "shards": 7,
+            "workers": 2
+          }
+        }
+      }
+    },
+    "recent01": {
+      "status": 200,
+      "body": {
+        "assigned_shards": 15,
+        "assignment_sha256": "78b6b482679b07d3e3e7821d305192a54e281d66ad5d1559d433d97c732b8044",
+        "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+        "map_sha256": "ad71435186634274c09fc41339f4572a401b8b296c90abfd18e7e2b0c270b298",
+        "mode": "warm",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "prewarm_seconds": 4.173912,
+        "ready": true,
+        "replica_group": "recent",
+        "role": "recent-replica",
+        "runtime_cache": {
+          "bytes": 5904141056,
+          "hits": 28,
+          "limit_bytes": 10737418240,
+          "misses": 18156,
+          "pending_saves": 0,
+          "restore_slots": 4,
+          "write_failures": 0
+        },
+        "shards": 175,
+        "target_runtimes": 30,
+        "warm_runtimes": 30,
+        "worker_assignment_sha256": "041802635cf1d9fab094c9d7de43dc4dda6651e6b7173c2c2602d4b43c586411",
+        "worker_id": "transparent-pir-recent-01"
+      }
+    },
+    "recent02": {
+      "status": 200,
+      "body": {
+        "assigned_shards": 15,
+        "assignment_sha256": "78b6b482679b07d3e3e7821d305192a54e281d66ad5d1559d433d97c732b8044",
+        "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+        "map_sha256": "ad71435186634274c09fc41339f4572a401b8b296c90abfd18e7e2b0c270b298",
+        "mode": "warm",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "prewarm_seconds": 3.835057,
+        "ready": true,
+        "replica_group": "recent",
+        "role": "recent-replica",
+        "runtime_cache": {
+          "bytes": 5904141056,
+          "hits": 1,
+          "limit_bytes": 10737418240,
+          "misses": 18190,
+          "pending_saves": 0,
+          "restore_slots": 4,
+          "write_failures": 0
+        },
+        "shards": 175,
+        "target_runtimes": 30,
+        "warm_runtimes": 30,
+        "worker_assignment_sha256": "0e684bdc9f6a1e48ac969504cde4fe7f1fe3cfa5331530341940ed212edb0eb0",
+        "worker_id": "transparent-pir-recent-02"
+      }
+    },
+    "recent03": {
+      "status": 200,
+      "body": {
+        "assigned_shards": 15,
+        "assignment_sha256": "78b6b482679b07d3e3e7821d305192a54e281d66ad5d1559d433d97c732b8044",
+        "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+        "map_sha256": "ad71435186634274c09fc41339f4572a401b8b296c90abfd18e7e2b0c270b298",
+        "mode": "warm",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "prewarm_seconds": 4.091419,
+        "ready": true,
+        "replica_group": "recent",
+        "role": "recent-replica",
+        "runtime_cache": {
+          "bytes": 5904141056,
+          "hits": 1,
+          "limit_bytes": 10737418240,
+          "misses": 18190,
+          "pending_saves": 0,
+          "restore_slots": 4,
+          "write_failures": 0
+        },
+        "shards": 175,
+        "target_runtimes": 30,
+        "warm_runtimes": 30,
+        "worker_assignment_sha256": "00f6a1cbd5926e5bd23d505fc6ecd23fc54eabd5837a68586e77c3aa7cb400f8",
+        "worker_id": "transparent-pir-recent-03"
+      }
+    },
+    "recent04": {
+      "status": 200,
+      "body": {
+        "assigned_shards": 15,
+        "assignment_sha256": "78b6b482679b07d3e3e7821d305192a54e281d66ad5d1559d433d97c732b8044",
+        "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+        "map_sha256": "ad71435186634274c09fc41339f4572a401b8b296c90abfd18e7e2b0c270b298",
+        "mode": "warm",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "prewarm_seconds": 3.553085,
+        "ready": true,
+        "replica_group": "recent",
+        "role": "recent-replica",
+        "runtime_cache": {
+          "bytes": 5904141056,
+          "hits": 4,
+          "limit_bytes": 10737418240,
+          "misses": 18190,
+          "pending_saves": 0,
+          "restore_slots": 4,
+          "write_failures": 0
+        },
+        "shards": 175,
+        "target_runtimes": 30,
+        "warm_runtimes": 30,
+        "worker_assignment_sha256": "da9b5d8d3498083dce7e4bb0b9e4159da0dbf0977d5111a53fc9efd799dcba52",
+        "worker_id": "transparent-pir-recent-04"
+      }
+    },
+    "archive01": {
+      "status": 200,
+      "body": {
+        "assigned_shards": 80,
+        "assignment_sha256": "78b6b482679b07d3e3e7821d305192a54e281d66ad5d1559d433d97c732b8044",
+        "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+        "map_sha256": "ad71435186634274c09fc41339f4572a401b8b296c90abfd18e7e2b0c270b298",
+        "mode": "warm",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "prewarm_seconds": 0.000368,
+        "ready": true,
+        "replica_group": null,
+        "role": "archive-owner",
+        "runtime_cache": {
+          "bytes": 48313149440,
+          "hits": 160,
+          "limit_bytes": 103079215104,
+          "misses": 0,
+          "pending_saves": 0,
+          "restore_slots": 4,
+          "write_failures": 0
+        },
+        "shards": 175,
+        "target_runtimes": 160,
+        "warm_runtimes": 160,
+        "worker_assignment_sha256": "df9807a661c2fc1839510ccda6de0c30a889ec466739f3771781debbfea3b66f",
+        "worker_id": "transparent-pir-archive-01"
+      }
+    },
+    "archive02": {
+      "status": 200,
+      "body": {
+        "assigned_shards": 80,
+        "assignment_sha256": "78b6b482679b07d3e3e7821d305192a54e281d66ad5d1559d433d97c732b8044",
+        "binary_sha256": "200ca85065c8096d344749d5e51a2db569ec369c71bd2ffff8cf0e9fd014ff62",
+        "map_sha256": "ad71435186634274c09fc41339f4572a401b8b296c90abfd18e7e2b0c270b298",
+        "mode": "warm",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "prewarm_seconds": 0.000326,
+        "ready": true,
+        "replica_group": null,
+        "role": "archive-owner",
+        "runtime_cache": {
+          "bytes": 48313149440,
+          "hits": 0,
+          "limit_bytes": 103079215104,
+          "misses": 160,
+          "pending_saves": 0,
+          "restore_slots": 4,
+          "write_failures": 0
+        },
+        "shards": 175,
+        "target_runtimes": 160,
+        "warm_runtimes": 160,
+        "worker_assignment_sha256": "8bd93885439bb27507ec7a239aa064b8512652bac8d49a50051324f113e80fd7",
+        "worker_id": "transparent-pir-archive-02"
+      }
+    }
+  }
+}
