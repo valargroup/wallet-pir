@@ -75,7 +75,7 @@ enhance/ops/scripts/deploy-enhance-pir.sh validate
 
 Deployment inventory uses `ssh_host` and `service_url`; the generated server
 worker-config uses a top-level `groups` list and replica `name`/`url` fields.
-Each group owns 16 consecutive shards and has two active-active replicas.
+Each group owns three consecutive shards and has two active-active replicas.
 Group order is append-only. The first migration from the legacy flat inventory
 requires the explicit topology-change override (`allow_topology_change` in the
 workflow, `ENHANCE_ALLOW_TOPOLOGY_CHANGE=true` in the helper). Replacing a replica

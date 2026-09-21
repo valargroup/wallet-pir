@@ -306,8 +306,8 @@ progress remain in the run directory even if the fixture fails.
 For a combined range-boundary rehearsal, pass two additional isolated worker
 origins as repeated `--append-worker-url http://HOST:PORT` arguments to either
 the fixture or supervisor. After its retention/load phase, the fixture fills
-shard 15, requests an append-only second group, and publishes the first position
-in shard 16 while continuously verifying an earlier session. It then verifies
+shard 2, requests an append-only second group, and publishes the first position
+in shard 3 while continuously verifying an earlier session. It then verifies
 old and new sessions across the boundary and records `online_append` evidence.
 The two additional processes may run on an isolated test host; record that
 placement explicitly. Such a run tests the protocol transition, not the second
