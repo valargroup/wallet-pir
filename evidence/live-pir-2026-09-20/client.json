@@ -1,0 +1,8 @@
+{
+  "utc": "2026-09-19T20:12:20.240058+00:00",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.2\nBuildVersion:\t\t25C56",
+  "cpu": "Apple M4 Max",
+  "ram": "137438953472",
+  "logical_cpus": "16",
+  "rustc": "rustc 1.91.0 (f8297e351 2025-10-28)\nbinary: rustc\ncommit-hash: f8297e351a40c1439a467bbbb6879088047f50b3\ncommit-date: 2025-10-28\nhost: aarch64-apple-darwin\nrelease: 1.91.0\nLLVM version: 21.1.2"
+}

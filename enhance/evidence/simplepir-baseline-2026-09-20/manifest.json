@@ -1,0 +1,13 @@
+{
+  "created_utc": "2026-09-20T07:15:19.651735+00:00",
+  "hardware": "Apple M4 Max\n137438953472",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.2\nBuildVersion:\t\t25C56",
+  "go": "go version go1.26.1 darwin/arm64",
+  "simplepir_revision": "e9020b03bf2872c75b8954e749e32408b5db87ed",
+  "enhance_source_revision": "48c910c72f7349e69fe5d6d8631caad90e834221",
+  "ipir_revision": "accc424e879d8da425fa620aad80f0f2c4e0defd",
+  "simplepir_threads": "GOMAXPROCS=1; upstream C kernels single-threaded",
+  "enhance_threads": "RAYON_NUM_THREADS=1",
+  "simplepir_binary_sha256": "4c3f9de2468af068d1192853d8386acc9360fea400598798208155b8a5c219c9",
+  "enhance_binary_sha256": "b31dd5e225967443ce39b126690491c173cf635c8317a4f46bd7fc7708ea3118"
+}

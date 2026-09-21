@@ -1,0 +1,56 @@
+{
+  "server": "https://enhance-pir.valargroup.dev",
+  "generation": 3489208,
+  "anchor_height": 3489208,
+  "ironwood_tree_size": 450506,
+  "duration_s": 60.0,
+  "parallelism": 1,
+  "completed": 43,
+  "succeeded": 43,
+  "errors": 0,
+  "error_rate": 0.0,
+  "requests_per_second": 0.7166666666666667,
+  "stages": [
+    {
+      "name": "end-to-end",
+      "samples": 43,
+      "p50_ms": 1289.215,
+      "p90_ms": 2086.911,
+      "p95_ms": 2115.583,
+      "p99_ms": 2603.007,
+      "p999_ms": 2603.007,
+      "max_ms": 2603.007
+    },
+    {
+      "name": "prepare",
+      "samples": 43,
+      "p50_ms": 30.159,
+      "p90_ms": 32.239,
+      "p95_ms": 33.247,
+      "p99_ms": 34.143,
+      "p999_ms": 34.143,
+      "max_ms": 34.143
+    },
+    {
+      "name": "http",
+      "samples": 43,
+      "p50_ms": 1257.471,
+      "p90_ms": 2050.047,
+      "p95_ms": 2084.863,
+      "p99_ms": 2570.239,
+      "p999_ms": 2570.239,
+      "max_ms": 2570.239
+    },
+    {
+      "name": "decode",
+      "samples": 43,
+      "p50_ms": 0.891,
+      "p90_ms": 5.311,
+      "p95_ms": 6.011,
+      "p99_ms": 7.315,
+      "p999_ms": 7.315,
+      "max_ms": 7.315
+    }
+  ],
+  "error_classes": []
+}

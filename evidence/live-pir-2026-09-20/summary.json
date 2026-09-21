@@ -1,0 +1,578 @@
+{
+  "enhance": {
+    "runs": [
+      "enhance-r1.jsonl.gz",
+      "enhance-r2.jsonl.gz",
+      "enhance-r3.jsonl.gz"
+    ],
+    "errors": [],
+    "setup_bytes": [
+      40473,
+      40473,
+      40473
+    ],
+    "generation": {
+      "anchor_block_hash": "0000000000701585217d576e37f5d8349368926d69b2bba544aa46d551b1d549",
+      "anchor_height": 3489203,
+      "generation": 3489203,
+      "ironwood_tree_size": 450250,
+      "logical_rows": 65536,
+      "network": "main",
+      "parameter_id": "ironwood-enhance-pir-v2-enhance-d2048-p16384-rows65536-cols4096",
+      "pool": "ironwood",
+      "protocol_revision": "ironwood-enhance-pir-v2",
+      "public_params_epoch": "09abac5bf81c02ef",
+      "public_params_sha256": "09abac5bf81c02efa231ebed3cb318f889c4171726aa84e86116d43e8e878e33",
+      "record_bytes": 737,
+      "records_per_row": 9,
+      "row_bytes": 6633,
+      "schema_version": 7,
+      "setup_seed": 11877852325592565855,
+      "shard_rows": 8192,
+      "shards": [
+        {
+          "global_row_start": 0,
+          "populated_positions": 73728,
+          "rows_sha256": "4be237b806d4c2f232d745e199c444ac75da5826400069c613fece6b47217cb3",
+          "sealed": true,
+          "shard_id": 0,
+          "worker": "shard-group-01"
+        },
+        {
+          "global_row_start": 8192,
+          "populated_positions": 73728,
+          "rows_sha256": "ac96a6dfdc9bfb14f868eba2fd689b17aa3e8f9760fe79456120256f076087c4",
+          "sealed": true,
+          "shard_id": 1,
+          "worker": "shard-group-01"
+        },
+        {
+          "global_row_start": 16384,
+          "populated_positions": 73728,
+          "rows_sha256": "7d6efbd7a643f50b7436481526d356b890b4edc33a85ea9a2293d47fedf5624b",
+          "sealed": true,
+          "shard_id": 2,
+          "worker": "shard-group-01"
+        },
+        {
+          "global_row_start": 24576,
+          "populated_positions": 73728,
+          "rows_sha256": "b3e22e0adced69b462c83a2a2d6ad8cad7c5dabc6726c6672a06866336a552a5",
+          "sealed": true,
+          "shard_id": 3,
+          "worker": "shard-group-01"
+        },
+        {
+          "global_row_start": 32768,
+          "populated_positions": 73728,
+          "rows_sha256": "5a9071d80f5822f0aee042e42c3c0f7cf2110c764ef627f036b59b713f1840f3",
+          "sealed": true,
+          "shard_id": 4,
+          "worker": "shard-group-01"
+        },
+        {
+          "global_row_start": 40960,
+          "populated_positions": 73728,
+          "rows_sha256": "c941f7dde7c9b018a607e80b4e0ae634d18399b82e7dca19974379764e8e89a4",
+          "sealed": true,
+          "shard_id": 5,
+          "worker": "shard-group-01"
+        },
+        {
+          "global_row_start": 49152,
+          "populated_positions": 7882,
+          "rows_sha256": "a3068d0442f1a60be3d3bf2db31f7ce5030d03abc7411b2719fb5a290e75b5c1",
+          "sealed": false,
+          "shard_id": 6,
+          "worker": "shard-group-01"
+        }
+      ],
+      "used_rows": 50028
+    },
+    "successful_measured_queries": 90,
+    "all_exact": true,
+    "upload_bytes": [
+      430088
+    ],
+    "download_bytes": [
+      10256
+    ],
+    "prepare_ms": {
+      "n": 90,
+      "mean": 31.03565131111111,
+      "p50": 29.4423335,
+      "p95": 35.889375,
+      "min": 27.355166,
+      "max": 39.528082999999995
+    },
+    "http_ms": {
+      "n": 90,
+      "mean": 1561.8101935555555,
+      "p50": 1068.0231665000001,
+      "p95": 4381.18225,
+      "min": 290.12325,
+      "max": 6538.803167
+    },
+    "decode_ms": {
+      "n": 90,
+      "mean": 1.9224764222222221,
+      "p50": 0.8820209999999999,
+      "p95": 4.869791,
+      "min": 0.809042,
+      "max": 7.282542
+    },
+    "total_ms": {
+      "n": 90,
+      "mean": 1594.768321288889,
+      "p50": 1100.2926455,
+      "p95": 4414.669333000001,
+      "min": 322.31729199999995,
+      "max": 6574.2935
+    },
+    "post_body_server_ms": {
+      "n": 90,
+      "mean": 40.90024948888937,
+      "p50": 40.86036849999175,
+      "p95": 42.99937100000761,
+      "min": 39.0694989999929,
+      "max": 45.415542999990066
+    },
+    "post_body_server_counter_deltas": {
+      "1.0": 90
+    },
+    "worker_rpc_ms": {
+      "n": 90,
+      "mean": 34.78249568888887,
+      "p50": 34.74867450000119,
+      "p95": 36.15557499999511,
+      "min": 32.812888000009366,
+      "max": 39.43573700000513
+    },
+    "worker_rpc_counter_deltas": {
+      "1.0": 90
+    }
+  },
+  "transparent-0-directory": {
+    "runs": [
+      "transparent-0-directory-r1.jsonl.gz",
+      "transparent-0-directory-r2.jsonl.gz",
+      "transparent-0-directory-r3.jsonl.gz"
+    ],
+    "errors": [
+      {
+        "fatal": "Error: reqwest::Error { kind: Request, url: \"https://transparent-pir.valargroup.dev/v1/shards/0/revisions/ea399174caaa0c70d571f08f6f15f4568cda30aae6fb474aa96077be81f11b8d/query/directory\", source: hyper_util::client::legacy::Error(SendRequest, hyper::Error(BodyWrite, Os { code: 32, kind: BrokenPipe, message: \"Broken pipe\" })) }\n"
+      }
+    ],
+    "setup_bytes": [
+      19436,
+      19436,
+      19436
+    ],
+    "successful_measured_queries": 75,
+    "all_exact": true,
+    "upload_bytes": [
+      258056
+    ],
+    "download_bytes": [
+      5136
+    ],
+    "prepare_ms": {
+      "n": 75,
+      "mean": 18.996742813333334,
+      "p50": 17.506042,
+      "p95": 23.418499999999998,
+      "min": 15.709916000000002,
+      "max": 24.379749999999998
+    },
+    "http_ms": {
+      "n": 75,
+      "mean": 729.88511564,
+      "p50": 648.782834,
+      "p95": 1575.708917,
+      "min": 128.193584,
+      "max": 2350.31875
+    },
+    "decode_ms": {
+      "n": 75,
+      "mean": 1.5217683466666667,
+      "p50": 0.7690419999999999,
+      "p95": 4.6145830000000005,
+      "min": 0.698416,
+      "max": 4.878833
+    },
+    "total_ms": {
+      "n": 75,
+      "mean": 750.4036268,
+      "p50": 673.969,
+      "p95": 1601.369001,
+      "min": 145.663458,
+      "max": 2369.107375
+    },
+    "evaluation_ms": {
+      "n": 75,
+      "mean": 8.069573333333334,
+      "p50": 7.916999999999952,
+      "p95": 9.28299999999993,
+      "min": 7.487000000000021,
+      "max": 10.98400000000005
+    },
+    "evaluation_counter_deltas": {
+      "1.0": 75
+    },
+    "handler_ms": {
+      "n": 75,
+      "mean": 531.145,
+      "p50": 514.8519999999976,
+      "p95": 1242.1020000000026,
+      "min": 12.292000000000414,
+      "max": 1703.7449999999978
+    },
+    "handler_counter_deltas": {
+      "1.0": 75
+    },
+    "queue_ms": {
+      "n": 75,
+      "mean": 0.001746666666666666,
+      "p50": 0.0019999999999999944,
+      "p95": 0.0020000000000000217,
+      "min": 0.00099999999999997,
+      "max": 0.01600000000000001
+    },
+    "queue_counter_deltas": {
+      "1.0": 75
+    }
+  },
+  "transparent-0-pages": {
+    "runs": [
+      "transparent-0-pages-r1.jsonl.gz",
+      "transparent-0-pages-r2.jsonl.gz",
+      "transparent-0-pages-r3.jsonl.gz"
+    ],
+    "errors": [
+      {
+        "elapsed_s": 0.510102,
+        "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/0/revisions/ea399174caaa0c70d571f08f6f15f4568cda30aae6fb474aa96077be81f11b8d/query/pages)",
+        "event": "query_error",
+        "i": 13,
+        "upload": 430088,
+        "warmup": false
+      },
+      {
+        "elapsed_s": 0.244710042,
+        "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/0/revisions/ea399174caaa0c70d571f08f6f15f4568cda30aae6fb474aa96077be81f11b8d/query/pages)",
+        "event": "query_error",
+        "i": 14,
+        "upload": 430088,
+        "warmup": false
+      },
+      {
+        "elapsed_s": 0.35976225,
+        "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/0/revisions/ea399174caaa0c70d571f08f6f15f4568cda30aae6fb474aa96077be81f11b8d/query/pages)",
+        "event": "query_error",
+        "i": 21,
+        "upload": 430088,
+        "warmup": false
+      }
+    ],
+    "setup_bytes": [
+      19432,
+      19432,
+      19432
+    ],
+    "successful_measured_queries": 87,
+    "all_exact": true,
+    "upload_bytes": [
+      430088
+    ],
+    "download_bytes": [
+      5136
+    ],
+    "prepare_ms": {
+      "n": 87,
+      "mean": 30.70731328735632,
+      "p50": 29.706667,
+      "p95": 35.307832999999995,
+      "min": 27.004875000000002,
+      "max": 36.853292
+    },
+    "http_ms": {
+      "n": 87,
+      "mean": 1123.542591,
+      "p50": 1013.1032499999999,
+      "p95": 2247.374208,
+      "min": 213.087167,
+      "max": 3131.867
+    },
+    "decode_ms": {
+      "n": 87,
+      "mean": 1.6554525632183907,
+      "p50": 0.7681250000000001,
+      "p95": 4.658291999999999,
+      "min": 0.7050420000000001,
+      "max": 5.182459000000001
+    },
+    "total_ms": {
+      "n": 87,
+      "mean": 1155.9053568505747,
+      "p50": 1045.1027080000001,
+      "p95": 2278.6288329999998,
+      "min": 244.301167,
+      "max": 3161.2435840000003
+    },
+    "evaluation_ms": {
+      "n": 87,
+      "mean": 12.68967816091954,
+      "p50": 12.57700000000006,
+      "p95": 13.56999999999986,
+      "min": 12.054999999999705,
+      "max": 14.0100000000003
+    },
+    "evaluation_counter_deltas": {
+      "1.0": 87
+    },
+    "handler_ms": {
+      "n": 87,
+      "mean": 907.5000114942527,
+      "p50": 791.2109999999899,
+      "p95": 1794.2410000000136,
+      "min": 84.8839999999953,
+      "max": 2678.0650000000037
+    },
+    "handler_counter_deltas": {
+      "1.0": 87
+    },
+    "queue_ms": {
+      "n": 87,
+      "mean": 0.0020459770114942526,
+      "p50": 0.0019999999999999944,
+      "p95": 0.0020000000000000486,
+      "min": 0.00099999999999997,
+      "max": 0.02699999999999998
+    },
+    "queue_counter_deltas": {
+      "1.0": 87
+    }
+  },
+  "transparent-160-directory": {
+    "runs": [
+      "transparent-160-directory-r1.jsonl.gz",
+      "transparent-160-directory-r2.jsonl.gz",
+      "transparent-160-directory-r3.jsonl.gz"
+    ],
+    "errors": [
+      {
+        "elapsed_s": 0.573906916,
+        "error": "the service has no free cache capacity",
+        "event": "query_error",
+        "i": 25,
+        "upload": 128008,
+        "warmup": false
+      },
+      {
+        "elapsed_s": 0.488321583,
+        "error": "the service has no free cache capacity",
+        "event": "query_error",
+        "i": 26,
+        "upload": 128008,
+        "warmup": false
+      },
+      {
+        "elapsed_s": 0.355227292,
+        "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/160/revisions/67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b/query/directory)",
+        "event": "query_error",
+        "i": 29,
+        "upload": 128008,
+        "warmup": false
+      },
+      {
+        "elapsed_s": 0.259469958,
+        "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/160/revisions/67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b/query/directory)",
+        "event": "query_error",
+        "i": 22,
+        "upload": 128008,
+        "warmup": false
+      }
+    ],
+    "setup_bytes": [
+      19435,
+      19435,
+      19435
+    ],
+    "successful_measured_queries": 86,
+    "all_exact": true,
+    "upload_bytes": [
+      128008
+    ],
+    "download_bytes": [
+      5136
+    ],
+    "prepare_ms": {
+      "n": 86,
+      "mean": 8.985214139534884,
+      "p50": 8.431521,
+      "p95": 11.527875,
+      "min": 7.328208,
+      "max": 12.381708
+    },
+    "http_ms": {
+      "n": 86,
+      "mean": 503.0673783604651,
+      "p50": 490.21089599999993,
+      "p95": 1198.883916,
+      "min": 143.017042,
+      "max": 1896.7959159999998
+    },
+    "decode_ms": {
+      "n": 86,
+      "mean": 1.9611472906976744,
+      "p50": 0.7839375,
+      "p95": 5.2521249999999995,
+      "min": 0.7245,
+      "max": 7.210583
+    },
+    "total_ms": {
+      "n": 86,
+      "mean": 514.0137397906976,
+      "p50": 500.1449165,
+      "p95": 1213.905125,
+      "min": 152.07299999999998,
+      "max": 1906.0997489999997
+    },
+    "evaluation_ms": {
+      "n": 86,
+      "mean": 24.471883720908345,
+      "p50": 11.811999999736145,
+      "p95": 34.19699999903969,
+      "min": 8.789000001343084,
+      "max": 648.7930000002962
+    },
+    "evaluation_counter_deltas": {
+      "1.0": 86
+    },
+    "handler_ms": {
+      "n": 86,
+      "mean": 281.7634186046425,
+      "p50": 278.1189999996059,
+      "p95": 748.7689999998111,
+      "min": 10.96499999948719,
+      "max": 1460.430000000997
+    },
+    "handler_counter_deltas": {
+      "1.0": 86
+    },
+    "queue_ms": {
+      "n": 86,
+      "mean": 0.0025813953488365636,
+      "p50": 0.0029999999999752447,
+      "p95": 0.0030000000001972893,
+      "min": 0.0009999999999177334,
+      "max": 0.008000000000008
+    },
+    "queue_counter_deltas": {
+      "1.0": 86
+    }
+  },
+  "transparent-160-pages": {
+    "runs": [
+      "transparent-160-pages-r1.jsonl.gz",
+      "transparent-160-pages-r2.jsonl.gz",
+      "transparent-160-pages-r3.jsonl.gz"
+    ],
+    "errors": [
+      {
+        "elapsed_s": 0.78197925,
+        "error": "the service has no free cache capacity",
+        "event": "query_error",
+        "i": 25,
+        "upload": 128008,
+        "warmup": false
+      },
+      {
+        "elapsed_s": 0.192555292,
+        "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/160/revisions/67574e8d4c7f7c258f8c7488f73e80a9476f8074c3db3540325133ff25020c2b/query/pages)",
+        "event": "query_error",
+        "i": 26,
+        "upload": 128008,
+        "warmup": false
+      }
+    ],
+    "setup_bytes": [
+      19431,
+      19431,
+      19431
+    ],
+    "successful_measured_queries": 88,
+    "all_exact": true,
+    "upload_bytes": [
+      128008
+    ],
+    "download_bytes": [
+      5136
+    ],
+    "prepare_ms": {
+      "n": 88,
+      "mean": 9.320330511363636,
+      "p50": 8.5270415,
+      "p95": 12.089541,
+      "min": 7.543,
+      "max": 15.522917000000001
+    },
+    "http_ms": {
+      "n": 88,
+      "mean": 578.8513158068182,
+      "p50": 523.8504375,
+      "p95": 1304.11925,
+      "min": 137.397583,
+      "max": 1784.756542
+    },
+    "decode_ms": {
+      "n": 88,
+      "mean": 1.669734,
+      "p50": 0.7776460000000001,
+      "p95": 4.957750000000001,
+      "min": 0.658917,
+      "max": 7.47775
+    },
+    "total_ms": {
+      "n": 88,
+      "mean": 589.8413803181818,
+      "p50": 534.193125,
+      "p95": 1317.5381670000002,
+      "min": 146.52154099999998,
+      "max": 1797.706625
+    },
+    "evaluation_ms": {
+      "n": 88,
+      "mean": 21.744522727286412,
+      "p50": 11.239999999816064,
+      "p95": 27.94700000049488,
+      "min": 8.929000001444365,
+      "max": 789.2179999998916
+    },
+    "evaluation_counter_deltas": {
+      "1.0": 88
+    },
+    "handler_ms": {
+      "n": 88,
+      "mean": 349.94503409091686,
+      "p50": 352.4004999999306,
+      "p95": 806.1849999994593,
+      "min": 11.278999998467043,
+      "max": 1316.3199999999051
+    },
+    "handler_counter_deltas": {
+      "1.0": 88
+    },
+    "queue_ms": {
+      "n": 88,
+      "mean": 0.0027386363636381565,
+      "p50": 0.0020000000000575113,
+      "p95": 0.0030000000001972893,
+      "min": 0.0009999999999177334,
+      "max": 0.026999999999999247
+    },
+    "queue_counter_deltas": {
+      "1.0": 88
+    }
+  }
+}

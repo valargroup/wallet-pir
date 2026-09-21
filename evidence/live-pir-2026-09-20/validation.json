@@ -1,0 +1,11 @@
+{
+  "validated_utc": "2026-09-19T20:25:23.251645+00:00",
+  "exact_measured_successes": 426,
+  "exact_warmup_successes": 45,
+  "measured_errors": 10,
+  "unattempted_after_first_abort": 14,
+  "server_counter_attribution": "Every successful measured query has count delta exactly 1 for every reported stage.",
+  "continuous_load_successes": 337,
+  "continuous_load_errors": 0,
+  "database_counts_and_sizes_crosschecked": true
+}

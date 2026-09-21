@@ -1,0 +1,26 @@
+[
+  {
+    "url": "https://transparent-pir.valargroup.dev/v1/shards/init",
+    "utc": "2026-09-19T20:15:07.654206+00:00",
+    "status": 404,
+    "body": ""
+  },
+  {
+    "url": "https://transparent-pir.valargroup.dev/v1/filters/shards",
+    "utc": "2026-09-19T20:15:08.102059+00:00",
+    "status": 200,
+    "body": "{\"genesis_hash\":\"00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08\",\"network\":\"main\",\"profile\":\"zcash-transparent-range-v1\",\"range_envelope_version\":1,\"start_height\":3428143,\"seal\":{\"recent-8k\":{\"max_scripts\":98304,\"max_page_rows\":7936,\"max_txids\":0}},\"shards\":[{\"shard_id\":0,\"geometry\":\"recent-8k\",\"start_height\":3428143,\"end_height\":3449746,\"parent_block_hash\":\"00000000008b2ffd813f6a09372b4c9da20caad248245086445c19770ac270dd\",\"terminal_block_hash\":\"0000000000048cd1aaa20639be298be854ec2f925fbe1c7c9c85cb6b1da1772f\",\"filter_hash\":\"56734bce0183e88648be83587bf18f3bcd7903a1081454878f41dc47070ef286\",\"scripts\":29466,\"page_rows\":7937,\"txids\":70250,\"directory_segments\":1,\"page_segments\":1,\"manifest_digest\":\"eb8bc41acddcabfecac7055d1c7c40178161e0af3cdf85d8b8e5f182f66e3dc6\",\"revision\":0,\"sealed\":true},{\"shard_id\":1,\"geometry\":\"recent-8k\",\"start_height\":3449747,\"end_height\":3465652,\"parent_block_hash\":\"0000000000048cd1aaa20639be298be854ec2f925fbe1c7c9c85cb6b1da1772f\",\"terminal_block_hash\":\"00000000001cb8e63ae81ae4372fc8b0122d19ac14d46ab473884bb2f5e2dc81\",\"filter_hash\":\"daf5feed9d3d546848a59287cd61873b91e82598f7b4e945ca8fd5a17aa8c407\",\"scripts\":41566,\"page_rows\":7937,\"txids\":77491,\"directory_segments\":1,\"page_segments\":1,\"manifest_digest\":\"9e3f40204968776c5ebf70777e46d1a4b9c95ec7c5e3bb23fc47fa1b16a4ffdc\",\"revision\":0,\"sealed\":true},{\"shard_id\":2,\"geometry\":\"recent-8k\",\"start_height\":3465653,\"end_height\":3473474,\"parent_block_hash\":\"00000000001cb8e63ae81ae4372fc8b0122d19ac14d46ab473884bb2f5e2dc81\",\"terminal_block_hash\":\"000000000050f22214edfb39713d20e1cb4598d1571442f436e01c5a53bc4e6e\",\"filter_hash\":\"f9c3e104c39850569024e336056c5b076c95e757e05739e27491b17a9964d93d\",\"scripts\":35767,\"page_rows\":5444,\"txids\":57236,\"directory_segments\":1,\"page_segments\":1,\"manifest_digest\":\"2f38cdcf8c06d238a6bb2c46ce40b2484103d6a57bb565dbbca8f7b7b265f74b\",\"revision\":0,\"sealed\":false}]}"
+  },
+  {
+    "url": "https://enhance-pir.valargroup.dev/v1/shards/init",
+    "utc": "2026-09-19T20:15:08.483306+00:00",
+    "status": 404,
+    "body": ""
+  },
+  {
+    "url": "https://enhance-pir.valargroup.dev/v1/filters/shards",
+    "utc": "2026-09-19T20:15:08.866332+00:00",
+    "status": 200,
+    "body": "{\"genesis_hash\":\"00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08\",\"network\":\"main\",\"profile\":\"zcash-transparent-range-v1\",\"range_envelope_version\":1,\"start_height\":3428143,\"seal\":{\"recent-8k\":{\"max_scripts\":98304,\"max_page_rows\":7936,\"max_txids\":0}},\"shards\":[{\"shard_id\":0,\"geometry\":\"recent-8k\",\"start_height\":3428143,\"end_height\":3449746,\"parent_block_hash\":\"00000000008b2ffd813f6a09372b4c9da20caad248245086445c19770ac270dd\",\"terminal_block_hash\":\"0000000000048cd1aaa20639be298be854ec2f925fbe1c7c9c85cb6b1da1772f\",\"filter_hash\":\"56734bce0183e88648be83587bf18f3bcd7903a1081454878f41dc47070ef286\",\"scripts\":29466,\"page_rows\":7937,\"txids\":70250,\"directory_segments\":1,\"page_segments\":1,\"manifest_digest\":\"eb8bc41acddcabfecac7055d1c7c40178161e0af3cdf85d8b8e5f182f66e3dc6\",\"revision\":0,\"sealed\":true},{\"shard_id\":1,\"geometry\":\"recent-8k\",\"start_height\":3449747,\"end_height\":3465652,\"parent_block_hash\":\"0000000000048cd1aaa20639be298be854ec2f925fbe1c7c9c85cb6b1da1772f\",\"terminal_block_hash\":\"00000000001cb8e63ae81ae4372fc8b0122d19ac14d46ab473884bb2f5e2dc81\",\"filter_hash\":\"daf5feed9d3d546848a59287cd61873b91e82598f7b4e945ca8fd5a17aa8c407\",\"scripts\":41566,\"page_rows\":7937,\"txids\":77491,\"directory_segments\":1,\"page_segments\":1,\"manifest_digest\":\"9e3f40204968776c5ebf70777e46d1a4b9c95ec7c5e3bb23fc47fa1b16a4ffdc\",\"revision\":0,\"sealed\":true},{\"shard_id\":2,\"geometry\":\"recent-8k\",\"start_height\":3465653,\"end_height\":3473474,\"parent_block_hash\":\"00000000001cb8e63ae81ae4372fc8b0122d19ac14d46ab473884bb2f5e2dc81\",\"terminal_block_hash\":\"000000000050f22214edfb39713d20e1cb4598d1571442f436e01c5a53bc4e6e\",\"filter_hash\":\"f9c3e104c39850569024e336056c5b076c95e757e05739e27491b17a9964d93d\",\"scripts\":35767,\"page_rows\":5444,\"txids\":57236,\"directory_segments\":1,\"page_segments\":1,\"manifest_digest\":\"2f38cdcf8c06d238a6bb2c46ce40b2484103d6a57bb565dbbca8f7b7b265f74b\",\"revision\":0,\"sealed\":false}]}"
+  }
+]

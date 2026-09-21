@@ -1,0 +1,11 @@
+{"event":"start","instances":2,"logical_rows":8192,"memory":{},"query_bits":41,"records":8193,"records_per_row":9,"shard_rows":8192,"shards":1,"threads":4,"used_rows":911}
+{"event":"shard_build","memory":{},"seconds":0.355449959,"shard":0}
+{"event":"workers_ready","memory":{},"seconds":0.361956375}
+{"base64_public_params_bytes":38232,"event":"packing_ready","memory":{},"public_params_bytes":28672,"seconds":0.621311334}
+{"decode_ms":0.869958,"event":"query","exact":true,"i":0,"noise_error":42930464919,"noise_threshold":2199023255543,"pack_ms":3.444042,"parse_ms":0.10137499999999999,"prepare_ms":8.588667,"response_bytes":10256,"row":0,"scan_ms":1.599583,"server_ms":5.145167,"upload_bytes":128008,"warmup":true}
+{"decode_ms":0.845417,"event":"query","exact":true,"i":1,"noise_error":42791305970,"noise_threshold":2199023255543,"pack_ms":3.301208,"parse_ms":0.1255,"prepare_ms":8.606083,"response_bytes":10256,"row":910,"scan_ms":1.6520000000000001,"server_ms":5.078834,"upload_bytes":128008,"warmup":true}
+{"decode_ms":0.894125,"event":"query","exact":true,"i":2,"noise_error":43890550335,"noise_threshold":2199023255543,"pack_ms":3.518666,"parse_ms":0.097792,"prepare_ms":8.572042,"response_bytes":10256,"row":910,"scan_ms":1.57325,"server_ms":5.189792000000001,"upload_bytes":128008,"warmup":true}
+{"decode_ms":0.843541,"event":"query","exact":true,"i":3,"noise_error":46498080090,"noise_threshold":2199023255543,"pack_ms":3.311208,"parse_ms":0.094416,"prepare_ms":8.662333,"response_bytes":10256,"row":910,"scan_ms":1.640375,"server_ms":5.046082999999999,"upload_bytes":128008,"warmup":false}
+{"decode_ms":0.860375,"event":"query","exact":true,"i":4,"noise_error":41653650821,"noise_threshold":2199023255543,"pack_ms":3.2412080000000003,"parse_ms":0.093959,"prepare_ms":8.820708999999999,"response_bytes":10256,"row":910,"scan_ms":1.5778750000000001,"server_ms":4.913209,"upload_bytes":128008,"warmup":false}
+{"decode_ms":0.836166,"event":"query","exact":true,"i":5,"noise_error":43301959615,"noise_threshold":2199023255543,"pack_ms":3.354167,"parse_ms":0.093917,"prepare_ms":8.237082999999998,"response_bytes":10256,"row":910,"scan_ms":1.618625,"server_ms":5.066834,"upload_bytes":128008,"warmup":false}
+{"event":"complete","memory":{}}

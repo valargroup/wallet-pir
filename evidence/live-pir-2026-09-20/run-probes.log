@@ -1,0 +1,4 @@
+enhance-r1 {'case': 'enhance-r1', 'started': '2026-09-19T20:07:50.336511+00:00', 'exit_code': 0, 'seconds': 47.316628541011596}
+transparent-0-directory-r1 {'case': 'transparent-0-directory-r1', 'started': '2026-09-19T20:08:37.654489+00:00', 'exit_code': 1, 'seconds': 18.83255058400391}
+Error: reqwest::Error { kind: Request, url: "https://transparent-pir.valargroup.dev/v1/shards/0/revisions/ea399174caaa0c70d571f08f6f15f4568cda30aae6fb474aa96077be81f11b8d/query/directory", source: hyper_util::client::legacy::Error(SendRequest, hyper::Error(BodyWrite, Os { code: 32, kind: BrokenPipe, message: "Broken pipe" })) }
+

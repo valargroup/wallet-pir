@@ -1,0 +1,2 @@
+39fee978111006a75131a5a25b3c8f965445dae2
+{"groups":[{"name":"shard-group-01","replicas":[{"name":"enhance-pir-worker-01","url":"http://10.142.0.15:8091"},{"name":"enhance-pir-worker-02","url":"http://10.142.0.16:8091"}]}]}

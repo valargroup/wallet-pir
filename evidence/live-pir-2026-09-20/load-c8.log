@@ -1,0 +1,38 @@
+=== Enhance PIR load test ===
+server:      https://enhance-pir.valargroup.dev
+parallelism: 8
+duration:    1m
+warmup:      10s
+seed:        42
+
+Connecting and validating public parameters...
+generation=3489209 anchor_height=3489209 positions=450573
+Running preflight query...
+Preflight query succeeded.
+
+Warming up for 10s...
+elapsed=5s requests=26 in_flight=8
+
+Applying measured load for 1m...
+elapsed=5s requests=30 in_flight=8
+elapsed=10s requests=52 in_flight=8
+elapsed=15s requests=71 in_flight=8
+elapsed=20s requests=98 in_flight=8
+elapsed=25s requests=125 in_flight=8
+elapsed=30s requests=150 in_flight=8
+elapsed=35s requests=173 in_flight=8
+elapsed=40s requests=201 in_flight=8
+elapsed=45s requests=227 in_flight=8
+elapsed=50s requests=249 in_flight=8
+elapsed=55s requests=271 in_flight=8
+
+=== Load-test report ===
+server=https://enhance-pir.valargroup.dev generation=3489209 anchor_height=3489209 positions=450573
+duration=60.0s parallelism=8 completed=294 succeeded=294 errors=0 (0.00%) throughput=4.90 req/s
+         stage        p50        p90        p95        p99      p99.9        max        n
+    end-to-end      1.55s      2.23s      2.45s      3.53s      5.96s      5.96s      294
+       prepare     30.2ms     32.2ms     33.6ms     35.6ms     37.0ms     37.0ms      294
+          http      1.51s      2.20s      2.41s      3.50s      5.93s      5.93s      294
+        decode      0.9ms      4.0ms      4.7ms      5.7ms      6.0ms      6.0ms      294
+
+JSON report: /Users/roman/projects/wallet-pir/evidence/live-pir-2026-09-20/load-c8-summary.json

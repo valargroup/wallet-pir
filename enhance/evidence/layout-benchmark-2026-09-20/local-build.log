@@ -1,0 +1,159 @@
+     Locking 82 packages to latest compatible versions
+      Adding base64 v0.22.1 (available: v0.23.1)
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding sha2 v0.10.9 (available: v0.11.0)
+   Compiling thiserror-impl v2.0.20
+   Compiling thiserror v2.0.20
+   Compiling enhance-layout-benchmark v0.1.0 (/Users/roman/projects/wallet-pir/enhance/evidence/layout-benchmark-2026-09-20)
+error[E0277]: the size for values of type `[CrsBlock]` cannot be known at compilation time
+   --> src/main.rs:35:10
+    |
+ 35 |   if let Some(ref mut total)=aggregate{ipir::add_crs_blocks_assign_mod(total,&runtime.crs_blocks,&rlwe)?;}else{aggregate=Some(runtime.crs...
+    |          ^^^^^^^^^^^^^^^^^^^ doesn't have a size known at compile-time
+    |
+    = help: the trait `Sized` is not implemented for `[CrsBlock]`
+note: required by a bound in `std::prelude::v1::Some`
+   --> /Users/roman/.rustup/toolchains/1.91.0-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/option.rs:594:17
+    |
+594 | pub enum Option<T> {
+    |                 ^ required by this bound in `std::prelude::v1::Some`
+...
+602 |     Some(#[stable(feature = "rust1", since = "1.0.0")] T),
+    |     ---- required by a bound in this tuple variant
+
+error[E0277]: the size for values of type `[CrsBlock]` cannot be known at compilation time
+   --> src/main.rs:30:73
+    |
+ 30 |  let start=Instant::now();let mut runtimes=Vec::new();let mut aggregate=None;
+    |                                                                         ^^^^ doesn't have a size known at compile-time
+    |
+    = help: the trait `Sized` is not implemented for `[CrsBlock]`
+note: required by a bound in `std::prelude::v1::None`
+   --> /Users/roman/.rustup/toolchains/1.91.0-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/option.rs:594:17
+    |
+594 | pub enum Option<T> {
+    |                 ^ required by this bound in `std::prelude::v1::None`
+...
+598 |     None,
+    |     ---- required by a bound in this unit variant
+
+error[E0308]: mismatched types
+  --> src/main.rs:35:122
+   |
+30 | ...();let mut aggregate=None;
+   |                         ---- expected due to this value
+...
+35 | ...s_blocks_assign_mod(total,&runtime.crs_blocks,&rlwe)?;}else{aggregate=Some(runtime.crs_blocks.clone());}
+   |                                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<[CrsBlock]>`, found `Option<Vec<CrsBlock>>`
+   |
+   = note: expected enum `std::option::Option<[CrsBlock]>`
+              found enum `std::option::Option<Vec<CrsBlock>>`
+
+error[E0277]: the size for values of type `[CrsBlock]` cannot be known at compilation time
+   --> src/main.rs:40:3
+    |
+ 40 |   drop(aggregate);let tail=count-1;let mut data=vec![0;layout.shard_bytes()];fill(tail*shard_rows*k,positions,&mut data);
+    |   ^^^^ doesn't have a size known at compile-time
+    |
+    = help: the trait `Sized` is not implemented for `[CrsBlock]`
+note: required by an implicit `Sized` bound in `std::option::Option`
+   --> /Users/roman/.rustup/toolchains/1.91.0-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/option.rs:594:17
+    |
+594 | pub enum Option<T> {
+    |                 ^ required by the implicit `Sized` requirement on this type parameter in `Option`
+
+error[E0599]: the method `take` exists for enum `std::option::Option<[CrsBlock]>`, but its trait bounds were not satisfied
+   --> src/main.rs:45:79
+    |
+ 45 | ...(&rlwe,&aggregate.take().unwrap())?;let top=TopKeyImages::build(&rlwe);let pubbytes=published_c1_rows(&pre,rlwe.q);let c1=recover_publ...
+    |                      ^^^^ method cannot be called on `std::option::Option<[CrsBlock]>` due to unsatisfied trait bounds
+    |
+   ::: /Users/roman/.rustup/toolchains/1.91.0-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/option.rs:594:1
+    |
+594 | pub enum Option<T> {
+    | ------------------ doesn't satisfy `std::option::Option<[CrsBlock]>: Iterator`
+    |
+    = note: the following trait bounds were not satisfied:
+            `[CrsBlock]: Sized`
+            `std::option::Option<[CrsBlock]>: Iterator`
+            which is required by `&mut std::option::Option<[CrsBlock]>: Iterator`
+
+error[E0382]: use of moved value: `table`
+   --> src/../../../services/enhance-pir-server/src/ipir.rs:168:13
+    |
+159 |         table: DatabaseId,
+    |         ----- move occurs because `table` has type `DatabaseId`, which does not implement the `Copy` trait
+...
+167 |             &shard_artifact_dir(artifact_root, table, shard_id),
+    |                                                ----- value moved here
+168 |             table,
+    |             ^^^^^ value used here after move
+    |
+note: consider changing this parameter type in function `shard_artifact_dir` to borrow instead if owning the value isn't necessary
+   --> src/../../../services/enhance-pir-server/src/ipir.rs:149:56
+    |
+149 | pub fn shard_artifact_dir(artifact_root: &Path, table: DatabaseId, shard_id: u64) -> PathBuf {
+    |        ------------------ in this function             ^^^^^^^^^^ this parameter takes ownership of the value
+note: if `DatabaseId` implemented `Clone`, you could clone the value
+   --> src/main.rs:13:2
+    |
+ 13 |  pub enum DatabaseId{Enhance} impl DatabaseId{pub fn as_str(&self)->&'static str{"enhance"}}
+    |  ^^^^^^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+    |
+   ::: src/../../../services/enhance-pir-server/src/ipir.rs:167:48
+    |
+167 |             &shard_artifact_dir(artifact_root, table, shard_id),
+    |                                                ----- you could clone this value
+
+error[E0382]: use of moved value: `table`
+   --> src/../../../services/enhance-pir-server/src/ipir.rs:192:13
+    |
+180 |         table: DatabaseId,
+    |         ----- move occurs because `table` has type `DatabaseId`, which does not implement the `Copy` trait
+...
+189 |         let directory = shard_artifact_dir(artifact_root, table, shard_id);
+    |                                                           ----- value moved here
+...
+192 |             table,
+    |             ^^^^^ value used here after move
+    |
+note: consider changing this parameter type in function `shard_artifact_dir` to borrow instead if owning the value isn't necessary
+   --> src/../../../services/enhance-pir-server/src/ipir.rs:149:56
+    |
+149 | pub fn shard_artifact_dir(artifact_root: &Path, table: DatabaseId, shard_id: u64) -> PathBuf {
+    |        ------------------ in this function             ^^^^^^^^^^ this parameter takes ownership of the value
+note: if `DatabaseId` implemented `Clone`, you could clone the value
+   --> src/main.rs:13:2
+    |
+ 13 |  pub enum DatabaseId{Enhance} impl DatabaseId{pub fn as_str(&self)->&'static str{"enhance"}}
+    |  ^^^^^^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+    |
+   ::: src/../../../services/enhance-pir-server/src/ipir.rs:189:59
+    |
+189 |         let directory = shard_artifact_dir(artifact_root, table, shard_id);
+    |                                                           ----- you could clone this value
+
+error[E0382]: use of moved value: `table`
+   --> src/../../../services/enhance-pir-server/src/ipir.rs:212:34
+    |
+180 |         table: DatabaseId,
+    |         ----- move occurs because `table` has type `DatabaseId`, which does not implement the `Copy` trait
+...
+192 |             table,
+    |             ----- value moved here
+...
+212 |             .persist(&directory, table, rlwe)
+    |                                  ^^^^^ value used here after move
+    |
+note: consider changing this parameter type in method `load` to borrow instead if owning the value isn't necessary
+   --> src/../../../services/enhance-pir-server/src/ipir.rs:288:16
+    |
+286 |     fn load(
+    |        ---- in this method
+287 |         directory: &Path,
+288 |         table: DatabaseId,
+    |                ^^^^^^^^^^ this parameter takes ownership of the value
+
+Some errors have detailed explanations: E0277, E0308, E0382, E0599.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `enhance-layout-benchmark` (bin "enhance-layout-benchmark") due to 8 previous errors

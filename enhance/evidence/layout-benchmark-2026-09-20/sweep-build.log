@@ -1,0 +1,3 @@
+   Compiling enhance-layout-benchmark v0.1.0 (/Users/roman/projects/wallet-pir/enhance/evidence/layout-benchmark-2026-09-20)
+    Finished `release` profile [optimized] target(s) in 0.20s
+     Running `target/release/sweep`

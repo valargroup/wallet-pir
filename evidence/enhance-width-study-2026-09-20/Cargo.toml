@@ -1,0 +1,8 @@
+[package]
+name = "enhance-width-study"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "accc424e879d8da425fa620aad80f0f2c4e0defd" }
+serde_json = "1"

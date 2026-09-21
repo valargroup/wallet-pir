@@ -1,0 +1,12 @@
+[package]
+name = "live-pir-probe"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+enhance-pir = { path = "../../../enhance/crates/enhance-pir" }
+transparent-wallet = { path = "../../../transparent/crates/transparent-wallet", features = ["reqwest"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

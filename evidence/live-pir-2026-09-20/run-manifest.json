@@ -1,0 +1,18 @@
+{
+  "started": "2026-09-19T20:07:50.332932+00:00",
+  "binary_sha256": "d394ffb6455de9408ac074e8fba62ceffe182d5993648861b7117e57f8dd697f",
+  "steps": [
+    {
+      "case": "enhance-r1",
+      "started": "2026-09-19T20:07:50.336511+00:00",
+      "exit_code": 0,
+      "seconds": 47.316628541011596
+    },
+    {
+      "case": "transparent-0-directory-r1",
+      "started": "2026-09-19T20:08:37.654489+00:00",
+      "exit_code": 1,
+      "seconds": 18.83255058400391
+    }
+  ]
+}

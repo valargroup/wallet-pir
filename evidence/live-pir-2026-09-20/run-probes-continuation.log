@@ -1,0 +1,14 @@
+transparent-0-pages-r1 {'case': 'transparent-0-pages-r1', 'started': '2026-09-19T20:10:02.200303+00:00', 'exit_code': 0, 'seconds': 48.14672537500155}
+transparent-160-directory-r1 {'case': 'transparent-160-directory-r1', 'started': '2026-09-19T20:10:50.347767+00:00', 'exit_code': 0, 'seconds': 40.22715058299946}
+transparent-160-pages-r1 {'case': 'transparent-160-pages-r1', 'started': '2026-09-19T20:11:30.576123+00:00', 'exit_code': 0, 'seconds': 40.86446258299111}
+enhance-r2 {'case': 'enhance-r2', 'started': '2026-09-19T20:12:11.441737+00:00', 'exit_code': 0, 'seconds': 44.11217766700429}
+transparent-0-directory-r2 {'case': 'transparent-0-directory-r2', 'started': '2026-09-19T20:12:55.555175+00:00', 'exit_code': 0, 'seconds': 41.80917970900191}
+transparent-0-pages-r2 {'case': 'transparent-0-pages-r2', 'started': '2026-09-19T20:13:37.365004+00:00', 'exit_code': 0, 'seconds': 58.22172549999959}
+transparent-160-directory-r2 {'case': 'transparent-160-directory-r2', 'started': '2026-09-19T20:14:35.589212+00:00', 'exit_code': 0, 'seconds': 33.582336708001094}
+transparent-160-pages-r2 {'case': 'transparent-160-pages-r2', 'started': '2026-09-19T20:15:09.172539+00:00', 'exit_code': 0, 'seconds': 43.10399041700293}
+enhance-r3 {'case': 'enhance-r3', 'started': '2026-09-19T20:15:52.278234+00:00', 'exit_code': 0, 'seconds': 107.25276454100094}
+transparent-0-directory-r3 {'case': 'transparent-0-directory-r3', 'started': '2026-09-19T20:17:39.550651+00:00', 'exit_code': 0, 'seconds': 57.119764542003395}
+transparent-0-pages-r3 {'case': 'transparent-0-pages-r3', 'started': '2026-09-19T20:18:36.673012+00:00', 'exit_code': 0, 'seconds': 75.18462}
+transparent-160-directory-r3 {'case': 'transparent-160-directory-r3', 'started': '2026-09-19T20:19:51.867138+00:00', 'exit_code': 0, 'seconds': 43.94895804100088}
+transparent-160-pages-r3 {'case': 'transparent-160-pages-r3', 'started': '2026-09-19T20:20:35.830678+00:00', 'exit_code': 0, 'seconds': 42.00001754099503}
+COMPLETE

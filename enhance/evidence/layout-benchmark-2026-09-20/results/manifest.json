@@ -1,0 +1,266 @@
+{
+  "start": "2026-09-20T05:44:40.632780+00:00",
+  "binary_sha256": "e50498a389bcc01bb55409e90fc0a6280b1f5ee64232899c941e9385ad46043b",
+  "cases": [
+    {
+      "name": "n450163-k9",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k9.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "9",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:44:40.655128+00:00",
+      "exit_code": 0,
+      "wall_seconds": 25.939755997038446
+    },
+    {
+      "name": "n450163-k58",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k58.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "58",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:45:06.615478+00:00",
+      "exit_code": 0,
+      "wall_seconds": 28.615145788993686
+    },
+    {
+      "name": "n450163-k19",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k19.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "19",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:45:35.245036+00:00",
+      "exit_code": 0,
+      "wall_seconds": 22.379968161985744
+    },
+    {
+      "name": "n450163-k77",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k77.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "77",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:45:57.638533+00:00",
+      "exit_code": 0,
+      "wall_seconds": 34.940253143024165
+    },
+    {
+      "name": "n450163-k29",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k29.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "29",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:46:32.592068+00:00",
+      "exit_code": 0,
+      "wall_seconds": 22.3123468090198
+    },
+    {
+      "name": "n450163-k38",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k38.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "38",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:46:54.917254+00:00",
+      "exit_code": 0,
+      "wall_seconds": 26.756899896019604
+    },
+    {
+      "name": "n450163-k14",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k14.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "14",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:47:21.686890+00:00",
+      "exit_code": 0,
+      "wall_seconds": 19.815599697001744
+    },
+    {
+      "name": "n450163-k9-repeat",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n450163-k9-repeat.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "9",
+        "450163",
+        "100",
+        "0"
+      ],
+      "started": "2026-09-20T05:47:41.514662+00:00",
+      "exit_code": 0,
+      "wall_seconds": 25.791366068995558
+    },
+    {
+      "name": "n1000000-k9",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n1000000-k9.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "9",
+        "1000000",
+        "60",
+        "0"
+      ],
+      "started": "2026-09-20T05:48:07.319332+00:00",
+      "exit_code": 0,
+      "wall_seconds": 35.93475604895502
+    },
+    {
+      "name": "n1000000-k29",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n1000000-k29.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "29",
+        "1000000",
+        "60",
+        "0"
+      ],
+      "started": "2026-09-20T05:48:43.269750+00:00",
+      "exit_code": 0,
+      "wall_seconds": 36.09278721897863
+    },
+    {
+      "name": "n1000000-k63",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/n1000000-k63.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "63",
+        "1000000",
+        "60",
+        "0"
+      ],
+      "started": "2026-09-20T05:49:19.375086+00:00",
+      "exit_code": 0,
+      "wall_seconds": 35.33696580398828
+    },
+    {
+      "name": "retention-k19",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/retention-k19.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "19",
+        "450163",
+        "0",
+        "3"
+      ],
+      "started": "2026-09-20T05:49:54.725161+00:00",
+      "exit_code": 0,
+      "wall_seconds": 16.938839769980405
+    },
+    {
+      "name": "retention-k38",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/retention-k38.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "38",
+        "450163",
+        "0",
+        "3"
+      ],
+      "started": "2026-09-20T05:50:11.678609+00:00",
+      "exit_code": 0,
+      "wall_seconds": 26.72752799099544
+    },
+    {
+      "name": "retention-k58",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/retention-k58.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "58",
+        "450163",
+        "0",
+        "8"
+      ],
+      "started": "2026-09-20T05:50:38.420453+00:00",
+      "exit_code": 0,
+      "wall_seconds": 72.31162838201271
+    },
+    {
+      "name": "retention-k77",
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/wallet-pir-layout-20260920/results/retention-k77.time",
+        "/tmp/wallet-pir-layout-20260920/target/release/enhance-layout-benchmark",
+        "77",
+        "450163",
+        "0",
+        "2"
+      ],
+      "started": "2026-09-20T05:51:50.746221+00:00",
+      "exit_code": 0,
+      "wall_seconds": 32.35450153198326
+    }
+  ],
+  "rayon_threads": 4,
+  "cpu_limit": "AllowedCPUs=0-3; CPUQuota=400%",
+  "memory_limit": "10G",
+  "workload": "deterministic synthetic 737-byte records, real production shard runtime/combiner, fresh randomized queries, first/last/poly/shard boundaries plus distributed interior rows",
+  "ended": "2026-09-20T05:52:23.101466+00:00"
+}

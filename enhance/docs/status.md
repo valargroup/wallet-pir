@@ -28,6 +28,17 @@ budget is reached at roughly eight schema-8 shards, about 1.9 million positions,
 which the group/autoscale design cannot expand past without one of the decisions
 listed in [capacity expansion](capacity-expansion.md).
 
+## September 21, 2026: current-worker shard ceiling decision
+
+Keep the existing `MemoryHigh=6G` and `MemoryMax=7G` limits and treat three
+schema-8 shards (712,704 positions) as the maximum supported placement on the
+current `c-4` workers. Do not activate a fourth shard on that hardware. The
+completed three-shard fixture peaked at 5,760 MiB with no memory events; the
+four-shard attempt reached the 6,144-MiB soft limit and recorded 2,073 reclaim
+events before the colocated harness was killed. Four shards require a larger
+worker and a new off-host qualification. This is an operational decision based
+on isolated evidence, not a claim that schema 8 has been deployed.
+
 ## September 14, 2026: public origin
 
 A read-only observation of `https://enhance-pir.valargroup.dev` found schema 7,

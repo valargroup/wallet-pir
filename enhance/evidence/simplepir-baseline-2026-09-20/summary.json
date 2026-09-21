@@ -1,0 +1,85 @@
+{
+  "simplepir": {
+    "server_ms": {
+      "p50": 14.3948335,
+      "p95": 14.947542
+    },
+    "query_and_serialize_ms": {
+      "p50": 7.9286455,
+      "p95": 8.245166
+    },
+    "decode_ms": {
+      "p50": 1.06425,
+      "p95": 1.144292
+    }
+  },
+  "enhance": {
+    "server_ms": {
+      "p50": 75.2615,
+      "p95": 82.12075
+    },
+    "scan_ms": {
+      "p50": 38.2857495,
+      "p95": 39.477542
+    },
+    "pack_ms": {
+      "p50": 36.751999999999995,
+      "p95": 38.864917
+    },
+    "prepare_ms": {
+      "p50": 11.4304995,
+      "p95": 11.676250000000001
+    },
+    "decode_ms": {
+      "p50": 1.2212715,
+      "p95": 1.304333
+    }
+  },
+  "simplepir_setup": {
+    "event": "setup",
+    "hint_bytes": 71565312,
+    "packed_database_bytes": 388577280,
+    "seconds": 21.398185959
+  },
+  "simplepir_parameters": {
+    "event": "database",
+    "info": {
+      "Num": 466986,
+      "Row_length": 5896,
+      "Packing": 0,
+      "Ne": 624,
+      "X": 624,
+      "P": 701,
+      "Logq": 32,
+      "Basis": 0,
+      "Squishing": 0,
+      "Cols": 0
+    },
+    "params": {
+      "N": 1024,
+      "Sigma": 6.4,
+      "L": 17472,
+      "M": 16679,
+      "Logq": 32,
+      "P": 701
+    },
+    "record_bytes": 737,
+    "records": 466986,
+    "unpacked_matrix_bytes": 1165661952
+  },
+  "simplepir_upload_bytes": 66720,
+  "simplepir_download_bytes": 69888,
+  "enhance_upload_bytes": 169992,
+  "enhance_download_bytes": 30736,
+  "enhance_setup": {
+    "base64_public_params_bytes": 114688,
+    "event": "packing_ready",
+    "memory": {},
+    "public_params_bytes": 86016,
+    "seconds": 4.104822708,
+    "serialized_init_bytes": 115992
+  },
+  "queries_each": 100,
+  "warmups_each": 3,
+  "all_exact": true
+}
