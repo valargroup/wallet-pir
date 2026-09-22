@@ -1,9 +1,10 @@
-use crate::ipir::{add_intermediate_assign_mod, global_parameters, shard_parameters, ShardRuntime};
+use crate::artifact::PublicationArtifact;
+use crate::ipir::{
+    add_intermediate_assign_mod, global_parameters, shard_parameters, CachedShard, ShardRuntime,
+};
 use crate::store::RecordJournal;
 use crate::types::DatabaseId;
-use crate::wire::{
-    decode_evaluate_request, encode_crs_blocks, encode_evaluate_response, EvaluateRequest,
-};
+use crate::wire::{decode_evaluate_request, encode_evaluate_response, EvaluateRequest};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 
 /// Generations a worker keeps answerable. The coordinator serves the same
 /// number, so a session built against a recent snapshot survives publishes.
@@ -34,7 +35,7 @@ pub const DEFAULT_EVALUATION_SLOTS: usize = 2;
 #[derive(Clone)]
 pub struct WorkerState {
     rlwe: Arc<BTreeMap<DatabaseId, inspiring::RlweParams>>,
-    shards: Arc<RwLock<HashMap<ShardKey, Arc<ShardRuntime>>>>,
+    shards: Arc<RwLock<HashMap<ShardKey, Arc<CachedShard>>>>,
     active: Arc<RwLock<BTreeMap<u64, ActiveGeneration>>>,
     artifact_dir: Arc<PathBuf>,
     evaluation_slots: Arc<Semaphore>,
@@ -151,6 +152,9 @@ impl WorkerState {
         self.rlwe.get(&table).expect("every table has parameters")
     }
 
+    /// Ensures both query state and a verified publication are available.
+    /// Invalid cached CRS is reloaded or rebuilt; repair failure preserves the
+    /// old query runtime. Returns whether preprocessing had to be rebuilt.
     pub async fn prepare_local(
         &self,
         table: DatabaseId,
@@ -162,7 +166,8 @@ impl WorkerState {
     ) -> Result<bool, String> {
         let _preparation = self
             .preparation_slots
-            .acquire()
+            .clone()
+            .acquire_owned()
             .await
             .map_err(|e| e.to_string())?;
         if RecordJournal::rows_digest(&rows) != rows_sha256 {
@@ -173,11 +178,35 @@ impl WorkerState {
             shard_id,
             rows_sha256: rows_sha256.clone(),
         };
-        if let Some(existing) = self.shards.read().await.get(&key) {
-            if existing.query_row_start == query_row_start {
+        let existing = self
+            .shards
+            .read()
+            .await
+            .get(&key)
+            .filter(|cached| cached.runtime.query_row_start == query_row_start)
+            .cloned();
+        let _preparation = if let Some(existing) = existing {
+            let (_, params) = shard_parameters(&table.layout()).map_err(|e| e.to_string())?;
+            let degree = self.rlwe(table).d;
+            // A cancelled hint may never have reached its final checksum.
+            // Validate even an apparently healthy cache hit before reusing it.
+            let (usable, permit) = tokio::task::spawn_blocking(move || {
+                let usable = !existing.publication.is_failed()
+                    && existing
+                        .publication
+                        .validate(params.db_cols / degree, degree)
+                        .is_ok();
+                (usable, _preparation)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            if usable {
                 return Ok(false);
             }
-        }
+            permit
+        } else {
+            _preparation
+        };
         let layout = table.layout();
         let rlwe = self.rlwe(table).clone();
         let (global_rlwe, global_params) =
@@ -189,7 +218,7 @@ impl WorkerState {
         let setup =
             client.generate_public_query_setup_simplepir_from_seed(table.setup_seed_bytes());
         let artifact_dir = self.artifact_dir.clone();
-        let (runtime, built) = tokio::task::spawn_blocking(move || {
+        self.install_prepared(key, _preparation, move || {
             ShardRuntime::load_or_build(
                 &artifact_dir,
                 table,
@@ -203,12 +232,10 @@ impl WorkerState {
             )
         })
         .await
-        .map_err(|_| "shard build task failed".to_string())?
-        .map_err(|e| e.to_string())?;
-        self.shards.write().await.insert(key, Arc::new(runtime));
-        Ok(built)
     }
 
+    /// Restores missing query state from disk. A known failed publication must
+    /// also be reloaded; corrupt artifacts return an error so prepare can repair.
     pub async fn ensure_local(
         &self,
         table: DatabaseId,
@@ -218,7 +245,8 @@ impl WorkerState {
     ) -> Result<(), String> {
         let _preparation = self
             .preparation_slots
-            .acquire()
+            .clone()
+            .acquire_owned()
             .await
             .map_err(|e| e.to_string())?;
         let key = ShardKey {
@@ -227,14 +255,16 @@ impl WorkerState {
             rows_sha256: rows_sha256.clone(),
         };
         if let Some(existing) = self.shards.read().await.get(&key) {
-            if existing.query_row_start == query_row_start {
+            if existing.runtime.query_row_start == query_row_start
+                && !existing.publication.is_failed()
+            {
                 return Ok(());
             }
         }
         let layout = table.layout();
         let rlwe = self.rlwe(table).clone();
         let artifact_dir = self.artifact_dir.clone();
-        let runtime = tokio::task::spawn_blocking(move || {
+        self.install_prepared(key, _preparation, move || {
             ShardRuntime::load_cached(
                 &artifact_dir,
                 table,
@@ -244,11 +274,27 @@ impl WorkerState {
                 &rows_sha256,
                 &rlwe,
             )
+            .map(|runtime| (runtime, false))
         })
-        .await
-        .map_err(|_| "shard load task failed".to_string())??;
-        self.shards.write().await.insert(key, Arc::new(runtime));
+        .await?;
         Ok(())
+    }
+
+    /// Keep the preparation slot until installation. If the caller is
+    /// cancelled, the blocking task still owns it until disk work finishes.
+    /// Failures leave any previously retained runtime available for queries.
+    async fn install_prepared(
+        &self,
+        key: ShardKey,
+        permit: OwnedSemaphorePermit,
+        prepare: impl FnOnce() -> Result<(CachedShard, bool), String> + Send + 'static,
+    ) -> Result<bool, String> {
+        let (result, _preparation) = tokio::task::spawn_blocking(move || (prepare(), permit))
+            .await
+            .map_err(|e| e.to_string())?;
+        let (runtime, built) = result?;
+        self.shards.write().await.insert(key, Arc::new(runtime));
+        Ok(built)
     }
 
     /// Activates a generation and evicts every runtime no retained generation
@@ -385,6 +431,7 @@ impl WorkerState {
                 .get(&key)
                 .ok_or_else(|| "active shard disappeared".to_string())?;
             let partial = runtime
+                .runtime
                 .evaluate(rlwe, &shard_query.coefficients)
                 .map_err(|e| e.to_string())?;
             add_intermediate_assign_mod(&mut combined, &partial, rlwe.q)
@@ -394,7 +441,11 @@ impl WorkerState {
     }
 
     /// The CRS hint of the most recently prepared runtime for the shard.
-    pub async fn crs_local(&self, table: DatabaseId, shard_id: u64) -> Result<Vec<u8>, String> {
+    pub async fn crs_local(
+        &self,
+        table: DatabaseId,
+        shard_id: u64,
+    ) -> Result<PublicationArtifact, String> {
         let cached = self.shards.read().await;
         let runtime = cached
             .iter()
@@ -402,7 +453,7 @@ impl WorkerState {
             .map(|(_, runtime)| runtime)
             .max_by_key(|runtime| runtime.prepared_at)
             .ok_or_else(|| "shard is not prepared".to_string())?;
-        Ok(encode_crs_blocks(&runtime.crs_blocks))
+        Ok(runtime.publication.clone())
     }
 
     /// Runtimes currently held, for tests and health.
@@ -537,7 +588,11 @@ async fn hint(
         Err(status) => return status.into_response(),
     };
     match state.crs_local(table, shard_id).await {
-        Ok(bytes) => bytes.into_response(),
+        Ok(artifact) => (
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            axum::body::Body::from_stream(artifact.stream()),
+        )
+            .into_response(),
         Err(error) => {
             tracing::warn!(%error, %table, shard_id, "hint request rejected");
             StatusCode::NOT_FOUND.into_response()
@@ -643,5 +698,292 @@ mod tests {
             assert_eq!(state.rlwe(table).d, 2_048, "{table}");
             assert!(table.layout().shard_bytes() <= max_shard_bytes());
         }
+    }
+}
+
+#[cfg(test)]
+mod publication_recovery_tests {
+    use super::*;
+    use crate::ipir::{shard_artifact_dir, PreparedShard};
+    use crate::types::{DatabaseLayout, ENHANCE_LAYOUT};
+    use crate::wire::{read_crs_blocks, ShardQuery};
+    use std::fs::{self, File};
+    use std::os::unix::fs::FileExt;
+    use std::time::Duration;
+
+    async fn drain(artifact: PublicationArtifact) -> bool {
+        tokio::task::spawn_blocking(move || {
+            std::io::copy(&mut artifact.reader(), &mut std::io::sink()).is_ok()
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn same_digest_reprepare_repairs_failed_and_early_cancelled_hints() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
+        let table = DatabaseId::Enhance;
+        let rows = vec![3; ENHANCE_LAYOUT.shard_bytes()];
+        let digest = RecordJournal::rows_digest(&rows);
+        assert!(worker
+            .prepare_local(
+                table,
+                0,
+                0,
+                ENHANCE_LAYOUT.shard_rows as u64,
+                digest.clone(),
+                rows.clone()
+            )
+            .await
+            .unwrap());
+        let key = ShardKey {
+            table,
+            shard_id: 0,
+            rows_sha256: digest.clone(),
+        };
+        worker
+            .activate_local(ActivateRequest {
+                generation: 1,
+                retained_generations: vec![],
+                tables: [(
+                    table,
+                    vec![ActivateShard {
+                        shard_id: 0,
+                        rows_sha256: digest.clone(),
+                    }],
+                )]
+                .into(),
+            })
+            .await
+            .unwrap();
+        let query = || EvaluateRequest {
+            generation: 1,
+            shards: vec![ShardQuery {
+                shard_id: 0,
+                coefficients: vec![1; ENHANCE_LAYOUT.shard_rows],
+            }],
+        };
+        let expected = worker.evaluate_local(table, query()).await.unwrap();
+        let path = shard_artifact_dir(dir.path(), table, 0).join("partial-crs.bin");
+        let original = worker.shards.read().await[&key].clone();
+        let file = File::options().write(true).open(&path).unwrap();
+        let length = file.metadata().unwrap().len();
+        file.set_len(length - 1).unwrap();
+        assert!(!drain(original.publication.clone()).await);
+        assert!(original.publication.is_failed());
+        assert!(worker
+            .ensure_local(table, 0, 0, digest.clone())
+            .await
+            .is_err());
+        // A failed repair must leave the retained generation answerable.
+        let blocked_temporary = path.with_file_name("partial-crs.bin.tmp");
+        fs::create_dir(&blocked_temporary).unwrap();
+        assert!(worker
+            .prepare_local(
+                table,
+                0,
+                0,
+                ENHANCE_LAYOUT.shard_rows as u64,
+                digest.clone(),
+                rows.clone()
+            )
+            .await
+            .is_err());
+        assert!(Arc::ptr_eq(&original, &worker.shards.read().await[&key]));
+        assert_eq!(
+            worker.evaluate_local(table, query()).await.unwrap(),
+            expected
+        );
+        fs::remove_dir(&blocked_temporary).unwrap();
+        assert!(worker
+            .prepare_local(
+                table,
+                0,
+                0,
+                ENHANCE_LAYOUT.shard_rows as u64,
+                digest.clone(),
+                rows.clone()
+            )
+            .await
+            .unwrap());
+        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
+        assert_eq!(
+            worker.evaluate_local(table, query()).await.unwrap(),
+            expected
+        );
+        drop(original);
+
+        // A malformed header can be rejected before the final checksum is
+        // read, leaving no failure signal from the cancelled streaming reader.
+        let cached = worker.shards.read().await[&key].clone();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .write_at(b"BAD!", 0)
+            .unwrap();
+        let artifact = cached.publication.clone();
+        assert!(
+            tokio::task::spawn_blocking(move || read_crs_blocks(artifact.reader(), 6, 2048))
+                .await
+                .unwrap()
+                .is_err()
+        );
+        assert!(!cached.publication.is_failed());
+        assert!(worker
+            .prepare_local(
+                table,
+                0,
+                0,
+                ENHANCE_LAYOUT.shard_rows as u64,
+                digest.clone(),
+                rows.clone()
+            )
+            .await
+            .unwrap());
+        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
+        assert_eq!(
+            worker.evaluate_local(table, query()).await.unwrap(),
+            expected
+        );
+
+        // Rebinding an operator-replaced pathname must not keep the bad inode.
+        let cached = worker.shards.read().await[&key].clone();
+        let replacement = path.with_extension("replacement");
+        fs::copy(&path, &replacement).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(0)
+            .unwrap();
+        assert!(!drain(cached.publication.clone()).await);
+        fs::rename(replacement, &path).unwrap();
+        worker
+            .ensure_local(table, 0, 0, digest.clone())
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&cached, &worker.shards.read().await[&key]));
+        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
+        assert!(!worker
+            .prepare_local(table, 0, 0, ENHANCE_LAYOUT.shard_rows as u64, digest, rows)
+            .await
+            .unwrap());
+        assert_eq!(worker.cached_shard_count().await, 1);
+        assert_eq!(
+            worker.evaluate_local(table, query()).await.unwrap(),
+            expected
+        );
+    }
+
+    fn small_cached(directory: &std::path::Path) -> CachedShard {
+        let layout = DatabaseLayout {
+            record_bytes: 3584,
+            records_per_row: 1,
+            shard_rows: 2048,
+        };
+        let (rlwe, params) = shard_parameters(&layout).unwrap();
+        let setup = ipir_sp::IPIRClient::new(&rlwe, &params)
+            .generate_public_query_setup_simplepir_from_seed(
+                DatabaseId::Enhance.setup_seed_bytes(),
+            );
+        PreparedShard::build(
+            &layout,
+            0,
+            0,
+            "fixture".into(),
+            &vec![0; layout.shard_bytes()],
+            &rlwe,
+            &setup,
+        )
+        .unwrap()
+        .persist(directory, DatabaseId::Enhance, &rlwe)
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn preparation_slot_stays_owned_while_cache_insertion_is_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let cached = small_cached(dir.path());
+        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
+        let key = ShardKey {
+            table: DatabaseId::Enhance,
+            shard_id: 0,
+            rows_sha256: "fixture".into(),
+        };
+        let permit = worker
+            .preparation_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+        let cache_lock = worker.shards.write().await;
+        let (finished, finished_rx) = tokio::sync::oneshot::channel();
+        let task_worker = worker.clone();
+        let task = tokio::spawn(async move {
+            task_worker
+                .install_prepared(key, permit, move || {
+                    finished.send(()).unwrap();
+                    Ok((cached, true))
+                })
+                .await
+        });
+        finished_rx.await.unwrap();
+        // With the previous closure-local guard, another request obtained this
+        // slot before installation and could build a duplicate runtime.
+        assert!(tokio::time::timeout(
+            Duration::from_millis(250),
+            worker.preparation_slots.clone().acquire_owned()
+        )
+        .await
+        .is_err());
+        assert!(!task.is_finished());
+        drop(cache_lock);
+        assert!(task.await.unwrap().unwrap());
+        assert_eq!(worker.cached_shard_count().await, 1);
+        assert_eq!(worker.preparation_slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn cancelled_preparation_keeps_slot_until_blocking_work_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
+        let key = ShardKey {
+            table: DatabaseId::Enhance,
+            shard_id: 0,
+            rows_sha256: "fixture".into(),
+        };
+        let permit = worker
+            .preparation_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+        let (started, started_rx) = tokio::sync::oneshot::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let task_worker = worker.clone();
+        let task = tokio::spawn(async move {
+            task_worker
+                .install_prepared(key, permit, move || {
+                    started.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Err("injected preparation failure".into())
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert_eq!(worker.preparation_slots.available_permits(), 0);
+        release.send(()).unwrap();
+        let _permit = tokio::time::timeout(
+            Duration::from_secs(5),
+            worker.preparation_slots.clone().acquire_owned(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(worker.cached_shard_count().await, 0);
     }
 }

@@ -1,0 +1,3 @@
+{"mode":"candidate","phase":"start","pid":17609,"revision":0,"rss_bytes":6766592,"seconds":0.00011775}
+{"mode":"candidate","phase":"prepared","pid":17609,"revision":0,"rss_bytes":589856768,"seconds":1.528678625}
+{"mode":"candidate","phase":"retained","pid":17609,"revisions":1,"rss_bytes":589856768}

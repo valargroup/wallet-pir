@@ -1,12 +1,12 @@
+use crate::artifact::{write_atomic, PublicationArtifact, VerifiedReader, IO_BUFFER_BYTES};
 use crate::types::{DatabaseId, DatabaseLayout};
-use crate::wire::{decode_crs_blocks, encode_crs_blocks};
+use crate::wire::{crs_encoded_len, write_crs_blocks};
 use inspiring::{InspiringError, RlweParams};
 use ipir_sp::server::{CrsBlock, IPIRServer};
 use ipir_sp::{IPIRSimpleQuery, YpirSchemeParams};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 // Shard composition helpers retained from ipir-sp e875404. The upstream
@@ -135,7 +135,18 @@ pub struct ShardRuntime {
     pub query_row_start: usize,
     pub rows_sha256: String,
     pub server: IPIRServer<u16>,
+}
+
+/// Offline preparation owns CRS only until it has been durably persisted.
+pub struct PreparedShard {
+    pub runtime: ShardRuntime,
     pub crs_blocks: Vec<CrsBlock>,
+}
+
+/// Retained worker state: query database plus a small pinned publication handle.
+pub struct CachedShard {
+    pub runtime: ShardRuntime,
+    pub publication: PublicationArtifact,
     /// Monotonic load order, so a worker can pick the newest runtime of a shard.
     pub prepared_at: u64,
 }
@@ -164,7 +175,7 @@ impl ShardRuntime {
         query_row_start: usize,
         rows_sha256: &str,
         rlwe: &RlweParams,
-    ) -> Result<Self, String> {
+    ) -> Result<CachedShard, String> {
         Self::load(
             &shard_artifact_dir(artifact_root, table, shard_id),
             table,
@@ -187,7 +198,7 @@ impl ShardRuntime {
         rows: &[u8],
         rlwe: &RlweParams,
         global_setup: &[Vec<u64>],
-    ) -> Result<(Self, bool), String> {
+    ) -> Result<(CachedShard, bool), String> {
         let directory = shard_artifact_dir(artifact_root, table, shard_id);
         if let Ok(runtime) = Self::load(
             &directory,
@@ -200,7 +211,7 @@ impl ShardRuntime {
         ) {
             return Ok((runtime, false));
         }
-        let runtime = Self::build(
+        let prepared = PreparedShard::build(
             layout,
             shard_id,
             query_row_start,
@@ -210,12 +221,99 @@ impl ShardRuntime {
             global_setup,
         )
         .map_err(|error| error.to_string())?;
-        runtime
+        let runtime = prepared
             .persist(&directory, table, rlwe)
             .map_err(|error| error.to_string())?;
         Ok((runtime, true))
     }
 
+    pub fn evaluate(&self, rlwe: &RlweParams, query: &[u64]) -> Result<Vec<u64>, InspiringError> {
+        let shard_rows = self.server.params().db_rows;
+        if query.len() != shard_rows {
+            return Err(InspiringError::LweShape(format!(
+                "shard query must contain {shard_rows} coefficients, got {}",
+                query.len()
+            )));
+        }
+        if query.iter().any(|coefficient| *coefficient >= rlwe.q) {
+            return Err(InspiringError::PreprocessMismatch(
+                "query coefficient is not reduced modulo q".to_string(),
+            ));
+        }
+        Ok(self.server.multiply_query(rlwe, query))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn load(
+        directory: &Path,
+        table: DatabaseId,
+        layout: &DatabaseLayout,
+        shard_id: u64,
+        query_row_start: usize,
+        rows_sha256: &str,
+        rlwe: &RlweParams,
+    ) -> Result<CachedShard, String> {
+        let metadata: ArtifactMetadata = serde_json::from_reader(BufReader::new(
+            File::open(directory.join("metadata.json")).map_err(|e| e.to_string())?,
+        ))
+        .map_err(|e| e.to_string())?;
+        if metadata.version != ARTIFACT_VERSION
+            || metadata.table != table.as_str()
+            || metadata.rlwe_degree != rlwe.d
+            || metadata.rlwe_modulus != rlwe.q
+            || metadata.shard_id != shard_id
+            || metadata.query_row_start != query_row_start
+            || metadata.rows_sha256 != rows_sha256
+        {
+            return Err("artifact metadata mismatch".to_string());
+        }
+        let (_, local_params) = shard_parameters(layout).map_err(|e| e.to_string())?;
+        if metadata.db_rows != local_params.db_rows
+            || metadata.db_cols != local_params.db_cols
+            || metadata.plaintext_modulus != local_params.p
+        {
+            return Err("persisted artifact parameter mismatch".to_string());
+        }
+        let coefficients = local_params
+            .db_rows
+            .checked_mul(local_params.db_cols)
+            .ok_or("persisted database size overflow")?;
+        let expected_db_bytes = coefficients
+            .checked_mul(2)
+            .ok_or("persisted database size overflow")? as u64;
+        let file = File::open(directory.join("database.u16le")).map_err(|e| e.to_string())?;
+        if file.metadata().map_err(|e| e.to_string())?.len() != expected_db_bytes {
+            return Err("persisted database has the wrong size".into());
+        }
+        let reader = BufReader::with_capacity(
+            IO_BUFFER_BYTES,
+            VerifiedReader::new(file, expected_db_bytes, metadata.database_sha256),
+        );
+        let server = read_database(reader, local_params.clone()).map_err(|e| e.to_string())?;
+        let blocks = local_params.db_cols / rlwe.d;
+        let publication = PublicationArtifact::open(
+            &directory.join("partial-crs.bin"),
+            crs_encoded_len(blocks, rlwe.d).map_err(|e| e.to_string())?,
+            metadata.crs_sha256,
+        )
+        .map_err(|e| e.to_string())?;
+        publication
+            .validate(blocks, rlwe.d)
+            .map_err(|e| e.to_string())?;
+        Ok(CachedShard {
+            runtime: Self {
+                shard_id,
+                query_row_start,
+                rows_sha256: rows_sha256.to_string(),
+                server,
+            },
+            publication,
+            prepared_at: next_prepared_at(),
+        })
+    }
+}
+
+impl PreparedShard {
     pub fn build(
         layout: &DatabaseLayout,
         shard_id: u64,
@@ -259,138 +357,99 @@ impl ShardRuntime {
             .crs_blocks;
 
         Ok(Self {
-            shard_id,
-            query_row_start,
-            rows_sha256,
-            server,
+            runtime: ShardRuntime {
+                shard_id,
+                query_row_start,
+                rows_sha256,
+                server,
+            },
             crs_blocks,
-            prepared_at: next_prepared_at(),
         })
     }
 
-    pub fn evaluate(&self, rlwe: &RlweParams, query: &[u64]) -> Result<Vec<u64>, InspiringError> {
-        let shard_rows = self.server.params().db_rows;
-        if query.len() != shard_rows {
-            return Err(InspiringError::LweShape(format!(
-                "shard query must contain {shard_rows} coefficients, got {}",
-                query.len()
-            )));
-        }
-        if query.iter().any(|coefficient| *coefficient >= rlwe.q) {
-            return Err(InspiringError::PreprocessMismatch(
-                "query coefficient is not reduced modulo q".to_string(),
-            ));
-        }
-        Ok(self.server.multiply_query(rlwe, query))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn load(
-        directory: &Path,
-        table: DatabaseId,
-        layout: &DatabaseLayout,
-        shard_id: u64,
-        query_row_start: usize,
-        rows_sha256: &str,
-        rlwe: &RlweParams,
-    ) -> Result<Self, String> {
-        let metadata: ArtifactMetadata = serde_json::from_slice(
-            &fs::read(directory.join("metadata.json")).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        if metadata.version != ARTIFACT_VERSION
-            || metadata.table != table.as_str()
-            || metadata.rlwe_degree != rlwe.d
-            || metadata.rlwe_modulus != rlwe.q
-            || metadata.shard_id != shard_id
-            || metadata.query_row_start != query_row_start
-            || metadata.rows_sha256 != rows_sha256
-        {
-            return Err("artifact metadata mismatch".to_string());
-        }
-        let (_, local_params) = shard_parameters(layout).map_err(|e| e.to_string())?;
-        if metadata.db_rows != local_params.db_rows
-            || metadata.db_cols != local_params.db_cols
-            || metadata.plaintext_modulus != local_params.p
-        {
-            return Err("persisted artifact parameter mismatch".to_string());
-        }
-        let raw_db = fs::read(directory.join("database.u16le")).map_err(|e| e.to_string())?;
-        if hex::encode(Sha256::digest(&raw_db)) != metadata.database_sha256 {
-            return Err("persisted database digest mismatch".to_string());
-        }
-        let expected_db_bytes = local_params.db_rows * local_params.db_cols * 2;
-        if raw_db.len() != expected_db_bytes {
-            return Err("persisted database has the wrong size".to_string());
-        }
-        let coefficients: Vec<u16> = raw_db
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect();
-        let server = IPIRServer::<u16>::new_auto_kernel(
-            local_params.clone(),
-            coefficients.into_iter(),
-            true,
-            true,
-        );
-        let hint = fs::read(directory.join("partial-crs.bin")).map_err(|e| e.to_string())?;
-        if hex::encode(Sha256::digest(&hint)) != metadata.crs_sha256 {
-            return Err("persisted CRS digest mismatch".to_string());
-        }
-        let crs_blocks = decode_crs_blocks(&hint, local_params.db_cols / rlwe.d, rlwe.d)
-            .map_err(|e| e.to_string())?;
-        Ok(Self {
-            shard_id,
-            query_row_start,
-            rows_sha256: rows_sha256.to_string(),
-            server,
-            crs_blocks,
-            prepared_at: next_prepared_at(),
-        })
-    }
-
-    fn persist(
-        &self,
+    pub fn persist(
+        self,
         directory: &Path,
         table: DatabaseId,
         rlwe: &RlweParams,
-    ) -> Result<(), std::io::Error> {
+    ) -> io::Result<CachedShard> {
         fs::create_dir_all(directory)?;
-        let mut database = Vec::with_capacity(self.server.db().len() * 2);
-        for coefficient in self.server.db() {
-            database.extend_from_slice(&coefficient.to_le_bytes());
-        }
-        let hint = encode_crs_blocks(&self.crs_blocks);
-        write_atomic(directory, "database.u16le", &database)?;
-        write_atomic(directory, "partial-crs.bin", &hint)?;
+        let runtime = self.runtime;
+        let database_sha256 = write_atomic(directory, "database.u16le", |writer| {
+            for coefficient in runtime.server.db() {
+                writer.write_all(&coefficient.to_le_bytes())?;
+            }
+            Ok(())
+        })?;
+        let crs_sha256 = write_atomic(directory, "partial-crs.bin", |writer| {
+            write_crs_blocks(writer, &self.crs_blocks)
+        })?;
+        let publication = PublicationArtifact::open(
+            &directory.join("partial-crs.bin"),
+            crs_encoded_len(runtime.server.params().db_cols / rlwe.d, rlwe.d)?,
+            crs_sha256.clone(),
+        )?;
+        drop(self.crs_blocks);
         let metadata = ArtifactMetadata {
             version: ARTIFACT_VERSION,
             table: table.as_str().to_string(),
             rlwe_degree: rlwe.d,
             rlwe_modulus: rlwe.q,
-            db_rows: self.server.params().db_rows,
-            db_cols: self.server.params().db_cols,
-            plaintext_modulus: self.server.params().p,
-            shard_id: self.shard_id,
-            query_row_start: self.query_row_start,
-            rows_sha256: self.rows_sha256.clone(),
-            database_sha256: hex::encode(Sha256::digest(&database)),
-            crs_sha256: hex::encode(Sha256::digest(&hint)),
+            db_rows: runtime.server.params().db_rows,
+            db_cols: runtime.server.params().db_cols,
+            plaintext_modulus: runtime.server.params().p,
+            shard_id: runtime.shard_id,
+            query_row_start: runtime.query_row_start,
+            rows_sha256: runtime.rows_sha256.clone(),
+            database_sha256,
+            crs_sha256,
         };
-        let metadata = serde_json::to_vec_pretty(&metadata).map_err(std::io::Error::other)?;
-        write_atomic(directory, "metadata.json", &metadata)?;
+        write_atomic(directory, "metadata.json", |writer| {
+            serde_json::to_writer_pretty(writer, &metadata).map_err(io::Error::other)
+        })?;
         File::open(directory)?.sync_all()?;
-        Ok(())
+        Ok(CachedShard {
+            runtime,
+            publication,
+            prepared_at: next_prepared_at(),
+        })
     }
 }
 
-fn write_atomic(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let path = directory.join(name);
-    let temporary = directory.join(format!("{name}.tmp"));
-    let mut file = File::create(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    fs::rename(temporary, path)
+/// The upstream constructor requires an infallible iterator of exactly the
+/// declared size. On read failure, finish with placeholders, then discard the
+/// server. No partially read database is ever returned to a caller.
+fn read_database(mut reader: impl Read, params: YpirSchemeParams) -> io::Result<IPIRServer<u16>> {
+    let count = params
+        .db_rows
+        .checked_mul(params.db_cols)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "database size overflow"))?;
+    let mut failure = None;
+    let coefficients = (0..count).map(|_| {
+        if failure.is_some() {
+            return 0;
+        }
+        let mut bytes = [0; 2];
+        match reader.read_exact(&mut bytes) {
+            Ok(()) => u16::from_le_bytes(bytes),
+            Err(e) => {
+                failure = Some(e);
+                0
+            }
+        }
+    });
+    let server = IPIRServer::<u16>::new_auto_kernel(params, coefficients, true, true);
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    let mut trailing = [0];
+    if reader.read(&mut trailing)? != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "trailing database bytes",
+        ));
+    }
+    Ok(server)
 }
 
 /// iPIR parameters for the global (coordinator-facing) database of a table
@@ -527,5 +586,148 @@ mod tests {
         let (_, params) = shard_parameters(&crate::types::ENHANCE_LAYOUT).expect("params");
         assert_eq!(params.instances, 6);
         assert_eq!(params.db_cols, 12_288);
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use crate::wire::{encode_crs_blocks, read_crs_blocks};
+    use sha2::{Digest, Sha256};
+    use std::io::{Cursor, Write};
+
+    fn layout() -> DatabaseLayout {
+        DatabaseLayout {
+            record_bytes: 3584,
+            records_per_row: 1,
+            shard_rows: 2048,
+        }
+    }
+
+    #[test]
+    fn streamed_database_rejects_short_corrupt_and_failed_reads_without_panicking() {
+        let (_, params) = shard_parameters(&layout()).unwrap();
+        let count = params.db_rows * params.db_cols;
+        let bytes = vec![0u8; count * 2];
+        let digest = hex::encode(Sha256::digest(&bytes));
+        let input = BufReader::with_capacity(
+            IO_BUFFER_BYTES,
+            VerifiedReader::new(Cursor::new(&bytes), bytes.len() as u64, digest.clone()),
+        );
+        assert!(read_database(input, params.clone()).is_ok());
+        for data in [&bytes[..bytes.len() - 1], &bytes[..1]] {
+            assert!(read_database(data, params.clone()).is_err());
+        }
+        let mut corrupt = bytes;
+        corrupt[0] = 1;
+        let input = BufReader::with_capacity(
+            IO_BUFFER_BYTES,
+            VerifiedReader::new(Cursor::new(&corrupt), corrupt.len() as u64, digest),
+        );
+        assert!(read_database(input, params.clone()).is_err());
+        struct Failed;
+        impl Read for Failed {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("injected read failure"))
+            }
+        }
+        assert!(read_database(Failed, params).is_err());
+    }
+
+    #[test]
+    fn legacy_v7_artifacts_load_and_streamed_persistence_preserves_queries_and_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = layout();
+        let (rlwe, params) = shard_parameters(&layout).unwrap();
+        let setup = ipir_sp::IPIRClient::new(&rlwe, &params)
+            .generate_public_query_setup_simplepir_from_seed(
+                DatabaseId::Enhance.setup_seed_bytes(),
+            );
+        let rows = vec![3; layout.shard_bytes()];
+        let prepared =
+            PreparedShard::build(&layout, 0, 0, "fixture".into(), &rows, &rlwe, &setup).unwrap();
+        let query = vec![1; params.db_rows];
+        let expected_query = prepared.runtime.evaluate(&rlwe, &query).unwrap();
+        // Independently reproduce the pre-refactor artifact writer: whole byte
+        // arrays and hashes, including the exact metadata schema and version.
+        let db: Vec<u8> = prepared
+            .runtime
+            .server
+            .db()
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let hint = encode_crs_blocks(&prepared.crs_blocks);
+        fs::write(dir.path().join("database.u16le"), &db).unwrap();
+        fs::write(dir.path().join("partial-crs.bin"), &hint).unwrap();
+        let metadata = serde_json::json!({
+            "version": 7, "table": "enhance", "rlwe_degree": rlwe.d, "rlwe_modulus": rlwe.q,
+            "db_rows": params.db_rows, "db_cols": params.db_cols, "plaintext_modulus": params.p,
+            "shard_id": 0, "query_row_start": 0, "rows_sha256": "fixture",
+            "database_sha256": hex::encode(Sha256::digest(&db)),
+            "crs_sha256": hex::encode(Sha256::digest(&hint)),
+        });
+        fs::write(
+            dir.path().join("metadata.json"),
+            serde_json::to_vec_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+        let load = || {
+            ShardRuntime::load(
+                dir.path(),
+                DatabaseId::Enhance,
+                &layout,
+                0,
+                0,
+                "fixture",
+                &rlwe,
+            )
+        };
+        let legacy = load().unwrap();
+        assert_eq!(
+            legacy.runtime.evaluate(&rlwe, &query).unwrap(),
+            expected_query
+        );
+        let cached = prepared
+            .persist(dir.path(), DatabaseId::Enhance, &rlwe)
+            .unwrap();
+        assert_eq!(fs::read(dir.path().join("database.u16le")).unwrap(), db);
+        assert_eq!(fs::read(dir.path().join("partial-crs.bin")).unwrap(), hint);
+        assert_eq!(
+            cached.runtime.evaluate(&rlwe, &query).unwrap(),
+            expected_query
+        );
+        assert_eq!(
+            load().unwrap().runtime.evaluate(&rlwe, &query).unwrap(),
+            expected_query
+        );
+        assert_eq!(
+            read_crs_blocks(legacy.publication.reader(), 1, rlwe.d).unwrap()[0].rows,
+            read_crs_blocks(cached.publication.reader(), 1, rlwe.d).unwrap()[0].rows
+        );
+        let file = File::options()
+            .write(true)
+            .open(dir.path().join("partial-crs.bin"))
+            .unwrap();
+        file.set_len(hint.len() as u64 - 1).unwrap();
+        assert!(load().is_err());
+        // Restore CRS and independently corrupt the database and metadata.
+        fs::write(dir.path().join("partial-crs.bin"), &hint).unwrap();
+        File::options()
+            .write(true)
+            .open(dir.path().join("database.u16le"))
+            .unwrap()
+            .write_all(&[0])
+            .unwrap();
+        assert!(load().is_err());
+        fs::write(dir.path().join("database.u16le"), &db).unwrap();
+        let mut bad_metadata = metadata;
+        bad_metadata["version"] = serde_json::json!(6);
+        fs::write(
+            dir.path().join("metadata.json"),
+            serde_json::to_vec(&bad_metadata).unwrap(),
+        )
+        .unwrap();
+        assert!(load().is_err());
     }
 }

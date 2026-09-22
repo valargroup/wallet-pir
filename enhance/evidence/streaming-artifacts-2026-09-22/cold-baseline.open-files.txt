@@ -1,0 +1,35 @@
+p17562
+fcwd
+s832
+i83785770
+n/Users/roman/projects/wallet-pir
+ftxt
+s1041184
+i251430662
+n/Users/roman/projects/wallet-pir/target/release/wallet-pir-stream-bench
+ftxt
+s2299152
+i1152921500312563341
+n/usr/lib/dyld
+f0
+s16384
+n->0x973a1ec341289303
+f1
+s16384
+n->0x987adf92f7e8e313
+f2
+s0
+i251440305
+n/private/tmp/wallet-pir-stream-bench/results/cold-baseline.time.txt
+f3
+ncount=0, state=0xa
+f4
+ncount=0, state=0xa
+f5
+ncount=0, state=0xa
+f6
+n->0xadcaebb9de894d90
+f7
+n->0x9e9060abbc19c6d8
+f8
+n->0xadcaebb9de894d90

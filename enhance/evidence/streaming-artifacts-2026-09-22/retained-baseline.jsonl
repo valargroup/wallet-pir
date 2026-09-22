@@ -1,0 +1,10 @@
+{"mode":"baseline","phase":"start","pid":17691,"revision":0,"rss_bytes":6782976,"seconds":0.000225375}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":0,"rss_bytes":992673792,"seconds":1.5151224170000002}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":1,"rss_bytes":1397735424,"seconds":1.512492167}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":2,"rss_bytes":1801797632,"seconds":1.498754}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":3,"rss_bytes":2206269440,"seconds":1.571505459}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":4,"rss_bytes":2609709056,"seconds":1.539293958}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":5,"rss_bytes":3013820416,"seconds":1.566924041}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":6,"rss_bytes":3417686016,"seconds":1.474499791}
+{"mode":"baseline","phase":"prepared","pid":17691,"revision":7,"rss_bytes":3821469696,"seconds":1.48223375}
+{"mode":"baseline","phase":"retained","pid":17691,"revisions":8,"rss_bytes":3821469696}

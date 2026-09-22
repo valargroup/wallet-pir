@@ -86,6 +86,42 @@ previous generation available. The coordinator retains eight generations;
 workers also pin the unpublished candidate so preparation cannot evict a still
 published snapshot. Retention is a count, not a fixed session lifetime.
 
+Worker query runtimes retain the prepared database, while publication CRS is
+held in disk-backed artifacts. For schema 8, the six CRS blocks contain 192 MiB
+of coefficients per distinct shard revision; those coefficients are released
+after preparation persists them. The protocol schema remains 8 and the
+independently numbered preprocessing artifact format remains 7.
+
+Database and CRS persistence use 64 KiB buffers and incremental SHA-256 hashing.
+Cached database loading feeds coefficients directly into the final query database;
+CRS validation scans the file without reconstructing its coefficients. Each
+cached revision pins its CRS file with a read-only handle, so atomic replacement
+cannot change an older revision's hint. Replaced files continue to consume disk
+space until eviction and any in-flight readers release their handles. The query
+database and the cryptographic kernel's own state still reside in memory.
+
+Read and validation failures mark a publication unusable across its reader
+handles. Preparation revalidates cached CRS before reuse, including when a
+cancelled reader never reached the checksum. The next preparation reloads a
+verified replacement or rebuilds the artifacts for the same row digest. The
+previous query runtime remains available until replacement succeeds; a failed
+repair does not interrupt retained-generation queries. Preparation holds its
+single worker slot through cache insertion, and cancelled callers leave that
+slot owned by any unfinished blocking disk work.
+
+Validation consumes coefficient payloads in bounded chunks while checking each
+row's framing; it does not decode or retain individual coefficients.
+
+Hint responses stream from independently positioned file readers through a
+bounded queue of two 64 KiB chunks. Slow consumers apply backpressure and
+cancelled responses stop disk reads. The final chunk is withheld until file
+length and digest validation succeeds; a failed stream is never accepted as a
+complete hint. Both embedded and remote coordinator paths decode incrementally
+into the coordinator's existing CRS cache, without a complete encoded hint
+buffer. Network-library buffers and the final decoded coordinator CRS remain
+additional allocations. The coordinator's aggregation and cache policy are
+unchanged.
+
 For a query, the coordinator sends encrypted coefficients to one ready replica
 in each populated group. Groups evaluate in parallel. Within a group, replicas
 are alternatives for load balancing and retry: only one answer contributes to

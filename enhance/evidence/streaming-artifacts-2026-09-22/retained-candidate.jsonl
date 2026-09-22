@@ -1,0 +1,10 @@
+{"mode":"candidate","phase":"start","pid":17809,"revision":0,"rss_bytes":6766592,"seconds":0.000124}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":0,"rss_bytes":590561280,"seconds":1.582967542}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":1,"rss_bytes":792395776,"seconds":1.492800375}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":2,"rss_bytes":993787904,"seconds":1.5437202079999999}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":3,"rss_bytes":1196408832,"seconds":1.54086925}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":4,"rss_bytes":1397751808,"seconds":1.587798875}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":5,"rss_bytes":1599111168,"seconds":1.5341616249999999}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":6,"rss_bytes":1800454144,"seconds":1.5723821249999999}
+{"mode":"candidate","phase":"prepared","pid":17809,"revision":7,"rss_bytes":2001797120,"seconds":1.546985459}
+{"mode":"candidate","phase":"retained","pid":17809,"revisions":8,"rss_bytes":2001797120}

@@ -1,0 +1,19 @@
+[package]
+name = "wallet-pir-stream-bench"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+enhance-pir-server = { path = "__REPO__/enhance/services/enhance-pir-server" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "accc424e879d8da425fa620aad80f0f2c4e0defd" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "accc424e879d8da425fa620aad80f0f2c4e0defd" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+[profile.release]
+lto = "fat"
+codegen-units = 1

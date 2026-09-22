@@ -2,6 +2,8 @@
 
 | Record | Supports | Limit |
 |---|---|---|
+| [September 22 streaming review fixes](streaming-artifacts-review-fixes-2026-09-22/README.md) | Corrupt CRS recovery, preparation-slot regressions, and five before/after cached loads | Local warm-cache sample; no demonstrated latency improvement or production qualification |
+| [September 22 streaming artifacts](streaming-artifacts-2026-09-22/README.md) | Local schema-8 before/after worker memory, persistence compatibility, streaming tests, and retained CRS disk usage | One synthetic run on Apple M4 Max; no fleet qualification or HTTP transport timing |
 | [September 20 live PIR baseline](../../evidence/live-pir-2026-09-20/REPORT.md) | Fresh production inventory, public exact-answer probes, payload sizes, timing, and bounded load observations for Enhance and Transparent PIR | Schema 7 observation only; short WAN-bound runs do not establish saturation capacity |
 | [September 20 wider-row encoding study](../../evidence/enhance-width-study-2026-09-20/README.md) | Pinned-encoder arithmetic and serialization sweep that selected candidates for empirical testing | No server timing, memory qualification, or deployment |
 | [September 20 layout benchmark](layout-benchmark-2026-09-20/REPORT.md) | Isolated four-vCPU AMD measurements of nine-, 29- and 58-record rows: serialized bytes, server time, and 1,528 exactly decoded queries | Synthetic records; qualifies no production layout, and no retained window, publication, concurrency or 16-shard behaviour |

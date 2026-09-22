@@ -4,6 +4,7 @@
 //! row shards are an operator detail: clients always submit one global iPIR+SP
 //! query and never name a shard.
 
+pub mod artifact;
 pub mod coordinator;
 pub mod ingest;
 pub mod ipir;

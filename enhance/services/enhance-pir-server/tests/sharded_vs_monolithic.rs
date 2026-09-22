@@ -7,7 +7,7 @@ use enhance_pir::types::{ROW_BYTES, SHARD_ROWS};
 use enhance_pir_server::coordinator::enhance_setup_seed_bytes;
 use enhance_pir_server::ipir::{
     add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
-    global_parameters, RowPlaintextIter, ShardRuntime,
+    global_parameters, PreparedShard, RowPlaintextIter,
 };
 use enhance_pir_server::store::RecordJournal;
 use enhance_pir_server::types::ENHANCE_LAYOUT;
@@ -42,7 +42,7 @@ fn two_shards_equal_one_monolithic_server() {
     let setup = client.generate_public_query_setup_simplepir_from_seed(enhance_setup_seed_bytes());
 
     // Sharded: each shard preprocesses over its slice of the seeded setup.
-    let shard0 = ShardRuntime::build(
+    let shard0 = PreparedShard::build(
         &ENHANCE_LAYOUT,
         0,
         0,
@@ -52,7 +52,7 @@ fn two_shards_equal_one_monolithic_server() {
         &setup,
     )
     .expect("shard 0");
-    let shard1 = ShardRuntime::build(
+    let shard1 = PreparedShard::build(
         &ENHANCE_LAYOUT,
         1,
         SHARD_ROWS,
@@ -95,9 +95,11 @@ fn two_shards_equal_one_monolithic_server() {
 
     let mono_partial = monolithic.multiply_query(&rlwe, &global_query);
     let mut sharded_partial = shard0
+        .runtime
         .evaluate(&rlwe, &global_query[..SHARD_ROWS])
         .expect("shard 0 partial");
     let partial1 = shard1
+        .runtime
         .evaluate(&rlwe, &global_query[SHARD_ROWS..])
         .expect("shard 1 partial");
     add_intermediate_assign_mod(&mut sharded_partial, &partial1, rlwe.q).expect("sum");

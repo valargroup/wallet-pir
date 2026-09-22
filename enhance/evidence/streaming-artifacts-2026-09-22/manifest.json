@@ -1,0 +1,85 @@
+{
+  "run_id": "streaming-artifacts-2026-09-22",
+  "completed_utc": "2026-09-22T07:52:46.188264+00:00",
+  "baseline_commit": "93fa9da7ba274e4d7f6f14e4b1b514b16bdca8be",
+  "candidate": "working tree on baseline; candidate.patch contains the implementation and tests",
+  "candidate_source_sha256": {
+    "Cargo.lock": "7575ee2dee9f633815ea2315a9a456e524830129abadfac0b7401aaed53c4215",
+    "enhance/services/enhance-pir-server/Cargo.toml": "165883366832d3d3245a195a8c395ded7a90c75ebc7b82450be88ab0979d4046",
+    "enhance/services/enhance-pir-server/src/artifact.rs": "f094846fe80933b351b589e14c61fe1aa75a090050d21c1ffdbb3fa684fab770",
+    "enhance/services/enhance-pir-server/src/coordinator.rs": "ca280652b64724e1bceccffcdbd1c48d1a599c570c0945cf7556023dd07c7e5a",
+    "enhance/services/enhance-pir-server/src/ingest.rs": "85d5372cac13cb40bab9b9158737fca76d0f454e16ccb4389062cf16bcd4fb0c",
+    "enhance/services/enhance-pir-server/src/ipir.rs": "0c7a334596c9ffd545c4256319f9c4356483f01725bdb98a6b2f97a7682f4de3",
+    "enhance/services/enhance-pir-server/src/lib.rs": "5c4df4690e60dd965544b345c44a30b28db478a634101c2add3c629e75d86fb5",
+    "enhance/services/enhance-pir-server/src/metrics.rs": "d8a8d6887277972723ba1e878dbcfa586056bc29c5962254d95aaad84e39211c",
+    "enhance/services/enhance-pir-server/src/spend.rs": "bc682d8d6bf033c3d78e2bc19ba7c62518e029cd87f810fd3bacbb1bb0e2886f",
+    "enhance/services/enhance-pir-server/src/store.rs": "ee592e12be9f18e91dd3fbd1816b17e9bd25ba6531bc1ee25b16afd7f683c423",
+    "enhance/services/enhance-pir-server/src/topology.rs": "f83442b25322588bd82c10b7c3aa0eb3570ae5e37102f06f44bf09d4799e5cd5",
+    "enhance/services/enhance-pir-server/src/types.rs": "eb028f6340b8153bb816ba5d7c0f70142a50b16dd9b45d9ca97a0d0f591e1a96",
+    "enhance/services/enhance-pir-server/src/wire.rs": "1dfba98b929a9187083d099740331ef69c825f1c91d5f533ee74e25d2608d387",
+    "enhance/services/enhance-pir-server/src/worker.rs": "c6df7a254cfa629e99ad76b798307360b302054edc2cf82b46ada49b1764b3da",
+    "enhance/services/enhance-pir-server/src/zakura.rs": "cdbb634bd739fa9d9fa7e5483a2a98ff85b5d3f86686993f3fab49ff50f7fc34"
+  },
+  "binary_sha256": "8c0151031fdda6d3847b779c90706b0ec21f1d1decac68c4d5d279678ca3b7cb",
+  "rustc": "rustc 1.91.0 (f8297e351 2025-10-28)",
+  "build": "cargo build --release; lto=fat; codegen-units=1; harness.Cargo.lock",
+  "backend": "ipir-sp/inspiring accc424e879d8da425fa620aad80f0f2c4e0defd",
+  "protocol_schema": 8,
+  "artifact_format": 7,
+  "geometry": {
+    "record_bytes": 737,
+    "records_per_row": 29,
+    "row_bytes": 21373,
+    "shard_rows": 8192,
+    "db_cols": 12288,
+    "rlwe_degree": 2048,
+    "crs_blocks": 6,
+    "database_bytes": 201326592,
+    "encoded_crs_bytes": 201375776
+  },
+  "host": {
+    "cpu": "Apple M4 Max",
+    "ram_bytes": 137438953472,
+    "os": "macOS 26.2 (25C56)",
+    "storage": "local APFS SSD",
+    "region": "local developer machine; no cloud region",
+    "sharing": "shared developer machine; benchmark run after workspace tests completed"
+  },
+  "workload": {
+    "source": "deterministic synthetic bytes in harness.rs; one frontier shard; first byte changes per revision",
+    "concurrency": 1,
+    "repetitions_per_scenario": 1,
+    "retained_revisions": 8,
+    "seal_policy": "changing frontier",
+    "cache": "cold=artifact miss; load/hint reuse cold artifacts with warm OS file cache; no cache purge",
+    "network": "none; hint producer drained locally into SHA-256 sink; excludes HTTP socket transport",
+    "queries": "none in benchmark; separate integration tests verify query correctness",
+    "packing_key_reuse": "not applicable",
+    "chain_genesis_journal_anchor_height_cutoff": "not applicable; synthetic rows, no live chain"
+  },
+  "runner_command": [
+    "python3",
+    "/tmp/wallet-pir-stream-bench/run.py",
+    "/Users/roman/projects/wallet-pir",
+    "/tmp/wallet-pir-stream-bench/results"
+  ],
+  "measurement": {
+    "rss": "sysinfo per-phase samples and macOS /usr/bin/time -l peak RSS, bytes",
+    "disk": "lsof distinct open CRS inodes plus visible artifact lengths; logical bytes, not physical APFS block allocation",
+    "hint_bytes": 201375776,
+    "units": "MiB=1048576 bytes; GiB=1073741824 bytes"
+  },
+  "tests": {
+    "make_check_exit_code": 0,
+    "rust_tests_passed": 612,
+    "rust_tests_ignored": 2
+  },
+  "failures_timeouts_incomplete_runs": 0,
+  "limits": [
+    "single local run, not production fleet qualification",
+    "no HTTP transport or coordinator-cache memory measurement",
+    "memory includes allocator retention; do not equate RSS delta with live coefficient bytes",
+    "load time increased in this run; no statistical latency claim",
+    "disk totals are logical file lengths, not physical storage allocation"
+  ]
+}

@@ -1,3 +1,4 @@
+use crate::artifact::{chunk_reader, IO_BUFFER_BYTES};
 use crate::ipir::{
     add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
     global_parameters, shard_parameters,
@@ -9,8 +10,7 @@ use crate::types::{
     TableManifest, PROTOCOL_REVISION,
 };
 use crate::wire::{
-    decode_crs_blocks, decode_evaluate_response, encode_evaluate_request, EvaluateRequest,
-    ShardQuery,
+    decode_evaluate_response, encode_evaluate_request, read_crs_blocks, EvaluateRequest, ShardQuery,
 };
 use crate::worker::{ActivateRequest, ActivateShard, WorkerState, RETAINED_GENERATIONS};
 use arc_swap::ArcSwap;
@@ -1117,9 +1117,9 @@ impl CoordinatorState {
             rows,
         )
         .await?;
-        let encoded = self.fetch_hint(replica, table, shard_id).await?;
         let hint = Arc::new(
-            decode_crs_blocks(&encoded, expected_blocks, degree).map_err(|e| e.to_string())?,
+            self.fetch_hint(replica, table, shard_id, expected_blocks, degree)
+                .await?,
         );
         let mut cache = state.hint_cache.write().await;
         let shard_prefix = format!("{}:{shard_id}:", replica.name());
@@ -1219,9 +1219,19 @@ impl CoordinatorState {
         worker: &WorkerTarget,
         table: DatabaseId,
         shard_id: u64,
-    ) -> Result<Vec<u8>, String> {
+        expected_blocks: usize,
+        degree: usize,
+    ) -> Result<Vec<CrsBlock>, String> {
         match worker {
-            WorkerTarget::Embedded { state, .. } => state.crs_local(table, shard_id).await,
+            WorkerTarget::Embedded { state, .. } => {
+                let artifact = state.crs_local(table, shard_id).await?;
+                tokio::task::spawn_blocking(move || {
+                    read_crs_blocks(artifact.reader(), expected_blocks, degree)
+                })
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())
+            }
             WorkerTarget::Remote { base_url, .. } => {
                 let response = self
                     .http
@@ -1237,7 +1247,7 @@ impl CoordinatorState {
                         response.status()
                     ));
                 }
-                read_worker_body(response, worker_hint_limit()).await
+                read_worker_hint(response, worker_hint_limit(), expected_blocks, degree).await
             }
         }
     }
@@ -1465,6 +1475,54 @@ async fn read_worker_body(
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// Streams the response into the decoded CRS. Both futures are owned by this
+/// call: cancellation drops the sender and wakes the blocking decoder at EOF.
+async fn read_worker_hint(
+    mut response: reqwest::Response,
+    limit: usize,
+    expected_blocks: usize,
+    degree: usize,
+) -> Result<Vec<CrsBlock>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err("worker response exceeds limit".into());
+    }
+    let (sender, reader) = chunk_reader();
+    let decoder = tokio::task::spawn_blocking(move || {
+        read_crs_blocks(
+            std::io::BufReader::with_capacity(IO_BUFFER_BYTES, reader),
+            expected_blocks,
+            degree,
+        )
+    });
+    let transfer = async move {
+        let mut received = 0usize;
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            received = received
+                .checked_add(chunk.len())
+                .ok_or("worker response exceeds limit")?;
+            if received > limit {
+                return Err("worker response exceeds limit".to_string());
+            }
+            for part in chunk.chunks(IO_BUFFER_BYTES) {
+                // Copy bounded pieces so queued Bytes cannot pin a large network allocation.
+                sender
+                    .send(Bytes::copy_from_slice(part))
+                    .await
+                    .map_err(|_| "worker hint decoder stopped".to_string())?;
+            }
+        }
+        Ok::<(), String>(())
+    };
+    let (transferred, decoded) = tokio::join!(transfer, decoder);
+    transferred?;
+    decoded
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// Largest hint (CRS block) response accepted from a worker. A shard's hint
@@ -1780,5 +1838,59 @@ mod tests {
             health_status(&failed, Duration::ZERO),
             StatusCode::SERVICE_UNAVAILABLE
         );
+    }
+}
+
+#[cfg(test)]
+mod streaming_hint_tests {
+    use super::*;
+    use crate::artifact::stream_reader;
+    use crate::wire::encode_crs_blocks;
+    use std::io::Cursor;
+
+    #[tokio::test]
+    async fn remote_hint_decodes_chunks_and_rejects_invalid_or_oversized_bodies() {
+        let blocks = vec![CrsBlock {
+            rows: vec![vec![1, 2], vec![3, 4]],
+        }];
+        let valid = encode_crs_blocks(&blocks);
+        for (bytes, limit, succeeds) in [
+            (valid.clone(), valid.len(), true),
+            (valid.clone(), valid.len() - 1, false),
+            (valid[..valid.len() - 1].to_vec(), valid.len(), false),
+            ([valid.as_slice(), &[0]].concat(), valid.len() + 1, false),
+            (vec![0; valid.len()], valid.len(), false),
+        ] {
+            let app = Router::new().route(
+                "/hint",
+                get(move || {
+                    let bytes = bytes.clone();
+                    async move { axum::body::Body::from_stream(stream_reader(Cursor::new(bytes))) }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            let response = reqwest::get(format!("http://{address}/hint"))
+                .await
+                .unwrap();
+            assert!(
+                response.content_length().is_none(),
+                "exercise running size bound"
+            );
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                read_worker_hint(response, limit, 1, 2),
+            )
+            .await
+            .unwrap();
+            server.abort();
+            assert_eq!(result.is_ok(), succeeds, "{result:?}");
+            if let Ok(decoded) = result {
+                assert_eq!(decoded[0].rows, blocks[0].rows);
+            }
+        }
     }
 }

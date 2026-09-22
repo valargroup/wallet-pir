@@ -1,0 +1,15 @@
+{
+  "utc": "2026-09-22T07:50:36.670174+00:00",
+  "command": [
+    "/usr/bin/time",
+    "-l",
+    "/Users/roman/projects/wallet-pir/target/release/wallet-pir-stream-bench",
+    "baseline",
+    "hint",
+    "/private/tmp/wallet-pir-stream-bench/results/artifacts-baseline-cold"
+  ],
+  "env": {
+    "BENCH_HOLD": "1"
+  },
+  "exit_code": 0
+}

@@ -1,0 +1,3 @@
+{"mode":"baseline","phase":"start","pid":17562,"revision":0,"rss_bytes":6750208,"seconds":0.00020875}
+{"mode":"baseline","phase":"prepared","pid":17562,"revision":0,"rss_bytes":992755712,"seconds":1.534034458}
+{"mode":"baseline","phase":"retained","pid":17562,"revisions":1,"rss_bytes":992772096}

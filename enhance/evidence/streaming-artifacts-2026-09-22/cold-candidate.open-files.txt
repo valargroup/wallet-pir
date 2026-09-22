@@ -1,0 +1,39 @@
+p17609
+fcwd
+s832
+i83785770
+n/Users/roman/projects/wallet-pir
+ftxt
+s1041184
+i251430662
+n/Users/roman/projects/wallet-pir/target/release/wallet-pir-stream-bench
+ftxt
+s2299152
+i1152921500312563341
+n/usr/lib/dyld
+f0
+s16384
+n->0x7d2f26417a180afe
+f1
+s16384
+n->0xd44280aa76127514
+f2
+s0
+i251440325
+n/private/tmp/wallet-pir-stream-bench/results/cold-candidate.time.txt
+f3
+ncount=0, state=0xa
+f4
+ncount=0, state=0xa
+f5
+ncount=0, state=0xa
+f6
+n->0xadcaebb9de894d90
+f7
+n->0x9e9060abbc19c6d8
+f8
+n->0xadcaebb9de894d90
+f9
+s201375776
+i251440331
+n/private/tmp/wallet-pir-stream-bench/results/artifacts-candidate-cold/enhance/shard-00000000/partial-crs.bin

@@ -1,0 +1,4 @@
+{"mode":"baseline","phase":"start","pid":17654,"revision":0,"rss_bytes":6733824,"seconds":0.000078834}
+{"mode":"baseline","phase":"hint_ready","pid":17654,"revision":0,"rss_bytes":1014808576,"seconds":0.903496792}
+{"mode":"baseline","phase":"hint_fetched","pid":17654,"revision":0,"rss_bytes":1014808576,"seconds":0.381505875}
+{"hint_bytes":201375776,"sha256":"5cbac93f330a68e330196e47656ead9bbe746b1ce9db9d1481c7e2cef8a86c34"}

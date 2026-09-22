@@ -1,0 +1,98 @@
+{
+  "run_id": "streaming-artifacts-review-fixes-2026-09-22",
+  "utc": "2026-09-22T08:55:36.782455+00:00",
+  "base_commit": "93fa9da7ba274e4d7f6f14e4b1b514b16bdca8be",
+  "before_source": "../streaming-artifacts-2026-09-22/candidate.patch",
+  "after_source": "candidate.patch (uncommitted working tree)",
+  "source_sha256": {
+    "Cargo.lock": "7575ee2dee9f633815ea2315a9a456e524830129abadfac0b7401aaed53c4215",
+    "enhance/services/enhance-pir-server/Cargo.toml": "165883366832d3d3245a195a8c395ded7a90c75ebc7b82450be88ab0979d4046",
+    "enhance/services/enhance-pir-server/src/artifact.rs": "e43074e9d3c071e00a9065f2ecd5c4b09fb4b9680aea0c952d7c57d6d3d50f45",
+    "enhance/services/enhance-pir-server/src/coordinator.rs": "ca280652b64724e1bceccffcdbd1c48d1a599c570c0945cf7556023dd07c7e5a",
+    "enhance/services/enhance-pir-server/src/ingest.rs": "85d5372cac13cb40bab9b9158737fca76d0f454e16ccb4389062cf16bcd4fb0c",
+    "enhance/services/enhance-pir-server/src/ipir.rs": "08f0bba19836375c81cc38733c19e8eed599fd4092b7b003235c64d706dd2a4b",
+    "enhance/services/enhance-pir-server/src/lib.rs": "5c4df4690e60dd965544b345c44a30b28db478a634101c2add3c629e75d86fb5",
+    "enhance/services/enhance-pir-server/src/metrics.rs": "d8a8d6887277972723ba1e878dbcfa586056bc29c5962254d95aaad84e39211c",
+    "enhance/services/enhance-pir-server/src/spend.rs": "bc682d8d6bf033c3d78e2bc19ba7c62518e029cd87f810fd3bacbb1bb0e2886f",
+    "enhance/services/enhance-pir-server/src/store.rs": "ee592e12be9f18e91dd3fbd1816b17e9bd25ba6531bc1ee25b16afd7f683c423",
+    "enhance/services/enhance-pir-server/src/topology.rs": "f83442b25322588bd82c10b7c3aa0eb3570ae5e37102f06f44bf09d4799e5cd5",
+    "enhance/services/enhance-pir-server/src/types.rs": "eb028f6340b8153bb816ba5d7c0f70142a50b16dd9b45d9ca97a0d0f591e1a96",
+    "enhance/services/enhance-pir-server/src/wire.rs": "afff6473ba1cafea7df800755ff165d9c5119330cdaecb4a6bb8b6efd0cbe45b",
+    "enhance/services/enhance-pir-server/src/worker.rs": "71884de138484075cfd4580a476c14784a1b8c50342f8cabf072bcfed22cbef5",
+    "enhance/services/enhance-pir-server/src/zakura.rs": "cdbb634bd739fa9d9fa7e5483a2a98ff85b5d3f86686993f3fab49ff50f7fc34"
+  },
+  "before_binary_sha256": "8c0151031fdda6d3847b779c90706b0ec21f1d1decac68c4d5d279678ca3b7cb",
+  "after_binary_sha256": "2f95d0fbdd56ba83c50c050ab68e330d6c8a22e41307d32bffb96b84afef09b0",
+  "harness": "../streaming-artifacts-2026-09-22/harness.rs; release, fat LTO, codegen-units=1; harness.Cargo.lock",
+  "rustc": "rustc 1.91.0 (f8297e351 2025-10-28)",
+  "host": {
+    "cpu": "Apple M4 Max",
+    "ram_bytes": 137438953472,
+    "os": "macOS 26.2 (25C56)",
+    "storage": "local APFS SSD",
+    "region": "local developer machine",
+    "sharing": "shared developer machine; no concurrent workspace builds/tests during timing"
+  },
+  "schema": 8,
+  "artifact_format": 7,
+  "geometry": {
+    "record_bytes": 737,
+    "records_per_row": 29,
+    "row_bytes": 21373,
+    "shard_rows": 8192,
+    "db_cols": 12288,
+    "rlwe_degree": 2048,
+    "crs_blocks": 6
+  },
+  "workload": {
+    "operation": "cached load of one schema-8 synthetic shard; warm OS cache, fresh process each time",
+    "repetitions": 5,
+    "order": "five before, then rebuild harness, then five after",
+    "concurrency": 1,
+    "network_journal_genesis_anchor_cutoff": "not applicable, synthetic local files",
+    "queries_and_wallets": 0,
+    "seal_policy": "no revisions during measurement",
+    "packing_keys": "not applicable"
+  },
+  "artifact_root": "/tmp/wallet-pir-stream-bench/results/artifacts-candidate-cold",
+  "before_command": [
+    "/usr/bin/time",
+    "-l",
+    "/tmp/wallet-pir-stream-bench-before-review",
+    "candidate",
+    "load",
+    "/tmp/wallet-pir-stream-bench/results/artifacts-candidate-cold"
+  ],
+  "after_command": [
+    "/usr/bin/time",
+    "-l",
+    "/Users/roman/projects/wallet-pir/target/release/wallet-pir-stream-bench",
+    "candidate",
+    "load",
+    "/tmp/wallet-pir-stream-bench/results/artifacts-candidate-cold"
+  ],
+  "artifact_sha256": {
+    "database.u16le": "c47fceca69f28435b6aa52f0e768d95e1bb7b66305c5dfedeacc17f6e670acc5",
+    "metadata.json": "76787f4b8bf9e5b4bee247d1fad25c805c8a1ac8fdfa207d0ccf54cd9ed4e7f4",
+    "partial-crs.bin": "5cbac93f330a68e330196e47656ead9bbe746b1ce9db9d1481c7e2cef8a86c34"
+  },
+  "failures_timeouts_incomplete": 0,
+  "measurement": "operation seconds from harness; maximum RSS in bytes from macOS time -l; no physical disk allocation or peak disk measurement in this load-only run",
+  "limitations": [
+    "small sequential sample on shared machine",
+    "not a production or end-to-end worker qualification",
+    "cached-load median did not improve; do not claim a speedup",
+    "does not time the new prepare-cache-hit validation or corruption recovery"
+  ],
+  "validation": {
+    "command": "make check",
+    "exit_code": 0,
+    "rust_tests": {
+      "passed": 617,
+      "failed": 0,
+      "ignored": 2
+    },
+    "server_unit_tests_passed": 46,
+    "log": "make-check.log.gz"
+  }
+}

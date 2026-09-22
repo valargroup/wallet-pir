@@ -1,0 +1,4 @@
+{"mode":"candidate","phase":"start","pid":17664,"revision":0,"rss_bytes":6733824,"seconds":0.000118833}
+{"mode":"candidate","phase":"hint_ready","pid":17664,"revision":0,"rss_bytes":208420864,"seconds":1.043892}
+{"mode":"candidate","phase":"hint_fetched","pid":17664,"revision":0,"rss_bytes":209305600,"seconds":0.397748583}
+{"hint_bytes":201375776,"sha256":"5cbac93f330a68e330196e47656ead9bbe746b1ce9db9d1481c7e2cef8a86c34"}

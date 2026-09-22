@@ -1,0 +1,2127 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 9cf71c6..8864fc7 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1060,6 +1060,7 @@ dependencies = [
+  "tempfile",
+  "thiserror 2.0.18",
+  "tokio",
++ "tokio-stream",
+  "tower 0.5.3",
+  "tower-http 0.5.2",
+  "tracing",
+@@ -3813,6 +3814,17 @@ dependencies = [
+  "tokio",
+ ]
+ 
++[[package]]
++name = "tokio-stream"
++version = "0.1.19"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
++dependencies = [
++ "futures-core",
++ "pin-project-lite",
++ "tokio",
++]
++
+ [[package]]
+ name = "tokio-util"
+ version = "0.7.19"
+diff --git a/enhance/docs/architecture.md b/enhance/docs/architecture.md
+index 52e5f76..3bcd926 100644
+--- a/enhance/docs/architecture.md
++++ b/enhance/docs/architecture.md
+@@ -86,6 +86,42 @@ previous generation available. The coordinator retains eight generations;
+ workers also pin the unpublished candidate so preparation cannot evict a still
+ published snapshot. Retention is a count, not a fixed session lifetime.
+ 
++Worker query runtimes retain the prepared database, while publication CRS is
++held in disk-backed artifacts. For schema 8, the six CRS blocks contain 192 MiB
++of coefficients per distinct shard revision; those coefficients are released
++after preparation persists them. The protocol schema remains 8 and the
++independently numbered preprocessing artifact format remains 7.
++
++Database and CRS persistence use 64 KiB buffers and incremental SHA-256 hashing.
++Cached database loading feeds coefficients directly into the final query database;
++CRS validation scans the file without reconstructing its coefficients. Each
++cached revision pins its CRS file with a read-only handle, so atomic replacement
++cannot change an older revision's hint. Replaced files continue to consume disk
++space until eviction and any in-flight readers release their handles. The query
++database and the cryptographic kernel's own state still reside in memory.
++
++Read and validation failures mark a publication unusable across its reader
++handles. Preparation revalidates cached CRS before reuse, including when a
++cancelled reader never reached the checksum. The next preparation reloads a
++verified replacement or rebuilds the artifacts for the same row digest. The
++previous query runtime remains available until replacement succeeds; a failed
++repair does not interrupt retained-generation queries. Preparation holds its
++single worker slot through cache insertion, and cancelled callers leave that
++slot owned by any unfinished blocking disk work.
++
++Validation consumes coefficient payloads in bounded chunks while checking each
++row's framing; it does not decode or retain individual coefficients.
++
++Hint responses stream from independently positioned file readers through a
++bounded queue of two 64 KiB chunks. Slow consumers apply backpressure and
++cancelled responses stop disk reads. The final chunk is withheld until file
++length and digest validation succeeds; a failed stream is never accepted as a
++complete hint. Both embedded and remote coordinator paths decode incrementally
++into the coordinator's existing CRS cache, without a complete encoded hint
++buffer. Network-library buffers and the final decoded coordinator CRS remain
++additional allocations. The coordinator's aggregation and cache policy are
++unchanged.
++
+ For a query, the coordinator sends encrypted coefficients to one ready replica
+ in each populated group. Groups evaluate in parallel. Within a group, replicas
+ are alternatives for load balancing and retry: only one answer contributes to
+diff --git a/enhance/services/enhance-pir-server/Cargo.toml b/enhance/services/enhance-pir-server/Cargo.toml
+index ee7e4b2..643633e 100644
+--- a/enhance/services/enhance-pir-server/Cargo.toml
++++ b/enhance/services/enhance-pir-server/Cargo.toml
+@@ -38,6 +38,7 @@ sha2 = "0.10"
+ sysinfo = "0.36"
+ thiserror = "2"
+ tokio = { version = "1", features = ["full"] }
++tokio-stream = "0.1"
+ tower-http = { version = "0.5", features = ["limit", "trace"] }
+ tracing = "0.1"
+ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+diff --git a/enhance/services/enhance-pir-server/src/coordinator.rs b/enhance/services/enhance-pir-server/src/coordinator.rs
+index 4699b8d..4ed034c 100644
+--- a/enhance/services/enhance-pir-server/src/coordinator.rs
++++ b/enhance/services/enhance-pir-server/src/coordinator.rs
+@@ -1,3 +1,4 @@
++use crate::artifact::{chunk_reader, IO_BUFFER_BYTES};
+ use crate::ipir::{
+     add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
+     global_parameters, shard_parameters,
+@@ -9,8 +10,7 @@ use crate::types::{
+     TableManifest, PROTOCOL_REVISION,
+ };
+ use crate::wire::{
+-    decode_crs_blocks, decode_evaluate_response, encode_evaluate_request, EvaluateRequest,
+-    ShardQuery,
++    decode_evaluate_response, encode_evaluate_request, read_crs_blocks, EvaluateRequest, ShardQuery,
+ };
+ use crate::worker::{ActivateRequest, ActivateShard, WorkerState, RETAINED_GENERATIONS};
+ use arc_swap::ArcSwap;
+@@ -1117,9 +1117,9 @@ impl CoordinatorState {
+             rows,
+         )
+         .await?;
+-        let encoded = self.fetch_hint(replica, table, shard_id).await?;
+         let hint = Arc::new(
+-            decode_crs_blocks(&encoded, expected_blocks, degree).map_err(|e| e.to_string())?,
++            self.fetch_hint(replica, table, shard_id, expected_blocks, degree)
++                .await?,
+         );
+         let mut cache = state.hint_cache.write().await;
+         let shard_prefix = format!("{}:{shard_id}:", replica.name());
+@@ -1219,9 +1219,19 @@ impl CoordinatorState {
+         worker: &WorkerTarget,
+         table: DatabaseId,
+         shard_id: u64,
+-    ) -> Result<Vec<u8>, String> {
++        expected_blocks: usize,
++        degree: usize,
++    ) -> Result<Vec<CrsBlock>, String> {
+         match worker {
+-            WorkerTarget::Embedded { state, .. } => state.crs_local(table, shard_id).await,
++            WorkerTarget::Embedded { state, .. } => {
++                let artifact = state.crs_local(table, shard_id).await?;
++                tokio::task::spawn_blocking(move || {
++                    read_crs_blocks(artifact.reader(), expected_blocks, degree)
++                })
++                .await
++                .map_err(|e| e.to_string())?
++                .map_err(|e| e.to_string())
++            }
+             WorkerTarget::Remote { base_url, .. } => {
+                 let response = self
+                     .http
+@@ -1237,7 +1247,7 @@ impl CoordinatorState {
+                         response.status()
+                     ));
+                 }
+-                read_worker_body(response, worker_hint_limit()).await
++                read_worker_hint(response, worker_hint_limit(), expected_blocks, degree).await
+             }
+         }
+     }
+@@ -1467,6 +1477,54 @@ async fn read_worker_body(
+     Ok(body)
+ }
+ 
++/// Streams the response into the decoded CRS. Both futures are owned by this
++/// call: cancellation drops the sender and wakes the blocking decoder at EOF.
++async fn read_worker_hint(
++    mut response: reqwest::Response,
++    limit: usize,
++    expected_blocks: usize,
++    degree: usize,
++) -> Result<Vec<CrsBlock>, String> {
++    if response
++        .content_length()
++        .is_some_and(|length| length > limit as u64)
++    {
++        return Err("worker response exceeds limit".into());
++    }
++    let (sender, reader) = chunk_reader();
++    let decoder = tokio::task::spawn_blocking(move || {
++        read_crs_blocks(
++            std::io::BufReader::with_capacity(IO_BUFFER_BYTES, reader),
++            expected_blocks,
++            degree,
++        )
++    });
++    let transfer = async move {
++        let mut received = 0usize;
++        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
++            received = received
++                .checked_add(chunk.len())
++                .ok_or("worker response exceeds limit")?;
++            if received > limit {
++                return Err("worker response exceeds limit".to_string());
++            }
++            for part in chunk.chunks(IO_BUFFER_BYTES) {
++                // Copy bounded pieces so queued Bytes cannot pin a large network allocation.
++                sender
++                    .send(Bytes::copy_from_slice(part))
++                    .await
++                    .map_err(|_| "worker hint decoder stopped".to_string())?;
++            }
++        }
++        Ok::<(), String>(())
++    };
++    let (transferred, decoded) = tokio::join!(transfer, decoder);
++    transferred?;
++    decoded
++        .map_err(|e| e.to_string())?
++        .map_err(|e| e.to_string())
++}
++
+ /// Largest hint (CRS block) response accepted from a worker. A shard's hint
+ /// grows with its row bytes: measured on the POC, the ENHANCE shard (54 MB of
+ /// rows) yields a conservative per-shard memory hint, so
+@@ -1782,3 +1840,57 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod streaming_hint_tests {
++    use super::*;
++    use crate::artifact::stream_reader;
++    use crate::wire::encode_crs_blocks;
++    use std::io::Cursor;
++
++    #[tokio::test]
++    async fn remote_hint_decodes_chunks_and_rejects_invalid_or_oversized_bodies() {
++        let blocks = vec![CrsBlock {
++            rows: vec![vec![1, 2], vec![3, 4]],
++        }];
++        let valid = encode_crs_blocks(&blocks);
++        for (bytes, limit, succeeds) in [
++            (valid.clone(), valid.len(), true),
++            (valid.clone(), valid.len() - 1, false),
++            (valid[..valid.len() - 1].to_vec(), valid.len(), false),
++            ([valid.as_slice(), &[0]].concat(), valid.len() + 1, false),
++            (vec![0; valid.len()], valid.len(), false),
++        ] {
++            let app = Router::new().route(
++                "/hint",
++                get(move || {
++                    let bytes = bytes.clone();
++                    async move { axum::body::Body::from_stream(stream_reader(Cursor::new(bytes))) }
++                }),
++            );
++            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++            let address = listener.local_addr().unwrap();
++            let server = tokio::spawn(async move {
++                axum::serve(listener, app).await.unwrap();
++            });
++            let response = reqwest::get(format!("http://{address}/hint"))
++                .await
++                .unwrap();
++            assert!(
++                response.content_length().is_none(),
++                "exercise running size bound"
++            );
++            let result = tokio::time::timeout(
++                Duration::from_secs(5),
++                read_worker_hint(response, limit, 1, 2),
++            )
++            .await
++            .unwrap();
++            server.abort();
++            assert_eq!(result.is_ok(), succeeds, "{result:?}");
++            if let Ok(decoded) = result {
++                assert_eq!(decoded[0].rows, blocks[0].rows);
++            }
++        }
++    }
++}
+diff --git a/enhance/services/enhance-pir-server/src/ipir.rs b/enhance/services/enhance-pir-server/src/ipir.rs
+index a912271..32c8b02 100644
+--- a/enhance/services/enhance-pir-server/src/ipir.rs
++++ b/enhance/services/enhance-pir-server/src/ipir.rs
+@@ -1,12 +1,12 @@
++use crate::artifact::{write_atomic, PublicationArtifact, VerifiedReader, IO_BUFFER_BYTES};
+ use crate::types::{DatabaseId, DatabaseLayout};
+-use crate::wire::{decode_crs_blocks, encode_crs_blocks};
++use crate::wire::{crs_encoded_len, write_crs_blocks};
+ use inspiring::{InspiringError, RlweParams};
+ use ipir_sp::server::{CrsBlock, IPIRServer};
+ use ipir_sp::{IPIRSimpleQuery, YpirSchemeParams};
+ use serde::{Deserialize, Serialize};
+-use sha2::{Digest, Sha256};
+ use std::fs::{self, File};
+-use std::io::Write;
++use std::io::{self, BufReader, Read};
+ use std::path::{Path, PathBuf};
+ 
+ // Shard composition helpers retained from ipir-sp e875404. The upstream
+@@ -135,7 +135,18 @@ pub struct ShardRuntime {
+     pub query_row_start: usize,
+     pub rows_sha256: String,
+     pub server: IPIRServer<u16>,
++}
++
++/// Offline preparation owns CRS only until it has been durably persisted.
++pub struct PreparedShard {
++    pub runtime: ShardRuntime,
+     pub crs_blocks: Vec<CrsBlock>,
++}
++
++/// Retained worker state: query database plus a small pinned publication handle.
++pub struct CachedShard {
++    pub runtime: ShardRuntime,
++    pub publication: PublicationArtifact,
+     /// Monotonic load order, so a worker can pick the newest runtime of a shard.
+     pub prepared_at: u64,
+ }
+@@ -164,7 +175,7 @@ impl ShardRuntime {
+         query_row_start: usize,
+         rows_sha256: &str,
+         rlwe: &RlweParams,
+-    ) -> Result<Self, String> {
++    ) -> Result<CachedShard, String> {
+         Self::load(
+             &shard_artifact_dir(artifact_root, table, shard_id),
+             table,
+@@ -187,7 +198,7 @@ impl ShardRuntime {
+         rows: &[u8],
+         rlwe: &RlweParams,
+         global_setup: &[Vec<u64>],
+-    ) -> Result<(Self, bool), String> {
++    ) -> Result<(CachedShard, bool), String> {
+         let directory = shard_artifact_dir(artifact_root, table, shard_id);
+         if let Ok(runtime) = Self::load(
+             &directory,
+@@ -200,7 +211,7 @@ impl ShardRuntime {
+         ) {
+             return Ok((runtime, false));
+         }
+-        let runtime = Self::build(
++        let prepared = PreparedShard::build(
+             layout,
+             shard_id,
+             query_row_start,
+@@ -210,64 +221,12 @@ impl ShardRuntime {
+             global_setup,
+         )
+         .map_err(|error| error.to_string())?;
+-        runtime
++        let runtime = prepared
+             .persist(&directory, table, rlwe)
+             .map_err(|error| error.to_string())?;
+         Ok((runtime, true))
+     }
+ 
+-    pub fn build(
+-        layout: &DatabaseLayout,
+-        shard_id: u64,
+-        query_row_start: usize,
+-        rows_sha256: String,
+-        rows: &[u8],
+-        rlwe: &RlweParams,
+-        global_setup: &[Vec<u64>],
+-    ) -> Result<Self, InspiringError> {
+-        if rows.len() != layout.shard_bytes() {
+-            return Err(InspiringError::PreprocessMismatch(format!(
+-                "shard must be {} bytes, got {}",
+-                layout.shard_bytes(),
+-                rows.len()
+-            )));
+-        }
+-        if !query_row_start.is_multiple_of(rlwe.d) {
+-            return Err(InspiringError::PreprocessMismatch(
+-                "shard query row is not polynomial aligned".to_string(),
+-            ));
+-        }
+-
+-        let (_, local_params) = shard_parameters(layout)?;
+-        let coefficients = RowPlaintextIter::new(
+-            rows,
+-            layout.row_bytes(),
+-            local_params.db_rows,
+-            local_params.db_cols,
+-            local_params.p.trailing_zeros() as usize,
+-        );
+-        let server = IPIRServer::<u16>::new_auto_kernel(local_params, coefficients, false, true);
+-        let first_poly = query_row_start / rlwe.d;
+-        let poly_count = layout.shard_rows / rlwe.d;
+-        let setup = global_setup
+-            .get(first_poly..first_poly + poly_count)
+-            .ok_or_else(|| {
+-                InspiringError::PreprocessMismatch("global setup does not cover shard".to_string())
+-            })?;
+-        let crs_blocks = server
+-            .perform_offline_precomputation_simplepir(rlwe, setup)
+-            .crs_blocks;
+-
+-        Ok(Self {
+-            shard_id,
+-            query_row_start,
+-            rows_sha256,
+-            server,
+-            crs_blocks,
+-            prepared_at: next_prepared_at(),
+-        })
+-    }
+-
+     pub fn evaluate(&self, rlwe: &RlweParams, query: &[u64]) -> Result<Vec<u64>, InspiringError> {
+         let shard_rows = self.server.params().db_rows;
+         if query.len() != shard_rows {
+@@ -293,10 +252,10 @@ impl ShardRuntime {
+         query_row_start: usize,
+         rows_sha256: &str,
+         rlwe: &RlweParams,
+-    ) -> Result<Self, String> {
+-        let metadata: ArtifactMetadata = serde_json::from_slice(
+-            &fs::read(directory.join("metadata.json")).map_err(|e| e.to_string())?,
+-        )
++    ) -> Result<CachedShard, String> {
++        let metadata: ArtifactMetadata = serde_json::from_reader(BufReader::new(
++            File::open(directory.join("metadata.json")).map_err(|e| e.to_string())?,
++        ))
+         .map_err(|e| e.to_string())?;
+         if metadata.version != ARTIFACT_VERSION
+             || metadata.table != table.as_str()
+@@ -315,82 +274,182 @@ impl ShardRuntime {
+         {
+             return Err("persisted artifact parameter mismatch".to_string());
+         }
+-        let raw_db = fs::read(directory.join("database.u16le")).map_err(|e| e.to_string())?;
+-        if hex::encode(Sha256::digest(&raw_db)) != metadata.database_sha256 {
+-            return Err("persisted database digest mismatch".to_string());
++        let coefficients = local_params
++            .db_rows
++            .checked_mul(local_params.db_cols)
++            .ok_or("persisted database size overflow")?;
++        let expected_db_bytes = coefficients
++            .checked_mul(2)
++            .ok_or("persisted database size overflow")? as u64;
++        let file = File::open(directory.join("database.u16le")).map_err(|e| e.to_string())?;
++        if file.metadata().map_err(|e| e.to_string())?.len() != expected_db_bytes {
++            return Err("persisted database has the wrong size".into());
+         }
+-        let expected_db_bytes = local_params.db_rows * local_params.db_cols * 2;
+-        if raw_db.len() != expected_db_bytes {
+-            return Err("persisted database has the wrong size".to_string());
+-        }
+-        let coefficients: Vec<u16> = raw_db
+-            .chunks_exact(2)
+-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+-            .collect();
+-        let server = IPIRServer::<u16>::new_auto_kernel(
+-            local_params.clone(),
+-            coefficients.into_iter(),
+-            true,
+-            true,
++        let reader = BufReader::with_capacity(
++            IO_BUFFER_BYTES,
++            VerifiedReader::new(file, expected_db_bytes, metadata.database_sha256),
+         );
+-        let hint = fs::read(directory.join("partial-crs.bin")).map_err(|e| e.to_string())?;
+-        if hex::encode(Sha256::digest(&hint)) != metadata.crs_sha256 {
+-            return Err("persisted CRS digest mismatch".to_string());
+-        }
+-        let crs_blocks = decode_crs_blocks(&hint, local_params.db_cols / rlwe.d, rlwe.d)
++        let server = read_database(reader, local_params.clone()).map_err(|e| e.to_string())?;
++        let blocks = local_params.db_cols / rlwe.d;
++        let publication = PublicationArtifact::open(
++            &directory.join("partial-crs.bin"),
++            crs_encoded_len(blocks, rlwe.d).map_err(|e| e.to_string())?,
++            metadata.crs_sha256,
++        )
++        .map_err(|e| e.to_string())?;
++        publication
++            .validate(blocks, rlwe.d)
+             .map_err(|e| e.to_string())?;
++        Ok(CachedShard {
++            runtime: Self {
++                shard_id,
++                query_row_start,
++                rows_sha256: rows_sha256.to_string(),
++                server,
++            },
++            publication,
++            prepared_at: next_prepared_at(),
++        })
++    }
++}
++
++impl PreparedShard {
++    pub fn build(
++        layout: &DatabaseLayout,
++        shard_id: u64,
++        query_row_start: usize,
++        rows_sha256: String,
++        rows: &[u8],
++        rlwe: &RlweParams,
++        global_setup: &[Vec<u64>],
++    ) -> Result<Self, InspiringError> {
++        if rows.len() != layout.shard_bytes() {
++            return Err(InspiringError::PreprocessMismatch(format!(
++                "shard must be {} bytes, got {}",
++                layout.shard_bytes(),
++                rows.len()
++            )));
++        }
++        if !query_row_start.is_multiple_of(rlwe.d) {
++            return Err(InspiringError::PreprocessMismatch(
++                "shard query row is not polynomial aligned".to_string(),
++            ));
++        }
++
++        let (_, local_params) = shard_parameters(layout)?;
++        let coefficients = RowPlaintextIter::new(
++            rows,
++            layout.row_bytes(),
++            local_params.db_rows,
++            local_params.db_cols,
++            local_params.p.trailing_zeros() as usize,
++        );
++        let server = IPIRServer::<u16>::new_auto_kernel(local_params, coefficients, false, true);
++        let first_poly = query_row_start / rlwe.d;
++        let poly_count = layout.shard_rows / rlwe.d;
++        let setup = global_setup
++            .get(first_poly..first_poly + poly_count)
++            .ok_or_else(|| {
++                InspiringError::PreprocessMismatch("global setup does not cover shard".to_string())
++            })?;
++        let crs_blocks = server
++            .perform_offline_precomputation_simplepir(rlwe, setup)
++            .crs_blocks;
++
+         Ok(Self {
+-            shard_id,
+-            query_row_start,
+-            rows_sha256: rows_sha256.to_string(),
+-            server,
++            runtime: ShardRuntime {
++                shard_id,
++                query_row_start,
++                rows_sha256,
++                server,
++            },
+             crs_blocks,
+-            prepared_at: next_prepared_at(),
+         })
+     }
+ 
+-    fn persist(
+-        &self,
++    pub fn persist(
++        self,
+         directory: &Path,
+         table: DatabaseId,
+         rlwe: &RlweParams,
+-    ) -> Result<(), std::io::Error> {
++    ) -> io::Result<CachedShard> {
+         fs::create_dir_all(directory)?;
+-        let mut database = Vec::with_capacity(self.server.db().len() * 2);
+-        for coefficient in self.server.db() {
+-            database.extend_from_slice(&coefficient.to_le_bytes());
+-        }
+-        let hint = encode_crs_blocks(&self.crs_blocks);
+-        write_atomic(directory, "database.u16le", &database)?;
+-        write_atomic(directory, "partial-crs.bin", &hint)?;
++        let runtime = self.runtime;
++        let database_sha256 = write_atomic(directory, "database.u16le", |writer| {
++            for coefficient in runtime.server.db() {
++                writer.write_all(&coefficient.to_le_bytes())?;
++            }
++            Ok(())
++        })?;
++        let crs_sha256 = write_atomic(directory, "partial-crs.bin", |writer| {
++            write_crs_blocks(writer, &self.crs_blocks)
++        })?;
++        let publication = PublicationArtifact::open(
++            &directory.join("partial-crs.bin"),
++            crs_encoded_len(runtime.server.params().db_cols / rlwe.d, rlwe.d)?,
++            crs_sha256.clone(),
++        )?;
++        drop(self.crs_blocks);
+         let metadata = ArtifactMetadata {
+             version: ARTIFACT_VERSION,
+             table: table.as_str().to_string(),
+             rlwe_degree: rlwe.d,
+             rlwe_modulus: rlwe.q,
+-            db_rows: self.server.params().db_rows,
+-            db_cols: self.server.params().db_cols,
+-            plaintext_modulus: self.server.params().p,
+-            shard_id: self.shard_id,
+-            query_row_start: self.query_row_start,
+-            rows_sha256: self.rows_sha256.clone(),
+-            database_sha256: hex::encode(Sha256::digest(&database)),
+-            crs_sha256: hex::encode(Sha256::digest(&hint)),
++            db_rows: runtime.server.params().db_rows,
++            db_cols: runtime.server.params().db_cols,
++            plaintext_modulus: runtime.server.params().p,
++            shard_id: runtime.shard_id,
++            query_row_start: runtime.query_row_start,
++            rows_sha256: runtime.rows_sha256.clone(),
++            database_sha256,
++            crs_sha256,
+         };
+-        let metadata = serde_json::to_vec_pretty(&metadata).map_err(std::io::Error::other)?;
+-        write_atomic(directory, "metadata.json", &metadata)?;
++        write_atomic(directory, "metadata.json", |writer| {
++            serde_json::to_writer_pretty(writer, &metadata).map_err(io::Error::other)
++        })?;
+         File::open(directory)?.sync_all()?;
+-        Ok(())
++        Ok(CachedShard {
++            runtime,
++            publication,
++            prepared_at: next_prepared_at(),
++        })
+     }
+ }
+ 
+-fn write_atomic(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), std::io::Error> {
+-    let path = directory.join(name);
+-    let temporary = directory.join(format!("{name}.tmp"));
+-    let mut file = File::create(&temporary)?;
+-    file.write_all(bytes)?;
+-    file.sync_all()?;
+-    fs::rename(temporary, path)
++/// The upstream constructor requires an infallible iterator of exactly the
++/// declared size. On read failure, finish with placeholders, then discard the
++/// server. No partially read database is ever returned to a caller.
++fn read_database(mut reader: impl Read, params: YpirSchemeParams) -> io::Result<IPIRServer<u16>> {
++    let count = params
++        .db_rows
++        .checked_mul(params.db_cols)
++        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "database size overflow"))?;
++    let mut failure = None;
++    let coefficients = (0..count).map(|_| {
++        if failure.is_some() {
++            return 0;
++        }
++        let mut bytes = [0; 2];
++        match reader.read_exact(&mut bytes) {
++            Ok(()) => u16::from_le_bytes(bytes),
++            Err(e) => {
++                failure = Some(e);
++                0
++            }
++        }
++    });
++    let server = IPIRServer::<u16>::new_auto_kernel(params, coefficients, true, true);
++    if let Some(e) = failure {
++        return Err(e);
++    }
++    let mut trailing = [0];
++    if reader.read(&mut trailing)? != 0 {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "trailing database bytes",
++        ));
++    }
++    Ok(server)
+ }
+ 
+ /// iPIR parameters for the global (coordinator-facing) database of a table
+@@ -529,3 +588,146 @@ mod tests {
+         assert_eq!(params.db_cols, 12_288);
+     }
+ }
++
++#[cfg(test)]
++mod persistence_tests {
++    use super::*;
++    use crate::wire::{encode_crs_blocks, read_crs_blocks};
++    use sha2::{Digest, Sha256};
++    use std::io::{Cursor, Write};
++
++    fn layout() -> DatabaseLayout {
++        DatabaseLayout {
++            record_bytes: 3584,
++            records_per_row: 1,
++            shard_rows: 2048,
++        }
++    }
++
++    #[test]
++    fn streamed_database_rejects_short_corrupt_and_failed_reads_without_panicking() {
++        let (_, params) = shard_parameters(&layout()).unwrap();
++        let count = params.db_rows * params.db_cols;
++        let bytes = vec![0u8; count * 2];
++        let digest = hex::encode(Sha256::digest(&bytes));
++        let input = BufReader::with_capacity(
++            IO_BUFFER_BYTES,
++            VerifiedReader::new(Cursor::new(&bytes), bytes.len() as u64, digest.clone()),
++        );
++        assert!(read_database(input, params.clone()).is_ok());
++        for data in [&bytes[..bytes.len() - 1], &bytes[..1]] {
++            assert!(read_database(data, params.clone()).is_err());
++        }
++        let mut corrupt = bytes;
++        corrupt[0] = 1;
++        let input = BufReader::with_capacity(
++            IO_BUFFER_BYTES,
++            VerifiedReader::new(Cursor::new(&corrupt), corrupt.len() as u64, digest),
++        );
++        assert!(read_database(input, params.clone()).is_err());
++        struct Failed;
++        impl Read for Failed {
++            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
++                Err(io::Error::other("injected read failure"))
++            }
++        }
++        assert!(read_database(Failed, params).is_err());
++    }
++
++    #[test]
++    fn legacy_v7_artifacts_load_and_streamed_persistence_preserves_queries_and_bytes() {
++        let dir = tempfile::tempdir().unwrap();
++        let layout = layout();
++        let (rlwe, params) = shard_parameters(&layout).unwrap();
++        let setup = ipir_sp::IPIRClient::new(&rlwe, &params)
++            .generate_public_query_setup_simplepir_from_seed(
++                DatabaseId::Enhance.setup_seed_bytes(),
++            );
++        let rows = vec![3; layout.shard_bytes()];
++        let prepared =
++            PreparedShard::build(&layout, 0, 0, "fixture".into(), &rows, &rlwe, &setup).unwrap();
++        let query = vec![1; params.db_rows];
++        let expected_query = prepared.runtime.evaluate(&rlwe, &query).unwrap();
++        // Independently reproduce the pre-refactor artifact writer: whole byte
++        // arrays and hashes, including the exact metadata schema and version.
++        let db: Vec<u8> = prepared
++            .runtime
++            .server
++            .db()
++            .iter()
++            .flat_map(|v| v.to_le_bytes())
++            .collect();
++        let hint = encode_crs_blocks(&prepared.crs_blocks);
++        fs::write(dir.path().join("database.u16le"), &db).unwrap();
++        fs::write(dir.path().join("partial-crs.bin"), &hint).unwrap();
++        let metadata = serde_json::json!({
++            "version": 7, "table": "enhance", "rlwe_degree": rlwe.d, "rlwe_modulus": rlwe.q,
++            "db_rows": params.db_rows, "db_cols": params.db_cols, "plaintext_modulus": params.p,
++            "shard_id": 0, "query_row_start": 0, "rows_sha256": "fixture",
++            "database_sha256": hex::encode(Sha256::digest(&db)),
++            "crs_sha256": hex::encode(Sha256::digest(&hint)),
++        });
++        fs::write(
++            dir.path().join("metadata.json"),
++            serde_json::to_vec_pretty(&metadata).unwrap(),
++        )
++        .unwrap();
++        let load = || {
++            ShardRuntime::load(
++                dir.path(),
++                DatabaseId::Enhance,
++                &layout,
++                0,
++                0,
++                "fixture",
++                &rlwe,
++            )
++        };
++        let legacy = load().unwrap();
++        assert_eq!(
++            legacy.runtime.evaluate(&rlwe, &query).unwrap(),
++            expected_query
++        );
++        let cached = prepared
++            .persist(dir.path(), DatabaseId::Enhance, &rlwe)
++            .unwrap();
++        assert_eq!(fs::read(dir.path().join("database.u16le")).unwrap(), db);
++        assert_eq!(fs::read(dir.path().join("partial-crs.bin")).unwrap(), hint);
++        assert_eq!(
++            cached.runtime.evaluate(&rlwe, &query).unwrap(),
++            expected_query
++        );
++        assert_eq!(
++            load().unwrap().runtime.evaluate(&rlwe, &query).unwrap(),
++            expected_query
++        );
++        assert_eq!(
++            read_crs_blocks(legacy.publication.reader(), 1, rlwe.d).unwrap()[0].rows,
++            read_crs_blocks(cached.publication.reader(), 1, rlwe.d).unwrap()[0].rows
++        );
++        let file = File::options()
++            .write(true)
++            .open(dir.path().join("partial-crs.bin"))
++            .unwrap();
++        file.set_len(hint.len() as u64 - 1).unwrap();
++        assert!(load().is_err());
++        // Restore CRS and independently corrupt the database and metadata.
++        fs::write(dir.path().join("partial-crs.bin"), &hint).unwrap();
++        File::options()
++            .write(true)
++            .open(dir.path().join("database.u16le"))
++            .unwrap()
++            .write_all(&[0])
++            .unwrap();
++        assert!(load().is_err());
++        fs::write(dir.path().join("database.u16le"), &db).unwrap();
++        let mut bad_metadata = metadata;
++        bad_metadata["version"] = serde_json::json!(6);
++        fs::write(
++            dir.path().join("metadata.json"),
++            serde_json::to_vec(&bad_metadata).unwrap(),
++        )
++        .unwrap();
++        assert!(load().is_err());
++    }
++}
+diff --git a/enhance/services/enhance-pir-server/src/lib.rs b/enhance/services/enhance-pir-server/src/lib.rs
+index f272b1a..914d0e0 100644
+--- a/enhance/services/enhance-pir-server/src/lib.rs
++++ b/enhance/services/enhance-pir-server/src/lib.rs
+@@ -4,6 +4,7 @@
+ //! row shards are an operator detail: clients always submit one global iPIR+SP
+ //! query and never name a shard.
+ 
++pub mod artifact;
+ pub mod coordinator;
+ pub mod ingest;
+ pub mod ipir;
+diff --git a/enhance/services/enhance-pir-server/src/wire.rs b/enhance/services/enhance-pir-server/src/wire.rs
+index a04c194..cea7625 100644
+--- a/enhance/services/enhance-pir-server/src/wire.rs
++++ b/enhance/services/enhance-pir-server/src/wire.rs
+@@ -1,4 +1,5 @@
+ use ipir_sp::server::CrsBlock;
++use std::io::{self, Read, Write};
+ 
+ const EVAL_REQUEST_MAGIC: &[u8; 4] = b"MPQ1";
+ const EVAL_RESPONSE_MAGIC: &[u8; 4] = b"MPR1";
+@@ -101,25 +102,25 @@ pub fn decode_evaluate_response(bytes: &[u8]) -> Result<(u64, Vec<u64>), WireErr
+     Ok((generation, values))
+ }
+ 
+-pub fn encode_crs_blocks(blocks: &[CrsBlock]) -> Vec<u8> {
+-    let row_count: usize = blocks.iter().map(|block| block.rows.len()).sum();
+-    let coefficient_count: usize = blocks
+-        .iter()
+-        .flat_map(|block| &block.rows)
+-        .map(Vec::len)
+-        .sum();
+-    let mut output = Vec::with_capacity(8 + row_count * 4 + coefficient_count * 8);
+-    output.extend_from_slice(HINT_MAGIC);
+-    output.extend_from_slice(&(blocks.len() as u32).to_le_bytes());
++/// Writes the existing MPH1 encoding without buffering the complete hint.
++pub fn write_crs_blocks(mut output: impl Write, blocks: &[CrsBlock]) -> io::Result<()> {
++    output.write_all(HINT_MAGIC)?;
++    output.write_all(&(blocks.len() as u32).to_le_bytes())?;
+     for block in blocks {
+-        output.extend_from_slice(&(block.rows.len() as u32).to_le_bytes());
++        output.write_all(&(block.rows.len() as u32).to_le_bytes())?;
+         for row in &block.rows {
+-            output.extend_from_slice(&(row.len() as u32).to_le_bytes());
++            output.write_all(&(row.len() as u32).to_le_bytes())?;
+             for coefficient in row {
+-                output.extend_from_slice(&coefficient.to_le_bytes());
++                output.write_all(&coefficient.to_le_bytes())?;
+             }
+         }
+     }
++    Ok(())
++}
++
++pub fn encode_crs_blocks(blocks: &[CrsBlock]) -> Vec<u8> {
++    let mut output = Vec::new();
++    write_crs_blocks(&mut output, blocks).expect("writing to a vector cannot fail");
+     output
+ }
+ 
+@@ -128,38 +129,104 @@ pub fn decode_crs_blocks(
+     expected_blocks: usize,
+     degree: usize,
+ ) -> Result<Vec<CrsBlock>, WireError> {
+-    let mut input = Input::new(bytes);
+-    input.expect_magic(HINT_MAGIC)?;
+-    let blocks = input.u32()? as usize;
+-    if blocks != expected_blocks {
+-        return Err(WireError::Malformed(
+-            "unexpected CRS block count".to_string(),
+-        ));
++    read_crs_blocks(bytes, expected_blocks, degree).map_err(|e| WireError::Malformed(e.to_string()))
++}
++
++/// Decodes directly into the final CRS representation, requiring clean EOF.
++pub fn read_crs_blocks(
++    input: impl Read,
++    expected_blocks: usize,
++    degree: usize,
++) -> io::Result<Vec<CrsBlock>> {
++    scan_crs_blocks(input, expected_blocks, degree, true)
++}
++
++/// Checks the encoding without retaining its coefficients.
++pub fn validate_crs_blocks(
++    input: impl Read,
++    expected_blocks: usize,
++    degree: usize,
++) -> io::Result<()> {
++    scan_crs_blocks(input, expected_blocks, degree, false).map(|_| ())
++}
++
++pub fn crs_encoded_len(blocks: usize, degree: usize) -> io::Result<u64> {
++    degree
++        .checked_mul(8)
++        .and_then(|n| n.checked_add(4))
++        .and_then(|n| n.checked_mul(degree))
++        .and_then(|n| n.checked_add(4))
++        .and_then(|n| n.checked_mul(blocks))
++        .and_then(|n| n.checked_add(8))
++        .and_then(|n| u64::try_from(n).ok())
++        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "CRS length overflow"))
++}
++
++fn scan_crs_blocks(
++    mut input: impl Read,
++    expected_blocks: usize,
++    degree: usize,
++    retain: bool,
++) -> io::Result<Vec<CrsBlock>> {
++    crs_encoded_len(expected_blocks, degree)?;
++    fn u32(input: &mut impl Read) -> io::Result<usize> {
++        let mut bytes = [0; 4];
++        input.read_exact(&mut bytes)?;
++        Ok(u32::from_le_bytes(bytes) as usize)
++    }
++    let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
++    let mut magic = [0; 4];
++    input.read_exact(&mut magic)?;
++    if &magic != HINT_MAGIC {
++        return Err(invalid("wrong message magic"));
+     }
+-    let mut output = Vec::with_capacity(blocks);
+-    for _ in 0..blocks {
+-        if input.u32()? as usize != degree {
+-            return Err(WireError::Malformed("unexpected CRS row count".to_string()));
++    if u32(&mut input)? != expected_blocks {
++        return Err(invalid("unexpected CRS block count"));
++    }
++    let mut output = Vec::new();
++    // Validation needs the framing and exact payload length, not individual
++    // coefficients. Digest verification remains in the underlying reader.
++    let mut scratch = [0u8; 64 * 1024];
++    for _ in 0..expected_blocks {
++        if u32(&mut input)? != degree {
++            return Err(invalid("unexpected CRS row count"));
+         }
+-        let mut rows = Vec::with_capacity(degree);
++        let mut rows = Vec::new();
+         for _ in 0..degree {
+-            if input.u32()? as usize != degree {
+-                return Err(WireError::Malformed(
+-                    "unexpected CRS coefficient count".to_string(),
+-                ));
++            if u32(&mut input)? != degree {
++                return Err(invalid("unexpected CRS coefficient count"));
++            }
++            let mut row = if retain {
++                Vec::with_capacity(degree)
++            } else {
++                Vec::new()
++            };
++            if retain {
++                for _ in 0..degree {
++                    let mut bytes = [0; 8];
++                    input.read_exact(&mut bytes)?;
++                    row.push(u64::from_le_bytes(bytes));
++                }
++            } else {
++                let mut remaining = degree * 8; // checked by crs_encoded_len above
++                while remaining != 0 {
++                    let n = remaining.min(scratch.len());
++                    input.read_exact(&mut scratch[..n])?;
++                    remaining -= n;
++                }
++            }
++            if retain {
++                rows.push(row);
+             }
+-            let raw = input.take(degree.checked_mul(8).ok_or_else(|| {
+-                WireError::Malformed("CRS coefficient length overflow".to_string())
+-            })?)?;
+-            rows.push(
+-                raw.chunks_exact(8)
+-                    .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight-byte chunk")))
+-                    .collect(),
+-            );
+         }
+-        output.push(CrsBlock { rows });
++        if retain {
++            output.push(CrsBlock { rows });
++        }
++    }
++    let mut trailing = [0];
++    if input.read(&mut trailing)? != 0 {
++        return Err(invalid("trailing message bytes"));
+     }
+-    input.finish()?;
+     Ok(output)
+ }
+ 
+@@ -296,3 +363,98 @@ mod tests {
+         assert!(decode_crs_blocks(&trailing, 2, degree).is_err());
+     }
+ }
++
++#[cfg(test)]
++mod streaming_tests {
++    use super::*;
++
++    #[test]
++    fn validation_reads_payload_in_bounded_chunks() {
++        struct Counting<'a> {
++            bytes: &'a [u8],
++            calls: usize,
++            largest: usize,
++        }
++        impl Read for Counting<'_> {
++            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
++                self.calls += 1;
++                self.largest = self.largest.max(out.len());
++                assert!(out.len() <= 64 * 1024);
++                self.bytes.read(out)
++            }
++        }
++        let degree = 128;
++        let encoded = encode_crs_blocks(&[CrsBlock {
++            rows: vec![vec![7; degree]; degree],
++        }]);
++        let mut reader = Counting {
++            bytes: &encoded,
++            calls: 0,
++            largest: 0,
++        };
++        validate_crs_blocks(&mut reader, 1, degree).unwrap();
++        assert!(
++            reader.calls < 3 * degree,
++            "per-coefficient reads returned: {}",
++            reader.calls
++        );
++        assert_eq!(reader.largest, degree * 8);
++
++        // A row crossing the chunk boundary must consume both chunks and still
++        // reject the following missing row header rather than accepting EOF.
++        let degree = 8193usize;
++        let mut truncated = Vec::from(*HINT_MAGIC);
++        truncated.extend_from_slice(&1u32.to_le_bytes());
++        truncated.extend_from_slice(&(degree as u32).to_le_bytes());
++        truncated.extend_from_slice(&(degree as u32).to_le_bytes());
++        truncated.resize(truncated.len() + degree * 8, 0);
++        let mut reader = Counting {
++            bytes: &truncated,
++            calls: 0,
++            largest: 0,
++        };
++        assert!(validate_crs_blocks(&mut reader, 1, degree).is_err());
++        assert_eq!(reader.largest, 64 * 1024);
++        assert!(reader.bytes.is_empty());
++    }
++
++    #[test]
++    fn streaming_codec_matches_legacy_mph1_bytes() {
++        let blocks = vec![CrsBlock {
++            rows: vec![vec![1, 2], vec![3, 4]],
++        }];
++        let expected = hex::decode(concat!(
++            "4d504831010000000200000002000000",
++            "01000000000000000200000000000000",
++            "0200000003000000000000000400000000000000"
++        ))
++        .unwrap();
++        let mut encoded = Vec::new();
++        write_crs_blocks(&mut encoded, &blocks).unwrap();
++        assert_eq!(encoded, expected);
++        assert_eq!(crs_encoded_len(1, 2).unwrap(), expected.len() as u64);
++        struct Fragmented<'a>(&'a [u8]);
++        impl Read for Fragmented<'_> {
++            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++                let n = bytes.len().min(3);
++                self.0.read(&mut bytes[..n])
++            }
++        }
++        let decoded = read_crs_blocks(Fragmented(&expected), 1, 2).unwrap();
++        assert_eq!(decoded[0].rows, blocks[0].rows);
++        validate_crs_blocks(Fragmented(&expected), 1, 2).unwrap();
++        for end in 0..expected.len() {
++            assert!(read_crs_blocks(&expected[..end], 1, 2).is_err());
++            assert!(validate_crs_blocks(&expected[..end], 1, 2).is_err());
++        }
++        let mut trailing = expected.clone();
++        trailing.push(0);
++        assert!(validate_crs_blocks(trailing.as_slice(), 1, 2).is_err());
++        for offset in [0, 4, 8, 12, 32] {
++            let mut malformed = expected.clone();
++            malformed[offset] ^= 1;
++            assert!(validate_crs_blocks(malformed.as_slice(), 1, 2).is_err());
++        }
++        assert!(crs_encoded_len(usize::MAX, usize::MAX).is_err());
++    }
++}
+diff --git a/enhance/services/enhance-pir-server/src/worker.rs b/enhance/services/enhance-pir-server/src/worker.rs
+index c497c6c..5bdb1bc 100644
+--- a/enhance/services/enhance-pir-server/src/worker.rs
++++ b/enhance/services/enhance-pir-server/src/worker.rs
+@@ -1,9 +1,10 @@
+-use crate::ipir::{add_intermediate_assign_mod, global_parameters, shard_parameters, ShardRuntime};
++use crate::artifact::PublicationArtifact;
++use crate::ipir::{
++    add_intermediate_assign_mod, global_parameters, shard_parameters, CachedShard, ShardRuntime,
++};
+ use crate::store::RecordJournal;
+ use crate::types::DatabaseId;
+-use crate::wire::{
+-    decode_evaluate_request, encode_crs_blocks, encode_evaluate_response, EvaluateRequest,
+-};
++use crate::wire::{decode_evaluate_request, encode_evaluate_response, EvaluateRequest};
+ use axum::body::Bytes;
+ use axum::extract::{Path, Query, State};
+ use axum::http::StatusCode;
+@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
+ use std::collections::{BTreeMap, HashMap, HashSet};
+ use std::path::PathBuf;
+ use std::sync::Arc;
+-use tokio::sync::{RwLock, Semaphore};
++use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
+ 
+ /// Generations a worker keeps answerable. The coordinator serves the same
+ /// number, so a session built against a recent snapshot survives publishes.
+@@ -34,7 +35,7 @@ pub const DEFAULT_EVALUATION_SLOTS: usize = 2;
+ #[derive(Clone)]
+ pub struct WorkerState {
+     rlwe: Arc<BTreeMap<DatabaseId, inspiring::RlweParams>>,
+-    shards: Arc<RwLock<HashMap<ShardKey, Arc<ShardRuntime>>>>,
++    shards: Arc<RwLock<HashMap<ShardKey, Arc<CachedShard>>>>,
+     active: Arc<RwLock<BTreeMap<u64, ActiveGeneration>>>,
+     artifact_dir: Arc<PathBuf>,
+     evaluation_slots: Arc<Semaphore>,
+@@ -151,6 +152,9 @@ impl WorkerState {
+         self.rlwe.get(&table).expect("every table has parameters")
+     }
+ 
++    /// Ensures both query state and a verified publication are available.
++    /// Invalid cached CRS is reloaded or rebuilt; repair failure preserves the
++    /// old query runtime. Returns whether preprocessing had to be rebuilt.
+     pub async fn prepare_local(
+         &self,
+         table: DatabaseId,
+@@ -162,7 +166,8 @@ impl WorkerState {
+     ) -> Result<bool, String> {
+         let _preparation = self
+             .preparation_slots
+-            .acquire()
++            .clone()
++            .acquire_owned()
+             .await
+             .map_err(|e| e.to_string())?;
+         if RecordJournal::rows_digest(&rows) != rows_sha256 {
+@@ -173,11 +178,35 @@ impl WorkerState {
+             shard_id,
+             rows_sha256: rows_sha256.clone(),
+         };
+-        if let Some(existing) = self.shards.read().await.get(&key) {
+-            if existing.query_row_start == query_row_start {
++        let existing = self
++            .shards
++            .read()
++            .await
++            .get(&key)
++            .filter(|cached| cached.runtime.query_row_start == query_row_start)
++            .cloned();
++        let _preparation = if let Some(existing) = existing {
++            let (_, params) = shard_parameters(&table.layout()).map_err(|e| e.to_string())?;
++            let degree = self.rlwe(table).d;
++            // A cancelled hint may never have reached its final checksum.
++            // Validate even an apparently healthy cache hit before reusing it.
++            let (usable, permit) = tokio::task::spawn_blocking(move || {
++                let usable = !existing.publication.is_failed()
++                    && existing
++                        .publication
++                        .validate(params.db_cols / degree, degree)
++                        .is_ok();
++                (usable, _preparation)
++            })
++            .await
++            .map_err(|e| e.to_string())?;
++            if usable {
+                 return Ok(false);
+             }
+-        }
++            permit
++        } else {
++            _preparation
++        };
+         let layout = table.layout();
+         let rlwe = self.rlwe(table).clone();
+         let (global_rlwe, global_params) =
+@@ -189,7 +218,7 @@ impl WorkerState {
+         let setup =
+             client.generate_public_query_setup_simplepir_from_seed(table.setup_seed_bytes());
+         let artifact_dir = self.artifact_dir.clone();
+-        let (runtime, built) = tokio::task::spawn_blocking(move || {
++        self.install_prepared(key, _preparation, move || {
+             ShardRuntime::load_or_build(
+                 &artifact_dir,
+                 table,
+@@ -203,12 +232,10 @@ impl WorkerState {
+             )
+         })
+         .await
+-        .map_err(|_| "shard build task failed".to_string())?
+-        .map_err(|e| e.to_string())?;
+-        self.shards.write().await.insert(key, Arc::new(runtime));
+-        Ok(built)
+     }
+ 
++    /// Restores missing query state from disk. A known failed publication must
++    /// also be reloaded; corrupt artifacts return an error so prepare can repair.
+     pub async fn ensure_local(
+         &self,
+         table: DatabaseId,
+@@ -218,7 +245,8 @@ impl WorkerState {
+     ) -> Result<(), String> {
+         let _preparation = self
+             .preparation_slots
+-            .acquire()
++            .clone()
++            .acquire_owned()
+             .await
+             .map_err(|e| e.to_string())?;
+         let key = ShardKey {
+@@ -227,14 +255,16 @@ impl WorkerState {
+             rows_sha256: rows_sha256.clone(),
+         };
+         if let Some(existing) = self.shards.read().await.get(&key) {
+-            if existing.query_row_start == query_row_start {
++            if existing.runtime.query_row_start == query_row_start
++                && !existing.publication.is_failed()
++            {
+                 return Ok(());
+             }
+         }
+         let layout = table.layout();
+         let rlwe = self.rlwe(table).clone();
+         let artifact_dir = self.artifact_dir.clone();
+-        let runtime = tokio::task::spawn_blocking(move || {
++        self.install_prepared(key, _preparation, move || {
+             ShardRuntime::load_cached(
+                 &artifact_dir,
+                 table,
+@@ -244,13 +274,29 @@ impl WorkerState {
+                 &rows_sha256,
+                 &rlwe,
+             )
++            .map(|runtime| (runtime, false))
+         })
+-        .await
+-        .map_err(|_| "shard load task failed".to_string())??;
+-        self.shards.write().await.insert(key, Arc::new(runtime));
++        .await?;
+         Ok(())
+     }
+ 
++    /// Keep the preparation slot until installation. If the caller is
++    /// cancelled, the blocking task still owns it until disk work finishes.
++    /// Failures leave any previously retained runtime available for queries.
++    async fn install_prepared(
++        &self,
++        key: ShardKey,
++        permit: OwnedSemaphorePermit,
++        prepare: impl FnOnce() -> Result<(CachedShard, bool), String> + Send + 'static,
++    ) -> Result<bool, String> {
++        let (result, _preparation) = tokio::task::spawn_blocking(move || (prepare(), permit))
++            .await
++            .map_err(|e| e.to_string())?;
++        let (runtime, built) = result?;
++        self.shards.write().await.insert(key, Arc::new(runtime));
++        Ok(built)
++    }
++
+     /// Activates a generation and evicts every runtime no retained generation
+     /// references, so memory holds exactly the shards that can still be asked.
+     pub async fn activate_local(&self, request: ActivateRequest) -> Result<(), String> {
+@@ -385,6 +431,7 @@ impl WorkerState {
+                 .get(&key)
+                 .ok_or_else(|| "active shard disappeared".to_string())?;
+             let partial = runtime
++                .runtime
+                 .evaluate(rlwe, &shard_query.coefficients)
+                 .map_err(|e| e.to_string())?;
+             add_intermediate_assign_mod(&mut combined, &partial, rlwe.q)
+@@ -394,7 +441,11 @@ impl WorkerState {
+     }
+ 
+     /// The CRS hint of the most recently prepared runtime for the shard.
+-    pub async fn crs_local(&self, table: DatabaseId, shard_id: u64) -> Result<Vec<u8>, String> {
++    pub async fn crs_local(
++        &self,
++        table: DatabaseId,
++        shard_id: u64,
++    ) -> Result<PublicationArtifact, String> {
+         let cached = self.shards.read().await;
+         let runtime = cached
+             .iter()
+@@ -402,7 +453,7 @@ impl WorkerState {
+             .map(|(_, runtime)| runtime)
+             .max_by_key(|runtime| runtime.prepared_at)
+             .ok_or_else(|| "shard is not prepared".to_string())?;
+-        Ok(encode_crs_blocks(&runtime.crs_blocks))
++        Ok(runtime.publication.clone())
+     }
+ 
+     /// Runtimes currently held, for tests and health.
+@@ -537,7 +588,11 @@ async fn hint(
+         Err(status) => return status.into_response(),
+     };
+     match state.crs_local(table, shard_id).await {
+-        Ok(bytes) => bytes.into_response(),
++        Ok(artifact) => (
++            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
++            axum::body::Body::from_stream(artifact.stream()),
++        )
++            .into_response(),
+         Err(error) => {
+             tracing::warn!(%error, %table, shard_id, "hint request rejected");
+             StatusCode::NOT_FOUND.into_response()
+@@ -645,3 +700,290 @@ mod tests {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod publication_recovery_tests {
++    use super::*;
++    use crate::ipir::{shard_artifact_dir, PreparedShard};
++    use crate::types::{DatabaseLayout, ENHANCE_LAYOUT};
++    use crate::wire::{read_crs_blocks, ShardQuery};
++    use std::fs::{self, File};
++    use std::os::unix::fs::FileExt;
++    use std::time::Duration;
++
++    async fn drain(artifact: PublicationArtifact) -> bool {
++        tokio::task::spawn_blocking(move || {
++            std::io::copy(&mut artifact.reader(), &mut std::io::sink()).is_ok()
++        })
++        .await
++        .unwrap()
++    }
++
++    #[tokio::test]
++    async fn same_digest_reprepare_repairs_failed_and_early_cancelled_hints() {
++        let dir = tempfile::tempdir().unwrap();
++        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
++        let table = DatabaseId::Enhance;
++        let rows = vec![3; ENHANCE_LAYOUT.shard_bytes()];
++        let digest = RecordJournal::rows_digest(&rows);
++        assert!(worker
++            .prepare_local(
++                table,
++                0,
++                0,
++                ENHANCE_LAYOUT.shard_rows as u64,
++                digest.clone(),
++                rows.clone()
++            )
++            .await
++            .unwrap());
++        let key = ShardKey {
++            table,
++            shard_id: 0,
++            rows_sha256: digest.clone(),
++        };
++        worker
++            .activate_local(ActivateRequest {
++                generation: 1,
++                retained_generations: vec![],
++                tables: [(
++                    table,
++                    vec![ActivateShard {
++                        shard_id: 0,
++                        rows_sha256: digest.clone(),
++                    }],
++                )]
++                .into(),
++            })
++            .await
++            .unwrap();
++        let query = || EvaluateRequest {
++            generation: 1,
++            shards: vec![ShardQuery {
++                shard_id: 0,
++                coefficients: vec![1; ENHANCE_LAYOUT.shard_rows],
++            }],
++        };
++        let expected = worker.evaluate_local(table, query()).await.unwrap();
++        let path = shard_artifact_dir(dir.path(), table, 0).join("partial-crs.bin");
++        let original = worker.shards.read().await[&key].clone();
++        let file = File::options().write(true).open(&path).unwrap();
++        let length = file.metadata().unwrap().len();
++        file.set_len(length - 1).unwrap();
++        assert!(!drain(original.publication.clone()).await);
++        assert!(original.publication.is_failed());
++        assert!(worker
++            .ensure_local(table, 0, 0, digest.clone())
++            .await
++            .is_err());
++        // A failed repair must leave the retained generation answerable.
++        let blocked_temporary = path.with_file_name("partial-crs.bin.tmp");
++        fs::create_dir(&blocked_temporary).unwrap();
++        assert!(worker
++            .prepare_local(
++                table,
++                0,
++                0,
++                ENHANCE_LAYOUT.shard_rows as u64,
++                digest.clone(),
++                rows.clone()
++            )
++            .await
++            .is_err());
++        assert!(Arc::ptr_eq(&original, &worker.shards.read().await[&key]));
++        assert_eq!(
++            worker.evaluate_local(table, query()).await.unwrap(),
++            expected
++        );
++        fs::remove_dir(&blocked_temporary).unwrap();
++        assert!(worker
++            .prepare_local(
++                table,
++                0,
++                0,
++                ENHANCE_LAYOUT.shard_rows as u64,
++                digest.clone(),
++                rows.clone()
++            )
++            .await
++            .unwrap());
++        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
++        assert_eq!(
++            worker.evaluate_local(table, query()).await.unwrap(),
++            expected
++        );
++        drop(original);
++
++        // A malformed header can be rejected before the final checksum is
++        // read, leaving no failure signal from the cancelled streaming reader.
++        let cached = worker.shards.read().await[&key].clone();
++        File::options()
++            .write(true)
++            .open(&path)
++            .unwrap()
++            .write_at(b"BAD!", 0)
++            .unwrap();
++        let artifact = cached.publication.clone();
++        assert!(
++            tokio::task::spawn_blocking(move || read_crs_blocks(artifact.reader(), 6, 2048))
++                .await
++                .unwrap()
++                .is_err()
++        );
++        assert!(!cached.publication.is_failed());
++        assert!(worker
++            .prepare_local(
++                table,
++                0,
++                0,
++                ENHANCE_LAYOUT.shard_rows as u64,
++                digest.clone(),
++                rows.clone()
++            )
++            .await
++            .unwrap());
++        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
++        assert_eq!(
++            worker.evaluate_local(table, query()).await.unwrap(),
++            expected
++        );
++
++        // Rebinding an operator-replaced pathname must not keep the bad inode.
++        let cached = worker.shards.read().await[&key].clone();
++        let replacement = path.with_extension("replacement");
++        fs::copy(&path, &replacement).unwrap();
++        File::options()
++            .write(true)
++            .open(&path)
++            .unwrap()
++            .set_len(0)
++            .unwrap();
++        assert!(!drain(cached.publication.clone()).await);
++        fs::rename(replacement, &path).unwrap();
++        worker
++            .ensure_local(table, 0, 0, digest.clone())
++            .await
++            .unwrap();
++        assert!(!Arc::ptr_eq(&cached, &worker.shards.read().await[&key]));
++        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
++        assert!(!worker
++            .prepare_local(table, 0, 0, ENHANCE_LAYOUT.shard_rows as u64, digest, rows)
++            .await
++            .unwrap());
++        assert_eq!(worker.cached_shard_count().await, 1);
++        assert_eq!(
++            worker.evaluate_local(table, query()).await.unwrap(),
++            expected
++        );
++    }
++
++    fn small_cached(directory: &std::path::Path) -> CachedShard {
++        let layout = DatabaseLayout {
++            record_bytes: 3584,
++            records_per_row: 1,
++            shard_rows: 2048,
++        };
++        let (rlwe, params) = shard_parameters(&layout).unwrap();
++        let setup = ipir_sp::IPIRClient::new(&rlwe, &params)
++            .generate_public_query_setup_simplepir_from_seed(
++                DatabaseId::Enhance.setup_seed_bytes(),
++            );
++        PreparedShard::build(
++            &layout,
++            0,
++            0,
++            "fixture".into(),
++            &vec![0; layout.shard_bytes()],
++            &rlwe,
++            &setup,
++        )
++        .unwrap()
++        .persist(directory, DatabaseId::Enhance, &rlwe)
++        .unwrap()
++    }
++
++    #[tokio::test]
++    async fn preparation_slot_stays_owned_while_cache_insertion_is_blocked() {
++        let dir = tempfile::tempdir().unwrap();
++        let cached = small_cached(dir.path());
++        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
++        let key = ShardKey {
++            table: DatabaseId::Enhance,
++            shard_id: 0,
++            rows_sha256: "fixture".into(),
++        };
++        let permit = worker
++            .preparation_slots
++            .clone()
++            .acquire_owned()
++            .await
++            .unwrap();
++        let cache_lock = worker.shards.write().await;
++        let (finished, finished_rx) = tokio::sync::oneshot::channel();
++        let task_worker = worker.clone();
++        let task = tokio::spawn(async move {
++            task_worker
++                .install_prepared(key, permit, move || {
++                    finished.send(()).unwrap();
++                    Ok((cached, true))
++                })
++                .await
++        });
++        finished_rx.await.unwrap();
++        // With the previous closure-local guard, another request obtained this
++        // slot before installation and could build a duplicate runtime.
++        assert!(tokio::time::timeout(
++            Duration::from_millis(250),
++            worker.preparation_slots.clone().acquire_owned()
++        )
++        .await
++        .is_err());
++        assert!(!task.is_finished());
++        drop(cache_lock);
++        assert!(task.await.unwrap().unwrap());
++        assert_eq!(worker.cached_shard_count().await, 1);
++        assert_eq!(worker.preparation_slots.available_permits(), 1);
++    }
++
++    #[tokio::test]
++    async fn cancelled_preparation_keeps_slot_until_blocking_work_finishes() {
++        let dir = tempfile::tempdir().unwrap();
++        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
++        let key = ShardKey {
++            table: DatabaseId::Enhance,
++            shard_id: 0,
++            rows_sha256: "fixture".into(),
++        };
++        let permit = worker
++            .preparation_slots
++            .clone()
++            .acquire_owned()
++            .await
++            .unwrap();
++        let (started, started_rx) = tokio::sync::oneshot::channel();
++        let (release, release_rx) = std::sync::mpsc::channel();
++        let task_worker = worker.clone();
++        let task = tokio::spawn(async move {
++            task_worker
++                .install_prepared(key, permit, move || {
++                    started.send(()).unwrap();
++                    release_rx.recv().unwrap();
++                    Err("injected preparation failure".into())
++                })
++                .await
++        });
++        started_rx.await.unwrap();
++        task.abort();
++        assert!(task.await.unwrap_err().is_cancelled());
++        assert_eq!(worker.preparation_slots.available_permits(), 0);
++        release.send(()).unwrap();
++        let _permit = tokio::time::timeout(
++            Duration::from_secs(5),
++            worker.preparation_slots.clone().acquire_owned(),
++        )
++        .await
++        .unwrap()
++        .unwrap();
++        assert_eq!(worker.cached_shard_count().await, 0);
++    }
++}
+diff --git a/enhance/services/enhance-pir-server/tests/sharded_vs_monolithic.rs b/enhance/services/enhance-pir-server/tests/sharded_vs_monolithic.rs
+index 9f2c52f..7a4e065 100644
+--- a/enhance/services/enhance-pir-server/tests/sharded_vs_monolithic.rs
++++ b/enhance/services/enhance-pir-server/tests/sharded_vs_monolithic.rs
+@@ -7,7 +7,7 @@ use enhance_pir::types::{ROW_BYTES, SHARD_ROWS};
+ use enhance_pir_server::coordinator::enhance_setup_seed_bytes;
+ use enhance_pir_server::ipir::{
+     add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
+-    global_parameters, RowPlaintextIter, ShardRuntime,
++    global_parameters, PreparedShard, RowPlaintextIter,
+ };
+ use enhance_pir_server::store::RecordJournal;
+ use enhance_pir_server::types::ENHANCE_LAYOUT;
+@@ -42,7 +42,7 @@ fn two_shards_equal_one_monolithic_server() {
+     let setup = client.generate_public_query_setup_simplepir_from_seed(enhance_setup_seed_bytes());
+ 
+     // Sharded: each shard preprocesses over its slice of the seeded setup.
+-    let shard0 = ShardRuntime::build(
++    let shard0 = PreparedShard::build(
+         &ENHANCE_LAYOUT,
+         0,
+         0,
+@@ -52,7 +52,7 @@ fn two_shards_equal_one_monolithic_server() {
+         &setup,
+     )
+     .expect("shard 0");
+-    let shard1 = ShardRuntime::build(
++    let shard1 = PreparedShard::build(
+         &ENHANCE_LAYOUT,
+         1,
+         SHARD_ROWS,
+@@ -95,9 +95,11 @@ fn two_shards_equal_one_monolithic_server() {
+ 
+     let mono_partial = monolithic.multiply_query(&rlwe, &global_query);
+     let mut sharded_partial = shard0
++        .runtime
+         .evaluate(&rlwe, &global_query[..SHARD_ROWS])
+         .expect("shard 0 partial");
+     let partial1 = shard1
++        .runtime
+         .evaluate(&rlwe, &global_query[SHARD_ROWS..])
+         .expect("shard 1 partial");
+     add_intermediate_assign_mod(&mut sharded_partial, &partial1, rlwe.q).expect("sum");
+diff --git a/enhance/services/enhance-pir-server/src/artifact.rs b/enhance/services/enhance-pir-server/src/artifact.rs
+new file mode 100644
+index 0000000..35943c2
+--- /dev/null
++++ b/enhance/services/enhance-pir-server/src/artifact.rs
+@@ -0,0 +1,476 @@
++//! Bounded artifact I/O. Open handles pin immutable, atomically replaced files.
++use axum::body::Bytes;
++use sha2::{Digest, Sha256};
++use std::fs::{self, File};
++use std::io::{self, BufReader, BufWriter, Read, Write};
++use std::os::unix::fs::FileExt;
++use std::path::Path;
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::Arc;
++use tokio::sync::mpsc;
++use tokio_stream::wrappers::ReceiverStream;
++
++pub const IO_BUFFER_BYTES: usize = 64 * 1024;
++const STREAM_QUEUE_CHUNKS: usize = 2;
++
++fn invalid(message: &str) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidData, message)
++}
++
++/// Small publication reference; no decoded or encoded CRS is retained here.
++#[derive(Clone)]
++pub struct PublicationArtifact {
++    file: Arc<File>,
++    length: u64,
++    digest: String,
++    failed: Arc<AtomicBool>,
++}
++
++impl PublicationArtifact {
++    pub(crate) fn open(path: &Path, length: u64, digest: String) -> io::Result<Self> {
++        let file = File::open(path)?;
++        if file.metadata()?.len() != length {
++            return Err(invalid("persisted CRS has the wrong size"));
++        }
++        Ok(Self {
++            file: Arc::new(file),
++            length,
++            digest,
++            failed: Arc::new(AtomicBool::new(false)),
++        })
++    }
++
++    pub(crate) fn is_failed(&self) -> bool {
++        self.failed.load(Ordering::Acquire)
++    }
++
++    /// Revalidates a cached publication before promising a reusable hint.
++    /// Shape failures must invalidate it too: a decoder may reject a damaged
++    /// header before the reader reaches the final checksum.
++    pub(crate) fn validate(&self, blocks: usize, degree: usize) -> io::Result<()> {
++        let result = crate::wire::validate_crs_blocks(self.reader(), blocks, degree);
++        if result.is_err() {
++            self.failed.store(true, Ordering::Release);
++        }
++        result
++    }
++
++    /// Every reader has an independent offset and verifies the pinned file.
++    pub fn reader(&self) -> impl Read + Send + 'static {
++        BufReader::with_capacity(
++            IO_BUFFER_BYTES,
++            VerifiedReader::new(
++                PositionalReader {
++                    file: self.file.clone(),
++                    offset: 0,
++                },
++                self.length,
++                self.digest.clone(),
++            )
++            .with_failure_flag(self.failed.clone()),
++        )
++    }
++
++    /// Bounded, backpressured disk-to-HTTP transfer. Closing the consumer stops
++    /// the blocking reader; the final chunk is released only after validation.
++    pub fn stream(&self) -> ReceiverStream<io::Result<Bytes>> {
++        stream_reader(self.reader())
++    }
++}
++
++pub(crate) fn stream_reader(
++    mut reader: impl Read + Send + 'static,
++) -> ReceiverStream<io::Result<Bytes>> {
++    let (sender, receiver) = mpsc::channel(STREAM_QUEUE_CHUNKS);
++    tokio::task::spawn_blocking(move || loop {
++        if sender.is_closed() {
++            break;
++        }
++        let mut chunk = vec![0; IO_BUFFER_BYTES];
++        match reader.read(&mut chunk) {
++            Ok(0) => break,
++            Ok(n) => {
++                chunk.truncate(n);
++                if sender.blocking_send(Ok(Bytes::from(chunk))).is_err() {
++                    break;
++                }
++            }
++            Err(e) => {
++                let _ = sender.blocking_send(Err(e));
++                break;
++            }
++        }
++    });
++    ReceiverStream::new(receiver)
++}
++
++struct PositionalReader {
++    file: Arc<File>,
++    offset: u64,
++}
++
++impl Read for PositionalReader {
++    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++        let n = self.file.read_at(bytes, self.offset)?;
++        self.offset += n as u64;
++        Ok(n)
++    }
++}
++
++/// Checks exact length and digest before returning the final bytes. Hashing
++/// sits beneath buffering, so it processes chunks rather than coefficients.
++pub(crate) struct VerifiedReader<R> {
++    inner: R,
++    remaining: u64,
++    hash: Sha256,
++    digest: String,
++    complete: bool,
++    failed: Arc<AtomicBool>,
++}
++
++impl<R: Read> VerifiedReader<R> {
++    pub(crate) fn new(inner: R, length: u64, digest: String) -> Self {
++        Self {
++            inner,
++            remaining: length,
++            hash: Sha256::new(),
++            digest,
++            complete: false,
++            failed: Arc::new(AtomicBool::new(false)),
++        }
++    }
++
++    fn with_failure_flag(mut self, failed: Arc<AtomicBool>) -> Self {
++        self.failed = failed;
++        self
++    }
++
++    fn read_checked(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++        let count = self.remaining.min(bytes.len() as u64) as usize;
++        let n = if count == 0 {
++            0
++        } else {
++            self.inner.read(&mut bytes[..count])?
++        };
++        if n == 0 && self.remaining != 0 {
++            return Err(io::Error::new(
++                io::ErrorKind::UnexpectedEof,
++                "truncated artifact",
++            ));
++        }
++        self.hash.update(&bytes[..n]);
++        self.remaining -= n as u64;
++        if self.remaining == 0 {
++            let mut extra = [0];
++            let extra_count = loop {
++                match self.inner.read(&mut extra) {
++                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
++                    result => break result?,
++                }
++            };
++            if extra_count != 0 {
++                return Err(invalid("trailing artifact bytes"));
++            }
++            if hex::encode(self.hash.clone().finalize()) != self.digest {
++                return Err(invalid("persisted artifact digest mismatch"));
++            }
++            self.complete = true;
++        }
++        Ok(n)
++    }
++}
++
++impl<R: Read> Read for VerifiedReader<R> {
++    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++        if bytes.is_empty() {
++            return Ok(0);
++        }
++        if self.failed.load(Ordering::Acquire) {
++            return Err(invalid("artifact validation failed"));
++        }
++        if self.complete {
++            return Ok(0);
++        }
++        match self.read_checked(bytes) {
++            Err(e) if e.kind() != io::ErrorKind::Interrupted => {
++                self.failed.store(true, Ordering::Release);
++                Err(e)
++            }
++            result => result,
++        }
++    }
++}
++
++struct HashWriter<W> {
++    inner: W,
++    hash: Sha256,
++}
++
++impl<W: Write> Write for HashWriter<W> {
++    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++        let n = self.inner.write(bytes)?;
++        self.hash.update(&bytes[..n]);
++        Ok(n)
++    }
++    fn flush(&mut self) -> io::Result<()> {
++        self.inner.flush()
++    }
++}
++
++/// Commits one file after a successful flush and sync. Callers commit metadata
++/// last and sync the directory. A failed attempt never renames its temporary.
++pub(crate) fn write_atomic(
++    directory: &Path,
++    name: &str,
++    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
++) -> io::Result<String> {
++    let temporary = directory.join(format!("{name}.tmp"));
++    let result = (|| {
++        let file = File::create(&temporary)?;
++        let mut writer = BufWriter::with_capacity(
++            IO_BUFFER_BYTES,
++            HashWriter {
++                inner: file,
++                hash: Sha256::new(),
++            },
++        );
++        write(&mut writer)?;
++        writer.flush()?;
++        writer.get_ref().inner.sync_all()?;
++        let digest = hex::encode(writer.get_ref().hash.clone().finalize());
++        fs::rename(&temporary, directory.join(name))?;
++        Ok(digest)
++    })();
++    if result.is_err() {
++        let _ = fs::remove_file(temporary);
++    }
++    result
++}
++
++/// A bounded bridge from asynchronous HTTP chunks to the blocking CRS decoder.
++pub(crate) struct ChunkReader {
++    receiver: mpsc::Receiver<Bytes>,
++    current: Bytes,
++}
++
++pub(crate) fn chunk_reader() -> (mpsc::Sender<Bytes>, ChunkReader) {
++    let (sender, receiver) = mpsc::channel(STREAM_QUEUE_CHUNKS);
++    (
++        sender,
++        ChunkReader {
++            receiver,
++            current: Bytes::new(),
++        },
++    )
++}
++
++impl Read for ChunkReader {
++    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++        if bytes.is_empty() {
++            return Ok(0);
++        }
++        while self.current.is_empty() {
++            match self.receiver.blocking_recv() {
++                Some(chunk) => self.current = chunk,
++                None => return Ok(0),
++            }
++        }
++        let n = bytes.len().min(self.current.len());
++        bytes[..n].copy_from_slice(&self.current.split_to(n));
++        Ok(n)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::io::Cursor;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    use tokio_stream::StreamExt;
++
++    fn artifact(path: &Path, bytes: &[u8]) -> PublicationArtifact {
++        fs::write(path, bytes).unwrap();
++        PublicationArtifact::open(path, bytes.len() as u64, hex::encode(Sha256::digest(bytes)))
++            .unwrap()
++    }
++
++    #[test]
++    fn failure_is_shared_but_partial_reads_and_interrupts_do_not_invalidate() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("hint");
++        let data = vec![7; IO_BUFFER_BYTES * 2];
++        let pinned = artifact(&path, &data);
++        let peer = pinned.clone();
++        let mut reader = pinned.reader();
++        reader.read_exact(&mut [0; 8]).unwrap();
++        drop(reader);
++        assert!(
++            !peer.is_failed(),
++            "cancellation must not invalidate a healthy artifact"
++        );
++        struct InterruptedThenFailed(bool);
++        impl Read for InterruptedThenFailed {
++            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
++                if std::mem::replace(&mut self.0, false) {
++                    Err(io::Error::from(io::ErrorKind::Interrupted))
++                } else {
++                    Err(io::Error::other("injected disk failure"))
++                }
++            }
++        }
++        let mut reader = VerifiedReader::new(
++            InterruptedThenFailed(true),
++            data.len() as u64,
++            pinned.digest.clone(),
++        )
++        .with_failure_flag(pinned.failed.clone());
++        assert_eq!(
++            reader.read(&mut [0]).unwrap_err().kind(),
++            io::ErrorKind::Interrupted
++        );
++        assert!(!peer.is_failed());
++        assert!(reader.read(&mut [0]).is_err());
++        assert!(peer.is_failed());
++        assert!(peer.reader().read(&mut [0]).is_err());
++    }
++
++    #[test]
++    fn pinned_files_survive_replacement_and_have_independent_readers() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("hint");
++        let old = artifact(&path, b"old bytes");
++        let mut a = old.reader();
++        let mut b = old.reader();
++        let mut prefix = [0; 3];
++        a.read_exact(&mut prefix).unwrap();
++        assert_eq!(&prefix, b"old");
++        write_atomic(dir.path(), "hint", |w| w.write_all(b"new bytes")).unwrap();
++        drop(old);
++        let mut all = Vec::new();
++        b.read_to_end(&mut all).unwrap();
++        assert_eq!(all, b"old bytes");
++        all.clear();
++        a.read_to_end(&mut all).unwrap();
++        assert_eq!(all, b" bytes");
++        assert_eq!(fs::read(&path).unwrap(), b"new bytes");
++    }
++
++    #[test]
++    fn verification_rejects_corruption_truncation_and_trailing_data() {
++        let data = vec![7u8; IO_BUFFER_BYTES * 2 + 17];
++        for corrupt in [
++            data[..data.len() - 1].to_vec(),
++            [data.as_slice(), &[0]].concat(),
++            vec![8; data.len()],
++        ] {
++            let mut reader = VerifiedReader::new(
++                Cursor::new(corrupt),
++                data.len() as u64,
++                hex::encode(Sha256::digest(&data)),
++            );
++            let mut output = Vec::new();
++            assert!(reader.read_to_end(&mut output).is_err());
++            assert!(output.len() < data.len(), "must withhold final bytes");
++            assert!(
++                reader.read(&mut [0]).is_err(),
++                "validation failure stays terminal"
++            );
++        }
++    }
++
++    #[test]
++    fn failed_atomic_write_keeps_previous_file_and_cleans_temporary() {
++        let dir = tempfile::tempdir().unwrap();
++        fs::write(dir.path().join("hint"), b"committed").unwrap();
++        let result = write_atomic(dir.path(), "hint", |w| {
++            w.write_all(&vec![9; IO_BUFFER_BYTES + 1])?;
++            Err(io::Error::other("injected write failure"))
++        });
++        assert!(result.is_err());
++        assert_eq!(fs::read(dir.path().join("hint")).unwrap(), b"committed");
++        assert!(!dir.path().join("hint.tmp").exists());
++        let digest = write_atomic(dir.path(), "hint", |w| w.write_all(b"replacement")).unwrap();
++        assert_eq!(digest, hex::encode(Sha256::digest(b"replacement")));
++    }
++
++    struct CountingReader {
++        reads: Arc<AtomicUsize>,
++        stopped: Option<tokio::sync::oneshot::Sender<()>>,
++    }
++    impl Read for CountingReader {
++        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++            assert!(bytes.len() <= IO_BUFFER_BYTES);
++            self.reads.fetch_add(1, Ordering::SeqCst);
++            bytes.fill(1);
++            Ok(bytes.len())
++        }
++    }
++    impl Drop for CountingReader {
++        fn drop(&mut self) {
++            if let Some(stopped) = self.stopped.take() {
++                let _ = stopped.send(());
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn slow_consumer_bounds_read_ahead_and_cancellation_stops_reader() {
++        let reads = Arc::new(AtomicUsize::new(0));
++        let (stopped, finished) = tokio::sync::oneshot::channel();
++        let stream = stream_reader(CountingReader {
++            reads: reads.clone(),
++            stopped: Some(stopped),
++        });
++        tokio::time::timeout(std::time::Duration::from_secs(5), async {
++            while reads.load(Ordering::SeqCst) < STREAM_QUEUE_CHUNKS + 1 {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .unwrap();
++        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++        assert_eq!(reads.load(Ordering::SeqCst), STREAM_QUEUE_CHUNKS + 1);
++        drop(stream);
++        tokio::time::timeout(std::time::Duration::from_secs(5), finished)
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(reads.load(Ordering::SeqCst), STREAM_QUEUE_CHUNKS + 1);
++    }
++
++    #[tokio::test]
++    async fn stream_keeps_pin_after_eviction_and_reports_final_corruption() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("hint");
++        let bytes = vec![4; IO_BUFFER_BYTES * 3 + 9];
++        let pinned = artifact(&path, &bytes);
++        let mut stream = pinned.stream();
++        drop(pinned);
++        fs::remove_file(&path).unwrap();
++        let mut decoded = Vec::new();
++        while let Some(chunk) = stream.next().await {
++            let chunk = chunk.unwrap();
++            assert!(chunk.len() <= IO_BUFFER_BYTES);
++            decoded.extend_from_slice(&chunk);
++        }
++        assert_eq!(decoded, bytes);
++        let pinned = artifact(&path, &bytes);
++        File::options()
++            .write(true)
++            .open(&path)
++            .unwrap()
++            .write_at(&[5], bytes.len() as u64 - 1)
++            .unwrap();
++        let mut stream = pinned.stream();
++        let mut received = 0;
++        let mut failed = false;
++        while let Some(chunk) = stream.next().await {
++            match chunk {
++                Ok(bytes) => received += bytes.len(),
++                Err(_) => failed = true,
++            }
++        }
++        assert!(failed);
++        assert!(received < bytes.len());
++    }
++}
