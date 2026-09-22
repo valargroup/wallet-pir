@@ -1,7 +1,8 @@
 name: CI full
 
-# Complete release qualification for both product families. Fast CI never
-# substitutes for these tests. Artifacts are published only after every gate passes.
+# Release correctness checks for both product families. Fast CI never substitutes
+# for these tests. Enhance hardware qualification remains a separate deployment
+# gate; artifacts are published only after every check in this workflow passes.
 
 on:
   push:
@@ -213,24 +214,16 @@ jobs:
         with:
           lane: full-test
       - name: Run Enhance release tests
-        env:
-          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            # The full-size embedded and topology fixtures exceed the hosted
-            # runner's memory at schema 8. Main uses the qualified-build runner
-            # and executes every integration target before publishing artifacts.
-            tools/ci/full-test.sh --locked --profile release-fast \
-              -p enhance-pir -p enhance-pir-load-test -p pir-apm -p transparent-spend-pir
-            tools/ci/full-test.sh --locked --profile release-fast \
-              -p enhance-pir-server --lib --bins \
-              --test operator_payloads --test record_layout \
-              --test sharded_vs_monolithic --test worker_migration
-          else
-            tools/ci/full-test.sh --locked --profile release-fast \
-              -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server \
-              -p pir-apm -p transparent-spend-pir
-          fi
+          # Full-size embedded/topology fixtures exceed the CI runner's memory
+          # at schema 8. Hardware qualification is a separate exact-release
+          # deployment gate; keep artifact CI bounded to correctness coverage.
+          tools/ci/full-test.sh --locked --profile release-fast \
+            -p enhance-pir -p enhance-pir-load-test -p pir-apm -p transparent-spend-pir
+          tools/ci/full-test.sh --locked --profile release-fast \
+            -p enhance-pir-server --lib --bins \
+            --test operator_payloads --test record_layout \
+            --test sharded_vs_monolithic --test worker_migration
 
   release:
     name: Prepare qualified release artifacts
