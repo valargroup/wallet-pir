@@ -1054,8 +1054,13 @@ impl CoordinatorState {
             used_rows,
             logical_rows,
             parameter_id: format!(
-                "{PROTOCOL_REVISION}-{table}-d{}-p{}-rows{}-cols{}",
-                rlwe.d, ypir.p, ypir.db_rows, ypir.db_cols
+                "{PROTOCOL_REVISION}-{}-{table}-d{}-p{}-qbits{}-rows{}-cols{}",
+                layout.pir_profile.id(),
+                rlwe.d,
+                ypir.p,
+                ypir.query_bits,
+                ypir.db_rows,
+                ypir.db_cols
             ),
             setup_seed: table.setup_seed(),
             public_params_epoch: hex::encode(epoch),

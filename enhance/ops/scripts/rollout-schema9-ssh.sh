@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Direct SSH rollout of the schema-8 (29-record) layout.
+# Direct SSH rollout of the schema-9 (33-record) layout.
 #
 # This exists because deploy-enhance-pir.sh cannot do this migration: it stages
 # and restarts Caddy, pir-apm and transparent-filter-server alongside Enhance,
@@ -17,7 +17,7 @@
 # replace binary installs, a complete rollback set captured before any service
 # stops, worker-before-coordinator ordering, and verification that fails closed.
 #
-# Usage: rollout-schema8-ssh.sh preflight|stage|cutover|verify|rollback
+# Usage: rollout-schema9-ssh.sh preflight|stage|cutover|verify|rollback
 set -euo pipefail
 
 usage() { echo "usage: $0 preflight|stage|cutover|verify|rollback" >&2; exit 2; }
@@ -32,15 +32,15 @@ RELEASE_SHA="${ENHANCE_RELEASE_SHA:?ENHANCE_RELEASE_SHA is required}"
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release sha must be 40 hex" >&2; exit 2; }
 
 # Must match enhance_pir::types and deploy-enhance-pir.sh.
-TARGET_SCHEMA=8
-TARGET_RECORDS_PER_ROW=29
-TARGET_ROW_BYTES=21373
-DATA_DIR=/srv/zakura/enhance-data-r29
-PREVIOUS_DATA_DIR=/srv/zakura/enhance-data-v7
-ARTIFACT_DIR=/srv/enhance-pir/artifacts-r29
+TARGET_SCHEMA=9
+TARGET_RECORDS_PER_ROW=33
+TARGET_ROW_BYTES=24321
+DATA_DIR=/srv/zakura/enhance-data-r33
+PREVIOUS_DATA_DIR=/srv/zakura/enhance-data-r29
+ARTIFACT_DIR=/srv/enhance-pir/artifacts-r33
 PREVIOUS_ARTIFACT_DIR=/srv/enhance-pir/artifacts-v7
-RELEASE_DIR="/opt/enhance-pir/schema8-$RELEASE_SHA"
-ROLLBACK_DIR="/opt/enhance-pir/rollback-before-schema8-$RELEASE_SHA"
+RELEASE_DIR="/opt/enhance-pir/schema9-$RELEASE_SHA"
+ROLLBACK_DIR="/opt/enhance-pir/rollback-before-schema9-$RELEASE_SHA"
 LOCK=/run/lock/wallet-pir-production.lock
 
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15)
@@ -79,12 +79,12 @@ preflight() {
   for host in $WORKERS; do
     worker "$host" test -x "$RELEASE_DIR/enhance-pir-worker" \
       || die "worker binary not staged on $host"
-    # Free space for a full set of schema-8 artifacts before anything starts
+    # Free space for a full set of schema-9 artifacts before anything starts
     # writing them; a worker that fills its disk mid-preparation leaves the
     # group without a ready replica.
     local avail
     avail="$(worker "$host" df --output=avail -BG / | tail -1 | tr -dc '0-9')"
-    [[ "$avail" -ge 10 ]] || die "$host has ${avail}G free; schema-8 artifacts need more headroom"
+    [[ "$avail" -ge 10 ]] || die "$host has ${avail}G free; schema-9 artifacts need more headroom"
     note "$host" "binary staged, ${avail}G free"
   done
 
@@ -208,7 +208,9 @@ verify() {
     --argjson rpr "$TARGET_RECORDS_PER_ROW" \
     --argjson rowbytes "$TARGET_ROW_BYTES" '
     (.generation.schema_version == $schema) and
-    (.generation.protocol_revision == "ironwood-enhance-pir-v2") and
+    (.generation.protocol_revision == "ironwood-enhance-pir-v3") and
+    (.generation.pir_profile == "simplepir-p16-q46-v1") and
+    (.params.p == 65536) and (.params.query_bits == 46) and
     (.generation.record_bytes == 737) and (.generation.records_per_row == $rpr) and
     (.generation.row_bytes == $rowbytes) and (.generation.shard_rows == 8192) and
     (.generation.network == "main") and (.generation.pool == "ironwood") and
@@ -216,7 +218,7 @@ verify() {
     (.generation.shards | length) > 0 and
     (.params | type == "object") and
     (.public_params_base64 | type == "string" and length > 0)
-  ' >/dev/null <<<"$init" || die "public init does not declare the schema-8 layout"
+  ' >/dev/null <<<"$init" || die "public init does not declare the schema-9 layout"
   note "public init" "schema $TARGET_SCHEMA, $TARGET_RECORDS_PER_ROW x 737 B, $TARGET_ROW_BYTES-byte rows"
 
   local health
@@ -245,7 +247,7 @@ verify() {
 
 # ----------------------------------------------------------------- rollback
 rollback() {
-  echo "== rollback to the pre-schema-8 deployment"
+  echo "== rollback to the pre-schema-9 deployment"
   coord systemctl stop enhance-pir-server || true
   local host
   for host in $WORKERS; do

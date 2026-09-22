@@ -86,8 +86,13 @@ fn session() -> EnhanceSession {
             used_rows,
             logical_rows,
             parameter_id: format!(
-                "{PROTOCOL_REVISION}-enhance-d{}-p{}-rows{}-cols{}",
-                rlwe.d, params.p, logical_rows, params.db_cols
+                "{PROTOCOL_REVISION}-{}-enhance-d{}-p{}-qbits{}-rows{}-cols{}",
+                layout.pir_profile.id(),
+                rlwe.d,
+                params.p,
+                params.query_bits,
+                logical_rows,
+                params.db_cols
             ),
             setup_seed: ENHANCE_SETUP_SEED,
             public_params_epoch: hex::encode(&digest[..8]),
@@ -143,10 +148,11 @@ fn init_payload_matches_the_operator_fixture() {
     let value = serde_json::to_value(session()).expect("serialize session");
     // The fields the deploy gate reads, asserted here as well so a fixture
     // refresh that quietly changed the layout is not self-approving.
-    assert_eq!(value["generation"]["schema_version"], 8);
+    assert_eq!(value["generation"]["schema_version"], 9);
     assert_eq!(value["generation"]["record_bytes"], 737);
-    assert_eq!(value["generation"]["records_per_row"], 29);
-    assert_eq!(value["generation"]["row_bytes"], 21_373);
+    assert_eq!(value["generation"]["records_per_row"], 33);
+    assert_eq!(value["generation"]["row_bytes"], 24_321);
+    assert_eq!(value["generation"]["pir_profile"], "simplepir-p16-q46-v1");
     assert_eq!(value["generation"]["shard_rows"], 8_192);
     golden("init.json", &value);
 }

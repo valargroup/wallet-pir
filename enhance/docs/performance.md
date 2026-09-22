@@ -5,6 +5,21 @@ client cryptography and the network path. An isolated worker fixture measures
 preparation, publication and query behavior under its own workload. Neither is
 a whole-wallet sync measurement or proof of maximum production capacity.
 
+## Schema-9 16-bit profile
+
+Schema 9 keeps six instances and the 12,288-column database shape while moving
+from 29 to 33 records per row. The response and 192-MiB encoded database
+allocation are unchanged. Query precision rises from 41 to 46 bits, adding
+`logical_rows × 5 / 8` bytes to the switched-query payload: 5 KiB at 8,192
+logical rows, 10 KiB at 16,384, and 20 KiB at 32,768.
+
+In the isolated full server benchmark, median p14/p16 times were 8.304/8.160 ms
+on an M4 Max and 25.880/26.010 ms on an AVX-512 Xeon. Each p16 result used 33
+records per row. These measurements cover server cryptography without HTTP,
+coordinator aggregation or application work. See
+[16-bit expansion](plaintext16-expansion.md) for the capacity arithmetic and
+correctness scope.
+
 ## Public baseline: September 14, 2026
 
 The [retained run](../evidence/public-baseline-2026-09-14/README.md) tests the public
@@ -114,6 +129,8 @@ The older report's 258,056-byte upload applies to its reported 32,768-row geomet
 and encoding. It must not be presented as today's upload size.
 
 ### Derived schema-8 sizes
+
+This section describes the historical schema-8 profile.
 
 Every figure in this section above is a schema-7 measurement: nine records per
 6,633-byte row, two PIR instances. Schema 8 changes both terms. Widening the row

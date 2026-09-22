@@ -1,7 +1,7 @@
 use crate::types::{
     setup_seed_bytes, EnhanceGeneration, EnhanceRecord, EnhanceSession, ENHANCE_SETUP_SEED,
-    ITEM_SIZE_BITS, NETWORK, POOL, PROTOCOL_REVISION, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES,
-    SCHEMA_VERSION, SHARD_ROWS,
+    ITEM_SIZE_BITS, NETWORK, PIR_PROFILE_ID, POOL, PROTOCOL_REVISION, RECORDS_PER_ROW,
+    RECORD_BYTES, ROW_BYTES, SCHEMA_VERSION, SHARD_ROWS,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
@@ -124,6 +124,11 @@ impl QuerySession {
                 "setup seed does not match Enhance PIR".to_string(),
             ));
         }
+        if generation.pir_profile != PIR_PROFILE_ID {
+            return Err(ClientError::Generation(
+                "PIR profile does not match Enhance PIR".to_string(),
+            ));
+        }
         if generation.record_bytes as usize != RECORD_BYTES
             || generation.records_per_row as usize != RECORDS_PER_ROW
             || generation.row_bytes as usize != ROW_BYTES
@@ -140,9 +145,12 @@ impl QuerySession {
                 "invalid database geometry".to_string(),
             ));
         }
-        let (rlwe, expected) =
-            ipir_sp::params_for_simplepir(generation.logical_rows, ITEM_SIZE_BITS)
-                .map_err(|error| ClientError::Pir(error.to_string()))?;
+        let (rlwe, expected) = ipir_sp::params_for_simplepir_profile(
+            generation.logical_rows,
+            ITEM_SIZE_BITS,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )
+        .map_err(|error| ClientError::Pir(error.to_string()))?;
         if ypir != expected {
             return Err(ClientError::Generation(
                 "parameters do not match the pinned generator".to_string(),
@@ -445,13 +453,18 @@ mod tests {
     use super::*;
 
     fn valid_session() -> EnhanceSession {
-        let (rlwe, params) = ipir_sp::params_for_simplepir(SHARD_ROWS as u64, ITEM_SIZE_BITS)
-            .expect("fixed Enhance geometry");
+        let (rlwe, params) = ipir_sp::params_for_simplepir_profile(
+            SHARD_ROWS as u64,
+            ITEM_SIZE_BITS,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )
+        .expect("fixed Enhance geometry");
         let public_params = vec![0; (params.db_cols / rlwe.d) * published_c1_len(rlwe.d, rlwe.q)];
         let digest = Sha256::digest(&public_params);
         let generation = EnhanceGeneration {
             schema_version: SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.to_string(),
+            pir_profile: PIR_PROFILE_ID.to_string(),
             network: NETWORK.to_string(),
             pool: POOL.to_string(),
             anchor_height: 3_428_143,
@@ -492,10 +505,29 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn rejects_a_different_plaintext_profile_or_query_width() {
+        let mut session = valid_session();
+        session.generation.pir_profile = "simplepir-p14-v1".to_string();
+        assert!(matches!(
+            QuerySession::from_session(session),
+            Err(ClientError::Generation(message))
+                if message == "PIR profile does not match Enhance PIR"
+        ));
+
+        let mut session = valid_session();
+        session.params.query_bits = 45;
+        assert!(matches!(
+            QuerySession::from_session(session),
+            Err(ClientError::Generation(message))
+                if message == "parameters do not match the pinned generator"
+        ));
+    }
+
     /// The compatibility direction that matters at cutover. The old fleet's
     /// document is well-formed and internally consistent; only its layout is
-    /// wrong. Nothing but this check stands between a schema-8 client and a
-    /// 6,633-byte row read with 21,373-byte offsets, so it is checked against a
+    /// wrong. Nothing but this check stands between a current client and a
+    /// 6,633-byte row read with 24,321-byte offsets, so it is checked against a
     /// document shaped exactly like the one the public origin served.
     #[test]
     fn rejects_the_superseded_nine_record_session() {
@@ -550,14 +582,14 @@ mod tests {
     }
 
     #[test]
-    fn a_run_crossing_offset_29_prepares_two_rows() {
+    fn a_run_crossing_offset_33_prepares_two_rows() {
         let session = covering_session(60);
         let prepared = session
-            .prepare_positions(&[27, 28, 29])
+            .prepare_positions(&[31, 32, 33])
             .expect("positions in coverage");
         assert_eq!(prepared.len(), 2);
         assert_eq!(prepared[0].query().row(), 0);
-        assert_eq!(prepared[0].slots(), &[27, 28]);
+        assert_eq!(prepared[0].slots(), &[31, 32]);
         assert_eq!(prepared[0].indexes(), &[0, 1]);
         assert_eq!(prepared[1].query().row(), 1);
         assert_eq!(prepared[1].slots(), &[0]);

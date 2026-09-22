@@ -3,9 +3,9 @@
 pub use enhance_pir::types::{
     group_index_for_shard, logical_rows_for, used_rows_for, worker_index_for_shard,
     EnhanceGeneration, EnhanceRecord, EnhanceRecordParts, ShardDescriptor, ACTIVATION_HEIGHT,
-    ENHANCE_SETUP_SEED, ITEM_SIZE_BITS, NETWORK, POOL, PROTOCOL_REVISION, RECORDS_PER_ROW,
-    RECORD_BYTES, ROW_BYTES, SCHEMA_VERSION, SHARDS_PER_GROUP, SHARDS_PER_WORKER, SHARD_POSITIONS,
-    SHARD_ROWS,
+    ENHANCE_SETUP_SEED, ITEM_SIZE_BITS, NETWORK, PIR_PROFILE_ID, POOL, PROTOCOL_REVISION,
+    RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES, SCHEMA_VERSION, SHARDS_PER_GROUP, SHARDS_PER_WORKER,
+    SHARD_POSITIONS, SHARD_ROWS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -82,6 +82,7 @@ pub struct DatabaseLayout {
     pub record_bytes: usize,
     pub records_per_row: usize,
     pub shard_rows: usize,
+    pub pir_profile: ipir_sp::SimplePirProfile,
 }
 
 impl DatabaseLayout {
@@ -114,12 +115,14 @@ pub const ENHANCE_LAYOUT: DatabaseLayout = DatabaseLayout {
     record_bytes: RECORD_BYTES,
     records_per_row: RECORDS_PER_ROW,
     shard_rows: SHARD_ROWS,
+    pir_profile: ipir_sp::SimplePirProfile::P16Q46,
 };
 
 pub const TRANSPARENT_SPEND_LAYOUT: DatabaseLayout = DatabaseLayout {
     record_bytes: transparent_spend_pir::ROW_BYTES,
     records_per_row: 1,
     shard_rows: transparent_spend_pir::SHARD_ROWS,
+    pir_profile: ipir_sp::SimplePirProfile::P14,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +170,7 @@ impl GenerationManifest {
             used_rows: table.used_rows,
             logical_rows: table.logical_rows,
             parameter_id: table.parameter_id.clone(),
+            pir_profile: PIR_PROFILE_ID.to_string(),
             setup_seed: table.setup_seed,
             public_params_epoch: table.public_params_epoch.clone(),
             public_params_sha256: table.public_params_sha256.clone(),

@@ -7,7 +7,7 @@ record without revealing the selected position.
 
 ## Record format
 
-Schema 7 stores exactly 737 bytes per output position:
+Schema 9 stores exactly 737 bytes per output position:
 
 | Offset | Length | Field | Use |
 | ---: | ---: | --- | --- |
@@ -19,7 +19,7 @@ Schema 7 stores exactly 737 bytes per output position:
 | 725 | 4 | expiry height | Little-endian u32; zero disables expiry |
 | 729 | 8 | fee | Little-endian u64 zatoshis; zero payload when absent |
 
-Twenty-nine consecutive records form a 21,373-byte PIR row. The client privately
+Thirty-three consecutive records form a 24,321-byte PIR row. The client privately
 retrieves the row and selects the requested record locally. The active table
 does not contain txids, nullifiers, note commitments, mined heights, or witness data.
 
@@ -28,8 +28,10 @@ does not contain txids, nullifiers, note commitments, mined heights, or witness 
 `enhance/crates/enhance-pir` owns public record and generation types plus client query logic.
 `enhance/services/enhance-pir-server` owns canonical ingestion, the append-only journal,
 sealed shards, workers, and HTTP routing. The protocol identifier is
-`ironwood-enhance-pir-v2`; clients must reject another identifier, schema,
-record width, row width, or setup seed.
+`ironwood-enhance-pir-v3`; clients must reject another identifier, schema,
+PIR profile, record width, row width, setup seed, or derived parameter set. The
+PIR profile is `simplepir-p16-q46-v1`: `p = 65,536`, six instances, a 46-bit
+query and a 20-bit response at the 8,192-row shard geometry.
 
 The client uses only:
 
@@ -54,7 +56,7 @@ would be unsafe. Client conformance and adoption must be verified for the intend
 
 The network identifier is `main`, the pool is `ironwood`, and activation height is
 3,428,143. Logical rows are the next power of two at or above the used row count,
-with a minimum of 8,192. Used rows equal `ceil(ironwood_tree_size / 29)`.
+with a minimum of 8,192. Used rows equal `ceil(ironwood_tree_size / 33)`.
 
 The client regenerates expected scheme parameters from geometry, checks them for
 exact equality, checks the SHA-256 digest of the decoded public material, and

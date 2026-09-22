@@ -112,12 +112,15 @@ pub fn add_crs_blocks_assign_mod(
 // authenticated transaction-shape byte and invalidates the old preprocessing.
 // Version 7 is the twenty-nine-record row: db_cols goes from 4,096 to 12,288,
 // so every persisted database and partial CRS from version 6 is the wrong shape.
-const ARTIFACT_VERSION: u16 = 7;
+// Version 8 binds the plaintext profile and changes Enhance to p=2^16 with a
+// 46-bit minimum query width.
+const ARTIFACT_VERSION: u16 = 8;
 
 #[derive(Serialize, Deserialize)]
 struct ArtifactMetadata {
     version: u16,
     table: String,
+    pir_profile: String,
     rlwe_degree: usize,
     rlwe_modulus: u64,
     db_rows: usize,
@@ -128,6 +131,27 @@ struct ArtifactMetadata {
     rows_sha256: String,
     database_sha256: String,
     crs_sha256: String,
+}
+
+impl ArtifactMetadata {
+    fn matches_identity(
+        &self,
+        table: DatabaseId,
+        layout: &DatabaseLayout,
+        shard_id: u64,
+        query_row_start: usize,
+        rows_sha256: &str,
+        rlwe: &RlweParams,
+    ) -> bool {
+        self.version == ARTIFACT_VERSION
+            && self.table == table.as_str()
+            && self.pir_profile == layout.pir_profile.id()
+            && self.rlwe_degree == rlwe.d
+            && self.rlwe_modulus == rlwe.q
+            && self.shard_id == shard_id
+            && self.query_row_start == query_row_start
+            && self.rows_sha256 == rows_sha256
+    }
 }
 
 pub struct ShardRuntime {
@@ -222,7 +246,7 @@ impl ShardRuntime {
         )
         .map_err(|error| error.to_string())?;
         let runtime = prepared
-            .persist(&directory, table, rlwe)
+            .persist(&directory, table, layout, rlwe)
             .map_err(|error| error.to_string())?;
         Ok((runtime, true))
     }
@@ -257,14 +281,7 @@ impl ShardRuntime {
             File::open(directory.join("metadata.json")).map_err(|e| e.to_string())?,
         ))
         .map_err(|e| e.to_string())?;
-        if metadata.version != ARTIFACT_VERSION
-            || metadata.table != table.as_str()
-            || metadata.rlwe_degree != rlwe.d
-            || metadata.rlwe_modulus != rlwe.q
-            || metadata.shard_id != shard_id
-            || metadata.query_row_start != query_row_start
-            || metadata.rows_sha256 != rows_sha256
-        {
+        if !metadata.matches_identity(table, layout, shard_id, query_row_start, rows_sha256, rlwe) {
             return Err("artifact metadata mismatch".to_string());
         }
         let (_, local_params) = shard_parameters(layout).map_err(|e| e.to_string())?;
@@ -371,6 +388,7 @@ impl PreparedShard {
         self,
         directory: &Path,
         table: DatabaseId,
+        layout: &DatabaseLayout,
         rlwe: &RlweParams,
     ) -> io::Result<CachedShard> {
         fs::create_dir_all(directory)?;
@@ -393,6 +411,7 @@ impl PreparedShard {
         let metadata = ArtifactMetadata {
             version: ARTIFACT_VERSION,
             table: table.as_str().to_string(),
+            pir_profile: layout.pir_profile.id().to_string(),
             rlwe_degree: rlwe.d,
             rlwe_modulus: rlwe.q,
             db_rows: runtime.server.params().db_rows,
@@ -458,7 +477,7 @@ pub fn global_parameters(
     logical_rows: u64,
     layout: &DatabaseLayout,
 ) -> Result<(RlweParams, YpirSchemeParams), InspiringError> {
-    ipir_sp::params_for_simplepir(logical_rows, layout.item_size_bits())
+    ipir_sp::params_for_simplepir_profile(logical_rows, layout.item_size_bits(), layout.pir_profile)
 }
 
 /// iPIR parameters for one shard of a table. Row sharding is sound because the
@@ -467,7 +486,11 @@ pub fn global_parameters(
 pub fn shard_parameters(
     layout: &DatabaseLayout,
 ) -> Result<(RlweParams, YpirSchemeParams), InspiringError> {
-    ipir_sp::params_for_simplepir(layout.shard_rows as u64, layout.item_size_bits())
+    ipir_sp::params_for_simplepir_profile(
+        layout.shard_rows as u64,
+        layout.item_size_bits(),
+        layout.pir_profile,
+    )
 }
 
 pub struct RowPlaintextIter<'a> {
@@ -552,7 +575,7 @@ mod tests {
     }
 
     /// Every served layout, with the instance count its rows need. One instance
-    /// carries d * log2(p) = 28,672 plaintext bits.
+    /// carries d * log2(p) plaintext bits.
     const LAYOUTS: &[(&str, DatabaseLayout, usize)] =
         &[("enhance", crate::types::ENHANCE_LAYOUT, 6)];
 
@@ -566,7 +589,8 @@ mod tests {
             )
             .expect("global params");
             assert_eq!(rlwe.d, 2_048, "{name}");
-            assert_eq!(shard.p, 1 << 14, "{name}");
+            assert_eq!(shard.p, 1 << 16, "{name}");
+            assert_eq!(shard.query_bits, 46, "{name}");
             assert_eq!(shard.instances, *instances, "{name}");
             assert_eq!(shard.db_cols, instances * rlwe.d, "{name}");
             // Shard and global parameters must agree on everything but row count,
@@ -579,13 +603,41 @@ mod tests {
 
     #[test]
     fn enhance_rows_use_six_ipir_instances() {
-        // A 21,373-byte row is 170,984 bits and fits six 28,672-bit instances
-        // with 1,048 bits to spare. Thirty 737-byte records need 176,880 bits
-        // and would spill into a seventh instance for one extra record.
-        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 21_373);
+        // A 24,321-byte row is 194,568 bits and fits six 32,768-bit instances
+        // with 2,040 bits to spare. Thirty-four records need 200,464 bits and
+        // would spill into a seventh instance.
+        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 24_321);
         let (_, params) = shard_parameters(&crate::types::ENHANCE_LAYOUT).expect("params");
         assert_eq!(params.instances, 6);
         assert_eq!(params.db_cols, 12_288);
+        assert_eq!(params.p, 1 << 16);
+        assert_eq!(params.query_bits, 46);
+    }
+
+    #[test]
+    fn sixteen_bit_row_encoding_preserves_the_odd_tail_byte_and_zero_padding() {
+        let layout = crate::types::ENHANCE_LAYOUT;
+        let (_, params) = shard_parameters(&layout).expect("params");
+        let mut row = vec![0_u8; layout.row_bytes()];
+        row[0] = 0x34;
+        row[1] = 0x12;
+        *row.last_mut().expect("nonempty row") = 0xab;
+
+        let mut coefficients = RowPlaintextIter::new(
+            &row,
+            layout.row_bytes(),
+            2,
+            params.db_cols,
+            layout.pir_profile.plaintext_bits(),
+        );
+        assert_eq!(coefficients.next(), Some(0x1234));
+        assert_eq!(coefficients.nth(12_159), Some(0x00ab));
+        assert_eq!(coefficients.next(), Some(0));
+        assert_eq!(
+            coefficients.nth(126),
+            Some(0),
+            "the padded second row is zero"
+        );
     }
 }
 
@@ -601,6 +653,7 @@ mod persistence_tests {
             record_bytes: 3584,
             records_per_row: 1,
             shard_rows: 2048,
+            pir_profile: ipir_sp::SimplePirProfile::P14,
         }
     }
 
@@ -635,7 +688,7 @@ mod persistence_tests {
     }
 
     #[test]
-    fn legacy_v7_artifacts_load_and_streamed_persistence_preserves_queries_and_bytes() {
+    fn legacy_v7_artifacts_are_rejected_and_streamed_persistence_preserves_queries_and_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let layout = layout();
         let (rlwe, params) = shard_parameters(&layout).unwrap();
@@ -683,13 +736,9 @@ mod persistence_tests {
                 &rlwe,
             )
         };
-        let legacy = load().unwrap();
-        assert_eq!(
-            legacy.runtime.evaluate(&rlwe, &query).unwrap(),
-            expected_query
-        );
+        assert!(load().is_err(), "profile-less v7 artifacts must be rebuilt");
         let cached = prepared
-            .persist(dir.path(), DatabaseId::Enhance, &rlwe)
+            .persist(dir.path(), DatabaseId::Enhance, &layout, &rlwe)
             .unwrap();
         assert_eq!(fs::read(dir.path().join("database.u16le")).unwrap(), db);
         assert_eq!(fs::read(dir.path().join("partial-crs.bin")).unwrap(), hint);
@@ -702,7 +751,7 @@ mod persistence_tests {
             expected_query
         );
         assert_eq!(
-            read_crs_blocks(legacy.publication.reader(), 1, rlwe.d).unwrap()[0].rows,
+            read_crs_blocks(Cursor::new(&hint), 1, rlwe.d).unwrap()[0].rows,
             read_crs_blocks(cached.publication.reader(), 1, rlwe.d).unwrap()[0].rows
         );
         let file = File::options()
@@ -721,8 +770,9 @@ mod persistence_tests {
             .unwrap();
         assert!(load().is_err());
         fs::write(dir.path().join("database.u16le"), &db).unwrap();
-        let mut bad_metadata = metadata;
-        bad_metadata["version"] = serde_json::json!(6);
+        let mut bad_metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.path().join("metadata.json")).unwrap()).unwrap();
+        bad_metadata["pir_profile"] = serde_json::json!("simplepir-p16-q46-v1");
         fs::write(
             dir.path().join("metadata.json"),
             serde_json::to_vec(&bad_metadata).unwrap(),

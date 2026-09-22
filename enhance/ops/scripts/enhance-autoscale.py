@@ -19,11 +19,11 @@ import tempfile
 import time
 import urllib.request
 
-# Three shards of 8,192 rows at 29 records per row. This must track
-# enhance_pir::types::{SHARDS_PER_GROUP, SHARD_POSITIONS}; the schema-8 row
-# widened from 9 to 29 records. Three shards are the measured c-4 ceiling;
+# Three shards of 8,192 rows at 33 records per row. This must track
+# enhance_pir::types::{SHARDS_PER_GROUP, SHARD_POSITIONS}; the schema-9 row
+# widened from 29 to 33 records. Three shards are the measured c-4 ceiling;
 # shard four must be placed on a new replica pair.
-GROUP_POSITIONS = 3 * 237568
+GROUP_POSITIONS = 3 * 270336
 MAX_GROUPS = 4
 
 
@@ -406,7 +406,7 @@ class Controller:
                 with open(self.config['known_hosts'], 'a', encoding='utf8') as handle:
                     handle.write(worker['host_key'])
                 self.ssh(host, 'cloud-init status --wait', timeout=max(1, int(op['deadline'] - time.time())))
-                self.ssh(host, 'install -d -m 700 /srv/enhance-pir/artifacts-r29 /opt/enhance-pir; test -e /swapfile; swapon --show --noheadings | grep -q /swapfile')
+                self.ssh(host, 'install -d -m 700 /srv/enhance-pir/artifacts-r33 /opt/enhance-pir; test -e /swapfile; swapon --show --noheadings | grep -q /swapfile')
                 for name in ('enhance-pir-worker', 'enhance-pir-worker.service'):
                     # Stream bytes through authenticated SSH without shell interpolation.
                     destination = '/usr/local/bin/enhance-pir-worker' if name == 'enhance-pir-worker' else '/etc/systemd/system/enhance-pir-worker.service'
@@ -422,7 +422,7 @@ class Controller:
                 if json.loads(report.read_text()).get('passed') is not True:
                     raise RuntimeError('worker qualification failed')
                 # Only these newly provisioned workers contain disposable fixtures.
-                self.ssh(host, 'systemctl stop enhance-pir-worker && rm -rf /srv/enhance-pir/artifacts-r29/enhance && systemctl start enhance-pir-worker')
+                self.ssh(host, 'systemctl stop enhance-pir-worker && rm -rf /srv/enhance-pir/artifacts-r33/enhance && systemctl start enhance-pir-worker')
                 worker['qualified'] = True
                 self.save()
             op.update(step='activate', activation_deadline=time.time() + 600)

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Build a separate journal; never stop or reconfigure a serving process.
 #
-# Schema 8 widens the PIR row to 29 records. Its journal manifest, shard digests
-# and worker artifacts are all incompatible with the schema-7 nine-record data
-# the fleet is serving, so this prepares into its own directory and leaves the
-# live -v7 directory untouched: that directory is the rollback data.
+# Schema 9 widens the PIR row to 33 records and changes the plaintext profile.
+# Its journal and worker artifacts are incompatible with schema 8, so this
+# prepares into its own directory and leaves the r29 rollback data untouched.
 set -euo pipefail
 for name in WALLET_PIR_COORDINATOR_HOST WALLET_PIR_DEPLOY_USER ENHANCE_RELEASE_SHA ENHANCE_ARTIFACT_DIR WALLET_PIR_SSH_KEY_PATH WALLET_PIR_KNOWN_HOSTS_PATH; do
   [[ -n "${!name:-}" ]] || { echo "$name is required" >&2; exit 2; }
@@ -14,8 +13,8 @@ done
 [[ "$WALLET_PIR_DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
 
 # Must match deploy-enhance-pir.sh and enhance_pir::types.
-ENHANCE_DATA_DIR="${ENHANCE_DATA_DIR:-/srv/zakura/enhance-data-r29}"
-ENHANCE_TARGET_RECORDS_PER_ROW="${ENHANCE_TARGET_RECORDS_PER_ROW:-29}"
+ENHANCE_DATA_DIR="${ENHANCE_DATA_DIR:-/srv/zakura/enhance-data-r33}"
+ENHANCE_TARGET_RECORDS_PER_ROW="${ENHANCE_TARGET_RECORDS_PER_ROW:-33}"
 [[ "$ENHANCE_DATA_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
 [[ "$ENHANCE_TARGET_RECORDS_PER_ROW" =~ ^[0-9]+$ ]]
 

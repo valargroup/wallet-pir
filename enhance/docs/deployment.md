@@ -56,7 +56,7 @@ The workflow has three operating modes:
 | Inputs | Effect |
 |---|---|
 | `artifact_only=true` | Fetch and verify the full-CI artifact without deploying |
-| `artifact_only=false`, `prepare_only=true` | Prepare the schema-8 journal alongside the active data |
+| `artifact_only=false`, `prepare_only=true` | Prepare the schema-9 journal alongside the active data |
 | Both false | Deploy and verify the release |
 
 The deployment helper uses `WALLET_PIR_COORDINATOR_HOST`,
@@ -81,7 +81,31 @@ requires the explicit topology-change override (`allow_topology_change` in the
 workflow, `ENHANCE_ALLOW_TOPOLOGY_CHANGE=true` in the helper). Replacing a replica
 inside an existing group does not itself move shard ownership.
 
-## Schema-8 preparation and cutover
+## Schema-9 16-bit preparation and cutover
+
+Schema 9 uses `ironwood-enhance-pir-v3` and profile
+`simplepir-p16-q46-v1`. It changes the row from 29 to 33 records, the plaintext
+modulus from 16,384 to 65,536, and the minimum query width from 41 to 46 bits.
+Treat these as one atomic migration. The generation document, client parameter
+derivation, parameter ID and persisted worker metadata all bind the profile.
+Schema-9 clients reject a schema-8 generation, and workers rebuild version-7
+artifacts because artifact version 8 includes the profile identity.
+
+Run the old and new profiles as parallel deployments during adoption. Each
+deployment keeps its own journal, artifact root, coordinator and service origin;
+route old clients to the schema-8 origin and upgraded clients to the schema-9
+origin. Do not serve both profiles from one generation or infer the profile from
+query length. Retire the old origin only after client adoption and rollback
+criteria are satisfied.
+
+Before production activation, generate and independently review a correctness
+certificate for the actual public snapshot and pinned setup. The retained
+synthetic fixtures establish at most `2^-143` per query in the stated
+independent-sampler model at 46 bits; they are evidence for the profile choice,
+not a certificate for a different production snapshot. See
+[16-bit expansion](plaintext16-expansion.md).
+
+## Historical schema-8 preparation and cutover
 
 Schema 8 uses `ironwood-enhance-pir-v2` on `/v1/enhance/*` and packs 29 records
 into a 21,373-byte row. Schema-7 clients reject it, and a schema-8 client rejects

@@ -18,14 +18,13 @@ esac
 # the deployment-side copy of enhance_pir::types; a release whose public init
 # disagrees with them is refused before any service stops.
 #
-# Schema 8 (29 records per 21,373-byte row) is NOT readable from a schema-7
-# journal or its worker artifacts, so it gets its own directories. The old -v7
-# directories are deliberately left in place: they are the rollback data.
-readonly ENHANCE_TARGET_SCHEMA=8
-readonly ENHANCE_TARGET_RECORDS_PER_ROW=29
-readonly ENHANCE_TARGET_ROW_BYTES=21373
-readonly ENHANCE_DATA_DIR=/srv/zakura/enhance-data-r29
-readonly ENHANCE_PREVIOUS_DATA_DIR=/srv/zakura/enhance-data-v7
+# Schema 9 is not readable from a schema-8 journal or its worker artifacts, so
+# it gets its own directories. The r29 directories remain rollback data.
+readonly ENHANCE_TARGET_SCHEMA=9
+readonly ENHANCE_TARGET_RECORDS_PER_ROW=33
+readonly ENHANCE_TARGET_ROW_BYTES=24321
+readonly ENHANCE_DATA_DIR=/srv/zakura/enhance-data-r33
+readonly ENHANCE_PREVIOUS_DATA_DIR=/srv/zakura/enhance-data-r29
 
 # ------------------------------------------------------------- jq programs
 #
@@ -58,10 +57,12 @@ readonly JQ_ENHANCE_COORDINATOR_SERVING='.phase.phase == "serving"'
 # shellcheck disable=SC2016
 readonly JQ_ENHANCE_HEALTH_WORKERS='.phase.phase == "serving" and .tables.enhance.workers == $expected'
 # shellcheck disable=SC2016
-readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.schema_version == 8) and
-    (.generation.protocol_revision == "ironwood-enhance-pir-v2") and
-    (.generation.record_bytes == 737) and (.generation.records_per_row == 29) and
-    (.generation.row_bytes == 21373) and (.generation.shard_rows == 8192) and
+readonly JQ_ENHANCE_INIT_COMPLETE='(.generation.schema_version == 9) and
+    (.generation.protocol_revision == "ironwood-enhance-pir-v3") and
+    (.generation.pir_profile == "simplepir-p16-q46-v1") and
+    (.generation.record_bytes == 737) and (.generation.records_per_row == 33) and
+    (.generation.row_bytes == 24321) and (.generation.shard_rows == 8192) and
+    (.params.p == 65536) and (.params.query_bits == 46) and
     (.generation.network == "main") and
     (.generation.pool == "ironwood") and
     (.generation.setup_seed | type == "number") and
