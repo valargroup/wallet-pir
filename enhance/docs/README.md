@@ -6,8 +6,9 @@ then decrypts and validates the returned data using its existing transaction
 context. The service does not supply transaction history, witnesses, or a
 complete wallet sync.
 
-The current client and server implement schema 8 of `ironwood-enhance-pir-v2`,
-which packs 29 records into a 21,373-byte PIR row. Schema-7 clients reject it.
+The current client and server implement schema 9 of `ironwood-enhance-pir-v3`,
+using the versioned `simplepir-p16-q46-v1` profile. It packs 33 records into a
+24,321-byte PIR row. Earlier clients reject the schema, protocol and profile.
 Start with the integration guide to use the service, or the deployment guide to
 operate it. The protocol describes the contract; status records what has
 actually been observed.
@@ -19,6 +20,7 @@ actually been observed.
 | [Architecture](architecture.md) | Repository layout, ingestion, storage, queries and replicas |
 | [Deployment](deployment.md) | Local operation, release preparation, cutover, rollback and monitoring |
 | [Capacity expansion](capacity-expansion.md) | Infrastructure migration, qualification and controller operation |
+| [16-bit expansion](plaintext16-expansion.md) | Rationale, exact capacity benefit, correctness evidence and migration contract |
 | [Performance](performance.md) | Measured latency and throughput, benchmark evidence and reproduction |
 | [Status](status.md) | Dated public observations and unresolved deployment facts |
 | [Remaining work](remaining-work.md) | Evidence and acceptance still required |

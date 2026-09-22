@@ -60,9 +60,10 @@ journal stores fixed-width records in `enhance/records.bin` and committed block
 metadata in `enhance/manifest.json` beneath the configured data directory.
 The journal supports restart and rewind; it is not a finality guarantee.
 
-Each record is 737 bytes. Twenty-nine records occupy a 21,373-byte row, which
-fits six PIR instances with 131 bytes to spare; a thirtieth record would require
-a seventh. A shard contains 8,192 rows, or 237,568 positions. Full shards are sealed; the partly filled frontier changes
+Each record is 737 bytes. Thirty-three records occupy a 24,321-byte row, which
+fits six 16-bit PIR instances with 255 bytes to spare; a thirty-fourth record
+would require a seventh instance. A shard contains 8,192 rows, or 270,336
+positions. Full shards are sealed; the partly filled frontier changes
 as blocks arrive. Row digests identify shard content for preparation and reuse.
 The logical database is padded to a power-of-two row count, at least 8,192.
 See the [protocol](protocol.md) for field offsets and public geometry.
@@ -130,8 +131,8 @@ encrypted row. The client decodes it and extracts the requested slot locally.
 
 ## Placement and capacity
 
-Ordered groups own consecutive ranges of three schema-8 shards. A group therefore
-covers 712,704 positions, with two production replicas holding the same assignment.
+Ordered groups own consecutive ranges of three schema-9 shards. A group therefore
+covers 811,008 positions, with two production replicas holding the same assignment.
 Group order fixes shard ownership and is append-only; replicas can be replaced
 within a group. Readiness is tracked per generation, so a recovering replica is
 not selected for data it does not yet hold.

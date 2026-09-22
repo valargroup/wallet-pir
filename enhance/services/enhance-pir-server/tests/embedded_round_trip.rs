@@ -443,12 +443,15 @@ async fn enhance_v1_routes_expose_only_the_current_generation() {
     assert_eq!(manifest.schema_version, enhance_pir::SCHEMA_VERSION);
     assert_eq!(manifest.generation, 3_428_143);
     assert_eq!(manifest.record_bytes, enhance_pir::RECORD_BYTES as u32);
+    assert_eq!(manifest.records_per_row, 33);
+    assert_eq!(manifest.row_bytes, 24_321);
+    assert_eq!(manifest.pir_profile, enhance_pir::PIR_PROFILE_ID);
     assert!(manifest.parameter_id.contains("-enhance-"));
     assert_eq!(wire.params, expected_session.params);
     let public_params = BASE64_STANDARD.decode(&wire.public_params_base64).unwrap();
     // One published `c1` row per iPIR instance, at full `q` precision. Derived
-    // from the served parameters rather than written out: the nine-to-29-record
-    // row took this from two instances to six, and a literal here only records
+    // from the served parameters rather than written out: the wider record
+    // rows took this from two instances to six, and a literal here only records
     // which layout the test was written against.
     assert_eq!(wire.params.db_cols % wire.params.poly_len, 0);
     assert_eq!(
@@ -459,7 +462,9 @@ async fn enhance_v1_routes_expose_only_the_current_generation() {
                 ipir_sp::params::SINGLE_CRT_Q,
             )
     );
-    assert_eq!(wire.params.instances, 6, "29 x 737-byte records per row");
+    assert_eq!(wire.params.instances, 6, "33 x 737-byte records per row");
+    assert_eq!(wire.params.p, 1 << 16);
+    assert_eq!(wire.params.query_bits, 46);
     assert_eq!(public_params, expected_public_params);
     assert_eq!(get(&app, "/v1/health").await.0, StatusCode::OK);
 

@@ -882,6 +882,7 @@ mod publication_recovery_tests {
             record_bytes: 3584,
             records_per_row: 1,
             shard_rows: 2048,
+            pir_profile: ipir_sp::SimplePirProfile::P14,
         };
         let (rlwe, params) = shard_parameters(&layout).unwrap();
         let setup = ipir_sp::IPIRClient::new(&rlwe, &params)
@@ -898,7 +899,7 @@ mod publication_recovery_tests {
             &setup,
         )
         .unwrap()
-        .persist(directory, DatabaseId::Enhance, &rlwe)
+        .persist(directory, DatabaseId::Enhance, &layout, &rlwe)
         .unwrap()
     }
 

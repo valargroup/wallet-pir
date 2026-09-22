@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEPLOY = ROOT / 'enhance/ops/scripts/deploy-enhance-pir.sh'
 PREPARE = ROOT / 'enhance/ops/scripts/prepare-enhance-pir.sh'
 AUTOSCALE = ROOT / 'enhance/ops/scripts/enhance-autoscale.py'
-ROLLOUT = ROOT / 'enhance/ops/scripts/rollout-schema8-ssh.sh'
+ROLLOUT = ROOT / 'enhance/ops/scripts/rollout-schema9-ssh.sh'
 TYPES = ROOT / 'enhance/crates/enhance-pir/src/types.rs'
 
 
@@ -67,10 +67,10 @@ class ServedLayout(unittest.TestCase):
                           PREPARE.read_text(), re.M)
         self.assertIsNotNone(match, 'prepare script has no ENHANCE_DATA_DIR default')
         self.assertEqual(match.group(1), deploy_dir)
-        self.assertNotEqual(deploy_dir, '/srv/zakura/enhance-data-v7',
+        self.assertNotEqual(deploy_dir, '/srv/zakura/enhance-data-r29',
                             'the new layout must not be prepared into the serving directory')
         self.assertEqual(shell_const(DEPLOY, 'ENHANCE_PREVIOUS_DATA_DIR'),
-                         '/srv/zakura/enhance-data-v7')
+                         '/srv/zakura/enhance-data-r29')
 
     def test_units_serve_the_directory_the_deploy_script_prepares(self):
         unit = (ROOT / 'enhance/ops/deploy/enhance-pir-server.service').read_text()

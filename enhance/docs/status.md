@@ -1,5 +1,21 @@
 # Status
 
+## September 22, 2026: schema-9 16-bit implementation, not deployed
+
+The schema-9 client and server implementation pins
+`simplepir-p16-q46-v1`: 16-bit plaintexts, 46-bit queries, 20-bit responses,
+33 records per 24,321-byte row and 270,336 positions per shard. It preserves the
+six-instance 12,288-column shape. Unit tests and embedded end-to-end retrieval
+tests pass locally; no production deployment or production-snapshot correctness
+certificate was performed in this work.
+
+Fixed public synthetic fixtures produced a weakest `2^-143` per-query
+independent-sampler bound and 768 fresh queries with zero failures. That evidence
+does not certify a different production snapshot. The migration must retain the
+schema-8 origin during adoption and obtain an independently reviewed certificate
+bound to the actual schema-9 snapshot and setup before activation. The exact
+benefit and scope are recorded in [16-bit expansion](plaintext16-expansion.md).
+
 ## September 20, 2026: schema-8 implementation, not deployed
 
 The 29-record layout is implemented and tested locally at schema 8; **nothing
