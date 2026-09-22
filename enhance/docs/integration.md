@@ -37,6 +37,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+A transaction whose trial decryption covers several actions passes every output
+position to `query_positions`. The client groups those positions by
+`position / 29` and issues one encrypted query per distinct row, then reads each
+requested slot from that decoded row. The returned records follow the order of
+the input. A repeated position in the same row still produces one query.
+`query_position` is that path for a single position.
+
+Actions in one transaction occupy consecutive output positions. A contiguous run
+of at most 29 positions occupies one row, or two rows when the run crosses a
+multiple of 29. The number of queries is the number of distinct rows.
+
 `query_dummy().await` sends a fresh query for a random row and discards the
 result. `query_position_with_timing` returns the same record plus preparation,
 HTTP, decoding and total durations. It is useful for measurements, not a
@@ -46,8 +57,11 @@ For an application-owned HTTP stack, construct `QuerySession::from_session`
 from the atomic initialization response. `prepare_position` returns a
 `PreparedQuery` and local slot; send `PreparedQuery::body()` as the binary POST
 body, pass the original prepared query and response to `decode`, then use
-`record_in_row` to extract and validate the record. Keep the query's private
-state local. `prepare_dummy` supplies the corresponding dummy path.
+`record_in_row` to extract and validate the record. For several positions,
+`prepare_positions` returns one `PreparedQuery` per distinct row together with
+the slots to read after `decode`. `rows_for_positions` exposes the same grouping
+when the caller prepares each row itself. Keep the query's private state local.
+`prepare_dummy` supplies the corresponding dummy path.
 
 ## CLI smoke checks
 
@@ -73,11 +87,12 @@ a session automatically nor retries failed requests. Its HTTP timeout is 120
 seconds, with body limits of 1 MiB for initialization and 16 MiB for responses.
 
 Positions are zero-based indices in the Ironwood output tree. The local mapping
-is `row = position / 9`, `slot = position % 9`; only positions below the session's
+is `row = position / 29`, `slot = position % 29`; only positions below the session's
 `ironwood_tree_size` are covered. Padded rows do not extend real coverage. If a
 newly scanned position is outside coverage, fetch a fresh session and check its
 anchor and coverage before querying. If it remains outside coverage, defer it;
-do not reinterpret a padded record as an output.
+do not reinterpret a padded record as an output. Group the positions for one
+transaction with that mapping before querying, so each row is requested once.
 
 A session can expire as newer generations displace the eight retained snapshots.
 The server currently uses HTTP 503 for several query failures, including an
@@ -119,6 +134,9 @@ queries use the same row-query construction, but this library does not implement
 a wallet-wide fixed query schedule, traffic envelope or retry policy. A wallet
 must choose those policies deliberately: requests made only after interesting
 scan events can reveal timing information even when the position is hidden.
+`query_positions` sends one request for each distinct row. That count is visible
+to the server and equals the number of rows the positions occupy. A wallet that
+wants a fixed request count pads or schedules those requests itself.
 
 A fallback that retrieves a transaction by ID exposes that identifier to the
 fallback service. Treat it as a separate wallet privacy decision, including for

@@ -64,6 +64,41 @@ impl PreparedQuery {
     }
 }
 
+/// Positions that share one PIR row, in the order they were requested.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowSlots {
+    pub row: usize,
+    /// Slot of each position inside `row`, parallel to `indexes`.
+    pub slots: Vec<usize>,
+    /// Index of each position in the caller's slice.
+    pub indexes: Vec<usize>,
+}
+
+/// One encrypted row query and the slots to read from its decoded row.
+pub struct PreparedRow {
+    query: PreparedQuery,
+    slots: Vec<usize>,
+    indexes: Vec<usize>,
+}
+
+impl PreparedRow {
+    pub fn query(&self) -> &PreparedQuery {
+        &self.query
+    }
+
+    pub fn slots(&self) -> &[usize] {
+        &self.slots
+    }
+
+    pub fn indexes(&self) -> &[usize] {
+        &self.indexes
+    }
+
+    fn into_parts(self) -> (PreparedQuery, Vec<usize>, Vec<usize>) {
+        (self.query, self.slots, self.indexes)
+    }
+}
+
 impl QuerySession {
     pub fn from_session(session: EnhanceSession) -> Result<Self, ClientError> {
         let public_params = BASE64_STANDARD.decode(session.public_params_base64)?;
@@ -167,6 +202,46 @@ impl QuerySession {
         Ok((self.prepare_row(row)?, slot))
     }
 
+    /// Groups positions into the PIR rows that contain them.
+    ///
+    /// Each distinct row appears once, in the order of its first position.
+    /// Slots and indexes keep request order inside that row. Any position at
+    /// or beyond the generation's `ironwood_tree_size` rejects the whole set.
+    pub fn rows_for_positions(&self, positions: &[u64]) -> Result<Vec<RowSlots>, ClientError> {
+        let mut groups: Vec<RowSlots> = Vec::new();
+        for (index, &position) in positions.iter().enumerate() {
+            let (row, slot) = self
+                .generation
+                .row_for_position(position)
+                .ok_or(ClientError::OutsideCoverage(position))?;
+            if let Some(group) = groups.iter_mut().find(|group| group.row == row) {
+                group.slots.push(slot);
+                group.indexes.push(index);
+            } else {
+                groups.push(RowSlots {
+                    row,
+                    slots: vec![slot],
+                    indexes: vec![index],
+                });
+            }
+        }
+        Ok(groups)
+    }
+
+    /// Prepares one encrypted query per distinct row occupied by `positions`.
+    pub fn prepare_positions(&self, positions: &[u64]) -> Result<Vec<PreparedRow>, ClientError> {
+        self.rows_for_positions(positions)?
+            .into_iter()
+            .map(|group| {
+                Ok(PreparedRow {
+                    query: self.prepare_row(group.row)?,
+                    slots: group.slots,
+                    indexes: group.indexes,
+                })
+            })
+            .collect()
+    }
+
     pub fn prepare_dummy(&self) -> Result<PreparedQuery, ClientError> {
         self.prepare_row(OsRng.gen_range(0..self.ypir.db_rows))
     }
@@ -261,9 +336,37 @@ impl EnhancePirClient {
     }
 
     pub async fn query_position(&self, position: u64) -> Result<EnhanceRecord, ClientError> {
-        let (query, slot) = self.session.prepare_position(position)?;
-        let row = self.send(query).await?;
-        record_in_row(&row, slot)
+        let mut records = self.query_positions(&[position]).await?;
+        records
+            .pop()
+            .ok_or_else(|| ClientError::Response("position was not retrieved".to_string()))
+    }
+
+    /// Retrieves every position, issuing one query per distinct row.
+    ///
+    /// Records follow the order of `positions`. Positions that share a row are
+    /// read from that single decoded row.
+    pub async fn query_positions(
+        &self,
+        positions: &[u64],
+    ) -> Result<Vec<EnhanceRecord>, ClientError> {
+        let prepared = self.session.prepare_positions(positions)?;
+        let mut records = Vec::new();
+        records.resize_with(positions.len(), || None);
+        for group in prepared {
+            let (query, slots, indexes) = group.into_parts();
+            let row = self.send(query).await?;
+            for (slot, index) in slots.into_iter().zip(indexes) {
+                records[index] = Some(record_in_row(&row, slot)?);
+            }
+        }
+        records
+            .into_iter()
+            .map(|record| {
+                record
+                    .ok_or_else(|| ClientError::Response("position was not retrieved".to_string()))
+            })
+            .collect()
     }
 
     pub async fn query_position_with_timing(
@@ -436,6 +539,49 @@ mod tests {
         assert!(matches!(
             QuerySession::from_session(session),
             Err(ClientError::Generation(message)) if message == "public parameter digest mismatch"
+        ));
+    }
+
+    fn covering_session(tree_size: u64) -> QuerySession {
+        let mut session = valid_session();
+        session.generation.ironwood_tree_size = tree_size;
+        session.generation.used_rows = tree_size.div_ceil(RECORDS_PER_ROW as u64);
+        QuerySession::from_session(session).expect("covering session")
+    }
+
+    #[test]
+    fn a_run_crossing_offset_29_prepares_two_rows() {
+        let session = covering_session(60);
+        let prepared = session
+            .prepare_positions(&[27, 28, 29])
+            .expect("positions in coverage");
+        assert_eq!(prepared.len(), 2);
+        assert_eq!(prepared[0].query().row(), 0);
+        assert_eq!(prepared[0].slots(), &[27, 28]);
+        assert_eq!(prepared[0].indexes(), &[0, 1]);
+        assert_eq!(prepared[1].query().row(), 1);
+        assert_eq!(prepared[1].slots(), &[0]);
+        assert_eq!(prepared[1].indexes(), &[2]);
+    }
+
+    #[test]
+    fn duplicates_inside_one_row_prepare_one_query() {
+        let session = covering_session(60);
+        let prepared = session
+            .prepare_positions(&[4, 11, 4])
+            .expect("positions in coverage");
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].query().row(), 0);
+        assert_eq!(prepared[0].slots(), &[4, 11, 4]);
+        assert_eq!(prepared[0].indexes(), &[0, 1, 2]);
+    }
+
+    #[test]
+    fn a_position_outside_the_tree_rejects_the_whole_set() {
+        let session = covering_session(30);
+        assert!(matches!(
+            session.rows_for_positions(&[28, 30]),
+            Err(ClientError::OutsideCoverage(30))
         ));
     }
 }
