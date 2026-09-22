@@ -1,0 +1,11 @@
+{
+  "binary": "/tmp/enhance-schema9-capacity-qy0ziH/enhance/evidence/row-layout-benchmark-2026-09-22/target/release/enhance-worker-capacity",
+  "memory_high": "7G",
+  "memory_max": "7680M",
+  "cases": [
+    {"name": "four-shards-active-transition", "args": [4, "active", 12, "/tmp/enhance-schema9-capacity-qy0ziH", 4]},
+    {"name": "seven-shards-sealed", "args": [7, "sealed", 12, "/tmp/enhance-schema9-capacity-qy0ziH", 0]},
+    {"name": "five-shards-active-transition", "args": [5, "active", 12, "/tmp/enhance-schema9-capacity-qy0ziH", 4]},
+    {"name": "eight-shards-sealed", "args": [8, "sealed", 12, "/tmp/enhance-schema9-capacity-qy0ziH", 0]}
+  ]
+}

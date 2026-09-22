@@ -1,0 +1,21 @@
+{
+  "schema_version": 9,
+  "repository_revision": "05337af410dd0f49214dc36fc4f053d3b126fb6c",
+  "ipir_revision": "225972648cc2982abfac66ba5b7a3930b223051a",
+  "rust_toolchain": "1.91.0",
+  "linux_rustflags": "-C target-cpu=x86-64-v3",
+  "linux_build_jobs": 4,
+  "linux_host": "wallet-pir-ci-01",
+  "linux_work_directory": "/tmp/enhance-schema9-capacity-qy0ziH",
+  "records_per_row": 33,
+  "record_bytes": 737,
+  "plaintext_bits": 16,
+  "pir_profile": "simplepir-p16-q46-v1",
+  "source_sha256": {
+    "source/enhance/services/enhance-pir-server/src/artifact.rs": "e43074e9d3c071e00a9065f2ecd5c4b09fb4b9680aea0c952d7c57d6d3d50f45",
+    "source/enhance/services/enhance-pir-server/src/ipir.rs": "3b04a74e95a2e901f4577d66d2347ec96036c119a085c7e56776062bc606f540",
+    "source/enhance/services/enhance-pir-server/src/wire.rs": "afff6473ba1cafea7df800755ff165d9c5119330cdaecb4a6bb8b6efd0cbe45b",
+    "source/enhance/services/enhance-pir-server/src/worker.rs": "b328fadfe132fbe9edf4c9c936538452fb41891ad976d939d8f8d4e5a703dac7",
+    "source/enhance/evidence/row-layout-benchmark-2026-09-22/src/worker_capacity.rs": "22c7fd6730460847abcbe7842924f9af86c0e394dd71057aa126aba296d83728"
+  }
+}

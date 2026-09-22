@@ -1,7 +1,20 @@
 # Enhance evidence
 
+## Current architecture-2 capacity evidence
+
+The [schema-9 worker-capacity report](schema9-worker-capacity-2026-09-22/REPORT.md)
+is the consolidated entry point for the 7 GiB worker budget. Its raw tests use
+**eight published generations plus a candidate**. The current
+[architecture-2 specification](../docs/architecture_2.md#five-generation-placement-model-and-memory-estimates)
+selects **five published generations plus a candidate**, with five total shards
+and one active frontier or six sealed shards. The five-generation figures are
+derived estimates, not completed benchmark or production qualification results.
+
+## Run catalog
+
 | Record | Supports | Limit |
 |---|---|---|
+| [September 22 schema-9 worker capacity](schema9-worker-capacity-2026-09-22/REPORT.md) | Four isolated Linux capacity cases at a 7 GiB soft limit, raw memory/correctness evidence, pinned source, and five-generation planning estimates | Measured retention is eight generations; five-generation lifecycle and physical 8 GiB-host safety remain unqualified |
 | [September 22 streaming review fixes](streaming-artifacts-review-fixes-2026-09-22/README.md) | Corrupt CRS recovery, preparation-slot regressions, and five before/after cached loads | Local warm-cache sample; no demonstrated latency improvement or production qualification |
 | [September 22 streaming artifacts](streaming-artifacts-2026-09-22/README.md) | Local schema-8 before/after worker memory, persistence compatibility, streaming tests, and retained CRS disk usage | One synthetic run on Apple M4 Max; no fleet qualification or HTTP transport timing |
 | [September 20 live PIR baseline](../../evidence/live-pir-2026-09-20/REPORT.md) | Fresh production inventory, public exact-answer probes, payload sizes, timing, and bounded load observations for Enhance and Transparent PIR | Schema 7 observation only; short WAN-bound runs do not establish saturation capacity |
