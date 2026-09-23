@@ -13,8 +13,12 @@ cargo test --locked --release --manifest-path enhance/tools/noise-analysis/Cargo
 python3 -m unittest discover -s enhance/tools/noise-analysis -v
 ```
 
-The standalone lockfile pins research dependencies. Production code and wire
-formats are unchanged. On Linux use `RUSTFLAGS="-C target-cpu=native"` to exercise
+The standalone lockfile pins research dependencies. The current candidate uses
+P16Q48 (`6f74a2d7`) with an explicitly selected `2^-78` full-query correctness
+target and production protocol v6. Historical q46 and q49 inputs keep their
+original `2^-128` target; the verifier binds each target to its exact dependency
+revision and query precision. See the [candidate evidence](../../evidence/p16-q48-2026-09-23/README.md).
+On Linux use `RUSTFLAGS="-C target-cpu=native"` to exercise
 the accelerated runtime-selected worker kernel against the portable monolithic
 reference. On ARM the portable worker path is selected.
 
@@ -84,7 +88,8 @@ publication policy.
 ## Analytical method and limits
 
 The extraction is adapted from ipir-sp commit `0beedf6`, recomputed from the
-current exact top-digit decomposition at `dac5b050`. No discarded-carry allowance
+exact top-digit decomposition introduced at `dac5b050` and retained by the q48
+candidate. No discarded-carry allowance
 is used. For each original Gaussian key-error coefficient, all signed
 negacyclic/automorphic contributions are combined before squaring. Two public
 error vectors cross-check the action against the NTT backend. An exhaustive tiny

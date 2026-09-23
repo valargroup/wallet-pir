@@ -115,7 +115,6 @@ impl DiskState {
         if self.schema_version != enhance_pir::v4::SCHEMA_VERSION
             || self.protocol_revision != PROTOCOL_REVISION
         {
-
             return Err(
                 "incompatible worker state; rebuild protocol v6 in a separate data directory"
                     .into(),

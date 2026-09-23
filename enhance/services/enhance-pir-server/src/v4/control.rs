@@ -712,7 +712,6 @@ mod tests {
         fs::write(&path, &bytes).unwrap();
         assert!(Store::open(root.path()).is_err());
         assert_eq!(fs::read(&path).unwrap(), bytes);
-
     }
 
     #[test]
