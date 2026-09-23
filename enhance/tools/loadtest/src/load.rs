@@ -74,7 +74,7 @@ impl WarmupSamples {
                 }
                 Ok(false)
             }
-            Err(error @ (ClientError::HttpStatus(429 | 503) | ClientError::Http(_))) => {
+            Err(error @ (ClientError::HttpStatus(429 | 502 | 503) | ClientError::Http(_))) => {
                 let class = match error {
                     ClientError::HttpStatus(status) => format!("http_{status}"),
                     _ => "transport".into(),
@@ -251,7 +251,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                         }
                     }
                     Err(error) => {
-                        if matches!(error, ClientError::HttpStatus(429 | 503)) {
+                        if matches!(error, ClientError::HttpStatus(429 | 502 | 503)) {
                             tokio::time::sleep(Duration::from_millis(50)).await;
                         }
                         let class = match error {
@@ -362,7 +362,7 @@ mod tests {
         };
         assert!(matches!(transport, ClientError::Http(_)));
         assert!(samples.observe(Err(transport), b"expected").unwrap());
-        for status in [429, 503, 429] {
+        for status in [429, 502, 503, 429] {
             assert!(samples
                 .observe(Err(ClientError::HttpStatus(status)), b"expected")
                 .unwrap());
@@ -374,6 +374,7 @@ mod tests {
             [
                 ("transport".into(), 1),
                 ("http_429".into(), 2),
+                ("http_502".into(), 1),
                 ("http_503".into(), 1)
             ]
             .into()

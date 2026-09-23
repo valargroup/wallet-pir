@@ -7,7 +7,8 @@ use super::{
 use axum::{
     body::to_bytes,
     extract::{Path, Request, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -16,8 +17,47 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::path::{Path as FsPath, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use tokio::sync::{RwLock, Semaphore};
+
+const QUERY_ACTIVE_LIMIT: usize = 2;
+const QUERY_WAIT_LIMIT: usize = 16;
+const QUERY_WAIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+const QUERY_BODY_LIMIT: usize = 512 * 1024;
+
+#[derive(Default)]
+struct QueryStats {
+    route_cursor: AtomicU64,
+    wait_count: AtomicU64,
+    wait_micros: AtomicU64,
+    rejected: AtomicU64,
+    primary_success: AtomicU64,
+    fallback_success: AtomicU64,
+    worker_busy: AtomicU64,
+    worker_failure: AtomicU64,
+}
+
+#[derive(Debug)]
+struct QueryError(StatusCode, String);
+
+impl From<(StatusCode, String)> for QueryError {
+    fn from((status, message): (StatusCode, String)) -> Self {
+        Self(status, message)
+    }
+}
+
+impl IntoResponse for QueryError {
+    fn into_response(self) -> Response {
+        if self.0 == StatusCode::TOO_MANY_REQUESTS {
+            (self.0, [(header::RETRY_AFTER, "1")], self.1).into_response()
+        } else {
+            (self.0, self.1).into_response()
+        }
+    }
+}
 
 // Native full-group cold preparation exceeded the shared 180-second HTTP
 // deadline during sealed qualification. Queries/control probes keep their short
@@ -148,6 +188,8 @@ pub struct Coordinator {
     snapshots: Arc<RwLock<Vec<Arc<Snapshot>>>>,
     publication: Arc<Semaphore>,
     queries: Arc<Semaphore>,
+    query_waiters: Arc<Semaphore>,
+    query_stats: Arc<QueryStats>,
     http: reqwest::Client,
     root: PathBuf,
     blocked: Arc<Mutex<Option<String>>>,
@@ -260,7 +302,9 @@ impl Coordinator {
             store: Arc::new(Mutex::new(store)),
             snapshots: Arc::new(RwLock::new(snapshots)),
             publication: Arc::new(Semaphore::new(1)),
-            queries: Arc::new(Semaphore::new(2)),
+            queries: Arc::new(Semaphore::new(QUERY_ACTIVE_LIMIT)),
+            query_waiters: Arc::new(Semaphore::new(QUERY_WAIT_LIMIT)),
+            query_stats: Arc::new(QueryStats::default()),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(180))
                 .build()
@@ -1360,6 +1404,29 @@ async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8
 }
 
 type ApiResult<T> = Result<T, (StatusCode, String)>;
+type QueryResult<T> = Result<T, QueryError>;
+
+async fn query_body(request: Request) -> QueryResult<axum::body::Bytes> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        to_bytes(request.into_body(), QUERY_BODY_LIMIT),
+    )
+    .await
+    .map_err(|_| QueryError(StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
+    .map_err(|e| QueryError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))
+}
+
+async fn reject_query(c: &Coordinator, request: Request) -> QueryResult<Vec<u8>> {
+    // Finish reading the bounded body before responding; otherwise the public
+    // reverse proxy can be left writing to a closed upstream connection.
+    let _ = query_body(request).await?;
+    c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
+    Err(QueryError(
+        StatusCode::TOO_MANY_REQUESTS,
+        "query limit".into(),
+    ))
+}
+
 async fn init(State(c): State<Coordinator>) -> ApiResult<Json<Manifest>> {
     c.manifest().await.map(Json).ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
@@ -1381,19 +1448,24 @@ async fn session(
         .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
     Ok(Json(pack.session(generation, shard)))
 }
-async fn query(State(c): State<Coordinator>, request: Request) -> ApiResult<Vec<u8>> {
-    let permit = c
-        .queries
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "query limit".into()))?;
-    let body = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        to_bytes(request.into_body(), 64 * 1024 * 1024),
-    )
-    .await
-    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
-    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Vec<u8>> {
+    let waiting = match c.query_waiters.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => return reject_query(&c, request).await,
+    };
+    let started_wait = std::time::Instant::now();
+    let acquired =
+        tokio::time::timeout(QUERY_WAIT_DEADLINE, c.queries.clone().acquire_owned()).await;
+    c.query_stats.wait_count.fetch_add(1, Ordering::Relaxed);
+    c.query_stats
+        .wait_micros
+        .fetch_add(started_wait.elapsed().as_micros() as u64, Ordering::Relaxed);
+    drop(waiting);
+    let permit = match acquired {
+        Ok(Ok(permit)) => permit,
+        _ => return reject_query(&c, request).await,
+    };
+    let body = query_body(request).await?;
     let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let generation_pin = c.snapshots.clone().read_owned().await;
     let snapshot = generation_pin
@@ -1416,7 +1488,17 @@ async fn query(State(c): State<Coordinator>, request: Request) -> ApiResult<Vec<
         coefficients,
     };
     let mut answer = None;
-    for url in &snapshot.saved.routes[&binding.shard_id] {
+    let mut non_busy_failure = false;
+    let routes = &snapshot.saved.routes[&binding.shard_id];
+    if routes.is_empty() {
+        return Err(QueryError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no replica route".into(),
+        ));
+    }
+    let first = c.query_stats.route_cursor.fetch_add(1, Ordering::Relaxed) as usize % routes.len();
+    for offset in 0..routes.len() {
+        let url = &routes[(first + offset) % routes.len()];
         let result = async {
             let response = c
                 .http
@@ -1426,6 +1508,9 @@ async fn query(State(c): State<Coordinator>, request: Request) -> ApiResult<Vec<
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                return Ok::<_, String>(None);
+            }
             let bytes = bounded(checked(response).await?, 1024 * 1024).await?;
             let intermediate: worker::Intermediate =
                 serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
@@ -1435,19 +1520,44 @@ async fn query(State(c): State<Coordinator>, request: Request) -> ApiResult<Vec<
             {
                 return Err("worker binding mismatch".into());
             }
-            Ok::<_, String>(intermediate.coefficients)
+            Ok::<_, String>(Some(intermediate.coefficients))
         }
         .await;
-        if let Ok(partial) = result {
-            answer = Some(partial);
-            break;
+        match result {
+            Ok(Some(partial)) => {
+                if offset == 0 {
+                    c.query_stats
+                        .primary_success
+                        .fetch_add(1, Ordering::Relaxed);
+                } else {
+                    c.query_stats
+                        .fallback_success
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                answer = Some(partial);
+                break;
+            }
+            Ok(None) => {
+                c.query_stats.worker_busy.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(_) => {
+                c.query_stats.worker_failure.fetch_add(1, Ordering::Relaxed);
+                non_busy_failure = true;
+            }
         }
     }
-    let answer = answer.ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no ready replica answered".into(),
-    ))?;
-    tokio::task::spawn_blocking(move || {
+    let answer = answer.ok_or_else(|| {
+        if non_busy_failure {
+            QueryError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no ready replica answered".into(),
+            )
+        } else {
+            c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
+            QueryError(StatusCode::TOO_MANY_REQUESTS, "all replicas busy".into())
+        }
+    })?;
+    Ok(tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let _snapshot = snapshot;
         let _generation_pin = generation_pin;
@@ -1455,7 +1565,7 @@ async fn query(State(c): State<Coordinator>, request: Request) -> ApiResult<Vec<
     })
     .await
     .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?
-    .map_err(|e| (StatusCode::BAD_REQUEST, e))
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?)
 }
 async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
     let snapshots = c.snapshots.read().await;
@@ -1512,17 +1622,161 @@ async fn metrics(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let mut body =
+        super::telemetry::coordinator(store.state(), manifest, &routes, blocked, &telemetry, now);
+    for (name, value) in [
+        (
+            "enhance_query_active",
+            (QUERY_ACTIVE_LIMIT - c.queries.available_permits()) as u64,
+        ),
+        (
+            "enhance_query_waiting",
+            (QUERY_WAIT_LIMIT - c.query_waiters.available_permits()) as u64,
+        ),
+        (
+            "enhance_query_wait_count_total",
+            c.query_stats.wait_count.load(Ordering::Relaxed),
+        ),
+        (
+            "enhance_query_wait_microseconds_total",
+            c.query_stats.wait_micros.load(Ordering::Relaxed),
+        ),
+        (
+            "enhance_query_rejected_total",
+            c.query_stats.rejected.load(Ordering::Relaxed),
+        ),
+        (
+            "enhance_query_primary_success_total",
+            c.query_stats.primary_success.load(Ordering::Relaxed),
+        ),
+        (
+            "enhance_query_fallback_success_total",
+            c.query_stats.fallback_success.load(Ordering::Relaxed),
+        ),
+        (
+            "enhance_query_worker_busy_total",
+            c.query_stats.worker_busy.load(Ordering::Relaxed),
+        ),
+        (
+            "enhance_query_worker_failure_total",
+            c.query_stats.worker_failure.load(Ordering::Relaxed),
+        ),
+    ] {
+        let kind = if name.ends_with("_total") {
+            "counter"
+        } else {
+            "gauge"
+        };
+        body.push_str(&format!("# TYPE {name} {kind}\n{name} {value}\n"));
+    }
     (
         [(
             axum::http::header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
-        super::telemetry::coordinator(store.state(), manifest, &routes, blocked, &telemetry, now),
+        body,
     )
 }
 
 #[cfg(test)]
 mod admission_tests {
+    fn test_coordinator() -> super::Coordinator {
+        let root = tempfile::tempdir().unwrap();
+        // The coordinator only needs a valid inventory for admission tests.
+        let group = Group {
+            placement_policy: Default::default(),
+            id: "g0".into(),
+            sequence: 0,
+            settling: false,
+            replicas: (0..2)
+                .map(|i| control::Replica {
+                    name: format!("r{i}"),
+                    url: format!("http://127.0.0.1:{}", 9100 + i),
+                    incarnation: String::new(),
+                    ledger: Default::default(),
+                })
+                .collect(),
+        };
+        Coordinator::open(root.path(), vec![group]).unwrap()
+    }
+
+    fn empty_query() -> axum::extract::Request {
+        axum::http::Request::builder()
+            .uri("/v1/enhance/query")
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn queue_waits_for_a_slot_and_releases_it() {
+        let coordinator = test_coordinator();
+        let first = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let second = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let waiting = tokio::spawn(query(State(coordinator.clone()), empty_query()));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            coordinator.query_waiters.available_permits(),
+            QUERY_WAIT_LIMIT - 1
+        );
+        drop(first);
+        let error = waiting.await.unwrap().unwrap_err();
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            coordinator.query_waiters.available_permits(),
+            QUERY_WAIT_LIMIT
+        );
+        drop(second);
+    }
+
+    #[tokio::test]
+    async fn full_queue_and_expired_wait_return_retryable_429() {
+        let coordinator = test_coordinator();
+        let _first = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let _second = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let mut waiters = Vec::new();
+        for _ in 0..QUERY_WAIT_LIMIT {
+            waiters.push(tokio::spawn(query(
+                State(coordinator.clone()),
+                empty_query(),
+            )));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(coordinator.query_waiters.available_permits(), 0);
+        let response = query(State(coordinator.clone()), empty_query())
+            .await
+            .unwrap_err()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        for waiter in waiters {
+            let response = waiter.await.unwrap().unwrap_err().into_response();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+        assert_eq!(
+            coordinator.query_waiters.available_permits(),
+            QUERY_WAIT_LIMIT
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_waiter_releases_capacity() {
+        let coordinator = test_coordinator();
+        let _first = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let _second = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let waiting = tokio::spawn(query(State(coordinator.clone()), empty_query()));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            coordinator.query_waiters.available_permits(),
+            QUERY_WAIT_LIMIT - 1
+        );
+        waiting.abort();
+        let _ = waiting.await;
+        assert_eq!(
+            coordinator.query_waiters.available_permits(),
+            QUERY_WAIT_LIMIT
+        );
+    }
+
     #[test]
     fn restart_rejects_changed_placement_policy() {
         let root = tempfile::tempdir().unwrap();
