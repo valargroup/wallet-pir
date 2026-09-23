@@ -28,7 +28,7 @@ pub struct QuerySession {
     shard: QueryShard,
     params: YpirSchemeParams,
     client: IPIRClient,
-    setup: Vec<Vec<u64>>,
+    setup: ipir_sp::PublicQuerySetup,
     public: Vec<Vec<u64>>,
 }
 
@@ -70,7 +70,12 @@ impl QuerySession {
                 "public material digest or length mismatch".into(),
             ));
         }
-        let client = IPIRClient::new(&rlwe, &params);
+        let client = IPIRClient::from_profile(
+            shard.logical_rows,
+            ITEM_SIZE_BITS,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )
+        .map_err(|e| ClientError::Pir(e.to_string()))?;
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id));
         let public = recover_published_c1(&bytes, rlwe.d, blocks, rlwe.q);
         Ok(Self {

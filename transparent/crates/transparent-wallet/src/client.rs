@@ -88,7 +88,7 @@ pub struct TableClient {
     table: Table,
     params: YpirSchemeParams,
     client: IPIRClient,
-    setup: Vec<Vec<u64>>,
+    setup: ipir_sp::PublicQuerySetup,
     row_bytes: usize,
     /// Per segment, because the published `c1` comes from each segment's own
     /// database. Keyed by manifest digest and segment index, so a superseded
@@ -106,7 +106,7 @@ impl TableClient {
         setup_seed: u64,
         served: &YpirSchemeParams,
     ) -> Result<Self, ClientError> {
-        let (rlwe, params) = ipir_sp::params_for_simplepir(rows, (row_bytes as u64) * 8)
+        let (_, params) = ipir_sp::params_for_simplepir(rows, (row_bytes as u64) * 8)
             .map_err(|error| ClientError::Pir(error.to_string()))?;
         if served != &params {
             return Err(ClientError::Session(format!(
@@ -116,7 +116,9 @@ impl TableClient {
         }
         let mut seed = [0u8; 32];
         seed[..8].copy_from_slice(&setup_seed.to_le_bytes());
-        let client = IPIRClient::new(&rlwe, &params);
+        let client =
+            IPIRClient::from_profile(rows, (row_bytes as u64) * 8, ipir_sp::SimplePirProfile::P14)
+                .map_err(|error| ClientError::Pir(error.to_string()))?;
         let setup = client.generate_public_query_setup_simplepir_from_seed(seed);
         Ok(Self {
             table,

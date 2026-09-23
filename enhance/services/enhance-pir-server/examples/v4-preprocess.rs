@@ -48,7 +48,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for repeat in 0..args.repetitions {
         let at = Instant::now();
         let params = parameters(32768)?;
-        let client = ipir_sp::IPIRClient::new(runtime::rlwe(), &params);
+        let client = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )?;
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(0));
         emit(json!({"kind":"full_shard_public_setup","repeat":repeat,"ms":ms(at)}))?;
         for rows in [2048, 4096, 8192] {
@@ -59,8 +63,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let bytes = records(0, rows * RECORDS_PER_ROW)?;
             let hash = hex::encode(Sha256::digest(&bytes));
             let at = Instant::now();
-            let prepared =
-                PreparedShard::build(&layout, 0, 0, hash.clone(), &bytes, runtime::rlwe(), &setup)?;
+            let prepared = PreparedShard::build(
+                &layout,
+                0,
+                0,
+                hash.clone(),
+                &bytes,
+                runtime::rlwe(),
+                setup.polys(),
+            )?;
             let build_ms = ms(at);
             let directory = args.output.join(format!("unit-{repeat}-{rows}"));
             let at = Instant::now();

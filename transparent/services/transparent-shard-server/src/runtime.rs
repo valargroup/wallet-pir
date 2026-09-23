@@ -192,8 +192,13 @@ impl TableRuntime {
         // exactly. It is public: it carries no secret and no selection.
         let mut seed = [0u8; 32];
         seed[..8].copy_from_slice(&shared.setup_seed.to_le_bytes());
-        let setup = IPIRClient::new(shared.rlwe, &shared.scheme)
-            .generate_public_query_setup_simplepir_from_seed(seed);
+        let setup = IPIRClient::from_profile(
+            shared.scheme.num_items,
+            shared.scheme.item_size_bits,
+            ipir_sp::SimplePirProfile::P14,
+        )
+        .map_err(|error| error.to_string())?
+        .generate_public_query_setup_simplepir_from_seed(seed);
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -203,7 +208,7 @@ impl TableRuntime {
         );
         phase = std::time::Instant::now();
         let crs_blocks = server
-            .perform_offline_precomputation_simplepir(shared.rlwe, &setup)
+            .perform_offline_precomputation_simplepir(shared.rlwe, setup.polys())
             .crs_blocks;
         tracing::debug!(
             geometry = shared.geometry.name,

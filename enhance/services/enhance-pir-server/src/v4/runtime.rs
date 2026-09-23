@@ -297,7 +297,12 @@ impl Engine {
         let mut units = Vec::new();
         // A full-size setup keeps unchanged unit setup slices stable through logical growth.
         let params = parameters(32768)?;
-        let client = ipir_sp::IPIRClient::new(rlwe(), &params);
+        let client = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )
+        .map_err(|e| e.to_string())?;
         let setup =
             client.generate_public_query_setup_simplepir_from_seed(setup_seed(plan.shard.id));
         for (spec, identity) in plan.shard.units.iter().zip(&plan.units) {
@@ -342,7 +347,7 @@ impl Engine {
                         identity.content_sha256.clone(),
                         &rows,
                         rlwe(),
-                        &setup,
+                        setup.polys(),
                     )
                     .map_err(|e| e.to_string())?;
                     drop(rows);
@@ -448,7 +453,12 @@ mod tests {
         let mut rows = records(0, shard.records as usize).unwrap();
         rows.resize(16384 * ENHANCE_LAYOUT.row_bytes(), 0);
         let params = parameters(16384).unwrap();
-        let client = ipir_sp::IPIRClient::new(rlwe(), &params);
+        let client = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )
+        .unwrap();
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id));
         let monolithic = PreparedShard::build(
             &DatabaseLayout {
@@ -460,7 +470,7 @@ mod tests {
             "test".into(),
             &rows,
             rlwe(),
-            &setup,
+            setup.polys(),
         )
         .unwrap();
         assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks);

@@ -38,7 +38,12 @@ fn two_shards_equal_one_monolithic_server() {
     let logical_rows = 2 * SHARD_ROWS as u64;
     let (rlwe, ypir) = global_parameters(logical_rows, &ENHANCE_LAYOUT).expect("params");
     assert_eq!(ypir.db_rows, logical_rows as usize);
-    let client = IPIRClient::new(&rlwe, &ypir);
+    let client = IPIRClient::from_profile(
+        logical_rows,
+        ENHANCE_LAYOUT.item_size_bits(),
+        ENHANCE_LAYOUT.pir_profile,
+    )
+    .expect("pinned profile");
     let setup = client.generate_public_query_setup_simplepir_from_seed(enhance_setup_seed_bytes());
 
     // Sharded: each shard preprocesses over its slice of the seeded setup.
@@ -49,7 +54,7 @@ fn two_shards_equal_one_monolithic_server() {
         RecordJournal::rows_digest(&rows0),
         &rows0,
         &rlwe,
-        &setup,
+        setup.polys(),
     )
     .expect("shard 0");
     let shard1 = PreparedShard::build(
@@ -59,7 +64,7 @@ fn two_shards_equal_one_monolithic_server() {
         RecordJournal::rows_digest(&rows1),
         &rows1,
         &rlwe,
-        &setup,
+        setup.polys(),
     )
     .expect("shard 1");
 
@@ -75,7 +80,7 @@ fn two_shards_equal_one_monolithic_server() {
     );
     let monolithic = IPIRServer::<u16>::new_auto_kernel(ypir.clone(), coefficients, false, true);
     let crs_mono = monolithic
-        .perform_offline_precomputation_simplepir(&rlwe, &setup)
+        .perform_offline_precomputation_simplepir(&rlwe, setup.polys())
         .crs_blocks;
 
     let mut crs_sum = shard0.crs_blocks.clone();

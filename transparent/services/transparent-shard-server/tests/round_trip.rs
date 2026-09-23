@@ -313,7 +313,12 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
 
     let mut seed = [0u8; 32];
     seed[..8].copy_from_slice(&setup_seed(&GEOMETRY, table).to_le_bytes());
-    let client = ipir_sp::IPIRClient::new(&rlwe, &expected);
+    let client = ipir_sp::IPIRClient::from_profile(
+        table.rows(&GEOMETRY),
+        (table.row_bytes(&GEOMETRY) as u64) * 8,
+        ipir_sp::SimplePirProfile::P14,
+    )
+    .unwrap();
     let setup_matrix = client.generate_public_query_setup_simplepir_from_seed(seed);
     let blocks = expected.db_cols / rlwe.d;
     let published_c1 =

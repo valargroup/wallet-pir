@@ -688,7 +688,12 @@ mod tests {
                 assert_eq!(cold.public_params_sha256, restored.public_params_sha256);
                 assert_eq!(cold.public_params_epoch, restored.public_params_epoch);
                 assert_eq!(cold.server.db(), restored.server.db());
-                let client = ipir_sp::IPIRClient::new(shared.rlwe, &shared.scheme);
+                let client = ipir_sp::IPIRClient::from_profile(
+                    shared.scheme.num_items,
+                    shared.scheme.item_size_bits,
+                    ipir_sp::SimplePirProfile::P14,
+                )
+                .unwrap();
                 let mut seed = [0u8; 32];
                 seed[..8].copy_from_slice(&shared.setup_seed.to_le_bytes());
                 let setup = client.generate_public_query_setup_simplepir_from_seed(seed);
