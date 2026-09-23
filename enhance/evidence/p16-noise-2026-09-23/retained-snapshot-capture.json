@@ -1,0 +1,132 @@
+[
+  {
+    "generation": 69,
+    "schema": 10,
+    "records": 574816,
+    "rows": 32768,
+    "shard": 0,
+    "expected_public_sha256": "f4891ea6ad3c64edb4830b294ef4eddc571feca76e786e92061b2947e64a45aa",
+    "record_file_sha256": "12f5eb4c466c0ce0c367993938daa651bf4c9fe91674d0447b97c39dcb990eea",
+    "unit_checks": [
+      {
+        "actual": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "expected": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "matches": true
+      },
+      {
+        "actual": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "expected": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "matches": true
+      },
+      {
+        "actual": "eee6dea1bf846d81a27c5539331969e600c612d1e12c5526a376bee1d8401d77",
+        "expected": "eee6dea1bf846d81a27c5539331969e600c612d1e12c5526a376bee1d8401d77",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "generation": 70,
+    "schema": 10,
+    "records": 574816,
+    "rows": 32768,
+    "shard": 0,
+    "expected_public_sha256": "f4891ea6ad3c64edb4830b294ef4eddc571feca76e786e92061b2947e64a45aa",
+    "record_file_sha256": "12f5eb4c466c0ce0c367993938daa651bf4c9fe91674d0447b97c39dcb990eea",
+    "unit_checks": [
+      {
+        "actual": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "expected": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "matches": true
+      },
+      {
+        "actual": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "expected": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "matches": true
+      },
+      {
+        "actual": "eee6dea1bf846d81a27c5539331969e600c612d1e12c5526a376bee1d8401d77",
+        "expected": "eee6dea1bf846d81a27c5539331969e600c612d1e12c5526a376bee1d8401d77",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "generation": 71,
+    "schema": 10,
+    "records": 574885,
+    "rows": 32768,
+    "shard": 0,
+    "expected_public_sha256": "369614b05ff220b6b059f45f3676105c3b1b99f80d17a1013227a455770eaec5",
+    "record_file_sha256": "11c97f49b48d524612dce5f69147a5d537e46a6e3fa1a598f2b94a53011fa712",
+    "unit_checks": [
+      {
+        "actual": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "expected": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "matches": true
+      },
+      {
+        "actual": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "expected": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "matches": true
+      },
+      {
+        "actual": "c040c1c898a82e3badbf658fc340bff4d5eee989c897084a58f0a0fb58b60190",
+        "expected": "c040c1c898a82e3badbf658fc340bff4d5eee989c897084a58f0a0fb58b60190",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "generation": 72,
+    "schema": 10,
+    "records": 574900,
+    "rows": 32768,
+    "shard": 0,
+    "expected_public_sha256": "abc112f3430edeb8fec47c2fbb13b2b5bf68c16f9f90111edfbe7ff0ef106764",
+    "record_file_sha256": "dc9c43bef1f966091cb1b21b33529be3fcab5b4aee537d146591c86660b5fac0",
+    "unit_checks": [
+      {
+        "actual": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "expected": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "matches": true
+      },
+      {
+        "actual": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "expected": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "matches": true
+      },
+      {
+        "actual": "4cdf092eb8134b34436c25037f9832af2df62a6ac6880c02320a025820104a49",
+        "expected": "4cdf092eb8134b34436c25037f9832af2df62a6ac6880c02320a025820104a49",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "generation": 73,
+    "schema": 10,
+    "records": 574935,
+    "rows": 32768,
+    "shard": 0,
+    "expected_public_sha256": "2e59b19ea89e19290742e720e062154a0de5963d181aa3a8f99dee0950465c76",
+    "record_file_sha256": "10603666e6c9de6d4203ae02025d4e0e3f7cc98b3bd83f1496655f2fcd8aa49f",
+    "unit_checks": [
+      {
+        "actual": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "expected": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+        "matches": true
+      },
+      {
+        "actual": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "expected": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d",
+        "matches": true
+      },
+      {
+        "actual": "867bff52339a43700684560aa5aab177c5de55c724ed3c5d2c5b5aa6718f88a0",
+        "expected": "867bff52339a43700684560aa5aab177c5de55c724ed3c5d2c5b5aa6718f88a0",
+        "matches": true
+      }
+    ]
+  }
+]
