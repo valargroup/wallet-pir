@@ -68,6 +68,16 @@ never open v6 state. Schema-8/10 worker caches, older release builds, temporary
 shadow units, and build staging were removed. Historical validation samples
 cited by prior evidence remain on the hosts.
 
+A one-time systemd timer on each host is scheduled for September 24 at 17:05
+UTC. Its [guarded cleanup script](retention-cleanup.py), [service](retention-cleanup.service),
+and [timer](retention-cleanup.timer) were copied verbatim into this record.
+Each host's dry check passed and showed the same deadline. At execution, the
+script requires the exact v6 binary hash, active current service, stopped old
+service, and healthy local v6 protocol before deleting the v5 canonical or
+worker state, release, and old unit. It preserves historical validation files.
+If any check fails, the rollback copy remains and the failed service needs
+operator review; the timer does not force deletion.
+
 The cutover did not run full CI or the sustained hardware campaigns. Production
 wallet operation, memory under longer load, and the two-query admission limit
 still require observation before claiming qualification.

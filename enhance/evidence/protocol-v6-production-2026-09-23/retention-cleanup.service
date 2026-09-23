@@ -1,0 +1,6 @@
+[Unit]
+Description=Remove retained Enhance PIR v5 rollback copy after v6 cutover
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/enhance-pir-v5-retention-cleanup.py
