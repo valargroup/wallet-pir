@@ -1626,7 +1626,7 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
     // freezes demand and inputs only; no provider calls or provisioning occur.
     let operations = root.path().join("operations");
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../ops/scripts/v4-expansion-journal.py");
+        .join("../../ops/scripts/expansion-journal.py");
     let observe = || {
         let output = std::process::Command::new("python3")
             .arg(&script)
