@@ -1,13 +1,13 @@
 [package]
 name = "enhance-pir-load-test"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 publish = false
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-enhance-pir = { path = "../../crates/enhance-pir" }
+enhance-pir = { path = "../../crates/enhance-pir", version = "=0.0.1" }
 hdrhistogram = "7"
 humantime = "2"
 rand = "0.8"

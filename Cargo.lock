@@ -999,7 +999,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "enhance-pir"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64",
  "clap",
@@ -1016,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "enhance-pir-load-test"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "enhance-pir-server"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "axum",
  "base64",
