@@ -18,8 +18,8 @@ enhance-pir = { path = "../../crates/enhance-pir" }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 hdrhistogram = "7"
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "611a29284264d844bf4dba00de2874c5b762f8c2" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "611a29284264d844bf4dba00de2874c5b762f8c2" }
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
