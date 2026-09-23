@@ -147,20 +147,7 @@ async fn run(
     deadline: u64,
     wrong: bool,
 ) -> Value {
-    run_for(dir, base, name, mode, slots, deadline, wrong, 1).await
-}
-
-async fn run_for(
-    dir: &Path,
-    base: &str,
-    name: &str,
-    mode: &str,
-    slots: usize,
-    deadline: u64,
-    wrong: bool,
-    duration: u64,
-) -> Value {
-    let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":mode,"sample":if wrong {"wrong.json"}else{"sample.json"},"shard_url":base,"profiles":{"test":slots},"duration_seconds":duration,"recovery_deadline_seconds":deadline,"request_timeout_seconds":30,"store":"sqlite","metrics_targets":{"test-worker":format!("{base}/metrics"),"missing-worker":"http://127.0.0.1:1/metrics"}});
+    let config = json!({"schema":"transparent-scenario-v1","name":name,"mode":mode,"sample":if wrong {"wrong.json"}else{"sample.json"},"shard_url":base,"profiles":{"test":slots},"duration_seconds":1,"recovery_deadline_seconds":deadline,"request_timeout_seconds":30,"store":"sqlite","metrics_targets":{"test-worker":format!("{base}/metrics"),"missing-worker":"http://127.0.0.1:1/metrics"}});
     run_config(dir, name, config).await
 }
 
@@ -308,17 +295,13 @@ async fn twenty_users_sustained_replacement_and_drain() {
     let wave = run(dir.path(), &base, "twenty", "wave", 20, 30, false).await;
     assert_eq!(wave["summary"]["outcomes"]["exact"], 20);
     // A one-second window can end before either recovery completes on a busy CI host.
-    let report = run_for(
-        dir.path(),
-        &base,
-        "sustained",
-        "sustained",
-        2,
-        30,
-        false,
-        10,
-    )
-    .await;
+    let mut sustained: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("twenty.json")).unwrap()).unwrap();
+    sustained["name"] = json!("sustained");
+    sustained["mode"] = json!("sustained");
+    sustained["profiles"] = json!({"test": 2});
+    sustained["duration_seconds"] = json!(10);
+    let report = run_config(dir.path(), "sustained", sustained).await;
     let users = report["users"].as_array().unwrap();
     assert!(users.len() > 2);
     let start = report["started_at"].as_f64().unwrap();
