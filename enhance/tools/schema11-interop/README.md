@@ -56,6 +56,8 @@ manifest's generation, anchor hash, height and record count to equal the
 chain-derived values, then queries every oracle position through the wallet's
 HTTPS transport and checks exact records. A publication between extraction
 and client fetch causes a safe failure; extract a fresh oracle and retry. This
-check uses the wallet client library but does not open a scanned SQLite wallet
+uses an explicit 32,768-row setup limit, matching the live production shard at
+the time of qualification; a larger future shard requires a deliberate limit
+review. The check uses the wallet client library but does not open a scanned SQLite wallet
 or exercise restore, resume or reorg behavior. Those remain separate release
 gates.

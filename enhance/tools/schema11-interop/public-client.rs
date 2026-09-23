@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
             hash,
             manifest.published_anchor_tree_size_at_end,
         ),
-        ClientResourceLimits::with_cache(4_096, 1),
+        ClientResourceLimits::with_cache(32_768, 1),
     );
     let mut client = pending.accept(&accepted)?;
     let mut exact = 0;
