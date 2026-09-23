@@ -1,7 +1,7 @@
 //! Independent wallet SDK wire compatibility with the production server engine.
+use enhance_pir::protocol::*;
 use enhance_pir::types::RECORD_BYTES;
-use enhance_pir::v4::*;
-use enhance_pir_server::v4::runtime::{plan, Engine, Packing};
+use enhance_pir_server::runtime::{plan, Engine, Packing};
 use zakura_pir_enhance::{
     AcceptedAnchor, ClientResourceLimits, GenerationAcceptance, QuerySession,
 };

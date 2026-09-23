@@ -42,3 +42,9 @@ so this page does not mark worker memory qualification passed.
 
 The [architecture](architecture.md) states the placement contract and the
 [evidence index](../evidence/README.md) owns historical run navigation.
+
+## Limited production rollout
+
+The [pilot readiness gates](pilot-readiness.md) define the 2 QPS opt-in envelope,
+4 QPS qualification workload, wallet checks, recovery budgets and observation
+window. They require new evidence for the selected release and every worker.

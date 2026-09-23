@@ -119,6 +119,19 @@ class VerifierTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             analyze(x)
 
+    def test_rc2_q48_identity_keeps_exact_transport_and_target(self):
+        from verify import Q48_PIN, Q48_RC2_PIN
+        x = copy.deepcopy(self.x)
+        x['params']['query_bits'] = 48
+        x['implementation'] = Q48_PIN
+        before = analyze(x)
+        x['implementation'] = Q48_RC2_PIN
+        self.assertEqual(analyze(x), before)
+        for bits in (46, 47, 49, 50):
+            x['params']['query_bits'] = bits
+            with self.assertRaises(ValueError):
+                analyze(x)
+
     def test_finite_cdf_validation(self):
         with self.assertRaises(ValueError):
             sampler((1 << 64,) * 131)

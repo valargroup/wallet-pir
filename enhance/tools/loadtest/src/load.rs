@@ -35,6 +35,10 @@ struct Report {
     p95_ms: f64,
     p99_ms: f64,
     scheduled_p99_ms: f64,
+    successful_p50_ms: Option<f64>,
+    successful_p95_ms: Option<f64>,
+    successful_p99_ms: Option<f64>,
+    successful_scheduled_p99_ms: Option<f64>,
     exact_answer_oracle: bool,
     warmup_errors: BTreeMap<String, u64>,
     warmup_correct_answers: u64,
@@ -44,6 +48,8 @@ struct Report {
 struct Samples {
     latency: Histogram<u64>,
     scheduled: Histogram<u64>,
+    successful_latency: Histogram<u64>,
+    successful_scheduled: Histogram<u64>,
     correct: u64,
     wrong: u64,
     errors: BTreeMap<String, u64>,
@@ -77,6 +83,7 @@ impl WarmupSamples {
             Err(error @ (ClientError::HttpStatus(429 | 502 | 503) | ClientError::Http(_))) => {
                 let class = match error {
                     ClientError::HttpStatus(status) => format!("http_{status}"),
+                    ClientError::Http(error) if error.is_timeout() => "timeout".into(),
                     _ => "transport".into(),
                 };
                 *self.errors.entry(class).or_default() += 1;
@@ -198,6 +205,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             let mut sample = Samples {
                 latency: Histogram::new(3).unwrap(),
                 scheduled: Histogram::new(3).unwrap(),
+                successful_latency: Histogram::new(3).unwrap(),
+                successful_scheduled: Histogram::new(3).unwrap(),
                 correct: 0,
                 wrong: 0,
                 errors: BTreeMap::new(),
@@ -226,15 +235,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 };
                 let began = Instant::now();
                 let result = client.query_position_with_timing(position).await;
+                let latency_us = began.elapsed().as_micros().max(1) as u64;
+                let scheduled_us = scheduled.elapsed().as_micros().max(1) as u64;
                 sample.completed += 1;
-                sample
-                    .latency
-                    .record(began.elapsed().as_micros().max(1) as u64)
-                    .unwrap();
-                sample
-                    .scheduled
-                    .record(scheduled.elapsed().as_micros().max(1) as u64)
-                    .unwrap();
+                sample.latency.record(latency_us).unwrap();
+                sample.scheduled.record(scheduled_us).unwrap();
                 match result {
                     Ok((record, _)) => {
                         let expected = if fixture {
@@ -246,6 +251,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                         };
                         if record.as_ref() == expected {
                             sample.correct += 1;
+                            sample.successful_latency.record(latency_us).unwrap();
+                            sample.successful_scheduled.record(scheduled_us).unwrap();
                         } else {
                             sample.wrong += 1;
                         }
@@ -256,6 +263,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                         }
                         let class = match error {
                             ClientError::HttpStatus(s) => format!("http_{s}"),
+                            ClientError::Http(error) if error.is_timeout() => "timeout".into(),
                             ClientError::Http(_) => "transport".into(),
                             ClientError::OutsideCoverage(_) => "coverage".into(),
                             ClientError::Response(_) => "invalid_response".into(),
@@ -271,6 +279,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let mut total = Samples {
         latency: Histogram::new(3)?,
         scheduled: Histogram::new(3)?,
+        successful_latency: Histogram::new(3)?,
+        successful_scheduled: Histogram::new(3)?,
         correct: 0,
         wrong: 0,
         errors: BTreeMap::new(),
@@ -280,6 +290,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         let sample = sample?;
         total.latency.add(sample.latency)?;
         total.scheduled.add(sample.scheduled)?;
+        total.successful_latency.add(sample.successful_latency)?;
+        total
+            .successful_scheduled
+            .add(sample.successful_scheduled)?;
         total.correct += sample.correct;
         total.wrong += sample.wrong;
         total.completed += sample.completed;
@@ -305,6 +319,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         p95_ms: total.latency.value_at_quantile(0.95) as f64 / 1000.,
         p99_ms: total.latency.value_at_quantile(0.99) as f64 / 1000.,
         scheduled_p99_ms: total.scheduled.value_at_quantile(0.99) as f64 / 1000.,
+        successful_p50_ms: percentile_ms(&total.successful_latency, 0.5),
+        successful_p95_ms: percentile_ms(&total.successful_latency, 0.95),
+        successful_p99_ms: percentile_ms(&total.successful_latency, 0.99),
+        successful_scheduled_p99_ms: percentile_ms(&total.successful_scheduled, 0.99),
         exact_answer_oracle: true,
         warmup_errors,
         warmup_correct_answers,
@@ -330,7 +348,33 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             report.p99_ms
         };
         ensure!(latency <= slo, "end-to-end p99 {latency}ms exceeds {slo}ms");
+        check_success_latency(
+            report.successful_p99_ms,
+            report.successful_scheduled_p99_ms,
+            slo,
+        )?;
     }
+    Ok(())
+}
+
+// Empty successful histograms must not look like zero-latency service.
+fn percentile_ms(histogram: &Histogram<u64>, quantile: f64) -> Option<f64> {
+    (!histogram.is_empty()).then(|| histogram.value_at_quantile(quantile) as f64 / 1000.)
+}
+
+fn check_success_latency(
+    service: Option<f64>,
+    scheduled: Option<f64>,
+    slo: f64,
+) -> anyhow::Result<()> {
+    ensure!(
+        service.is_some_and(|p99| p99 <= slo),
+        "successful-query p99 missing or exceeds {slo}ms"
+    );
+    ensure!(
+        scheduled.is_some_and(|p99| p99 <= slo),
+        "successful scheduled-to-completion p99 missing or exceeds {slo}ms"
+    );
     Ok(())
 }
 
@@ -350,6 +394,22 @@ fn decode_hex(text: &str) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_rejections_cannot_mask_slow_successes() {
+        let mut all = Histogram::<u64>::new(3).unwrap();
+        let mut success = Histogram::<u64>::new(3).unwrap();
+        all.record_n(1_000, 1000).unwrap();
+        all.record(2_000_000).unwrap();
+        success.record(2_000_000).unwrap();
+        assert!(percentile_ms(&all, 0.99).unwrap() < 1000.);
+        assert!(check_success_latency(percentile_ms(&success, 0.99), Some(2100.), 1000.).is_err());
+        assert!(check_success_latency(Some(100.), Some(1100.), 1000.).is_err());
+        assert!(check_success_latency(Some(100.), Some(200.), 1000.).is_ok());
+        let empty = Histogram::<u64>::new(3).unwrap();
+        assert_eq!(percentile_ms(&empty, 0.99), None);
+        assert!(check_success_latency(None, None, 1000.).is_err());
+    }
 
     #[tokio::test]
     async fn warmup_preserves_transient_failures_and_exact_answer_failures() {

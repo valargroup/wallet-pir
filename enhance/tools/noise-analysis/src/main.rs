@@ -2,7 +2,7 @@ mod certificate;
 mod fast_weights;
 use clap::Parser;
 use enhance_pir::{
-    v4::{self, Geometry},
+    protocol::{self, Geometry},
     RECORDS_PER_ROW, RECORD_BYTES,
 };
 use enhance_pir_server::ipir::{
@@ -68,7 +68,7 @@ fn matrix() -> serde_json::Value {
             .and_modify(|v| v.1 = used)
             .or_insert((used, used));
     }
-    json!(ranges.into_iter().map(|((domain,units),(first,last))| json!({"domain_rows":domain,"units":units,"first_used_rows":first,"last_used_rows":last,"params":v4::parameters(domain).unwrap()})).collect::<Vec<_>>())
+    json!(ranges.into_iter().map(|((domain,units),(first,last))| json!({"domain_rows":domain,"units":units,"first_used_rows":first,"last_used_rows":last,"params":protocol::parameters(domain).unwrap()})).collect::<Vec<_>>())
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if record_width == RECORD_BYTES {
         assert_eq!(
             serde_json::to_value(p)?,
-            serde_json::to_value(v4::parameters(rows)?)?
+            serde_json::to_value(protocol::parameters(rows)?)?
         );
     }
     let start = Instant::now();
@@ -178,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let client = IPIRClient::new(&profile);
-    let seed = v4::setup_seed(args.shard);
+    let seed = protocol::setup_seed(args.shard);
     let setup = client.generate_public_query_setup_simplepir_from_seed(seed);
     // Generate the public fixture once; both production/reference servers own
     // separate transposed copies. This avoids recomputing record bytes while
@@ -311,7 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         results.push(json!({"target":target,"max_expected_phase_error":error,"exact_answer":decoded==expected}));
     }
     let dg = spiral_rs::discrete_gaussian::DiscreteGaussian::init(r.spiral.noise_width);
-    let result = json!({"format":1,"implementation":"6f74a2d754b58934f925fc8a347f46620148ad47","schema":if record_width == 737 {10} else {v4::SCHEMA_VERSION},"record_width":record_width,"expected_public_sha256":args.expected_public_sha256,"pattern":args.pattern,"shard":args.shard,
+    let result = json!({"format":1,"implementation":"611a29284264d844bf4dba00de2874c5b762f8c2","schema":if record_width == 737 {10} else {protocol::SCHEMA_VERSION},"record_width":record_width,"expected_public_sha256":args.expected_public_sha256,"pattern":args.pattern,"shard":args.shard,
         "rows":rows,"used_rows":used,"records":records,"units":specs,"params":p,"n":r.d,"q":r.q,"p":r.p,"ell":r.gadget.ell,
         "setup_seed":hex::encode(seed),"database_sha256":hex::encode(db_hash.finalize()),"public_c1_sha256":hex::encode(Sha256::digest(&published)),
         "record_file_sha256":captured.as_ref().map(|v|hex::encode(Sha256::digest(v))),
