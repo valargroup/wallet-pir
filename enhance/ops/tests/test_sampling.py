@@ -66,11 +66,42 @@ HEALTH = {'protocol': module.PROTOCOL, 'incarnation': 'fixture-incarnation', 'ep
 
 
 class SamplingTests(unittest.TestCase):
-    def sample(self, root, properties):
+    def sample(self, root, properties, direct_policy=None):
         with patch.object(module, 'health', return_value=HEALTH), \
                 patch.object(module, 'runtime_metrics', return_value={'values': VALUES.copy(), 'exposition_sha256': hashlib.sha256(METRICS).hexdigest()}), \
                 patch.object(module.socket, 'gethostname', return_value='fixture-host'):
-            return module.collect(root, properties)
+            return module.collect(root, properties, direct_policy)
+
+    def test_direct_release_policy_binds_existing_production_layout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            properties = fixture(root)
+            revision = 'c' * 40
+            release = root / 'opt/enhance-pir-v6/releases' / revision
+            release.mkdir(parents=True)
+            binary = release / 'enhance-pir-server'
+            binary.write_bytes(b'fixture-binary')
+            process_binary = root / 'proc/123/exe'
+            process_binary.unlink()
+            process_binary.symlink_to(binary)
+            manifest = release / 'SHA256SUMS'
+            manifest.write_text(hashlib.sha256(binary.read_bytes()).hexdigest() + '  enhance-pir-server\n')
+            receipt = json.loads((root / 'srv/enhance-pir/bootstrap.json').read_text())
+            receipt.update(kind='enhance-direct-worker-sampling-v1', revision=revision,
+                           manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                           private_port=8091)
+            policy = root / 'etc/enhance-pir-v6/sampling.json'
+            write(root, 'etc/enhance-pir-v6/sampling.json', json.dumps(receipt))
+            policy.chmod(0o600)
+            (root / 'srv/enhance-pir-v6/worker').mkdir(parents=True)
+            result = self.sample(root, properties, Path('/etc/enhance-pir-v6/sampling.json'))
+            self.assertIsNone(result['error'])
+            self.assertEqual(result['identity_source'], 'direct-release-policy')
+            self.assertEqual(result['source_revision'], revision)
+            self.assertEqual(result['worker_private_port'], 8091)
+            manifest.write_text('changed\n')
+            with self.assertRaisesRegex(ValueError, 'manifest differs'):
+                self.sample(root, properties, Path('/etc/enhance-pir-v6/sampling.json'))
 
     def test_counters_are_not_reset_and_memory_units_are_bytes(self):
         with tempfile.TemporaryDirectory() as temp:

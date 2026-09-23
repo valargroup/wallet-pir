@@ -14,6 +14,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--seconds', type=int, required=True)
     parser.add_argument('--interval', type=float, default=1)
+    parser.add_argument('--direct-policy', type=Path,
+                        help='Root-only policy binding a directly deployed v6 worker to its release')
     args = parser.parse_args()
     if not 1 <= args.seconds <= 172800 or not 1 <= args.interval <= 10:
         parser.error('use 1..172800 seconds and a 1..10 second interval')
@@ -27,6 +29,10 @@ def main():
              'sampler_sha256': hashlib.sha256(script.read_bytes()).hexdigest(),
              'started_wall_ns': time.time_ns(), 'seconds_requested': args.seconds,
              'interval_seconds': args.interval, 'samples': 0, 'errors': 0}
+    if args.direct_policy is not None:
+        if not args.direct_policy.is_absolute() or not args.direct_policy.is_file():
+            parser.error('direct policy must be an existing absolute file')
+        state['direct_policy_sha256'] = hashlib.sha256(args.direct_policy.read_bytes()).hexdigest()
     stopping = False
 
     def stop(_signum, _frame):
@@ -42,7 +48,7 @@ def main():
         while not stopping and time.monotonic() - began < args.seconds:
             started = time.monotonic()
             try:
-                sample = sampler.collect()
+                sample = sampler.collect(direct_policy=args.direct_policy)
             except Exception:
                 sample = {'kind': 'enhance-hardware-sample', 'version': sampler.SAMPLE_VERSION,
                           'wall_time_ns': time.time_ns(), 'error': 'collection_failed'}

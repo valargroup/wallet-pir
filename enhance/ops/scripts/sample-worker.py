@@ -150,7 +150,7 @@ def runtime_consistent(before, metrics, after):
             and metrics['retained_generations'] == len(after['published']))
 
 
-def collect(root=Path('/'), properties=None):
+def collect(root=Path('/'), properties=None, direct_policy=None):
     started = time.monotonic_ns()
     boot = root / 'proc/sys/kernel/random/boot_id'
     boot_id = boot.read_text().strip()
@@ -172,15 +172,34 @@ def collect(root=Path('/'), properties=None):
         return sample
     if properties['ControlGroup'] != '/system.slice/' + SERVICE:
         raise ValueError('unexpected service cgroup')
-    receipt = json.loads((root / 'srv/enhance-pir/bootstrap.json').read_text())
-    if receipt.get('worker_name') != sample['hostname'] or receipt.get('phase') != 'bootstrapped':
-        raise ValueError('bootstrap receipt does not describe this host')
+    if direct_policy is None:
+        receipt = json.loads((root / 'srv/enhance-pir/bootstrap.json').read_text())
+        if receipt.get('worker_name') != sample['hostname'] or receipt.get('phase') != 'bootstrapped':
+            raise ValueError('bootstrap receipt does not describe this host')
+        release_prefix = 'opt/enhance-pir/releases/'
+        binary_name = 'enhance-pir'
+        data_dir = root / 'srv/enhance-pir/worker'
+    else:
+        policy_path = root / str(direct_policy).lstrip('/')
+        if policy_path.is_symlink() or policy_path.stat().st_mode & 0o077:
+            raise ValueError('direct sampling policy must be a private regular file')
+        receipt = json.loads(policy_path.read_text())
+        if receipt.get('kind') != 'enhance-direct-worker-sampling-v1' or receipt.get('worker_name') != sample['hostname']:
+            raise ValueError('direct sampling policy does not describe this host')
+        release_prefix = 'opt/enhance-pir-v6/releases/'
+        binary_name = 'enhance-pir-server'
+        data_dir = root / 'srv/enhance-pir-v6/worker'
+        manifest = root / release_prefix / receipt['revision'] / 'SHA256SUMS'
+        if hashlib.sha256(manifest.read_bytes()).hexdigest() != receipt['manifest_sha256']:
+            raise ValueError('direct release manifest differs from policy')
+        sample['identity_source'] = 'direct-release-policy'
+        sample['identity_policy_sha256'] = hashlib.sha256(policy_path.read_bytes()).hexdigest()
     pid = int(properties['MainPID'])
     process = root / 'proc' / str(pid)
     identity = start_ticks(process / 'stat')
     binary = (process / 'exe').resolve()
     relative = str(binary.relative_to(root.resolve()))
-    match = re.fullmatch('opt/enhance-pir/releases/([0-9a-f]{40}|[0-9a-f]{64})/enhance-pir', relative)
+    match = re.fullmatch(re.escape(release_prefix) + r'([0-9a-f]{40}|[0-9a-f]{64})/' + binary_name, relative)
     binary_sha256 = hashlib.sha256(binary.read_bytes()).hexdigest()
     expected_directory = receipt['revision'] if match and len(match[1]) == 40 else binary_sha256
     if not match or match[1] != expected_directory or binary_sha256 != receipt['binary_sha256']:
@@ -245,7 +264,7 @@ def collect(root=Path('/'), properties=None):
         # fails; never turn a missing or invalid memory sample into zero bytes.
         sample['runtime_metrics'] = {'error': 'runtime_metrics_failed'}
         sample['error'] = 'runtime_metrics_failed'
-    sample['disk_free_bytes'] = shutil.disk_usage(root / 'srv/enhance-pir/worker').free
+    sample['disk_free_bytes'] = shutil.disk_usage(data_dir).free
     if (start_ticks(process / 'stat') != identity or boot.read_text().strip() != boot_id
             or sorted(int(p) for p in (group / 'cgroup.procs').read_text().split()) != pids
             or any(start_ticks(root / 'proc' / str(p['pid']) / 'stat') != p['start_ticks'] for p in sample['process_memory'])):
