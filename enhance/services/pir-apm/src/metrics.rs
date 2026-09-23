@@ -783,6 +783,7 @@ pub fn parse_prometheus(
                     "enhance_published_",
                     "enhance_capacity_",
                     "enhance_query_",
+                    "enhance_ingestion_",
                     "enhance_publication_",
                     "enhance_last_publication_",
                     "enhance_registered_groups",
@@ -1064,6 +1065,7 @@ mod tests {
             "enhance_published_anchor_height 3493673\n\
              enhance_capacity_remaining_rows 146120\n\
              enhance_query_rejected_total 2\n\
+             enhance_ingestion_failed 1\n\
              enhance_group_assigned_shards{group=\"shard-group-01\"} 1\n",
             Instant::now(),
         )
@@ -1080,6 +1082,7 @@ mod tests {
             snapshot.snapshot_gauges["enhance_query_rejected_total"],
             2.0
         );
+        assert_eq!(snapshot.snapshot_gauges["enhance_ingestion_failed"], 1.0);
         assert!(!snapshot
             .snapshot_gauges
             .contains_key("enhance_group_assigned_shards"));

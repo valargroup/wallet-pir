@@ -32,7 +32,10 @@ one candidate. A source or deployment change invalidates affected results.
 5. Validate the consuming wallet release through public HTTPS using independently
    reconstructed chain records. Include restore, resume, boundaries, retained and
    expired generations, bounded retry, cancellation and controlled reorgs.
-   Neither loopback tests nor a CLI/journal oracle establish this gate. No false
+   The [chain oracle](../tools/chain-oracle/README.md) extracts exact-answer
+   records from canonical node blocks and checks published coverage. Run it
+   after latency measurements, then use its output from a separate client host.
+   Neither loopback tests nor a journal-derived oracle establish this gate. No false
    completion, incorrect balance, lost committed state or plaintext fallback is
    accepted. Reject v5/q46 clients and state without modifying stored data.
 
@@ -129,8 +132,12 @@ old release/data directories; never open new state with an incompatible binary.
 Verify worker port 8091 is unreachable from the public internet and private
 coordinator services bind only to their intended interfaces. Check TLS, request
 limits and deadlines. Exercise alerts for stale publication, missing replicas,
-errors/rejections, resource pressure and missing scrapes; name incident and
-release owners. Preserve rollback data for the entire qualification and pilot
+errors/rejections, resource pressure and missing scrapes. For the 1-second pilot
+query budget, set the APM sidecar's `PIR_APM_LATENCY_P99_OVERRIDES` query entry
+to `1.0`; its production value of `5.0` does not match this release gate. The
+sidecar now has distinct ingestion failure, blocked or stale publication, and
+new-rejection alerts. Name incident and release owners. Preserve rollback data
+for the entire qualification and pilot
 window, including checking any scheduled cleanup timers.
 
 ## Admission decision

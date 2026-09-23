@@ -173,6 +173,12 @@ async fn scrape_loop(
                 .map(|snapshot| snapshot.workers.clone())
                 .unwrap_or_default(),
         );
+        alerts.set_coordinator_gauges(
+            rolling
+                .latest()
+                .map(|snapshot| snapshot.snapshot_gauges.clone())
+                .unwrap_or_default(),
+        );
         let transitions = alerts.evaluate(AlertInput {
             now,
             scrape_ok: scrape_ok && scrape_error.is_none(),

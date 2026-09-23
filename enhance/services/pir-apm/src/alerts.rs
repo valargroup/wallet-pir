@@ -28,6 +28,9 @@ pub struct AlertEngine {
     worker_groups: BTreeMap<String, BTreeMap<String, BTreeMap<String, f64>>>,
     workers: BTreeMap<String, BTreeMap<String, f64>>,
     tables: BTreeMap<String, BTreeMap<String, f64>>,
+    coordinator_gauges: BTreeMap<String, f64>,
+    last_rejected_total: Option<f64>,
+    last_rejection_at: Option<Instant>,
 }
 
 pub struct AlertInput<'a> {
@@ -49,6 +52,9 @@ impl AlertEngine {
             worker_groups: BTreeMap::new(),
             workers: BTreeMap::new(),
             tables: BTreeMap::new(),
+            coordinator_gauges: BTreeMap::new(),
+            last_rejected_total: None,
+            last_rejection_at: None,
         }
     }
 
@@ -65,6 +71,10 @@ impl AlertEngine {
 
     pub fn set_workers(&mut self, workers: BTreeMap<String, BTreeMap<String, f64>>) {
         self.workers = workers;
+    }
+
+    pub fn set_coordinator_gauges(&mut self, gauges: BTreeMap<String, f64>) {
+        self.coordinator_gauges = gauges;
     }
 
     pub fn evaluate(&mut self, input: AlertInput<'_>) -> Vec<AlertTransition> {
@@ -101,6 +111,66 @@ impl AlertEngine {
                 format!("{}s", thresholds::READY_FAILURE_SECONDS),
             ),
         );
+
+        if self.schema.prefix == "enhance" && input.scrape_ok {
+            let gauge = |name: &str| self.coordinator_gauges.get(name).copied();
+            if let Some(failed) = gauge("enhance_ingestion_failed") {
+                conditions.insert(
+                    "enhance_ingestion_failed".to_string(),
+                    (
+                        failed >= 1.0,
+                        format!("ingestion_failed={failed:.0}"),
+                        "0".into(),
+                    ),
+                );
+            }
+            if let Some(blocked) = gauge("enhance_publication_blocked") {
+                conditions.insert(
+                    "enhance_publication_blocked".to_string(),
+                    (
+                        blocked >= 1.0,
+                        format!("publication_blocked={blocked:.0}"),
+                        "0".into(),
+                    ),
+                );
+            }
+            if let (Some(available), Some(current), Some(pending)) = (
+                gauge("enhance_publication_target_available"),
+                gauge("enhance_publication_target_current"),
+                gauge("enhance_publication_pending_seconds"),
+            ) {
+                conditions.insert(
+                    "enhance_publication_stale".to_string(),
+                    (
+                        available >= 1.0
+                            && current < 1.0
+                            && pending > thresholds::PUBLICATION_STALE_SECONDS as f64,
+                        format!("unpublished target pending for {pending:.0}s"),
+                        format!("> {}s", thresholds::PUBLICATION_STALE_SECONDS),
+                    ),
+                );
+            }
+            if let Some(rejected) = gauge("enhance_query_rejected_total") {
+                if self.last_rejected_total.is_some_and(|last| rejected > last) {
+                    self.last_rejection_at = Some(input.now);
+                }
+                self.last_rejected_total = Some(rejected);
+                conditions.insert(
+                    "enhance_query_rejections".to_string(),
+                    (
+                        self.last_rejection_at.is_some_and(|at| {
+                            input.now.duration_since(at)
+                                < Duration::from_secs(thresholds::REJECTION_ALERT_HOLD_SECONDS)
+                        }),
+                        format!("query_rejected_total={rejected:.0}"),
+                        format!(
+                            "no new rejections for {}s",
+                            thresholds::REJECTION_ALERT_HOLD_SECONDS
+                        ),
+                    ),
+                );
+            }
+        }
 
         for (endpoint, window) in input.endpoints {
             let endpoint = endpoint.as_str();
@@ -301,6 +371,41 @@ mod tests {
             disk_used_ratio: 0.5,
             data_dir: "/data".into(),
         }
+    }
+
+    #[test]
+    fn v6_ingestion_publication_and_rejection_alerts_fire_and_recover() {
+        let mut engine = AlertEngine::new(Schema::enhance_default());
+        let host = healthy_host();
+        let endpoints = BTreeMap::new();
+        let now = Instant::now();
+        let gauges = |failed, blocked, pending, rejected| {
+            BTreeMap::from([
+                ("enhance_ingestion_failed".into(), failed),
+                ("enhance_publication_blocked".into(), blocked),
+                ("enhance_publication_target_available".into(), 1.0),
+                ("enhance_publication_target_current".into(), 0.0),
+                ("enhance_publication_pending_seconds".into(), pending),
+                ("enhance_query_rejected_total".into(), rejected),
+            ])
+        };
+        let input = |at| AlertInput {
+            now: at,
+            scrape_ok: true,
+            ready_ok: true,
+            endpoints: &endpoints,
+            host: &host,
+        };
+        engine.set_coordinator_gauges(gauges(0.0, 0.0, 10.0, 0.0));
+        assert!(engine.evaluate(input(now)).is_empty());
+        engine.set_coordinator_gauges(gauges(1.0, 1.0, 301.0, 1.0));
+        let fired = engine.evaluate(input(now + Duration::from_secs(15)));
+        assert_eq!(fired.len(), 4);
+        assert_eq!(engine.active().len(), 4);
+        engine.set_coordinator_gauges(gauges(0.0, 0.0, 0.0, 1.0));
+        let recovered = engine.evaluate(input(now + Duration::from_secs(316)));
+        assert_eq!(recovered.len(), 4);
+        assert!(engine.active().is_empty());
     }
 
     #[test]
