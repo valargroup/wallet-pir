@@ -1,6 +1,7 @@
 mod alerts;
 mod config;
 mod dashboard;
+mod fleet;
 mod host;
 mod metrics;
 mod schema;
@@ -63,6 +64,10 @@ async fn main() -> Result<()> {
         config.hostname.clone(),
         initial_host,
     )));
+    if let Some(path) = config.worker_config.clone() {
+        dashboard.write().await.fleet_enabled = true;
+        tokio::spawn(fleet::monitor(path, dashboard.clone()));
+    }
     let scrape_dashboard = Arc::clone(&dashboard);
     let scrape_config = config.clone();
     tokio::spawn(async move {
@@ -71,12 +76,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    let app = Router::new()
-        .route("/", get(dashboard::index))
-        .route("/apm", get(dashboard::index))
-        .route("/apm/", get(dashboard::index))
-        .route("/healthz", get(dashboard::healthz))
-        .with_state(dashboard);
+    let app = dashboard_router(dashboard);
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("binding dashboard listener {}", config.listen))?;
@@ -118,6 +118,12 @@ async fn scrape_loop(
         let host = host::collect(&config.data_dir);
         let mut scrape_error = None;
 
+        let group_metrics = metrics_result.as_ref().ok().map(|r| {
+            fleet::groups(
+                &r.body,
+                health_result.as_ref().ok().map(|h| h.body.as_str()),
+            )
+        });
         match metrics_result {
             Ok(response) => match metrics::parse_prometheus(&config.schema, &response.body, now) {
                 Ok(snapshot) => rolling.push(snapshot),
@@ -163,6 +169,9 @@ async fn scrape_loop(
         {
             let latest = rolling.latest();
             let mut view = dashboard.write().await;
+            if let Some(groups) = group_metrics {
+                view.groups = groups;
+            }
             view.last_scrape = Some(SystemTime::now());
             view.scrape_error = scrape_error;
             view.health_status = health_status;
@@ -234,4 +243,17 @@ async fn fetch(
         status: status.as_u16(),
         body,
     })
+}
+
+fn dashboard_router(dashboard: SharedDashboard) -> Router {
+    Router::new()
+        .route("/", get(dashboard::index))
+        .route("/apm", get(dashboard::index))
+        .route("/apm/", get(dashboard::index))
+        .route("/coordinator/", get(dashboard::coordinator_page))
+        .route("/apm/coordinator/", get(dashboard::coordinator_page))
+        .route("/workers/:name/", get(dashboard::worker_page))
+        .route("/apm/workers/:name/", get(dashboard::worker_page))
+        .route("/healthz", get(dashboard::healthz))
+        .with_state(dashboard)
 }

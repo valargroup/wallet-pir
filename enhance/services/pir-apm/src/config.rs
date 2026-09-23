@@ -12,6 +12,7 @@ use crate::schema::Schema;
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub worker_config: Option<PathBuf>,
     pub scrape_url: String,
     pub metrics_path: String,
     pub health_path: String,
@@ -93,6 +94,7 @@ impl Config {
         .context("invalid PIR_APM metric schema")?;
 
         Ok(Self {
+            worker_config: get("PIR_APM_WORKER_CONFIG").map(PathBuf::from),
             scrape_url,
             metrics_path: path_value(&get_or("PIR_APM_METRICS_PATH", "/metrics"))?,
             health_path: path_value(&get_or("PIR_APM_HEALTH_PATH", "/v1/health"))?,

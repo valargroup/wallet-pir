@@ -457,10 +457,10 @@ pub fn histogram_quantile(q: f64, cumulative_buckets: &[(f64, f64)], count: f64)
 }
 
 #[derive(Debug)]
-struct ParsedSample {
-    name: String,
-    labels: HashMap<String, String>,
-    value: f64,
+pub(crate) struct ParsedSample {
+    pub name: String,
+    pub labels: HashMap<String, String>,
+    pub value: f64,
 }
 
 pub fn parse_prometheus(
@@ -593,7 +593,24 @@ pub fn parse_prometheus(
             if let Some(values) = worker_query_entry(&mut worker_queries, &sample) {
                 values.in_flight = sample.value;
             }
-        } else if name.starts_with(&schema.gauge_prefix) {
+        } else if name.starts_with(&schema.gauge_prefix)
+            || (schema.prefix == "enhance"
+                && sample.labels.is_empty()
+                && [
+                    "enhance_published_",
+                    "enhance_capacity_",
+                    "enhance_query_",
+                    "enhance_publication_",
+                    "enhance_last_publication_",
+                    "enhance_registered_groups",
+                ]
+                .iter()
+                .any(|prefix| name.starts_with(prefix)))
+        {
+            // Current Enhance coordinators publish aggregate, unlabelled
+            // capacity and query families instead of the old snapshot family.
+            // Keep labelled families out of this flat map: distinct groups or
+            // shards would otherwise silently overwrite one another.
             snapshot_gauges.insert(name.to_string(), sample.value);
         } else if let Some(stem) = name.strip_prefix(&schema.worker_group_prefix) {
             if let (Some(table), Some(group)) =
@@ -760,7 +777,7 @@ fn set_endpoint_value(
     }
 }
 
-fn parse_line(line: &str) -> Result<ParsedSample, String> {
+pub(crate) fn parse_line(line: &str) -> Result<ParsedSample, String> {
     let split = line
         .rfind(char::is_whitespace)
         .ok_or_else(|| "missing metric value".to_string())?;
@@ -856,6 +873,34 @@ fn parse_labels(input: &str) -> Result<HashMap<String, String>, String> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn current_coordinator_aggregates_are_kept_without_flattening_groups() {
+        let snapshot = parse_prometheus(
+            &Schema::enhance_default(),
+            "enhance_published_anchor_height 3493673\n\
+             enhance_capacity_remaining_rows 146120\n\
+             enhance_query_rejected_total 2\n\
+             enhance_group_assigned_shards{group=\"shard-group-01\"} 1\n",
+            Instant::now(),
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot.snapshot_gauges["enhance_published_anchor_height"],
+            3493673.0
+        );
+        assert_eq!(
+            snapshot.snapshot_gauges["enhance_capacity_remaining_rows"],
+            146120.0
+        );
+        assert_eq!(
+            snapshot.snapshot_gauges["enhance_query_rejected_total"],
+            2.0
+        );
+        assert!(!snapshot
+            .snapshot_gauges
+            .contains_key("enhance_group_assigned_shards"));
+    }
 
     #[test]
     fn parses_required_prometheus_families_and_labels() {

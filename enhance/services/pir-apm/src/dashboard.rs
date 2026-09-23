@@ -23,6 +23,10 @@ const REFRESH_SECONDS: u64 = 15;
 
 #[derive(Clone, Debug)]
 pub struct DashboardData {
+    pub fleet_enabled: bool,
+    pub fleet: BTreeMap<String, crate::fleet::Worker>,
+    pub groups: BTreeMap<String, crate::fleet::Group>,
+    pub inventory_error: Option<String>,
     pub title: String,
     pub schema: Schema,
     pub environment: String,
@@ -54,6 +58,10 @@ impl DashboardData {
         host: HostHealth,
     ) -> Self {
         Self {
+            fleet_enabled: false,
+            fleet: BTreeMap::new(),
+            groups: BTreeMap::new(),
+            inventory_error: None,
             title,
             schema,
             environment,
@@ -286,7 +294,10 @@ const SCRIPT: &str = r#"
         if (!text) return;
         var next = new DOMParser().parseFromString(text, 'text/html').getElementById('app');
         var current = document.getElementById('app');
-        if (next && current) current.replaceWith(next);
+        if (next && current) {
+          current.querySelectorAll("details[id][open]").forEach(function (el) { var d = next.querySelector('#' + el.id); if (d) d.open = true; });
+          current.replaceWith(next);
+        }
       })
       .catch(function () {})
       .then(schedule);
@@ -299,6 +310,14 @@ const SCRIPT: &str = r#"
 "#;
 
 fn render(data: &DashboardData) -> String {
+    if data
+        .snapshot_gauges
+        .contains_key("enhance_published_anchor_height")
+        || data.fleet_enabled
+        || !data.fleet.is_empty()
+    {
+        return fleet_view::overview(data);
+    }
     let mut out = String::with_capacity(16 * 1024);
     out.push_str("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">");
     out.push_str("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
@@ -329,6 +348,37 @@ fn render(data: &DashboardData) -> String {
     out.push_str("</main><script>");
     out.push_str(SCRIPT);
     out.push_str("</script></body></html>");
+    out
+}
+
+// The current coordinator publishes aggregate gauges and query counters. It
+// does not publish the old HTTP histogram families, so showing their empty
+// endpoint table would imply measurements that are no longer available.
+fn current_kpis(data: &DashboardData) -> String {
+    let value = |name: &str| {
+        data.snapshot_gauges
+            .get(name)
+            .map(|value| format_number(*value))
+            .unwrap_or_else(|| "—".to_string())
+    };
+    let mut out = String::from("<section class=\"kpis\">");
+    for (label, name, unit) in [
+        (
+            "Published anchor",
+            "enhance_published_anchor_height",
+            "block height",
+        ),
+        ("Generation", "enhance_published_generation", "published"),
+        ("Groups", "enhance_registered_groups", "registered"),
+        (
+            "Capacity",
+            "enhance_capacity_remaining_rows",
+            "rows remaining",
+        ),
+    ] {
+        out.push_str(&kpi(label, &value(name), unit, ""));
+    }
+    out.push_str("</section>");
     out
 }
 
@@ -1308,7 +1358,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn sample() -> DashboardData {
+    pub(super) fn sample() -> DashboardData {
         let mut data = DashboardData::new(
             "Enhance PIR APM".to_string(),
             Schema::enhance_default(),
@@ -1348,6 +1398,23 @@ mod tests {
             },
         );
         data
+    }
+
+    #[test]
+    fn current_coordinator_shows_live_metrics_without_legacy_endpoint_claims() {
+        let mut data = sample();
+        data.snapshot_gauges
+            .insert("enhance_published_anchor_height".into(), 3493673.0);
+        data.snapshot_gauges
+            .insert("enhance_capacity_remaining_rows".into(), 146120.0);
+        data.snapshot_gauges
+            .insert("enhance_query_rejected_total".into(), 2.0);
+        let html = render(&data);
+        assert!(html.contains("Published anchor"));
+        assert!(html.contains("3493673"));
+        assert!(html.contains("Deployment topology"));
+        assert!(!html.contains("Worst server p95"));
+        assert!(!html.contains("<th>query</th>"));
     }
 
     #[test]
@@ -1792,3 +1859,7 @@ mod tests {
         assert!(html.contains("waiting for first scrape"));
     }
 }
+
+#[path = "fleet_view.rs"]
+mod fleet_view;
+pub use fleet_view::{coordinator_page, worker_page};
