@@ -39,6 +39,15 @@ class PublicMonitorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.assess(self.report() | dict(errors={'http_503': True}), 0.2, 300)
 
+    def test_wall_clock_and_window_gap_are_checked(self):
+        previous = dict(started_ns=0, finished_ns=300_000_000_000)
+        good = dict(started_ns=301_000_000_000, finished_ns=601_000_000_000)
+        self.assertEqual(module.assess_timing(good, 300, previous), [])
+        self.assertIn('short_wall_window', module.assess_timing(
+            good | dict(finished_ns=600_000_000_000), 300, previous))
+        self.assertIn('observation_gap_invalid_or_over_30s', module.assess_timing(
+            good | dict(started_ns=331_000_000_000, finished_ns=631_000_000_000), 300, previous))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -62,6 +62,17 @@ def assess(report, rate, seconds):
     return failures
 
 
+def assess_timing(run, seconds, previous=None):
+    failures = []
+    if run['finished_ns'] - run['started_ns'] < seconds * 1_000_000_000:
+        failures.append('short_wall_window')
+    if previous is not None:
+        gap = run['started_ns'] - previous['finished_ns']
+        if gap < 0 or gap > 30_000_000_000:
+            failures.append('observation_gap_invalid_or_over_30s')
+    return failures
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
@@ -128,6 +139,8 @@ def main():
                     or digest(oracle_manifest_path) != manifest['oracle_manifest_sha256']):
                 raise RuntimeError('binary or oracle evidence changed during observation')
             failures = assess(json.loads(report_path.read_text()), args.rate, args.window_seconds) if report_path.exists() else ['missing_report']
+            failures.extend(assess_timing(run, args.window_seconds,
+                                          manifest['runs'][-2] if len(manifest['runs']) > 1 else None))
             if result.returncode:
                 failures.append('load_process_failed')
             run.update(status='failed' if failures else 'passed', failures=failures,
