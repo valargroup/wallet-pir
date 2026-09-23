@@ -27,7 +27,7 @@ use tokio::sync::{RwLock, Semaphore};
 // that aggregate worker capacity so it does not queue behind idle replicas.
 const QUERY_ACTIVE_LIMIT: usize = 4;
 const QUERY_WAIT_LIMIT: usize = 16;
-const QUERY_WAIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+const QUERY_WAIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 const QUERY_BODY_LIMIT: usize = 512 * 1024;
 
 #[derive(Default)]
