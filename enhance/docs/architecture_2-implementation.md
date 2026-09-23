@@ -22,7 +22,8 @@ records the gap and the corrected restoration-supervisor failure.
 The first six-sealed attempt failed during cold preparation, before measurement.
 Samples indicate preparation exceeded the shared 180-second request deadline;
 the preparation-specific bounded deadline fix is deployed and passed 460 public
-exact-answer load queries. A fresh sealed campaign is building, with canonical
+exact-answer load queries. The fresh sealed campaign began its measured window
+at 2026-09-23 13:17:31 UTC after successful initialization, with canonical
 serving temporarily stopped and restoration supervised. See the
 [deadline failure evidence](../evidence/architecture-v4-sealed-deadline-2026-09-23/README.md).
 

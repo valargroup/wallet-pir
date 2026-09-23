@@ -49,6 +49,13 @@ The failed synthetic worker directories were removed only after retaining their
 measurement evidence, to restore at least 32 GiB free disk before this new run.
 No passing sealed qualification result exists yet.
 
+The retry completed initialization and started measurement at
+2026-09-23 13:17:31 UTC (`retry-measurement-start.json`). Initial ready health
+records two published replicas for both the physical-worker group and the
+coordinator-hosted support group. This advances beyond the first attempt's
+preparation failure. The earliest six-hour completion is 19:17:31 UTC; 300
+measured publications and final resource/correctness assessment are still required.
+
 ## Retry initialization sampling
 
 `retry-initial-worker-{1,2}-summary.json` summarizes complete prefixes of the

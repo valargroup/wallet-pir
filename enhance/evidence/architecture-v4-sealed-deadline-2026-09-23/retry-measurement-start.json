@@ -1,0 +1,15 @@
+{
+  "binary_sha256": "4c3b0a0f12c4a275afd5fd5e89ea7556627c4fc3fb2969b275ec02b499464478",
+  "concurrency": 2,
+  "kind": "enhance-v4-workload",
+  "measurement_started_wall_ns": 1790169451396128349,
+  "min_publications": 300,
+  "origin": "http://127.0.0.1:8280",
+  "profile": "sealed",
+  "publications": 0,
+  "qualification": "unqualified",
+  "seconds_requested": 21600,
+  "started_wall_ns": 1790168690712571788,
+  "status": "running",
+  "workload_host_id_sha256": "dff17613609d6a64aa857c10121d3f5c006e6b6120d12e5299660f5206b8b81a"
+}
