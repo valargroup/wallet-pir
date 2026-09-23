@@ -21,6 +21,7 @@ def main():
     p.add_argument('--patterns', default='zero,max,alternating,impulse,random,records')
     p.add_argument('--edge', choices=['first', 'last', 'both'], default='both')
     p.add_argument('--jobs', type=int, default=4)
+    p.add_argument('--reverse', action='store_true', help='Evaluate larger configurations first')
     p.add_argument('--source-revision')
     args = p.parse_args()
     binary = args.binary.resolve()
@@ -55,6 +56,8 @@ def main():
         row = dict(case=name, sha256=hashlib.sha256(path.read_bytes()).hexdigest(), **analyze(x))
         return row
     specs = list(itertools.product(matrix, edges, args.patterns.split(','), args.shards.split(',')))
+    if args.reverse:
+        specs.reverse()
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         pending = [pool.submit(case, spec) for spec in specs]
         for future in as_completed(pending):

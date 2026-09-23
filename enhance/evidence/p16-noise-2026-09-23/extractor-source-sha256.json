@@ -4,5 +4,6 @@
   "campaign_main_rs_sha256": "40b2ee267a5a81810e2fdf17d3be7a58377862860e8635d5565a8d219f2ab600",
   "campaign_certificate_rs_sha256": "9f3d7f2fc4e759fe1c0144af604900c143a1532f8ba4dafcb54c291a8073bae1",
   "lockfile_sha256": "e3d65b36119050d2deb80272011902832d7599021013873a9e3f5aa6f13a1973",
-  "source_difference": "Campaign binaries use (row + col) % 2 == 0. Final source uses equivalent (row + col) & 1 == 0 solely to satisfy clippy; all other extractor source is identical."
+  "source_difference": "Campaign binaries use (row + col) % 2 == 0. Final source uses equivalent (row + col) & 1 == 0 solely to satisfy clippy; all other extractor source is identical.",
+  "reference_8k_source": "reference-extractor-main.rs.gz and reference-extractor-certificate.rs.gz retain the initial portable-kernel extractor; the final Cargo.toml and lockfile apply."
 }

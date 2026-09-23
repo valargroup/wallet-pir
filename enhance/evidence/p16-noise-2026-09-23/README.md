@@ -99,8 +99,11 @@ Completed harness checks:
 - Partitioned hints and each query intermediate compared with monolithic
   reference evaluation in every completed case.
 
-The existing production persistence/reload benchmark is also running. Its
-completion and the remaining captured-data projections will be recorded here.
+The existing production persistence/reload benchmark completed successfully: all
+2K/4K/8K units persisted and reloaded, all four query domains reused and reloaded
+without canonical rereads, and 16 exact-answer queries passed. See
+`persistence.jsonl`. This is functional evidence, not hardware qualification.
+Remaining captured-data projections will be recorded here.
 
 For production acceptance, finish the required coverage, resolve the wide-dense
 proof gap, independently review the adapted extractor/bound, and certify the
