@@ -184,6 +184,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    // A panic inside a request handler or a blocking task would otherwise be
+    // swallowed (the task's JoinError becomes a 503) while leaving a poisoned
+    // engine or state mutex behind; every later lock().unwrap() then panics and
+    // the process serves nothing but keeps answering health. Abort instead so
+    // systemd's Restart=on-failure brings a clean process back.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        std::process::abort();
+    }));
     let cli = Cli::parse();
     let placement_policy = PlacementPolicy {
         sealed_shards: cli.sealed_shards,
