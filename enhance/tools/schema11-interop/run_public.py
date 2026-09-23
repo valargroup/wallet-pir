@@ -51,6 +51,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+zcash_protocol = "=0.10.4"
 [profile.release]
 debug = 0
 '''

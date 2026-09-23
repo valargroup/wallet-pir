@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
+use zcash_protocol::consensus::{NetworkUpgrade, Parameters, MAIN_NETWORK};
 use zakura_pir_enhance::{
     transport::{PendingClient, ReqwestTransport},
     AcceptedAnchor, ClientResourceLimits, GenerationAcceptance,
@@ -74,9 +75,12 @@ async fn main() -> Result<()> {
     let hash: [u8; 32] = hex::decode(&manifest.published_anchor_hash_at_end)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("invalid anchor hash"))?;
+    let activation = MAIN_NETWORK
+        .activation_height(NetworkUpgrade::Nu6_3)
+        .context("mainnet NU6.3 activation unavailable in the pinned wallet consensus rules")?;
     let accepted = GenerationAcceptance::new(
         "main",
-        3_428_143,
+        u64::from(u32::from(activation)),
         AcceptedAnchor::new(
             manifest.published_anchor_at_end,
             hash,
