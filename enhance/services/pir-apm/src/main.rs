@@ -128,6 +128,10 @@ async fn scrape_loop(
         let host = host::collect(&config.data_dir);
         let mut scrape_error = None;
         let mut metrics_success = false;
+        let health_json = health_result
+            .as_ref()
+            .ok()
+            .and_then(|response| serde_json::from_str::<serde_json::Value>(&response.body).ok());
 
         let group_metrics = metrics_result.as_ref().ok().map(|r| {
             fleet::groups(
@@ -150,6 +154,8 @@ async fn scrape_loop(
                 scrape_error = Some(error.clone());
             } else if let Err(error) = &ready_result {
                 scrape_error = Some(error.clone());
+            } else if config.schema.prefix == "enhance" && health_json.is_none() {
+                scrape_error = Some("invalid coordinator health JSON".into());
             }
         }
 
@@ -161,6 +167,21 @@ async fn scrape_loop(
                 .map(|snapshot| snapshot.worker_groups.clone())
                 .unwrap_or_default(),
         );
+        let v6_health = health_json
+            .as_ref()
+            .is_some_and(|health| health["protocol"] == "ironwood-enhance-pir-v6");
+        alerts.set_v6_groups(v6_health.then(|| group_metrics.clone().unwrap_or_default()));
+        {
+            let view = dashboard.read().await;
+            alerts.set_fleet(
+                view.fleet_enabled,
+                view.inventory_error.is_some(),
+                view.fleet
+                    .iter()
+                    .map(|(name, worker)| (name.clone(), worker.status().to_string()))
+                    .collect(),
+            );
+        }
         alerts.set_tables(
             rolling
                 .latest()
