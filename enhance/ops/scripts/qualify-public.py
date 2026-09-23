@@ -65,6 +65,11 @@ def assess(report, rate, seconds, burst=False):
     return failures
 
 
+def verify_inputs(binary, oracle, manifest):
+    if digest(binary) != manifest['binary_sha256'] or digest(oracle) != manifest['oracle_sha256']:
+        raise ValueError('binary or oracle changed during campaign; use a new run directory')
+
+
 def write(path, data):
     path.write_text(json.dumps(data, indent=2, allow_nan=False) + '\n')
 
@@ -104,6 +109,7 @@ def main():
     stages += [('soak-4', 4, args.soak_seconds, False), ('burst-8', None, args.burst_seconds, True)]
     try:
         for name, rate, seconds, burst in stages:
+            verify_inputs(binary, oracle, manifest)
             command = [str(binary), '--server', args.server, '--oracle', str(oracle),
                        '--parallelism', '8', '--duration', f'{seconds}s',
                        '--warmup', f'{args.warmup_seconds}s', '--seed', '20260923',
@@ -119,6 +125,7 @@ def main():
                 result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
                                         timeout=seconds + args.warmup_seconds + 180)
             run.update(exit_code=result.returncode, finished_ns=time.time_ns())
+            verify_inputs(binary, oracle, manifest)
             report_path = args.out / f'{name}.json'
             failures = assess(json.loads(report_path.read_text()), rate, seconds, burst) if report_path.exists() else ['missing_report']
             if result.returncode:

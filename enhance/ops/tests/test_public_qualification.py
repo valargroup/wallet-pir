@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
 
 spec = importlib.util.spec_from_file_location('qualify_public', Path(__file__).parents[1] / 'scripts/qualify-public.py')
 module = importlib.util.module_from_spec(spec)
@@ -39,6 +40,20 @@ class PublicQualificationTests(unittest.TestCase):
         self.assertEqual(module.assess(report, None, 1800, burst=True), [])
         report.update(succeeded=6999, incorrect_answers=1)
         self.assertIn('incorrect_answers', module.assess(report, None, 1800, burst=True))
+
+    def test_changed_binary_or_oracle_cannot_mix_campaign_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary, oracle = Path(directory) / 'binary', Path(directory) / 'oracle'
+            binary.write_bytes(b'candidate')
+            oracle.write_bytes(b'records')
+            manifest = dict(binary_sha256=module.digest(binary), oracle_sha256=module.digest(oracle))
+            module.verify_inputs(binary, oracle, manifest)
+            for path in (binary, oracle):
+                before = path.read_bytes()
+                path.write_bytes(b'changed')
+                with self.assertRaises(ValueError):
+                    module.verify_inputs(binary, oracle, manifest)
+                path.write_bytes(before)
 
     def test_invalid_counters_are_rejected(self):
         for changes in [dict(completed=-1), dict(errors={'http_502': True})]:
