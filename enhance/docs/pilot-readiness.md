@@ -135,11 +135,27 @@ limits and deadlines. Exercise alerts for stale publication, missing replicas,
 errors/rejections, resource pressure and missing scrapes. The sidecar has
 distinct ingestion failure, blocked or stale publication, and new-rejection
 alerts. The v6 coordinator does not export an HTTP latency histogram, so the
-sidecar's query p99 setting cannot monitor the 1-second public budget. Use a
-separate public HTTPS latency monitor during the pilot. Name incident and release
+sidecar's query p99 setting cannot monitor the 1-second public budget. During
+the pilot, run `enhance/ops/scripts/monitor-public.py` from a separate client
+host with a chain-derived oracle. Its default 0.2 QPS, five-minute windows
+consume one tenth of the 2 QPS pilot envelope; reserve that traffic in the
+admission budget. It checks exact answers and public scheduled and successful
+p99 each window, stops on failure, and retains per-window reports. Supervise
+its process and respond to failure; a completed synthetic observation does not
+measure every wallet request. Name incident and release
 owners. Preserve rollback data
 for the entire qualification and pilot
 window, including checking any scheduled cleanup timers.
+
+```sh
+python3 enhance/ops/scripts/monitor-public.py \
+  --binary target/release/enhance-pir-load-test \
+  --oracle /absolute/path/to/chain-oracle-output/oracle.json \
+  --server https://enhance-pir.valargroup.dev \
+  --source-revision LOAD_DRIVER_FULL_GIT_SHA \
+  --server-revision VERIFIED_SERVER_FULL_GIT_SHA \
+  --out /absolute/path/to/new-monitor-directory
+```
 
 ## Admission decision
 
