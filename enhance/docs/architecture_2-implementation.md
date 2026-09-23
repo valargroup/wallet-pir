@@ -19,6 +19,11 @@ sampling gap prevents uninterrupted hardware qualification. The
 [production evidence](../evidence/architecture-v4-production-2026-09-23/README.md)
 records the gap and the corrected restoration-supervisor failure.
 
+The six-sealed campaign is now building on the physical c-4 pair, with two
+coordinator-hosted helper replicas supporting its active group. Canonical serving
+is temporarily stopped again; the supervisor restores it after the campaign.
+This campaign has not yet produced a qualification result.
+
 ## Implementation delivered
 
 - Schema 10 and protocol `ironwood-enhance-pir-v4`, explicit public domains,

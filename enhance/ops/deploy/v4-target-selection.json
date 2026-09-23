@@ -1,6 +1,6 @@
 {
   "kind": "enhance-v4-deployment-inputs",
-  "status": "deployed-canonical-restored-active-workload-completed",
+  "status": "deployed-sealed-campaign-building",
   "qualification": "incomplete: worker-1 sampling gap; sealed and other qualification tests pending",
   "purpose": "Reuse existing production hosts, stop legacy Enhance services, deploy and test v4 directly over SSH",
   "organization": "Valargroup",
@@ -79,9 +79,10 @@
     "worker_port": 8091,
     "coordinator_listen": "127.0.0.1:8080",
     "legacy_services": "disabled",
-    "public_canonical_service": "restored; four post-active load cases passed",
+    "public_canonical_service": "temporarily stopped for six-sealed campaign; canonical state preserved",
     "new_hosts_created": 0,
     "active_campaign_unit": "enhance-pir-v4-active-campaign.service",
-    "active_campaign_status": "completed; six-hour publication gate passed; not hardware qualification"
+    "active_campaign_status": "completed; six-hour publication gate passed; not hardware qualification",
+    "sealed_campaign_unit": "enhance-pir-v4-sealed-campaign.service"
   }
 }

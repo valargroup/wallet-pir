@@ -85,3 +85,15 @@ records the protocol metadata, positions, client checksum and return-to-v4 load.
 Large public-parameter base64 is represented by its encoded length and SHA-256.
 This verifies service rollback with preserved separate data directories; it does
 not imply that a legacy binary can open a v4 data directory.
+
+A six-sealed campaign was started after rollback validation. Its first group is
+the real c-4 replica pair; a second group consists of two loopback worker processes
+on the existing coordinator and is test support only. No hosts were created.
+The campaign requests six measured hours, 300 publications and concurrency two.
+Initial state is `building`, not measured or qualified. Canonical serving is
+stopped and preserved separately during this workload. Both physical samplers
+were verified fresh. The local supervisor checks sampler health, handles unloaded
+transient units, and restores canonical serving after completion or failure.
+`sealed-start/` preserves the exact launch/supervision scripts and operational
+paths. Prior synthetic active worker data was removed to recover the 32 GiB
+free-space floor; original canonical and legacy data and raw samples remain.

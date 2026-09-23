@@ -1,0 +1,26 @@
+{
+  "status": "building",
+  "qualification": "unqualified",
+  "campaign_unit": "enhance-pir-v4-sealed-campaign.service",
+  "report": "/srv/enhance-pir-v4/validation/sealed/exercise.json",
+  "seconds": 21600,
+  "min_publications": 300,
+  "concurrency": 2,
+  "worker_sampling_unit": "enhance-pir-v4-sealed-sampling.service",
+  "worker_sampling_path": "/srv/enhance-pir-v4/validation/sealed-samples",
+  "worker_sampling_seconds": 32400,
+  "physical_workers": [
+    "10.142.0.15",
+    "10.142.0.16"
+  ],
+  "helper_workers": [
+    "127.0.0.1:8191",
+    "127.0.0.1:8192"
+  ],
+  "helpers": "Coordinator-hosted test support, not qualified 8 GiB replicas",
+  "canonical_service": "stopped during campaign",
+  "restoration": "finish-sealed.py under local caffeinate; stops workload on stale/failed sampling and restores canonical state",
+  "runtime_deadline": "8 hours",
+  "synthetic_active_worker_archive": "removed after evidence retained; regenerable fixture data only",
+  "canonical_worker_state": "/srv/enhance-pir-v4/worker.canonical"
+}
