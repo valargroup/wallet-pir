@@ -57,7 +57,7 @@ impl QuerySession {
         let (rlwe, params) = ipir_sp::params_for_simplepir_profile(
             shard.logical_rows,
             ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q46,
+            ipir_sp::SimplePirProfile::P16Q49,
         )
         .map_err(|e| ClientError::Pir(e.to_string()))?;
         let bytes = STANDARD.decode(session.public_params_base64)?;
@@ -73,7 +73,7 @@ impl QuerySession {
         let client = IPIRClient::from_profile(
             shard.logical_rows,
             ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q46,
+            ipir_sp::SimplePirProfile::P16Q49,
         )
         .map_err(|e| ClientError::Pir(e.to_string()))?;
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id));
