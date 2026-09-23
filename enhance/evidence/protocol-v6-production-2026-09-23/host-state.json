@@ -1,0 +1,62 @@
+{
+  "release": "afdb4b6d70d6947fa60688a3cf4df21fe5eeae69",
+  "hosts": [
+    {
+      "host": "enhance-pir-coordinator-01",
+      "role": "coordinator",
+      "release": "afdb4b6d70d6947fa60688a3cf4df21fe5eeae69",
+      "binary_sha256": "2a421799ff260dc3696bf7ccc34cd2bcf6bb8c86f3fe3782a681912adedad42c",
+      "current_unit": {
+        "active": "active",
+        "enabled": "enabled"
+      },
+      "rollback_unit": {
+        "active": "inactive",
+        "enabled": "disabled"
+      },
+      "rollback_release_present": true,
+      "rollback_data_present": true,
+      "disk_available_bytes": 159754829824
+    },
+    {
+      "host": "enhance-pir-worker-01",
+      "role": "worker",
+      "release": "afdb4b6d70d6947fa60688a3cf4df21fe5eeae69",
+      "binary_sha256": "2a421799ff260dc3696bf7ccc34cd2bcf6bb8c86f3fe3782a681912adedad42c",
+      "current_unit": {
+        "active": "active",
+        "enabled": "enabled"
+      },
+      "rollback_unit": {
+        "active": "inactive",
+        "enabled": "disabled"
+      },
+      "rollback_release_present": true,
+      "rollback_data_present": true,
+      "disk_available_bytes": 37945696256
+    },
+    {
+      "host": "enhance-pir-worker-02",
+      "role": "worker",
+      "release": "afdb4b6d70d6947fa60688a3cf4df21fe5eeae69",
+      "binary_sha256": "2a421799ff260dc3696bf7ccc34cd2bcf6bb8c86f3fe3782a681912adedad42c",
+      "current_unit": {
+        "active": "active",
+        "enabled": "enabled"
+      },
+      "rollback_unit": {
+        "active": "inactive",
+        "enabled": "disabled"
+      },
+      "rollback_release_present": true,
+      "rollback_data_present": true,
+      "disk_available_bytes": 38328631296
+    }
+  ],
+  "public": {
+    "schema_version": 11,
+    "protocol_revision": "ironwood-enhance-pir-v6",
+    "generation": 10,
+    "anchor_height": 3493648
+  }
+}

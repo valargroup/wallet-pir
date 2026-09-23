@@ -51,6 +51,7 @@ These are dated records, not claims about the current source or live fleet. Use 
 | [p16-noise-2026-09-23](p16-noise-2026-09-23/README.md) | Plaintext-16 noise qualification and current-decomposition results — September 23, 2026 |
 | [p16-q48-2026-09-23](p16-q48-2026-09-23/README.md) | Q48 precision qualification for the protocol-v6 profile — September 23, 2026 |
 | [preflight-2026-09-13](preflight-2026-09-13/README.md) | Enhance isolated c-4 preflight — September 13, 2026 |
+| [protocol-v6-production-2026-09-23](protocol-v6-production-2026-09-23/README.md) | Direct SSH v6/q48 production cutover and exact-answer checks — September 23, 2026 |
 | [public-baseline-2026-09-14](public-baseline-2026-09-14/README.md) | Public Enhance baseline — September 14, 2026 |
 | [reported-performance](reported-performance/README.md) | Previously reported Enhance production performance |
 | [schema11-placement-2026-09-23](schema11-placement-2026-09-23/README.md) | Schema-11 placement and full-shard width comparison — September 23, 2026 |

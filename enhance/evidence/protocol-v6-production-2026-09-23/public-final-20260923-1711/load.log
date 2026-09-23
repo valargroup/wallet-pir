@@ -1,0 +1,24 @@
+{
+  "protocol": "ironwood-enhance-pir-v6",
+  "seconds": 15.05295074,
+  "concurrency": 2,
+  "offered_qps": null,
+  "completed": 251,
+  "succeeded": 118,
+  "incorrect_answers": 0,
+  "errors": {
+    "http_429": 115,
+    "http_502": 18
+  },
+  "unstarted_arrivals": 0,
+  "correct_queries_per_second": 7.838994628902904,
+  "p50_ms": 67.135,
+  "p95_ms": 182.015,
+  "p99_ms": 206.719,
+  "scheduled_p99_ms": 206.719,
+  "exact_answer_oracle": true,
+  "warmup_errors": {},
+  "warmup_correct_answers": 46,
+  "warmup_incorrect_answers": 0
+}
+Error: error/unsent-arrival threshold exceeded

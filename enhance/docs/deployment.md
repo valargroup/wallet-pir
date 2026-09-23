@@ -1,5 +1,11 @@
 # Enhance PIR deployment
 
+The recorded production fleet serves v6/q48 from commit `afdb4b6` on the
+unversioned coordinator and worker units. Its state is under
+`/srv/enhance-pir-v6`; see the [cutover evidence](../evidence/protocol-v6-production-2026-09-23/README.md).
+The later `ipir-sp` rc.2 dependency pin on `main` has not been deployed by that
+cutover.
+
 The release binary is `enhance-pir-server`. It has `coordinator`, `worker`,
 `exercise`, and `repair-rows` subcommands. The CLI and exact-answer load driver
 are `enhance-pir-cli` and `enhance-pir-load-test`. Schema 11 uses fresh canonical,
@@ -60,5 +66,5 @@ tags when reconciling infrastructure.
    and clients to the preserved old release and data; it does not reuse new state.
 
 The physical hosts have recorded `v4` resource names in Terraform. Those names
-are live identities and are deliberately left unchanged. This source cleanup
-neither runs Terraform nor changes production services.
+are live identities and are deliberately left unchanged. The direct SSH
+cutover did not run Terraform.

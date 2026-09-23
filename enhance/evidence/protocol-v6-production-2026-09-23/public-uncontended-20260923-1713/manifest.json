@@ -1,0 +1,83 @@
+{
+  "schema_version": 11,
+  "protocol_revision": "ironwood-enhance-pir-v6",
+  "network": "main",
+  "pool": "ironwood",
+  "generation": 6,
+  "anchor_height": 3493644,
+  "anchor_block_hash": "00000000007706a9e9aca43c225fd55199121f6f2aa8e564fa76b9f209803e63",
+  "geometry": {
+    "max_shard_rows": 32768,
+    "min_shard_rows": 4096,
+    "max_mutable_unit_rows": 8192,
+    "min_mutable_unit_rows": 2048
+  },
+  "coverage": {
+    "records": 583711,
+    "shards": [
+      {
+        "id": 0,
+        "global_row_start": 0,
+        "records": 583711,
+        "logical_rows": 32768,
+        "state": "GROWING",
+        "units": [
+          {
+            "local_row_start": 0,
+            "used_rows": 8192,
+            "allocated_rows": 8192
+          },
+          {
+            "local_row_start": 8192,
+            "used_rows": 8192,
+            "allocated_rows": 8192
+          },
+          {
+            "local_row_start": 16384,
+            "used_rows": 1305,
+            "allocated_rows": 2048
+          }
+        ]
+      }
+    ],
+    "loan": null
+  },
+  "sessions": [
+    {
+      "shard_id": 0,
+      "public_params_sha256": "7781aa478e7d3fe82e9d5f72ff5adbff4172c239fd04778b6f31ae4ab8b6c9f3",
+      "parameter_id": "ironwood-enhance-pir-v6/b731a410f932c354abd6a01a05b32865d327b287e021a8d9769190d28c08290c"
+    }
+  ],
+  "unit_identities": {
+    "0": [
+      {
+        "table": "enhance",
+        "shard_id": 0,
+        "local_row_start": 0,
+        "allocated_rows": 8192,
+        "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+        "parameter_id": "ironwood-enhance-pir-v6/unit/943a13f970b8cd1fe917c1442bdb487aebafdedd0c79fa14554d346b85746d57",
+        "content_sha256": "1274f66e8d20a4bded0e383750f18022d9373073612446a26197907f453beb5c"
+      },
+      {
+        "table": "enhance",
+        "shard_id": 0,
+        "local_row_start": 8192,
+        "allocated_rows": 8192,
+        "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+        "parameter_id": "ironwood-enhance-pir-v6/unit/943a13f970b8cd1fe917c1442bdb487aebafdedd0c79fa14554d346b85746d57",
+        "content_sha256": "c535dffe2dce0e7a80fc541836b31ba5663889757e7c792f65e55beac891b0d0"
+      },
+      {
+        "table": "enhance",
+        "shard_id": 0,
+        "local_row_start": 16384,
+        "allocated_rows": 2048,
+        "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+        "parameter_id": "ironwood-enhance-pir-v6/unit/4060688777d40ec7703e657242a5684692ecfd2f1e325a5306c19a5ab2caba1a",
+        "content_sha256": "29e521ccad7a5d935cff9f0aa34fe3e0c77649616d5de7f7c5c9d9254150f474"
+      }
+    ]
+  }
+}

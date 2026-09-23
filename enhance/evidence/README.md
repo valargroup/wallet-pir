@@ -17,6 +17,7 @@ release and must not be read as current source paths.
 
 ## Production and qualification
 
+- [Protocol-v6 direct SSH cutover and exact-answer checks](protocol-v6-production-2026-09-23/README.md)
 - [Direct production deployment and active campaign](architecture-v4-production-2026-09-23/README.md)
 - [Sealed cold-preparation failure and retry](architecture-v4-sealed-deadline-2026-09-23/README.md)
 - [Full-size correctness and disk sizing](architecture-v4-worker-disk-2026-09-23/README.md)

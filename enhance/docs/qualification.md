@@ -1,14 +1,14 @@
 # Qualification and current status
 
 This page records what the repository's dated evidence supports. It is not a
-live fleet report. The latest recorded production deployment uses a prior
-revision and `v4` service/path names; this cleanup has not been deployed.
-Each result applies only to the source, binary, hardware, and workload recorded
-with it. A release built from this tree needs fresh regression and operational
-checks before promotion.
+live fleet report. Protocol v6/q48 was deployed directly over SSH from commit
+`afdb4b6` on September 23, 2026. That binary predates the later `ipir-sp` rc.2
+pin on `main`. Each result applies only to its recorded source, binary,
+hardware, and workload.
 
 | Evidence | Recorded result | Limit |
 |---|---|---|
+| [Protocol-v6 production cutover](../evidence/protocol-v6-production-2026-09-23/README.md) | Two ready replicas and exact-answer public checks after cutover | No full CI or sustained qualification; eight-way load hit the two-query admission limit |
 | [Schema-11 interoperability](../evidence/schema11-suffix-2026-09-23/README.md) | Suffix record and wallet checks | Local; no fleet qualification |
 | [Production deployment](../evidence/architecture-v4-production-2026-09-23/README.md) | Exact answers, replicated publication, failover, restart, repair, and rollback rehearsal | Previous candidate; short load and a worker sampling gap |
 | [Active campaign](../evidence/architecture-v4-production-2026-09-23/README.md) | Six hours, 320 publications, 225,939 correct background answers | Worker-1 sample gap prevents uninterrupted hardware qualification |
@@ -18,8 +18,8 @@ checks before promotion.
 
 Open production gates are uninterrupted active and sealed hardware traces on
 physical workers; full-size delayed reclamation, replica recovery, and overload
-characterization; admission and memory-model calibration; and wallet adoption
-for schema 11. Seven sealed shards remain opt-in and unqualified until measured
+characterization; admission and memory-model calibration; and v6 wallet
+interoperability confirmation. Seven sealed shards remain opt-in and unqualified until measured
 on the intended hardware. The automated campaign assessor never issues a
 qualification certificate. Inspect raw failures and unstarted work as well as
 successful query counts.
