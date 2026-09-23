@@ -1,0 +1,21 @@
+[
+  "/opt/enhance-pir-v6/releases/9494d5e202e41bfe12bf30847521568839952052/enhance-pir-load-test",
+  "--server",
+  "https://enhance-pir.valargroup.dev",
+  "--oracle",
+  "/srv/enhance-pir-v6/validation/query-admission-wait-load-20260923T182857Z/oracle.json",
+  "--parallelism",
+  "8",
+  "--warmup",
+  "5s",
+  "--duration",
+  "300s",
+  "--seed",
+  "20260923",
+  "--max-error-rate",
+  "0",
+  "--slo-p99-ms",
+  "1000",
+  "--json-out",
+  "/srv/enhance-pir-v6/validation/query-admission-wait-load-20260923T182857Z/public-c8.json"
+]
