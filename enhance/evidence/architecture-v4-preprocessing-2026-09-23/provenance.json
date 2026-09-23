@@ -1,0 +1,9 @@
+{
+  "base_revision": "a0481931a212b0c0df5e9063a5f40c621fb6f52d",
+  "example_sha256": "78bb942283f04427967480c2076a1719b1bd7ccfa96d3732523aa480e3a6e75a",
+  "compiler": "rustc 1.91.0 (f8297e351 2025-10-28)",
+  "build": "cargo build --locked --release -p enhance-pir-server --example v4-preprocess",
+  "run": "target/release/examples/v4-preprocess --output .local-pir/v4-preprocess-local-20260923-fixed --repetitions 1",
+  "scope": "local aarch64 macOS smoke only; not c-4 timing or hardware qualification",
+  "first_attempt": "32K exact-boundary fixture incorrectly assumed one shard; rejected by manifest validation. Corrected to one record below boundary; no production implementation change."
+}
