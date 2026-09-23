@@ -4,17 +4,19 @@
 Zakura blocks. It does not read the Enhance journal, coordinator records, or
 worker state. It parses raw blocks, independently writes the 653-byte wallet
 record format, checks action counts against tree-size growth, and rechecks block
-hashes before accepting the output. The raw chain transaction parser is the
-same `zakura-chain` dependency used by the server, so a separate wallet release
-test remains necessary.
+hashes before accepting the output. It also requires the local coordinator to
+report two published replicas covering the selected height. The raw chain
+transaction parser is the same `zakura-chain` dependency used by the server,
+so a separate wallet release test remains necessary.
 
-Run this after latency measurements on the coordinator to avoid making node RPC
-reads part of the public load experiment. Set `END_HEIGHT` to a published anchor
-from `/v1/health`, then use a new output directory:
+Build with `cargo build --locked --release -p enhance-chain-oracle` from the
+pinned source on a Linux build host and verify the binary checksum when copying
+it to the coordinator. Run it there after latency measurements to
+avoid making node RPC reads part of the public load experiment. Set `END_HEIGHT`
+to a published anchor from `/v1/health`, then use a new output directory:
 
 ```sh
-cargo build --locked --release -p enhance-chain-oracle
-target/release/enhance-chain-oracle \
+/opt/enhance-chain-oracle \
   --cookie /root/.cache/zakura/.cookie \
   --end-height "$END_HEIGHT" --max-blocks 128 --count 16 \
   --out /root/enhance-chain-oracle-1

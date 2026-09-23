@@ -50,6 +50,14 @@ struct TreeSize {
     size: u64,
 }
 
+#[derive(Deserialize)]
+struct Health {
+    protocol: String,
+    anchor_height: u64,
+    generation: u64,
+    published_replica_counts: BTreeMap<String, u64>,
+}
+
 #[derive(Serialize)]
 struct OracleRecord {
     position: u64,
@@ -94,6 +102,26 @@ async fn rpc<T: DeserializeOwned>(
     response
         .result
         .ok_or_else(|| format!("node omitted {method} result").into())
+}
+
+async fn published_health(client: &reqwest::Client) -> Result<Health, Box<dyn std::error::Error>> {
+    let health = client
+        .get("http://127.0.0.1:8080/v1/health")
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Health>()
+        .await?;
+    if health.protocol != "ironwood-enhance-pir-v6"
+        || health.published_replica_counts.is_empty()
+        || health
+            .published_replica_counts
+            .values()
+            .any(|count| *count < 2)
+    {
+        return Err("coordinator is not serving two replicas".into());
+    }
+    Ok(health)
 }
 
 fn transaction_records(
@@ -171,8 +199,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("use loopback node RPC and bounded extraction limits".into());
     }
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(30))
         .build()?;
+    let health_before = published_health(&client).await?;
     let tip: u64 = rpc(
         &client,
         &args.rpc_url,
@@ -181,8 +211,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         json!([]),
     )
     .await?;
-    if args.end_height > tip {
-        return Err("end height exceeds node tip".into());
+    if args.end_height > tip || args.end_height > health_before.anchor_height {
+        return Err("end height exceeds node tip or published anchor".into());
     }
     let mut selected = BTreeMap::new();
     let mut blocks = Vec::new();
@@ -291,12 +321,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("canonical block changed before extraction completed".into());
         }
     }
+    let health_after = published_health(&client).await?;
+    if health_after.anchor_height < args.end_height {
+        return Err("published anchor rewound during extraction".into());
+    }
     let mut oracle = serde_json::to_vec_pretty(&selected.into_values().collect::<Vec<_>>())?;
     oracle.push(b'\n');
     let digest = hex::encode(Sha256::digest(&oracle));
     let manifest = json!({"kind":"enhance-chain-oracle-v1","qualification":"unqualified",
         "source":"canonical raw blocks from local node RPC; no PIR journal reads",
-        "node_tip_at_start":tip,"end_height":args.end_height,"blocks":blocks,
+        "node_tip_at_start":tip,"published_anchor_at_start":health_before.anchor_height,
+        "generation_at_start":health_before.generation,
+        "published_anchor_at_end":health_after.anchor_height,
+        "generation_at_end":health_after.generation,
+        "end_height":args.end_height,"blocks":blocks,
         "record_count":args.count,"oracle_sha256":digest,
         "limitations":["Uses the same zakura-chain transaction parser as the server, but reconstructs record encoding separately.",
                        "A separate wallet release must still validate restore and recovery over public HTTPS."]});
