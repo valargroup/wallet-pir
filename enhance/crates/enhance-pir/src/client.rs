@@ -43,7 +43,7 @@ pub struct QuerySession {
     generation: EnhanceGeneration,
     ypir: YpirSchemeParams,
     client: IPIRClient,
-    setup: Vec<Vec<u64>>,
+    setup: ipir_sp::PublicQuerySetup,
     published_c1: Vec<Vec<u64>>,
     epoch: [u8; 8],
 }
@@ -178,7 +178,12 @@ impl QuerySession {
             )));
         }
         let published_c1 = recover_published_c1(public_params, rlwe.d, blocks, rlwe.q);
-        let client = IPIRClient::new(&rlwe, &ypir);
+        let client = IPIRClient::from_profile(
+            generation.logical_rows,
+            ITEM_SIZE_BITS,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )
+        .map_err(|error| ClientError::Pir(error.to_string()))?;
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed_bytes());
         Ok(Self {
             generation,
@@ -199,7 +204,7 @@ impl QuerySession {
     }
 
     pub fn setup(&self) -> &[Vec<u64>] {
-        &self.setup
+        self.setup.polys()
     }
 
     pub fn prepare_position(&self, position: u64) -> Result<(PreparedQuery, usize), ClientError> {

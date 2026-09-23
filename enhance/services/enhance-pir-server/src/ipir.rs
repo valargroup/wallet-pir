@@ -692,13 +692,17 @@ mod persistence_tests {
         let dir = tempfile::tempdir().unwrap();
         let layout = layout();
         let (rlwe, params) = shard_parameters(&layout).unwrap();
-        let setup = ipir_sp::IPIRClient::new(&rlwe, &params)
-            .generate_public_query_setup_simplepir_from_seed(
-                DatabaseId::Enhance.setup_seed_bytes(),
-            );
+        let setup = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            layout.pir_profile,
+        )
+        .unwrap()
+        .generate_public_query_setup_simplepir_from_seed(DatabaseId::Enhance.setup_seed_bytes());
         let rows = vec![3; layout.shard_bytes()];
         let prepared =
-            PreparedShard::build(&layout, 0, 0, "fixture".into(), &rows, &rlwe, &setup).unwrap();
+            PreparedShard::build(&layout, 0, 0, "fixture".into(), &rows, &rlwe, setup.polys())
+                .unwrap();
         let query = vec![1; params.db_rows];
         let expected_query = prepared.runtime.evaluate(&rlwe, &query).unwrap();
         // Independently reproduce the pre-refactor artifact writer: whole byte

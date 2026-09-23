@@ -214,7 +214,12 @@ impl WorkerState {
         if global_rlwe.d != rlwe.d || global_rlwe.q != rlwe.q {
             return Err("global and worker RLWE parameters differ".to_string());
         }
-        let client = ipir_sp::IPIRClient::new(&global_rlwe, &global_params);
+        let client = ipir_sp::IPIRClient::from_profile(
+            global_params.num_items,
+            global_params.item_size_bits,
+            layout.pir_profile,
+        )
+        .map_err(|e| e.to_string())?;
         let setup =
             client.generate_public_query_setup_simplepir_from_seed(table.setup_seed_bytes());
         let artifact_dir = self.artifact_dir.clone();
@@ -228,7 +233,7 @@ impl WorkerState {
                 rows_sha256,
                 &rows,
                 &rlwe,
-                &setup,
+                setup.polys(),
             )
         })
         .await
@@ -885,10 +890,13 @@ mod publication_recovery_tests {
             pir_profile: ipir_sp::SimplePirProfile::P14,
         };
         let (rlwe, params) = shard_parameters(&layout).unwrap();
-        let setup = ipir_sp::IPIRClient::new(&rlwe, &params)
-            .generate_public_query_setup_simplepir_from_seed(
-                DatabaseId::Enhance.setup_seed_bytes(),
-            );
+        let setup = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            layout.pir_profile,
+        )
+        .unwrap()
+        .generate_public_query_setup_simplepir_from_seed(DatabaseId::Enhance.setup_seed_bytes());
         PreparedShard::build(
             &layout,
             0,
@@ -896,7 +904,7 @@ mod publication_recovery_tests {
             "fixture".into(),
             &vec![0; layout.shard_bytes()],
             &rlwe,
-            &setup,
+            setup.polys(),
         )
         .unwrap()
         .persist(directory, DatabaseId::Enhance, &layout, &rlwe)

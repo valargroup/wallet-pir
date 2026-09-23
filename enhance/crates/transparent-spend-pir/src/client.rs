@@ -35,7 +35,7 @@ struct TableClient {
     generation: TransparentSpendGeneration,
     params: YpirSchemeParams,
     client: IPIRClient,
-    setup: Vec<Vec<u64>>,
+    setup: ipir_sp::PublicQuerySetup,
     published_c1: Vec<Vec<u64>>,
     epoch: [u8; 8],
 }
@@ -84,7 +84,12 @@ impl TableClient {
             ));
         }
         let published_c1 = recover_published_c1(&public_params, rlwe.d, blocks, rlwe.q);
-        let client = IPIRClient::new(&rlwe, &session.params);
+        let client = IPIRClient::from_profile(
+            generation.logical_rows,
+            ITEM_SIZE_BITS,
+            ipir_sp::SimplePirProfile::P14,
+        )
+        .map_err(|error| ClientError::Pir(error.to_string()))?;
         let mut seed = [0; 32];
         seed[..8].copy_from_slice(&expected_seed.to_le_bytes());
         let setup = client.generate_public_query_setup_simplepir_from_seed(seed);
