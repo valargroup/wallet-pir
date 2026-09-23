@@ -1,0 +1,32 @@
+{
+  "qualification": "unqualified",
+  "case": "deployed canonical peer row repair",
+  "row_id": "bbc107effa32ff691b971f1e5fba4ad618330d61b8ad6aafbe182593a69d53ad",
+  "content_sha256": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6",
+  "allocated_rows": 8192,
+  "live_worker_lock_refused": true,
+  "repair_stdout": "{\"qualification\":\"unqualified\",\"readiness\":\"requires_worker_restart\",\"restored_units\":1,\"status\":\"rows_verified\"}\n",
+  "journal_unchanged_sha256": "131c4e2694c876f60cdc1976a4296ec68894d2da7b90ac2ca1ad2511d5c426a1",
+  "second_repair_stdout": "{\"qualification\":\"unqualified\",\"readiness\":\"requires_worker_restart\",\"restored_units\":0,\"status\":\"rows_verified\"}\n",
+  "repaired_worker_only_load": {
+    "protocol": "ironwood-enhance-pir-v4",
+    "seconds": 20.028222422,
+    "concurrency": 1,
+    "offered_qps": null,
+    "completed": 218,
+    "succeeded": 218,
+    "incorrect_answers": 0,
+    "errors": {},
+    "unstarted_arrivals": 0,
+    "correct_queries_per_second": 10.884640454189181,
+    "p50_ms": 82.367,
+    "p95_ms": 122.239,
+    "p99_ms": 148.223,
+    "scheduled_p99_ms": 148.223,
+    "exact_answer_oracle": true,
+    "warmup_errors": {},
+    "warmup_correct_answers": 23,
+    "warmup_incorrect_answers": 0
+  },
+  "status": "passed"
+}

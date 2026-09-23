@@ -1,0 +1,52 @@
+{
+  "anchor_height": 3493410,
+  "blocked_reason": null,
+  "capacity": {
+    "burst_rows": 4096,
+    "effective_rows_per_second": 1.0,
+    "fleet_ceiling_reached": false,
+    "memory_limit": null,
+    "observation": {
+      "at": 1790166532,
+      "records": 574221
+    },
+    "peak_rows_per_second": 0.4121212121212121,
+    "readiness_seconds": 21600.0,
+    "remaining_rows": 146440,
+    "requested": null,
+    "requests": {}
+  },
+  "generation": 50,
+  "operation": {
+    "affected_groups": [
+      "shard-group-01"
+    ],
+    "assignments": {
+      "0": "shard-group-01"
+    },
+    "attempt": 53,
+    "candidate_digest": "18f1b72802d3e3022d9e33d2756bb22d0da8973d13c5cd8d4f235363e8fa5470",
+    "epoch": 11,
+    "expected_revision": 50,
+    "id": "generation-51",
+    "infrastructure_resources": {},
+    "phase": "PREPARING",
+    "readiness": [],
+    "require_both": [],
+    "source_generations": [
+      50,
+      49,
+      48,
+      47,
+      46
+    ]
+  },
+  "pending_abort_notifications": 0,
+  "pending_commit_notifications": 0,
+  "placement_revision": 50,
+  "protocol": "ironwood-enhance-pir-v4",
+  "published_replica_counts": {
+    "shard-group-01": 2
+  },
+  "registered_groups": 1
+}

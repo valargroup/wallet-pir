@@ -1,0 +1,33 @@
+{
+  "coordinator": {
+    "generation": 48,
+    "anchor_height": 3493408,
+    "published_replica_counts": {
+      "shard-group-01": 1
+    },
+    "protocol": "ironwood-enhance-pir-v4"
+  },
+  "worker1": {
+    "protocol": "ironwood-enhance-pir-v4",
+    "epoch": 11,
+    "revision": 48,
+    "published": [
+      44,
+      45,
+      46,
+      47,
+      48
+    ]
+  },
+  "worker2": {
+    "protocol": "ironwood-enhance-pir-v4",
+    "epoch": 11,
+    "revision": 47,
+    "published": [
+      44,
+      45,
+      46,
+      47
+    ]
+  }
+}

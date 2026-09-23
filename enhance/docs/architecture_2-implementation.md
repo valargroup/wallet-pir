@@ -88,8 +88,9 @@ A result applies only to the source and binary hashes recorded with it.
 
 The architecture permits exceptional reorgs to relocate into qualified capacity
 **or block publication**. An exhaustive placement solver is not required.
-Automatic peer transfer is optional; safe offline row repair and its deployed
-rehearsal remain part of recovery validation.
+Automatic peer transfer is optional. Deployed offline repair of one missing
+canonical 8K-row artifact passed, including journal preservation and 218 exact
+answers through the repaired replica. Broader recovery scenarios remain.
 
 The 32 GiB initial worker free-space floor is based on sampled full-size worker
 footprints (14.392 GiB peak), with additional native disk monitoring required.

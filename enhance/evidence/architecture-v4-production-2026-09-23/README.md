@@ -57,5 +57,19 @@ state is back at `worker`. Legacy services and automatic provisioning remain off
 
 Implementation and cleanup were pushed to main at
 `436dcc7efda3e09a6734342fd4f55e07bf1d9d95`; this evidence update follows it.
-Sealed-role, full-size overload, uninterrupted worker-1 qualification, deployed
-repair and legacy rollback rehearsals remain outstanding.
+Sealed-role, full-size overload, uninterrupted worker-1 qualification and legacy
+rollback rehearsal remain outstanding.
+
+The deployed canonical peer-row repair rehearsal passed. The CLI refused repair
+while worker 1 held its live lock. After stopping it, one 8K-row artifact was
+moved aside and restored from a checksum-verified worker-2 copy. The durable
+journal hash was unchanged. A second repair restored zero units. After restart,
+worker 2 was stopped to force exact-answer traffic through the repaired replica:
+218 measured answers and 23 warmup answers were correct, with zero errors and
+148.223 ms measured p99. Both replicas were restarted; the peer caught up and
+generation 50 was published on both replicas. See
+`completed/repair-rehearsal.json`, `completed/after-repair-health.json` and
+`completed/after-repair-replicated-health.json`. This
+proves this canonical missing-row recovery case, not all corruption or full-size
+recovery scenarios. The preserved original and peer copy remain on worker 1 at
+`/srv/enhance-pir-v4/validation/repair-20260923`.
