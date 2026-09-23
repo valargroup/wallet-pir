@@ -77,19 +77,25 @@ def main():
     origin = urlsplit(args.server)
     if origin.scheme != 'https' or not origin.hostname or origin.username or origin.password or origin.query or origin.fragment:
         parser.error('use a public HTTPS origin without credentials, query, or fragment')
-    if not math.isfinite(args.rate) or args.rate <= 0 or args.window_seconds <= 0 or args.windows <= 0:
-        parser.error('use positive rate, window and count')
+    if not math.isfinite(args.rate) or not 0 < args.rate <= 0.2 or args.window_seconds <= 0 or args.windows <= 0:
+        parser.error('use positive window/count and a monitor rate no higher than 0.2 QPS')
     if math.floor(args.rate * args.window_seconds) == 0:
         parser.error('each window must schedule at least one query')
     if any(not re.fullmatch('[0-9a-f]{40}', revision)
            for revision in (args.source_revision, args.server_revision)):
         parser.error('use full source and deployed revisions')
     binary, oracle = args.binary.resolve(strict=True), args.oracle.resolve(strict=True)
+    oracle_manifest_path = oracle.parent / 'manifest.json'
+    oracle_manifest = json.loads(oracle_manifest_path.read_text())
+    if (oracle_manifest.get('kind') != 'enhance-chain-oracle-v1'
+            or oracle_manifest.get('oracle_sha256') != digest(oracle)):
+        parser.error('oracle must match a chain-oracle manifest in the same directory')
     args.out.mkdir(parents=True, exist_ok=False, mode=0o700)
     manifest = dict(kind='enhance-public-monitor-v1', qualification='unqualified',
                     server=args.server, source_revision=args.source_revision,
                     server_revision=args.server_revision, binary_sha256=digest(binary),
-                    oracle_sha256=digest(oracle), rate=args.rate,
+                    oracle_sha256=digest(oracle),
+                    oracle_manifest_sha256=digest(oracle_manifest_path), rate=args.rate,
                     window_seconds=args.window_seconds, windows=args.windows,
                     started_ns=time.time_ns(), status='running', runs=[],
                     limitations=['Oracle provenance and deployed binary identity require independent verification',
@@ -98,8 +104,10 @@ def main():
     write(args.out / 'manifest.json', manifest)
     try:
         for index in range(args.windows):
-            if digest(binary) != manifest['binary_sha256'] or digest(oracle) != manifest['oracle_sha256']:
-                raise RuntimeError('binary or oracle changed during observation')
+            if (digest(binary) != manifest['binary_sha256']
+                    or digest(oracle) != manifest['oracle_sha256']
+                    or digest(oracle_manifest_path) != manifest['oracle_manifest_sha256']):
+                raise RuntimeError('binary or oracle evidence changed during observation')
             name = f'window-{index:03d}'
             report_path = args.out / f'{name}.json'
             command = [str(binary), '--server', args.server, '--oracle', str(oracle),
@@ -115,8 +123,10 @@ def main():
                 result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
                                         timeout=args.window_seconds + 180)
             run.update(exit_code=result.returncode, finished_ns=time.time_ns())
-            if digest(binary) != manifest['binary_sha256'] or digest(oracle) != manifest['oracle_sha256']:
-                raise RuntimeError('binary or oracle changed during observation')
+            if (digest(binary) != manifest['binary_sha256']
+                    or digest(oracle) != manifest['oracle_sha256']
+                    or digest(oracle_manifest_path) != manifest['oracle_manifest_sha256']):
+                raise RuntimeError('binary or oracle evidence changed during observation')
             failures = assess(json.loads(report_path.read_text()), args.rate, args.window_seconds) if report_path.exists() else ['missing_report']
             if result.returncode:
                 failures.append('load_process_failed')

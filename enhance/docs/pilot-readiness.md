@@ -138,14 +138,14 @@ alerts. The v6 coordinator does not export an HTTP latency histogram, so the
 sidecar's query p99 setting cannot monitor the 1-second public budget. During
 the pilot, run `enhance/ops/scripts/monitor-public.py` from a separate client
 host with a chain-derived oracle. Its default 0.2 QPS, five-minute windows
-consume one tenth of the 2 QPS pilot envelope; reserve that traffic in the
-admission budget. It checks exact answers and public scheduled and successful
+consume about one tenth of the 2 QPS pilot envelope, including one warmup
+query per window; reserve that traffic in the admission budget. It checks
+exact answers and public scheduled and successful
 p99 each window, stops on failure, and retains per-window reports. Supervise
 its process and respond to failure; a completed synthetic observation does not
-measure every wallet request. Name incident and release
-owners. Preserve rollback data
-for the entire qualification and pilot
-window, including checking any scheduled cleanup timers.
+measure every wallet request. Name incident and release owners. Preserve
+rollback data for the entire qualification and pilot window, including
+checking any scheduled cleanup timers.
 
 ```sh
 python3 enhance/ops/scripts/monitor-public.py \
