@@ -121,6 +121,55 @@ def wait_registered(origin, operation, timeout=120):
     raise RuntimeError('coordinator did not register the provisioned pair')
 
 
+def watch_request(origin, operation_id, target_groups, trace_path, timeout, interval):
+    """Record the forecast crossing and return only for the pinned demand."""
+    started = time.monotonic()
+    saw_outside = False
+    with trace_path.open('x') as trace:
+        while time.monotonic() - started < timeout:
+            began = time.monotonic()
+            current = health(origin)
+            capacity = current['capacity']
+            observation = capacity.get('observation') or {}
+            remaining = capacity.get('remaining_rows')
+            rate = capacity.get('effective_rows_per_second')
+            readiness = capacity.get('readiness_seconds')
+            burst = capacity.get('burst_rows')
+            if any(value is None for value in (remaining, rate, readiness, burst)):
+                raise ValueError('coordinator has no complete capacity forecast')
+            threshold = rate * max(readiness, 21600) + burst
+            sample = {'event': 'sample', 'at_ns': time.time_ns(),
+                      'generation': current['generation'],
+                      'registered_groups': current['registered_groups'],
+                      'observation': observation, 'remaining_rows': remaining,
+                      'effective_rows_per_second': rate,
+                      'readiness_seconds': readiness, 'burst_rows': burst,
+                      'threshold_rows': threshold, 'requested': capacity.get('requested'),
+                      'requests': capacity.get('requests', {})}
+            trace.write(json.dumps(sample, sort_keys=True, allow_nan=False) + '\n')
+            trace.flush()
+            if current['registered_groups'] != target_groups - 1:
+                raise ValueError('fleet group count changed during the pinned watch')
+            requested = capacity.get('requested')
+            if requested is None:
+                if remaining <= threshold:
+                    raise ValueError('capacity is due but the coordinator has no request')
+                saw_outside = True
+            else:
+                request = capacity.get('requests', {}).get(operation_id)
+                if (not saw_outside or requested != operation_id or request is None
+                        or request.get('target_groups') != target_groups
+                        or request.get('registered') is not False
+                        or remaining > threshold):
+                    raise ValueError('pinned request did not follow an outside-threshold sample')
+                trace.write(json.dumps({'event': 'provision-start', 'at_ns': time.time_ns(),
+                                        'operation_id': operation_id}, sort_keys=True) + '\n')
+                trace.flush()
+                return trace
+            time.sleep(max(0, interval - (time.monotonic() - began)))
+    raise TimeoutError('pinned capacity request did not arrive in the watch window')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('state-dir', 'terraform-dir', 'policy', 'inventory', 'bootstrap-policy',
@@ -128,12 +177,20 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--coordinator-url', default='http://127.0.0.1:8280')
     parser.add_argument('--stage', choices=('provision', 'complete'), default='complete')
+    parser.add_argument('--watch-request', action='store_true')
+    parser.add_argument('--watch-seconds', type=int, default=900)
+    parser.add_argument('--watch-interval', type=float, default=1)
+    parser.add_argument('--trace-out', type=Path)
     parser.add_argument('--expected-operation-id', required=True)
     parser.add_argument('--expected-target-groups', type=int, required=True)
     parser.add_argument('--token-env', default='DIGITALOCEAN_ACCESS_TOKEN')
     parser.add_argument('--acknowledge-unqualified-test', action='store_true', required=True)
     args = parser.parse_args()
     os.umask(0o077)
+    if args.watch_request and (args.stage != 'provision' or args.trace_out is None
+                               or not 1 <= args.watch_seconds <= 3600
+                               or not 0.5 <= args.watch_interval <= 5):
+        parser.error('watch requires provision stage, a new trace path, and bounded timing')
     if (args.expected_target_groups not in (2, 3, 4)
             or not re.fullmatch(r'successor-[0-9]+-pair-' + str(args.expected_target_groups),
                                 args.expected_operation_id)):
@@ -146,6 +203,10 @@ def main():
     token = os.environ.get(args.token_env)
     if not token:
         parser.error('runtime DigitalOcean token is missing')
+    if args.watch_request:
+        watch_request(args.coordinator_url, args.expected_operation_id,
+                      args.expected_target_groups, args.trace_out,
+                      args.watch_seconds, args.watch_interval)
     policy = json.loads(args.policy.read_text())
     common = ['--state-dir', str(args.state_dir), '--terraform-dir', str(args.terraform_dir),
               '--policy', str(args.policy), '--inventory', str(args.inventory),
@@ -171,6 +232,10 @@ def main():
     # their journals before doing anything to an existing resource.
     run_adapter('v4-provision', common)
     if args.stage == 'provision':
+        if args.watch_request:
+            with args.trace_out.open('a') as trace:
+                trace.write(json.dumps({'event': 'provision-complete', 'at_ns': time.time_ns(),
+                                        'operation_id': operation_id}, sort_keys=True) + '\n')
         print(json.dumps({'operation': operation_id, 'phase': 'provisioned',
                           'qualification': 'unqualified'}, sort_keys=True))
         return
