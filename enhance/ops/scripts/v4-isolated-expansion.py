@@ -111,7 +111,7 @@ def registration(journal, terraform_dir, policy, inventory_path, bootstrap_polic
         return updated
 
 
-def wait_registered(origin, operation, timeout=120):
+def wait_registered(origin, operation, timeout=600):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = health(origin)
