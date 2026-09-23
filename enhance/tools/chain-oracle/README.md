@@ -32,6 +32,8 @@ to a published anchor from `/v1/health`, then use a new output directory:
 
 The output contains `oracle.json` for `enhance-pir-load-test --oracle` and a
 manifest with source block heights, hashes, tree sizes, and the oracle SHA-256.
+It also records the published anchor's canonical block hash and Ironwood tree
+size as independent inputs for a later wallet-client acceptance check.
 Keep the manifest and exact binary checksum with the public query report.
 Run the load driver from a separate host through the public HTTPS endpoint.
 This checks positional answers; restore and recovery require the consuming

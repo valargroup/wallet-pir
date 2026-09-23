@@ -325,6 +325,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if health_after.anchor_height < args.end_height {
         return Err("published anchor rewound during extraction".into());
     }
+    let anchor_hash: String = rpc(
+        &client,
+        &args.rpc_url,
+        &args.cookie,
+        "getblockhash",
+        json!([health_after.anchor_height]),
+    )
+    .await?;
+    let anchor_block: VerboseBlock = rpc(
+        &client,
+        &args.rpc_url,
+        &args.cookie,
+        "getblock",
+        json!([health_after.anchor_height.to_string(), 2]),
+    )
+    .await?;
+    let anchor_tree_size = anchor_block
+        .trees
+        .ironwood
+        .ok_or("published anchor has no Ironwood tree size")?
+        .size;
+    let anchor_hash_recheck: String = rpc(
+        &client,
+        &args.rpc_url,
+        &args.cookie,
+        "getblockhash",
+        json!([health_after.anchor_height]),
+    )
+    .await?;
+    if anchor_hash != anchor_hash_recheck {
+        return Err("published anchor changed during extraction".into());
+    }
     let mut oracle = serde_json::to_vec_pretty(&selected.into_values().collect::<Vec<_>>())?;
     oracle.push(b'\n');
     let digest = hex::encode(Sha256::digest(&oracle));
@@ -333,6 +365,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "node_tip_at_start":tip,"published_anchor_at_start":health_before.anchor_height,
         "generation_at_start":health_before.generation,
         "published_anchor_at_end":health_after.anchor_height,
+        "published_anchor_hash_at_end":anchor_hash,
+        "published_anchor_tree_size_at_end":anchor_tree_size,
         "generation_at_end":health_after.generation,
         "end_height":args.end_height,"blocks":blocks,
         "record_count":args.count,"oracle_sha256":digest,

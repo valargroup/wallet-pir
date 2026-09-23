@@ -31,3 +31,31 @@ The loopback transport and generation-expiry scenario are adapted from the
 pinned wallet's historical `http_integration.rs` fixture. The new SQLite scenario
 verifies schema-11 suffix reconstruction and batch application. Wallet metadata
 and transaction-shape trust semantics are unchanged.
+
+## Public client check
+
+After the latency campaign, build the pinned wallet client on a separate
+machine without querying production:
+
+```sh
+python3 enhance/tools/schema11-interop/run_public.py \
+  /absolute/path/to/wallet-libraries --build-only
+```
+
+Run `enhance-chain-oracle` on the coordinator and transfer its `oracle.json`
+and `manifest.json` to the separate machine. Then run:
+
+```sh
+python3 enhance/tools/schema11-interop/run_public.py \
+  /absolute/path/to/wallet-libraries \
+  --oracle /absolute/path/to/chain-oracle-output
+```
+
+The command pins PR #29, verifies the oracle digest, requires the public
+manifest's generation, anchor hash, height and record count to equal the
+chain-derived values, then queries every oracle position through the wallet's
+HTTPS transport and checks exact records. A publication between extraction
+and client fetch causes a safe failure; extract a fresh oracle and retry. This
+check uses the wallet client library but does not open a scanned SQLite wallet
+or exercise restore, resume or reorg behavior. Those remain separate release
+gates.
