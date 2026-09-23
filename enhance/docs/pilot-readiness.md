@@ -45,6 +45,39 @@ Exercise retention, reclamation, growth and placement transitions. Seven sealed
 shards remain disabled. Use `assess-campaign.py`, then explicitly review its
 unproven gates; it intentionally never emits a qualification certificate.
 
+Start worker observation before the public load window as well. Bootstrap-managed
+workers use `sample-loop.py` with their bootstrap receipt. Directly deployed v6
+workers use `--direct-policy /etc/enhance-pir-v6/sampling.json`: the root-only
+policy pins the worker name, release revision, binary and checksum-manifest hashes,
+private address and port, and the three effective memory limits. The sampler
+checks those against the running process, cgroup, private health and metrics on
+every sample. Keep the raw worker-local traces and summarize immutable copies with
+`summarize-samples.py`; a sampler started after a stage began cannot cover that
+stage. On the coordinator, `observe-freshness.py` records the local node tip and
+published anchor without writing RPC credentials to its trace. Retain its raw
+trace to assess the five-minute freshness gate over the same window.
+
+The direct sampling policy has this nonsecret shape; use observed values from
+the verified release and effective `systemctl show` limits, then install it
+mode 0600 on its matching worker:
+
+```json
+{
+  "kind": "enhance-direct-worker-sampling-v1",
+  "worker_name": "enhance-pir-worker-01",
+  "revision": "<40-character source revision>",
+  "binary_sha256": "<server binary SHA-256>",
+  "manifest_sha256": "<SHA256SUMS file SHA-256>",
+  "private_ipv4": "<worker private IPv4>",
+  "private_port": 8091,
+  "limits": {
+    "memory_high_bytes": 7516192768,
+    "memory_max_bytes": 7609516032,
+    "memory_swap_max_bytes": 2147479552
+  }
+}
+```
+
 Run the public workload from a client outside the coordinator/worker hosts:
 
 ```sh

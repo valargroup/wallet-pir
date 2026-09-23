@@ -102,6 +102,10 @@ class SamplingTests(unittest.TestCase):
             manifest.write_text('changed\n')
             with self.assertRaisesRegex(ValueError, 'manifest differs'):
                 self.sample(root, properties, Path('/etc/enhance-pir-v6/sampling.json'))
+            receipt['revision'] = '../../etc'
+            policy.write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(ValueError, 'invalid direct release identity'):
+                self.sample(root, properties, Path('/etc/enhance-pir-v6/sampling.json'))
 
     def test_counters_are_not_reset_and_memory_units_are_bytes(self):
         with tempfile.TemporaryDirectory() as temp:

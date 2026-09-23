@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import time
 import urllib.request
@@ -181,11 +182,17 @@ def collect(root=Path('/'), properties=None, direct_policy=None):
         data_dir = root / 'srv/enhance-pir/worker'
     else:
         policy_path = root / str(direct_policy).lstrip('/')
-        if policy_path.is_symlink() or policy_path.stat().st_mode & 0o077:
+        policy_mode = policy_path.lstat().st_mode
+        if not stat.S_ISREG(policy_mode) or policy_mode & 0o077:
             raise ValueError('direct sampling policy must be a private regular file')
         receipt = json.loads(policy_path.read_text())
         if receipt.get('kind') != 'enhance-direct-worker-sampling-v1' or receipt.get('worker_name') != sample['hostname']:
             raise ValueError('direct sampling policy does not describe this host')
+        if (not isinstance(receipt.get('revision'), str)
+                or not re.fullmatch('[0-9a-f]{40}', receipt['revision'])
+                or not isinstance(receipt.get('manifest_sha256'), str)
+                or not re.fullmatch('[0-9a-f]{64}', receipt['manifest_sha256'])):
+            raise ValueError('invalid direct release identity')
         release_prefix = 'opt/enhance-pir-v6/releases/'
         binary_name = 'enhance-pir-server'
         data_dir = root / 'srv/enhance-pir-v6/worker'
