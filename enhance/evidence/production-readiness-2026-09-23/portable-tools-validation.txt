@@ -67,3 +67,18 @@ is retained as /usr/local/bin/pir-apm.before-a9cc754 for rollback. After
 Its fleet page rendered both worker reachability markers without scrape or
 inventory errors; /coordinator/ reported all checks passing with zero
 active alerts. The serving coordinator stayed active with NRestarts=0.
+
+2026-09-23 23:56 UTC: prepared the pinned public wallet client on the
+separate wallet-pir-ci-01 Linux host. The clean wallet-libraries checkout
+resolved to 9b190657d129d08e964623d0ecc1d8e4ffb31b1d. The wallet-pir
+source archive at 33b71ed had SHA-256
+8f9f511d9023496dced8f949d5059cc09106c63ff55401477246bcf8b4d98eb8.
+With RUSTFLAGS='-C target-cpu=x86-64', the harness built successfully and
+found no packages outside the pinned wallet lock. Wallet lock SHA-256 was
+0bd37dfed8077d7f34f41b25c0bb8f82c5a2a7f7f302de6c7c55a501ba3a920f;
+resolved lock SHA-256 was
+31c11205617a046ac2efcb84133177b6956bf1c16bd08402a1be59104b91be87.
+The Linux client binary SHA-256 was
+97a51f5fc6a10b41c5f962871631db8308775a93e5c9e71f8729a733e5fdc179
+and matched after transfer to the operator machine. It has not yet queried
+production; the chain-derived anchor and load window must come first.
