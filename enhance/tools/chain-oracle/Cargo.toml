@@ -1,0 +1,17 @@
+[package]
+name = "enhance-chain-oracle"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
+
+[dev-dependencies]
+enhance-pir = { path = "../../crates/enhance-pir", version = "=0.0.1" }

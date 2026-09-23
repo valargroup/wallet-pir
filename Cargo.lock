@@ -1007,6 +1007,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
+name = "enhance-chain-oracle"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "enhance-pir",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "zakura-chain",
+]
+
+[[package]]
 name = "enhance-pir"
 version = "0.0.1"
 dependencies = [

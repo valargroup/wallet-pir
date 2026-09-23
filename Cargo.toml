@@ -17,6 +17,7 @@ members = [
     "transparent/services/transparent-shard-server",
     # Development and validation tools; package/binary names stay stable.
     "enhance/tools/loadtest",
+    "enhance/tools/chain-oracle",
     "transparent/tools/transparent-loadtest",
     "transparent/tools/transparent-regression",
     "transparent/tools/transparent-measure",
