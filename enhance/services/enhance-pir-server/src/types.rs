@@ -115,7 +115,7 @@ pub const ENHANCE_LAYOUT: DatabaseLayout = DatabaseLayout {
     record_bytes: RECORD_BYTES,
     records_per_row: RECORDS_PER_ROW,
     shard_rows: SHARD_ROWS,
-    pir_profile: ipir_sp::SimplePirProfile::P16Q49,
+    pir_profile: ipir_sp::SimplePirProfile::P16Q48,
 };
 
 pub const TRANSPARENT_SPEND_LAYOUT: DatabaseLayout = DatabaseLayout {

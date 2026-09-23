@@ -3,7 +3,7 @@
 ## Schema-11 clean cutover
 
 The supported runtime is `enhance-pir-v4`, now advertising schema 11 and
-`ironwood-enhance-pir-v5`. Binary and module names are retained; state formats
+`ironwood-enhance-pir-v6`. Binary and module names are retained; state formats
 are not. `enhance-pir-server`, `enhance-pir-worker`, and the legacy deployment
 scripts refuse operation. The old journal migration utility only changes row
 packing and cannot create suffix records.

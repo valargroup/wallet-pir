@@ -591,7 +591,7 @@ mod tests {
             .expect("global params");
             assert_eq!(rlwe.d, 2_048, "{name}");
             assert_eq!(shard.p, 1 << 16, "{name}");
-            assert_eq!(shard.query_bits, 46, "{name}");
+            assert_eq!(shard.query_bits, 48, "{name}");
             assert_eq!(shard.instances, *instances, "{name}");
             assert_eq!(shard.db_cols, instances * rlwe.d, "{name}");
             // Shard and global parameters must agree on everything but row count,
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(params.instances, 6);
         assert_eq!(params.db_cols, 12_288);
         assert_eq!(params.p, 1 << 16);
-        assert_eq!(params.query_bits, 46);
+        assert_eq!(params.query_bits, 48);
     }
 
     #[test]

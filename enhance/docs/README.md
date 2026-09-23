@@ -6,7 +6,7 @@ then decrypts and validates the returned data using its existing transaction
 context. The service does not supply transaction history, witnesses, or a
 complete wallet sync.
 
-The supported server implements schema 11 of `ironwood-enhance-pir-v5`, using
+The supported server implements schema 11 of `ironwood-enhance-pir-v6`, using
 653-byte suffix records and 33 records per 21,549-byte row. It requires the
 wallet to retain compact encryption fields. The architecture-2 binary and
 modules retain their `v4` names. Earlier clients and persisted state are

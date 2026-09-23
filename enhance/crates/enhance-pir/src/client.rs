@@ -148,7 +148,7 @@ impl QuerySession {
         let (rlwe, expected) = ipir_sp::params_for_simplepir_profile(
             generation.logical_rows,
             ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q49,
+            ipir_sp::SimplePirProfile::P16Q48,
         )
         .map_err(|error| ClientError::Pir(error.to_string()))?;
         if ypir != expected {
@@ -181,7 +181,7 @@ impl QuerySession {
         let client = IPIRClient::from_profile(
             generation.logical_rows,
             ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q49,
+            ipir_sp::SimplePirProfile::P16Q48,
         )
         .map_err(|error| ClientError::Pir(error.to_string()))?;
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed_bytes());
@@ -461,7 +461,7 @@ mod tests {
         let (rlwe, params) = ipir_sp::params_for_simplepir_profile(
             SHARD_ROWS as u64,
             ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q49,
+            ipir_sp::SimplePirProfile::P16Q48,
         )
         .expect("fixed Enhance geometry");
         let public_params = vec![0; (params.db_cols / rlwe.d) * published_c1_len(rlwe.d, rlwe.q)];

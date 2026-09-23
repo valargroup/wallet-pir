@@ -20,7 +20,7 @@ import time
 import urllib.request
 
 SERVICE = 'enhance-pir-v4-worker.service'
-PROTOCOL = 'ironwood-enhance-pir-v5'
+PROTOCOL = 'ironwood-enhance-pir-v6'
 
 
 def counters(value):

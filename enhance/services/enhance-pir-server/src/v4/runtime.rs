@@ -26,7 +26,7 @@ pub fn rlwe() -> &'static RlweParams {
         ipir_sp::params_for_simplepir_profile(
             32768,
             ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q49,
+            ipir_sp::SimplePirProfile::P16Q48,
         )
         .expect("pinned profile")
         .0
@@ -300,7 +300,7 @@ impl Engine {
         let client = ipir_sp::IPIRClient::from_profile(
             params.num_items,
             params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q49,
+            ipir_sp::SimplePirProfile::P16Q48,
         )
         .map_err(|e| e.to_string())?;
         let setup =
@@ -403,11 +403,28 @@ mod tests {
             sessions: vec![pack.reference(0).unwrap()],
             unit_identities: [(0, plan.units.clone())].into(),
         };
+        let mut old_manifest = manifest.clone();
+        old_manifest.protocol_revision = "ironwood-enhance-pir-v5".into();
+        assert!(
+            enhance_pir::v4_client::QuerySession::new(&old_manifest, pack.session(1, 0)).is_err()
+        );
+        let mut old_session = pack.session(1, 0);
+        old_session.params.query_bits = 46;
+        assert!(enhance_pir::v4_client::QuerySession::new(&manifest, old_session).is_err());
+        let mut old_plan = plan.clone();
+        old_plan.units[0].parameter_id = old_plan.units[0].parameter_id.replace("-v6/", "-v5/");
+        assert!(old_plan.validate().is_err());
         let client =
             enhance_pir::v4_client::QuerySession::new(&manifest, pack.session(1, 0)).unwrap();
         for position in [0, 32, 33, 66] {
             let (query, slot) = client.prepare_position(position).unwrap();
             let binding = QueryBinding::decode(query.body()).unwrap();
+            // A q46 body is shorter by two bits per row and cannot be accepted
+            // under the unchanged header/public-material epoch of this q48 session.
+            let old_len = query.body().len() - 4096 * 2 / 8;
+            assert!(pack
+                .query_coefficients(&query.body()[..old_len], binding)
+                .is_err());
             let coefficients = pack.query_coefficients(query.body(), binding).unwrap();
             let response = pack
                 .pack(query.body(), &eval.evaluate(&coefficients).unwrap())
@@ -456,7 +473,7 @@ mod tests {
         let client = ipir_sp::IPIRClient::from_profile(
             params.num_items,
             params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q49,
+            ipir_sp::SimplePirProfile::P16Q48,
         )
         .unwrap();
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id));

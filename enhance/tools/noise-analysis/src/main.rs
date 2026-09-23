@@ -122,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let specs = g.units(records)?;
     let used = records.div_ceil(RECORDS_PER_ROW as u64) as usize;
     let profile =
-        ProductionSimplePirParams::new(rows, (row_bytes * 8) as u64, SimplePirProfile::P16Q49)?;
+        ProductionSimplePirParams::new(rows, (row_bytes * 8) as u64, SimplePirProfile::P16Q48)?;
     let r = profile.rlwe();
     let p = profile.ypir();
     if record_width == RECORD_BYTES {
@@ -203,7 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let up = ProductionSimplePirParams::new(
             spec.allocated_rows,
             (row_bytes * 8) as u64,
-            SimplePirProfile::P16Q49,
+            SimplePirProfile::P16Q48,
         )?;
         let offset = spec.local_row_start as usize;
         let count = spec.allocated_rows as usize;
@@ -311,7 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         results.push(json!({"target":target,"max_expected_phase_error":error,"exact_answer":decoded==expected}));
     }
     let dg = spiral_rs::discrete_gaussian::DiscreteGaussian::init(r.spiral.noise_width);
-    let result = json!({"format":1,"implementation":"b1c540f90f62e112c834a0f57f025e3c605e55d1","schema":if record_width == 737 {10} else {v4::SCHEMA_VERSION},"record_width":record_width,"expected_public_sha256":args.expected_public_sha256,"pattern":args.pattern,"shard":args.shard,
+    let result = json!({"format":1,"implementation":"6f74a2d754b58934f925fc8a347f46620148ad47","schema":if record_width == 737 {10} else {v4::SCHEMA_VERSION},"record_width":record_width,"expected_public_sha256":args.expected_public_sha256,"pattern":args.pattern,"shard":args.shard,
         "rows":rows,"used_rows":used,"records":records,"units":specs,"params":p,"n":r.d,"q":r.q,"p":r.p,"ell":r.gadget.ell,
         "setup_seed":hex::encode(seed),"database_sha256":hex::encode(db_hash.finalize()),"public_c1_sha256":hex::encode(Sha256::digest(&published)),
         "record_file_sha256":captured.as_ref().map(|v|hex::encode(Sha256::digest(v))),
