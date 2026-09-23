@@ -1,5 +1,10 @@
 # Architecture
 
+This page describes the retired fixed-shard serving path. The supported schema-11
+runtime is described in [architecture-2 implementation](architecture_2-implementation.md)
+and [protocol](protocol.md). Its suffix records are 653 bytes; the historical
+geometry and commands below apply only to their original release.
+
 Enhance is a position-indexed database of Ironwood output records. A coordinator
 builds the database from canonical blocks and publishes consistent generations.
 Workers evaluate encrypted queries over their assigned shards; the coordinator

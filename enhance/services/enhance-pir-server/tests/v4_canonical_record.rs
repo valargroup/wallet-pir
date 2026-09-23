@@ -51,8 +51,9 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
         .ironwood_actions()
         .map(|a| {
             EnhanceRecord::from_parts(EnhanceRecordParts {
-                ephemeral_key: <[u8; 32]>::from(&a.ephemeral_key),
-                enc_ciphertext: a.enc_ciphertext.into(),
+                enc_ciphertext_suffix: <[u8; 580]>::from(a.enc_ciphertext)[52..]
+                    .try_into()
+                    .unwrap(),
                 cv_net: a.cv.into(),
                 out_ciphertext: a.out_ciphertext.into(),
                 has_transparent_inputs: false,
@@ -90,7 +91,12 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
             sliced, expected[i],
             "frozen oracle must retain its raw-byte provenance"
         );
-        assert_eq!(record.as_bytes().as_slice(), expected[i]);
+        assert_eq!(record.as_bytes().as_slice(), &expected[i][84..]);
+        let ciphertext_start = offsets["enc_ciphertext"].as_u64().unwrap() as usize;
+        assert_eq!(
+            record.enc_ciphertext_suffix().as_slice(),
+            &raw[ciphertext_start + 52..ciphertext_start + 580]
+        );
         assert_eq!(
             hex::encode(Sha256::digest(&expected[i])),
             oracle["records"][i]["record_sha256"]
@@ -163,7 +169,7 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
                 .unwrap()
                 .0
                 .as_ref(),
-            bytes
+            &bytes[84..]
         );
         assert_eq!(
             current
@@ -172,7 +178,7 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
                 .unwrap()
                 .0
                 .as_ref(),
-            bytes
+            &bytes[84..]
         );
     }
     assert_eq!(retained.manifest().generation, old);

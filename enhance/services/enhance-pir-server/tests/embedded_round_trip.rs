@@ -33,8 +33,7 @@ fn record(position: u64) -> EnhanceRecord {
         *byte = (position as usize).wrapping_mul(7).wrapping_add(index) as u8;
     }
     EnhanceRecord::from_parts(EnhanceRecordParts {
-        ephemeral_key: tag(2),
-        enc_ciphertext: enc,
+        enc_ciphertext_suffix: enc[52..].try_into().unwrap(),
         cv_net: tag(3),
         out_ciphertext: out,
         has_transparent_inputs: false,
@@ -444,7 +443,7 @@ async fn enhance_v1_routes_expose_only_the_current_generation() {
     assert_eq!(manifest.generation, 3_428_143);
     assert_eq!(manifest.record_bytes, enhance_pir::RECORD_BYTES as u32);
     assert_eq!(manifest.records_per_row, 33);
-    assert_eq!(manifest.row_bytes, 24_321);
+    assert_eq!(manifest.row_bytes, 21_549);
     assert_eq!(manifest.pir_profile, enhance_pir::PIR_PROFILE_ID);
     assert!(manifest.parameter_id.contains("-enhance-"));
     assert_eq!(wire.params, expected_session.params);
@@ -462,7 +461,7 @@ async fn enhance_v1_routes_expose_only_the_current_generation() {
                 ipir_sp::params::SINGLE_CRT_Q,
             )
     );
-    assert_eq!(wire.params.instances, 6, "33 x 737-byte records per row");
+    assert_eq!(wire.params.instances, 6, "33 x 653-byte records per row");
     assert_eq!(wire.params.p, 1 << 16);
     assert_eq!(wire.params.query_bits, 46);
     assert_eq!(public_params, expected_public_params);

@@ -1,5 +1,44 @@
 # Deployment
 
+## Schema-11 clean cutover
+
+The supported runtime is `enhance-pir-v4`, now advertising schema 11 and
+`ironwood-enhance-pir-v5`. Binary and module names are retained; state formats
+are not. `enhance-pir-server`, `enhance-pir-worker`, and the legacy deployment
+scripts refuse operation. The old journal migration utility only changes row
+packing and cannot create suffix records.
+
+1. Build and test the candidate, including the wallet interoperability harness
+   in [integration](integration.md). Keep the current deployment running.
+2. Create separate schema-11 directories for canonical ingestion, controller
+   state, worker rows, hints and caches. Re-ingest canonical blocks using this
+   build. Never copy an old journal or controller/worker state into these paths.
+3. Start a separate worker pair and coordinator using the architecture-2 commands
+   in [the runtime guide](architecture_2-implementation.md), with all data paths
+   explicitly changed to the new schema-11 directories. Bootstrap tooling still
+   uses v4 service/path names; use fresh hosts or a separately configured service
+   layout rather than installing over the previous deployment.
+4. Confirm schema 11 / protocol v5 from initialization and health; verify the
+   canonical anchor and tree size, wallet note recovery, duplicate row batching,
+   generation expiry and worker restart before routing clients to the candidate.
+5. Measure actual capacity on deployment hardware. The raw journal is 11.4%
+   smaller, but six PIR instances remain; do not lower memory reservations or
+   increase worker assignments on the basis of record width alone.
+6. Switch traffic together with compatible wallets. Keep the previous binary,
+   configuration and original data directories intact. Rollback switches both
+   clients and traffic to that deployment; it never opens new state with an old
+   binary or old state with the new binary.
+
+No deployment is performed by implementing or testing this change. New candidate
+bundles remain unqualified until the hardware and operational gates pass.
+
+## Historical schema-9 operations
+
+The following procedures describe the retired serving path and are retained as
+rollback reference for its original revision. They are not commands for a
+schema-11 deployment; use the previous release checkout for historical rollback.
+
+
 The production workflow builds a tested revision, prepares schema-transition data
 when needed, deploys the coordinator and workers, then verifies a private query
 through the public origin. A build or workflow default does not establish what

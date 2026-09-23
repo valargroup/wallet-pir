@@ -1,5 +1,11 @@
 # Enhance evidence
 
+## Schema-11 suffix records
+
+The [schema-11 report](schema11-suffix-2026-09-23/README.md) records wallet
+interoperability, cutover checks and equal-geometry local width measurements.
+It does not qualify a deployment or revise fleet memory reservations.
+
 ## Current architecture-2 capacity evidence
 
 The [schema-9 worker-capacity report](schema9-worker-capacity-2026-09-22/REPORT.md)

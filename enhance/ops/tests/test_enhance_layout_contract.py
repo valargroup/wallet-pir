@@ -1,10 +1,4 @@
-"""Keep the deployment scripts' idea of the served layout equal to the code's.
-
-The 9-to-29 record widening found `JQ_ENHANCE_INIT_COMPLETE` still asserting
-`row_bytes == 6633` and the preparation gate still keyed on "schema differs
-from 7". Both were written against a layout that had moved, and nothing
-compared them to `enhance_pir::types`. This does.
-"""
+"""Historical schema-9 script consistency and schema-11 retirement guards."""
 import re
 import subprocess
 import unittest
@@ -33,13 +27,17 @@ def shell_const(path, name):
 
 class ServedLayout(unittest.TestCase):
     def setUp(self):
-        self.schema = rust_const('SCHEMA_VERSION')
+        self.schema = 9  # Frozen historical deployment contract.
         self.records_per_row = rust_const('RECORDS_PER_ROW')
-        self.record_bytes = int(re.search(
-            r'^pub const RECORD_BYTES: usize = (\d+);',
-            (ROOT / 'enhance/crates/enhance-pir/src/record.rs').read_text(), re.M).group(1))
+        self.record_bytes = 737  # Retired scripts cannot deploy suffix records.
         self.shard_rows = rust_const('SHARD_ROWS')
         self.row_bytes = self.record_bytes * self.records_per_row
+
+    def test_legacy_deployment_commands_are_retired_before_environment_checks(self):
+        for script, mode in [(DEPLOY, 'deploy'), (PREPARE, ''), (ROLLOUT, 'cutover')]:
+            result = subprocess.run(['bash', str(script), mode], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('retired', result.stderr)
 
     def test_deploy_target_constants_match_the_crate(self):
         self.assertEqual(int(shell_const(DEPLOY, 'ENHANCE_TARGET_SCHEMA')), self.schema)
@@ -58,39 +56,9 @@ class ServedLayout(unittest.TestCase):
             self.assertIn(f'.generation.{field} == {value}', gate,
                           f'the deploy gate does not pin {field}={value}')
 
-    def test_prepare_and_deploy_agree_on_the_data_directory(self):
-        """A preparation receipt written somewhere the deploy gate does not read
-        is worse than no receipt: the gate fails open on a missing file only if
-        someone later 'fixes' it, and fails closed here instead."""
-        deploy_dir = shell_const(DEPLOY, 'ENHANCE_DATA_DIR')
-        match = re.search(r'^ENHANCE_DATA_DIR="\$\{ENHANCE_DATA_DIR:-([^}"]+)\}"',
-                          PREPARE.read_text(), re.M)
-        self.assertIsNotNone(match, 'prepare script has no ENHANCE_DATA_DIR default')
-        self.assertEqual(match.group(1), deploy_dir)
-        self.assertNotEqual(deploy_dir, '/srv/zakura/enhance-data-r29',
-                            'the new layout must not be prepared into the serving directory')
-        self.assertEqual(shell_const(DEPLOY, 'ENHANCE_PREVIOUS_DATA_DIR'),
-                         '/srv/zakura/enhance-data-r29')
-
     def test_units_serve_the_directory_the_deploy_script_prepares(self):
         unit = (ROOT / 'enhance/ops/deploy/enhance-pir-server.service').read_text()
         self.assertIn(f'--data-dir {shell_const(DEPLOY, "ENHANCE_DATA_DIR")}', unit)
-
-    def test_ssh_rollout_targets_the_same_layout_and_directories(self):
-        """The direct rollout path bypasses CI, not the layout contract."""
-        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_SCHEMA')), self.schema)
-        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_RECORDS_PER_ROW')),
-                         self.records_per_row)
-        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_ROW_BYTES')), self.row_bytes)
-        self.assertEqual(shell_const(ROLLOUT, 'DATA_DIR'),
-                         shell_const(DEPLOY, 'ENHANCE_DATA_DIR'))
-        self.assertEqual(shell_const(ROLLOUT, 'PREVIOUS_DATA_DIR'),
-                         shell_const(DEPLOY, 'ENHANCE_PREVIOUS_DATA_DIR'))
-        text = ROLLOUT.read_text()
-        # The rollback is the old data. Nothing in this script may write to it.
-        for forbidden in ('rm -rf $PREVIOUS_DATA_DIR', 'rm -rf "$PREVIOUS_DATA_DIR"',
-                          'rm -rf $PREVIOUS_ARTIFACT_DIR'):
-            self.assertNotIn(forbidden, text)
 
     def test_autoscale_group_capacity_follows_the_layout(self):
         match = re.search(r'^GROUP_POSITIONS = (\d+) \* (\d+)', AUTOSCALE.read_text(), re.M)

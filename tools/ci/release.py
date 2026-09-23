@@ -92,7 +92,7 @@ def assemble(sha, target, output, kind=None):
             shutil.copy2(ROOT / source, directory / Path(source).name)
         if kind == 'enhance-pir-v4-candidate':
             (directory / 'candidate.json').write_text(json.dumps({
-                'kind': kind, 'schema_version': 10, 'protocol_revision': 'ironwood-enhance-pir-v4',
+                'kind': kind, 'schema_version': 11, 'protocol_revision': 'ironwood-enhance-pir-v5',
                 'qualification': 'unqualified', 'source_revision': sha, 'source_dirty': dirty,
             }, indent=2) + '\n')
         if kind == 'enhance-pir':
@@ -142,8 +142,8 @@ def extract(archive_path, destination, sha, kind):
     if kind == 'enhance-pir-v4-candidate':
         candidate = json.loads(payload['candidate.json'])
         if (candidate.get('kind') != kind or candidate.get('source_revision') != sha
-                or candidate.get('schema_version') != 10
-                or candidate.get('protocol_revision') != 'ironwood-enhance-pir-v4'
+                or candidate.get('schema_version') != 11
+                or candidate.get('protocol_revision') != 'ironwood-enhance-pir-v5'
                 or candidate.get('qualification') != 'unqualified'
                 or not isinstance(candidate.get('source_dirty'), bool)):
             raise ValueError('invalid v4 candidate metadata; qualification is a separate gate')

@@ -532,7 +532,7 @@ mod tests {
     /// The compatibility direction that matters at cutover. The old fleet's
     /// document is well-formed and internally consistent; only its layout is
     /// wrong. Nothing but this check stands between a current client and a
-    /// 6,633-byte row read with 24,321-byte offsets, so it is checked against a
+    /// 6,633-byte row read with 21,549-byte offsets, so it is checked against a
     /// document shaped exactly like the one the public origin served.
     #[test]
     fn rejects_the_superseded_nine_record_session() {

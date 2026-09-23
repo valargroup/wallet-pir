@@ -5,12 +5,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-// Version 6 stored 737-byte schema-v7 records in nine-record rows. Version 7 is
-// the same 737-byte record in a twenty-nine-record row: the records file is
-// byte-identical, but `records_per_row` is part of the manifest and every
-// derived shard, artifact and PIR parameter changes with it. Rebuild in a
-// separate directory; the version bump and the `records_per_row` check below
-// both refuse an in-place reuse of a v6 journal.
+// Version 7's manifest binds both record width and row packing. Schema 11 keeps
+// the manifest encoding, but its 653-byte width rejects all older 737-byte journals.
+// Always rebuild in a separate directory; never reinterpret or truncate old data.
 const STORE_VERSION: u16 = 7;
 
 #[derive(Debug, thiserror::Error)]
@@ -347,7 +344,7 @@ mod tests {
     fn record(byte: u8) -> EnhanceRecord {
         {
             let mut bytes = [byte; RECORD_BYTES];
-            bytes[724..].fill(0);
+            bytes[enhance_pir::types::RECORD_FLAGS_OFFSET..].fill(0);
             EnhanceRecord::from_bytes(bytes).unwrap()
         }
     }

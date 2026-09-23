@@ -30,7 +30,7 @@ MIB = 1024 ** 2
 MIN_FREE_DISK_BYTES = 32 * GIB
 SERVICE = 'enhance-pir-v4-worker.service'
 USER = 'enhance-pir-v4'
-PROTOCOL = 'ironwood-enhance-pir-v4'
+PROTOCOL = 'ironwood-enhance-pir-v5'
 BUNDLE_FILES = {'enhance-pir-v4', 'enhance-pir-cli', 'enhance-pir-load-test',
                 'test-v4-local.py', 'bootstrap-v4-worker.py', 'sample-v4-worker.py', 'workers-v4.example.json',
                 'v4-candidate.md', 'candidate.json', 'revision', 'SHA256SUMS'}
@@ -85,7 +85,7 @@ def verify_bundle(bundle, revision, manifest_sha256):
             raise ValueError('candidate file checksum mismatch')
     metadata = json.loads((bundle / 'candidate.json').read_text())
     if ((bundle / 'revision').read_text().strip() != revision or metadata.get('source_revision') != revision
-            or metadata.get('kind') != 'enhance-pir-v4-candidate' or metadata.get('schema_version') != 10
+            or metadata.get('kind') != 'enhance-pir-v4-candidate' or metadata.get('schema_version') != 11
             or metadata.get('protocol_revision') != PROTOCOL or metadata.get('qualification') != 'unqualified'
             or metadata.get('source_dirty') is not False):
         raise ValueError('bootstrap requires a clean exact-revision unqualified candidate')

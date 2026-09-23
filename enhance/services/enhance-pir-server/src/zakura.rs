@@ -134,8 +134,9 @@ impl ZakuraClient {
             let metadata = transaction_metadata(transaction)?;
             records.extend(transaction.ironwood_actions().map(|action| {
                 EnhanceRecord::from_parts(EnhanceRecordParts {
-                    ephemeral_key: <[u8; 32]>::from(&action.ephemeral_key),
-                    enc_ciphertext: action.enc_ciphertext.into(),
+                    enc_ciphertext_suffix: <[u8; 580]>::from(action.enc_ciphertext)[52..]
+                        .try_into()
+                        .expect("fixed ciphertext suffix"),
                     cv_net: action.cv.into(),
                     out_ciphertext: action.out_ciphertext.into(),
                     has_transparent_inputs,

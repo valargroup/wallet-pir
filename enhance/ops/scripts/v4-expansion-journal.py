@@ -16,7 +16,7 @@ import re
 import tempfile
 import urllib.request
 
-PROTOCOL = 'ironwood-enhance-pir-v4'
+PROTOCOL = 'ironwood-enhance-pir-v5'
 
 
 def digest(value):

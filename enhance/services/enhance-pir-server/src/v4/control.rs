@@ -221,7 +221,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             capacity: super::capacity::Capacity::default(),
-            version: 4,
+            version: 5,
             epoch: 0,
             revision: 0,
             next_generation: 1,
@@ -301,8 +301,11 @@ impl Store {
             state,
         };
         store.update(|s| {
-            if s.version != 4 {
-                return Err("incompatible controller state".into());
+            if s.version != 5 {
+                return Err(
+                    "incompatible controller state; rebuild schema 11 in a separate data directory"
+                        .into(),
+                );
             }
             s.epoch = s.epoch.checked_add(1).ok_or("controller epoch exhausted")?;
             Ok(())

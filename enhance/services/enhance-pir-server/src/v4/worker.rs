@@ -77,8 +77,9 @@ pub struct Intermediate {
     pub coefficients: Vec<u64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct DiskState {
+    schema_version: u16,
     epoch: u64,
     revision: u64,
     last_attempt: Option<(u64, u64)>,
@@ -86,6 +87,38 @@ struct DiskState {
     candidate: Option<Candidate>,
     activated: Option<Manifest>,
     published: BTreeMap<u64, (Manifest, Vec<DomainPlan>)>,
+}
+
+impl Default for DiskState {
+    fn default() -> Self {
+        Self {
+            schema_version: enhance_pir::v4::SCHEMA_VERSION,
+            epoch: 0,
+            revision: 0,
+            last_attempt: None,
+            retention: Vec::new(),
+            candidate: None,
+            activated: None,
+            published: BTreeMap::new(),
+        }
+    }
+}
+impl DiskState {
+    fn validate_format(&self) -> Result<(), String> {
+        if self.schema_version != enhance_pir::v4::SCHEMA_VERSION {
+            return Err(
+                "incompatible worker state; rebuild schema 11 in a separate data directory".into(),
+            );
+        }
+        for manifest in self
+            .activated
+            .iter()
+            .chain(self.published.values().map(|(m, _)| m))
+        {
+            manifest.validate()?;
+        }
+        Ok(())
+    }
 }
 
 struct Inner {
@@ -289,6 +322,7 @@ impl Worker {
             &fs::read(root.join("worker-v4.json")).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
+        disk.validate_format()?;
         let mut units = BTreeMap::new();
         for plan in disk
             .published
@@ -344,6 +378,7 @@ impl Worker {
         } else {
             DiskState::default()
         };
+        disk.validate_format()?;
         let mut engine = Engine::new(root);
         let mut published = BTreeMap::new();
         for (generation, (_, plans)) in &disk.published {

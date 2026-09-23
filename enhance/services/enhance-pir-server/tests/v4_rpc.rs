@@ -152,7 +152,8 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         include_str!("fixtures/ironwood-canonical-record-0.hex"),
         include_str!("fixtures/ironwood-canonical-record-1.hex"),
     ]
-    .map(|s| hex::decode(s.trim()).unwrap());
+    // Historical oracle includes epk (32) and compact ciphertext (52).
+    .map(|s| hex::decode(s.trim()).unwrap()[84..].to_vec());
     let state = Rpc {
         blocks: Arc::new(blocks),
         selected: Arc::new(AtomicUsize::new(0)),
