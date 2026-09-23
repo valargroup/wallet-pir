@@ -1,7 +1,7 @@
 {
   "kind": "enhance-v4-deployment-inputs",
-  "status": "deadline-fix-deployed-sealed-retry-building",
-  "qualification": "incomplete: worker-1 sampling gap; sealed and other qualification tests pending",
+  "status": "schema11-deployed-six-sealed",
+  "qualification": "unqualified: native sustained seven-sealed hardware campaign pending; no qualification inherited from schema-10 campaigns",
   "purpose": "Reuse existing production hosts, stop legacy Enhance services, deploy and test v4 directly over SSH",
   "organization": "Valargroup",
   "proposed_workers": {
@@ -23,7 +23,7 @@
     "coordinator_and_off_host_generator_host": "wallet-pir-coordinator-01",
     "coordinator_private_ipv4": "10.142.0.3",
     "operator_ssh_cidrs": null,
-    "isolated_remote_state_backend": "not used: no infrastructure creation or Terraform changes"
+    "isolated_remote_state_backend": "No provisioning or Terraform apply; coordinator-tag-only worker TCP 8291 firewall rule added via DO API and mirrored in Terraform"
   },
   "ssh": {
     "authorize_public_key": "~/.ssh/id_ed25519.pub",
@@ -75,14 +75,22 @@
     "qualification_before_cutover": "User explicitly authorized deployment and testing on production before qualification; do not claim qualification passed"
   },
   "production_deployment": {
-    "revision": "b1863b1d270df52d213d7dd389e5b8bf96bca224",
-    "worker_port": 8091,
+    "revision": "2b76bcdfadebd564ffdcad0e460901ac0cd91bcc",
+    "worker_port": 8291,
     "coordinator_listen": "127.0.0.1:8080",
     "legacy_services": "disabled",
-    "public_canonical_service": "temporarily stopped for fresh sealed campaign; restoration supervised",
+    "public_canonical_service": "serving schema 11 / ironwood-enhance-pir-v5 with two ready replicas",
     "new_hosts_created": 0,
     "active_campaign_unit": "enhance-pir-v4-active-campaign.service",
     "active_campaign_status": "completed; six-hour publication gate passed; not hardware qualification",
-    "sealed_campaign_unit": "enhance-pir-v4-sealed-retry-campaign.service"
+    "sealed_campaign_unit": "enhance-pir-v4-sealed-retry-campaign.service",
+    "schema_version": 11,
+    "protocol_revision": "ironwood-enhance-pir-v5",
+    "sealed_shards": 6,
+    "canonical_data": "/srv/enhance-pir-v11/canonical",
+    "worker_data": "/srv/enhance-pir-v11/worker",
+    "sealed_campaign_status": "historical schema-10 retry interrupted before six-hour gate; evidence retained",
+    "rollback_unit_directory": "/var/backups/enhance-pir-schema11/2b76bcdfadebd564ffdcad0e460901ac0cd91bcc",
+    "evidence": "enhance/evidence/schema11-production-2026-09-23/README.md"
   }
 }

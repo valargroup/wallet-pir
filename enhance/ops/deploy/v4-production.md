@@ -6,6 +6,23 @@ the old Enhance deployment workflow or autoscaler over this deployment.
 
 ## Schema-11 cutover — September 23, 2026
 
+Production now serves schema 11 / `ironwood-enhance-pir-v5` from revision
+`2b76bcdfadebd564ffdcad0e460901ac0cd91bcc`. Both replicas are ready. The public
+endpoint is `https://enhance-pir.valargroup.dev`; the backend remains loopback
+8080 and worker endpoints are `10.142.0.15:8291` and `10.142.0.16:8291`.
+The coordinator uses `/srv/enhance-pir-v11/canonical` and
+`/etc/enhance-pir-v11/workers.json`; workers use `/srv/enhance-pir-v11/worker`.
+All services explicitly select `--sealed-shards 6`.
+
+The clean release was built natively on Linux, checked against source
+fingerprints, and hash-verified on all three hosts. The public smoke test passed
+468/468 exact queries with no errors, p99 154.367 ms at concurrency two over
+30 seconds. The private pre-cutover test passed 416/416. These tests use the
+fresh journal as the exact-answer oracle; independent transaction extraction
+and wallet batch interoperability are covered by the local test evidence.
+See the [deployment receipt](../../evidence/schema11-production-2026-09-23/README.md)
+and [placement/interoperability evidence](../../evidence/schema11-placement-2026-09-23/README.md).
+
 The schema-10 sealed retry campaign was stopped before its six-hour gate; it is
 unqualified. Its supervisor restored canonical serving and passed the four
 public/private validation cases. The campaign data is preserved.

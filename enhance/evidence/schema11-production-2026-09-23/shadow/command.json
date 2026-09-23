@@ -1,0 +1,1 @@
+["/opt/enhance-pir-v4/releases/2b76bcdfadebd564ffdcad0e460901ac0cd91bcc/enhance-pir-load-test", "--v4", "--server", "http://127.0.0.1:8281", "--oracle", "/srv/enhance-pir-v11/validation/shadow/oracle.json", "--parallelism", "2", "--warmup", "3s", "--duration", "30s", "--seed", "20260923", "--max-error-rate", "0", "--json-out", "/srv/enhance-pir-v11/validation/shadow/load.json"]

@@ -1,0 +1,15 @@
+NRestarts=0
+ExecStart={ path=/opt/enhance-pir-v4/releases/2b76bcdfadebd564ffdcad0e460901ac0cd91bcc/enhance-pir-v4 ; argv[]=/opt/enhance-pir-v4/releases/2b76bcdfadebd564ffdcad0e460901ac0cd91bcc/enhance-pir-v4 worker --sealed-shards 6 --listen 10.142.0.16:8291 --data-dir /srv/enhance-pir-v11/worker ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+ControlGroup=/system.slice/enhance-pir-v4-worker.service
+MemoryCurrent=1132625920
+MemoryPeak=1334411264
+ActiveState=active
+SubState=running
+Filesystem       1B-blocks        Used   Available Use% Mounted on
+/dev/vda1      50884108288 34581733376 16285597696  68% /
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0

@@ -1,0 +1,16 @@
+{
+  "revision": "2b76bcdfadebd564ffdcad0e460901ac0cd91bcc",
+  "candidate": {
+    "kind": "enhance-pir-v4-candidate",
+    "schema_version": 11,
+    "protocol_revision": "ironwood-enhance-pir-v5",
+    "qualification": "unqualified",
+    "source_revision": "2b76bcdfadebd564ffdcad0e460901ac0cd91bcc",
+    "source_dirty": false
+  },
+  "archive_sha256": "465662a6ca835909197acc785610709b127edbe054db7aa8adafc69bbb495039",
+  "non_build_changes_since_native_snapshot": [
+    "enhance/ops/deploy/v4-production.md",
+    "ops/infra/digitalocean/production/enhance.tf"
+  ]
+}

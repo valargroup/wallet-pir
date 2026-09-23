@@ -1,0 +1,4 @@
+Sep 23 15:11:01 enhance-pir-coordinator-01 cargo[3100927]:    Compiling enhance-pir-server v0.1.0 (/opt/enhance-schema11-build/source/enhance/services/enhance-pir-server)
+Sep 23 15:12:43 enhance-pir-coordinator-01 cargo[3100927]:     Finished `release` profile [optimized] target(s) in 3m 01s
+Sep 23 15:12:43 enhance-pir-coordinator-01 systemd[1]: enhance-schema11-build.service: Deactivated successfully.
+Sep 23 15:12:43 enhance-pir-coordinator-01 systemd[1]: enhance-schema11-build.service: Consumed 7min 38.694s CPU time, 1.5G memory peak, 0B memory swap peak.

@@ -1,0 +1,8 @@
+{
+  "binary_sha256": "e2b8ceb4173d375b1e66f4c39b1db55a5e8ab1683b7d7734cf0c6cf11489b891",
+  "staging_release": "/opt/enhance-pir-v4/releases/schema11-e2b8ceb4173d375b",
+  "schema_version": 11,
+  "protocol_revision": "ironwood-enhance-pir-v5",
+  "sealed_shards": 6,
+  "qualification": "unqualified"
+}
