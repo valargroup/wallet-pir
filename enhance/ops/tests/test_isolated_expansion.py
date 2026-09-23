@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/v4-isolated-expansion.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/isolated-expansion.py'
 spec = importlib.util.spec_from_file_location('v4_isolated_expansion', SCRIPT)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one live v4 expansion in a disposable synthetic coordinator environment.
+"""Run one live expansion in a disposable synthetic coordinator environment.
 
 This is a test driver, not a production capacity controller or qualification
 receipt. It joins the existing demand, provisioning and bootstrap adapters with
@@ -28,8 +28,8 @@ def sibling(name):
     return module
 
 
-provisioning = sibling('v4-provision')
-bootstrap = sibling('v4-bootstrap-pair')
+provisioning = sibling('provision')
+bootstrap = sibling('bootstrap-pair')
 journal_module = provisioning.journal_module
 
 
@@ -241,7 +241,7 @@ def main():
     # Each adapter owns both locks for its entire operation. A rerun reconciles
     # their journals before doing anything to an existing resource.
     if operation['phase'] != 'bootstrapped':
-        run_adapter('v4-provision', common)
+        run_adapter('provision', common)
     if args.stage == 'provision':
         if args.watch_request:
             with args.trace_out.open('a') as trace:
@@ -251,7 +251,7 @@ def main():
                           'qualification': 'unqualified'}, sort_keys=True))
         return
     if operation['phase'] != 'bootstrapped':
-        run_adapter('v4-bootstrap-pair', [*common, '--bootstrap-policy', str(args.bootstrap_policy),
+        run_adapter('bootstrap-pair', [*common, '--bootstrap-policy', str(args.bootstrap_policy),
                     '--bundle', str(args.bundle), '--ssh-key', str(args.ssh_key),
                     '--known-hosts', str(args.known_hosts)])
     with journal_module.Journal(args.state_dir) as journal:

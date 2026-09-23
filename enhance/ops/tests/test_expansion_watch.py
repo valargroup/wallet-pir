@@ -8,7 +8,7 @@ from unittest.mock import patch
 import urllib.error
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/v4-isolated-expansion.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/isolated-expansion.py'
 spec = importlib.util.spec_from_file_location('v4_isolated_expansion_watch', SCRIPT)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
