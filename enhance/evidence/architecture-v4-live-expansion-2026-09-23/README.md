@@ -22,6 +22,13 @@ remained `qualification: unqualified`.
 | 13:21:12 | 6 | 5,677,026 | shards 0–4 on group 1; shard 5 on group 2 | 2 published on each group |
 | 13:26:27 | 8 | 6,758,370 | shards 0–5 sealed on group 1; growing shard 6 on group 2 | 2 published on each group |
 
+At 13:16:32 the coordinator reported **two registered groups while shard 5
+did not yet exist**. Shard 5 first appeared on group 2 at 13:21:12, so the
+new worker capacity was ready at least 4 minutes 40 seconds before that
+published shard. This trace establishes advance worker provisioning. It does
+not record whether shard 5's candidate data was prepared in worker memory
+before publication; that would need a reserve/prepare trace from both replicas.
+
 The shard 5 move followed rollover of shard 6. The placement trace recorded
 no blocked reason through these transitions. It ended at generation 17 and
 11,624,418 records, when both registered groups were full. The last three of
