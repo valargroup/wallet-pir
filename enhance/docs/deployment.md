@@ -41,8 +41,8 @@ Keep worker port 8091 on the private network and expose only the coordinator's
 client routes through the public origin. The worker API has no application-layer
 authentication.
 
-The coordinator admits four active queries and lets up to 16 more wait for one
-second. A full or expired queue returns HTTP 429 with `Retry-After: 1`; a busy
+The coordinator admits four active queries and lets up to 16 more wait for two
+seconds. A full or expired queue returns HTTP 429 with `Retry-After: 1`; a busy
 replica is retried on its peer. The public Caddy query route disables upstream
 keepalive so overload responses are not lost on stale local connections. Check
 the `enhance_query_*` metrics and public 429/502 counts after rollout.
