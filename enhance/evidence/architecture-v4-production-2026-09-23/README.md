@@ -29,9 +29,33 @@ answers with zero errors. Independent worker sampling recorded no swap and no
 collection errors at the captured points. These short checks are not full-size
 hardware qualification.
 
-A six-hour active-profile campaign is now running on the production c-4 pair,
-with one-second host/cgroup/process/runtime samples. The public canonical service
-is temporarily stopped; synthetic fixtures listen only on loopback port 8280.
-Canonical worker directories are preserved as `worker.canonical` for restoration.
-See `active-campaign.json` for the live systemd unit and data paths. No passing
-sustained-test claim is made here. Sealed-role testing and final restoration remain.
+The active-profile campaign completed 21,657.284 measured seconds and 320
+publications. It recorded 225,939 correct background answers, zero background
+errors, 13,006 exact boundary/retained probes and 316 expired-session refreshes.
+Background query p99 was 391.935 ms. Maximum fixture publication was 92.004 s;
+that timer includes synthetic journal changes and publication, not just PIR
+preprocessing. See `completed/active/exercise.json` and `publications.jsonl`.
+
+This is not full hardware qualification. Worker 1's sampler was stopped at
+06:51:47 UTC; its restart failed because the output directory already existed.
+Sampling resumed in a separate directory at 09:50:33 UTC. The missing interval
+cannot be reconstructed. Worker 2 recorded the full period. Sampled RSS plus
+kernel peaks were 5.873 GiB and 5.296 GiB; recorded samples had no worker swap or
+OOM events. `completed/sampling-summary.json` records intervals, raw-file hashes
+and collection manifests. Raw samples remain in the recorded host paths.
+
+The campaign finished at 10:30:57 UTC. Automatic restoration failed because the
+supervisor attempted to stop a transient unit that systemd had already unloaded.
+The supervisor was corrected to accept an absent unit only with MainPID zero;
+canonical worker state was restored and the coordinator started at 11:22:22 UTC.
+The original restoration error is retained in `completed/restoration-error.json`.
+Canonical catch-up and public serving then recovered. All four post-restoration
+load cases passed: 1,893 measured exact answers, zero wrong answers or errors.
+Their reports and a later replicated canonical health snapshot are in `completed/`.
+Synthetic worker state is preserved as `worker.active-completed`; live canonical
+state is back at `worker`. Legacy services and automatic provisioning remain off.
+
+Implementation and cleanup were pushed to main at
+`436dcc7efda3e09a6734342fd4f55e07bf1d9d95`; this evidence update follows it.
+Sealed-role, full-size overload, uninterrupted worker-1 qualification, deployed
+repair and legacy rollback rehearsals remain outstanding.

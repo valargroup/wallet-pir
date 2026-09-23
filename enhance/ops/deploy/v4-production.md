@@ -48,7 +48,18 @@ record length/block continuity and copies the raw records unchanged, changing
 only packing metadata to 33. It never copies compiled serving artifacts or
 publication state. A migrated coordinator revalidates its anchor against RPC.
 
-## Active capacity campaign
+## Completed active capacity campaign
+
+The September 23 campaign completed six hours and 320 publications. Canonical
+serving is restored; synthetic worker state is archived as `worker.active-completed`.
+The commands below describe the completed run and restoration procedure, not
+current running jobs. Worker 1 has a measurement gap; qualification remains open.
+
+Before stopping a transient unit, inspect LoadState. A completed unit may have
+been unloaded: treat `not-found` plus MainPID zero as already stopped. Do not
+retry a failing stop indefinitely. Sample restarts must use new output directories
+and retain explicit gap timestamps; never overwrite prior samples.
+
 
 `enhance-pir-v4-active-campaign.service` runs on the coordinator. Its output is
 `/srv/enhance-pir-v4/validation/active`. It requests 21,600 measured seconds,

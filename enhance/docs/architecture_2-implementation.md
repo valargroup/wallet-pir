@@ -12,11 +12,12 @@ services, bypassing CI where possible, and creating no new hosts. This replaces
 the earlier proposal for an isolated fleet and a new c-16 generator. Production
 cutover before qualification is an operator decision, not qualification evidence.
 
-The current full-size active campaign temporarily occupies both production c-4
-workers. Canonical serving is stopped during that test; synthetic fixture traffic
-is confined to coordinator loopback port 8280. Restore canonical serving after
-the capacity and recovery campaigns. The [production runbook](../ops/deploy/v4-production.md)
-records identities, preserved state and restoration commands.
+The six-hour active campaign completed 320 publications and 225,939 correct
+background answers with zero errors. Canonical serving is restored; four
+post-restoration cases added 1,893 exact answers without errors. A worker-1
+sampling gap prevents uninterrupted hardware qualification. The
+[production evidence](../evidence/architecture-v4-production-2026-09-23/README.md)
+records the gap and the corrected restoration-supervisor failure.
 
 ## Implementation delivered
 
@@ -53,7 +54,7 @@ records identities, preserved state and restoration commands.
 | Native production load | Public HTTPS, private concurrency 1/2 and open-loop 2 QPS: 1,870 exact measured answers, zero errors. These use the current live dataset, not maximum placement. |
 | Native recovery | One-replica-offline and coordinator restart: 329 additional exact measured answers, zero errors. |
 | Operational tools | 115 tests passed with three environment-specific skips; 17 CI-tool tests passed. Journal migration, source locks, record continuity and explicit-port sampling have targeted tests. |
-| Sustained capacity | Active-profile six-hour campaign and one-second worker samples are running. No passing result yet; sealed-role, full-load and final restoration remain. |
+| Sustained capacity | Active campaign completed six hours and 320 publications; zero background errors. Worker-1 sampling gap prevents qualification; sealed-role and overload tests remain. |
 
 The current Rust runtime sources are byte-identical to the clean deployed
 candidate; the production evidence records that comparison. Deployment fixes so
@@ -63,9 +64,9 @@ A result applies only to the source and binary hashes recorded with it.
 
 ## Remaining execution plan
 
-1. Finish the full-size active campaign on the actual 8 GiB workers: at least
-   six hours and 300 publications, including loan/return, growth, rewind, exact
-   current/retained queries and concurrent off-host traffic.
+1. Repeat uninterrupted active hardware measurement on worker 1 and assess both
+   workers against resource and latency limits. The completed workload met six
+   hours and 300 publications, but its sampling gap is not qualification evidence.
 2. Exercise six-sealed placement, delayed reclamation, replica recovery and
    rollback on existing resources. Any helper processes on the coordinator must
    be identified as test support; they do not count as qualified 8 GiB workers.
@@ -76,12 +77,12 @@ A result applies only to the source and binary hashes recorded with it.
 4. Run offered-load/overload characterization on the full-size assignments.
    Record rejected/unstarted work and scheduled latency; an allowed-error
    characterization run is not a zero-error acceptance result.
-5. Restore canonical worker and coordinator state, verify live source anchors,
-   public queries and both replicas, and rehearse rollback to the preserved
-   legacy installation. Record final service status and remaining limitations.
-6. Clean and merge the tested implementation into `main`, preserving artifact
-   provenance. CI may be skipped as explicitly requested; local and production
-   validation evidence must remain available. Commit subsequent test-driven fixes.
+5. Rehearse rollback to the preserved legacy installation and return to v4.
+   Canonical restoration and public/private checks after the active campaign
+   have passed; preserve them and verify serving again after further tests.
+6. Keep subsequent fixes and evidence on main. The implementation was merged
+   and pushed at `436dcc7efda3e09a6734342fd4f55e07bf1d9d95`. CI may be skipped
+   as requested; preserve local and production validation evidence.
 
 ## Interpretation and limits
 

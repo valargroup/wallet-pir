@@ -1,0 +1,99 @@
+{
+  "10.142.0.15": [
+    {
+      "path": "/srv/enhance-pir-v4/validation/active-samples/samples.jsonl",
+      "sha256": "e8dbdc77c12dd3e006986ac78a5db1eb23a74f8ed2b5884e5c7210aa7d25abd6",
+      "samples": 9038,
+      "errors": 0,
+      "peak_rss_plus_kernel_bytes": 6306111488,
+      "peak_sampled_swap_bytes": 0,
+      "first_wall_ns": 1790137264169353608,
+      "last_wall_ns": 1790146307093273937,
+      "last_events": {
+        "high": 36599,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0
+      },
+      "manifest": {
+        "status": "interrupted",
+        "qualification": "unqualified",
+        "sampler_sha256": "f6da513d7b8faf01d8d7a02cb65cd839348c74081b0a4db9b76cc09269b9a03e",
+        "started_wall_ns": 1790137264168834460,
+        "seconds_requested": 23400,
+        "interval_seconds": 1.0,
+        "samples": 9038,
+        "errors": 0,
+        "elapsed_seconds": 9043.924186695018,
+        "finished_wall_ns": 1790146308092937266,
+        "samples_sha256": "e8dbdc77c12dd3e006986ac78a5db1eb23a74f8ed2b5884e5c7210aa7d25abd6"
+      }
+    },
+    {
+      "path": "/srv/enhance-pir-v4/validation/active-samples-resumed-0951/samples.jsonl",
+      "sha256": "ae4172f45d2d3de30841f62f2d6e9c83a3d192a1bd3a822ca89ffb6d66621cf4",
+      "samples": 3599,
+      "errors": 0,
+      "peak_rss_plus_kernel_bytes": 6073761792,
+      "peak_sampled_swap_bytes": 0,
+      "first_wall_ns": 1790157033713628930,
+      "last_wall_ns": 1790160633626372738,
+      "last_events": {
+        "high": 79332,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0
+      },
+      "manifest": {
+        "status": "recorded",
+        "qualification": "unqualified",
+        "sampler_sha256": "f6da513d7b8faf01d8d7a02cb65cd839348c74081b0a4db9b76cc09269b9a03e",
+        "started_wall_ns": 1790157033712664376,
+        "seconds_requested": 3600,
+        "interval_seconds": 1.0,
+        "samples": 3599,
+        "errors": 0,
+        "elapsed_seconds": 3600.0751485599903,
+        "finished_wall_ns": 1790160633787415842,
+        "samples_sha256": "ae4172f45d2d3de30841f62f2d6e9c83a3d192a1bd3a822ca89ffb6d66621cf4"
+      }
+    }
+  ],
+  "10.142.0.16": [
+    {
+      "path": "/srv/enhance-pir-v4/validation/active-samples/samples.jsonl",
+      "sha256": "6266eb635ba438953c48c4842aea034b7c5dcfcf4889b28b18058d31de2d1a43",
+      "samples": 23396,
+      "errors": 0,
+      "peak_rss_plus_kernel_bytes": 5686272000,
+      "peak_sampled_swap_bytes": 0,
+      "first_wall_ns": 1790137270770111168,
+      "last_wall_ns": 1790160670689887615,
+      "last_events": {
+        "high": 31708,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0
+      },
+      "manifest": {
+        "status": "recorded",
+        "qualification": "unqualified",
+        "sampler_sha256": "f6da513d7b8faf01d8d7a02cb65cd839348c74081b0a4db9b76cc09269b9a03e",
+        "started_wall_ns": 1790137270769553731,
+        "seconds_requested": 23400,
+        "interval_seconds": 1.0,
+        "samples": 23396,
+        "errors": 0,
+        "elapsed_seconds": 23400.094647336984,
+        "finished_wall_ns": 1790160670864107152,
+        "samples_sha256": "6266eb635ba438953c48c4842aea034b7c5dcfcf4889b28b18058d31de2d1a43"
+      }
+    }
+  ]
+}
