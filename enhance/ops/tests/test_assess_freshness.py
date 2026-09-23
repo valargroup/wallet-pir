@@ -55,6 +55,18 @@ class FreshnessAssessmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'invalid publication state'):
             self.assess(rows)
 
+    def test_known_pre_window_tip_is_bounded_when_covered_inside_window(self):
+        rows = trace(30)
+        for row in rows:
+            second = row['wall_time_ns'] // SECOND
+            if second >= 30:
+                row['node_tip'] = 102
+                row['published_anchor'] = 101 if second < 40 else 102
+        result = module.assess(rows, 20 * SECOND, 40 * SECOND)
+        self.assertEqual(result['status'], 'freshness_observation_passed')
+        self.assertEqual(result['sampled_tip_advances'], 1)
+        self.assertEqual(result['bounded_pre_window_tips'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -29,7 +29,10 @@ def assess(samples, start_ns, end_ns, interval_seconds=10, limit_seconds=300):
     last_wall = last_tip = None
     before_start = after_end = False
     initial_uncovered = False
+    unknown_initial_height = None
+    window_entered = False
     observed_tips = passed = ambiguous = 0
+    carry_in_bounded = 0
     worst_upper_ns = 0
     for sample in samples:
         wall = sample.get('wall_time_ns')
@@ -53,27 +56,34 @@ def assess(samples, start_ns, end_ns, interval_seconds=10, limit_seconds=300):
             raise ValueError('invalid publication state')
         if sample.get('ingestion_failed') or sample.get('publication_blocked'):
             findings.add('reported_ingestion_or_publication_problem')
+        if last_tip is None and anchor < tip:
+            unknown_initial_height = tip
+        if not window_entered and wall >= start_ns:
+            initial_uncovered = unknown_initial_height is not None
+            window_entered = True
+        if unknown_initial_height is not None and anchor >= unknown_initial_height:
+            unknown_initial_height = None
         if last_tip is not None and tip < last_tip:
             findings.add('reorg_requires_hash_review')
             pending.clear()
-        if wall < start_ns:
-            initial_uncovered = anchor < tip
-        if last_tip is not None and tip > last_tip and start_ns <= wall <= end_ns:
+        if last_tip is not None and tip > last_tip and wall <= end_ns:
             # The new tip became available after the previous sample and no
             # later than this one. Use the earlier time for a safe lag bound.
             pending.append((tip, last_wall, wall))
-            observed_tips += 1
+            observed_tips += start_ns <= wall
         remaining = []
         for height, earliest, seen in pending:
             if anchor >= height:
                 upper = wall - earliest
-                worst_upper_ns = max(worst_upper_ns, upper)
-                if upper <= limit:
-                    passed += 1
-                else:
-                    ambiguous += 1
+                if wall >= start_ns:
+                    worst_upper_ns = max(worst_upper_ns, upper)
+                    if upper <= limit:
+                        passed += 1
+                        carry_in_bounded += seen < start_ns
+                    else:
+                        ambiguous += 1
             else:
-                if wall - seen > limit:
+                if wall >= start_ns and wall - seen > limit:
                     findings.add('definite_freshness_failure')
                 remaining.append((height, earliest, seen))
         pending = remaining
@@ -93,6 +103,7 @@ def assess(samples, start_ns, end_ns, interval_seconds=10, limit_seconds=300):
     return {'kind': 'enhance-freshness-assessment', 'qualification': 'unqualified',
             'status': status, 'window_wall_ns': [start_ns, end_ns],
             'sampled_tip_advances': observed_tips, 'conservatively_bounded': passed,
+            'bounded_pre_window_tips': carry_in_bounded,
             'ambiguous_tip_advances': ambiguous, 'max_conservative_lag_seconds': worst_upper_ns / 1e9,
             'findings': sorted(findings),
             'limits': {'freshness_seconds': limit_seconds, 'maximum_sample_gap_seconds': 2 * interval_seconds},
