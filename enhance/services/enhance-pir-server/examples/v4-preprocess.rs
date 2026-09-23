@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let client = ipir_sp::IPIRClient::from_profile(
             params.num_items,
             params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q46,
+            ipir_sp::SimplePirProfile::P16Q49,
         )?;
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(0));
         emit(json!({"kind":"full_shard_public_setup","repeat":repeat,"ms":ms(at)}))?;

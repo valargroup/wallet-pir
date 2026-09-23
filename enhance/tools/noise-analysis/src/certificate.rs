@@ -136,7 +136,7 @@ mod tests {
         let profile = ipir_sp::ProductionSimplePirParams::new(
             4096,
             2048 * 16,
-            ipir_sp::SimplePirProfile::P16Q46,
+            ipir_sp::SimplePirProfile::P16Q49,
         )
         .unwrap();
         let r = profile.rlwe();

@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 /// Frozen schema-11 wallet limit, independent of worker placement density.
 pub const MAX_QUERY_SHARDS: u64 = 24;
 pub const SCHEMA_VERSION: u16 = 11;
-pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v5";
+pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v6";
 pub const RETAINED_GENERATIONS: usize = 5;
 pub const HEADER_BYTES: usize = 28;
 
@@ -392,7 +392,7 @@ pub fn parameters(logical_rows: u64) -> Result<ipir_sp::YpirSchemeParams, String
     ipir_sp::params_for_simplepir_profile(
         logical_rows,
         (RECORD_BYTES * RECORDS_PER_ROW * 8) as u64,
-        ipir_sp::SimplePirProfile::P16Q46,
+        ipir_sp::SimplePirProfile::P16Q49,
     )
     .map(|(_, p)| p)
     .map_err(|e| e.to_string())
@@ -412,7 +412,7 @@ pub fn unit_parameter_id(rows: u64) -> Result<String, String> {
     let (_, params) = ipir_sp::params_for_simplepir_profile(
         rows,
         crate::ITEM_SIZE_BITS,
-        ipir_sp::SimplePirProfile::P16Q46,
+        ipir_sp::SimplePirProfile::P16Q49,
     )
     .map_err(|e| e.to_string())?;
     Ok(format!("{PROTOCOL_REVISION}/unit/{}", digest(&params)))

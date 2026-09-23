@@ -26,7 +26,7 @@ pub fn rlwe() -> &'static RlweParams {
         ipir_sp::params_for_simplepir_profile(
             32768,
             ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q46,
+            ipir_sp::SimplePirProfile::P16Q49,
         )
         .expect("pinned profile")
         .0
@@ -300,7 +300,7 @@ impl Engine {
         let client = ipir_sp::IPIRClient::from_profile(
             params.num_items,
             params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q46,
+            ipir_sp::SimplePirProfile::P16Q49,
         )
         .map_err(|e| e.to_string())?;
         let setup =
@@ -456,7 +456,7 @@ mod tests {
         let client = ipir_sp::IPIRClient::from_profile(
             params.num_items,
             params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q46,
+            ipir_sp::SimplePirProfile::P16Q49,
         )
         .unwrap();
         let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id));

@@ -79,6 +79,24 @@ class VerifierTests(unittest.TestCase):
         self.assertLessEqual(r['union_log2_upper'], -128)
         self.assertEqual(r['limiting_coefficient']['lambda_denominator'], 4 * 270596803)
 
+    def test_wide_profile_requires_correct_precision_and_current_weights(self):
+        from verify import WIDE_PIN, Q, ceildiv
+        x = copy.deepcopy(self.x)
+        x['implementation'] = WIDE_PIN
+        x['params']['query_bits'] = 49
+        x['rows'] = x['params']['db_rows'] = 32768
+        x['column_sums'] = [32768 * 65535] * 12288
+        x['deterministic_bounds'] = [(65 + ceildiv(Q, 1 << 50) + 1) * v + ceildiv(Q, 1 << 21) + 1 + Q % 65536 for v in x['column_sums']]
+        self.assertGreater(analyze(x)['min_deterministic_allowance'], 0)
+        for bits in [46, 47, 48, 50]:
+            wrong = copy.deepcopy(x)
+            wrong['params']['query_bits'] = bits
+            with self.assertRaises(ValueError):
+                analyze(wrong)
+        x['blocks'] = None
+        with self.assertRaises(ValueError):
+            analyze(x)
+
     def test_finite_cdf_validation(self):
         with self.assertRaises(ValueError):
             sampler((1 << 64,) * 131)
