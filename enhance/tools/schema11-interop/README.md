@@ -58,6 +58,9 @@ HTTPS transport and checks exact records. A publication between extraction
 and client fetch causes a safe failure; extract a fresh oracle and retry. This
 uses an explicit 32,768-row setup limit, matching the live production shard at
 the time of qualification; a larger future shard requires a deliberate limit
-review. The check uses the wallet client library but does not open a scanned SQLite wallet
+review. The runner starts from the wallet checkout's Cargo lock, rejects any
+resolved package absent from that lock, and prints source, lock and binary
+hashes. The check uses the wallet client library but does not open a scanned
+SQLite wallet
 or exercise restore, resume or reorg behavior. Those remain separate release
 gates.
