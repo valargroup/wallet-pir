@@ -21,3 +21,17 @@ ready 200, publication blocked 0, and query rejected total 0. It was then
 stopped. The chain oracle --help command ran
 successfully on the coordinator without making node RPC requests. Neither
 portable tool has replaced the installed production service at this point.
+
+2026-09-23 UTC: rebuilt the sidecar from source archive
+c969125a4c1c39f1aad7a03d0703775ac7d9863a (archive SHA-256
+8decb06acd2c67b755312020fc34d047b353bf1977c3aa8c4f5de4665eecee55)
+on the same Linux build host with the portable x86-64 target. The
+new pir-apm SHA-256 is
+eb46cbab5b93bd8c44452236558fd67688aab3c803eea38ed51d1f0b9811976c;
+the hash matched after transfer to the production coordinator and --help ran
+there. The installed APM service stayed active. On the separate CI host, a
+local v6 coordinator fixture advertised two published routes while one of
+two private worker fixtures was unreachable. With no Slack webhook, the
+sidecar rendered an active enhance_worker_reachability_worker-2 alert.
+This checks the route-versus-reachability distinction without stopping a
+production worker; live failure and recovery remain to be rehearsed.
