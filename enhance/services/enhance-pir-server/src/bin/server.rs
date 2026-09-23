@@ -181,6 +181,11 @@ fn parse_worker_config(bytes: &[u8]) -> Result<WorkerConfigFile, serde_json::Err
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Err("legacy Enhance serving is retired; use enhance-pir-v4 with fresh schema-11 data".into())
+}
+
+#[allow(dead_code)]
+async fn legacy_main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),

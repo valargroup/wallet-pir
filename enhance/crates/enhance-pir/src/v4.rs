@@ -1,10 +1,10 @@
-//! Versioned query-domain geometry. V3 remains a separate protocol during rollout.
+//! Schema-11 query-domain geometry. The internal module name is retained from v4.
 use crate::types::{RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const SCHEMA_VERSION: u16 = 10;
-pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v4";
+pub const SCHEMA_VERSION: u16 = 11;
+pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v5";
 pub const RETAINED_GENERATIONS: usize = 5;
 pub const HEADER_BYTES: usize = 28;
 

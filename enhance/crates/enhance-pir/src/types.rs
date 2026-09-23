@@ -1,11 +1,9 @@
 use ipir_sp::YpirSchemeParams;
 use serde::{Deserialize, Serialize};
 
-// Schema 9 makes every stored u16 plaintext bit useful. The record encoding is
-// unchanged, but row geometry, plaintext modulus, query precision, and every
-// derived artifact change together.
-pub const SCHEMA_VERSION: u16 = 9;
-pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v3";
+// The legacy helpers use the current record layout, but their serving binaries
+// are retired. The supported public manifest and runtime live in `v4`.
+pub use crate::v4::{PROTOCOL_REVISION, SCHEMA_VERSION};
 pub const PIR_PROFILE_ID: &str = "simplepir-p16-q46-v1";
 pub const NETWORK: &str = "main";
 pub const POOL: &str = "ironwood";
@@ -122,18 +120,17 @@ mod tests {
     #[test]
     fn record_layout_contains_only_enhancement_fields() {
         let record = EnhanceRecord::from_parts(EnhanceRecordParts {
-            ephemeral_key: [1; 32],
-            enc_ciphertext: [2; 580],
+            enc_ciphertext_suffix: [2; 528],
             cv_net: [3; 32],
             out_ciphertext: [4; 80],
             has_transparent_inputs: true,
             has_transparent_outputs: false,
             metadata: crate::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
         });
-        assert_eq!(RECORD_BYTES, 737);
-        assert_eq!(ROW_BYTES, 24_321);
-        assert_eq!(record.ephemeral_key(), &[1; 32]);
-        assert_eq!(record.enc_ciphertext(), &[2; 580]);
+        assert_eq!(RECORD_BYTES, 653);
+        assert_eq!(ROW_BYTES, 21_549);
+
+        assert_eq!(record.enc_ciphertext_suffix(), &[2; 528]);
         assert_eq!(record.cv_net(), &[3; 32]);
         assert_eq!(record.out_ciphertext(), &[4; 80]);
         assert!(record.has_transparent_inputs());

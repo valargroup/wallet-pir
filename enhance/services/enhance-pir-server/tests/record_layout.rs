@@ -1,4 +1,4 @@
-//! The 737-byte Enhance record is the one layout that can never change cheaply:
+//! The 653-byte Enhance record is the one layout that can never change cheaply:
 //! widening it later rebuilds every sealed shard. Pin every offset here, and
 //! pin that a record survives the journal and the padded shard read unchanged.
 
@@ -10,8 +10,7 @@ use enhance_pir_server::types::{DatabaseId, ENHANCE_LAYOUT};
 
 fn sample(seed: u8) -> EnhanceRecord {
     EnhanceRecord::from_parts(EnhanceRecordParts {
-        ephemeral_key: [seed.wrapping_add(1); 32],
-        enc_ciphertext: [seed.wrapping_add(2); 580],
+        enc_ciphertext_suffix: [seed.wrapping_add(2); 528],
         cv_net: [seed.wrapping_add(3); 32],
         out_ciphertext: [seed.wrapping_add(4); 80],
         has_transparent_inputs: true,
@@ -24,14 +23,13 @@ fn sample(seed: u8) -> EnhanceRecord {
 fn field_offsets_are_pinned() {
     let record = sample(10);
     let bytes = record.as_bytes();
-    assert_eq!(bytes.len(), 737);
-    assert_eq!(&bytes[0..32], &[11; 32]);
-    assert_eq!(&bytes[32..612], &[12; 580][..]);
-    assert_eq!(&bytes[612..644], &[13; 32]);
-    assert_eq!(&bytes[644..724], &[14; 80][..]);
-    assert_eq!(bytes[724], 5);
-    assert_eq!(&bytes[725..729], &0u32.to_le_bytes());
-    assert_eq!(&bytes[729..737], &0u64.to_le_bytes());
+    assert_eq!(bytes.len(), 653);
+    assert_eq!(&bytes[0..528], &[12; 528][..]);
+    assert_eq!(&bytes[528..560], &[13; 32]);
+    assert_eq!(&bytes[560..640], &[14; 80][..]);
+    assert_eq!(bytes[640], 5);
+    assert_eq!(&bytes[641..645], &0u32.to_le_bytes());
+    assert_eq!(&bytes[645..653], &0u64.to_le_bytes());
 }
 
 #[test]

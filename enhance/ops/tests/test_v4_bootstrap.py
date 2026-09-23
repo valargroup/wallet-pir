@@ -36,7 +36,7 @@ def bundle_at(path):
         (path / name).write_bytes(b'fixture')
     (path / 'revision').write_text(SHA + '\n')
     (path / 'candidate.json').write_text(json.dumps({'kind': 'enhance-pir-v4-candidate',
-        'source_revision': SHA, 'source_dirty': False, 'schema_version': 10,
+        'source_revision': SHA, 'source_dirty': False, 'schema_version': 11,
         'protocol_revision': module.PROTOCOL, 'qualification': 'unqualified'}))
     header = bytearray(20)
     header[:6] = b'\x7fELF\x02\x01'

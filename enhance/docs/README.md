@@ -6,12 +6,12 @@ then decrypts and validates the returned data using its existing transaction
 context. The service does not supply transaction history, witnesses, or a
 complete wallet sync.
 
-The current client and server implement schema 9 of `ironwood-enhance-pir-v3`,
-using the versioned `simplepir-p16-q46-v1` profile. It packs 33 records into a
-24,321-byte PIR row. Earlier clients reject the schema, protocol and profile.
-Start with the integration guide to use the service, or the deployment guide to
-operate it. The protocol describes the contract; status records what has
-actually been observed.
+The supported server implements schema 11 of `ironwood-enhance-pir-v5`, using
+653-byte suffix records and 33 records per 21,549-byte row. It requires the
+wallet to retain compact encryption fields. The architecture-2 binary and
+modules retain their `v4` names. Earlier clients and persisted state are
+incompatible; use the deployment guide for a clean cutover. Historical evidence
+and status pages describe their recorded revisions, not this build.
 
 | Guide | Contents |
 |---|---|

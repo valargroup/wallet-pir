@@ -43,8 +43,11 @@ fn record(position: u64) -> EnhanceRecord {
     let mut key = [0u8; 32];
     key[..8].copy_from_slice(&position.to_le_bytes());
     EnhanceRecord::from_parts(EnhanceRecordParts {
-        ephemeral_key: key,
-        enc_ciphertext: [17; 580],
+        enc_ciphertext_suffix: {
+            let mut suffix = [17; 528];
+            suffix[..32].copy_from_slice(&key);
+            suffix
+        },
         cv_net: [23; 32],
         out_ciphertext: [41; 80],
         has_transparent_inputs: false,
@@ -75,6 +78,11 @@ async fn query(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Err("legacy qualification is retired; use enhance-pir-v4 exercise for schema 11".into())
+}
+
+#[allow(dead_code)]
+async fn legacy_main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     if !cli.isolated_workers
         || !(1..=SHARDS_PER_GROUP).contains(&cli.shards)

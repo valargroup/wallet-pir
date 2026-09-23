@@ -29,6 +29,9 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    if !cli.v4 {
+        return Err("legacy client transport is retired; pass --v4 for schema 11".into());
+    }
     if cli.v4 {
         let mut client = enhance_pir::v4_client::EnhancePirClient::connect(&cli.server).await?;
         match cli.command {

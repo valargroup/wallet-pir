@@ -63,6 +63,9 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if !args.v4 {
+        anyhow::bail!("legacy load-test transport is retired; pass --v4 for schema 11");
+    }
     if args.v4 {
         v4::run(args).await
     } else {

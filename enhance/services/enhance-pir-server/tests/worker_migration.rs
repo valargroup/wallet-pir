@@ -23,8 +23,7 @@ fn record(position: u64) -> EnhanceRecord {
         *byte = (position as usize).wrapping_mul(29).wrapping_add(index) as u8;
     }
     EnhanceRecord::from_parts(EnhanceRecordParts {
-        ephemeral_key: tag(2),
-        enc_ciphertext: enc,
+        enc_ciphertext_suffix: enc[52..].try_into().unwrap(),
         cv_net: tag(3),
         out_ciphertext: [5; 80],
         has_transparent_inputs: false,

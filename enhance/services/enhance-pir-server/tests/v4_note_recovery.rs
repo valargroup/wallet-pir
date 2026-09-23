@@ -27,16 +27,18 @@ use zcash_note_encryption::{
 struct Output {
     record: EnhanceRecord,
     cmx: [u8; 32],
+    ephemeral_key: [u8; 32],
+    enc_ciphertext: [u8; 580],
 }
 impl<D: Domain<ExtractedCommitmentBytes = [u8; 32]>> ShieldedOutput<D, 580> for Output {
     fn ephemeral_key(&self) -> EphemeralKeyBytes {
-        EphemeralKeyBytes(*self.record.ephemeral_key())
+        EphemeralKeyBytes(self.ephemeral_key)
     }
     fn cmstar_bytes(&self) -> [u8; 32] {
         self.cmx
     }
     fn enc_ciphertext(&self) -> &[u8; 580] {
-        self.record.enc_ciphertext()
+        &self.enc_ciphertext
     }
 }
 async fn serve(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
@@ -73,9 +75,10 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     );
     let cmx = ExtractedNoteCommitment::from(note.commitment());
     let encryptor = IronwoodNoteEncryption::new(Some(ovk.clone()), note, memo);
+    let ephemeral_key = IronwoodDomain::epk_bytes(encryptor.epk()).0;
+    let enc_ciphertext = encryptor.encrypt_note_plaintext();
     let record = EnhanceRecord::from_parts(EnhanceRecordParts {
-        ephemeral_key: IronwoodDomain::epk_bytes(encryptor.epk()).0,
-        enc_ciphertext: encryptor.encrypt_note_plaintext(),
+        enc_ciphertext_suffix: enc_ciphertext[52..].try_into().unwrap(),
         cv_net: cv.to_bytes(),
         out_ciphertext: encryptor.encrypt_outgoing_plaintext(&cv, &cmx, &mut rand::thread_rng()),
         has_transparent_inputs: false,
@@ -85,8 +88,8 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let compact = CompactAction::from_parts(
         Nullifier::from_bytes(&[0; 32]).unwrap(),
         cmx,
-        EphemeralKeyBytes(*record.ephemeral_key()),
-        record.enc_ciphertext()[..52].try_into().unwrap(),
+        EphemeralKeyBytes(ephemeral_key),
+        enc_ciphertext[..52].try_into().unwrap(),
     );
     let domain = IronwoodDomain::for_compact_action(&compact);
     let root = tempfile::tempdir().unwrap();
@@ -136,9 +139,15 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
     let bytes = client.query_position_with_timing(32).await.unwrap().0;
     assert_eq!(bytes.as_ref(), record.as_bytes());
+    let returned = EnhanceRecord::from_bytes(*bytes.as_bytes()).unwrap();
+    let mut reconstructed = [0; 580];
+    reconstructed[..52].copy_from_slice(&enc_ciphertext[..52]);
+    reconstructed[52..].copy_from_slice(returned.enc_ciphertext_suffix());
     let mut output = Output {
         record: EnhanceRecord::from_bytes(bytes.as_ref().try_into().unwrap()).unwrap(),
         cmx: cmx.to_bytes(),
+        ephemeral_key,
+        enc_ciphertext: reconstructed,
     };
     assert_eq!(
         try_note_decryption(&domain, &ivk, &output),
@@ -200,6 +209,7 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let mut corrupted = *record.as_bytes();
     corrupted[100] ^= 1;
     output.record = EnhanceRecord::from_bytes(corrupted).unwrap();
+    output.enc_ciphertext[52..].copy_from_slice(output.record.enc_ciphertext_suffix());
     assert!(try_note_decryption(&domain, &ivk, &output).is_none());
     assert!(try_output_recovery_with_ovk(
         &domain,
@@ -209,6 +219,12 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
         output.record.out_ciphertext()
     )
     .is_none());
+    output.enc_ciphertext = reconstructed;
+    output.enc_ciphertext[0] ^= 1;
+    assert!(try_note_decryption(&domain, &ivk, &output).is_none());
+    output.enc_ciphertext = reconstructed;
+    output.ephemeral_key[0] ^= 1;
+    assert!(try_note_decryption(&domain, &ivk, &output).is_none());
     server.abort();
     for task in tasks {
         task.abort();

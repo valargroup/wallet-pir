@@ -1,5 +1,10 @@
 # Architecture 2 implementation, testing and deployment
 
+The current build uses schema 11 / `ironwood-enhance-pir-v5` and 653-byte suffix
+records. Binary, module, service and internal route names retain `v4`. Historical
+qualification results below belong to their recorded revisions; they do not
+qualify schema 11. Use fresh data directories as described in [deployment](deployment.md).
+
 ## Current state
 
 The implementation is deployed directly to the existing production hosts using
@@ -29,7 +34,7 @@ serving temporarily stopped and restoration supervised. See the
 
 ## Implementation delivered
 
-- Schema 10 and protocol `ironwood-enhance-pir-v4`, explicit public domains,
+- Schema 11 and protocol `ironwood-enhance-pir-v5`, explicit public domains,
   fixed 32K shards, 4K loan/return boundaries and adaptive 2K/4K/8K units.
 - Content-bound immutable runtimes and sessions; five retained generations plus
   candidate preparation. Queries pin the runtime they use through reclamation.

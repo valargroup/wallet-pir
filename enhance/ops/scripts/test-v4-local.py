@@ -35,8 +35,8 @@ def provenance(bin_dir):
         metadata = json.loads(candidate.read_text())
         if (metadata.get('kind') != 'enhance-pir-v4-candidate'
                 or metadata.get('qualification') != 'unqualified'
-                or metadata.get('protocol_revision') != 'ironwood-enhance-pir-v4'
-                or metadata.get('schema_version') != 10
+                or metadata.get('protocol_revision') != 'ironwood-enhance-pir-v5'
+                or metadata.get('schema_version') != 11
                 or not isinstance(metadata.get('source_dirty'), bool)
                 or not re.fullmatch('[0-9a-f]{40}', metadata.get('source_revision', ''))):
             raise ValueError('invalid candidate provenance')

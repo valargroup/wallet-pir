@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+echo "legacy Enhance deployment is retired; use the schema-11 cutover guide" >&2
+exit 1
 # Direct SSH rollout of the schema-9 (33-record) layout.
 #
 # This exists because deploy-enhance-pir.sh cannot do this migration: it stages

@@ -1,5 +1,9 @@
 # Status
 
+Schema 11 is implemented locally with wallet interoperability evidence in the
+[suffix-record report](../evidence/schema11-suffix-2026-09-23/README.md).
+No production deployment is claimed. The observations below remain historical.
+
 ## September 22, 2026: schema-9 16-bit implementation, not deployed
 
 The schema-9 client and server implementation pins

@@ -13,8 +13,7 @@ use std::sync::Arc;
 
 fn record(tag: u8) -> EnhanceRecord {
     EnhanceRecord::from_parts(EnhanceRecordParts {
-        ephemeral_key: [tag; 32],
-        enc_ciphertext: [tag; 580],
+        enc_ciphertext_suffix: [tag; 528],
         cv_net: [tag; 32],
         out_ciphertext: [tag; 80],
         has_transparent_inputs: false,

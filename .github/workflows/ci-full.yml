@@ -239,7 +239,7 @@ jobs:
             -p enhance-pir -p enhance-pir-load-test -p pir-apm -p transparent-spend-pir
           tools/ci/full-test.sh --locked --profile release-fast \
             -p enhance-pir-server --lib --bins \
-            --test operator_payloads --test record_layout \
+            --test operator_payloads --test record_layout --test schema11_cutover \
             --test sharded_vs_monolithic --test worker_migration \
             --test v4_http --test v4_canonical_record --test v4_note_recovery \
             --test v4_rpc

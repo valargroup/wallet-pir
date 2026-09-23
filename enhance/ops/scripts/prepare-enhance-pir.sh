@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+echo "legacy Enhance deployment is retired; use the schema-11 cutover guide" >&2
+exit 1
 # Build a separate journal; never stop or reconfigure a serving process.
 #
 # Schema 9 widens the PIR row to 33 records and changes the plaintext profile.

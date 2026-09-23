@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+if [[ "${1:-}" != jq-programs ]]; then
+  echo "legacy Enhance deployment is retired; use the schema-11 cutover guide" >&2
+  exit 1
+fi
 set -euo pipefail
 
 usage() {

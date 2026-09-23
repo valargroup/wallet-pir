@@ -480,7 +480,7 @@ async fn full_shard_loan_return_over_http_preserves_old_queries() {
     // Reapply the split on a different branch: stable shard identity must not
     // allow a cached runtime for the old branch to supply the changed record.
     let mut replacement = record(boundary - 1);
-    replacement[enhance_pir::types::RECORD_ENC_CIPHERTEXT_OFFSET] = 0x99;
+    replacement[enhance_pir::types::RECORD_ENC_CIPHERTEXT_SUFFIX_OFFSET] = 0x99;
     journal
         .append_block(3428144, "04".repeat(32), &[replacement.clone()])
         .unwrap();

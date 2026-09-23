@@ -114,7 +114,8 @@ pub fn add_crs_blocks_assign_mod(
 // so every persisted database and partial CRS from version 6 is the wrong shape.
 // Version 8 binds the plaintext profile and changes Enhance to p=2^16 with a
 // 46-bit minimum query width.
-const ARTIFACT_VERSION: u16 = 8;
+// Version 9 invalidates full-ciphertext artifacts for schema 11 suffix records.
+const ARTIFACT_VERSION: u16 = 9;
 
 #[derive(Serialize, Deserialize)]
 struct ArtifactMetadata {
@@ -603,10 +604,9 @@ mod tests {
 
     #[test]
     fn enhance_rows_use_six_ipir_instances() {
-        // A 24,321-byte row is 194,568 bits and fits six 32,768-bit instances
-        // with 2,040 bits to spare. Thirty-four records need 200,464 bits and
-        // would spill into a seventh instance.
-        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 24_321);
+        // A 21,549-byte suffix row is 172,392 bits. It still requires six
+        // 32,768-bit instances; compact storage does not reduce PIR dimensions.
+        assert_eq!(crate::types::ENHANCE_LAYOUT.row_bytes(), 21_549);
         let (_, params) = shard_parameters(&crate::types::ENHANCE_LAYOUT).expect("params");
         assert_eq!(params.instances, 6);
         assert_eq!(params.db_cols, 12_288);
@@ -631,10 +631,10 @@ mod tests {
             layout.pir_profile.plaintext_bits(),
         );
         assert_eq!(coefficients.next(), Some(0x1234));
-        assert_eq!(coefficients.nth(12_159), Some(0x00ab));
+        assert_eq!(coefficients.nth(layout.row_bytes() / 2 - 1), Some(0x00ab));
         assert_eq!(coefficients.next(), Some(0));
         assert_eq!(
-            coefficients.nth(126),
+            coefficients.nth(params.db_cols - layout.row_bytes().div_ceil(2) - 1),
             Some(0),
             "the padded second row is zero"
         );
@@ -750,6 +750,16 @@ mod persistence_tests {
             cached.runtime.evaluate(&rlwe, &query).unwrap(),
             expected_query
         );
+        let path = dir.path().join("metadata.json");
+        let current = fs::read(&path).unwrap();
+        let mut old: serde_json::Value = serde_json::from_slice(&current).unwrap();
+        old["version"] = 8.into();
+        fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        assert!(
+            load().is_err(),
+            "schema-10 artifacts must be rebuilt even at equal PIR dimensions"
+        );
+        fs::write(&path, current).unwrap();
         assert_eq!(
             load().unwrap().runtime.evaluate(&rlwe, &query).unwrap(),
             expected_query

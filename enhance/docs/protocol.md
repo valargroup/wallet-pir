@@ -1,101 +1,82 @@
 # Protocol
 
-Enhance PIR replaces transaction-specific retrieval for the encrypted output
-data a wallet needs after compact scanning. The wallet derives an Ironwood
-output position, sends a private real-or-dummy query, and receives one fixed
-record without revealing the selected position.
+The supported server implements schema 11, `ironwood-enhance-pir-v5`, using the
+architecture-2 runtime. Its Rust modules and binary retain their `v4` names.
+The exact wallet counterpart is [wallet-libraries PR #28](https://github.com/zakura-core/wallet-libraries/pull/28),
+commit `de3ec78f31b6fd184596fc952fe4f78d3a63cd0a`.
 
 ## Record format
 
-Schema 9 stores exactly 737 bytes per output position:
+Each Ironwood action occupies 653 bytes at its commitment-tree position:
 
-| Offset | Length | Field | Use |
-| ---: | ---: | --- | --- |
-| 0 | 32 | `ephemeralKey` | Note key agreement |
-| 32 | 580 | `encCiphertext` | Note and authenticated memo |
-| 612 | 32 | `cv_net` | OVK-based outgoing recovery |
-| 644 | 80 | `outCiphertext` | OVK-based outgoing recovery |
-| 724 | 1 | flags | Transparent inputs/outputs (bits 0/1), fee present (bit 2) |
-| 725 | 4 | expiry height | Little-endian u32; zero disables expiry |
-| 729 | 8 | fee | Little-endian u64 zatoshis; zero payload when absent |
+| Offset | Length | Field |
+| ---: | ---: | --- |
+| 0 | 528 | `enc_ciphertext[52..580]` |
+| 528 | 32 | `cv_net` |
+| 560 | 80 | `out_ciphertext` |
+| 640 | 1 | flags: transparent inputs/outputs (bits 0/1), fee present (bit 2) |
+| 641 | 4 | expiry height, little-endian u32 |
+| 645 | 8 | fee in zatoshis, little-endian u64 |
 
-Thirty-three consecutive records form a 24,321-byte PIR row. The client privately
-retrieves the row and selects the requested record locally. The active table
-does not contain txids, nullifiers, note commitments, mined heights, or witness data.
+Reserved flag bits must be zero. Expiry must be below 500,000,000. An absent fee
+has a zero payload; a present fee cannot exceed 21,000,000 × 100,000,000.
+Expiry zero disables expiry. These fields and the transparent flags are trusted
+indexer metadata; note decryption does not authenticate them.
 
-## Protocol boundary
+The wallet retains the ephemeral key and first 52 ciphertext bytes from the
+same compact-scanned action. It concatenates that prefix with the 528-byte PIR
+suffix before note authentication. Neither omitted field is supplied by PIR.
+The table contains no transaction IDs, nullifiers, commitments, or witnesses.
 
-`enhance/crates/enhance-pir` owns public record and generation types plus client query logic.
-`enhance/services/enhance-pir-server` owns canonical ingestion, the append-only journal,
-sealed shards, workers, and HTTP routing. The protocol identifier is
-`ironwood-enhance-pir-v3`; clients must reject another identifier, schema,
-PIR profile, record width, row width, setup seed, or derived parameter set. The
-PIR profile is `simplepir-p16-q46-v1`: `p = 65,536`, six instances, a 46-bit
-query and a 20-bit response at the 8,192-row shard geometry.
+33 consecutive records form a 21,549-byte row. Row and slot are derived from
+the action position using division and remainder by 33. Records never straddle
+rows. Padding is zero, including the high byte of the final u16 plaintext.
+Compared with schema 10, raw records and rows shrink by 11.4%; the row still
+requires six PIR instances. This does not imply equivalent savings in query
+responses, expanded databases, or latency.
 
-The client uses only:
+## Initialization and queries
 
-- `GET /v1/health`
-- `GET /v1/enhance/init`
-- `POST /v1/enhance/query`
+`GET /v1/enhance/init` returns the architecture-2 `Manifest`: schema/protocol,
+network/pool, generation, anchor height/hash, shard geometry and coverage,
+session references, and mutable-unit identities. The client validates the
+manifest and binds it to locally scanned chain state before requesting setup.
 
-This is a breaking replacement for the former memo/action API. There are no
-compatibility aliases because interpreting an old record with the new offsets
-would be unsafe. Client conformance and adoption must be verified for the intended cutover; see
-[status](status.md) for the limits of the committed rollout evidence.
+`GET /v1/enhance/sessions/:generation/:shard` returns the generation-bound shard
+session, including derived parameters and base64 public material. The wallet
+checks parameter identity, public-material digest and length, and resource
+limits before allocating a query session.
 
-## Atomic initialization
+`POST /v1/enhance/query` carries an opaque PIR query. Its 28-byte header retains
+`EPQ4`, followed by little-endian u64 generation, little-endian u64 shard ID,
+and the eight-byte public-material digest prefix. Responses use the same
+binding. Both peers reject mismatched generations, domains, epochs, and lengths.
+Expired generations return HTTP 410; a refreshed manifest requires fresh wallet
+acceptance. A row result is selected locally; action identities never go to the
+server. Same-transaction batching needs no new server endpoint.
 
-`GET /v1/enhance/init` returns an `EnhanceSession` JSON object containing:
+The PIR profile remains `simplepir-p16-q46-v1`. Query domains remain 4,096,
+8,192, 16,384, or 32,768 rows, with 2,048/4,096/8,192-row mutable units.
+The deterministic public setup seed and the literal domain
+`ironwood-enhance-pir-v4/main/ironwood/setup\0` are intentionally unchanged to
+match the wallet. Schema, protocol, parameter identities, and content hashes
+separate the new records and artifacts. Do not mechanically rename the header
+or setup domain to v5.
 
-- `generation`: network/pool, schema/protocol, chain anchor, tree size, generation
-  ID, record/row/shard geometry, parameter ID, setup seed, public-parameter epoch
-  and digest, and shard descriptors;
-- `params`: the pinned PIR scheme parameters for the logical database;
-- `public_params_base64`: the published public material for that same generation.
+The authoritative wire types and validation are in
+[the protocol module](../crates/enhance-pir/src/v4.rs); record encoding is in
+[record.rs](../crates/enhance-pir/src/record.rs).
 
-The network identifier is `main`, the pool is `ironwood`, and activation height is
-3,428,143. Logical rows are the next power of two at or above the used row count,
-with a minimum of 8,192. Used rows equal `ceil(ironwood_tree_size / 33)`.
+## Compatibility and trust
 
-The client regenerates expected scheme parameters from geometry, checks them for
-exact equality, checks the SHA-256 digest of the decoded public material, and
-checks that the epoch is its first eight digest bytes. It also validates the
-expected public-material length. These are compatibility and consistency checks,
-not an independently trusted commitment to canonical chain contents.
+Schema-9 and schema-10 clients are incompatible. The legacy serving commands
+are retired. Journals validate record width, controller state is version 5,
+worker state requires schema 11, and preprocessing artifacts are version 9.
+Use fresh data directories and rebuild publications and caches. The older
+`migrate-v4-journal.py` only repacks full records and cannot prepare schema 11.
 
-## Binary query and response
-
-`POST /v1/enhance/query` takes a binary body, not JSON. All integer prefixes below
-are little-endian. Use the pinned client encoder: packing keys and coefficients
-are scheme-specific encodings, not a portable list of JSON numbers.
-
-| Message | Layout |
-|---|---|
-| Request | 8-byte generation ID, serialized fresh packing keys, switched query coefficients |
-| Response | 8-byte generation ID, 8-byte public-parameter epoch, encoded PIR response body |
-
-The client checks both response prefixes and the exact expected body length
-before decoding. Decoding yields a row; slot selection and record validation
-happen locally. For a given generation, real and dummy requests use the same
-construction. Each request uses fresh query randomness and fresh packing keys.
-The private coordinator/worker wire protocol is separate from this public API.
-
-Initialization returns 503 when no generation is available. Query failures,
-including an unretained generation or admission failure, currently return 503;
-there is no public structured error that distinguishes those causes. The
-coordinator's query body limit is 64 MiB. The reference client imposes stricter
-response limits described in [integration](integration.md).
-
-## Record validation and trust
-
-Bits 3–7 of the flags byte must be zero. When fee-present is clear, the eight fee
-bytes must be zero; when set, zero is a valid known fee. Fees above
-2,100,000,000,000,000 zatoshis and expiry heights at or above 500,000,000 are
-rejected. Encoding validation does not authenticate a record.
-
-Fee, expiry and transaction-shape flags are indexer assertions. The wallet must
-perform its normal authenticated note/outgoing recovery and bind the result to
-its scanned action. The public parameter hash does not remove that requirement.
-The [integration guide](integration.md) covers sessions, reorgs, missing metadata
-and the privacy consequences of fallback retrieval.
+Incoming authentication and stale wallet identities remain wallet obligations.
+Outgoing decryption should authenticate recoverable outputs; send-only association
+may rely on server trust when decryption cannot authenticate an action. PIR
+hides the chosen position, but timing and the number of row queries remain
+observable. See [integration](integration.md) and [deployment](deployment.md).
