@@ -1,0 +1,16 @@
+{
+  "source": "current canonical journal",
+  "sha256": "161d34f6de465ee48ccc1530f3b94108a13eb32d5785ee8f58d01f72c810173b",
+  "records": 585542,
+  "positions": [
+    0,
+    1,
+    32,
+    33,
+    270335,
+    270336,
+    540671,
+    540672,
+    585541
+  ]
+}

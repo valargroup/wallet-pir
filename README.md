@@ -12,23 +12,30 @@ and outstanding acceptance gates. Implementation is not proof of live rollout.
 
 ## Enhance performance
 
-A previously reported five-minute production test with eight workers completed
-**6,512 encrypted queries with no errors**, sustaining **21.71 requests/second**.
+On September 23, 2026, a five-minute production test through the public HTTPS
+origin completed **9,809 correct encrypted queries with no errors**, sustaining
+**32.68 requests/second** with eight closed-loop clients. The load driver ran on
+the coordinator host, so the figures include the public HTTPS route but not
+geographically remote network latency.
 
 | End-to-end latency | Time |
 |---|---:|
-| p50 | 322.6 ms |
-| p95 | 483.3 ms |
-| p99 | 1.75 s |
+| p50 | 242.6 ms |
+| p95 | 263.2 ms |
+| p99 | 348.9 ms |
 
-With the tested 32,768-row by 4,096-column configuration, each query uploads
-258,056 bytes (252.0 KiB) and downloads 10,256 bytes (10.0 KiB), for **262.0 KiB
-combined**. At the reported throughput, this corresponds to 5.60 MB/s upload and
-0.22 MB/s download, or 46.6 Mbit/s combined, excluding HTTP and TLS overhead.
+The published schema-11 database held **585,542 records** of 653 bytes each
+(364.6 MiB of raw records) in one 32,768-row logical shard. The deployed v6/q48
+coordinator admitted four active queries, with up to 16 waiting for two seconds;
+two worker replicas served the shard. All measured and warmup answers matched
+the canonical journal oracle. The test ran against the database size and
+configuration recorded at its start, not a fixed-size synthetic fixture.
 
-See the [measurement record](enhance/evidence/reported-performance/README.md)
-for provenance and limitations, and the
-[APM dashboard](https://enhance-pir.valargroup.dev/apm/) for live fleet performance.
+See the [dated measurement record](enhance/evidence/query-admission-production-2026-09-23/README.md)
+for commands, raw reports and limitations. The
+[older reported result](enhance/evidence/reported-performance/README.md)
+remains available for historical context. The
+[APM dashboard](https://enhance-pir.valargroup.dev/apm/) shows live fleet performance.
 
 ## Repository layout
 
