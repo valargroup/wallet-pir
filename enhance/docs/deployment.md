@@ -43,11 +43,24 @@ Keep worker port 8091 on the private network and expose only the coordinator's
 client routes through the public origin. The worker API has no application-layer
 authentication.
 
-The coordinator admits four active queries and lets up to 16 more wait for two
-seconds. A full or expired queue returns HTTP 429 with `Retry-After: 1`; a busy
-replica is retried on its peer. The public Caddy query route disables upstream
-keepalive so overload responses are not lost on stale local connections. Check
-the `enhance_query_*` metrics and public 429/502 counts after rollout.
+The coordinator reads and frame-checks the bounded query body before admission,
+then admits four active queries and lets up to 16 more wait for two seconds. A
+full or expired queue returns HTTP 429 with `Retry-After: 1`; a busy replica is
+retried on its peer. Each replica attempt has a 3-second connect and 10-second
+response deadline, tried in round-robin order, and a replica that has retired
+the generation yields 410 so the wallet refreshes. The public Caddy query route
+disables upstream keepalive so overload responses are not lost on stale local
+connections. Check the `enhance_query_*` metrics and public 429/502 counts
+after rollout.
+
+Serving and canonical ingestion are reported separately. `/v1/health` carries
+`blocked_reason` for publication and `ingestion_error` for the journal (node
+lag, a rotated RPC cookie, a continuity mismatch); `enhance_ingestion_failed`
+and `enhance_last_ingest_age_seconds` expose the same in metrics. A stalled
+journal keeps the published generations serving, so alert on these rather than
+on readiness. The coordinator reloads the RPC cookie on 401, never rewinds the
+journal while the node's tip is below it, and aborts on any internal panic so
+systemd restarts it.
 
 The service examples are [coordinator](../ops/deploy/enhance-pir-server.service)
 and [worker](../ops/deploy/enhance-pir-worker.service). Point
