@@ -238,5 +238,9 @@ class SamplingTests(unittest.TestCase):
         if (group / 'memory.stat').exists():
             memory = module.counters((group / 'memory.stat').read_text())
             self.assertTrue({'anon', 'file', 'shmem', 'kernel'} <= memory.keys())
+        # The root cgroup exposes memory.stat but not memory.events, which only
+        # exists for non-root groups, so a runner sampling its own root sees
+        # the former without the latter.
+        if (group / 'memory.events').exists():
             events = module.counters((group / 'memory.events').read_text())
             self.assertTrue({'high', 'max', 'oom', 'oom_kill'} <= events.keys())
