@@ -236,9 +236,12 @@ def main():
             raise SystemExit('coordinator has not requested expansion')
         require_expected(operation, args.expected_operation_id, args.expected_target_groups)
         operation_id = operation['id']
+        if args.stage == 'provision' and operation['phase'] == 'bootstrapped':
+            raise ValueError('pair is already bootstrapped; complete its registration')
     # Each adapter owns both locks for its entire operation. A rerun reconciles
     # their journals before doing anything to an existing resource.
-    run_adapter('v4-provision', common)
+    if operation['phase'] != 'bootstrapped':
+        run_adapter('v4-provision', common)
     if args.stage == 'provision':
         if args.watch_request:
             with args.trace_out.open('a') as trace:
@@ -247,9 +250,10 @@ def main():
         print(json.dumps({'operation': operation_id, 'phase': 'provisioned',
                           'qualification': 'unqualified'}, sort_keys=True))
         return
-    run_adapter('v4-bootstrap-pair', [*common, '--bootstrap-policy', str(args.bootstrap_policy),
-                '--bundle', str(args.bundle), '--ssh-key', str(args.ssh_key),
-                '--known-hosts', str(args.known_hosts)])
+    if operation['phase'] != 'bootstrapped':
+        run_adapter('v4-bootstrap-pair', [*common, '--bootstrap-policy', str(args.bootstrap_policy),
+                    '--bundle', str(args.bundle), '--ssh-key', str(args.ssh_key),
+                    '--known-hosts', str(args.known_hosts)])
     with journal_module.Journal(args.state_dir) as journal:
         operation = journal.state['operation']
         if operation is None or operation['id'] != operation_id:
