@@ -9,8 +9,8 @@ publish = false
 [dependencies]
 enhance-pir = { path = "../../crates/enhance-pir" }
 enhance-pir-server = { path = "../../services/enhance-pir-server" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "dac5b050cfa00770405f9d6b464b8adb2b17a3c0" }
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "dac5b050cfa00770405f9d6b464b8adb2b17a3c0" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
 spiral-rs = { package = "valar-spiral-rs", git = "https://github.com/valargroup/spiral-rs.git", rev = "584fee3893b1d2d17b5d774c83bd801fb70d5ace" }
 rayon = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }

@@ -15,6 +15,10 @@ from pathlib import Path
 
 PIN = 'dac5b050cfa00770405f9d6b464b8adb2b17a3c0'
 Q = 72057594037641217
+WIDE_PIN = 'b1c540f90f62e112c834a0f57f025e3c605e55d1'
+Q48_PIN = '6f74a2d754b58934f925fc8a347f46620148ad47'
+PROFILE_BITS = {PIN: 46, WIDE_PIN: 49, Q48_PIN: 48}
+TARGET_BITS = {PIN: 128, WIDE_PIN: 128, Q48_PIN: 78}
 N = 2048
 COLS = 12288
 
@@ -65,12 +69,12 @@ def sampler(cdf):
 
 
 def validate(x):
-    require(x['format'] == 1 and x['implementation'] == PIN, 'wrong implementation')
+    require(x['format'] == 1 and x['implementation'] in PROFILE_BITS, 'wrong implementation')
     require((x['n'], x['q'], x['p'], x['ell'], x['cdf_max_val']) == (N, Q, 65536, 3, 65), 'wrong profile')
     p = x['params']
     require(x['rows'] in (4096, 8192, 16384, 32768), 'unsupported domain')
     require(p['db_rows'] == x['rows'] and p['db_cols'] == COLS and p['instances'] == 6, 'wrong shape')
-    require(p['p'] == 65536 and p['query_bits'] == 46 and p['q_prime_1'] == 1 << 20, 'transport profile changed')
+    require(p['p'] == 65536 and p['query_bits'] == PROFILE_BITS[x['implementation']] and p['q_prime_1'] == 1 << 20, 'transport profile changed')
     require(x['threshold'] == (Q // 65536) // 2, 'threshold mismatch')
     require(len(x['column_sums']) == COLS and all(integer(v) and 0 <= v <= x['rows'] * 65535 for v in x['column_sums']), 'column coverage/range')
     require(x['partitioned_hint_matches'] is True and x['partitioned_intermediates_match'] is True, 'composition mismatch')
@@ -81,7 +85,7 @@ def validate(x):
     require(x['max_expected_phase_error'] == max(q['max_expected_phase_error'] for q in x['queries']), 'maximum mismatch')
     require(hashlib.sha256(b''.join(v.to_bytes(8, 'little') for v in x['cdf_table'])).hexdigest() == 'bc68011d7224eb5dcb649a206c70697d4e6bce32af77966f4ebd60c0683cac2e', 'pinned sampler CDF mismatch')
     mean = sampler(tuple(x['cdf_table']))
-    deterministic = [(65 + ceildiv(Q, 1 << 47) + 1) * v + ceildiv(Q, 1 << 21) + 1 + Q % 65536 for v in x['column_sums']]
+    deterministic = [(65 + ceildiv(Q, 1 << (p['query_bits'] + 1)) + 1) * v + ceildiv(Q, 1 << 21) + 1 + Q % 65536 for v in x['column_sums']]
     require(x['deterministic_bounds'] == deterministic, 'deterministic bounds mismatch')
     return mean, deterministic
 
@@ -89,7 +93,8 @@ def validate(x):
 def analyze(x):
     mean, deterministic = validate(x)
     threshold = x['threshold']
-    result = dict(status='not certified', analytical_pass=False, independent_review='pending',
+    target_bits = TARGET_BITS[x['implementation']]
+    result = dict(target_failure_bits=target_bits, query_bits=x['params']['query_bits'], status='not certified', analytical_pass=False, independent_review='pending',
                   failures=x['failures'], queries=len(x['queries']),
                   min_deterministic_allowance=threshold-max(deterministic),
                   max_expected_phase_error=x['max_expected_phase_error'],
@@ -131,11 +136,11 @@ def analyze(x):
             if worst is None or exponent < worst['exponent_bits_floor']:
                 worst = item
     bound = (2 * COLS - 1).bit_length() - worst['exponent_bits_floor']
-    passed = bound <= -128 and worst['key_allowance'] > 0
+    passed = bound <= -target_bits and worst['key_allowance'] > 0
     result.update(analytical_pass=passed, union_log2_upper=bound, limiting_coefficient=worst)
     if x['failures'] == 0:
         result['reason'] = ('analytical target met; independent review pending' if passed
-                            else 'current sufficient bound does not meet 2^-128 per full query')
+                            else f'current sufficient bound does not meet 2^-{target_bits} per full query')
     return result
 
 

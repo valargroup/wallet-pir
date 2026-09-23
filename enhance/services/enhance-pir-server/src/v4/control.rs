@@ -251,7 +251,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             capacity: super::capacity::Capacity::default(),
-            version: 5,
+            version: 6,
             epoch: 0,
             revision: 0,
             next_generation: 1,
@@ -331,9 +331,9 @@ impl Store {
             state,
         };
         store.update(|s| {
-            if s.version != 5 {
+            if s.version != 6 {
                 return Err(
-                    "incompatible controller state; rebuild schema 11 in a separate data directory"
+                    "incompatible controller state; rebuild protocol v6 in a separate data directory"
                         .into(),
                 );
             }
@@ -698,6 +698,20 @@ mod tests {
         }
         assert_ne!(relocated[&reorg.shards.last().unwrap().id], "g0");
         assert!(PlacementPolicy { sealed_shards: 8 }.validate().is_err());
+    }
+
+    #[test]
+    fn q46_controller_state_is_rejected_without_rewriting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("controller-v4.json");
+        let old = State {
+            version: 5,
+            ..State::default()
+        };
+        let bytes = serde_json::to_vec(&old).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        assert!(Store::open(root.path()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
     }
 
     #[test]

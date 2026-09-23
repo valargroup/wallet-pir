@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         record_bytes: width,
         records_per_row: 33,
         shard_rows: rows_count,
-        pir_profile: SimplePirProfile::P16Q46,
+        pir_profile: SimplePirProfile::P16Q48,
     };
     let (rlwe, params) = ipir_sp::params_for_simplepir_profile(
         rows_count as u64,

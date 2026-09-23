@@ -1,0 +1,17 @@
+[package]
+name = "enhance-q48-interop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+enhance-pir = { path = "../../crates/enhance-pir" }
+enhance-pir-server = { path = "../../services/enhance-pir-server" }
+zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9b190657d129d08e964623d0ecc1d8e4ffb31b1d", default-features = false }
+serde_json = "1"
+tempfile = "3"
+
+[profile.release]
+codegen-units = 16

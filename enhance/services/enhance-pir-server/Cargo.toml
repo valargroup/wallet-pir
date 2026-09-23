@@ -32,8 +32,8 @@ arc-swap = "1"
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 hdrhistogram = "7"
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "dac5b050cfa00770405f9d6b464b8adb2b17a3c0" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "dac5b050cfa00770405f9d6b464b8adb2b17a3c0" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "6f74a2d754b58934f925fc8a347f46620148ad47" }
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

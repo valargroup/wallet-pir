@@ -463,7 +463,7 @@ async fn enhance_v1_routes_expose_only_the_current_generation() {
     );
     assert_eq!(wire.params.instances, 6, "33 x 653-byte records per row");
     assert_eq!(wire.params.p, 1 << 16);
-    assert_eq!(wire.params.query_bits, 46);
+    assert_eq!(wire.params.query_bits, 48);
     assert_eq!(public_params, expected_public_params);
     assert_eq!(get(&app, "/v1/health").await.0, StatusCode::OK);
 
