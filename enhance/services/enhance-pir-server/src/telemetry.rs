@@ -49,6 +49,13 @@ pub(super) struct Publication {
     target: Option<Target>,
     pub last_attempt_seconds: Option<f64>,
     pub last_attempt_succeeded: Option<bool>,
+    /// Last canonical ingestion failure (RPC, cookie, continuity), distinct
+    /// from a publication failure: serving stays green while ingestion stalls.
+    pub ingestion_error: Option<String>,
+    pub last_ingest_success: Option<Instant>,
+    /// Committed notifications dropped because the worker came back with
+    /// fresh state; the next publication re-prepares that replica.
+    pub forfeited_commits: u64,
 }
 impl Publication {
     pub fn observe(&mut self, height: u64, records: u64, hash: &str) {
@@ -112,8 +119,22 @@ pub(super) fn coordinator(
             "enhance_publication_target_available",
             u64::from(publication.target.is_some()),
         ),
+        (
+            "enhance_ingestion_failed",
+            u64::from(publication.ingestion_error.is_some()),
+        ),
+        (
+            "enhance_forfeited_commit_notifications_total",
+            publication.forfeited_commits,
+        ),
     ] {
         m.number(name, value);
+    }
+    if let Some(success) = publication.last_ingest_success {
+        m.number(
+            "enhance_last_ingest_age_seconds",
+            success.elapsed().as_secs(),
+        );
     }
     let phase = state
         .operation

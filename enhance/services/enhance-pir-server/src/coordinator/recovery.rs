@@ -173,6 +173,22 @@ impl Coordinator {
                 .await
                 .map_err(|e| e.to_string())?;
                 let generation = notification.manifest.generation;
+                // A pending replica receives no reserve, abort, retain or commit,
+                // so its epoch and revision cannot move and its candidate cannot
+                // clear. This exact fresh-state shape (the same one that admits a
+                // new replica) is therefore only reachable from a wiped data
+                // directory. The decision is durable here and on the peer; the
+                // fresh worker holds nothing, so the notification is forfeited
+                // and the next publication prepares it from scratch.
+                if health["published"].as_array().is_some_and(|p| p.is_empty())
+                    && health["candidate"].is_null()
+                    && health["epoch"].as_u64() == Some(0)
+                    && health["revision"].as_u64() == Some(0)
+                {
+                    tracing::warn!(replica = %replica.name, "worker restarted with fresh state; committed notification forfeited, next publication re-prepares it");
+                    self.telemetry.lock().unwrap().forfeited_commits += 1;
+                    return Ok(());
+                }
                 if health["published"]
                     .as_array()
                     .is_some_and(|gs| gs.iter().any(|g| g.as_u64() == Some(generation)))

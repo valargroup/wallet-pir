@@ -1973,3 +1973,168 @@ async fn worker_revocation_survives_restart_and_rejects_regression() {
         let _ = server.await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn committed_notification_is_forfeited_for_a_worker_with_fresh_state() {
+    use axum::response::IntoResponse;
+    use enhance_pir_server::control::State as ControlState;
+    use std::sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    };
+    // Modes: 0 normal, 1 rejects commit, 2 offline.
+    async fn start_worker(
+        root: &std::path::Path,
+        address: &str,
+        mode: Arc<AtomicU8>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let worker = Worker::open(root).unwrap();
+        let router = worker.router().layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let mode = mode.clone();
+                async move {
+                    let mode = mode.load(Ordering::SeqCst);
+                    let commit = request.uri().path() == "/internal/commit";
+                    let mut response = if mode == 2 || (mode == 1 && commit) {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    } else {
+                        next.run(request).await
+                    };
+                    response
+                        .headers_mut()
+                        .insert(axum::http::header::CONNECTION, "close".parse().unwrap());
+                    response
+                }
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind(address).await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        (
+            url,
+            tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            }),
+        )
+    }
+    let root = tempfile::tempdir().unwrap();
+    let modes = [Arc::new(AtomicU8::new(0)), Arc::new(AtomicU8::new(0))];
+    let mut tasks = Vec::new();
+    let mut replicas = Vec::new();
+    for (index, mode) in modes.iter().enumerate() {
+        let (url, task) = start_worker(
+            &root.path().join(format!("worker-{index}")),
+            "127.0.0.1:0",
+            mode.clone(),
+        )
+        .await;
+        tasks.push(task);
+        replicas.push(Replica {
+            name: format!("peer-{index}"),
+            url,
+            incarnation: String::new(),
+            ledger: Ledger::default(),
+        });
+    }
+    let groups = vec![Group {
+        placement_policy: Default::default(),
+        id: "g0".into(),
+        sequence: 0,
+        replicas,
+    }];
+    let coordinator_root = root.path().join("coordinator");
+    let read_state = || -> ControlState {
+        serde_json::from_slice(&std::fs::read(coordinator_root.join("controller.json")).unwrap())
+            .unwrap()
+    };
+    let coordinator = Coordinator::open(&coordinator_root, groups.clone()).unwrap();
+    let (origin, server) = serve(coordinator.clone().router()).await;
+    let mut journal = RecordJournal::open(
+        root.path().join("journal"),
+        DatabaseId::Enhance,
+        ENHANCE_LAYOUT,
+    )
+    .unwrap();
+    journal
+        .append_block(
+            3428143,
+            "01".repeat(32),
+            &(0..67).map(record).collect::<Vec<_>>(),
+        )
+        .unwrap();
+    coordinator
+        .publish(&journal, 3428143, "01".repeat(32))
+        .await
+        .unwrap();
+    modes[0].store(1, Ordering::SeqCst);
+    journal
+        .append_block(3428144, "02".repeat(32), &[record(67)])
+        .unwrap();
+    coordinator
+        .publish(&journal, 3428144, "02".repeat(32))
+        .await
+        .unwrap();
+    assert_eq!(read_state().pending_commits.len(), 1);
+    assert_eq!(read_state().pending_commits[0].replica, "peer-0");
+
+    // The worker host is rebuilt: same address, empty data directory. Its
+    // durable candidate is gone, which previously left the notification
+    // pending forever and the replica excluded from every future candidate.
+    modes[0].store(2, Ordering::SeqCst);
+    tasks[0].abort();
+    let _ = (&mut tasks[0]).await;
+    std::fs::remove_dir_all(root.path().join("worker-0")).unwrap();
+    modes[0].store(0, Ordering::SeqCst);
+    let (url, restarted) = start_worker(
+        &root.path().join("worker-0"),
+        groups[0].replicas[0].url.strip_prefix("http://").unwrap(),
+        modes[0].clone(),
+    )
+    .await;
+    assert_eq!(url, groups[0].replicas[0].url);
+    tasks[0] = restarted;
+    coordinator.reconcile().await.unwrap();
+    assert!(read_state().pending_commits.is_empty());
+    let metrics = reqwest::get(format!("{origin}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(metrics.contains("enhance_forfeited_commit_notifications_total 1\n"));
+
+    // The next publication prepares the fresh replica from scratch, after
+    // which it serves alone when its peer goes offline.
+    let position = journal.tree_size();
+    journal
+        .append_block(3428145, "03".repeat(32), &[record(position)])
+        .unwrap();
+    coordinator
+        .publish(&journal, 3428145, "03".repeat(32))
+        .await
+        .unwrap();
+    let health: serde_json::Value = reqwest::get(format!("{origin}/v1/health"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(health["published_replica_counts"]["g0"], 2);
+    assert_eq!(health["pending_commit_notifications"], 0);
+    modes[1].store(2, Ordering::SeqCst);
+    let mut client = EnhancePirClient::connect(&origin).await.unwrap();
+    for position in [0, 66, position] {
+        assert_eq!(
+            client
+                .query_position_with_timing(position)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(position)
+        );
+    }
+    server.abort();
+    for task in tasks {
+        task.abort();
+    }
+}
