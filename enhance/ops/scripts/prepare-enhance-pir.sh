@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-echo "legacy Enhance deployment is retired; use the schema-11 cutover guide" >&2
-exit 1
+# Retained only as a readable historical procedure. Never invoked in this build.
+# shellcheck disable=SC2329
+legacy_main() {
 # Build a separate journal; never stop or reconfigure a serving process.
 #
 # Schema 9 widens the PIR row to 33 records and changes the plaintext profile.
@@ -64,3 +65,8 @@ prepared_rpr="$(as_root jq -r '.records_per_row // 0' "$data_dir/enhance/manifes
 printf '%s records-per-row=%s\n' "$release" "$records_per_row" |
   as_root tee "$data_dir/prepared-release" >/dev/null
 REMOTE
+
+}
+
+echo "legacy Enhance deployment is retired; use the schema-11 cutover guide" >&2
+exit 1

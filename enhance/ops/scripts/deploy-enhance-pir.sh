@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-if [[ "${1:-}" != jq-programs ]]; then
+if [[ "${1:-}" != jq-programs && "${1:-}" != validate ]]; then
   echo "legacy Enhance deployment is retired; use the schema-11 cutover guide" >&2
   exit 1
 fi
