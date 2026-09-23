@@ -32,5 +32,5 @@ automated evidence checks passed; all assessor results retain
 calibration, hard-cap/reclaim acceptance, workload host/clock identity, latency
 and open-loop acceptance, and protocol/wallet conformance remain unproven.
 
-See the [usage and evidence contract](../../ops/deploy/v4-candidate.md) and
-[remaining implementation gates](../../docs/architecture_2-implementation.md).
+See the [usage and evidence contract](../../docs/qualification.md) and
+[remaining implementation gates](../../docs/qualification.md).

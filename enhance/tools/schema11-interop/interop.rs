@@ -3,11 +3,9 @@
 use enhance_pir_server::{
     store::RecordJournal,
     types::{DatabaseId, ENHANCE_LAYOUT},
-    v4::{
-        control::{Group, Ledger, PlacementPolicy, Replica},
-        coordinator::Coordinator,
-        worker::Worker,
-    },
+    control::{Group, Ledger, PlacementPolicy, Replica},
+    coordinator::Coordinator,
+    worker::Worker,
 };
 use futures_util::StreamExt;
 use zakura_pir_enhance::{
@@ -95,7 +93,7 @@ fn acceptance(height: u64, hash: u8, records: u64) -> GenerationAcceptance {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn wallet_client_round_trips_real_v4_http_and_requires_fresh_acceptance() {
+async fn wallet_client_round_trips_real_http_and_requires_fresh_acceptance() {
     let root = tempfile::tempdir().unwrap();
     let mut tasks = Vec::new();
     let mut replicas = Vec::new();
@@ -420,16 +418,16 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
 #[test]
 fn frozen_wallet_and_server_share_the_24_shard_ceiling() {
     let span = 32768 * 33;
-    let server = enhance_pir::v4::Lifecycle::default()
-        .coverage(24 * span - 1, enhance_pir::v4::Geometry::default())
+    let server = enhance_pir::protocol::Lifecycle::default()
+        .coverage(24 * span - 1, enhance_pir::protocol::Geometry::default())
         .unwrap();
     let wallet: zakura_pir_enhance::types::Coverage =
         serde_json::from_value(serde_json::to_value(server).unwrap()).unwrap();
     wallet
         .validate(zakura_pir_enhance::types::Geometry::default())
         .unwrap();
-    assert!(enhance_pir::v4::Lifecycle::default()
-        .coverage(24 * span, enhance_pir::v4::Geometry::default())
+    assert!(enhance_pir::protocol::Lifecycle::default()
+        .coverage(24 * span, enhance_pir::protocol::Geometry::default())
         .is_err());
     assert!(zakura_pir_enhance::types::Lifecycle::default()
         .coverage(24 * span, zakura_pir_enhance::types::Geometry::default())

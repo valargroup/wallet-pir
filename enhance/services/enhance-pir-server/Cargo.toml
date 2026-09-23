@@ -11,24 +11,10 @@ path = "src/lib.rs"
 name = "enhance-pir-server"
 path = "src/bin/server.rs"
 
-[[bin]]
-name = "enhance-pir-worker"
-path = "src/bin/worker.rs"
-
-[[bin]]
-name = "enhance-pir-qualify"
-path = "src/bin/qualify.rs"
-
-[[bin]]
-name = "enhance-pir-v4"
-path = "src/bin/v4.rs"
-
 [dependencies]
 axum = "0.7"
 base64 = "0.22"
 enhance-pir = { path = "../../crates/enhance-pir" }
-transparent-spend-pir = { path = "../../crates/transparent-spend-pir" }
-arc-swap = "1"
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 hdrhistogram = "7"
@@ -40,11 +26,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-sysinfo = "0.36"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-tower-http = { version = "0.5", features = ["limit", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }

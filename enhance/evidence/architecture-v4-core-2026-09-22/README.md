@@ -53,5 +53,5 @@ publication-delay limits, resident memory safety or sustainable fleet capacity.
   The full repository `make check` also passed before the final recovery changes;
   the final Rust suite and clippy above cover the subsequent code snapshot.
 
-The [implementation status](../../docs/architecture_2-implementation.md) lists
+The [implementation status](../../docs/qualification.md) lists
 remaining implementation, hardware qualification and deployment work.

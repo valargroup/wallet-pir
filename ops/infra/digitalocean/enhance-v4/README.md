@@ -132,7 +132,7 @@ DigitalOcean's [account](https://docs.digitalocean.com/reference/api/reference/a
 [VPC](https://docs.digitalocean.com/reference/api/reference/vpcs/), and
 [Droplet](https://docs.digitalocean.com/reference/api/reference/droplets/) contracts.
 
-The [candidate bootstrap instructions](../../../../enhance/ops/deploy/v4-candidate.md)
+The [candidate bootstrap instructions](../../../../enhance/docs/qualification.md)
 describe the packaged host-local installer and its unqualified receipt. It runs through the explicit pair-bootstrap step below after provisioning.
 
 ## Pair bootstrap driver

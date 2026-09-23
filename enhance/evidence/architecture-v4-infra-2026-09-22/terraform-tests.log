@@ -1,9 +1,0 @@
-tests/fleet.tftest.hcl... in progress
-  run "bootstrap"... pass
-  run "two_pairs"... pass
-  run "reject_fifth_pair"... pass
-  run "reject_open_ssh"... pass
-tests/fleet.tftest.hcl... tearing down
-tests/fleet.tftest.hcl... pass
-
-Success! 4 passed, 0 failed.

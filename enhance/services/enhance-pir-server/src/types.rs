@@ -1,56 +1,26 @@
-//! Server-internal geometry adapters for the single Enhance PIR database.
-
+//! Storage layout for the Enhance database.
 pub use enhance_pir::types::{
-    group_index_for_shard, logical_rows_for, used_rows_for, worker_index_for_shard,
-    EnhanceGeneration, EnhanceRecord, EnhanceRecordParts, ShardDescriptor, ACTIVATION_HEIGHT,
-    ENHANCE_SETUP_SEED, ITEM_SIZE_BITS, NETWORK, PIR_PROFILE_ID, POOL, PROTOCOL_REVISION,
-    RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES, SCHEMA_VERSION, SHARDS_PER_GROUP, SHARDS_PER_WORKER,
-    SHARD_POSITIONS, SHARD_ROWS,
+    EnhanceRecord, ACTIVATION_HEIGHT, ENHANCE_SETUP_SEED, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES,
+    SHARD_ROWS,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DatabaseId {
     Enhance,
-    TransparentSpendCold,
-    TransparentSpendWarm,
 }
 
 impl DatabaseId {
-    /// The tables this build actually serves.
-    ///
-    /// The transparent-spend variants below are retained so the unserved
-    /// `spend` module still compiles and its work is recoverable, but they are
-    /// deliberately absent here: this array drives worker shard directories,
-    /// coordinator metrics and embedded setup, none of which should mention a
-    /// table nothing publishes.
-    pub const ALL: [Self; 1] = [Self::Enhance];
-
     pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Enhance => "enhance",
-            Self::TransparentSpendCold => "transparent-spend-cold",
-            Self::TransparentSpendWarm => "transparent-spend-warm",
-        }
+        "enhance"
     }
-
     pub const fn layout(self) -> DatabaseLayout {
-        match self {
-            Self::Enhance => ENHANCE_LAYOUT,
-            Self::TransparentSpendCold | Self::TransparentSpendWarm => TRANSPARENT_SPEND_LAYOUT,
-        }
+        ENHANCE_LAYOUT
     }
-
     pub const fn setup_seed(self) -> u64 {
-        match self {
-            Self::Enhance => ENHANCE_SETUP_SEED,
-            Self::TransparentSpendCold => transparent_spend_pir::COLD_SETUP_SEED,
-            Self::TransparentSpendWarm => transparent_spend_pir::WARM_SETUP_SEED,
-        }
+        ENHANCE_SETUP_SEED
     }
-
     pub fn setup_seed_bytes(self) -> [u8; 32] {
         let mut bytes = [0; 32];
         bytes[..8].copy_from_slice(&self.setup_seed().to_le_bytes());
@@ -70,8 +40,6 @@ impl std::str::FromStr for DatabaseId {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "enhance" => Ok(Self::Enhance),
-            "transparent-spend-cold" => Ok(Self::TransparentSpendCold),
-            "transparent-spend-warm" => Ok(Self::TransparentSpendWarm),
             _ => Err(format!("unknown PIR database: {value:?}")),
         }
     }
@@ -117,64 +85,3 @@ pub const ENHANCE_LAYOUT: DatabaseLayout = DatabaseLayout {
     shard_rows: SHARD_ROWS,
     pir_profile: ipir_sp::SimplePirProfile::P16Q48,
 };
-
-pub const TRANSPARENT_SPEND_LAYOUT: DatabaseLayout = DatabaseLayout {
-    record_bytes: transparent_spend_pir::ROW_BYTES,
-    records_per_row: 1,
-    shard_rows: transparent_spend_pir::SHARD_ROWS,
-    pir_profile: ipir_sp::SimplePirProfile::P14,
-};
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TableManifest {
-    pub record_bytes: u32,
-    pub records_per_row: u32,
-    pub row_bytes: u32,
-    pub shard_rows: u32,
-    pub positions: u64,
-    pub used_rows: u64,
-    pub logical_rows: u64,
-    pub parameter_id: String,
-    pub setup_seed: u64,
-    pub public_params_epoch: String,
-    pub public_params_sha256: String,
-    pub shards: Vec<ShardDescriptor>,
-}
-
-/// Internal representation retained while the coordinator manages generations.
-#[derive(Clone, Debug)]
-pub struct GenerationManifest {
-    pub anchor_height: u64,
-    pub anchor_block_hash: String,
-    pub ironwood_tree_size: u64,
-    pub generation: u64,
-    pub tables: BTreeMap<DatabaseId, TableManifest>,
-}
-
-impl GenerationManifest {
-    pub fn public(&self) -> Option<EnhanceGeneration> {
-        let table = self.tables.get(&DatabaseId::Enhance)?;
-        Some(EnhanceGeneration {
-            schema_version: SCHEMA_VERSION,
-            protocol_revision: PROTOCOL_REVISION.to_string(),
-            network: NETWORK.to_string(),
-            pool: POOL.to_string(),
-            anchor_height: self.anchor_height,
-            anchor_block_hash: self.anchor_block_hash.clone(),
-            ironwood_tree_size: self.ironwood_tree_size,
-            generation: self.generation,
-            record_bytes: table.record_bytes,
-            records_per_row: table.records_per_row,
-            row_bytes: table.row_bytes,
-            shard_rows: table.shard_rows,
-            used_rows: table.used_rows,
-            logical_rows: table.logical_rows,
-            parameter_id: table.parameter_id.clone(),
-            pir_profile: PIR_PROFILE_ID.to_string(),
-            setup_seed: table.setup_seed,
-            public_params_epoch: table.public_params_epoch.clone(),
-            public_params_sha256: table.public_params_sha256.clone(),
-            shards: table.shards.clone(),
-        })
-    }
-}

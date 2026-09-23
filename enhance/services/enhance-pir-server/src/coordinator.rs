@@ -1,1901 +1,1981 @@
-use crate::artifact::{chunk_reader, IO_BUFFER_BYTES};
-use crate::ipir::{
-    add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
-    global_parameters, shard_parameters,
+//! Coordinator with atomic manifests and generation-specific replica routes.
+use super::{
+    control::{self, Group, Operation, PendingCommit, Phase, ReadyAck, Store},
+    runtime::{self, DomainPlan, Packing},
+    worker,
 };
-use crate::metrics;
-use crate::store::RecordJournal;
-use crate::types::{
-    group_index_for_shard, DatabaseId, DatabaseLayout, GenerationManifest, ShardDescriptor,
-    TableManifest, PROTOCOL_REVISION,
+use axum::{
+    body::to_bytes,
+    extract::{Path, Request, State},
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
 };
-use crate::wire::{
-    decode_evaluate_response, encode_evaluate_request, read_crs_blocks, EvaluateRequest, ShardQuery,
-};
-use crate::worker::{ActivateRequest, ActivateShard, WorkerState, RETAINED_GENERATIONS};
-use arc_swap::ArcSwap;
-use axum::body::Bytes;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json, Response};
-use axum::routing::{get, post};
-use axum::Router;
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use enhance_pir::EnhanceSession;
-use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
-use ipir_sp::serialize::{deserialize_packing_keys, serialized_packing_keys_len};
-use ipir_sp::server::{
-    build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows, CrsBlock,
-};
-use ipir_sp::YpirSchemeParams;
-use serde::Serialize;
-use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock, Semaphore};
-use transparent_spend_pir::{
-    ShardDescriptor as SpendShardDescriptor, TransparentSpendGeneration, TransparentSpendSession,
-    TransparentSpendTableSession, NETWORK as SPEND_NETWORK,
-    PROTOCOL_REVISION as SPEND_PROTOCOL_REVISION, SCHEMA_VERSION as SPEND_SCHEMA_VERSION,
-    WARM_BLOCKS,
-};
+use enhance_pir::protocol::*;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File};
+use std::path::{Path as FsPath, PathBuf};
+use std::sync::{Arc, Mutex};
+use tokio::sync::{RwLock, Semaphore};
 
-pub use crate::types::ENHANCE_SETUP_SEED;
+// Native full-group cold preparation exceeded the shared 180-second HTTP
+// deadline during sealed qualification. Queries/control probes keep their short
+// deadlines; this bounded offline operation also covers recovery replay.
+const PREPARATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// The ENHANCE table's expanded setup seed.
-pub fn enhance_setup_seed_bytes() -> [u8; 32] {
-    DatabaseId::Enhance.setup_seed_bytes()
+fn preparation_request(http: &reqwest::Client, worker_url: &str) -> reqwest::RequestBuilder {
+    http.post(format!("{worker_url}/internal/prepare"))
+        .timeout(PREPARATION_TIMEOUT)
 }
 
-/// Default concurrent queries admitted per table pool.
-pub const DEFAULT_QUERY_SLOTS: usize = 2;
-
-const HEALTH_PHASE_GRACE_PERIOD: Duration = Duration::from_secs(30);
-
-fn next_generation(previous: Option<u64>, tip_height: u64) -> u64 {
-    previous.map_or(tip_height, |generation| {
-        tip_height.max(generation.saturating_add(1))
-    })
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SavedSnapshot {
+    manifest: Manifest,
+    routes: BTreeMap<u64, Vec<String>>,
+    hints: BTreeMap<u64, String>,
+    domain_keys: BTreeMap<u64, String>,
 }
 
-#[derive(Clone)]
-pub enum WorkerTarget {
-    Remote { name: String, base_url: String },
-    Embedded { name: String, state: WorkerState },
+struct Snapshot {
+    saved: SavedSnapshot,
+    packing: BTreeMap<u64, Arc<Packing>>,
 }
 
-impl WorkerTarget {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Remote { name, .. } | Self::Embedded { name, .. } => name,
-        }
-    }
+fn hint_name(name: &str) -> bool {
+    name.strip_suffix(".bin")
+        .is_some_and(|stem| stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// Two or more interchangeable workers holding the same complete shard range.
-/// The name is stable placement identity; replica names identify physical
-/// processes and may be replaced without moving shards.
-#[derive(Clone)]
-pub struct WorkerGroup {
-    pub name: String,
-    pub replicas: Vec<WorkerTarget>,
-}
-
-/// One table the coordinator serves and the ordered worker groups that own its
-/// shards. Groups may share physical hosts; ownership is per table.
-#[derive(Clone)]
-pub struct TableSetup {
-    pub table: DatabaseId,
-    pub groups: Vec<WorkerGroup>,
-}
-
-/// What the coordinator needs from a table's rows to publish it. Journals
-/// implement it directly; sealed tables implement it from memory.
-pub trait TableSource: Sync {
-    fn table(&self) -> DatabaseId;
-    fn layout(&self) -> DatabaseLayout;
-    /// Populated positions (records).
-    fn positions(&self) -> u64;
-    fn shard_ids(&self) -> std::ops::RangeInclusive<u64>;
-    /// The full padded shard, deterministic so its digest is stable.
-    fn read_shard_rows(&self, shard_id: u64) -> Result<Vec<u8>, String>;
-    fn populated_positions_in_shard(&self, shard_id: u64) -> u64;
-}
-
-/// A journal viewed as the table it backs.
-pub struct TableJournal<'a> {
-    table: DatabaseId,
-    journal: &'a RecordJournal,
-}
-
-impl<'a> TableJournal<'a> {
-    pub fn new(table: DatabaseId, journal: &'a RecordJournal) -> Result<Self, String> {
-        if journal.table() != Some(table) {
-            return Err(format!(
-                "journal {} does not back the {table} table",
-                journal.name()
-            ));
-        }
-        Ok(Self { table, journal })
-    }
-}
-
-impl TableSource for TableJournal<'_> {
-    fn table(&self) -> DatabaseId {
-        self.table
-    }
-
-    fn layout(&self) -> DatabaseLayout {
-        *self.journal.layout()
-    }
-
-    fn positions(&self) -> u64 {
-        self.journal.tree_size()
-    }
-
-    fn shard_ids(&self) -> std::ops::RangeInclusive<u64> {
-        self.journal.shard_ids()
-    }
-
-    fn read_shard_rows(&self, shard_id: u64) -> Result<Vec<u8>, String> {
-        self.journal
-            .read_shard_rows(shard_id)
-            .map_err(|e| e.to_string())
-    }
-
-    fn populated_positions_in_shard(&self, shard_id: u64) -> u64 {
-        self.journal.populated_positions_in_shard(shard_id)
-    }
-}
-
-/// The chain state one generation is anchored to.
-#[derive(Clone, Debug, Default)]
-pub struct Anchor {
-    pub height: u64,
-    /// Hex, display byte order.
-    pub hash: String,
-}
-
-struct TableState {
-    setup: TableSetup,
-    rlwe: &'static RlweParams,
-    hint_cache: RwLock<HashMap<String, Arc<Vec<CrsBlock>>>>,
-    query_slots: Arc<Semaphore>,
-}
-
-/// One table as published in one generation: what a query is answered with.
-pub struct TableSnapshot {
-    pub manifest: TableManifest,
-    pub ypir: YpirSchemeParams,
-    pub preprocessed: Vec<QueryPackPreprocessed<'static>>,
-    pub top_key_images: TopKeyImages<'static>,
-    pub public_params: Vec<u8>,
-    pub public_params_epoch: [u8; 8],
-    ready_groups: BTreeMap<String, Arc<ReadyWorkerGroup>>,
-}
-
-struct ReadyWorkerGroup {
-    replicas: Vec<WorkerTarget>,
-    next: AtomicUsize,
-}
-
-#[derive(Debug)]
-struct WorkerEvaluationError {
-    message: String,
-    retryable: bool,
-}
-
-impl std::fmt::Display for WorkerEvaluationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl ReadyWorkerGroup {
-    fn replicas_for_request(&self) -> Vec<WorkerTarget> {
-        let start = self.next.fetch_add(1, Ordering::Relaxed) % self.replicas.len();
-        (0..self.replicas.len())
-            .map(|offset| self.replicas[(start + offset) % self.replicas.len()].clone())
-            .collect()
-    }
-}
-
-/// Every table at one anchor. Immutable once published.
-pub struct GenerationSnapshot {
-    pub manifest: GenerationManifest,
-    pub tables: BTreeMap<DatabaseId, Arc<TableSnapshot>>,
-}
-
-/// Retained generations, newest first.
-type Generations = Vec<Arc<GenerationSnapshot>>;
-
-#[derive(Clone)]
-pub struct CoordinatorState {
-    tables: Arc<BTreeMap<DatabaseId, TableState>>,
-    topology: Option<Arc<crate::topology::TopologyStore>>,
-    publication: Arc<Mutex<()>>,
-    http: reqwest::Client,
-    live: Arc<ArcSwap<Generations>>,
-    status: Arc<RwLock<CoordinatorStatus>>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
-pub enum CoordinatorPhase {
-    Syncing {
-        current_height: u64,
-        target_height: u64,
-    },
-    Building {
-        anchor_height: u64,
-    },
-    Serving,
-    Failed {
-        reason: String,
-    },
-}
-
-struct CoordinatorStatus {
-    phase: CoordinatorPhase,
-    non_serving_since: Option<Instant>,
-}
-
-#[derive(Serialize)]
-struct TableHealth {
-    shards: usize,
-    workers: usize,
-}
-
-#[derive(Serialize)]
-struct HealthResponse {
-    phase: CoordinatorPhase,
-    generation: Option<u64>,
-    retained_generations: usize,
-    anchor_height: Option<u64>,
-    ironwood_tree_size: Option<u64>,
-    tables: BTreeMap<DatabaseId, TableHealth>,
-}
-
-impl CoordinatorState {
-    pub fn new(setups: Vec<TableSetup>) -> Result<Self, String> {
-        Self::with_query_slots(setups, DEFAULT_QUERY_SLOTS)
-    }
-
-    pub fn with_query_slots(setups: Vec<TableSetup>, query_slots: usize) -> Result<Self, String> {
-        if setups.is_empty() {
-            return Err("at least one PIR table is required".to_string());
-        }
-        let mut tables = BTreeMap::new();
-        for setup in setups {
-            if setup.groups.is_empty() {
-                return Err(format!(
-                    "table {} needs at least one worker group",
-                    setup.table
-                ));
-            }
-            let mut group_names: Vec<_> = setup
-                .groups
+/// Remove only owned, unreferenced artifacts after validating the entire keep set.
+/// The caller must hold publication exclusion and have no unresolved candidate.
+fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result<(), String> {
+    let mut snapshots = BTreeSet::new();
+    let mut hints = BTreeSet::new();
+    for manifest in published {
+        let name = format!("{}.json", manifest.generation);
+        let saved: SavedSnapshot = serde_json::from_slice(
+            &fs::read(root.join("snapshots").join(&name)).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        if &saved.manifest != manifest
+            || saved.hints.len() != manifest.coverage.shards.len()
+            || manifest
+                .coverage
+                .shards
                 .iter()
-                .map(|group| group.name.as_str())
-                .collect();
-            group_names.sort_unstable();
-            if group_names.windows(2).any(|pair| pair[0] == pair[1]) {
-                return Err(format!(
-                    "worker group names in the {} pool must be unique",
-                    setup.table
-                ));
-            }
-            let mut replica_names = HashSet::new();
-            for group in &setup.groups {
-                if group.name.is_empty() {
-                    return Err(format!(
-                        "worker group name in {} must not be empty",
-                        setup.table
-                    ));
-                }
-                if group.replicas.is_empty() {
-                    return Err(format!(
-                        "worker group {} in {} needs at least one replica",
-                        group.name, setup.table
-                    ));
-                }
-                for replica in &group.replicas {
-                    if !replica_names.insert(replica.name().to_string()) {
-                        return Err(format!(
-                            "worker replica names in the {} pool must be unique",
-                            setup.table
-                        ));
-                    }
-                }
-            }
-            if tables.contains_key(&setup.table) {
-                return Err(format!("table {} is configured twice", setup.table));
-            }
-            let (rlwe, _) = shard_parameters(&setup.table.layout()).map_err(|e| e.to_string())?;
-            tables.insert(
-                setup.table,
-                TableState {
-                    setup,
-                    rlwe: Box::leak(Box::new(rlwe)),
-                    hint_cache: RwLock::new(HashMap::new()),
-                    query_slots: Arc::new(Semaphore::new(query_slots.max(1))),
-                },
+                .any(|s| !saved.hints.contains_key(&s.id))
+        {
+            return Err(
+                "cannot collect artifacts: retained snapshot differs from durable decision".into(),
             );
         }
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(120))
-            .build()
-            .map_err(|e| e.to_string())?;
-        Ok(Self {
-            tables: Arc::new(tables),
-            topology: None,
-            publication: Arc::new(Mutex::new(())),
-            http,
-            live: Arc::new(ArcSwap::from_pointee(Vec::new())),
-            status: Arc::new(RwLock::new(CoordinatorStatus {
-                phase: CoordinatorPhase::Syncing {
-                    current_height: 0,
-                    target_height: 0,
-                },
-                non_serving_since: Some(Instant::now()),
-            })),
-        })
-    }
-
-    pub fn with_topology(mut self, topology: Arc<crate::topology::TopologyStore>) -> Self {
-        self.topology = Some(topology);
-        self
-    }
-
-    pub fn has_pending_topology(&self) -> bool {
-        self.topology
-            .as_ref()
-            .is_some_and(|t| t.status().pending.is_some())
-    }
-
-    fn groups(&self, table: DatabaseId) -> Vec<WorkerGroup> {
-        if table == DatabaseId::Enhance {
-            if let Some(topology) = &self.topology {
-                return topology
-                    .status()
-                    .groups
-                    .iter()
-                    .map(|g| g.target())
-                    .collect();
+        for name in saved.hints.values() {
+            if !hint_name(name) || !root.join("hints").join(name).is_file() {
+                return Err("cannot collect artifacts: invalid or missing retained hint".into());
             }
+            hints.insert(name.clone());
         }
-        self.tables
-            .get(&table)
-            .map(|s| s.setup.groups.clone())
-            .unwrap_or_default()
+        snapshots.insert(name);
     }
-
-    pub async fn set_phase(&self, phase: CoordinatorPhase) {
-        let mut status = self.status.write().await;
-        if matches!(phase, CoordinatorPhase::Serving) {
-            status.non_serving_since = None;
-        } else if status.non_serving_since.is_none() {
-            status.non_serving_since = Some(Instant::now());
-        }
-        status.phase = phase;
-    }
-
-    pub fn tables(&self) -> impl Iterator<Item = DatabaseId> + '_ {
-        self.tables.keys().copied()
-    }
-
-    fn table(&self, table: DatabaseId) -> Result<&TableState, String> {
-        self.tables
-            .get(&table)
-            .ok_or_else(|| format!("table {table} is not served"))
-    }
-
-    /// The newest retained generation.
-    pub fn newest(&self) -> Option<Arc<GenerationSnapshot>> {
-        self.live.load().first().cloned()
-    }
-
-    /// The retained generation with this id, if still answerable.
-    pub fn generation(&self, generation: u64) -> Option<Arc<GenerationSnapshot>> {
-        self.live
-            .load()
-            .iter()
-            .find(|snapshot| snapshot.manifest.generation == generation)
-            .cloned()
-    }
-
-    pub fn manifest(&self) -> Option<GenerationManifest> {
-        self.newest().map(|snapshot| snapshot.manifest.clone())
-    }
-
-    /// All public material for the newest generation, captured from one
-    /// retained snapshot so a publication cannot mix setup epochs.
-    pub fn session(&self) -> Option<EnhanceSession> {
-        let snapshot = self.newest()?;
-        let table = snapshot.tables.get(&DatabaseId::Enhance)?;
-        Some(EnhanceSession {
-            generation: snapshot.manifest.public()?,
-            params: table.ypir.clone(),
-            public_params_base64: BASE64_STANDARD.encode(&table.public_params),
-        })
-    }
-
-    /// Both transparent-spend tiers captured from the same best-chain tip.
-    /// Unreachable in this build: the transparent-spend tables are not
-    /// published and the endpoint that called this is gone. Retained with the
-    /// rest of the spend code so reviving the feature is rewiring rather than
-    /// rewriting. See "Transparent-spend deprecation" in `enhance/docs/architecture.md`.
-    pub fn transparent_spend_session(&self) -> Option<TransparentSpendSession> {
-        let snapshot = self.newest()?;
-        let cold_end_height = snapshot.manifest.anchor_height.saturating_sub(WARM_BLOCKS);
-        let table_session = |database: DatabaseId| {
-            let table = snapshot.tables.get(&database)?;
-            let manifest = &table.manifest;
-            Some(TransparentSpendTableSession {
-                generation: TransparentSpendGeneration {
-                    schema_version: SPEND_SCHEMA_VERSION,
-                    protocol_revision: SPEND_PROTOCOL_REVISION.to_string(),
-                    network: SPEND_NETWORK.to_string(),
-                    tip_height: snapshot.manifest.anchor_height,
-                    tip_block_hash: snapshot.manifest.anchor_block_hash.clone(),
-                    ironwood_tree_size: snapshot.manifest.ironwood_tree_size,
-                    generation: snapshot.manifest.generation,
-                    cold_end_height,
-                    buckets: manifest.positions,
-                    row_bytes: manifest.row_bytes,
-                    shard_rows: manifest.shard_rows,
-                    logical_rows: manifest.logical_rows,
-                    parameter_id: manifest.parameter_id.clone(),
-                    setup_seed: manifest.setup_seed,
-                    public_params_epoch: manifest.public_params_epoch.clone(),
-                    public_params_sha256: manifest.public_params_sha256.clone(),
-                    shards: manifest
-                        .shards
-                        .iter()
-                        .map(|shard| SpendShardDescriptor {
-                            shard_id: shard.shard_id,
-                            global_row_start: shard.global_row_start,
-                            populated_positions: shard.populated_positions,
-                            rows_sha256: shard.rows_sha256.clone(),
-                            sealed: shard.sealed,
-                            worker: shard.worker.clone(),
-                        })
-                        .collect(),
-                },
-                params: table.ypir.clone(),
-                public_params_base64: BASE64_STANDARD.encode(&table.public_params),
-            })
-        };
-        Some(TransparentSpendSession {
-            tip_height: snapshot.manifest.anchor_height,
-            tip_block_hash: snapshot.manifest.anchor_block_hash.clone(),
-            ironwood_tree_size: snapshot.manifest.ironwood_tree_size,
-            generation: snapshot.manifest.generation,
-            cold_end_height,
-            cold: table_session(DatabaseId::TransparentSpendCold)?,
-            warm: table_session(DatabaseId::TransparentSpendWarm)?,
-        })
-    }
-
-    /// Every distinct replica across all pools, in first-seen group order.
-    fn workers(groups: &BTreeMap<DatabaseId, Vec<WorkerGroup>>) -> Vec<WorkerTarget> {
-        let mut seen = HashSet::new();
-        groups
-            .values()
-            .flat_map(|groups| groups.clone())
-            .flat_map(|group| group.replicas.into_iter())
-            .filter(|worker| seen.insert(worker.name().to_string()))
-            .collect()
-    }
-
-    /// Point-in-time gauges for `/metrics`. Reads only aggregate state.
-    /// Probes each remote worker's health with a short timeout so a dead
-    /// worker shows up on the dashboard without slowing the scrape down.
-    pub async fn observe(&self) -> metrics::Observation {
-        let phase = self.status.read().await.phase.clone();
-        let groups_by_table: BTreeMap<_, _> = self
-            .tables
-            .keys()
-            .map(|table| (*table, self.groups(*table)))
-            .collect();
-        let retained = self.live.load();
-        let newest = retained.first();
-        let manifest = newest.map(|snapshot| &snapshot.manifest);
-
-        let tables = DatabaseId::ALL
-            .into_iter()
-            .map(|table| {
-                let state = self.tables.get(&table);
-                let published = manifest.and_then(|m| m.tables.get(&table));
-                metrics::TableObservation {
-                    table,
-                    registered: state.is_some(),
-                    // Retain the existing metric field name, but report
-                    // logical groups so capacity is not doubled by replicas.
-                    pool_workers: groups_by_table[&table].len() as u64,
-                    query_slots_available: state
-                        .map_or(0, |t| t.query_slots.available_permits() as u64),
-                    positions: published.map_or(0, |t| t.positions),
-                    used_rows: published.map_or(0, |t| t.used_rows),
-                    logical_rows: published.map_or(0, |t| t.logical_rows),
-                    shards: published.map_or(0, |t| t.shards.len() as u64),
-                    sealed_shards: published
-                        .map_or(0, |t| t.shards.iter().filter(|s| s.sealed).count() as u64),
-                }
-            })
-            .collect();
-
-        let mut probes = tokio::task::JoinSet::new();
-        for (index, worker) in Self::workers(&groups_by_table).into_iter().enumerate() {
-            let name = worker.name().to_string();
-            let shares: Vec<(DatabaseId, u64, u64, u64)> = self
-                .tables
-                .iter()
-                .filter_map(|(table, _state)| {
-                    let groups = &groups_by_table[table];
-                    let (pool_index, group) = groups.iter().enumerate().find(|(_, group)| {
-                        group
-                            .replicas
-                            .iter()
-                            .any(|candidate| candidate.name() == name)
-                    })?;
-                    let assigned: Vec<&ShardDescriptor> = manifest
-                        .and_then(|m| m.tables.get(table))
-                        .map(|t| t.shards.iter().filter(|s| s.worker == group.name).collect())
-                        .unwrap_or_default();
-                    Some((
-                        *table,
-                        pool_index as u64,
-                        assigned.len() as u64,
-                        assigned.iter().map(|s| s.populated_positions).sum(),
-                    ))
-                })
-                .collect();
-            let probe = match &worker {
-                WorkerTarget::Embedded { .. } => None,
-                WorkerTarget::Remote { base_url, .. } => {
-                    Some((self.http.clone(), base_url.clone()))
-                }
+    for (directory, keep) in [("snapshots", snapshots), ("hints", hints)] {
+        let directory_path = root.join(directory);
+        for entry in fs::read_dir(&directory_path).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
             };
-            probes.spawn(async move {
-                let probe = match probe {
-                    None => {
-                        let (total, available, rss) = crate::worker::host_memory();
-                        WorkerProbe {
-                            up: true,
-                            total_memory_bytes: total,
-                            available_memory_bytes: available,
-                            process_rss_bytes: rss,
-                            ..Default::default()
-                        }
-                    }
-                    Some((client, base_url)) => probe_worker_health(&client, &base_url).await,
-                };
-                let observation = metrics::WorkerObservation {
-                    name,
-                    index: index as u64,
-                    up: probe.up,
-                    generation: probe.generation,
-                    total_memory_bytes: probe.total_memory_bytes,
-                    available_memory_bytes: probe.available_memory_bytes,
-                    process_rss_bytes: probe.process_rss_bytes,
-                    tables: shares
-                        .into_iter()
-                        .map(
-                            |(table, pool_index, assigned_shards, populated_positions)| {
-                                metrics::WorkerTableObservation {
-                                    table,
-                                    index: pool_index,
-                                    assigned_shards,
-                                    populated_positions,
-                                    active_shards: probe
-                                        .active_shards
-                                        .get(table.as_str())
-                                        .copied()
-                                        .unwrap_or(0),
-                                }
-                            },
-                        )
-                        .collect(),
-                };
-                (index, observation)
-            });
-        }
-        let mut worker_details: Vec<(usize, metrics::WorkerObservation)> = Vec::new();
-        while let Some(result) = probes.join_next().await {
-            if let Ok(entry) = result {
-                worker_details.push(entry);
+            let owned = if directory == "snapshots" {
+                name.strip_suffix(".json")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .is_some_and(|g| name == format!("{g}.json"))
+            } else {
+                hint_name(&name)
+            };
+            if owned && !keep.contains(&name) {
+                fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
             }
         }
-        worker_details.sort_by_key(|(index, _)| *index);
-        let worker_details: Vec<metrics::WorkerObservation> = worker_details
-            .into_iter()
-            .map(|(_, observation)| observation)
-            .collect();
-        let worker_groups = self
-            .tables
-            .keys()
-            .flat_map(|table| {
-                groups_by_table[table]
-                    .clone()
-                    .into_iter()
-                    .map(|group| {
-                        let assigned = newest
-                            .and_then(|snapshot| snapshot.tables.get(table))
-                            .and_then(|snapshot| snapshot.ready_groups.get(&group.name));
-                        // Empty ranges are standby capacity: use health, not a nonexistent generation.
-                        let ready_replicas = assigned.map_or_else(
-                            || {
-                                group
-                                    .replicas
-                                    .iter()
-                                    .filter(|replica| {
-                                        worker_details.iter().any(|worker| {
-                                            worker.name == replica.name() && worker.up
-                                        })
-                                    })
-                                    .count() as u64
-                            },
-                            |ready| ready.replicas.len() as u64,
-                        );
-                        metrics::WorkerGroupObservation {
-                            table: *table,
-                            name: group.name,
-                            configured_replicas: group.replicas.len() as u64,
-                            ready_replicas,
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        metrics::Observation {
-            phase: Some(phase),
-            anchor_height: manifest.map_or(0, |m| m.anchor_height),
-            generation: manifest.map_or(0, |m| m.generation),
-            ironwood_tree_size: manifest.map_or(0, |m| m.ironwood_tree_size),
-            retained_generations: retained.len() as u64,
-            tables,
-            worker_details,
-            worker_groups,
+        File::open(directory_path)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn restore(root: &FsPath, manifest: &Manifest) -> Result<Arc<Snapshot>, String> {
+    manifest.validate()?;
+    let saved: SavedSnapshot = serde_json::from_slice(
+        &fs::read(
+            root.join("snapshots")
+                .join(format!("{}.json", manifest.generation)),
+        )
+        .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    if &saved.manifest != manifest {
+        return Err("snapshot differs from durable decision".into());
+    }
+    let mut packing = BTreeMap::new();
+    for shard in &manifest.coverage.shards {
+        let name = saved.hints.get(&shard.id).ok_or("missing persisted hint")?;
+        if !hint_name(name) {
+            return Err("invalid persisted hint identity".into());
+        }
+        let params = parameters(shard.logical_rows)?;
+        let file = File::open(root.join("hints").join(name)).map_err(|e| e.to_string())?;
+        let blocks = crate::wire::read_crs_blocks(
+            file,
+            params.db_cols / runtime::rlwe().d,
+            runtime::rlwe().d,
+        )
+        .map_err(|e| e.to_string())?;
+        let pack = Packing::new(shard.logical_rows, &blocks)?;
+        if !manifest.sessions.contains(&pack.reference(shard.id)?) {
+            return Err("restored session digest differs".into());
+        }
+        packing.insert(shard.id, Arc::new(pack));
+    }
+    Ok(Arc::new(Snapshot { saved, packing }))
+}
+
+#[derive(Clone)]
+pub struct Coordinator {
+    store: Arc<Mutex<Store>>,
+    snapshots: Arc<RwLock<Vec<Arc<Snapshot>>>>,
+    publication: Arc<Semaphore>,
+    queries: Arc<Semaphore>,
+    http: reqwest::Client,
+    root: PathBuf,
+    blocked: Arc<Mutex<Option<String>>>,
+    telemetry: Arc<Mutex<super::telemetry::Publication>>,
+}
+
+fn validate_inventory(groups: &[Group]) -> Result<(), String> {
+    for group in groups {
+        group.placement_policy.validate()?;
+        if group.placement_policy != groups[0].placement_policy {
+            return Err("inventory placement policies differ".into());
+        }
+    }
+    let mut names = BTreeSet::new();
+    let mut urls = BTreeSet::new();
+    if groups.is_empty() || groups.len() > 4 {
+        return Err("requires one to four replica pairs".into());
+    }
+    for (sequence, group) in groups.iter().enumerate() {
+        if group.id.is_empty()
+            || group.sequence != sequence as u64
+            || !names.insert(group.id.clone())
+            || group.replicas.len() != 2
+        {
+            return Err("invalid group inventory".into());
+        }
+        for r in &group.replicas {
+            let url = reqwest::Url::parse(&r.url).map_err(|e| e.to_string())?;
+            if r.name.is_empty()
+                || !names.insert(r.name.clone())
+                || !urls.insert(url.to_string())
+                || url.scheme() != "http"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || url.path() != "/"
+            {
+                return Err("invalid or duplicate private worker origin".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn inventory_extends(existing: &[Group], configured: &[Group]) -> bool {
+    configured.len() >= existing.len()
+        && existing.iter().zip(configured).all(|(a, b)| {
+            a.id == b.id
+                && a.placement_policy == b.placement_policy
+                && a.sequence == b.sequence
+                && a.replicas.len() == b.replicas.len()
+                && a.replicas
+                    .iter()
+                    .zip(&b.replicas)
+                    .all(|(a, b)| a.name == b.name && a.url == b.url)
+        })
+}
+
+impl Coordinator {
+    pub fn observe_capacity(
+        &self,
+        records: u64,
+        now: u64,
+        policy: super::capacity::Policy,
+    ) -> Result<(), String> {
+        self.store.lock().unwrap().update(|state| {
+            state.capacity.observe(
+                records,
+                now,
+                policy,
+                &state.groups,
+                &state.lifecycle,
+                &state.assignments,
+            )
+        })
+    }
+    // Run synchronously under the caller's publication permit: a detached cleanup
+    // task must never outlive that permit and race creation of the next candidate.
+    fn collect_retired_artifacts(&self) {
+        let store = self.store.lock().unwrap();
+        if store.state().operation.is_some() {
+            return;
+        }
+        if let Err(error) = collect_artifacts(&self.root, &store.state().published) {
+            tracing::warn!(%error, "coordinator artifact cleanup deferred");
         }
     }
 
-    /// Publishes one generation from the ENHANCE journal alone.
-    pub async fn publish_from_store(
-        &self,
-        store: &RecordJournal,
-        anchor_height: u64,
-        anchor_hash: String,
-    ) -> Result<(), String> {
-        let enhance = TableJournal::new(DatabaseId::Enhance, store)?;
-        self.publish(
-            &[&enhance],
-            Anchor {
-                height: anchor_height,
-                hash: anchor_hash,
-            },
-        )
-        .await
+    pub fn open(root: &FsPath, groups: Vec<Group>) -> Result<Self, String> {
+        validate_inventory(&groups)?;
+        fs::create_dir_all(root.join("hints")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("snapshots")).map_err(|e| e.to_string())?;
+        let mut store = Store::open(root)?;
+        store.update(|s| {
+            if !inventory_extends(&s.groups, &groups) {
+                return Err("inventory must preserve all registered groups and endpoints".into());
+            }
+            if s.groups.is_empty() {
+                s.groups = groups;
+            }
+            Ok(())
+        })?;
+        let mut snapshots = Vec::new();
+        for manifest in &store.state().published {
+            snapshots.push(restore(root, manifest)?);
+        }
+        Ok(Self {
+            store: Arc::new(Mutex::new(store)),
+            snapshots: Arc::new(RwLock::new(snapshots)),
+            publication: Arc::new(Semaphore::new(1)),
+            queries: Arc::new(Semaphore::new(2)),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(180))
+                .build()
+                .map_err(|e| e.to_string())?,
+            root: root.into(),
+            blocked: Arc::new(Mutex::new(None)),
+            telemetry: Arc::new(Mutex::new(super::telemetry::Publication::default())),
+        })
     }
 
-    /// Builds the Enhance snapshot, activates at least one replica in every
-    /// shard group, then swaps in the new generation while keeping previous
-    /// generations answerable. Sources this coordinator does not serve are
-    /// skipped.
+    /// Register only additional replica pairs. Existing placements and worker
+    /// endpoints are immutable here; replacement/removal require a drain protocol.
+    /// Readiness is a liveness check, not hardware qualification.
+    pub async fn reconcile_inventory(&self, configured: Vec<Group>) -> Result<(), String> {
+        validate_inventory(&configured)?;
+        let _permit = self
+            .publication
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "publication already in progress")?;
+        let (existing, epoch, revision) = {
+            let store = self.store.lock().unwrap();
+            if !inventory_extends(&store.state().groups, &configured) {
+                return Err("inventory must preserve all registered groups and endpoints".into());
+            }
+            if store.state().groups.len() == configured.len() {
+                return Ok(());
+            }
+            if store.state().operation.is_some() {
+                return Err("recover publication before registering capacity".into());
+            }
+            (
+                store.state().groups.len(),
+                store.state().epoch,
+                store.state().revision,
+            )
+        };
+        let mut additions = configured[existing..].to_vec();
+        let mut incarnations = BTreeSet::new();
+        for group in &mut additions {
+            group.settling = false;
+            for replica in &mut group.replicas {
+                let response = checked(
+                    self.http
+                        .get(format!("{}/internal/health", replica.url))
+                        .timeout(std::time::Duration::from_secs(10))
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                let health: serde_json::Value =
+                    serde_json::from_slice(&bounded(response, 65536).await?)
+                        .map_err(|e| e.to_string())?;
+                let incarnation = health["incarnation"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or("new replica has no process identity")?;
+                if health["placement_policy"]
+                    != serde_json::to_value(group.placement_policy).unwrap()
+                    || health["protocol"].as_str() != Some(PROTOCOL_REVISION)
+                    || health["published"].as_array().is_none_or(|s| !s.is_empty())
+                    || health["candidate"] != serde_json::Value::Null
+                    || health["epoch"].as_u64() != Some(0)
+                    || health["revision"].as_u64() != Some(0)
+                    || !incarnations.insert(incarnation.to_owned())
+                {
+                    return Err(
+                        "new replica must be a distinct, idle process with fresh state".into(),
+                    );
+                }
+                replica.incarnation = incarnation.to_owned();
+                replica.ledger = control::Ledger::default();
+            }
+        }
+        self.store.lock().unwrap().update(|state| {
+            if state.epoch != epoch
+                || state.revision != revision
+                || state.operation.is_some()
+                || state.groups.len() != existing
+            {
+                return Err("inventory changed during readiness checks".into());
+            }
+            state.revision = state
+                .revision
+                .checked_add(1)
+                .ok_or("placement revision exhausted")?;
+            state.groups.extend(additions);
+            for request in state.capacity.requests.values_mut() {
+                request.registered |= state.groups.len() >= request.target_groups;
+            }
+            state.capacity.requested = state
+                .capacity
+                .requests
+                .values()
+                .find(|r| !r.registered)
+                .map(|r| r.id.clone());
+            Ok(())
+        })
+    }
+
+    async fn assignment_admitted(
+        &self,
+        group: &Group,
+        plans: &[DomainPlan],
+        assignments: &BTreeMap<u64, String>,
+    ) -> bool {
+        let pending = self.pending_replicas();
+        if group.replicas.len() != 2 || group.replicas.iter().any(|r| pending.contains(&r.name)) {
+            return false;
+        }
+        let own: Vec<_> = plans
+            .iter()
+            .filter(|p| assignments.get(&p.shard.id) == Some(&group.id))
+            .collect();
+        for replica in &group.replicas {
+            let admission = self
+                .http
+                .post(format!("{}/internal/admit", replica.url))
+                .timeout(std::time::Duration::from_secs(3))
+                .json(&own)
+                .send()
+                .await;
+            if !admission.is_ok_and(|r| r.status() == StatusCode::NO_CONTENT) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Try spare registered capacity for new domains without moving published
+    /// domains. Preflight never reserves; actual reservation repeats admission.
+    async fn place_new_if_admitted(
+        &self,
+        coverage: &Coverage,
+        groups: &[Group],
+        plans: &[DomainPlan],
+        previous: &BTreeMap<u64, String>,
+        mut assignments: BTreeMap<u64, String>,
+    ) -> Result<(BTreeMap<u64, String>, BTreeSet<String>), String> {
+        let mut strict = BTreeSet::new();
+        let mut ordered: Vec<_> = groups.iter().collect();
+        ordered.sort_by_key(|g| g.sequence);
+        for shard in coverage
+            .shards
+            .iter()
+            .filter(|s| !previous.contains_key(&s.id))
+        {
+            let source = assignments
+                .get(&shard.id)
+                .ok_or("new shard unassigned")?
+                .clone();
+            let preferred = groups
+                .iter()
+                .find(|g| g.id == source)
+                .ok_or("unknown placement group")?;
+            if self
+                .assignment_admitted(preferred, plans, &assignments)
+                .await
+            {
+                continue;
+            }
+            for destination in &ordered {
+                if destination.id == source || destination.settling {
+                    continue;
+                }
+                let mut proposed = assignments.clone();
+                proposed.insert(shard.id, destination.id.clone());
+                if destination.role(coverage, &proposed).is_err()
+                    || !self
+                        .assignment_admitted(destination, plans, &proposed)
+                        .await
+                {
+                    continue;
+                }
+                strict.insert(destination.id.clone());
+                assignments = proposed;
+                break;
+            }
+        }
+        Ok((assignments, strict))
+    }
+
+    /// Relocate a published shard only after explicit memory refusal and loss of
+    /// required admission quorum. Busy or unreachable replicas alone are not a
+    /// placement signal. Retained source snapshots remain charged until expiry.
+    async fn relocate_if_memory_refused(
+        &self,
+        coverage: &Coverage,
+        groups: &[Group],
+        plans: &[DomainPlan],
+        previous: &BTreeMap<u64, String>,
+        mut assignments: BTreeMap<u64, String>,
+    ) -> BTreeMap<u64, String> {
+        let pending = self.pending_replicas();
+        let mut ordered: Vec<_> = groups.iter().collect();
+        ordered.sort_by_key(|g| g.sequence);
+        for source in &ordered {
+            let required_pairs = control::required_destination_pairs(&assignments, previous);
+            let own: Vec<_> = plans
+                .iter()
+                .filter(|p| assignments.get(&p.shard.id) == Some(&source.id))
+                .collect();
+            if own.is_empty() {
+                continue;
+            }
+            let mut refused = false;
+            let mut admitted = 0;
+            for replica in &source.replicas {
+                if pending.contains(&replica.name) {
+                    continue;
+                }
+                if let Ok(response) = self
+                    .http
+                    .post(format!("{}/internal/admit", replica.url))
+                    .timeout(std::time::Duration::from_secs(3))
+                    .json(&own)
+                    .send()
+                    .await
+                {
+                    refused |= response.status() == StatusCode::INSUFFICIENT_STORAGE;
+                    admitted += usize::from(response.status() == StatusCode::NO_CONTENT);
+                }
+            }
+            let quorum = if required_pairs.contains(&source.id) {
+                2
+            } else {
+                1
+            };
+            if !refused || admitted >= quorum {
+                continue;
+            }
+            // Try a whole-shard move. Both complete post-move assignments must
+            // fit, including retained data. If no such move fits, reservation
+            // preserves the existing failure path and requests more capacity.
+            'search: for shard in &coverage.shards {
+                if assignments.get(&shard.id) != Some(&source.id)
+                    || !previous.contains_key(&shard.id)
+                {
+                    continue;
+                }
+                for destination in &ordered {
+                    if destination.id == source.id || destination.settling {
+                        continue;
+                    }
+                    let mut proposed = assignments.clone();
+                    proposed.insert(shard.id, destination.id.clone());
+                    if destination.role(coverage, &proposed).is_err()
+                        || !self
+                            .assignment_admitted(destination, plans, &proposed)
+                            .await
+                    {
+                        continue;
+                    }
+                    if proposed.values().any(|id| id == &source.id)
+                        && !self.assignment_admitted(source, plans, &proposed).await
+                    {
+                        continue;
+                    }
+                    assignments = proposed;
+                    break 'search;
+                }
+            }
+        }
+        assignments
+    }
+
+    /// Elective moves must not hold the canonical update behind a known lack of
+    /// destination capacity. Preflight has no side effects; reservation still
+    /// repeats admission and both destination replicas remain mandatory.
+    async fn consolidate_if_admitted(
+        &self,
+        coverage: &Coverage,
+        groups: &[Group],
+        plans: &[DomainPlan],
+        original: BTreeMap<u64, String>,
+    ) -> Result<(BTreeMap<u64, String>, BTreeSet<String>), String> {
+        let mut proposed = original.clone();
+        let destinations = control::consolidate(coverage, groups, &mut proposed)?;
+        for group in groups.iter().filter(|g| destinations.contains(&g.id)) {
+            if !self.assignment_admitted(group, plans, &proposed).await {
+                tracing::info!(group = %group.id,
+                    "elective consolidation deferred; preserving canonical update placement");
+                return Ok((original, BTreeSet::new()));
+            }
+        }
+        Ok((proposed, destinations))
+    }
+
+    pub fn router(self) -> Router {
+        Router::new()
+            .route("/v1/enhance/init", get(init))
+            .route("/v1/enhance/sessions/:generation/:shard", get(session))
+            .route("/v1/enhance/query", post(query))
+            .route("/v1/health", get(health))
+            .route("/ready", get(ready))
+            .route("/metrics", get(metrics))
+            .with_state(self)
+    }
+
+    pub async fn manifest(&self) -> Option<Manifest> {
+        self.snapshots
+            .read()
+            .await
+            .first()
+            .map(|s| s.saved.manifest.clone())
+    }
+
+    async fn synchronize_retention(&self) {
+        let (epoch, groups, generations, pending) = {
+            let store = self.store.lock().unwrap();
+            (
+                store.state().epoch,
+                store.state().groups.clone(),
+                store
+                    .state()
+                    .published
+                    .iter()
+                    .map(|m| m.generation)
+                    .collect::<Vec<_>>(),
+                store.state().pending_replicas(),
+            )
+        };
+        if generations.is_empty() {
+            return;
+        }
+        for group in groups {
+            for replica in group.replicas {
+                if pending.contains(&replica.name) {
+                    continue;
+                }
+                let response = self
+                    .http
+                    .post(format!("{}/internal/retain", replica.url))
+                    .timeout(std::time::Duration::from_secs(3))
+                    .json(&worker::Retain {
+                        epoch,
+                        generations: generations.clone(),
+                    })
+                    .send()
+                    .await;
+                if !response.is_ok_and(|r| r.status().is_success()) {
+                    tracing::warn!(replica = %replica.name, "retention synchronization deferred; worker continues charging old runtimes");
+                }
+            }
+        }
+    }
+
+    fn pending_replicas(&self) -> BTreeSet<String> {
+        self.store.lock().unwrap().state().pending_replicas()
+    }
+
+    // Retry decisions independently; no disconnected participant authorizes
+    // dropping its reservation or putting a second candidate on that worker.
+    async fn deliver_decisions(&self) -> Result<(), String> {
+        self.deliver_commits().await?;
+        let (pending, groups, epoch) = {
+            let store = self.store.lock().unwrap();
+            (
+                store.state().pending_aborts.clone(),
+                store.state().groups.clone(),
+                store.state().epoch,
+            )
+        };
+        for notification in pending {
+            let replica = groups
+                .iter()
+                .flat_map(|g| &g.replicas)
+                .find(|r| r.name == notification.replica)
+                .ok_or("pending abort has no registered worker")?;
+            let delivered: Result<(), String> = async {
+                checked(
+                    self.http
+                        .post(format!("{}/internal/abort", replica.url))
+                        .timeout(std::time::Duration::from_secs(3))
+                        .json(&worker::Abort {
+                            epoch,
+                            operation: notification.operation.clone(),
+                            attempt: notification.attempt,
+                        })
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                Ok(())
+            }
+            .await;
+            match delivered {
+                Ok(()) => self.store.lock().unwrap().update(|s| {
+                    s.pending_aborts.retain(|p| p != &notification);
+                    Ok(())
+                })?,
+                Err(error) => {
+                    tracing::warn!(replica = %replica.name, %error, "abort notification remains pending; worker excluded from new candidates")
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Caller owns the publication permit. Errors for one participant must not
+    // prevent delivery to its peer; intent remains durable until an exact ack.
+    async fn deliver_commits(&self) -> Result<(), String> {
+        let (pending, groups, epoch) = {
+            let store = self.store.lock().unwrap();
+            (
+                store.state().pending_commits.clone(),
+                store.state().groups.clone(),
+                store.state().epoch,
+            )
+        };
+        for notification in pending {
+            let replica = groups
+                .iter()
+                .flat_map(|g| &g.replicas)
+                .find(|r| r.name == notification.replica)
+                .ok_or("pending commit has no registered worker")?;
+            let delivered: Result<(), String> = async {
+                let health: serde_json::Value = checked(
+                    self.http
+                        .get(format!("{}/internal/health", replica.url))
+                        .timeout(std::time::Duration::from_secs(3))
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+                let generation = notification.manifest.generation;
+                if health["published"]
+                    .as_array()
+                    .is_some_and(|gs| gs.iter().any(|g| g.as_u64() == Some(generation)))
+                {
+                    // Commit was durable but its response was lost. Match the
+                    // exact decision before releasing this replica's quarantine.
+                    if health["published_manifest_digests"][generation.to_string()]
+                        != digest(&notification.manifest)
+                    {
+                        return Err(
+                            "published worker manifest differs from committed decision".into()
+                        );
+                    }
+                    return Ok(());
+                }
+                let candidate: worker::Candidate =
+                    serde_json::from_value(health["candidate"].clone())
+                        .map_err(|e| e.to_string())?;
+                if candidate.operation != notification.operation
+                    || candidate.attempt != notification.attempt
+                    || candidate.generation != generation
+                {
+                    return Err("worker lost committed candidate; repair required".into());
+                }
+                checked(
+                    preparation_request(&self.http, &replica.url)
+                        .json(&candidate)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                let revision = health["revision"]
+                    .as_u64()
+                    .ok_or("missing revision")?
+                    .checked_add(1)
+                    .ok_or("worker revision exhausted")?;
+                checked(
+                    self.http
+                        .post(format!("{}/internal/commit", replica.url))
+                        .json(&worker::Commit {
+                            epoch,
+                            revision,
+                            generation,
+                            manifest_digest: digest(&notification.manifest),
+                            retained: notification.retained.clone(),
+                        })
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                Ok(())
+            }
+            .await;
+            match delivered {
+                Ok(()) => self.store.lock().unwrap().update(|s| {
+                    s.pending_commits.retain(|p| p != &notification);
+                    Ok(())
+                })?,
+                Err(error) => {
+                    tracing::warn!(replica = %replica.name, %error, "committed notification remains pending; worker excluded from new candidates")
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Recover the durable decision. A committed placement is never rolled back by cancellation.
+    pub async fn reconcile(&self) -> Result<(), String> {
+        let _permit = self
+            .publication
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "publication already in progress")?;
+        self.reconcile_inner().await
+    }
+
+    // Caller owns the publication permit, including fallback within publication.
+    async fn reconcile_inner(&self) -> Result<(), String> {
+        let (op, published) = {
+            let store = self.store.lock().unwrap();
+            let s = store.state();
+            (s.operation.clone(), s.published.clone())
+        };
+        let Some(op) = op else {
+            self.deliver_decisions().await?;
+            self.synchronize_retention().await;
+            self.collect_retired_artifacts();
+            return Ok(());
+        };
+        let committed = matches!(
+            op.phase,
+            Phase::Committed | Phase::Draining | Phase::Complete
+        );
+        if committed {
+            // Also migrate a pre-outbox committed journal before releasing its
+            // candidate slot. Notification intent is durable before release.
+            let manifest = published
+                .first()
+                .ok_or("committed operation missing manifest")?;
+            self.store.lock().unwrap().update(|s| {
+                for ack in &op.readiness {
+                    if !s.pending_commits.iter().any(|p| p.replica == ack.replica) {
+                        s.pending_commits.push(PendingCommit {
+                            replica: ack.replica.clone(),
+                            operation: op.id.clone(),
+                            attempt: op.attempt,
+                            manifest: manifest.clone(),
+                            retained: published.iter().map(|m| m.generation).collect(),
+                        });
+                    }
+                }
+                s.cancel_participants(
+                    &op,
+                    &op.readiness.iter().map(|ack| ack.replica.clone()).collect(),
+                );
+                Ok(())
+            })?;
+        } else {
+            self.store.lock().unwrap().abort_operation()?;
+        }
+
+        if committed {
+            let manifest = published.first().ok_or("missing committed manifest")?;
+            if self.manifest().await.as_ref() != Some(manifest) {
+                let root = self.root.clone();
+                let manifest = manifest.clone();
+                let restored = tokio::task::spawn_blocking(move || restore(&root, &manifest))
+                    .await
+                    .map_err(|e| e.to_string())??;
+                let mut snapshots = self.snapshots.write().await;
+                snapshots.insert(0, restored);
+                snapshots.retain(|s| {
+                    published
+                        .iter()
+                        .any(|m| m.generation == s.saved.manifest.generation)
+                });
+            }
+        }
+        self.store.lock().unwrap().update(|s| {
+            if committed {
+                if let Some(mut operation) = s.operation.take() {
+                    operation.phase = Phase::Draining;
+                    s.draining.push(operation);
+                }
+                s.draining.retain(|op| {
+                    op.source_generations
+                        .iter()
+                        .any(|g| s.published.iter().any(|m| m.generation == *g))
+                });
+            }
+            Ok(())
+        })?;
+        self.deliver_decisions().await?;
+        self.synchronize_retention().await;
+        self.collect_retired_artifacts();
+        Ok(())
+    }
+
+    /// Serialize candidate preparation. Cancellation leaves a durable operation that must
+    /// be reconciled before another candidate can be prepared.
     pub async fn publish(
         &self,
-        sources: &[&dyn TableSource],
-        anchor: Anchor,
+        journal: &crate::store::RecordJournal,
+        height: u64,
+        hash: String,
     ) -> Result<(), String> {
-        self.publish_checked(sources, anchor, || async { Ok(()) })
+        self.publish_checked(journal, height, hash, || async { Ok(()) })
             .await
     }
 
     pub async fn publish_checked<F, Fut>(
         &self,
-        sources: &[&dyn TableSource],
-        anchor: Anchor,
-        validate_anchor: F,
+        journal: &crate::store::RecordJournal,
+        height: u64,
+        hash: String,
+        validate: F,
     ) -> Result<(), String>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<(), String>>,
     {
-        let _publication = self.publication.lock().await;
-        let pending = self.topology.as_ref().and_then(|t| t.status().pending);
-        let sources: Vec<&dyn TableSource> = sources
-            .iter()
-            .copied()
-            .filter(|source| self.tables.contains_key(&source.table()))
-            .collect();
-        if sources.is_empty() {
-            return Err("nothing to publish".to_string());
-        }
-        // Reject exhausted placement before preparing anything on the serving replicas.
-        for source in &sources {
-            let groups = if source.table() == DatabaseId::Enhance {
-                pending
-                    .as_ref()
-                    .map(|p| p.groups.iter().map(|g| g.target()).collect())
-                    .unwrap_or_else(|| self.groups(source.table()))
-            } else {
-                self.groups(source.table())
+        let _permit = self
+            .publication
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "publication already in progress")?;
+        let began = std::time::Instant::now();
+        self.telemetry
+            .lock()
+            .unwrap()
+            .observe(height, journal.tree_size(), &hash);
+        let mut validate = Some(validate);
+        let mut result = self
+            .publish_inner(journal, height, hash.clone(), &mut validate, true)
+            .await;
+        let retry = result.is_err() && validate.is_some() && {
+            let store = self.store.lock().unwrap();
+            store.state().operation.as_ref().is_some_and(|op| {
+                op.phase == Phase::Planned
+                    && op
+                        .require_both
+                        .iter()
+                        .any(|group| store.state().assignments.values().any(|g| g == group))
+            })
+        };
+        if retry {
+            // No preparation or durable publication has occurred. Persist the
+            // abort decision before retrying; unacknowledged workers stay excluded.
+            result = match self.reconcile_inner().await {
+                Ok(()) => {
+                    self.publish_inner(journal, height, hash, &mut validate, false)
+                        .await
+                }
+                Err(error) => Err(format!(
+                    "consolidation fallback awaits abort recovery: {error}"
+                )),
             };
-            let capacity = groups.len() as u64
-                * crate::types::SHARDS_PER_GROUP
-                * crate::types::SHARD_POSITIONS as u64;
-            let embedded = groups.iter().all(|g| {
-                g.replicas
-                    .iter()
-                    .all(|r| matches!(r, WorkerTarget::Embedded { .. }))
-            });
-            if !embedded && source.positions() > capacity {
+        }
+        *self.blocked.lock().unwrap() = result.as_ref().err().cloned();
+        let mut telemetry = self.telemetry.lock().unwrap();
+        telemetry.last_attempt_seconds = Some(began.elapsed().as_secs_f64());
+        telemetry.last_attempt_succeeded = Some(result.is_ok());
+        result
+    }
+
+    async fn publish_inner<F, Fut>(
+        &self,
+        journal: &crate::store::RecordJournal,
+        height: u64,
+        hash: String,
+        validate: &mut Option<F>,
+        allow_consolidation: bool,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        self.deliver_decisions().await?;
+        let (mut lifecycle, generation, attempt, epoch, revision, mut groups, previous) = {
+            let store = self.store.lock().unwrap();
+            let s = store.state();
+            if s.operation.is_some() {
                 return Err(
-                    "Enhance capacity exhausted; retained generations remain available".into(),
+                    "unfinished operation requires reconciliation before publication".into(),
                 );
             }
-        }
-        let anchor_height = anchor.height;
-        self.set_phase(CoordinatorPhase::Building { anchor_height })
-            .await;
-        // Heights are not unique across same-height reorgs. Reusing one would
-        // let workers replace shards underneath an older retained snapshot.
-        let generation = next_generation(
-            self.newest().map(|snapshot| snapshot.manifest.generation),
-            anchor_height,
-        );
-        let ironwood_tree_size = sources
-            .iter()
-            .find(|source| source.table() == DatabaseId::Enhance)
-            .map(|source| source.positions())
-            .or_else(|| {
-                self.newest()
-                    .map(|snapshot| snapshot.manifest.ironwood_tree_size)
-            })
-            .unwrap_or(0);
-
-        let mut snapshots = BTreeMap::new();
-        let mut manifests = BTreeMap::new();
-        for source in sources {
-            let table = source.table();
-            let groups = if table == DatabaseId::Enhance {
-                pending
-                    .as_ref()
-                    .map(|p| p.groups.iter().map(|g| g.target()).collect())
-                    .unwrap_or_else(|| self.groups(table))
-            } else {
-                self.groups(table)
-            };
-            let snapshot = match self.build_table(source, generation, &groups).await {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    if let (Some(store), Some(pending)) = (&self.topology, &pending) {
-                        store.finish(&pending.operation_id, Some(error.clone()))?;
-                    }
-                    return Err(error);
-                }
-            };
-            manifests.insert(table, snapshot.manifest.clone());
-            snapshots.insert(table, Arc::new(snapshot));
-        }
-
-        // Recheck canonicality after potentially long worker preparation, before exposure.
-        validate_anchor().await?;
-        let manifest = GenerationManifest {
-            anchor_height,
-            anchor_block_hash: anchor.hash,
-            ironwood_tree_size,
-            generation,
-            tables: manifests,
+            (
+                s.lifecycle.clone(),
+                s.next_generation,
+                s.next_attempt,
+                s.epoch,
+                s.revision,
+                s.groups.clone(),
+                s.assignments.clone(),
+            )
         };
-        let snapshot = Arc::new(GenerationSnapshot {
-            manifest,
-            tables: snapshots,
-        });
-        let mut retained: Generations = Vec::with_capacity(RETAINED_GENERATIONS);
-        retained.push(snapshot);
-        for previous in self.live.load().iter() {
-            if retained.len() >= RETAINED_GENERATIONS {
-                break;
-            }
-            if previous.manifest.generation != generation {
-                retained.push(previous.clone());
-            }
-        }
-        if let (Some(store), Some(pending)) = (&self.topology, &pending) {
-            store.finish(&pending.operation_id, None)?;
-        }
-        self.live.store(Arc::new(retained));
-        self.set_phase(CoordinatorPhase::Serving).await;
-        Ok(())
-    }
-
-    /// Prepares every shard on all available replicas, sums one CRS hint per
-    /// shard, and activates every replica that completed the group's full
-    /// assignment. One ready replica per group is the publication quorum.
-    async fn build_table(
-        &self,
-        journal: &dyn TableSource,
-        generation: u64,
-        groups: &[WorkerGroup],
-    ) -> Result<TableSnapshot, String> {
-        let table = journal.table();
-        let state = self.table(table)?;
-        let layout = journal.layout();
-        if layout != table.layout() {
-            return Err(format!(
-                "source layout for {table} does not match the protocol"
-            ));
-        }
-        if journal.positions() == 0 {
-            return Err(format!("cannot publish an empty {table} table"));
-        }
-        let used_rows = layout.used_rows_for(journal.positions());
-        let logical_rows = layout.logical_rows_for(used_rows);
-        let (global_rlwe, ypir) =
-            global_parameters(logical_rows, &layout).map_err(|e| e.to_string())?;
-        if global_rlwe.d != state.rlwe.d || global_rlwe.q != state.rlwe.q {
-            return Err(format!(
-                "{table}: global RLWE parameters changed unexpectedly"
-            ));
-        }
-        let rlwe = state.rlwe;
-
-        let mut candidates: BTreeMap<String, BTreeMap<String, (WorkerTarget, Vec<ActivateShard>)>> =
-            groups
-                .iter()
-                .map(|group| {
-                    (
-                        group.name.clone(),
-                        group
-                            .replicas
-                            .iter()
-                            .cloned()
-                            .map(|replica| (replica.name().to_string(), (replica, Vec::new())))
-                            .collect(),
-                    )
-                })
-                .collect();
-
-        let mut descriptors = Vec::new();
-        let mut combined_crs: Option<Vec<CrsBlock>> = None;
-        for shard_id in journal.shard_ids() {
-            let embedded = groups.len() == 1
-                && groups[0]
-                    .replicas
-                    .iter()
-                    .all(|r| matches!(r, WorkerTarget::Embedded { .. }));
-            let group_index = (if embedded {
-                Some(0)
-            } else {
-                group_index_for_shard(shard_id, groups.len())
-            })
-            .ok_or_else(|| {
-                format!(
-                    "{table} shard {shard_id} exceeds the capacity of {} worker groups",
-                    groups.len()
-                )
-            })?;
-            let group = &groups[group_index];
-            let rows = journal.read_shard_rows(shard_id)?;
-            let digest = RecordJournal::rows_digest(&rows);
-            let query_row_start = shard_id as usize * layout.shard_rows;
-
-            let replicas: Vec<WorkerTarget> = candidates[&group.name]
-                .values()
-                .map(|(replica, _)| replica.clone())
-                .collect();
-            if replicas.is_empty() {
-                return Err(format!(
-                    "worker group {} has no replica with a complete {table} assignment",
-                    group.name
-                ));
-            }
-            let mut tasks = tokio::task::JoinSet::new();
-            for replica in replicas {
-                let coordinator = self.clone();
-                let rows = rows.clone();
-                let digest = digest.clone();
-                tasks.spawn(async move {
-                    let name = replica.name().to_string();
-                    let result = coordinator
-                        .prepare_replica_shard(
-                            &replica,
-                            table,
-                            shard_id,
-                            query_row_start,
-                            logical_rows,
-                            digest,
-                            rows,
-                            ypir.db_cols / rlwe.d,
-                            rlwe.d,
-                        )
-                        .await;
-                    (name, result)
-                });
-            }
-
-            let mut successful = Vec::new();
-            while let Some(result) = tasks.join_next().await {
-                match result {
-                    Ok((name, Ok(hint))) => successful.push((name, hint)),
-                    Ok((name, Err(error))) => {
-                        tracing::warn!(%error, replica = %name, group = %group.name, shard_id,
-                            "replica shard preparation failed");
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, group = %group.name, shard_id,
-                            "replica shard preparation task failed");
-                    }
-                }
-            }
-            let Some((_, canonical_hint)) = successful.first() else {
-                return Err(format!(
-                    "worker group {} has no ready replica for {table} shard {shard_id}",
-                    group.name
-                ));
-            };
-            let canonical_hint = canonical_hint.clone();
-            let accepted: HashSet<String> = successful
-                .into_iter()
-                .filter_map(|(name, hint)| {
-                    if *hint == *canonical_hint {
-                        Some(name)
-                    } else {
-                        tracing::warn!(replica = %name, group = %group.name, shard_id,
-                            "replica CRS hint differs from its peer");
-                        None
-                    }
-                })
-                .collect();
-            let group_candidates = candidates
-                .get_mut(&group.name)
-                .expect("configured worker group");
-            group_candidates.retain(|name, _| accepted.contains(name));
-            for (_, assignment) in group_candidates.values_mut() {
-                assignment.push(ActivateShard {
-                    shard_id,
-                    rows_sha256: digest.clone(),
-                });
-            }
-            if group_candidates.is_empty() {
-                return Err(format!(
-                    "worker group {} has no replica with a complete matching {table} assignment",
-                    group.name
-                ));
-            }
-
-            let hint = canonical_hint;
-            if let Some(accumulator) = &mut combined_crs {
-                add_crs_blocks_assign_mod(accumulator, &hint, rlwe).map_err(|e| e.to_string())?;
-            } else {
-                combined_crs = Some((*hint).clone());
-            }
-            let populated = journal.populated_positions_in_shard(shard_id);
-            descriptors.push(ShardDescriptor {
-                shard_id,
-                global_row_start: shard_id * layout.shard_rows as u64,
-                populated_positions: populated,
-                rows_sha256: digest,
-                sealed: populated == layout.shard_positions() as u64,
-                // Kept for wire compatibility; this is now the stable logical
-                // group identity rather than a physical replica name.
-                worker: group.name.clone(),
-            });
-        }
-
-        let used_groups: HashSet<&str> = descriptors
-            .iter()
-            .map(|shard| shard.worker.as_str())
-            .collect();
-        let mut ready_groups = BTreeMap::new();
-        for (group_name, replicas) in candidates {
-            if !used_groups.contains(group_name.as_str()) {
-                continue;
-            }
-            let mut ready_replicas = Vec::new();
-            for (_, (replica, shards)) in replicas {
-                let mut tables = BTreeMap::new();
-                tables.insert(table, shards);
-                match self
-                    .activate_worker(
-                        &replica,
-                        ActivateRequest {
-                            generation,
-                            tables,
-                            retained_generations: self
-                                .live
-                                .load()
-                                .iter()
-                                .map(|s| s.manifest.generation)
-                                .collect(),
-                        },
-                    )
-                    .await
-                {
-                    Ok(()) => ready_replicas.push(replica),
-                    Err(error) => {
-                        tracing::warn!(%error, replica = %replica.name(), group = %group_name,
-                        generation, "replica activation failed")
-                    }
-                }
-            }
-            if ready_replicas.is_empty() {
-                return Err(format!(
-                    "worker group {group_name} did not activate any replica for generation {generation}"
-                ));
-            }
-            ready_groups.insert(
-                group_name,
-                Arc::new(ReadyWorkerGroup {
-                    replicas: ready_replicas,
-                    next: AtomicUsize::new(0),
-                }),
-            );
-        }
-
-        let combined_crs = combined_crs.ok_or_else(|| "no CRS contributions".to_string())?;
-        let preprocessed =
-            build_pack_preprocessed_blocks(rlwe, &combined_crs).map_err(|e| e.to_string())?;
-        let top_key_images = TopKeyImages::build(rlwe);
-        let public_params = published_c1_rows(&preprocessed, rlwe.q);
-        let public_digest = Sha256::digest(&public_params);
-        let mut epoch = [0; 8];
-        epoch.copy_from_slice(&public_digest[..8]);
-        let manifest = TableManifest {
-            record_bytes: layout.record_bytes as u32,
-            records_per_row: layout.records_per_row as u32,
-            row_bytes: layout.row_bytes() as u32,
-            shard_rows: layout.shard_rows as u32,
-            positions: journal.positions(),
-            used_rows,
-            logical_rows,
-            parameter_id: format!(
-                "{PROTOCOL_REVISION}-{}-{table}-d{}-p{}-qbits{}-rows{}-cols{}",
-                layout.pir_profile.id(),
-                rlwe.d,
-                ypir.p,
-                ypir.query_bits,
-                ypir.db_rows,
-                ypir.db_cols
-            ),
-            setup_seed: table.setup_seed(),
-            public_params_epoch: hex::encode(epoch),
-            public_params_sha256: hex::encode(public_digest),
-            shards: descriptors,
-        };
-        Ok(TableSnapshot {
-            manifest,
-            ypir,
-            preprocessed,
-            top_key_images,
-            public_params,
-            public_params_epoch: epoch,
-            ready_groups,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn prepare_replica_shard(
-        &self,
-        replica: &WorkerTarget,
-        table: DatabaseId,
-        shard_id: u64,
-        query_row_start: usize,
-        logical_rows: u64,
-        rows_sha256: String,
-        rows: Vec<u8>,
-        expected_blocks: usize,
-        degree: usize,
-    ) -> Result<Arc<Vec<CrsBlock>>, String> {
-        let state = self.table(table)?;
-        let cache_key = format!(
-            "{}:{shard_id}:{query_row_start}:{rows_sha256}",
-            replica.name()
-        );
-        if let Some(hint) = state.hint_cache.read().await.get(&cache_key).cloned() {
-            if self
-                .ensure_worker(
-                    replica,
-                    table,
-                    shard_id,
-                    query_row_start,
-                    rows_sha256.clone(),
-                )
-                .await
-                .is_ok()
-            {
-                return Ok(hint);
-            }
-        }
-
-        self.prepare_worker(
-            replica,
-            table,
-            shard_id,
-            query_row_start,
-            logical_rows,
-            rows_sha256,
-            rows,
-        )
-        .await?;
-        let hint = Arc::new(
-            self.fetch_hint(replica, table, shard_id, expected_blocks, degree)
-                .await?,
-        );
-        let mut cache = state.hint_cache.write().await;
-        let shard_prefix = format!("{}:{shard_id}:", replica.name());
-        cache.retain(|key, _| !key.starts_with(&shard_prefix));
-        cache.insert(cache_key, hint.clone());
-        Ok(hint)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn prepare_worker(
-        &self,
-        worker: &WorkerTarget,
-        table: DatabaseId,
-        shard_id: u64,
-        query_row_start: usize,
-        logical_rows: u64,
-        rows_sha256: String,
-        rows: Vec<u8>,
-    ) -> Result<(), String> {
-        match worker {
-            WorkerTarget::Embedded { state, .. } => state
-                .prepare_local(
-                    table,
-                    shard_id,
-                    query_row_start,
-                    logical_rows,
-                    rows_sha256,
-                    rows,
-                )
-                .await
-                .map(|_| ()),
-            WorkerTarget::Remote { base_url, .. } => {
-                let response = self
-                    .http
-                    .put(format!("{base_url}/internal/{table}/shards/{shard_id}"))
-                    .query(&[
-                        ("query_row_start", query_row_start.to_string()),
-                        ("logical_rows", logical_rows.to_string()),
-                        ("rows_sha256", rows_sha256),
-                    ])
-                    .body(rows)
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !response.status().is_success() {
-                    return Err(format!(
-                        "worker shard preparation returned {}",
-                        response.status()
-                    ));
-                }
-                Ok(())
-            }
-        }
-    }
-
-    async fn ensure_worker(
-        &self,
-        worker: &WorkerTarget,
-        table: DatabaseId,
-        shard_id: u64,
-        query_row_start: usize,
-        rows_sha256: String,
-    ) -> Result<(), String> {
-        match worker {
-            WorkerTarget::Embedded { state, .. } => {
-                state
-                    .ensure_local(table, shard_id, query_row_start, rows_sha256)
-                    .await
-            }
-            WorkerTarget::Remote { base_url, .. } => {
-                let response = self
-                    .http
-                    .post(format!(
-                        "{base_url}/internal/{table}/shards/{shard_id}/load"
-                    ))
-                    .query(&[
-                        ("query_row_start", query_row_start.to_string()),
-                        ("logical_rows", "0".to_string()),
-                        ("rows_sha256", rows_sha256),
-                    ])
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !response.status().is_success() {
-                    return Err(format!(
-                        "worker cached shard load returned {}",
-                        response.status()
-                    ));
-                }
-                Ok(())
-            }
-        }
-    }
-
-    async fn fetch_hint(
-        &self,
-        worker: &WorkerTarget,
-        table: DatabaseId,
-        shard_id: u64,
-        expected_blocks: usize,
-        degree: usize,
-    ) -> Result<Vec<CrsBlock>, String> {
-        match worker {
-            WorkerTarget::Embedded { state, .. } => {
-                let artifact = state.crs_local(table, shard_id).await?;
-                tokio::task::spawn_blocking(move || {
-                    read_crs_blocks(artifact.reader(), expected_blocks, degree)
-                })
-                .await
-                .map_err(|e| e.to_string())?
+        let coverage = lifecycle.coverage(journal.tree_size(), Geometry::default())?;
+        let base_assignments = control::assign(&coverage, &groups, &previous)?;
+        let read = |start, count| {
+            journal
+                .read_records(start, count)
                 .map_err(|e| e.to_string())
-            }
-            WorkerTarget::Remote { base_url, .. } => {
-                let response = self
-                    .http
-                    .get(format!(
-                        "{base_url}/internal/{table}/shards/{shard_id}/hint"
-                    ))
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !response.status().is_success() {
-                    return Err(format!(
-                        "worker hint request returned {}",
-                        response.status()
-                    ));
-                }
-                read_worker_hint(response, worker_hint_limit(), expected_blocks, degree).await
-            }
-        }
-    }
-
-    async fn activate_worker(
-        &self,
-        worker: &WorkerTarget,
-        request: ActivateRequest,
-    ) -> Result<(), String> {
-        match worker {
-            WorkerTarget::Embedded { state, .. } => state.activate_local(request).await,
-            WorkerTarget::Remote { base_url, .. } => {
-                let response = self
-                    .http
-                    .post(format!("{base_url}/internal/activate"))
-                    .json(&request)
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !response.status().is_success() {
-                    return Err(format!("worker activation returned {}", response.status()));
-                }
-                Ok(())
-            }
-        }
-    }
-
-    async fn evaluate_worker(
-        &self,
-        worker: &WorkerTarget,
-        table: DatabaseId,
-        request: EvaluateRequest,
-    ) -> Result<Vec<u64>, WorkerEvaluationError> {
-        match worker {
-            WorkerTarget::Embedded { state, .. } => state
-                .evaluate_local(table, request)
-                .await
-                .map_err(|message| WorkerEvaluationError {
-                    retryable: message.contains("evaluation limit")
-                        || message.contains("generation mismatch")
-                        || message.contains("active shard disappeared"),
-                    message,
-                }),
-            WorkerTarget::Remote { base_url, .. } => {
-                let generation = request.generation;
-                let response = self
-                    .http
-                    .post(format!("{base_url}/internal/{table}/evaluate"))
-                    .body(encode_evaluate_request(&request))
-                    .send()
-                    .await
-                    .map_err(|error| WorkerEvaluationError {
-                        message: error.to_string(),
-                        retryable: true,
-                    })?;
-                if !response.status().is_success() {
-                    let status = response.status();
-                    return Err(WorkerEvaluationError {
-                        message: format!("worker evaluation returned {status}"),
-                        retryable: status == StatusCode::TOO_MANY_REQUESTS
-                            || status.is_server_error(),
-                    });
-                }
-                let bytes = read_worker_body(response, 1024 * 1024)
-                    .await
-                    .map_err(|message| WorkerEvaluationError {
-                        message,
-                        retryable: false,
-                    })?;
-                let (response_generation, coefficients) = decode_evaluate_response(&bytes)
-                    .map_err(|error| WorkerEvaluationError {
-                        message: error.to_string(),
-                        retryable: false,
-                    })?;
-                if response_generation != generation {
-                    return Err(WorkerEvaluationError {
-                        message: "worker response generation mismatch".to_string(),
-                        retryable: true,
-                    });
-                }
-                Ok(coefficients)
-            }
-        }
-    }
-
-    /// Answers one opaque client query for `table` against whichever retained
-    /// generation the body names. Exposed so in-process tests can drive the
-    /// coordinator without HTTP; the query handlers add admission control and
-    /// metrics on top.
-    pub async fn answer_query(&self, table: DatabaseId, body: &[u8]) -> Result<Vec<u8>, String> {
-        let state = self.table(table)?;
-        let rlwe = state.rlwe;
-        let generation_bytes: [u8; 8] = body
-            .get(..8)
-            .ok_or_else(|| "query is truncated".to_string())?
-            .try_into()
-            .expect("eight-byte generation");
-        let generation = u64::from_le_bytes(generation_bytes);
-        let snapshot = self
-            .generation(generation)
-            .ok_or_else(|| "query generation is not retained".to_string())?;
-        let live = snapshot
-            .tables
-            .get(&table)
-            .ok_or_else(|| format!("generation has no {table} table"))?;
-        let packing_len = serialized_packing_keys_len(rlwe);
-        let switched_len = (live.ypir.db_rows * live.ypir.query_bits).div_ceil(8);
-        if body.len() != 8 + packing_len + switched_len {
-            return Err("query has the wrong fixed length".to_string());
-        }
-        let packing_keys =
-            deserialize_packing_keys(rlwe, &body[8..8 + packing_len]).map_err(|e| e.to_string())?;
-        let global_query = deserialize_first_dim_query(rlwe, &live.ypir, &body[8 + packing_len..])
-            .map_err(|e| e.to_string())?;
-
-        let shard_rows = table.layout().shard_rows;
-        let mut by_group: BTreeMap<String, Vec<ShardQuery>> = BTreeMap::new();
-        for shard in &live.manifest.shards {
-            let start = shard.global_row_start as usize;
-            let coefficients = global_query
-                .get(start..start + shard_rows)
-                .ok_or_else(|| "query does not cover a published shard".to_string())?
-                .to_vec();
-            by_group
-                .entry(shard.worker.clone())
-                .or_default()
-                .push(ShardQuery {
-                    shard_id: shard.shard_id,
-                    coefficients,
-                });
-        }
-
-        let mut tasks = tokio::task::JoinSet::new();
-        for (group_name, group) in &live.ready_groups {
-            let Some(shards) = by_group.remove(group_name) else {
+        };
+        let plans: Vec<DomainPlan> = coverage
+            .shards
+            .iter()
+            .map(|s| runtime::plan(s.clone(), read))
+            .collect::<Result<_, _>>()?;
+        let (base_assignments, admission_destinations) = self
+            .place_new_if_admitted(&coverage, &groups, &plans, &previous, base_assignments)
+            .await?;
+        let base_assignments = self
+            .relocate_if_memory_refused(&coverage, &groups, &plans, &previous, base_assignments)
+            .await;
+        let (assignments, consolidation_destinations) = if allow_consolidation {
+            self.consolidate_if_admitted(&coverage, &groups, &plans, base_assignments)
+                .await?
+        } else {
+            (base_assignments, BTreeSet::new())
+        };
+        let operation_id = format!("generation-{generation}");
+        let mut require_both = control::required_destination_pairs(&assignments, &previous);
+        require_both.extend(consolidation_destinations);
+        require_both.extend(admission_destinations);
+        let strict_groups = require_both.clone();
+        let operation = Operation {
+            id: operation_id.clone(),
+            attempt,
+            epoch,
+            expected_revision: revision,
+            candidate_digest: digest(&plans),
+            phase: Phase::Planned,
+            assignments: assignments.clone(),
+            affected_groups: assignments
+                .values()
+                .chain(previous.values())
+                .cloned()
+                .collect(),
+            source_generations: self
+                .store
+                .lock()
+                .unwrap()
+                .state()
+                .published
+                .iter()
+                .map(|m| m.generation)
+                .collect(),
+            require_both,
+            readiness: Vec::new(),
+            infrastructure_resources: BTreeMap::new(),
+        };
+        self.store.lock().unwrap().plan(operation)?;
+        let mut candidates = BTreeMap::new();
+        // Reserve all destinations before any expensive preparation. A failure leaves the operation visible.
+        for group in &mut groups {
+            let own: Vec<_> = plans
+                .iter()
+                .filter(|p| assignments[&p.shard.id] == group.id)
+                .cloned()
+                .collect();
+            if own.is_empty() && !previous.values().any(|id| id == &group.id) {
                 continue;
-            };
-            let replicas = group.replicas_for_request();
-            let group_name = group_name.clone();
-            let coordinator = self.clone();
-            tasks.spawn(async move {
-                let mut last_error = None;
-                for (attempt, replica) in replicas.into_iter().enumerate() {
-                    if attempt > 0 {
-                        metrics::record_replica_request(&group_name, replica.name(), "retry");
+            }
+            for replica in &mut group.replicas {
+                if self.pending_replicas().contains(&replica.name) {
+                    if strict_groups.contains(&group.id) {
+                        return Err("required replica awaits decision recovery".into());
                     }
-                    metrics::record_replica_request(&group_name, replica.name(), "selected");
-                    let timer = metrics::start_worker_replica_request(&group_name, replica.name());
-                    match coordinator
-                        .evaluate_worker(
-                            &replica,
-                            table,
-                            EvaluateRequest {
-                                generation,
-                                shards: shards.clone(),
-                            },
-                        )
+                    continue;
+                }
+                let reservation: Result<_, String> = async {
+                    let health: serde_json::Value = self
+                        .http
+                        .get(format!("{}/internal/health", replica.url))
+                        .timeout(std::time::Duration::from_secs(3))
+                        .send()
                         .await
+                        .map_err(|e| e.to_string())?
+                        .error_for_status()
+                        .map_err(|e| e.to_string())?
+                        .json()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if health["protocol"].as_str() != Some(PROTOCOL_REVISION)
+                        || health["placement_policy"]
+                            != serde_json::to_value(group.placement_policy).unwrap()
                     {
-                        Ok(partial) => {
-                            timer.succeeded();
-                            return Ok(partial);
-                        }
-                        Err(error) => {
-                            timer.failed();
-                            tracing::warn!(%error, replica = %replica.name(), generation,
-                                "worker replica evaluation failed; trying peer");
-                            if !error.retryable {
-                                return Err(error.message);
-                            }
-                            last_error = Some(error.message);
-                        }
+                        return Err("worker protocol or placement policy mismatch".into());
+                    }
+                    replica.incarnation = health["incarnation"]
+                        .as_str()
+                        .ok_or("missing worker incarnation")?
+                        .into();
+                    let worker_revision = health["revision"]
+                        .as_u64()
+                        .ok_or("missing worker revision")?;
+                    let candidate = worker::Candidate {
+                        placement_policy: group.placement_policy,
+                        operation: operation_id.clone(),
+                        attempt,
+                        epoch,
+                        expected_revision: worker_revision,
+                        generation,
+                        plans: own.clone(),
+                    };
+                    let response = self
+                        .http
+                        .post(format!("{}/internal/reserve", replica.url))
+                        .json(&candidate)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if response.status() == StatusCode::INSUFFICIENT_STORAGE {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_err(|e| e.to_string())?
+                            .as_secs();
+                        self.store.lock().unwrap().update(|state| {
+                            state.capacity.memory_refused(
+                                journal.tree_size(),
+                                now,
+                                state.groups.len(),
+                            )
+                        })?;
+                    }
+                    let missing: Vec<String> = checked(response)
+                        .await?
+                        .json()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok((candidate, missing, worker_revision))
+                }
+                .await;
+                match reservation {
+                    Ok(reserved) => {
+                        candidates.insert(replica.name.clone(), reserved);
+                    }
+                    Err(error) if !strict_groups.contains(&group.id) => {
+                        tracing::warn!(replica = %replica.name, %error, "replica unavailable; ordinary publication may use its peer");
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        for group in &groups {
+            if !assignments.values().any(|id| id == &group.id) {
+                continue;
+            }
+            let reserved = group
+                .replicas
+                .iter()
+                .filter(|r| candidates.contains_key(&r.name))
+                .count();
+            if reserved
+                < if strict_groups.contains(&group.id) {
+                    2
+                } else {
+                    1
+                }
+            {
+                return Err("group lacks its required reservation quorum".into());
+            }
+        }
+        self.store.lock().unwrap().update(|s| {
+            s.groups = groups.clone();
+            Ok(())
+        })?;
+        self.store
+            .lock()
+            .unwrap()
+            .advance(epoch, &operation_id, attempt, Phase::Reserved)?;
+        self.store
+            .lock()
+            .unwrap()
+            .advance(epoch, &operation_id, attempt, Phase::Preparing)?;
+        let mut packing = BTreeMap::new();
+        let mut hints = BTreeMap::new();
+        let domain_keys: BTreeMap<_, _> = plans
+            .iter()
+            .map(|p| (p.shard.id, digest(&(p.shard.logical_rows, &p.units))))
+            .collect();
+        {
+            let previous = self.snapshots.read().await;
+            for snapshot in previous.iter() {
+                for (shard, key) in &domain_keys {
+                    if !packing.contains_key(shard)
+                        && snapshot.saved.domain_keys.get(shard) == Some(key)
+                    {
+                        packing.insert(*shard, snapshot.packing[shard].clone());
+                        hints.insert(*shard, snapshot.saved.hints[shard].clone());
                     }
                 }
-                Err(last_error.unwrap_or_else(|| "worker group has no ready replica".to_string()))
-            });
+            }
         }
-        if !by_group.is_empty() {
-            return Err("snapshot references an unavailable worker group".to_string());
+        let reusable: BTreeSet<_> = packing.keys().copied().collect();
+        let mut routes = BTreeMap::<u64, Vec<String>>::new();
+        for group in &groups {
+            for replica in &group.replicas {
+                let Some((candidate, missing, _)) = candidates.get(&replica.name) else {
+                    continue;
+                };
+                for plan in &candidate.plans {
+                    for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
+                        if !missing.contains(&unit.digest()) {
+                            continue;
+                        }
+                        let rows = runtime::unit_rows(&plan.shard, spec, &mut { read })?;
+                        checked(
+                            self.http
+                                .put(format!("{}/internal/rows/{}", replica.url, unit.digest()))
+                                .header("x-enhance-epoch", candidate.epoch)
+                                .header("x-enhance-attempt", candidate.attempt)
+                                .header("x-enhance-operation", &candidate.operation)
+                                .body(rows)
+                                .send()
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        )
+                        .await?;
+                    }
+                }
+                checked(
+                    preparation_request(&self.http, &replica.url)
+                        .json(candidate)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                for plan in &candidate.plans {
+                    if reusable.contains(&plan.shard.id) {
+                        routes
+                            .entry(plan.shard.id)
+                            .or_default()
+                            .push(replica.url.clone());
+                        continue;
+                    }
+                    let response = checked(
+                        self.http
+                            .get(format!("{}/internal/hint/{}", replica.url, plan.shard.id))
+                            .send()
+                            .await
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .await?;
+                    let bytes = bounded(response, 256 * 1024 * 1024).await?;
+                    let params = parameters(plan.shard.logical_rows)?;
+                    let hint = crate::wire::read_crs_blocks(
+                        bytes.as_slice(),
+                        params.db_cols / runtime::rlwe().d,
+                        runtime::rlwe().d,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let pack = Arc::new(Packing::new(plan.shard.logical_rows, &hint)?);
+                    let reference = pack.reference(plan.shard.id)?;
+                    if let Some(existing) = packing.get(&plan.shard.id) {
+                        let existing: &Arc<Packing> = existing;
+                        if existing.reference(plan.shard.id)? != reference {
+                            return Err("replica public material differs".into());
+                        }
+                    } else {
+                        let name = format!("{}.bin", reference.public_params_sha256);
+                        crate::artifact::write_atomic(&self.root.join("hints"), &name, |f| {
+                            f.write_all(&bytes)
+                        })
+                        .map_err(|e| e.to_string())?;
+                        hints.insert(plan.shard.id, name);
+                        packing.insert(plan.shard.id, pack);
+                    }
+                    routes
+                        .entry(plan.shard.id)
+                        .or_default()
+                        .push(replica.url.clone());
+                }
+            }
         }
-        let mut combined = vec![0u64; live.ypir.db_cols];
-        let mut partial_count = 0usize;
-        while let Some(result) = tasks.join_next().await {
-            let partial = result.map_err(|_| "worker evaluation task failed".to_string())??;
-            add_intermediate_assign_mod(&mut combined, &partial, rlwe.q)
+        let sessions = coverage
+            .shards
+            .iter()
+            .map(|s| packing[&s.id].reference(s.id))
+            .collect::<Result<_, _>>()?;
+        let manifest = Manifest {
+            schema_version: SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation,
+            anchor_height: height,
+            anchor_block_hash: hash,
+            geometry: Geometry::default(),
+            coverage,
+            sessions,
+            unit_identities: plans
+                .iter()
+                .map(|p| (p.shard.id, p.units.clone()))
+                .collect(),
+        };
+        manifest.validate()?;
+        let manifest_digest = digest(&manifest);
+        let mut readiness = Vec::new();
+        for group in &groups {
+            for replica in &group.replicas {
+                if !candidates.contains_key(&replica.name) {
+                    continue;
+                }
+                let request = worker::Activation {
+                    operation: operation_id.clone(),
+                    attempt,
+                    epoch,
+                    manifest: manifest.clone(),
+                };
+                let ack: serde_json::Value = checked(
+                    self.http
+                        .post(format!("{}/internal/activate", replica.url))
+                        .json(&request)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?
+                .json()
+                .await
                 .map_err(|e| e.to_string())?;
-            partial_count += 1;
+                if ack["incarnation"].as_str() != Some(&replica.incarnation)
+                    || ack["candidate_digest"].as_str() != Some(&manifest_digest)
+                {
+                    return Err("stale worker readiness".into());
+                }
+                readiness.push(ReadyAck {
+                    replica: replica.name.clone(),
+                    incarnation: replica.incarnation.clone(),
+                    candidate_digest: manifest_digest.clone(),
+                });
+            }
         }
-        if partial_count == 0 {
-            return Err("no worker evaluated the query".to_string());
-        }
-
-        let packed = pack_intermediate_blocks(
-            &combined,
-            &packing_keys,
-            &live.top_key_images,
-            &live.preprocessed,
+        let saved = SavedSnapshot {
+            manifest: manifest.clone(),
+            routes,
+            hints,
+            domain_keys,
+        };
+        // Wait for admitted HTTP queries before retiring worker routes. Preparations did not block them.
+        let mut snapshots = self.snapshots.write().await;
+        validate
+            .take()
+            .ok_or("canonical validation already consumed")?()
+        .await?;
+        crate::artifact::write_atomic(
+            &self.root.join("snapshots"),
+            &format!("{generation}.json"),
+            |f| serde_json::to_writer(f, &saved).map_err(std::io::Error::other),
         )
         .map_err(|e| e.to_string())?;
-        let c2 =
-            ipir_sp::modulus_switch::serialize_rlwe_response_bodies(&packed, live.ypir.q_prime_1);
-        let mut response = Vec::with_capacity(16 + c2.len());
-        response.extend_from_slice(&generation.to_le_bytes());
-        response.extend_from_slice(&live.public_params_epoch);
-        response.extend_from_slice(&c2);
+        File::open(self.root.join("snapshots"))
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        self.store.lock().unwrap().update(|s| {
+            let op = s.operation.as_mut().ok_or("candidate disappeared")?;
+            op.candidate_digest = manifest_digest.clone();
+            op.readiness = readiness;
+            Ok(())
+        })?;
+        self.store
+            .lock()
+            .unwrap()
+            .advance(epoch, &operation_id, attempt, Phase::Ready)?;
+        self.store
+            .lock()
+            .unwrap()
+            .commit(manifest.clone(), lifecycle)?;
+        snapshots.insert(0, Arc::new(Snapshot { saved, packing }));
+        snapshots.truncate(RETAINED_GENERATIONS);
+        drop(snapshots);
+        self.reconcile_inner().await
+    }
+}
+
+async fn checked(response: reqwest::Response) -> Result<reqwest::Response, String> {
+    if response.status().is_success() {
         Ok(response)
-    }
-}
-
-async fn read_worker_body(
-    mut response: reqwest::Response,
-    limit: usize,
-) -> Result<Vec<u8>, String> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err("worker response exceeds limit".to_string());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        if body.len().saturating_add(chunk.len()) > limit {
-            return Err("worker response exceeds limit".to_string());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-/// Streams the response into the decoded CRS. Both futures are owned by this
-/// call: cancellation drops the sender and wakes the blocking decoder at EOF.
-async fn read_worker_hint(
-    mut response: reqwest::Response,
-    limit: usize,
-    expected_blocks: usize,
-    degree: usize,
-) -> Result<Vec<CrsBlock>, String> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err("worker response exceeds limit".into());
-    }
-    let (sender, reader) = chunk_reader();
-    let decoder = tokio::task::spawn_blocking(move || {
-        read_crs_blocks(
-            std::io::BufReader::with_capacity(IO_BUFFER_BYTES, reader),
-            expected_blocks,
-            degree,
-        )
-    });
-    let transfer = async move {
-        let mut received = 0usize;
-        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-            received = received
-                .checked_add(chunk.len())
-                .ok_or("worker response exceeds limit")?;
-            if received > limit {
-                return Err("worker response exceeds limit".to_string());
-            }
-            for part in chunk.chunks(IO_BUFFER_BYTES) {
-                // Copy bounded pieces so queued Bytes cannot pin a large network allocation.
-                sender
-                    .send(Bytes::copy_from_slice(part))
-                    .await
-                    .map_err(|_| "worker hint decoder stopped".to_string())?;
-            }
-        }
-        Ok::<(), String>(())
-    };
-    let (transferred, decoded) = tokio::join!(transfer, decoder);
-    transferred?;
-    decoded
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
-}
-
-/// Largest hint (CRS block) response accepted from a worker. A shard's hint
-/// grows with its row bytes: measured on the POC, the ENHANCE shard (54 MB of
-/// rows) yields a conservative per-shard memory hint, so
-/// the bound is a multiple of the largest table's shard rather than a literal
-/// that silently stops covering a new table.
-fn worker_hint_limit() -> usize {
-    DatabaseId::ALL
-        .iter()
-        .map(|table| table.layout().shard_bytes())
-        .max()
-        .expect("at least one table")
-        * 4
-}
-
-/// Longest a query waits for a free per-table slot before it is refused.
-const QUERY_QUEUE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Largest query body accepted on the query routes. A query grows with the
-/// logical row count; this bound covers every capacity the POC can reach
-/// before the request-size work in the deployment plan lands.
-const QUERY_BODY_LIMIT: usize = 64 * 1024 * 1024;
-
-pub fn router(state: CoordinatorState) -> Router {
-    let queries = Router::new()
-        .route("/v1/enhance/query", post(query))
-        .layer(axum::extract::DefaultBodyLimit::max(QUERY_BODY_LIMIT));
-    Router::new()
-        .route("/v1/health", get(health))
-        .route("/v1/enhance/init", get(enhance_session))
-        .merge(queries)
-        .route("/metrics", get(handle_metrics))
-        .route("/ready", get(ready))
-        .layer(axum::middleware::from_fn(metrics::track_request))
-        .with_state(state)
-}
-
-/// What one `/internal/health` probe yielded. All zeros when the worker is down.
-#[derive(Clone, Debug, Default)]
-struct WorkerProbe {
-    up: bool,
-    generation: u64,
-    /// Active shard count per table wire name, from the newest generation.
-    active_shards: BTreeMap<String, u64>,
-    total_memory_bytes: u64,
-    available_memory_bytes: u64,
-    process_rss_bytes: u64,
-}
-
-/// Ask a worker for `/internal/health`. Any error, non-2xx, or malformed
-/// body counts as down.
-async fn probe_worker_health(client: &reqwest::Client, base_url: &str) -> WorkerProbe {
-    let response = client
-        .get(format!("{base_url}/internal/health"))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await;
-    let Ok(response) = response else {
-        return WorkerProbe::default();
-    };
-    if !response.status().is_success() {
-        return WorkerProbe::default();
-    }
-    let Ok(body) = response.json::<serde_json::Value>().await else {
-        return WorkerProbe::default();
-    };
-    let field = |name: &str| body.get(name).and_then(|v| v.as_u64()).unwrap_or(0);
-    // `active_shards` is a per-table object keyed by wire name on current
-    // workers; an older bare number is attributed to the ENHANCE table.
-    let active_shards = match body.get("active_shards") {
-        Some(serde_json::Value::Object(per_table)) => per_table
-            .iter()
-            .filter_map(|(table, v)| v.as_u64().map(|count| (table.clone(), count)))
-            .collect(),
-        Some(value) => value
-            .as_u64()
-            .map(|count| BTreeMap::from([(DatabaseId::Enhance.as_str().to_string(), count)]))
-            .unwrap_or_default(),
-        None => BTreeMap::new(),
-    };
-    WorkerProbe {
-        up: body.get("status").and_then(|v| v.as_str()) == Some("ok"),
-        generation: field("generation"),
-        active_shards,
-        total_memory_bytes: field("total_memory_bytes"),
-        available_memory_bytes: field("available_memory_bytes"),
-        process_rss_bytes: field("process_rss_bytes"),
-    }
-}
-
-/// `GET /metrics`: Prometheus text exposition for the local `pir-apm` sidecar.
-/// Refreshes the snapshot gauges from live coordinator state on every scrape.
-/// Caddy blocks this path publicly; it is loopback-only by policy.
-async fn handle_metrics(State(state): State<CoordinatorState>) -> Response {
-    metrics::record_observation(&state.observe().await);
-    let (status, content_type, body) = metrics::encode();
-    (
-        status,
-        [(axum::http::header::CONTENT_TYPE, content_type)],
-        body,
-    )
-        .into_response()
-}
-
-/// `GET /ready`: 200 while queries can be answered from a live generation.
-///
-/// The previous generation keeps serving during a `building` rebuild, so
-/// readiness follows the live snapshot rather than the `serving` phase; only
-/// a failed ingest, or having nothing published yet, reports 503.
-async fn ready(State(state): State<CoordinatorState>) -> Response {
-    let phase = state.status.read().await.phase.clone();
-    if is_ready(&phase, state.newest().is_some()) {
-        (StatusCode::OK, "ready\n").into_response()
     } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response()
+        let status = response.status();
+        let reason = bounded(response, 4096).await.unwrap_or_default();
+        Err(format!(
+            "worker returned {status}: {}",
+            String::from_utf8_lossy(&reason)
+        ))
     }
 }
 
-fn is_ready(phase: &CoordinatorPhase, has_live_snapshot: bool) -> bool {
-    has_live_snapshot
-        && matches!(
-            phase,
-            CoordinatorPhase::Serving | CoordinatorPhase::Building { .. }
-        )
-}
-
-fn health_status(phase: &CoordinatorPhase, non_serving_for: Duration) -> StatusCode {
-    match phase {
-        CoordinatorPhase::Serving => StatusCode::OK,
-        CoordinatorPhase::Failed { .. } => StatusCode::SERVICE_UNAVAILABLE,
-        CoordinatorPhase::Syncing { .. } | CoordinatorPhase::Building { .. } => {
-            if non_serving_for > HEALTH_PHASE_GRACE_PERIOD {
-                StatusCode::SERVICE_UNAVAILABLE
-            } else {
-                StatusCode::OK
-            }
+async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+    if response.content_length().is_some_and(|n| n > limit as u64) {
+        return Err("oversized worker response".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if chunk.len() > limit - bytes.len() {
+            return Err("oversized worker response".into());
         }
+        bytes.extend_from_slice(&chunk);
     }
+    Ok(bytes)
 }
 
-async fn health(State(state): State<CoordinatorState>) -> Response {
-    let (phase, non_serving_for) = {
-        let status = state.status.read().await;
-        (
-            status.phase.clone(),
-            status
-                .non_serving_since
-                .map_or(Duration::ZERO, |since| since.elapsed()),
-        )
-    };
-    let retained = state.live.load();
-    let newest = retained.first();
-    let status = health_status(&phase, non_serving_for);
-    let tables = state
-        .tables
-        .keys()
-        .map(|table| {
-            (
-                *table,
-                TableHealth {
-                    shards: newest
-                        .and_then(|snapshot| snapshot.manifest.tables.get(table))
-                        .map_or(0, |manifest| manifest.shards.len()),
-                    workers: state
-                        .groups(*table)
-                        .iter()
-                        .map(|group| group.replicas.len())
-                        .sum(),
-                },
-            )
-        })
-        .collect();
-    (
-        status,
-        Json(HealthResponse {
-            phase,
-            generation: newest.map(|snapshot| snapshot.manifest.generation),
-            retained_generations: retained.len(),
-            anchor_height: newest.map(|snapshot| snapshot.manifest.anchor_height),
-            ironwood_tree_size: newest.map(|snapshot| snapshot.manifest.ironwood_tree_size),
-            tables,
-        }),
-    )
-        .into_response()
+type ApiResult<T> = Result<T, (StatusCode, String)>;
+async fn init(State(c): State<Coordinator>) -> ApiResult<Json<Manifest>> {
+    c.manifest().await.map(Json).ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no published generation".into(),
+    ))
 }
-
-async fn enhance_session(State(state): State<CoordinatorState>) -> Response {
-    match state.session() {
-        Some(session) => Json(session).into_response(),
-        None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    }
+async fn session(
+    State(c): State<Coordinator>,
+    Path((generation, shard)): Path<(u64, u64)>,
+) -> ApiResult<Json<ShardSession>> {
+    let snapshots = c.snapshots.read().await;
+    let s = snapshots
+        .iter()
+        .find(|s| s.saved.manifest.generation == generation)
+        .ok_or((StatusCode::GONE, "expired session".into()))?;
+    let pack = s
+        .packing
+        .get(&shard)
+        .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+    Ok(Json(pack.session(generation, shard)))
 }
-
-async fn query(State(state): State<CoordinatorState>, body: Bytes) -> Response {
-    answer(&state, DatabaseId::Enhance, &body).await
-}
-
-async fn answer(state: &CoordinatorState, table: DatabaseId, body: &[u8]) -> Response {
-    // Axum has extracted the complete body before entering this function. Start
-    // the post-body scope before validation or admission queueing so it covers
-    // every server-side step that remains before the response is ready.
-    let _processing = metrics::start_processing(metrics::query_endpoint(table));
-    let Ok(table_state) = state.table(table) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    // A wallet pass sends its fixed envelope as a burst; queue it for a
-    // bounded wait rather than refusing everything beyond the slot count.
-    let Ok(Ok(_permit)) = tokio::time::timeout(
-        QUERY_QUEUE_WAIT,
-        table_state.query_slots.clone().acquire_owned(),
+async fn query(State(c): State<Coordinator>, request: Request) -> ApiResult<Vec<u8>> {
+    let permit = c
+        .queries
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "query limit".into()))?;
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        to_bytes(request.into_body(), 64 * 1024 * 1024),
     )
     .await
-    else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
+    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let generation_pin = c.snapshots.clone().read_owned().await;
+    let snapshot = generation_pin
+        .iter()
+        .find(|s| s.saved.manifest.generation == binding.generation)
+        .cloned()
+        .ok_or((StatusCode::GONE, "expired session".into()))?;
+    let pack = snapshot
+        .packing
+        .get(&binding.shard_id)
+        .cloned()
+        .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+    let coefficients = pack
+        .query_coefficients(&body, binding)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let request = worker::Evaluate {
+        generation: binding.generation,
+        shard_id: binding.shard_id,
+        epoch: hex::encode(binding.epoch),
+        coefficients,
     };
-    match state.answer_query(table, body).await {
-        Ok(response) => response.into_response(),
-        Err(error) => {
-            tracing::warn!(%error, %table, "PIR query failed");
-            StatusCode::SERVICE_UNAVAILABLE.into_response()
+    let mut answer = None;
+    for url in &snapshot.saved.routes[&binding.shard_id] {
+        let result = async {
+            let response = c
+                .http
+                .post(format!("{url}/internal/evaluate"))
+                .timeout(std::time::Duration::from_secs(30))
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let bytes = bounded(checked(response).await?, 1024 * 1024).await?;
+            let intermediate: worker::Intermediate =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            if intermediate.generation != binding.generation
+                || intermediate.shard_id != binding.shard_id
+                || intermediate.epoch != request.epoch
+            {
+                return Err("worker binding mismatch".into());
+            }
+            Ok::<_, String>(intermediate.coefficients)
+        }
+        .await;
+        if let Ok(partial) = result {
+            answer = Some(partial);
+            break;
         }
     }
+    let answer = answer.ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no ready replica answered".into(),
+    ))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let _snapshot = snapshot;
+        let _generation_pin = generation_pin;
+        pack.pack(&body, &answer)
+    })
+    .await
+    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))
+}
+async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
+    let snapshots = c.snapshots.read().await;
+    let manifest = snapshots.first().map(|s| &s.saved.manifest);
+    let store = c.store.lock().unwrap();
+    let mut published_replica_counts = BTreeMap::new();
+    if let Some(snapshot) = snapshots.first() {
+        for (shard, routes) in &snapshot.saved.routes {
+            if let Some(group) = store.state().assignments.get(shard) {
+                published_replica_counts
+                    .entry(group.clone())
+                    .and_modify(|n: &mut usize| *n = (*n).min(routes.len()))
+                    .or_insert(routes.len());
+            }
+        }
+    }
+    Json(
+        serde_json::json!({"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
+        "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":store.state().revision,
+        "registered_groups":store.state().groups.len(),
+        "capacity":store.state().capacity,
+        "published_replica_counts":published_replica_counts,
+        "pending_commit_notifications":store.state().pending_commits.len(),
+        "pending_abort_notifications":store.state().pending_aborts.len(),
+        "operation":store.state().operation,"blocked_reason":*c.blocked.lock().unwrap()}),
+    )
+}
+async fn ready(State(c): State<Coordinator>) -> StatusCode {
+    if c.manifest().await.is_some() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+async fn metrics(
+    State(c): State<Coordinator>,
+) -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
+    let snapshots = c.snapshots.read().await;
+    let manifest = snapshots.first().map(|s| &s.saved.manifest);
+    let routes = snapshots
+        .first()
+        .map(|s| {
+            s.saved
+                .routes
+                .iter()
+                .map(|(id, replicas)| (*id, replicas.len()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let store = c.store.lock().unwrap();
+    let blocked = c.blocked.lock().unwrap().is_some();
+    let telemetry = c.telemetry.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        super::telemetry::coordinator(store.state(), manifest, &routes, blocked, &telemetry, now),
+    )
 }
 
 #[cfg(test)]
-mod tests {
-    /// The transparent-spend tables are deprecated: nothing may publish them
-    /// and no route may expose them. A restored route would otherwise pass
-    /// every other test in this file.
+mod admission_tests {
     #[test]
-    fn only_the_enhance_table_is_served() {
-        assert_eq!(super::DatabaseId::ALL, [super::DatabaseId::Enhance]);
-        let source = std::include_str!("coordinator.rs");
-        for path in [
-            "/v1/transparent-spend/init",
-            "/v1/transparent-spend/cold/query",
-            "/v1/transparent-spend/warm/query",
-        ] {
-            assert!(
-                !source.contains(&format!("route(\"{path}\"")),
-                "{path} is routed again; the spend tables are not published"
-            );
-        }
-    }
-
-    #[test]
-    fn same_height_reorg_gets_a_distinct_generation() {
-        assert_eq!(super::next_generation(None, 100), 100);
-        assert_eq!(super::next_generation(Some(100), 100), 101);
-        assert_eq!(super::next_generation(Some(101), 105), 105);
-    }
-
-    /// Every table's hint (at most about 1.5x its shard bytes on the POC) must
-    /// fit the read limit with room to spare.
-    #[test]
-    fn worker_hint_limit_covers_every_table() {
-        for table in super::DatabaseId::ALL {
-            let shard_bytes = table.layout().shard_bytes();
-            assert!(
-                super::worker_hint_limit() >= shard_bytes * 2,
-                "{table}: hint limit too small for a {shard_bytes}-byte shard"
-            );
-        }
-    }
-
-    use super::{health_status, is_ready, CoordinatorPhase, HEALTH_PHASE_GRACE_PERIOD};
-    use axum::http::StatusCode;
-    use std::time::Duration;
-
-    #[test]
-    fn readiness_follows_the_live_snapshot() {
-        let building = CoordinatorPhase::Building { anchor_height: 1 };
-        let syncing = CoordinatorPhase::Syncing {
-            current_height: 0,
-            target_height: 1,
+    fn restart_rejects_changed_placement_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let group = Group {
+            placement_policy: control::PlacementPolicy { sealed_shards: 7 },
+            id: "g0".into(),
+            sequence: 0,
+            settling: false,
+            replicas: (0..2)
+                .map(|i| control::Replica {
+                    name: format!("r{i}"),
+                    url: format!("http://127.0.0.1:{}", 9100 + i),
+                    incarnation: String::new(),
+                    ledger: Default::default(),
+                })
+                .collect(),
         };
-        let failed = CoordinatorPhase::Failed { reason: "x".into() };
-        assert!(is_ready(&CoordinatorPhase::Serving, true));
-        assert!(is_ready(&building, true));
-        assert!(!is_ready(&CoordinatorPhase::Serving, false));
-        assert!(!is_ready(&building, false));
-        assert!(!is_ready(&syncing, true));
-        assert!(!is_ready(&failed, true));
+        drop(Coordinator::open(root.path(), vec![group.clone()]).unwrap());
+        let mut changed = group.clone();
+        changed.placement_policy.sealed_shards = 6;
+        assert!(Coordinator::open(root.path(), vec![changed]).is_err());
+        assert!(Coordinator::open(root.path(), vec![group]).is_ok());
     }
-
-    #[test]
-    fn health_graces_short_syncs_and_builds() {
-        let syncing = CoordinatorPhase::Syncing {
-            current_height: 0,
-            target_height: 1,
-        };
-        let building = CoordinatorPhase::Building { anchor_height: 1 };
-        let failed = CoordinatorPhase::Failed { reason: "x".into() };
-
-        assert_eq!(
-            health_status(&CoordinatorPhase::Serving, Duration::ZERO),
-            StatusCode::OK
-        );
-        assert_eq!(health_status(&syncing, Duration::ZERO), StatusCode::OK);
-        assert_eq!(
-            health_status(&building, HEALTH_PHASE_GRACE_PERIOD),
-            StatusCode::OK
-        );
-        assert_eq!(
-            health_status(
-                &syncing,
-                HEALTH_PHASE_GRACE_PERIOD + Duration::from_millis(1)
-            ),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            health_status(&failed, Duration::ZERO),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-    }
-}
-
-#[cfg(test)]
-mod streaming_hint_tests {
-    use super::*;
-    use crate::artifact::stream_reader;
-    use crate::wire::encode_crs_blocks;
-    use std::io::Cursor;
 
     #[tokio::test]
-    async fn remote_hint_decodes_chunks_and_rejects_invalid_or_oversized_bodies() {
-        let blocks = vec![CrsBlock {
-            rows: vec![vec![1, 2], vec![3, 4]],
-        }];
-        let valid = encode_crs_blocks(&blocks);
-        for (bytes, limit, succeeds) in [
-            (valid.clone(), valid.len(), true),
-            (valid.clone(), valid.len() - 1, false),
-            (valid[..valid.len() - 1].to_vec(), valid.len(), false),
-            ([valid.as_slice(), &[0]].concat(), valid.len() + 1, false),
-            (vec![0; valid.len()], valid.len(), false),
-        ] {
-            let app = Router::new().route(
-                "/hint",
-                get(move || {
-                    let bytes = bytes.clone();
-                    async move { axum::body::Body::from_stream(stream_reader(Cursor::new(bytes))) }
-                }),
-            );
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = tokio::spawn(async move {
-                axum::serve(listener, app).await.unwrap();
+    async fn preparation_outlives_default_http_deadline() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = axum::Router::new().route(
+            "/internal/prepare",
+            axum::routing::post(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                axum::http::StatusCode::OK
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(10))
+            .build()
+            .unwrap();
+        let ordinary = http
+            .post(format!("http://{address}/internal/prepare"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(ordinary.is_timeout());
+        let result = super::preparation_request(&http, &format!("http://{address}"))
+            .send()
+            .await;
+        server.abort();
+        assert_eq!(result.unwrap().status(), axum::http::StatusCode::OK);
+    }
+
+    use super::*;
+    use axum::response::IntoResponse;
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn reorg_destination_memory_refusal_replans_to_complete_spare_pair() {
+        let root = tempfile::tempdir().unwrap();
+        let memory_refusal = Arc::new(AtomicBool::new(true));
+        let mut groups = Vec::new();
+        let mut tasks = Vec::new();
+        for sequence in 0..3 {
+            let mut replicas = Vec::new();
+            for index in 0..2 {
+                let refuse = memory_refusal.clone();
+                let router = Router::new().route(
+                    "/internal/admit",
+                    post(move || {
+                        let refuse = refuse.clone();
+                        async move {
+                            if sequence == 1 && index == 1 {
+                                if refuse.load(Ordering::SeqCst) {
+                                    StatusCode::INSUFFICIENT_STORAGE
+                                } else {
+                                    StatusCode::SERVICE_UNAVAILABLE
+                                }
+                            } else {
+                                StatusCode::NO_CONTENT
+                            }
+                        }
+                    }),
+                );
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let url = format!("http://{}", listener.local_addr().unwrap());
+                tasks.push(tokio::spawn(async move {
+                    axum::serve(listener, router).await.unwrap();
+                }));
+                replicas.push(control::Replica {
+                    name: format!("g{sequence}-r{index}"),
+                    url,
+                    incarnation: String::new(),
+                    ledger: control::Ledger::default(),
+                });
+            }
+            groups.push(Group {
+                placement_policy: Default::default(),
+                id: format!("g{sequence}"),
+                sequence,
+                replicas,
+                settling: false,
             });
-            let response = reqwest::get(format!("http://{address}/hint"))
-                .await
-                .unwrap();
-            assert!(
-                response.content_length().is_none(),
-                "exercise running size bound"
-            );
-            let result = tokio::time::timeout(
-                Duration::from_secs(5),
-                read_worker_hint(response, limit, 1, 2),
-            )
+        }
+        let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
+        let mut lifecycle = enhance_pir::protocol::Lifecycle::default();
+        let old = lifecycle
+            .coverage((6 * 32768 + 4096) * 33, Geometry::default())
+            .unwrap();
+        let previous: BTreeMap<_, _> = old
+            .shards
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id, if i < 6 { "g0" } else { "g1" }.to_owned()))
+            .collect();
+        let coverage = lifecycle
+            .coverage((5 * 32768 + 4096) * 33, Geometry::default())
+            .unwrap();
+        let planned = control::assign(&coverage, &groups, &previous).unwrap();
+        let frontier = coverage.shards.last().unwrap().id;
+        assert_eq!(previous[&frontier], "g0");
+        assert_eq!(planned[&frontier], "g1");
+        // Valid plan geometry and identities, but no materialized data: these
+        // endpoints model admission outcomes, not measured memory qualification.
+        let plans: Vec<_> = coverage
+            .shards
+            .iter()
+            .map(|shard| DomainPlan {
+                shard: shard.clone(),
+                units: shard
+                    .units
+                    .iter()
+                    .map(|u| UnitIdentity {
+                        table: "enhance".into(),
+                        shard_id: shard.id,
+                        local_row_start: u.local_row_start,
+                        allocated_rows: u.allocated_rows,
+                        setup_sha256: hex::encode(Sha256::digest(setup_seed(shard.id))),
+                        parameter_id: unit_parameter_id(u.allocated_rows).unwrap(),
+                        content_sha256: "00".repeat(32),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let relocated = coordinator
+            .relocate_if_memory_refused(&coverage, &groups, &plans, &previous, planned.clone())
+            .await;
+        assert_eq!(
+            relocated[&frontier], "g2",
+            "one admitting replica cannot satisfy a moved shard's pair quorum"
+        );
+        assert_eq!(
+            control::required_destination_pairs(&relocated, &previous),
+            ["g2".to_owned()].into()
+        );
+        for (shard, group) in &planned {
+            if *shard != frontier {
+                assert_eq!(&relocated[shard], group);
+            }
+        }
+        memory_refusal.store(false, Ordering::SeqCst);
+        assert_eq!(
+            coordinator
+                .relocate_if_memory_refused(&coverage, &groups, &plans, &previous, planned.clone())
+                .await,
+            planned,
+            "unavailable peer alone must not be interpreted as memory pressure"
+        );
+        memory_refusal.store(true, Ordering::SeqCst);
+        let mut unavailable = groups.clone();
+        unavailable[2].replicas.pop();
+        assert_eq!(
+            coordinator
+                .relocate_if_memory_refused(
+                    &coverage,
+                    &unavailable,
+                    &plans,
+                    &previous,
+                    planned.clone()
+                )
+                .await,
+            planned,
+            "an incomplete spare pair cannot receive the reorg shard"
+        );
+        for task in tasks {
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn elective_consolidation_requires_both_admissions_and_does_not_reserve() {
+        let root = tempfile::tempdir().unwrap();
+        let reject_peer = Arc::new(AtomicBool::new(true));
+        let mut tasks = Vec::new();
+        let mut groups = Vec::new();
+        let mut original_files = Vec::new();
+        for sequence in 0..2 {
+            let mut replicas = Vec::new();
+            for index in 0..2 {
+                let name = format!("g{sequence}-r{index}");
+                let path = root.path().join(&name);
+                let worker = worker::Worker::open(&path).unwrap();
+                let state_file = path.join("worker.json");
+                original_files.push((state_file.clone(), fs::read(state_file).ok()));
+                let reject = reject_peer.clone();
+                let router = worker.router().layer(axum::middleware::from_fn(
+                    move |request: Request, next: axum::middleware::Next| {
+                        let reject = reject.clone();
+                        async move {
+                            if sequence == 0
+                                && index == 1
+                                && request.uri().path() == "/internal/admit"
+                                && reject.load(Ordering::SeqCst)
+                            {
+                                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                            }
+                            next.run(request).await
+                        }
+                    },
+                ));
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let url = format!("http://{}", listener.local_addr().unwrap());
+                tasks.push(tokio::spawn(async move {
+                    axum::serve(listener, router).await.unwrap();
+                }));
+                replicas.push(control::Replica {
+                    name,
+                    url,
+                    incarnation: String::new(),
+                    ledger: control::Ledger::default(),
+                });
+            }
+            groups.push(Group {
+                placement_policy: Default::default(),
+                id: format!("g{sequence}"),
+                sequence,
+                replicas,
+                settling: false,
+            });
+        }
+        let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
+        let coverage = Lifecycle::default()
+            .coverage((6 * 32768 + 4096) * 33, Geometry::default())
+            .unwrap();
+        let original: BTreeMap<_, _> = coverage
+            .shards
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id, if i < 5 { "g0" } else { "g1" }.to_owned()))
+            .collect();
+        // Full-sized plan metadata is enough to exercise the real admission model;
+        // these hashes do not stand for materialized or qualified databases.
+        let plans: Vec<_> = coverage
+            .shards
+            .iter()
+            .map(|shard| DomainPlan {
+                shard: shard.clone(),
+                units: shard
+                    .units
+                    .iter()
+                    .map(|u| UnitIdentity {
+                        table: "enhance".into(),
+                        shard_id: shard.id,
+                        local_row_start: u.local_row_start,
+                        allocated_rows: u.allocated_rows,
+                        setup_sha256: hex::encode(Sha256::digest(setup_seed(shard.id))),
+                        parameter_id: unit_parameter_id(u.allocated_rows).unwrap(),
+                        content_sha256: "00".repeat(32),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let mut previous = original.clone();
+        let new_shard = coverage.shards[0].id;
+        previous.remove(&new_shard);
+        let (alternative, strict) = coordinator
+            .place_new_if_admitted(&coverage, &groups, &plans, &previous, original.clone())
             .await
             .unwrap();
-            server.abort();
-            assert_eq!(result.is_ok(), succeeds, "{result:?}");
-            if let Ok(decoded) = result {
-                assert_eq!(decoded[0].rows, blocks[0].rows);
-            }
+        assert_eq!(alternative[&new_shard], "g1");
+        assert_eq!(strict, ["g1".to_owned()].into());
+        for (shard, group) in &previous {
+            assert_eq!(alternative[shard], *group);
+        }
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.push(control::PendingAbort {
+                    replica: groups[1].replicas[1].name.clone(),
+                    operation: "pending".into(),
+                    attempt: 1,
+                });
+                Ok(())
+            })
+            .unwrap();
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &groups, &plans, &previous, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged, original,
+            "pending decision excludes an alternative despite free memory"
+        );
+        assert!(strict.is_empty());
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.clear();
+                Ok(())
+            })
+            .unwrap();
+        let mut unavailable = groups.clone();
+        unavailable[1].replicas.pop();
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &unavailable, &plans, &previous, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged, original,
+            "one alternative replica cannot authorize relocation"
+        );
+        assert!(strict.is_empty());
+        let mut settling = groups.clone();
+        settling[1].settling = true;
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &settling, &plans, &previous, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(unchanged, original);
+        assert!(strict.is_empty());
+        // No newly introduced shards means the fallback cannot relocate published data.
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &groups, &plans, &original, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(unchanged, original);
+        assert!(strict.is_empty());
+        let (deferred, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            deferred, original,
+            "one available destination cannot force an elective move"
+        );
+        assert!(strict.is_empty());
+        reject_peer.store(false, Ordering::SeqCst);
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.push(control::PendingAbort {
+                    replica: groups[0].replicas[0].name.clone(),
+                    operation: "pending".into(),
+                    attempt: 2,
+                });
+                Ok(())
+            })
+            .unwrap();
+        let (unchanged, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged, original,
+            "pending decision defers elective consolidation too"
+        );
+        assert!(strict.is_empty());
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.clear();
+                Ok(())
+            })
+            .unwrap();
+
+        let (admitted, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(strict, ["g0".to_owned()].into());
+        assert_eq!(admitted[&coverage.shards[5].id], "g0");
+        assert_eq!(admitted[&coverage.shards[6].id], "g1");
+        for (path, before) in original_files {
+            assert_eq!(fs::read(path).ok(), before);
+        }
+        assert!(coordinator
+            .store
+            .lock()
+            .unwrap()
+            .state()
+            .operation
+            .is_none());
+        let origin = &groups[0].replicas[0].url;
+        let mut invalid = plans[..6].to_vec();
+        invalid[0].shard.state = ShardState::Growing;
+        assert_eq!(
+            coordinator
+                .http
+                .post(format!("{origin}/internal/admit"))
+                .json(&invalid)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        // An unresolved candidate also defers consolidation; admission must not
+        // implicitly cancel it or consume another operation attempt.
+        let candidate = worker::Candidate {
+            placement_policy: Default::default(),
+            operation: "held".into(),
+            attempt: 0,
+            epoch: 1,
+            expected_revision: 0,
+            generation: 1,
+            plans: vec![plans[0].clone()],
+        };
+        assert!(coordinator
+            .http
+            .post(format!("{origin}/internal/reserve"))
+            .json(&candidate)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        let (deferred, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(deferred, original);
+        assert!(strict.is_empty());
+        let health: serde_json::Value = coordinator
+            .http
+            .get(format!("{origin}/internal/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(health["candidate"]["operation"], "held");
+        for task in tasks {
+            task.abort();
         }
     }
 }

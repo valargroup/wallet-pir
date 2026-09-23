@@ -1,13 +1,13 @@
 # V4 hardware observation validation — September 23, 2026
 
-The candidate now includes a [read-only worker sampler](../../ops/scripts/sample-v4-worker.py).
+The candidate now includes a [read-only worker sampler](../../ops/scripts/sample-worker.py).
 It binds measurements to the running binary and bootstrap limits, records
 boot/process identities, cgroup memory/peaks/events, swap, pressure, host memory,
 per-process RSS/PSS and kernel RSS high-water accounting, disk space, and worker
 retention/candidate observations. It never resets counters or substitutes zero
 usage when collection fails.
 
-The [off-host observer](../../ops/scripts/observe-v4-pair.py) selects the persisted
+The [off-host observer](../../ops/scripts/observe-pair.py) selects the persisted
 bootstrapped pair, uses pinned-key SSH, retains every scheduled slot (including
 transport failures and missed deadlines), fsyncs the trace, and records its final
 SHA-256 digest. Output remains `qualification: unqualified`; no workload is
@@ -41,6 +41,6 @@ load/oracle results, publication timing, qualification assessment, and registrat
 still require implementation/integration and actual hardware execution.
 
 [Source hashes](source-sha256.json) identify sampler, observer, packaging, tests,
-and instructions. See the [implementation status](../../docs/architecture_2-implementation.md)
-for the remaining complete release gates and the [measurement instructions](../../ops/deploy/v4-candidate.md)
+and instructions. See the [implementation status](../../docs/qualification.md)
+for the remaining complete release gates and the [measurement instructions](../../docs/qualification.md)
 for units, counter/peak interpretation, error records, and off-host limitations.

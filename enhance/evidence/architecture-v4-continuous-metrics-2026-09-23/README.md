@@ -29,7 +29,7 @@ recorded windows when assessing them.
   state, and checked candidate/model flags. The worker and temporary state were
   removed afterward. No unrelated listener was adopted.
 
-The [Prometheus fixture](../../ops/fixtures/v4-worker-metrics.prom) comes from the
+The [Prometheus fixture](../../ops/fixtures/worker-metrics.prom) comes from the
 previous real separate-process workload's [worker scrape](../architecture-v4-metrics-2026-09-23/process-smoke/metrics/worker-0.prom).
 It contains no query positions or request-derived labels.
 
@@ -39,5 +39,5 @@ The live RPC test runs on macOS and does not measure Linux cgroups or 8 GiB
 capacity. Linux host/systemd parser tests do not constitute deployment of the
 actual service. No six-hour worker campaign, coordinator collector deployment,
 hardware qualification, live SSH rollout or production mutation occurred.
-See the [collection contract](../../ops/deploy/v4-candidate.md) and
-[remaining implementation gates](../../docs/architecture_2-implementation.md).
+See the [collection contract](../../docs/qualification.md) and
+[remaining implementation gates](../../docs/qualification.md).

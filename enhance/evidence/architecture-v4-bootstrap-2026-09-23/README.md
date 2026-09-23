@@ -1,6 +1,6 @@
 # V4 worker bootstrap validation — September 23, 2026
 
-The candidate bundle now contains a [host-local bootstrap installer](../../ops/scripts/bootstrap-v4-worker.py).
+The candidate bundle now contains a [host-local bootstrap installer](../../ops/scripts/bootstrap-worker.py).
 It verifies a trusted checksum-manifest digest, the full artifact inventory,
 clean-source candidate metadata and Linux x86-64 ELF format. It checks measured
 host RAM/available RAM, CPU count, disk, swap and cgroup support against explicit
@@ -36,6 +36,6 @@ upgrade procedure. No production service template or inventory was modified.
 Actual Linux installation, remote transfer/orchestration, hardware qualification,
 receipt verification, and automatic registration remain outstanding. No cloud
 resource, host account, or running service was changed by these tests. Refer to
-[bootstrap instructions](../../ops/deploy/v4-candidate.md) and the
-[implementation status](../../docs/architecture_2-implementation.md) for the
+[bootstrap instructions](../../docs/qualification.md) and the
+[implementation status](../../docs/qualification.md) for the
 remaining gates. [Source hashes](source-sha256.json) bind this change's inputs.

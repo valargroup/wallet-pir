@@ -1,7 +1,7 @@
 # Wallet PIR production infrastructure
 
 The c-4 three-shard target below is not yet production-deployed.
-Follow the [migration and qualification gates](../../../../enhance/docs/deployment.md#capacity-expansion-target); do not apply this root to the legacy pair without the state moves described there.
+Follow the [migration and qualification gates](../../../../enhance/docs/qualification.md); do not apply this root to the legacy pair without the state moves described there.
 
 This Terraform root manages the shared Wallet PIR production infrastructure in
 the `wallet-pir` DigitalOcean project:

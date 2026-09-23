@@ -1,494 +1,376 @@
-use clap::{Parser, ValueEnum};
-use enhance_pir::types::{ACTIVATION_HEIGHT, RECORDS_PER_ROW, SCHEMA_VERSION};
-use enhance_pir_server::coordinator::{
-    router, Anchor, CoordinatorPhase, CoordinatorState, TableJournal, TableSetup, WorkerGroup,
-    WorkerTarget,
+//! Enhance PIR coordinator and worker entrypoint.
+use clap::{Parser, Subcommand};
+use enhance_pir_server::{
+    control::{Group, Ledger, PlacementPolicy, Replica},
+    coordinator::Coordinator,
+    ingest::EnhanceJournal,
+    worker::Worker,
+    zakura::ZakuraClient,
 };
-use enhance_pir_server::ingest::EnhanceJournal;
-use enhance_pir_server::store::RecordJournal;
-use enhance_pir_server::types::DatabaseId;
-use enhance_pir_server::worker::WorkerState;
-use enhance_pir_server::zakura::ZakuraClient;
 use serde::Deserialize;
-use std::collections::HashSet;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::time::Duration;
-use tracing_subscriber::EnvFilter;
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum Mode {
-    Distributed,
-    Embedded,
-}
-
-#[derive(Parser, Clone)]
-#[command(
-    name = "enhance-pir-server",
-    about = "Ironwood Enhance PIR coordinator"
-)]
+#[derive(Parser)]
 struct Cli {
-    #[arg(long, value_enum, default_value_t = Mode::Distributed)]
-    mode: Mode,
-    /// Rebuild/catch up the journal and exit without serving or contacting workers.
-    #[arg(long)]
-    prepare_only: bool,
-    #[arg(long, default_value = "127.0.0.1:8080")]
-    listen: SocketAddr,
-    #[arg(long, default_value = "http://127.0.0.1:8232")]
-    zakura_rpc_url: String,
-    #[arg(long)]
-    zakura_cookie: PathBuf,
-    #[arg(long, default_value = "./enhance-data")]
-    data_dir: PathBuf,
-    #[arg(long = "worker-url")]
-    worker_urls: Vec<String>,
-    #[arg(long, conflicts_with = "worker_urls")]
-    worker_config: Option<PathBuf>,
-    #[arg(long)]
-    control_socket: Option<PathBuf>,
-    #[arg(long, default_value_t = 10)]
-    poll_seconds: u64,
+    /// Deployment policy; seven sealed shards require independent qualification.
+    #[arg(long, global = true, default_value_t = 6)]
+    sealed_shards: usize,
+    #[command(subcommand)]
+    command: Command,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkerConfigFile {
-    groups: Vec<WorkerGroupConfig>,
-    /// Accepted and ignored. The transparent-spend tables are not served, but a
-    /// config file written for the previous release must not stop the
-    /// coordinator starting.
-    #[serde(default)]
-    transparent_spend_groups: Vec<WorkerGroupConfig>,
+#[derive(Subcommand)]
+enum Command {
+    /// Synthetic workloads for isolated, unregistered workers only. Never grants qualification.
+    Exercise {
+        #[arg(long, required = true)]
+        isolated_workers: bool,
+        #[arg(long, value_enum)]
+        profile: enhance_pir_server::exercise::Profile,
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        worker_config: PathBuf,
+        #[arg(long, default_value = "127.0.0.1:8280")]
+        listen: SocketAddr,
+        #[arg(long, default_value_t = 21600)]
+        seconds: u64,
+        #[arg(long, default_value_t = 300)]
+        min_publications: u64,
+        #[arg(long, default_value_t = 60)]
+        publication_interval: u64,
+        #[arg(long, default_value_t = 2)]
+        concurrency: usize,
+    },
+    /// Offline repair of journal-referenced rows from a peer row archive.
+    RepairRows {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        source_rows: PathBuf,
+    },
+    Worker {
+        #[arg(long, default_value = "127.0.0.1:8091")]
+        listen: SocketAddr,
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    Coordinator {
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        listen: SocketAddr,
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        worker_config: PathBuf,
+        #[arg(long, default_value = "http://127.0.0.1:8232")]
+        zakura_rpc_url: String,
+        #[arg(long)]
+        zakura_cookie: Option<PathBuf>,
+        /// Dedicated synthetic fixture environment only. Never use on serving production data.
+        #[arg(long)]
+        isolated_fixture: bool,
+        #[arg(long, default_value_t = 67)]
+        fixture_records: u64,
+        #[arg(long, default_value_t = 1)]
+        fixture_append_records: u64,
+        #[arg(long, default_value_t = 10)]
+        poll_seconds: u64,
+        #[arg(long, default_value_t = 1.0)]
+        capacity_fallback_rows_per_second: f64,
+        #[arg(long, default_value_t = 21600.0)]
+        capacity_readiness_seconds: f64,
+        #[arg(long, default_value_t = 4096)]
+        capacity_burst_rows: u64,
+    },
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WorkerGroupConfig {
+struct Inventory {
+    groups: Vec<InventoryGroup>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InventoryGroup {
     name: String,
-    replicas: Vec<WorkerConfig>,
+    replicas: Vec<InventoryReplica>,
 }
-
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WorkerConfig {
+struct InventoryReplica {
     name: String,
     url: String,
 }
 
-fn remote_worker_setups(cli: &Cli) -> Result<Vec<TableSetup>, Box<dyn std::error::Error>> {
-    let enhance = if let Some(path) = &cli.worker_config {
-        let config = parse_worker_config(&std::fs::read(path)?)?;
-        if !config.transparent_spend_groups.is_empty() {
-            tracing::warn!(
-                "worker config declares transparent_spend_groups; those tables are \
-                 no longer served and the entry is ignored"
-            );
-        }
-        config.groups
-    } else {
-        let groups: Vec<_> = cli
-            .worker_urls
-            .iter()
-            .enumerate()
-            .map(|(index, url)| WorkerGroupConfig {
-                name: format!("shard-group-{}", index + 1),
-                replicas: vec![WorkerConfig {
-                    name: format!("worker-{}", index + 1),
-                    url: url.clone(),
-                }],
-            })
-            .collect();
-        groups
-    };
-    if enhance.is_empty() {
-        return Err("distributed mode requires at least one worker group".into());
-    }
-    Ok(vec![TableSetup {
-        table: DatabaseId::Enhance,
-        groups: validate_worker_groups(enhance)?,
-    }])
-}
-
-fn validate_worker_groups(
-    configured: Vec<WorkerGroupConfig>,
-) -> Result<Vec<WorkerGroup>, Box<dyn std::error::Error>> {
-    let mut group_names = HashSet::new();
-    let mut names = HashSet::new();
-    let mut urls = HashSet::new();
-    configured
+fn load_inventory(
+    path: &std::path::Path,
+) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
+    let config: Inventory = serde_json::from_slice(&std::fs::read(path)?)?;
+    Ok(config
+        .groups
         .into_iter()
-        .map(|group| {
-            validate_name("worker group", &group.name)?;
-            if !group_names.insert(group.name.clone()) {
-                return Err(format!("duplicate worker group name: {}", group.name));
-            }
-            if group.replicas.is_empty() {
-                return Err(format!("worker group {} has no replicas", group.name));
-            }
-            let replicas = group
+        .enumerate()
+        .map(|(sequence, g)| Group {
+            placement_policy: Default::default(),
+            id: g.name,
+            sequence: sequence as u64,
+            settling: false,
+            replicas: g
                 .replicas
                 .into_iter()
-                .map(|worker| {
-                    validate_name("worker", &worker.name)?;
-                    let parsed = reqwest::Url::parse(&worker.url)
-                        .map_err(|error| format!("invalid URL for {}: {error}", worker.name))?;
-                    if !matches!(parsed.scheme(), "http" | "https")
-                        || parsed.host_str().is_none()
-                        || parsed.username() != ""
-                        || parsed.password().is_some()
-                        || parsed.query().is_some()
-                        || parsed.fragment().is_some()
-                    {
-                        return Err(format!("invalid URL for {}", worker.name));
-                    }
-                    let url = worker.url.trim_end_matches('/').to_string();
-                    if !names.insert(worker.name.clone()) {
-                        return Err(format!("duplicate worker name: {}", worker.name));
-                    }
-                    if !urls.insert(url.clone()) {
-                        return Err(format!("duplicate worker URL: {url}"));
-                    }
-                    Ok(WorkerTarget::Remote {
-                        name: worker.name,
-                        base_url: url,
-                    })
+                .map(|r| Replica {
+                    name: r.name,
+                    url: r.url.trim_end_matches('/').into(),
+                    incarnation: String::new(),
+                    ledger: Ledger::default(),
                 })
-                .collect::<Result<Vec<_>, String>>()?;
-            Ok(WorkerGroup {
-                name: group.name,
-                replicas,
-            })
+                .collect(),
         })
-        .collect::<Result<Vec<WorkerGroup>, String>>()
-        .map_err(Into::into)
-}
-
-fn validate_name(kind: &str, name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '-')
-    {
-        return Err(format!("invalid {kind} name: {name:?}"));
-    }
-    Ok(())
-}
-
-fn parse_worker_config(bytes: &[u8]) -> Result<WorkerConfigFile, serde_json::Error> {
-    serde_json::from_slice(bytes)
+        .collect())
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Err("legacy Enhance serving is retired; use enhance-pir-v4 with fresh schema-11 data".into())
-}
-
-#[allow(dead_code)]
-async fn legacy_main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let cli = Cli::parse();
-    if cli.prepare_only {
-        prepare(&cli).await.map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-    let setups = match cli.mode {
-        Mode::Distributed => remote_worker_setups(&cli)?,
-        Mode::Embedded => {
-            tracing::warn!("embedded mode runs one in-process worker; not for production");
-            let groups = vec![WorkerGroup {
-                name: "embedded-group".to_string(),
-                replicas: vec![WorkerTarget::Embedded {
-                    name: "embedded".to_string(),
-                    state: WorkerState::new(cli.data_dir.join("embedded-worker"))?,
-                }],
-            }];
-            DatabaseId::ALL
-                .into_iter()
-                .map(|table| TableSetup {
-                    table,
-                    groups: groups.clone(),
-                })
-                .collect()
-        }
+    let placement_policy = PlacementPolicy {
+        sealed_shards: cli.sealed_shards,
     };
-    let mut state = CoordinatorState::new(setups.clone())?;
-    if let Some(socket) = cli.control_socket.clone() {
-        use enhance_pir_server::topology::{Group, Replica, TopologyStore};
-        let groups = setups[0]
-            .groups
-            .iter()
-            .map(|g| {
-                Ok(Group {
-                    name: g.name.clone(),
-                    replicas: g
-                        .replicas
-                        .iter()
-                        .map(|r| match r {
-                            WorkerTarget::Remote { name, base_url } => Ok(Replica {
-                                name: name.clone(),
-                                url: base_url.clone(),
-                            }),
-                            _ => Err("control socket requires distributed workers"),
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                })
-            })
-            .collect::<Result<Vec<_>, &str>>()?;
-        let topology = std::sync::Arc::new(TopologyStore::open(
-            cli.data_dir.join("topology.json"),
-            groups,
-        )?);
-        state = state.with_topology(topology.clone());
-        tokio::spawn(async move {
-            if let Err(error) = enhance_pir_server::topology::serve(socket, topology).await {
-                tracing::error!(%error, "topology control socket stopped");
+    placement_policy.validate()?;
+    match cli.command {
+        Command::Exercise {
+            isolated_workers,
+            profile,
+            data_dir,
+            worker_config,
+            listen,
+            seconds,
+            min_publications,
+            publication_interval,
+            concurrency,
+        } => {
+            if !isolated_workers {
+                return Err("isolated worker acknowledgement required".into());
             }
-        });
-    }
-    let ingest_state = state.clone();
-    let ingest_cli = cli.clone();
-    tokio::spawn(async move {
-        loop {
-            if let Err(error) = ingest(ingest_cli.clone(), ingest_state.clone()).await {
-                tracing::error!(%error, "Enhance PIR ingestion stopped");
-                ingest_state
-                    .set_phase(CoordinatorPhase::Failed {
-                        reason: "ingestion failed; retrying; inspect local logs".to_string(),
-                    })
-                    .await;
-                tokio::time::sleep(Duration::from_secs(30)).await;
+            let mut groups = load_inventory(&worker_config)?;
+            for group in &mut groups {
+                group.placement_policy = placement_policy;
             }
+            enhance_pir_server::exercise::run(
+                enhance_pir_server::exercise::Config {
+                    profile,
+                    root: data_dir,
+                    listen,
+                    seconds,
+                    min_publications,
+                    interval: Duration::from_secs(publication_interval),
+                    concurrency,
+                },
+                groups,
+            )
+            .await?;
         }
-    });
-    let listener = tokio::net::TcpListener::bind(cli.listen).await?;
-    tracing::info!(listen = %cli.listen, mode = ?cli.mode, "Enhance PIR coordinator started");
-    axum::serve(listener, router(state)).await?;
-    Ok(())
-}
-
-/// Resume canonical ingestion in an explicitly selected data directory.
-///
-/// The directory's journal decides the layout, not this binary: `EnhanceJournal::open`
-/// refuses a manifest whose record width or records-per-row differs from the
-/// build's. The schema is logged rather than written into the message so a
-/// preparation log says which layout it actually built.
-async fn prepare(cli: &Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
-    let mut journal = EnhanceJournal::open(&cli.data_dir)?;
-    let target = zakura.tip_height().await?;
-    if target < ACTIVATION_HEIGHT {
-        return Err("chain has not reached Ironwood activation".into());
-    }
-    reconcile(&zakura, &mut journal.records, target).await?;
-    let next = journal
-        .committed_height()
-        .map_or(ACTIVATION_HEIGHT, |h| h + 1);
-    for height in next..=target {
-        journal.append_block(&zakura.block(height).await?)?;
-        if height % 1000 == 0 {
-            tracing::info!(height, target, schema = SCHEMA_VERSION, "preparing journal");
-        }
-    }
-    let (height, hash) = journal.highest_committed().ok_or("empty journal")?;
-    if height != target
-        || zakura.block_hash(height).await? != hash
-        || zakura.tree_size(height).await? != journal.records.tree_size()
-    {
-        return Err("preparation anchor changed; rerun to reconcile".into());
-    }
-    tracing::info!(
-        height,
-        hash,
-        positions = journal.records.tree_size(),
-        schema = SCHEMA_VERSION,
-        records_per_row = RECORDS_PER_ROW,
-        "journal prepared"
-    );
-    Ok(())
-}
-
-async fn ingest(
-    cli: Cli,
-    state: CoordinatorState,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let zakura = ZakuraClient::from_cookie_file(&cli.zakura_rpc_url, &cli.zakura_cookie)?;
-    let mut enhance = EnhanceJournal::open(&cli.data_dir)?;
-    loop {
-        let target = zakura.tip_height().await?;
-        reconcile(&zakura, &mut enhance.records, target).await?;
-        if target < ACTIVATION_HEIGHT {
-            return Err("Zakura has not reached Ironwood activation".into());
-        }
-        let mut next = enhance
-            .committed_height()
-            .map_or(ACTIVATION_HEIGHT, |height| height + 1);
-        if next <= target {
-            state
-                .set_phase(CoordinatorPhase::Syncing {
-                    current_height: next.saturating_sub(1),
-                    target_height: target,
-                })
-                .await;
-        }
-        while next <= target {
-            let block = zakura.block(next).await?;
-            enhance.append_block(&block)?;
-            next += 1;
-        }
-        let current_hash = enhance
-            .highest_committed()
-            .filter(|(height, _)| *height == target)
-            .map(|(_, hash)| hash);
-        let already_published = state.manifest().is_some_and(|manifest| {
-            manifest.anchor_height == target
-                && current_hash.as_deref() == Some(manifest.anchor_block_hash.as_str())
-        });
-        if enhance.committed_height() == Some(target)
-            && (!already_published || state.has_pending_topology())
-        {
-            // Do not publish a height that ceased to be the best-chain tip
-            // while its mutable tail shards were being assembled.
-            if zakura.tip_height().await? != target {
-                continue;
-            }
-            let hash = current_hash.expect("committed target has a block hash");
-            if zakura.block_hash(target).await? != hash {
-                continue;
-            }
-            let enhance_table = TableJournal::new(DatabaseId::Enhance, &enhance.records)?;
-            let candidate_append = state.has_pending_topology();
-            if let Err(error) = state
-                .publish_checked(
-                    &[&enhance_table],
-                    Anchor {
-                        height: target,
-                        hash: hash.clone(),
-                    },
-                    || async {
-                        if zakura.tip_height().await.map_err(|e| e.to_string())? != target
-                            || zakura.block_hash(target).await.map_err(|e| e.to_string())? != hash
-                        {
-                            Err("publication anchor changed during preparation".into())
-                        } else {
-                            Ok(())
-                        }
-                    },
-                )
-                .await
-            {
-                tracing::error!(%error, "publication failed; preserving retained queries and retrying");
-                if (candidate_append || error == "publication anchor changed during preparation")
-                    && state.manifest().is_some()
-                {
-                    state.set_phase(CoordinatorPhase::Serving).await;
-                } else {
-                    state
-                        .set_phase(CoordinatorPhase::Failed { reason: error })
-                        .await;
-                }
-                tokio::time::sleep(Duration::from_secs(cli.poll_seconds)).await;
-                continue;
-            }
-            tracing::info!(
-                tip_height = target,
-                positions = enhance.records.tree_size(),
-                "published tip-bound Enhance PIR generation"
+        Command::RepairRows {
+            data_dir,
+            source_rows,
+        } => {
+            let restored = Worker::repair_rows(&data_dir, &source_rows)?;
+            println!(
+                "{}",
+                serde_json::json!({"status":"rows_verified", "restored_units":restored,
+                "readiness":"requires_worker_restart", "qualification":"unqualified"})
             );
         }
-        tokio::time::sleep(Duration::from_secs(cli.poll_seconds)).await;
-    }
-}
-
-async fn reconcile(
-    zakura: &ZakuraClient,
-    journal: &mut RecordJournal,
-    tip: u64,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    loop {
-        let Some(last) = journal.last_block().cloned() else {
-            return Ok(());
-        };
-        if last.height <= tip && zakura.block_hash(last.height).await? == last.hash {
-            return Ok(());
+        Command::Worker { listen, data_dir } => {
+            let worker = Worker::open_with_policy(&data_dir, placement_policy)?;
+            axum::serve(
+                tokio::net::TcpListener::bind(listen).await?,
+                worker.router(),
+            )
+            .await?;
         }
-        let previous = journal
-            .blocks()
-            .iter()
-            .rev()
-            .nth(1)
-            .map(|block| block.height);
-        tracing::warn!(
-            height = last.height,
-            "rewinding PIR journal after best-chain change"
-        );
-        journal.rewind_to_height(previous)?;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn cli(worker_config: Option<PathBuf>, worker_urls: Vec<String>) -> Cli {
-        Cli {
-            prepare_only: false,
-            mode: Mode::Distributed,
-            listen: "127.0.0.1:8080".parse().unwrap(),
-            zakura_rpc_url: "http://127.0.0.1:8232".to_string(),
-            zakura_cookie: PathBuf::from("cookie"),
-            data_dir: PathBuf::from("data"),
-            worker_urls,
+        Command::Coordinator {
+            listen,
+            data_dir,
             worker_config,
-            control_socket: None,
-            poll_seconds: 10,
+            zakura_rpc_url,
+            zakura_cookie,
+            isolated_fixture,
+            fixture_records,
+            fixture_append_records,
+            poll_seconds,
+            capacity_fallback_rows_per_second,
+            capacity_readiness_seconds,
+            capacity_burst_rows,
+        } => {
+            let capacity_policy = enhance_pir_server::capacity::Policy {
+                fallback_rows_per_second: capacity_fallback_rows_per_second,
+                readiness_seconds: capacity_readiness_seconds,
+                burst_rows: capacity_burst_rows,
+            };
+            capacity_policy.validate()?;
+            if poll_seconds == 0
+                || (isolated_fixture && zakura_cookie.is_some())
+                || (!isolated_fixture && zakura_cookie.is_none())
+            {
+                return Err("select either a canonical RPC cookie or an isolated fixture; polling must be nonzero".into());
+            }
+            let mut groups = load_inventory(&worker_config)?;
+            for group in &mut groups {
+                group.placement_policy = placement_policy;
+            }
+            std::fs::create_dir_all(&data_dir)?;
+            let mode_path = data_dir.join("source-mode");
+            let mode = if isolated_fixture {
+                "synthetic-fixture"
+            } else {
+                "canonical-archive"
+            };
+            if mode_path.exists() {
+                if std::fs::read_to_string(&mode_path)? != mode {
+                    return Err("cannot mix fixture and canonical data directories".into());
+                }
+            } else {
+                std::fs::write(mode_path, mode)?;
+            }
+            let coordinator = Coordinator::open(&data_dir.join("control"), groups)?;
+            let serving = coordinator.clone();
+            let task = tokio::spawn(async move {
+                axum::serve(
+                    tokio::net::TcpListener::bind(listen).await?,
+                    serving.router(),
+                )
+                .await
+            });
+            let mut journal = EnhanceJournal::open(&data_dir)?;
+            let rpc = zakura_cookie
+                .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
+                .transpose()?;
+            loop {
+                if let Err(error) = coordinator.reconcile().await {
+                    tracing::error!(%error, "publication recovery blocked");
+                    tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
+                    continue;
+                }
+                // Capacity registration is independent of journal advancement. A bad
+                // or unavailable addition must not stop serving/publishing on the
+                // already registered fleet. The infrastructure writer replaces this
+                // file atomically only after provisioning its replica pair.
+                let inventory_result = match load_inventory(&worker_config) {
+                    Ok(mut groups) => {
+                        for group in &mut groups {
+                            group.placement_policy = placement_policy;
+                        }
+                        coordinator.reconcile_inventory(groups).await
+                    }
+                    Err(error) => Err(error.to_string()),
+                };
+                if let Err(error) = inventory_result {
+                    tracing::error!(%error, "inventory reconciliation deferred");
+                }
+                let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                    let (height, hash) = if let Some(rpc) = &rpc {
+                        let tip = rpc.tip_height().await?;
+                        while let Some(last) = journal.records.last_block().cloned() {
+                            if last.height <= tip && rpc.block_hash(last.height).await? == last.hash
+                            {
+                                break;
+                            }
+                            let previous = journal
+                                .records
+                                .blocks()
+                                .iter()
+                                .rev()
+                                .nth(1)
+                                .map(|b| b.height);
+                            journal.rewind_to_height(previous)?;
+                        }
+                        let next = journal
+                            .committed_height()
+                            .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
+                        for height in next..=tip {
+                            journal.append_block(&rpc.block(height).await?)?;
+                        }
+                        journal
+                            .highest_committed()
+                            .ok_or("empty canonical journal")?
+                    } else {
+                        let target = if journal.records.tree_size() == 0 {
+                            fixture_records
+                        } else {
+                            journal
+                                .records
+                                .tree_size()
+                                .checked_add(fixture_append_records)
+                                .ok_or("fixture overflow")?
+                        };
+                        if target == 0 || target > 23 * 32768 * 33 {
+                            return Err("fixture outside fleet coverage".into());
+                        }
+                        while journal.records.tree_size() < target {
+                            let start = journal.records.tree_size();
+                            let count = (target - start).min(4096);
+                            let records: Vec<_> = (start..start + count)
+                                .map(|p| {
+                                    let mut r = vec![0u8; enhance_pir::RECORD_BYTES];
+                                    r[..8].copy_from_slice(&p.to_le_bytes());
+                                    r
+                                })
+                                .collect();
+                            let height = journal
+                                .committed_height()
+                                .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
+                            journal.records.append_block(
+                                height,
+                                format!("{height:064x}"),
+                                &records,
+                            )?;
+                        }
+                        journal.highest_committed().ok_or("empty fixture")?
+                    };
+                    coordinator.observe_capacity(
+                        journal.records.tree_size(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs(),
+                        capacity_policy,
+                    )?;
+                    if coordinator
+                        .manifest()
+                        .await
+                        .is_some_and(|m| m.anchor_height == height && m.anchor_block_hash == hash)
+                    {
+                        return Ok(());
+                    }
+                    let verify_hash = hash.clone();
+                    coordinator
+                        .publish_checked(&journal.records, height, hash, || async {
+                            if let Some(rpc) = &rpc {
+                                if rpc.block_hash(height).await.map_err(|e| e.to_string())?
+                                    != verify_hash
+                                {
+                                    return Err(
+                                        "canonical anchor changed during preparation".into()
+                                    );
+                                }
+                            }
+                            Ok(())
+                        })
+                        .await?;
+                    Ok(())
+                }
+                .await;
+                if let Err(error) = result {
+                    tracing::error!(%error, "ingestion/publication blocked");
+                }
+                if task.is_finished() {
+                    return Err("HTTP server stopped".into());
+                }
+                tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
+            }
         }
     }
-
-    #[test]
-    fn a_config_without_a_spend_pool_is_accepted() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("workers.json");
-        std::fs::write(
-            &path,
-            br#"{"groups":[{"name":"group-a","replicas":[{"name":"worker-a","url":"http://10.0.0.2:8091"},{"name":"worker-b","url":"http://10.0.0.3:8091/"}]}]}"#,
-        )
-        .unwrap();
-        let setups = remote_worker_setups(&cli(Some(path), vec![])).unwrap();
-        assert_eq!(setups.len(), 1);
-        assert_eq!(setups[0].table, DatabaseId::Enhance);
-    }
-
-    #[test]
-    fn a_config_still_declaring_a_spend_pool_is_accepted_and_ignored() {
-        // A worker config written for the previous release must not stop the
-        // coordinator starting; the entry is ignored, not rejected.
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("workers.json");
-        std::fs::write(
-            &path,
-            br#"{"groups":[{"name":"enhance","replicas":[{"name":"enhance-a","url":"http://10.0.0.2:8091"}]}],"transparent_spend_groups":[{"name":"spend","replicas":[{"name":"transparent-spend-worker-01","url":"http://10.0.0.4:8091"}]}]}"#,
-        )
-        .unwrap();
-        let setups = remote_worker_setups(&cli(Some(path), vec![])).unwrap();
-        assert_eq!(setups.len(), 1);
-        assert_eq!(setups[0].table, DatabaseId::Enhance);
-        assert_eq!(setups[0].groups[0].replicas[0].name(), "enhance-a");
-    }
-
-    #[test]
-    fn rejects_removed_tables_option() {
-        assert!(Cli::try_parse_from([
-            "enhance-pir-server",
-            "--zakura-cookie",
-            "cookie",
-            "--tables",
-            "enhance"
-        ])
-        .is_err());
-    }
+    Ok(())
 }

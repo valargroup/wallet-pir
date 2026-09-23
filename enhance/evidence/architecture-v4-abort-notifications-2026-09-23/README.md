@@ -65,5 +65,5 @@ These tests use real cryptographic evaluation and HTTP listeners with controlled
 fault middleware. They do not establish 8 GiB hardware capacity, the six-hour
 qualification campaigns, lost-artifact repair, all distributed failure phases,
 or production deployment readiness. No cloud or production mutation occurred.
-See the [implementation status](../../docs/architecture_2-implementation.md) and
-[operating instructions](../../ops/deploy/v4-candidate.md).
+See the [implementation status](../../docs/qualification.md) and
+[operating instructions](../../docs/qualification.md).

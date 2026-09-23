@@ -109,8 +109,8 @@ class ReleaseTests(unittest.TestCase):
             for kind in release.BINARIES:
                 release.extract(root / 'bundles' / f'{kind}.tar.gz', root / kind, SHA, kind)
 
-    def test_v4_candidate_is_separate_and_cannot_claim_qualification(self):
-        kind = 'enhance-pir-v4-candidate'
+    def test_enhance_candidate_cannot_claim_qualification(self):
+        kind = 'enhance-pir'
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'target/release').mkdir(parents=True)
@@ -122,9 +122,6 @@ class ReleaseTests(unittest.TestCase):
             metadata = json.loads((root / 'verified/candidate.json').read_text())
             self.assertEqual(metadata['qualification'], 'unqualified')
             self.assertIsInstance(metadata['source_dirty'], bool)
-            self.assertFalse((root / 'bundles/enhance-pir.tar.gz').exists())
-            with self.assertRaises(ValueError):
-                release.extract(archive, root / 'legacy', SHA, 'enhance-pir')
             data = {p.name: p.read_bytes() for p in (root / 'verified').iterdir()}
             metadata['qualification'] = 'passed'
             data['candidate.json'] = json.dumps(metadata).encode()

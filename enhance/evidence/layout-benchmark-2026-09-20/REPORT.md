@@ -56,7 +56,7 @@ The first case uses 450,163 records; the smaller-shard cases use 466,986. Both c
 
 3. **A concrete 2,048-shard publication failure.** `worker_hint_limit()` in [coordinator.rs](../../services/enhance-pir-server/src/coordinator.rs), around line 1475, allows four times the largest plaintext shard size. For width 58 and 2,048 rows this is **350,175,232 bytes**. The real production encoder emits **402,751,544 bytes** for its 12 CRS blocks. The response exceeds the limit and publication would be rejected. `hint-limit-proof.json` comes from actually allocating and serializing those blocks and asserting the bounds. At 4,096 rows the limit is 700,350,464 bytes, so that particular blocker is absent. A parameter-derived limit is needed if using 2,048-row shards.
 
-4. **Autoscaling assumes the old layout.** [enhance-autoscale.py](../../ops/scripts/enhance-autoscale.py), line 22, fixes `GROUP_POSITIONS = 16 * 73728`, encoding 16 × 8,192 × 9. Capacity thresholds and group assignment need updating with any new geometry.
+4. **Autoscaling assumes the old layout.** [enhance-autoscale.py](../../../docs/cleanup-2026-09-23.md), line 22, fixes `GROUP_POSITIONS = 16 * 73728`, encoding 16 × 8,192 × 9. Capacity thresholds and group assignment need updating with any new geometry.
 
 5. **Packing CPU rises with row width.** At the refreshed count, median scan time falls from 20.43 to 14.71 ms for width 58, but median packing rises from 9.10 to 48.40 ms. Overall median server computation rises from 30.81 to 63.48 ms; width 29 is 42.09 ms. The 4,096-shard width-58 run is 72.79 ms. Separate sequential cases have some run-to-run variation; the original baseline repeat moved from 30.99 to 31.61 ms. None of these runs establish maximum QPS.
 

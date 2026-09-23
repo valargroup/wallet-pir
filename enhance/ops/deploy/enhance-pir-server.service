@@ -5,10 +5,8 @@ Wants=network-online.target
 Requires=zakurad.service
 
 [Service]
-RuntimeDirectory=enhance-pir
-RuntimeDirectoryMode=0700
 Type=simple
-ExecStart=/usr/local/bin/enhance-pir-server --mode distributed --listen 127.0.0.1:8080 --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/enhance-data-r33 --worker-config /etc/enhance-pir/workers.json --control-socket /run/enhance-pir/control.sock
+ExecStart=/opt/enhance-pir/current/enhance-pir-server coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir/canonical --worker-config /etc/enhance-pir/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie
 Restart=on-failure
 RestartSec=10
 User=root

@@ -61,5 +61,5 @@ it is not a substitute measurement-window denominator.
 The workload validates record decoding and encoding, not canonical equality or
 whole-wallet recovery. It does not measure server resource use, full-capacity
 memory, failover or online expansion. Passing this baseline does not satisfy
-hardware qualification. See the [performance guide](../../docs/performance.md)
+hardware qualification. See the [performance guide](../../docs/qualification.md)
 for stage definitions, historical comparisons and reproduction.

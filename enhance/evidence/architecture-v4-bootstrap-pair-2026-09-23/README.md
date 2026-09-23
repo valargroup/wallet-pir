@@ -1,6 +1,6 @@
 # V4 pair bootstrap and Linux validation — September 23, 2026
 
-The [pair-bootstrap driver](../../ops/scripts/v4-bootstrap-pair.py) connects
+The [pair-bootstrap driver](../../ops/scripts/bootstrap-pair.py) connects
 provisioned resources to verified artifact transfer and host bootstrap. It reuses
 the provisioning adapter's live account/project/VPC/state checks, selects the
 new pair by recorded IDs and private origins, requires pinned SSH host keys,
@@ -34,5 +34,5 @@ verification, coordinator inventory registration, and production deployment
 remain outstanding. No cloud resource, remote host, credential store, production
 service, or production inventory was changed. [Source hashes](source-sha256.json)
 identify the driver, shared provider checks, tests, and operator instructions.
-See the [implementation status](../../docs/architecture_2-implementation.md)
+See the [implementation status](../../docs/qualification.md)
 for the complete remaining release gates.

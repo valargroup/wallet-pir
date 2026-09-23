@@ -1,9 +1,0 @@
-{
-  "tools/ci/release.py": "5a01175545b750c9270053034f3d2a6e0d89d6250381c00cf9dc81e0fc891317",
-  "tools/tests/test_ci.py": "51f20778cab6813e0b3314fed545a6425f55952517e9a0f04066fc4e975ff049",
-  ".github/workflows/ci-full.yml": "21d1216d598937e87031eeca850d0ab9ae1a83db536e35c37240297276e380e7",
-  "enhance/ops/scripts/test-v4-local.py": "c6cd81b6027ec41b01f9b0ab245844b02189374bee710e86fd66336317d59bdb",
-  "enhance/ops/tests/test_v4_bundle.py": "13814f010a52577a7ab5f17c870fa9e8e529833c025f281000c7ef6673d10e89",
-  "enhance/ops/deploy/workers-v4.example.json": "dbd95448c50fa713711f60034b67599ef5b73d33e57e238384e5300deadb6c2f",
-  "enhance/ops/deploy/v4-candidate.md": "9ddea47f671eecf3bcd6aed9c31da866b02435bc819d40f759a041393afe735f"
-}

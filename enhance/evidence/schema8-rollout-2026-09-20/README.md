@@ -3,7 +3,7 @@
 Raw state and isolated qualification for the 29-record (schema 8) layout at
 source revision `c26c8f038536171aa70cae37d608b19c35b282cb`.
 
-Read [status](../../docs/status.md) for what was and was not deployed. This
+Read [status](../../docs/qualification.md) for what was and was not deployed. This
 directory holds the bytes; it draws no conclusion the files do not support.
 
 ## Artifacts

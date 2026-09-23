@@ -1,10 +1,10 @@
-# V4 preprocessing phase benchmark
+# Preprocessing phase benchmark
 
 Build and run outside a qualification workload:
 
 ```sh
-cargo build --locked --release -p enhance-pir-server --example v4-preprocess
-./target/release/examples/v4-preprocess --output /new/disposable/directory --repetitions 3
+cargo build --locked --release -p enhance-pir-server --example preprocess
+./target/release/examples/preprocess --output /new/disposable/directory --repetitions 3
 ```
 
 The output directory must not exist. `timings.jsonl` is flushed after every case;

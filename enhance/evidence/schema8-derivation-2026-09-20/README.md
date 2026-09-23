@@ -52,4 +52,4 @@ generation plus the unpublished candidate, and a runtime is its packed u16
 database plus its partial CRS blocks. It excludes the coordinator, the
 preparation slot, allocator overhead and every transient during a publish, so it
 is a lower bound on what a worker needs, not an estimate of what it will use.
-[Capacity expansion](../../docs/capacity-expansion.md) draws the conclusion.
+[Capacity expansion](../../docs/qualification.md) draws the conclusion.

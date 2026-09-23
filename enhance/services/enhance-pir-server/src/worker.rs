@@ -1,998 +1,1415 @@
-use crate::artifact::PublicationArtifact;
-use crate::ipir::{
-    add_intermediate_assign_mod, global_parameters, shard_parameters, CachedShard, ShardRuntime,
+//! Private worker API. A candidate never evicts a published assignment.
+use super::control::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT};
+use super::runtime::{DomainPlan, Engine, Evaluation};
+use axum::{
+    body::{to_bytes, Body},
+    extract::{Path, Request, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post, put},
+    Json, Router,
 };
-use crate::store::RecordJournal;
-use crate::types::DatabaseId;
-use crate::wire::{decode_evaluate_request, encode_evaluate_response, EvaluateRequest};
-use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json, Response};
-use axum::routing::{get, post, put};
-use axum::Router;
+use enhance_pir::protocol::{
+    digest, Manifest, ShardState, UnitIdentity, PROTOCOL_REVISION, RETAINED_GENERATIONS,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File, OpenOptions};
+use std::io::Read;
+use std::path::{Path as FsPath, PathBuf};
+use std::sync::{Arc, Mutex};
+use tokio::sync::Semaphore;
 
-/// Generations a worker keeps answerable. The coordinator serves the same
-/// number, so a session built against a recent snapshot survives publishes.
-/// A generation is published per block; a wallet pass (parameter fetch,
-/// anchor gate, one fixed query envelope) must fit inside the retained window
-/// even when blocks arrive in a burst, so eight (about ten minutes at the
-/// 75-second target) rather than the two that a single straddled publish
-/// would need.
-pub const RETAINED_GENERATIONS: usize = 8;
-
-/// Default concurrent shard evaluations per worker process.
-pub const DEFAULT_EVALUATION_SLOTS: usize = 2;
-
-/// A worker hosts shards of every table. Runtimes are keyed by table, shard,
-/// and row digest: re-preparing the frontier shard for a new generation must
-/// not replace the runtime the previous generation still answers with.
-#[derive(Clone)]
-pub struct WorkerState {
-    rlwe: Arc<BTreeMap<DatabaseId, inspiring::RlweParams>>,
-    shards: Arc<RwLock<HashMap<ShardKey, Arc<CachedShard>>>>,
-    active: Arc<RwLock<BTreeMap<u64, ActiveGeneration>>>,
-    artifact_dir: Arc<PathBuf>,
-    evaluation_slots: Arc<Semaphore>,
-    preparation_slots: Arc<Semaphore>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ShardKey {
-    table: DatabaseId,
-    shard_id: u64,
-    rows_sha256: String,
-}
-
-#[derive(Clone, Debug)]
-struct ActiveGeneration {
-    generation: u64,
-    /// Per table, the complete sorted assignment with each shard's digest.
-    tables: BTreeMap<DatabaseId, Vec<ActivateShard>>,
-}
-
-impl ActiveGeneration {
-    fn shard_ids(&self, table: DatabaseId) -> Option<Vec<u64>> {
-        self.tables
-            .get(&table)
-            .map(|shards| shards.iter().map(|shard| shard.shard_id).collect())
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct PrepareQuery {
-    query_row_start: usize,
-    logical_rows: u64,
-    rows_sha256: String,
-}
-
-/// Activates one generation across every table the worker serves. Sent once
-/// per publish; tables the worker holds no shards of are simply absent.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ActivateRequest {
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Candidate {
+    pub placement_policy: PlacementPolicy,
+    pub operation: String,
+    pub attempt: u64,
+    pub epoch: u64,
+    pub expected_revision: u64,
     pub generation: u64,
-    /// Published generations pinned by the coordinator, plus this candidate.
-    #[serde(default)]
-    pub retained_generations: Vec<u64>,
-    pub tables: BTreeMap<DatabaseId, Vec<ActivateShard>>,
+    pub plans: Vec<DomainPlan>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActivateShard {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Activation {
+    pub operation: String,
+    pub attempt: u64,
+    pub epoch: u64,
+    pub manifest: Manifest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Commit {
+    pub epoch: u64,
+    pub revision: u64,
+    pub generation: u64,
+    pub manifest_digest: String,
+    pub retained: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Abort {
+    pub epoch: u64,
+    pub operation: String,
+    pub attempt: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Retain {
+    pub epoch: u64,
+    pub generations: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Evaluate {
+    pub generation: u64,
     pub shard_id: u64,
-    pub rows_sha256: String,
+    pub epoch: String,
+    pub coefficients: Vec<u64>,
 }
 
-#[derive(Debug, Serialize)]
-struct PrepareResponse {
-    status: &'static str,
-    table: DatabaseId,
-    shard_id: u64,
-    rows_sha256: String,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Intermediate {
+    pub generation: u64,
+    pub shard_id: u64,
+    pub epoch: String,
+    pub coefficients: Vec<u64>,
 }
 
-#[derive(Debug, Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    generation: Option<u64>,
-    /// Active shard count per table in the newest generation.
-    active_shards: BTreeMap<DatabaseId, usize>,
-    cached_shards: usize,
-    total_memory_bytes: u64,
-    available_memory_bytes: u64,
-    process_rss_bytes: u64,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct DiskState {
+    #[serde(default)]
+    placement_policy: PlacementPolicy,
+    schema_version: u16,
+    protocol_revision: String,
+    epoch: u64,
+    revision: u64,
+    last_attempt: Option<(u64, u64)>,
+    retention: Vec<u64>,
+    candidate: Option<Candidate>,
+    activated: Option<Manifest>,
+    published: BTreeMap<u64, (Manifest, Vec<DomainPlan>)>,
 }
 
-/// Host memory as (total, available, this process's RSS), in bytes. Cheap
-/// enough to call on every health probe; the coordinator relays it to the
-/// dashboard so operators can see worker headroom without shell access.
-pub fn host_memory() -> (u64, u64, u64) {
-    let mut system = sysinfo::System::new();
-    system.refresh_memory();
-    let rss = sysinfo::get_current_pid()
-        .ok()
-        .and_then(|pid| {
-            system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-            system.process(pid).map(|process| process.memory())
-        })
-        .unwrap_or(0);
-    (system.total_memory(), system.available_memory(), rss)
+impl Default for DiskState {
+    fn default() -> Self {
+        Self {
+            placement_policy: PlacementPolicy::default(),
+            schema_version: enhance_pir::protocol::SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
+            epoch: 0,
+            revision: 0,
+            last_attempt: None,
+            retention: Vec::new(),
+            candidate: None,
+            activated: None,
+            published: BTreeMap::new(),
+        }
+    }
 }
-
-impl WorkerState {
-    pub fn new(artifact_dir: PathBuf) -> Result<Self, inspiring::InspiringError> {
-        Self::with_evaluation_slots(artifact_dir, DEFAULT_EVALUATION_SLOTS)
-    }
-
-    pub fn with_evaluation_slots(
-        artifact_dir: PathBuf,
-        evaluation_slots: usize,
-    ) -> Result<Self, inspiring::InspiringError> {
-        let mut rlwe = BTreeMap::new();
-        for table in DatabaseId::ALL {
-            let (params, _) = shard_parameters(&table.layout())?;
-            rlwe.insert(table, params);
-        }
-        Ok(Self {
-            rlwe: Arc::new(rlwe),
-            shards: Arc::new(RwLock::new(HashMap::new())),
-            active: Arc::new(RwLock::new(BTreeMap::new())),
-            artifact_dir: Arc::new(artifact_dir),
-            evaluation_slots: Arc::new(Semaphore::new(evaluation_slots.max(1))),
-            preparation_slots: Arc::new(Semaphore::new(1)),
-        })
-    }
-
-    fn rlwe(&self, table: DatabaseId) -> &inspiring::RlweParams {
-        self.rlwe.get(&table).expect("every table has parameters")
-    }
-
-    /// Ensures both query state and a verified publication are available.
-    /// Invalid cached CRS is reloaded or rebuilt; repair failure preserves the
-    /// old query runtime. Returns whether preprocessing had to be rebuilt.
-    pub async fn prepare_local(
-        &self,
-        table: DatabaseId,
-        shard_id: u64,
-        query_row_start: usize,
-        logical_rows: u64,
-        rows_sha256: String,
-        rows: Vec<u8>,
-    ) -> Result<bool, String> {
-        let _preparation = self
-            .preparation_slots
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| e.to_string())?;
-        if RecordJournal::rows_digest(&rows) != rows_sha256 {
-            return Err("row digest mismatch".to_string());
-        }
-        let key = ShardKey {
-            table,
-            shard_id,
-            rows_sha256: rows_sha256.clone(),
-        };
-        let existing = self
-            .shards
-            .read()
-            .await
-            .get(&key)
-            .filter(|cached| cached.runtime.query_row_start == query_row_start)
-            .cloned();
-        let _preparation = if let Some(existing) = existing {
-            let (_, params) = shard_parameters(&table.layout()).map_err(|e| e.to_string())?;
-            let degree = self.rlwe(table).d;
-            // A cancelled hint may never have reached its final checksum.
-            // Validate even an apparently healthy cache hit before reusing it.
-            let (usable, permit) = tokio::task::spawn_blocking(move || {
-                let usable = !existing.publication.is_failed()
-                    && existing
-                        .publication
-                        .validate(params.db_cols / degree, degree)
-                        .is_ok();
-                (usable, _preparation)
-            })
-            .await
-            .map_err(|e| e.to_string())?;
-            if usable {
-                return Ok(false);
-            }
-            permit
-        } else {
-            _preparation
-        };
-        let layout = table.layout();
-        let rlwe = self.rlwe(table).clone();
-        let (global_rlwe, global_params) =
-            global_parameters(logical_rows, &layout).map_err(|e| e.to_string())?;
-        if global_rlwe.d != rlwe.d || global_rlwe.q != rlwe.q {
-            return Err("global and worker RLWE parameters differ".to_string());
-        }
-        let client = ipir_sp::IPIRClient::from_profile(
-            global_params.num_items,
-            global_params.item_size_bits,
-            layout.pir_profile,
-        )
-        .map_err(|e| e.to_string())?;
-        let setup =
-            client.generate_public_query_setup_simplepir_from_seed(table.setup_seed_bytes());
-        let artifact_dir = self.artifact_dir.clone();
-        self.install_prepared(key, _preparation, move || {
-            ShardRuntime::load_or_build(
-                &artifact_dir,
-                table,
-                &layout,
-                shard_id,
-                query_row_start,
-                rows_sha256,
-                &rows,
-                &rlwe,
-                setup.polys(),
-            )
-        })
-        .await
-    }
-
-    /// Restores missing query state from disk. A known failed publication must
-    /// also be reloaded; corrupt artifacts return an error so prepare can repair.
-    pub async fn ensure_local(
-        &self,
-        table: DatabaseId,
-        shard_id: u64,
-        query_row_start: usize,
-        rows_sha256: String,
-    ) -> Result<(), String> {
-        let _preparation = self
-            .preparation_slots
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| e.to_string())?;
-        let key = ShardKey {
-            table,
-            shard_id,
-            rows_sha256: rows_sha256.clone(),
-        };
-        if let Some(existing) = self.shards.read().await.get(&key) {
-            if existing.runtime.query_row_start == query_row_start
-                && !existing.publication.is_failed()
-            {
-                return Ok(());
-            }
-        }
-        let layout = table.layout();
-        let rlwe = self.rlwe(table).clone();
-        let artifact_dir = self.artifact_dir.clone();
-        self.install_prepared(key, _preparation, move || {
-            ShardRuntime::load_cached(
-                &artifact_dir,
-                table,
-                &layout,
-                shard_id,
-                query_row_start,
-                &rows_sha256,
-                &rlwe,
-            )
-            .map(|runtime| (runtime, false))
-        })
-        .await?;
-        Ok(())
-    }
-
-    /// Keep the preparation slot until installation. If the caller is
-    /// cancelled, the blocking task still owns it until disk work finishes.
-    /// Failures leave any previously retained runtime available for queries.
-    async fn install_prepared(
-        &self,
-        key: ShardKey,
-        permit: OwnedSemaphorePermit,
-        prepare: impl FnOnce() -> Result<(CachedShard, bool), String> + Send + 'static,
-    ) -> Result<bool, String> {
-        let (result, _preparation) = tokio::task::spawn_blocking(move || (prepare(), permit))
-            .await
-            .map_err(|e| e.to_string())?;
-        let (runtime, built) = result?;
-        self.shards.write().await.insert(key, Arc::new(runtime));
-        Ok(built)
-    }
-
-    /// Activates a generation and evicts every runtime no retained generation
-    /// references, so memory holds exactly the shards that can still be asked.
-    pub async fn activate_local(&self, request: ActivateRequest) -> Result<(), String> {
-        if request.retained_generations.len() > RETAINED_GENERATIONS {
-            return Err("too many retained generations".into());
-        }
-        if request.tables.values().all(Vec::is_empty) {
-            return Err("an active generation needs at least one shard".to_string());
-        }
-        let mut tables = BTreeMap::new();
+impl DiskState {
+    fn validate_format(&self) -> Result<(), String> {
+        self.placement_policy.validate()?;
+        if self.schema_version != enhance_pir::protocol::SCHEMA_VERSION
+            || self.protocol_revision != PROTOCOL_REVISION
         {
-            let cached = self.shards.read().await;
-            for (table, shards) in request.tables {
-                let mut shards = shards;
-                shards.sort_by_key(|shard| shard.shard_id);
-                if shards
-                    .windows(2)
-                    .any(|pair| pair[0].shard_id == pair[1].shard_id)
-                {
-                    return Err(format!("duplicate active shard in {table}"));
-                }
-                for shard in &shards {
-                    let key = ShardKey {
-                        table,
-                        shard_id: shard.shard_id,
-                        rows_sha256: shard.rows_sha256.clone(),
-                    };
-                    if !cached.contains_key(&key) {
-                        return Err(format!(
-                            "{table} shard {} with digest {} is not prepared",
-                            shard.shard_id, shard.rows_sha256
-                        ));
-                    }
-                }
-                if !shards.is_empty() {
-                    tables.insert(table, shards);
-                }
-            }
-        }
-        let mut active = self.active.write().await;
-        if let Some(existing) = active.get_mut(&request.generation) {
-            // A physical worker may own multiple logical tables (the dedicated
-            // spend worker owns both cold and warm). Table activation is
-            // incremental while the coordinator builds one atomic generation.
-            existing.tables.extend(tables);
-        } else {
-            active.insert(
-                request.generation,
-                ActiveGeneration {
-                    generation: request.generation,
-                    tables,
-                },
+            return Err(
+                "incompatible worker state; rebuild protocol v6 in a separate data directory"
+                    .into(),
             );
         }
-        if !request.retained_generations.is_empty() {
-            active.retain(|generation, _| {
-                *generation == request.generation
-                    || request.retained_generations.contains(generation)
-            });
+        if self
+            .candidate
+            .as_ref()
+            .is_some_and(|c| c.placement_policy != self.placement_policy)
+        {
+            return Err("persisted candidate placement policy mismatch".into());
         }
-        let retention = if request.retained_generations.is_empty() {
-            RETAINED_GENERATIONS
-        } else {
-            RETAINED_GENERATIONS + 1
-        };
-        while active.len() > retention {
-            let oldest = *active.keys().next().expect("nonempty generation map");
-            active.remove(&oldest);
+        for manifest in self
+            .activated
+            .iter()
+            .chain(self.published.values().map(|(m, _)| m))
+        {
+            manifest.validate()?;
         }
-        let referenced: HashSet<ShardKey> = active
+        Ok(())
+    }
+}
+
+struct Inner {
+    disk: DiskState,
+    engine: Arc<Mutex<Engine>>,
+    candidate: BTreeMap<u64, Arc<Evaluation>>,
+    published: BTreeMap<u64, BTreeMap<u64, Arc<Evaluation>>>,
+    root: PathBuf,
+    _lock: File,
+}
+
+#[derive(Clone)]
+pub struct Worker {
+    inner: Arc<Mutex<Inner>>,
+    preparation: Arc<Semaphore>,
+    evaluation: Arc<Semaphore>,
+    pub incarnation: String,
+}
+
+type ApiResult<T> = Result<T, (StatusCode, String)>;
+fn unavailable(e: impl ToString) -> (StatusCode, String) {
+    (StatusCode::SERVICE_UNAVAILABLE, e.to_string())
+}
+
+const MEMORY_REFUSAL: &str = "full growth/transition reservation does not fit";
+
+fn admission_error(error: String) -> (StatusCode, String) {
+    if error == MEMORY_REFUSAL {
+        (StatusCode::INSUFFICIENT_STORAGE, error)
+    } else {
+        unavailable(error)
+    }
+}
+
+struct Budget {
+    union_database_bytes: u64,
+    growth_reserved_bytes: u64,
+    transition_reserved_bytes: u64,
+    total_bytes: u64,
+}
+
+impl Inner {
+    fn collect_unused(&mut self) -> Result<(), String> {
+        let mut engine = self.engine.lock().unwrap();
+        engine.collect_unused()?;
+        let units = engine.live_sizes();
+        let plans: BTreeSet<_> = self
+            .published
             .values()
-            .flat_map(|generation| {
-                generation.tables.iter().flat_map(|(table, shards)| {
-                    shards.iter().map(|shard| ShardKey {
-                        table: *table,
-                        shard_id: shard.shard_id,
-                        rows_sha256: shard.rows_sha256.clone(),
-                    })
-                })
-            })
+            .flat_map(|s| s.values())
+            .map(|e| digest(&e.plan))
             .collect();
-        drop(active);
-        self.shards
-            .write()
-            .await
-            .retain(|key, _| referenced.contains(key));
+        for (directory, retained) in [
+            ("rows", units.keys().cloned().collect::<BTreeSet<_>>()),
+            ("hints", plans),
+        ] {
+            for entry in fs::read_dir(self.root.join(directory)).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.len() == 64
+                    && hex::decode(&name).is_ok()
+                    && !retained.contains(&name)
+                    && entry.file_type().map_err(|e| e.to_string())?.is_file()
+                {
+                    fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
+                }
+            }
+        }
         Ok(())
     }
 
-    pub async fn evaluate_local(
-        &self,
-        table: DatabaseId,
-        request: EvaluateRequest,
-    ) -> Result<Vec<u64>, String> {
-        let _permit = self
-            .evaluation_slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "worker is at its evaluation limit".to_string())?;
-        let active = self
-            .active
-            .read()
-            .await
-            .get(&request.generation)
-            .cloned()
-            .ok_or_else(|| "generation mismatch".to_string())?;
-        let assignment = active
-            .tables
-            .get(&table)
-            .ok_or_else(|| format!("generation has no {table} shards on this worker"))?;
-        let mut requested_ids: Vec<_> = request.shards.iter().map(|shard| shard.shard_id).collect();
-        requested_ids.sort_unstable();
-        if Some(requested_ids) != active.shard_ids(table) {
-            return Err("request does not cover the complete active shard assignment".to_string());
-        }
-        let rlwe = self.rlwe(table);
-        let (_, params) = shard_parameters(&table.layout()).map_err(|e| e.to_string())?;
-        let cached = self.shards.read().await;
-        let mut combined = vec![0u64; params.db_cols];
-        for shard_query in request.shards {
-            let digest = &assignment
-                .iter()
-                .find(|shard| shard.shard_id == shard_query.shard_id)
-                .expect("assignment covers requested ids")
-                .rows_sha256;
-            let key = ShardKey {
-                table,
-                shard_id: shard_query.shard_id,
-                rows_sha256: digest.clone(),
-            };
-            let runtime = cached
-                .get(&key)
-                .ok_or_else(|| "active shard disappeared".to_string())?;
-            let partial = runtime
-                .runtime
-                .evaluate(rlwe, &shard_query.coefficients)
-                .map_err(|e| e.to_string())?;
-            add_intermediate_assign_mod(&mut combined, &partial, rlwe.q)
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(combined)
+    fn save(&mut self, disk: DiskState) -> Result<(), String> {
+        crate::artifact::write_atomic(&self.root, "worker.json", |f| {
+            serde_json::to_writer(f, &disk).map_err(std::io::Error::other)
+        })
+        .map_err(|e| e.to_string())?;
+        File::open(&self.root)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        self.disk = disk;
+        Ok(())
     }
 
-    /// The CRS hint of the most recently prepared runtime for the shard.
-    pub async fn crs_local(
-        &self,
-        table: DatabaseId,
-        shard_id: u64,
-    ) -> Result<PublicationArtifact, String> {
-        let cached = self.shards.read().await;
-        let runtime = cached
+    fn admission(&self, plans: &[DomainPlan]) -> Result<(), String> {
+        let budget = self.budget(plans, &self.engine.lock().unwrap().live_sizes())?;
+        if budget.total_bytes > RESIDENT_LIMIT {
+            return Err(MEMORY_REFUSAL.into());
+        }
+        Ok(())
+    }
+
+    fn budget(&self, plans: &[DomainPlan], live: &BTreeMap<String, u64>) -> Result<Budget, String> {
+        let growing = plans
             .iter()
-            .filter(|(key, _)| key.table == table && key.shard_id == shard_id)
-            .map(|(_, runtime)| runtime)
-            .max_by_key(|runtime| runtime.prepared_at)
-            .ok_or_else(|| "shard is not prepared".to_string())?;
-        Ok(runtime.publication.clone())
-    }
-
-    /// Runtimes currently held, for tests and health.
-    pub async fn cached_shard_count(&self) -> usize {
-        self.shards.read().await.len()
+            .filter(|p| p.shard.state == ShardState::Growing)
+            .count();
+        let active = plans.iter().any(|p| p.shard.state != ShardState::Sealed);
+        if growing > 1 || plans.len() > self.disk.placement_policy.limit(active) {
+            return Err("group role limit exceeded".into());
+        }
+        let mut ids = BTreeSet::new();
+        let mut runtimes = BTreeMap::new();
+        for plan in plans {
+            plan.validate()?;
+            if !ids.insert(plan.shard.id) {
+                return Err("duplicate shard assignment".into());
+            }
+            for unit in &plan.units {
+                runtimes.insert(unit.digest(), unit.allocated_rows * 24576);
+            }
+        }
+        let current: u64 = runtimes.values().sum();
+        for snapshot in self.published.values() {
+            for evaluation in snapshot.values() {
+                for unit in &evaluation.plan.units {
+                    runtimes.insert(unit.digest(), unit.allocated_rows * 24576);
+                }
+            }
+        }
+        // Engine weak references also see snapshots pinned by admitted queries after expiry.
+        runtimes.extend(live.iter().map(|(id, bytes)| (id.clone(), *bytes)));
+        let retained: u64 = runtimes.values().sum();
+        let distinct = retained;
+        let growth = plans.len() as u64 * 768 * MIB - current;
+        let extra = if active {
+            (5 * 192 * MIB).saturating_sub(retained - current) + 768 * MIB
+        } else {
+            0
+        };
+        Ok(Budget {
+            union_database_bytes: distinct,
+            growth_reserved_bytes: growth,
+            transition_reserved_bytes: extra,
+            total_bytes: distinct + growth + extra + OVERHEAD,
+        })
     }
 }
 
-fn max_shard_bytes() -> usize {
-    DatabaseId::ALL
+// Staged rows are durable recovery input, not an authority: bind the entire
+// padded file to the committed unit identity before supplying source records.
+fn staged_records(
+    root: &FsPath,
+    plan: &DomainPlan,
+    start: u64,
+    count: usize,
+) -> Result<Vec<u8>, String> {
+    if !start.is_multiple_of(enhance_pir::RECORDS_PER_ROW as u64) {
+        return Err("unaligned staged source".into());
+    }
+    let row = (start / enhance_pir::RECORDS_PER_ROW as u64)
+        .checked_sub(plan.shard.global_row_start)
+        .ok_or("staged source before shard")?;
+    let unit = plan
+        .units
         .iter()
-        .map(|table| table.layout().shard_bytes())
-        .max()
-        .expect("at least one table")
+        .find(|u| u.local_row_start == row)
+        .ok_or("unknown unit source")?;
+    let bytes = verified_rows(&root.join("rows"), unit)?;
+    let end = count
+        .checked_mul(enhance_pir::RECORD_BYTES)
+        .ok_or("staged range overflow")?;
+    bytes
+        .get(..end)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| "short staged rows".into())
 }
 
-pub fn router(state: WorkerState) -> Router {
-    Router::new()
-        .route("/internal/health", get(health))
-        .route("/internal/:table/shards/:shard_id", put(prepare))
-        .route("/internal/:table/shards/:shard_id/load", post(load))
-        .route("/internal/:table/shards/:shard_id/hint", get(hint))
-        .route("/internal/:table/evaluate", post(evaluate))
-        .route("/internal/activate", post(activate))
-        .layer(axum::extract::DefaultBodyLimit::max(
-            max_shard_bytes() + 1024 * 1024,
-        ))
-        .with_state(state)
+fn verified_rows(directory: &FsPath, unit: &UnitIdentity) -> Result<Vec<u8>, String> {
+    let expected = unit
+        .allocated_rows
+        .checked_mul(crate::types::ENHANCE_LAYOUT.row_bytes() as u64)
+        .ok_or("staged size overflow")?;
+    let mut bytes = Vec::new();
+    File::open(directory.join(unit.digest()))
+        .map_err(|e| e.to_string())?
+        .take(expected.checked_add(1).ok_or("staged size overflow")?)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 != expected || hex::encode(Sha256::digest(&bytes)) != unit.content_sha256
+    {
+        return Err("staged unit length or digest mismatch".into());
+    }
+    Ok(bytes)
 }
 
-fn parse_table(name: &str) -> Result<DatabaseId, StatusCode> {
-    name.parse().map_err(|_| StatusCode::NOT_FOUND)
+impl Worker {
+    /// Restore only journal-referenced row files while the worker is stopped.
+    /// Each replacement is atomic and independently resumable; committed metadata
+    /// is never copied from the source or changed by repair.
+    pub fn repair_rows(root: &FsPath, source_rows: &FsPath) -> Result<usize, String> {
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join("worker.lock"))
+            .map_err(|e| e.to_string())?;
+        lock.try_lock()
+            .map_err(|e| format!("stop worker before row repair: {e}"))?;
+        let disk: DiskState =
+            serde_json::from_slice(&fs::read(root.join("worker.json")).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        disk.validate_format()?;
+        let mut units = BTreeMap::new();
+        for plan in disk
+            .published
+            .values()
+            .flat_map(|(_, plans)| plans)
+            .chain(disk.candidate.iter().flat_map(|c| &c.plans))
+        {
+            plan.validate()?;
+            for unit in &plan.units {
+                units.insert(unit.digest(), unit.clone());
+            }
+        }
+        let destination = root.join("rows");
+        fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
+        let mut restored = 0;
+        for (id, unit) in units {
+            if verified_rows(&destination, &unit).is_ok() {
+                continue;
+            }
+            let bytes = verified_rows(source_rows, &unit)
+                .map_err(|e| format!("cannot repair unit {id}: {e}"))?;
+            crate::artifact::write_atomic(&destination, &id, |file| {
+                std::io::Write::write_all(file, &bytes)
+            })
+            .map_err(|e| e.to_string())?;
+            File::open(&destination)
+                .and_then(|file| file.sync_all())
+                .map_err(|e| e.to_string())?;
+            restored += 1;
+        }
+        File::open(root)
+            .and_then(|file| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        Ok(restored)
+    }
+
+    pub fn open(root: &FsPath) -> Result<Self, String> {
+        Self::open_with_policy(root, PlacementPolicy::default())
+    }
+
+    pub fn open_with_policy(root: &FsPath, policy: PlacementPolicy) -> Result<Self, String> {
+        policy.validate()?;
+        fs::create_dir_all(root.join("rows")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("hints")).map_err(|e| e.to_string())?;
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join("worker.lock"))
+            .map_err(|e| e.to_string())?;
+        lock.try_lock()
+            .map_err(|e| format!("worker already open: {e}"))?;
+        let path = root.join("worker.json");
+        let disk: DiskState = if path.exists() {
+            serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?
+        } else {
+            DiskState {
+                placement_policy: policy,
+                ..DiskState::default()
+            }
+        };
+        disk.validate_format()?;
+        if disk.placement_policy != policy {
+            return Err("persisted worker placement policy mismatch; explicit redistribution or fresh state required".into());
+        }
+        crate::artifact::write_atomic(root, "worker.json", |f| {
+            serde_json::to_writer(f, &disk).map_err(std::io::Error::other)
+        })
+        .map_err(|e| e.to_string())?;
+        File::open(root)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        let mut engine = Engine::new(root);
+        let mut published = BTreeMap::new();
+        for (generation, (_, plans)) in &disk.published {
+            let mut assignments = BTreeMap::new();
+            for plan in plans {
+                assignments.insert(
+                    plan.shard.id,
+                    engine.prepare(plan.clone(), |start, count| {
+                        staged_records(root, plan, start, count)
+                    })?,
+                );
+            }
+            published.insert(*generation, assignments);
+        }
+        let incarnation = format!("{:032x}", rand::random::<u128>());
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Inner {
+                disk,
+                engine: Arc::new(Mutex::new(engine)),
+                candidate: BTreeMap::new(),
+                published,
+                root: root.into(),
+                _lock: lock,
+            })),
+            preparation: Arc::new(Semaphore::new(1)),
+            evaluation: Arc::new(Semaphore::new(2)),
+            incarnation,
+        })
+    }
+
+    pub fn router(self) -> Router {
+        Router::new()
+            .route("/internal/health", get(health))
+            .route("/internal/metrics", get(metrics))
+            .route("/internal/admit", post(admit))
+            .route("/internal/reserve", post(reserve))
+            .route("/internal/rows/:id", put(upload))
+            .route("/internal/prepare", post(prepare))
+            .route("/internal/hint/:shard", get(hint))
+            .route("/internal/activate", post(activate))
+            .route("/internal/commit", post(commit))
+            .route("/internal/abort", post(abort))
+            .route("/internal/retain", post(retain))
+            .route("/internal/evaluate", post(evaluate))
+            .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+            .with_state(self)
+    }
 }
 
-async fn health(State(state): State<WorkerState>) -> Json<HealthResponse> {
-    let active = state.active.read().await;
-    let cached_shards = state.shards.read().await.len();
-    let newest = active.last_key_value().map(|(_, generation)| generation);
-    let (total_memory_bytes, available_memory_bytes, process_rss_bytes) = host_memory();
-    Json(HealthResponse {
-        status: "ok",
-        generation: newest.map(|generation| generation.generation),
-        active_shards: newest.map_or_else(BTreeMap::new, |generation| {
-            generation
-                .tables
+/// Advisory only: no runtime, reservation, epoch, or durable worker state changes.
+/// The reserve command must repeat admission because query pins can change.
+async fn admit(
+    State(w): State<Worker>,
+    Json(plans): Json<Vec<DomainPlan>>,
+) -> ApiResult<StatusCode> {
+    let inner = w.inner.lock().unwrap();
+    if inner.disk.candidate.is_some() {
+        return Err(unavailable("candidate already reserved"));
+    }
+    inner.admission(&plans).map_err(admission_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn metrics(
+    State(w): State<Worker>,
+) -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
+    let inner = w.inner.lock().unwrap();
+    let mut metrics = super::telemetry::Metrics::default();
+    metrics.number("enhance_worker_up", 1);
+    metrics.number("enhance_worker_epoch", inner.disk.epoch);
+    metrics.number("enhance_worker_revision", inner.disk.revision);
+    metrics.number(
+        "enhance_worker_retained_generations",
+        inner.disk.published.len() as u64,
+    );
+    metrics.number(
+        "enhance_worker_candidate_present",
+        u64::from(inner.disk.candidate.is_some()),
+    );
+    metrics.number(
+        "enhance_worker_preparation_busy",
+        u64::from(w.preparation.available_permits() == 0),
+    );
+    metrics.number(
+        "enhance_worker_queries_in_flight",
+        (2 - w.evaluation.available_permits()) as u64,
+    );
+    // Preparation holds the engine lock. Never stall that work just to scrape,
+    // and never substitute zero database usage when the sample is unavailable.
+    if let Ok(engine) = inner.engine.try_lock() {
+        let live = engine.live_sizes();
+        metrics.number("enhance_worker_memory_sample_available", 1);
+        metrics.number("enhance_worker_live_database_bytes", live.values().sum());
+        let latest = inner
+            .disk
+            .published
+            .last_key_value()
+            .map(|(_, (_, plans))| plans.as_slice())
+            .unwrap_or_default();
+        let ids = |plans: &[DomainPlan]| -> BTreeSet<String> {
+            plans
                 .iter()
-                .map(|(table, shards)| (*table, shards.len()))
+                .flat_map(|p| &p.units)
+                .map(|u| u.digest())
                 .collect()
-        }),
-        cached_shards,
-        total_memory_bytes,
-        available_memory_bytes,
-        process_rss_bytes,
+        };
+        let latest_ids = ids(latest);
+        let published_ids: BTreeSet<_> = inner
+            .published
+            .values()
+            .flat_map(|snapshot| snapshot.values())
+            .flat_map(|e| e.plan.units.iter().map(|u| u.digest()))
+            .collect();
+        let candidate_plans = inner.disk.candidate.as_ref().map(|c| c.plans.as_slice());
+        let candidate_ids = ids(candidate_plans.unwrap_or_default());
+        let selected_bytes = |selected: &BTreeSet<String>| -> u64 {
+            live.iter()
+                .filter(|(id, _)| selected.contains(*id))
+                .map(|(_, bytes)| bytes)
+                .sum()
+        };
+        metrics.number(
+            "enhance_worker_published_database_bytes",
+            selected_bytes(&published_ids),
+        );
+        metrics.number(
+            "enhance_worker_latest_database_bytes",
+            selected_bytes(&latest_ids),
+        );
+        metrics.number(
+            "enhance_worker_candidate_database_bytes",
+            selected_bytes(&candidate_ids),
+        );
+        metrics.number(
+            "enhance_worker_query_only_database_bytes",
+            live.iter()
+                .filter(|(id, _)| !published_ids.contains(*id) && !candidate_ids.contains(*id))
+                .map(|(_, bytes)| bytes)
+                .sum(),
+        );
+        metrics.number(
+            "enhance_worker_source_reclamation_database_bytes",
+            live.iter()
+                .filter(|(id, _)| !latest_ids.contains(*id) && !candidate_ids.contains(*id))
+                .map(|(_, bytes)| bytes)
+                .sum(),
+        );
+        let budget = inner.budget(candidate_plans.unwrap_or(latest), &live);
+        metrics.number(
+            "enhance_worker_memory_model_available",
+            u64::from(budget.is_ok()),
+        );
+        if let Ok(budget) = budget {
+            metrics.number(
+                "enhance_worker_memory_model_uses_candidate",
+                u64::from(candidate_plans.is_some()),
+            );
+            metrics.number(
+                "enhance_worker_model_union_database_bytes",
+                budget.union_database_bytes,
+            );
+            metrics.number(
+                "enhance_worker_model_growth_reserved_bytes",
+                budget.growth_reserved_bytes,
+            );
+            metrics.number(
+                "enhance_worker_model_transition_reserved_bytes",
+                budget.transition_reserved_bytes,
+            );
+            metrics.number("enhance_worker_model_overhead_bytes", OVERHEAD);
+            metrics.number("enhance_worker_model_total_bytes", budget.total_bytes);
+            metrics.number("enhance_worker_model_limit_bytes", RESIDENT_LIMIT);
+            metrics.number(
+                "enhance_worker_model_within_limit",
+                u64::from(budget.total_bytes <= RESIDENT_LIMIT),
+            );
+        }
+    } else {
+        metrics.number("enhance_worker_memory_sample_available", 0);
+        metrics.number("enhance_worker_memory_model_available", 0);
+    }
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        metrics.finish(),
+    )
+}
+
+async fn health(State(w): State<Worker>) -> Json<serde_json::Value> {
+    let inner = w.inner.lock().unwrap();
+    Json(
+        serde_json::json!({"protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
+        "resident_database_bytes":inner.engine.try_lock().ok().map(|e| e.live_bytes()),"published":inner.disk.published.keys().collect::<Vec<_>>(),
+        "published_manifest_digests":inner.disk.published.iter().map(|(g,(m,_))| (g.to_string(), digest(m))).collect::<BTreeMap<_,_>>(),
+        "candidate":inner.disk.candidate}),
+    )
+}
+
+async fn abort(State(w): State<Worker>, Json(request): Json<Abort>) -> ApiResult<StatusCode> {
+    let _permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    let mut i = w.inner.lock().unwrap();
+    if request.epoch < i.disk.epoch {
+        return Err(unavailable("stale abort epoch"));
+    }
+    if let Some(c) = &i.disk.candidate {
+        if c.operation != request.operation || c.attempt != request.attempt {
+            return Err(unavailable("conflicting abort"));
+        }
+    }
+    let mut disk = i.disk.clone();
+    disk.epoch = request.epoch;
+    // Fence delayed reservations even if this worker never saw the attempt.
+    disk.last_attempt = Some(
+        disk.last_attempt
+            .unwrap_or((0, 0))
+            .max((request.epoch, request.attempt)),
+    );
+    disk.candidate = None;
+    disk.activated = None;
+    i.save(disk).map_err(unavailable)?;
+    i.candidate.clear();
+    Ok(StatusCode::OK)
+}
+
+async fn retain(State(w): State<Worker>, Json(request): Json<Retain>) -> ApiResult<StatusCode> {
+    let _permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    let mut i = w.inner.lock().unwrap();
+    let generations = &request.generations;
+    if request.epoch < i.disk.epoch
+        || generations.is_empty()
+        || generations.len() > RETAINED_GENERATIONS
+        || generations.windows(2).any(|pair| pair[0] <= pair[1])
+        || (!i.disk.retention.is_empty()
+            && (generations[0] < i.disk.retention[0]
+                || (generations[0] == i.disk.retention[0] && generations != &i.disk.retention)))
+    {
+        return Err(unavailable("stale or conflicting retention command"));
+    }
+    let mut disk = i.disk.clone();
+    disk.epoch = request.epoch;
+    disk.retention = generations.clone();
+    disk.published.retain(|g, _| generations.contains(g));
+    i.save(disk).map_err(unavailable)?;
+    i.published.retain(|g, _| generations.contains(g));
+    if i.disk.candidate.is_none() {
+        i.collect_unused().map_err(unavailable)?;
+    }
+    Ok(StatusCode::OK)
+}
+
+async fn reserve(
+    State(w): State<Worker>,
+    Json(candidate): Json<Candidate>,
+) -> ApiResult<Json<Vec<String>>> {
+    let _permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    let mut i = w.inner.lock().unwrap();
+    if candidate.placement_policy != i.disk.placement_policy {
+        return Err(unavailable("worker placement policy mismatch"));
+    }
+    if candidate.epoch < i.disk.epoch || candidate.expected_revision != i.disk.revision {
+        return Err(unavailable("stale epoch or placement revision"));
+    }
+    if let Some(existing) = &i.disk.candidate {
+        if existing != &candidate {
+            return Err(unavailable(
+                "candidate already reserved; explicit recovery required",
+            ));
+        }
+    } else if i
+        .disk
+        .last_attempt
+        .is_some_and(|last| (candidate.epoch, candidate.attempt) <= last)
+    {
+        return Err(unavailable("retired operation attempt"));
+    }
+    if candidate.generation == 0
+        || i.disk
+            .published
+            .keys()
+            .next_back()
+            .is_some_and(|g| *g >= candidate.generation)
+    {
+        return Err(unavailable("nonmonotonic candidate generation"));
+    }
+    i.admission(&candidate.plans).map_err(admission_error)?;
+    let mut disk = i.disk.clone();
+    disk.epoch = candidate.epoch;
+    disk.last_attempt = Some((candidate.epoch, candidate.attempt));
+    let missing = candidate
+        .plans
+        .iter()
+        .flat_map(|p| &p.units)
+        .map(|u| u.digest())
+        .filter(|id| !i.root.join("rows").join(id).exists())
+        .collect();
+    disk.candidate = Some(candidate);
+    i.save(disk).map_err(unavailable)?;
+    Ok(Json(missing))
+}
+
+async fn upload(
+    State(w): State<Worker>,
+    Path(id): Path<String>,
+    request: Request,
+) -> ApiResult<StatusCode> {
+    let permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    let (root, size, hash) = {
+        let i = w.inner.lock().unwrap();
+        let candidate = i
+            .disk
+            .candidate
+            .as_ref()
+            .ok_or_else(|| unavailable("no reservation"))?;
+        let matches_header = |name: &str, expected: String| {
+            request.headers().get(name).and_then(|v| v.to_str().ok()) == Some(expected.as_str())
+        };
+        if !matches_header("x-enhance-epoch", candidate.epoch.to_string())
+            || !matches_header("x-enhance-attempt", candidate.attempt.to_string())
+            || !matches_header("x-enhance-operation", candidate.operation.clone())
+        {
+            return Err(unavailable("stale unit upload"));
+        }
+        let unit = candidate
+            .plans
+            .iter()
+            .flat_map(|p| &p.units)
+            .find(|u| u.digest() == id)
+            .ok_or_else(|| unavailable("unreserved unit"))?;
+        (
+            i.root.clone(),
+            unit.allocated_rows as usize * crate::types::ENHANCE_LAYOUT.row_bytes(),
+            unit.content_sha256.clone(),
+        )
+    };
+    let bytes = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        to_bytes(request.into_body(), size),
+    )
+    .await
+    .map_err(unavailable)?
+    .map_err(unavailable)?;
+    if bytes.len() != size {
+        return Err((StatusCode::BAD_REQUEST, "wrong unit byte length".into()));
+    }
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        if hex::encode(Sha256::digest(&bytes)) != hash {
+            return Err("unit content digest mismatch".into());
+        }
+        crate::artifact::write_atomic(&root.join("rows"), &id, |f| {
+            std::io::Write::write_all(f, &bytes)
+        })
+        .map_err(|e| e.to_string())?;
+        Ok::<_, String>(())
     })
+    .await
+    .map_err(unavailable)?
+    .map_err(unavailable)?;
+    Ok(StatusCode::OK)
 }
 
 async fn prepare(
-    State(state): State<WorkerState>,
-    Path((table, shard_id)): Path<(String, u64)>,
-    Query(query): Query<PrepareQuery>,
-    body: Bytes,
-) -> Response {
-    let table = match parse_table(&table) {
-        Ok(table) => table,
-        Err(status) => return status.into_response(),
-    };
-    match state
-        .prepare_local(
-            table,
-            shard_id,
-            query.query_row_start,
-            query.logical_rows,
-            query.rows_sha256.clone(),
-            body.to_vec(),
-        )
-        .await
-    {
-        Ok(built) => Json(PrepareResponse {
-            status: if built { "built" } else { "cached" },
-            table,
-            shard_id,
-            rows_sha256: query.rows_sha256,
-        })
-        .into_response(),
-        Err(error) => {
-            tracing::warn!(%error, %table, shard_id, "shard preparation rejected");
-            StatusCode::BAD_REQUEST.into_response()
+    State(w): State<Worker>,
+    Json(candidate): Json<Candidate>,
+) -> ApiResult<StatusCode> {
+    let permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let (engine, root) = {
+            let i = w.inner.lock().unwrap();
+            if i.disk.candidate.as_ref() != Some(&candidate) {
+                return Err("conflicting prepare command".into());
+            }
+            (i.engine.clone(), i.root.clone())
+        };
+        let mut prepared = BTreeMap::new();
+        let mut engine = engine.lock().unwrap();
+        for plan in &candidate.plans {
+            let eval = engine.prepare(plan.clone(), |start, count| {
+                staged_records(&root, plan, start, count)
+            })?;
+            prepared.insert(plan.shard.id, eval);
         }
-    }
+        drop(engine);
+        w.inner.lock().unwrap().candidate = prepared;
+        Ok::<_, String>(())
+    })
+    .await
+    .map_err(unavailable)?
+    .map_err(unavailable)?;
+    Ok(StatusCode::OK)
 }
 
-async fn load(
-    State(state): State<WorkerState>,
-    Path((table, shard_id)): Path<(String, u64)>,
-    Query(query): Query<PrepareQuery>,
-) -> Response {
-    let table = match parse_table(&table) {
-        Ok(table) => table,
-        Err(status) => return status.into_response(),
+async fn hint(State(w): State<Worker>, Path(shard): Path<u64>) -> ApiResult<Response> {
+    let permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    let (eval, root) = {
+        let i = w.inner.lock().unwrap();
+        (
+            i.candidate
+                .get(&shard)
+                .cloned()
+                .ok_or_else(|| unavailable("shard not prepared"))?,
+            i.root.join("hints"),
+        )
     };
-    match state
-        .ensure_local(table, shard_id, query.query_row_start, query.rows_sha256)
-        .await
-    {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => {
-            tracing::warn!(%error, %table, shard_id, "cached shard load rejected");
-            StatusCode::CONFLICT.into_response()
-        }
-    }
+    let artifact = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let blocks = eval.hint()?;
+        let name = digest(&eval.plan);
+        let hash = crate::artifact::write_atomic(&root, &name, |f| {
+            crate::wire::write_crs_blocks(f, &blocks)
+        })
+        .map_err(|e| e.to_string())?;
+        let length = crate::wire::crs_encoded_len(blocks.len(), super::runtime::rlwe().d)
+            .map_err(|e| e.to_string())?;
+        crate::artifact::PublicationArtifact::open(&root.join(name), length, hash)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(unavailable)?
+    .map_err(unavailable)?;
+    Ok(Body::from_stream(artifact.stream()).into_response())
 }
 
 async fn activate(
-    State(state): State<WorkerState>,
-    Json(request): Json<ActivateRequest>,
-) -> Response {
-    match state.activate_local(request).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => {
-            tracing::warn!(%error, "generation activation rejected");
-            StatusCode::CONFLICT.into_response()
-        }
+    State(w): State<Worker>,
+    Json(request): Json<Activation>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let _permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    request.manifest.validate().map_err(unavailable)?;
+    let mut i = w.inner.lock().unwrap();
+    let c = i
+        .disk
+        .candidate
+        .as_ref()
+        .ok_or_else(|| unavailable("no candidate"))?;
+    if c.epoch != request.epoch
+        || c.operation != request.operation
+        || c.attempt != request.attempt
+        || c.generation != request.manifest.generation
+        || i.candidate.len() != c.plans.len()
+        || c.plans.iter().any(|p| {
+            !request.manifest.coverage.shards.contains(&p.shard)
+                || request.manifest.unit_identities.get(&p.shard.id) != Some(&p.units)
+        })
+    {
+        return Err(unavailable("candidate is incomplete or session differs"));
     }
+    if i.disk
+        .activated
+        .as_ref()
+        .is_some_and(|m| m != &request.manifest)
+    {
+        return Err(unavailable("conflicting activation"));
+    }
+    let hash = digest(&request.manifest);
+    let mut disk = i.disk.clone();
+    disk.activated = Some(request.manifest);
+    i.save(disk).map_err(unavailable)?;
+    Ok(Json(
+        serde_json::json!({"incarnation":w.incarnation,"candidate_digest":hash}),
+    ))
 }
 
-async fn hint(
-    State(state): State<WorkerState>,
-    Path((table, shard_id)): Path<(String, u64)>,
-) -> Response {
-    let table = match parse_table(&table) {
-        Ok(table) => table,
-        Err(status) => return status.into_response(),
-    };
-    match state.crs_local(table, shard_id).await {
-        Ok(artifact) => (
-            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
-            axum::body::Body::from_stream(artifact.stream()),
-        )
-            .into_response(),
-        Err(error) => {
-            tracing::warn!(%error, %table, shard_id, "hint request rejected");
-            StatusCode::NOT_FOUND.into_response()
-        }
+async fn commit(State(w): State<Worker>, Json(request): Json<Commit>) -> ApiResult<StatusCode> {
+    let _permit = w
+        .preparation
+        .clone()
+        .try_acquire_owned()
+        .map_err(unavailable)?;
+    let mut i = w.inner.lock().unwrap();
+    if request.epoch < i.disk.epoch || request.revision < i.disk.revision {
+        return Err(unavailable("stale commit"));
     }
+    if let Some((m, _)) = i.disk.published.get(&request.generation) {
+        return if digest(m) == request.manifest_digest && request.revision == i.disk.revision {
+            Ok(StatusCode::OK)
+        } else {
+            Err(unavailable("conflicting commit"))
+        };
+    }
+    let manifest = i
+        .disk
+        .activated
+        .clone()
+        .ok_or_else(|| unavailable("candidate not activated"))?;
+    if manifest.generation != request.generation
+        || digest(&manifest) != request.manifest_digest
+        || request.retained.len() > RETAINED_GENERATIONS
+        || request.retained.first() != Some(&request.generation)
+        || request.retained.windows(2).any(|pair| pair[0] <= pair[1])
+        || i.disk
+            .retention
+            .first()
+            .is_some_and(|latest| *latest > request.generation)
+        || request.revision != i.disk.revision + 1
+    {
+        return Err(unavailable("invalid commit decision"));
+    }
+    let c = i
+        .disk
+        .candidate
+        .clone()
+        .ok_or_else(|| unavailable("candidate missing"))?;
+    if i.candidate.len() != c.plans.len() {
+        return Err(unavailable("reprepare candidate after restart"));
+    }
+    let mut disk = i.disk.clone();
+    disk.epoch = request.epoch;
+    disk.revision = request.revision;
+    disk.published
+        .insert(request.generation, (manifest, c.plans));
+    disk.published.retain(|g, _| request.retained.contains(g));
+    disk.retention = request.retained.clone();
+    disk.candidate = None;
+    disk.activated = None;
+    i.save(disk).map_err(unavailable)?;
+    let prepared = std::mem::take(&mut i.candidate);
+    i.published.insert(request.generation, prepared);
+    i.published.retain(|g, _| request.retained.contains(g));
+    i.collect_unused().map_err(unavailable)?;
+    Ok(StatusCode::OK)
 }
 
-async fn evaluate(
-    State(state): State<WorkerState>,
-    Path(table): Path<String>,
-    body: Bytes,
-) -> Response {
-    let table = match parse_table(&table) {
-        Ok(table) => table,
-        Err(status) => return status.into_response(),
-    };
-    let request = match decode_evaluate_request(&body) {
-        Ok(request) => request,
-        Err(error) => {
-            tracing::warn!(%error, "worker query rejected");
-            return StatusCode::BAD_REQUEST.into_response();
+async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<Intermediate>> {
+    // Admission precedes body buffering. The permit moves into the blocking evaluation.
+    let permit = w
+        .evaluation
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
+    let bytes = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        to_bytes(request.into_body(), 1024 * 1024),
+    )
+    .await
+    .map_err(unavailable)?
+    .map_err(unavailable)?;
+    let query: Evaluate =
+        serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let evaluation = {
+        let i = w.inner.lock().unwrap();
+        let (manifest, assignment) =
+            if let Some((manifest, _)) = i.disk.published.get(&query.generation) {
+                (manifest, &i.published[&query.generation])
+            } else if let Some(manifest) = i
+                .disk
+                .activated
+                .as_ref()
+                .filter(|m| m.generation == query.generation)
+            {
+                // Activation promises answerability before the coordinator's durable commit.
+                // The public router cannot expose this session before its commit decision.
+                (manifest, &i.candidate)
+            } else {
+                return Err((StatusCode::GONE, "expired session".into()));
+            };
+        let session = manifest
+            .sessions
+            .iter()
+            .find(|s| s.shard_id == query.shard_id)
+            .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+        if session.public_params_sha256[..16] != query.epoch {
+            return Err((StatusCode::BAD_REQUEST, "epoch mismatch".into()));
         }
+        assignment
+            .get(&query.shard_id)
+            .cloned()
+            .ok_or((StatusCode::BAD_REQUEST, "wrong group".into()))?
     };
-    let generation = request.generation;
-    match state.evaluate_local(table, request).await {
-        Ok(coefficients) => encode_evaluate_response(generation, &coefficients).into_response(),
-        Err(error) => {
-            tracing::warn!(%error, %table, "worker evaluation failed");
-            StatusCode::SERVICE_UNAVAILABLE.into_response()
-        }
-    }
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let coefficients = evaluation.evaluate(&query.coefficients)?;
+        Ok::<_, String>(Intermediate {
+            generation: query.generation,
+            shard_id: query.shard_id,
+            epoch: query.epoch,
+            coefficients,
+        })
+    })
+    .await
+    .map_err(unavailable)?
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(result))
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn host_memory_reports_a_real_total() {
-        let (total, available, _rss) = super::host_memory();
-        assert!(total > 0);
-        assert!(available <= total);
-    }
-
     use super::*;
-    use crate::types::SHARD_ROWS;
-    use crate::wire::ShardQuery;
-
-    #[tokio::test]
-    async fn evaluation_requires_an_active_generation() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let state = WorkerState::new(dir.path().to_path_buf()).expect("worker");
-        let error = state
-            .evaluate_local(
-                DatabaseId::Enhance,
-                EvaluateRequest {
-                    generation: 7,
-                    shards: vec![ShardQuery {
-                        shard_id: 0,
-                        coefficients: vec![0; SHARD_ROWS],
-                    }],
-                },
-            )
-            .await
-            .expect_err("nothing is active");
-        assert!(error.contains("generation mismatch"), "{error}");
-    }
-
-    #[tokio::test]
-    async fn activation_requires_prepared_shards() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let state = WorkerState::new(dir.path().to_path_buf()).expect("worker");
-        assert!(state
-            .activate_local(ActivateRequest {
-                retained_generations: vec![],
-                generation: 1,
-                tables: BTreeMap::new(),
-            })
-            .await
-            .is_err());
-        let mut tables = BTreeMap::new();
-        tables.insert(
-            DatabaseId::Enhance,
-            vec![ActivateShard {
-                shard_id: 3,
-                rows_sha256: "00".repeat(32),
-            }],
-        );
-        let error = state
-            .activate_local(ActivateRequest {
-                retained_generations: vec![],
-                generation: 1,
-                tables,
-            })
-            .await
-            .expect_err("shard 3 was never prepared");
-        assert!(error.contains("enhance shard 3"), "{error}");
-    }
+    use tower::ServiceExt;
 
     #[test]
-    fn every_table_has_shard_parameters_and_the_body_limit_covers_them() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let state = WorkerState::new(dir.path().to_path_buf()).expect("worker");
-        for table in DatabaseId::ALL {
-            assert_eq!(state.rlwe(table).d, 2_048, "{table}");
-            assert!(table.layout().shard_bytes() <= max_shard_bytes());
+    fn q46_worker_state_is_rejected_without_rewriting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("worker.json");
+        let mut old = serde_json::to_value(DiskState::default()).unwrap();
+        old.as_object_mut().unwrap().remove("protocol_revision");
+        for revision in [None, Some("ironwood-enhance-pir-v5")] {
+            if let Some(revision) = revision {
+                old["protocol_revision"] = revision.into();
+            }
+            let bytes = serde_json::to_vec(&old).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            assert!(Worker::open(root.path()).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
         }
     }
-}
-
-#[cfg(test)]
-mod publication_recovery_tests {
-    use super::*;
-    use crate::ipir::{shard_artifact_dir, PreparedShard};
-    use crate::types::{DatabaseLayout, ENHANCE_LAYOUT};
-    use crate::wire::{read_crs_blocks, ShardQuery};
-    use std::fs::{self, File};
-    use std::os::unix::fs::FileExt;
-    use std::time::Duration;
-
-    async fn drain(artifact: PublicationArtifact) -> bool {
-        tokio::task::spawn_blocking(move || {
-            std::io::copy(&mut artifact.reader(), &mut std::io::sink()).is_ok()
-        })
-        .await
-        .unwrap()
-    }
 
     #[tokio::test]
-    async fn same_digest_reprepare_repairs_failed_and_early_cancelled_hints() {
-        let dir = tempfile::tempdir().unwrap();
-        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
-        let table = DatabaseId::Enhance;
-        let rows = vec![3; ENHANCE_LAYOUT.shard_bytes()];
-        let digest = RecordJournal::rows_digest(&rows);
-        assert!(worker
-            .prepare_local(
-                table,
-                0,
-                0,
-                ENHANCE_LAYOUT.shard_rows as u64,
-                digest.clone(),
-                rows.clone()
-            )
-            .await
-            .unwrap());
-        let key = ShardKey {
-            table,
-            shard_id: 0,
-            rows_sha256: digest.clone(),
-        };
-        worker
-            .activate_local(ActivateRequest {
-                generation: 1,
-                retained_generations: vec![],
-                tables: [(
-                    table,
-                    vec![ActivateShard {
-                        shard_id: 0,
-                        rows_sha256: digest.clone(),
-                    }],
-                )]
-                .into(),
-            })
-            .await
-            .unwrap();
-        let query = || EvaluateRequest {
+    async fn placement_policy_is_persisted_and_fences_reservations() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = PlacementPolicy { sealed_shards: 7 };
+        let worker = Worker::open_with_policy(root.path(), policy).unwrap();
+        let router = worker.router();
+        let mut candidate = Candidate {
+            placement_policy: PlacementPolicy::default(),
+            operation: "policy".into(),
+            attempt: 1,
+            epoch: 1,
+            expected_revision: 0,
             generation: 1,
-            shards: vec![ShardQuery {
-                shard_id: 0,
-                coefficients: vec![1; ENHANCE_LAYOUT.shard_rows],
-            }],
+            plans: vec![],
         };
-        let expected = worker.evaluate_local(table, query()).await.unwrap();
-        let path = shard_artifact_dir(dir.path(), table, 0).join("partial-crs.bin");
-        let original = worker.shards.read().await[&key].clone();
-        let file = File::options().write(true).open(&path).unwrap();
-        let length = file.metadata().unwrap().len();
-        file.set_len(length - 1).unwrap();
-        assert!(!drain(original.publication.clone()).await);
-        assert!(original.publication.is_failed());
-        assert!(worker
-            .ensure_local(table, 0, 0, digest.clone())
-            .await
-            .is_err());
-        // A failed repair must leave the retained generation answerable.
-        let blocked_temporary = path.with_file_name("partial-crs.bin.tmp");
-        fs::create_dir(&blocked_temporary).unwrap();
-        assert!(worker
-            .prepare_local(
-                table,
-                0,
-                0,
-                ENHANCE_LAYOUT.shard_rows as u64,
-                digest.clone(),
-                rows.clone()
-            )
-            .await
-            .is_err());
-        assert!(Arc::ptr_eq(&original, &worker.shards.read().await[&key]));
         assert_eq!(
-            worker.evaluate_local(table, query()).await.unwrap(),
-            expected
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::SERVICE_UNAVAILABLE
         );
-        fs::remove_dir(&blocked_temporary).unwrap();
-        assert!(worker
-            .prepare_local(
-                table,
-                0,
-                0,
-                ENHANCE_LAYOUT.shard_rows as u64,
-                digest.clone(),
-                rows.clone()
-            )
-            .await
-            .unwrap());
-        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
+        candidate.placement_policy = policy;
         assert_eq!(
-            worker.evaluate_local(table, query()).await.unwrap(),
-            expected
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::OK
         );
-        drop(original);
-
-        // A malformed header can be rejected before the final checksum is
-        // read, leaving no failure signal from the cancelled streaming reader.
-        let cached = worker.shards.read().await[&key].clone();
-        File::options()
-            .write(true)
-            .open(&path)
+        drop(router);
+        assert!(Worker::open(root.path())
+            .err()
             .unwrap()
-            .write_at(b"BAD!", 0)
-            .unwrap();
-        let artifact = cached.publication.clone();
+            .contains("placement policy"));
+        assert!(Worker::open_with_policy(root.path(), policy).is_ok());
         assert!(
-            tokio::task::spawn_blocking(move || read_crs_blocks(artifact.reader(), 6, 2048))
-                .await
-                .unwrap()
-                .is_err()
+            Worker::open_with_policy(root.path(), PlacementPolicy { sealed_shards: 8 }).is_err()
         );
-        assert!(!cached.publication.is_failed());
-        assert!(worker
-            .prepare_local(
-                table,
-                0,
-                0,
-                ENHANCE_LAYOUT.shard_rows as u64,
-                digest.clone(),
-                rows.clone()
+    }
+
+    #[test]
+    fn restart_rebuilds_lost_cache_only_from_verified_durable_rows() {
+        use super::super::runtime::{plan, unit_rows, Packing};
+        use enhance_pir::protocol::{Geometry, Lifecycle, SCHEMA_VERSION};
+        let root = tempfile::tempdir().unwrap();
+        let worker = Worker::open(root.path()).unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(1, Geometry::default())
+            .unwrap();
+        let source = |_: u64, count: usize| Ok(vec![7; count * enhance_pir::RECORD_BYTES]);
+        let plan = plan(coverage.shards[0].clone(), source).unwrap();
+        let rows = unit_rows(&plan.shard, &plan.shard.units[0], &mut { source }).unwrap();
+        let path = root.path().join("rows").join(plan.units[0].digest());
+        fs::write(&path, &rows).unwrap();
+        let eval = worker
+            .inner
+            .lock()
+            .unwrap()
+            .engine
+            .lock()
+            .unwrap()
+            .prepare(plan.clone(), source)
+            .unwrap();
+        let packing = Packing::new(4096, &eval.hint().unwrap()).unwrap();
+        let manifest = Manifest {
+            schema_version: SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation: 1,
+            anchor_height: 3428143,
+            anchor_block_hash: "01".repeat(32),
+            geometry: Geometry::default(),
+            coverage,
+            sessions: vec![packing.reference(0).unwrap()],
+            unit_identities: [(0, plan.units.clone())].into(),
+        };
+        worker
+            .inner
+            .lock()
+            .unwrap()
+            .save(DiskState {
+                epoch: 3,
+                revision: 1,
+                retention: vec![1],
+                published: [(1, (manifest, vec![plan.clone()]))].into(),
+                ..DiskState::default()
+            })
+            .unwrap();
+        let durable = fs::read(root.path().join("worker.json")).unwrap();
+        let mut coefficients = vec![0; 4096];
+        coefficients[0] = 1;
+        let expected = eval.evaluate(&coefficients).unwrap();
+        let peer = tempfile::tempdir().unwrap();
+        let peer_path = peer.path().join(plan.units[0].digest());
+        fs::write(&peer_path, &rows).unwrap();
+        assert!(Worker::repair_rows(root.path(), peer.path()).is_err());
+        drop(eval);
+        drop(worker);
+        fs::remove_dir_all(root.path().join("artifacts-9")).unwrap();
+        // Reject corrupt padding too, even though the live prefix is intact.
+        let mut corrupt = rows.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        fs::write(&path, corrupt).unwrap();
+        assert!(Worker::open(root.path()).is_err());
+        fs::remove_file(&path).unwrap();
+        assert!(Worker::open(root.path()).is_err());
+        fs::write(&peer_path, b"corrupt source").unwrap();
+        assert!(Worker::repair_rows(root.path(), peer.path()).is_err());
+        assert!(!path.exists());
+        assert_eq!(fs::read(root.path().join("worker.json")).unwrap(), durable);
+        fs::write(&peer_path, &rows).unwrap();
+        fs::write(peer.path().join("unreferenced"), b"do not copy").unwrap();
+        assert_eq!(Worker::repair_rows(root.path(), peer.path()).unwrap(), 1);
+        assert_eq!(Worker::repair_rows(root.path(), peer.path()).unwrap(), 0);
+        assert!(!root.path().join("rows/unreferenced").exists());
+        let recovered = Worker::open(root.path()).unwrap();
+        let inner = recovered.inner.lock().unwrap();
+        assert_eq!(
+            inner.published[&1][&0].evaluate(&coefficients).unwrap(),
+            expected
+        );
+        assert_eq!(inner.disk.epoch, 3);
+        assert_eq!(fs::read(root.path().join("worker.json")).unwrap(), durable);
+        assert!(staged_records(root.path(), &plan, 1, 1).is_err());
+        assert!(staged_records(root.path(), &plan, 0, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn offline_repair_includes_durable_candidate_and_rejects_missing_journal() {
+        let root = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        assert!(Worker::repair_rows(root.path(), source.path()).is_err());
+        let worker = Worker::open(root.path()).unwrap();
+        let coverage = enhance_pir::protocol::Lifecycle::default()
+            .coverage(1, enhance_pir::protocol::Geometry::default())
+            .unwrap();
+        let plan = super::super::runtime::plan(coverage.shards[0].clone(), |_, count| {
+            Ok(vec![0; count * enhance_pir::RECORD_BYTES])
+        })
+        .unwrap();
+        let unit = &plan.units[0];
+        fs::write(
+            source.path().join(unit.digest()),
+            vec![0; unit.allocated_rows as usize * crate::types::ENHANCE_LAYOUT.row_bytes()],
+        )
+        .unwrap();
+        worker
+            .inner
+            .lock()
+            .unwrap()
+            .save(DiskState {
+                candidate: Some(Candidate {
+                    placement_policy: Default::default(),
+                    operation: "pending".into(),
+                    attempt: 2,
+                    epoch: 3,
+                    expected_revision: 0,
+                    generation: 1,
+                    plans: vec![plan],
+                }),
+                ..DiskState::default()
+            })
+            .unwrap();
+        let journal = fs::read(root.path().join("worker.json")).unwrap();
+        drop(worker);
+        assert_eq!(Worker::repair_rows(root.path(), source.path()).unwrap(), 1);
+        assert_eq!(fs::read(root.path().join("worker.json")).unwrap(), journal);
+    }
+
+    async fn command(router: &Router, path: &str, value: &impl Serialize) -> StatusCode {
+        router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(value).unwrap()))
+                    .unwrap(),
             )
             .await
-            .unwrap());
-        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
-        assert_eq!(
-            worker.evaluate_local(table, query()).await.unwrap(),
-            expected
-        );
-
-        // Rebinding an operator-replaced pathname must not keep the bad inode.
-        let cached = worker.shards.read().await[&key].clone();
-        let replacement = path.with_extension("replacement");
-        fs::copy(&path, &replacement).unwrap();
-        File::options()
-            .write(true)
-            .open(&path)
             .unwrap()
-            .set_len(0)
+            .status()
+    }
+
+    #[tokio::test]
+    async fn metrics_do_not_block_preparation_or_invent_zero_memory() {
+        let root = tempfile::tempdir().unwrap();
+        let worker = Worker::open(root.path()).unwrap();
+        let before = fs::read(root.path().join("worker.json")).ok();
+        let engine = worker.inner.lock().unwrap().engine.clone();
+        let (ready_send, ready_receive) = std::sync::mpsc::channel();
+        let (finish_send, finish_receive) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _guard = engine.lock().unwrap();
+            ready_send.send(()).unwrap();
+            finish_receive
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+        });
+        ready_receive
+            .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap();
-        assert!(!drain(cached.publication.clone()).await);
-        fs::rename(replacement, &path).unwrap();
-        worker
-            .ensure_local(table, 0, 0, digest.clone())
-            .await
-            .unwrap();
-        assert!(!Arc::ptr_eq(&cached, &worker.shards.read().await[&key]));
-        assert!(drain(worker.crs_local(table, 0).await.unwrap()).await);
-        assert!(!worker
-            .prepare_local(table, 0, 0, ENHANCE_LAYOUT.shard_rows as u64, digest, rows)
-            .await
-            .unwrap());
-        assert_eq!(worker.cached_shard_count().await, 1);
+        let (_, text) = metrics(State(worker.clone())).await;
+        finish_send.send(()).unwrap();
+        thread.join().unwrap();
+        assert!(text.contains("enhance_worker_memory_sample_available 0\n"));
+        assert!(!text.contains("enhance_worker_live_database_bytes "));
+        let (_, text) = metrics(State(worker)).await;
+        assert!(text.contains("enhance_worker_memory_sample_available 1\n"));
+        assert!(text.contains("enhance_worker_live_database_bytes 0\n"));
+        assert!(text.contains(&format!("enhance_worker_model_total_bytes {OVERHEAD}\n")));
+        assert_eq!(fs::read(root.path().join("worker.json")).ok(), before);
+    }
+
+    #[tokio::test]
+    async fn abort_before_reserve_fences_delayed_attempt() {
+        let root = tempfile::tempdir().unwrap();
+        let router = Worker::open(root.path()).unwrap().router();
+        let abort = Abort {
+            epoch: 1,
+            operation: "cancelled".into(),
+            attempt: 0,
+        };
         assert_eq!(
-            worker.evaluate_local(table, query()).await.unwrap(),
-            expected
+            command(&router, "/internal/abort", &abort).await,
+            StatusCode::OK
+        );
+        let mut candidate = Candidate {
+            placement_policy: Default::default(),
+            epoch: 1,
+            operation: "cancelled".into(),
+            attempt: 0,
+            expected_revision: 0,
+            generation: 1,
+            plans: vec![],
+        };
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        candidate.attempt = 1;
+        candidate.operation = "replacement".into();
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            command(&router, "/internal/abort", &abort).await,
+            StatusCode::SERVICE_UNAVAILABLE
         );
     }
 
-    fn small_cached(directory: &std::path::Path) -> CachedShard {
-        let layout = DatabaseLayout {
-            record_bytes: 3584,
-            records_per_row: 1,
-            shard_rows: 2048,
-            pir_profile: ipir_sp::SimplePirProfile::P14,
-        };
-        let (rlwe, params) = shard_parameters(&layout).unwrap();
-        let setup = ipir_sp::IPIRClient::from_profile(
-            params.num_items,
-            params.item_size_bits,
-            layout.pir_profile,
-        )
-        .unwrap()
-        .generate_public_query_setup_simplepir_from_seed(DatabaseId::Enhance.setup_seed_bytes());
-        PreparedShard::build(
-            &layout,
-            0,
-            0,
-            "fixture".into(),
-            &vec![0; layout.shard_bytes()],
-            &rlwe,
-            setup.polys(),
-        )
-        .unwrap()
-        .persist(directory, DatabaseId::Enhance, &layout, &rlwe)
-        .unwrap()
-    }
-
     #[tokio::test]
-    async fn preparation_slot_stays_owned_while_cache_insertion_is_blocked() {
-        let dir = tempfile::tempdir().unwrap();
-        let cached = small_cached(dir.path());
-        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
-        let key = ShardKey {
-            table: DatabaseId::Enhance,
-            shard_id: 0,
-            rows_sha256: "fixture".into(),
-        };
-        let permit = worker
-            .preparation_slots
-            .clone()
-            .acquire_owned()
-            .await
+    async fn aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http() {
+        let root = tempfile::tempdir().unwrap();
+        let router = Worker::open(root.path()).unwrap().router();
+        let coverage = enhance_pir::protocol::Lifecycle::default()
+            .coverage(1, enhance_pir::protocol::Geometry::default())
             .unwrap();
-        let cache_lock = worker.shards.write().await;
-        let (finished, finished_rx) = tokio::sync::oneshot::channel();
-        let task_worker = worker.clone();
-        let task = tokio::spawn(async move {
-            task_worker
-                .install_prepared(key, permit, move || {
-                    finished.send(()).unwrap();
-                    Ok((cached, true))
-                })
-                .await
-        });
-        finished_rx.await.unwrap();
-        // With the previous closure-local guard, another request obtained this
-        // slot before installation and could build a duplicate runtime.
-        assert!(tokio::time::timeout(
-            Duration::from_millis(250),
-            worker.preparation_slots.clone().acquire_owned()
-        )
-        .await
-        .is_err());
-        assert!(!task.is_finished());
-        drop(cache_lock);
-        assert!(task.await.unwrap().unwrap());
-        assert_eq!(worker.cached_shard_count().await, 1);
-        assert_eq!(worker.preparation_slots.available_permits(), 1);
-    }
-
-    #[tokio::test]
-    async fn cancelled_preparation_keeps_slot_until_blocking_work_finishes() {
-        let dir = tempfile::tempdir().unwrap();
-        let worker = WorkerState::new(dir.path().to_owned()).unwrap();
-        let key = ShardKey {
-            table: DatabaseId::Enhance,
-            shard_id: 0,
-            rows_sha256: "fixture".into(),
-        };
-        let permit = worker
-            .preparation_slots
-            .clone()
-            .acquire_owned()
-            .await
-            .unwrap();
-        let (started, started_rx) = tokio::sync::oneshot::channel();
-        let (release, release_rx) = std::sync::mpsc::channel();
-        let task_worker = worker.clone();
-        let task = tokio::spawn(async move {
-            task_worker
-                .install_prepared(key, permit, move || {
-                    started.send(()).unwrap();
-                    release_rx.recv().unwrap();
-                    Err("injected preparation failure".into())
-                })
-                .await
-        });
-        started_rx.await.unwrap();
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        assert_eq!(worker.preparation_slots.available_permits(), 0);
-        release.send(()).unwrap();
-        let _permit = tokio::time::timeout(
-            Duration::from_secs(5),
-            worker.preparation_slots.clone().acquire_owned(),
-        )
-        .await
-        .unwrap()
+        let plan = super::super::runtime::plan(coverage.shards[0].clone(), |_, count| {
+            Ok(vec![0; count * enhance_pir::RECORD_BYTES])
+        })
         .unwrap();
-        assert_eq!(worker.cached_shard_count().await, 0);
+        let mut candidate = Candidate {
+            placement_policy: Default::default(),
+            operation: "test".into(),
+            attempt: 0,
+            epoch: 1,
+            expected_revision: 0,
+            generation: 1,
+            plans: vec![plan],
+        };
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            command(
+                &router,
+                "/internal/abort",
+                &Abort {
+                    epoch: 0,
+                    operation: "test".into(),
+                    attempt: 0
+                }
+            )
+            .await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/internal/rows/{}",
+                        candidate.plans[0].units[0].digest()
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "uploads need the reservation's command identity"
+        );
+        assert_eq!(
+            command(
+                &router,
+                "/internal/abort",
+                &Abort {
+                    epoch: 1,
+                    operation: "test".into(),
+                    attempt: 0
+                }
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        candidate.attempt = 1;
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::OK
+        );
+        candidate.plans[0].units[0].content_sha256 = "ff".repeat(32);
+        assert_eq!(
+            command(&router, "/internal/reserve", &candidate).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            command(
+                &router,
+                "/internal/retain",
+                &Retain {
+                    epoch: 0,
+                    generations: vec![1]
+                }
+            )
+            .await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            command(
+                &router,
+                "/internal/retain",
+                &Retain {
+                    epoch: 1,
+                    generations: vec![1, 1]
+                }
+            )
+            .await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 }

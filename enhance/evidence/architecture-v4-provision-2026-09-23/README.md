@@ -1,6 +1,6 @@
 # V4 provisioning adapter validation — September 23, 2026
 
-The [provisioning adapter](../../ops/scripts/v4-provision.py) connects a pending
+The [provisioning adapter](../../ops/scripts/provision.py) connects a pending
 infrastructure journal operation to an isolated, preinitialized Terraform root.
 It pins module content, backend identity and locking, state lineage, account,
 project ownership, VPC region/coordinator address, and established worker IDs and
@@ -38,4 +38,4 @@ change did not require rebuilding Rust binaries or repeating PIR load tests.
 operator documentation. No credentials were fetched and no remote infrastructure
 or service was changed. Bootstrap, qualification receipt verification, inventory
 registration, initial fleet deployment, and hardware/load campaigns remain
-outstanding in the [implementation status](../../docs/architecture_2-implementation.md).
+outstanding in the [implementation status](../../docs/qualification.md).

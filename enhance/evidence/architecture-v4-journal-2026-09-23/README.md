@@ -1,6 +1,6 @@
 # V4 durable expansion journal validation — September 23, 2026
 
-The [journal](../../ops/scripts/v4-expansion-journal.py) consumes live or captured
+The [journal](../../ops/scripts/expansion-journal.py) consumes live or captured
 coordinator demand under a separate infrastructure writer lock. It freezes
 operation inputs, persists Droplet identities, records apply intent before
 external work, and requires reconciliation before retrying an interrupted apply.

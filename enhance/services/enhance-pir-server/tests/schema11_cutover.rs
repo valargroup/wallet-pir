@@ -1,11 +1,9 @@
 //! A cutover must refuse old state without modifying its durable bytes.
 use enhance_pir_server::{
+    control::{State, Store},
     store::RecordJournal,
     types::{DatabaseId, ENHANCE_LAYOUT},
-    v4::{
-        control::{State, Store},
-        worker::Worker,
-    },
+    worker::Worker,
 };
 
 #[test]
@@ -37,7 +35,7 @@ fn old_controller_and_worker_state_are_rejected_without_rewrite() {
         ..State::default()
     };
     let bytes = serde_json::to_vec(&old).unwrap();
-    let path = root.path().join("controller-v4.json");
+    let path = root.path().join("controller.json");
     std::fs::write(&path, &bytes).unwrap();
     assert!(Store::open(root.path()).is_err());
     assert_eq!(std::fs::read(path).unwrap(), bytes);
@@ -49,28 +47,10 @@ fn old_controller_and_worker_state_are_rejected_without_rewrite() {
             old["schema_version"] = schema.into();
         }
         let bytes = serde_json::to_vec(&old).unwrap();
-        let path = root.path().join("worker-v4.json");
+        let path = root.path().join("worker.json");
         std::fs::write(&path, &bytes).unwrap();
         assert!(Worker::open(root.path()).is_err());
         assert!(Worker::repair_rows(root.path(), root.path()).is_err());
         assert_eq!(std::fs::read(path).unwrap(), bytes);
-    }
-}
-
-#[test]
-fn legacy_serving_binaries_exit_before_creating_data() {
-    let root = tempfile::tempdir().unwrap();
-    for binary in [
-        env!("CARGO_BIN_EXE_enhance-pir-server"),
-        env!("CARGO_BIN_EXE_enhance-pir-worker"),
-    ] {
-        let output = std::process::Command::new(binary)
-            .arg("--data-dir")
-            .arg(root.path().join("data"))
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("retired"));
-        assert!(!root.path().join("data").exists());
     }
 }

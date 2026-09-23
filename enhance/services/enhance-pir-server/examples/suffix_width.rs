@@ -40,8 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         layout.item_size_bits(),
         layout.pir_profile,
     )?;
-    let setup =
-        client.generate_public_query_setup_simplepir_from_seed(enhance_pir::v4::setup_seed(0));
+    let setup = client
+        .generate_public_query_setup_simplepir_from_seed(enhance_pir::protocol::setup_seed(0));
     let mut rows = vec![0; layout.shard_bytes()];
     for (i, byte) in rows.iter_mut().enumerate() {
         *byte = i.wrapping_mul(17).wrapping_add(i / layout.row_bytes()) as u8;

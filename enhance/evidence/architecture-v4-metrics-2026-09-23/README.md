@@ -52,5 +52,5 @@ memory admission or live replica readiness. Continuous scraping, actual 8 GiB
 hardware campaigns, six-hour qualification and deployment remain outstanding.
 No cloud or production changes occurred.
 
-See the [metric semantics and scrape instructions](../../ops/deploy/v4-candidate.md)
-and [implementation status](../../docs/architecture_2-implementation.md).
+See the [metric semantics and scrape instructions](../../docs/qualification.md)
+and [implementation status](../../docs/qualification.md).

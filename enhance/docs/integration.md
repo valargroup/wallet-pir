@@ -1,11 +1,9 @@
 # Wallet integration
 
 Use the protocol-v6/q48 wallet follow-up to [wallet-libraries PR #28](https://github.com/zakura-core/wallet-libraries/pull/28).
-PR #28 alone uses q46 and must not connect to this server.
+PR #28 alone uses q46 and cannot connect to this server.
 The server publishes `ironwood-enhance-pir-v6` with 653-byte records and 33
-records per row. The HTTP routes, `EPQ4` binding header, and setup domain are
-unchanged from the architecture-2 transport. The schema-11 record encoding is
-unchanged from v5; query precision and profile identities are incompatible.
+records per row. The HTTP routes, `EPQ4` binding header, and setup domain are fixed wire identifiers.
 See [protocol](protocol.md) for offsets and validation.
 
 ## Wallet flow
@@ -32,14 +30,13 @@ row-query counts remain observable; batching does not add cover traffic.
 
 ## CLI smoke checks
 
-The internal `v4` module and CLI option name are retained for operational
-continuity. They now speak schema 11:
+The CLI speaks schema 11:
 
 ```sh
 cargo run -p enhance-pir --features cli --bin enhance-pir-cli -- \
-  --v4 --server http://127.0.0.1:8280 metadata
+  --server http://127.0.0.1:8280 metadata
 cargo run -p enhance-pir --features cli --bin enhance-pir-cli -- \
-  --v4 --server http://127.0.0.1:8280 query 0
+  --server http://127.0.0.1:8280 query 0
 ```
 
 The CLI returns an encoded suffix record; it does not perform wallet

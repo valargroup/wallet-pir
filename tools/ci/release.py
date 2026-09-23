@@ -13,23 +13,16 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARIES = {
-    'enhance-pir-v4-candidate': ['enhance-pir-v4', 'enhance-pir-cli', 'enhance-pir-load-test'],
-    'enhance-pir': ['enhance-pir-server', 'enhance-pir-worker', 'enhance-pir-qualify', 'enhance-pir-cli', 'pir-apm', 'transparent-filter-server'],
+    'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'transparent-filter': ['transparent-filter-server'],
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
 }
 FILES = {
-    'enhance-pir-v4-candidate': ['enhance/ops/scripts/test-v4-local.py', 'enhance/ops/scripts/bootstrap-v4-worker.py', 'enhance/ops/scripts/sample-v4-worker.py',
-        'enhance/ops/deploy/workers-v4.example.json', 'enhance/ops/deploy/v4-candidate.md'],
-    'enhance-pir': [
-        'enhance/ops/deploy/enhance-pir-server.service', 'enhance/ops/deploy/enhance-pir-worker.service',
-        'enhance/ops/deploy/pir-apm.service', 'transparent/ops/deploy/transparent-filter-server.service',
-        'ops/deploy/coordinator/Caddyfile', 'enhance/ops/scripts/enhance-autoscale.py',
-        'ops/scripts/wallet-pir-terraform.sh', 'ops/scripts/wallet-pir-runtime.py',
-        'enhance/ops/scripts/enhance-qualification.py', 'enhance/ops/deploy/enhance-autoscale.service',
-        'enhance/ops/deploy/enhance-autoscale.timer', 'enhance/ops/deploy/autoscale.example.json',
-    ],
+    'enhance-pir': ['enhance/ops/scripts/test-local.py', 'enhance/ops/scripts/bootstrap-worker.py',
+        'enhance/ops/scripts/sample-worker.py',
+        'enhance/ops/scripts/summarize-samples.py', 'enhance/ops/scripts/assess-campaign.py',
+        'enhance/ops/deploy/workers.example.json'],
     'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
     'transparent-shard': ['transparent/ops/deploy/transparent-shard-server.service', 'transparent/ops/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
@@ -90,16 +83,11 @@ def assemble(sha, target, output, kind=None):
             (directory / name).chmod(0o755)
         for source in FILES[kind]:
             shutil.copy2(ROOT / source, directory / Path(source).name)
-        if kind == 'enhance-pir-v4-candidate':
+        if kind == 'enhance-pir':
             (directory / 'candidate.json').write_text(json.dumps({
                 'kind': kind, 'schema_version': 11, 'protocol_revision': 'ironwood-enhance-pir-v6',
                 'qualification': 'unqualified', 'source_revision': sha, 'source_dirty': dirty,
             }, indent=2) + '\n')
-        if kind == 'enhance-pir':
-            paths = subprocess.check_output(['git', 'ls-files', '-z', 'ops/infra/digitalocean/production'], cwd=ROOT).decode().split('\0')
-            with tarfile.open(directory / 'wallet-pir-infra.tar.gz', 'w:gz') as archive:
-                for path in filter(None, paths):
-                    archive.add(ROOT / path, arcname=path)
         (directory / 'revision').write_text(sha + '\n')
         (directory / 'SHA256SUMS').write_text(''.join(
             f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
@@ -121,8 +109,6 @@ def extract(archive_path, destination, sha, kind):
         payload = {m.name: archive.extractfile(m).read() for m in members}
     required = set(BINARIES[kind]) | {Path(p).name for p in FILES[kind]} | {'revision', 'SHA256SUMS'}
     if kind == 'enhance-pir':
-        required.add('wallet-pir-infra.tar.gz')
-    if kind == 'enhance-pir-v4-candidate':
         required.add('candidate.json')
     if set(payload) != required:
         raise ValueError('release archive contents differ from the required artifact inventory')
@@ -139,14 +125,14 @@ def extract(archive_path, destination, sha, kind):
     for name, digest in checksums.items():
         if hashlib.sha256(payload[name]).hexdigest() != digest:
             raise ValueError(f'checksum mismatch: {name}')
-    if kind == 'enhance-pir-v4-candidate':
+    if kind == 'enhance-pir':
         candidate = json.loads(payload['candidate.json'])
         if (candidate.get('kind') != kind or candidate.get('source_revision') != sha
                 or candidate.get('schema_version') != 11
                 or candidate.get('protocol_revision') != 'ironwood-enhance-pir-v6'
                 or candidate.get('qualification') != 'unqualified'
                 or not isinstance(candidate.get('source_dirty'), bool)):
-            raise ValueError('invalid v4 candidate metadata; qualification is a separate gate')
+            raise ValueError('invalid candidate metadata; qualification is a separate gate')
     destination.mkdir(parents=True, exist_ok=False)
     for name, data in payload.items():
         path = destination / name

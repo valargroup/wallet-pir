@@ -39,6 +39,6 @@ cargo clippy --locked -p enhance-pir-server --all-targets --all-features -- -D w
 
 [Clippy](clippy.log), formatting, and documentation link checks passed. No cloud
 resources, production services, or release configuration changed. The remaining
-[implementation and deployment gates](../../docs/architecture_2-implementation.md)
+[implementation and deployment gates](../../docs/qualification.md)
 still apply; earlier load results describe their recorded binaries, not this
 subsequent cleanup change.

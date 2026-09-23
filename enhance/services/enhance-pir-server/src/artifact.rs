@@ -40,6 +40,7 @@ impl PublicationArtifact {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn is_failed(&self) -> bool {
         self.failed.load(Ordering::Acquire)
     }
@@ -245,40 +246,6 @@ pub(crate) fn write_atomic(
         let _ = fs::remove_file(temporary);
     }
     result
-}
-
-/// A bounded bridge from asynchronous HTTP chunks to the blocking CRS decoder.
-pub(crate) struct ChunkReader {
-    receiver: mpsc::Receiver<Bytes>,
-    current: Bytes,
-}
-
-pub(crate) fn chunk_reader() -> (mpsc::Sender<Bytes>, ChunkReader) {
-    let (sender, receiver) = mpsc::channel(STREAM_QUEUE_CHUNKS);
-    (
-        sender,
-        ChunkReader {
-            receiver,
-            current: Bytes::new(),
-        },
-    )
-}
-
-impl Read for ChunkReader {
-    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        if bytes.is_empty() {
-            return Ok(0);
-        }
-        while self.current.is_empty() {
-            match self.receiver.blocking_recv() {
-                Some(chunk) => self.current = chunk,
-                None => return Ok(0),
-            }
-        }
-        let n = bytes.len().min(self.current.len());
-        bytes[..n].copy_from_slice(&self.current.split_to(n));
-        Ok(n)
-    }
 }
 
 #[cfg(test)]

@@ -4,7 +4,6 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::Path;
-use transparent_spend_pir::TransparentSpendEntry;
 use zakura_chain::block::Block;
 use zakura_chain::serialization::ZcashDeserialize;
 
@@ -43,7 +42,6 @@ pub struct CanonicalBlock {
     pub height: u64,
     pub hash: String,
     pub records: Vec<EnhanceRecord>,
-    pub transparent_spends: Vec<TransparentSpendEntry>,
     pub tree_size: u64,
 }
 
@@ -145,26 +143,6 @@ impl ZakuraClient {
                 })
             }));
         }
-        let spend_height = u32::try_from(height)
-            .map_err(|_| ZakuraError::Block(format!("block height {height} exceeds u32")))?;
-        let mut transparent_spends = Vec::new();
-        for (transaction_index, transaction) in block.transactions.iter().enumerate() {
-            let transaction_index = u16::try_from(transaction_index).map_err(|_| {
-                ZakuraError::Block(format!("block {height} has too many transactions"))
-            })?;
-            let spending_txid = transaction.hash().0;
-            transparent_spends.extend(transaction.spent_outpoints().map(|outpoint| {
-                TransparentSpendEntry {
-                    outpoint_txid: outpoint.hash.0,
-                    outpoint_index: outpoint.index,
-                    spending_txid,
-                    spend_height,
-                    transaction_index,
-                }
-            }));
-        }
-        // Ironwood tree metadata does not exist before activation, while the
-        // transparent-spend journal deliberately starts at genesis.
         let tree_size = if height >= ACTIVATION_HEIGHT {
             self.tree_size(height).await?
         } else {
@@ -174,7 +152,6 @@ impl ZakuraClient {
             height,
             hash,
             records,
-            transparent_spends,
             tree_size,
         })
     }

@@ -7,7 +7,7 @@ investigation at the user's request; no schema-8 measurements qualify this repor
 
 ## Current decision and evidence status
 
-The [architecture specification](../../docs/architecture_2.md#five-generation-placement-model-and-memory-estimates)
+The [architecture specification](../../docs/architecture.md#five-generation-placement-model-and-memory-estimates)
 is authoritative for the selected policy: **five retained published generations,
 including current, plus one candidate; five total shards with one active frontier,
 or six sealed shards per replica**. Maximum mutable-unit size remains 8K.

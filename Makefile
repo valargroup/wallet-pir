@@ -80,7 +80,7 @@ run-server:
 	cargo run --release -p enhance-pir-server --bin enhance-pir-server -- --help
 
 run-worker:
-	cargo run --release -p enhance-pir-server --bin enhance-pir-worker -- --help
+	cargo run --release -p enhance-pir-server --bin enhance-pir-server -- worker --help
 
 load-test:
 	cargo run --release -p enhance-pir-load-test -- \

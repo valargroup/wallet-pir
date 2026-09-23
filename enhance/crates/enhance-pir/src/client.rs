@@ -1,14 +1,14 @@
-use crate::types::{
-    setup_seed_bytes, EnhanceGeneration, EnhanceRecord, EnhanceSession, ENHANCE_SETUP_SEED,
-    ITEM_SIZE_BITS, NETWORK, PIR_PROFILE_ID, POOL, PROTOCOL_REVISION, RECORDS_PER_ROW,
-    RECORD_BYTES, ROW_BYTES, SCHEMA_VERSION, SHARD_ROWS,
-};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+//! Enhance PIR client. Shard selection is public; row and record-slot selection stay local.
+use crate::protocol::*;
+use crate::{EnhanceRecord, ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
 use ipir_sp::serialize::serialize_packing_keys;
-use ipir_sp::{IPIRClient, YpirSchemeParams};
+use ipir_sp::{IPIRClient, IPIRSeed, YpirSchemeParams};
 use rand::{rngs::OsRng, Rng};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, thiserror::Error)]
@@ -39,267 +39,346 @@ pub struct QueryTiming {
     pub total: Duration,
 }
 
-pub struct QuerySession {
-    generation: EnhanceGeneration,
-    ypir: YpirSchemeParams,
-    client: IPIRClient,
-    setup: ipir_sp::PublicQuerySetup,
-    published_c1: Vec<Vec<u64>>,
-    epoch: [u8; 8],
-}
-
 pub struct PreparedQuery {
-    row: usize,
+    binding: QueryBinding,
+    seed: IPIRSeed,
     body: Vec<u8>,
-    seed: ipir_sp::IPIRSeed,
 }
-
 impl PreparedQuery {
     pub fn body(&self) -> &[u8] {
         &self.body
     }
-
-    pub fn row(&self) -> usize {
-        self.row
-    }
 }
 
-/// Positions that share one PIR row, in the order they were requested.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RowSlots {
-    pub row: usize,
-    /// Slot of each position inside `row`, parallel to `indexes`.
-    pub slots: Vec<usize>,
-    /// Index of each position in the caller's slice.
-    pub indexes: Vec<usize>,
-}
-
-/// One encrypted row query and the slots to read from its decoded row.
-pub struct PreparedRow {
-    query: PreparedQuery,
-    slots: Vec<usize>,
-    indexes: Vec<usize>,
-}
-
-impl PreparedRow {
-    pub fn query(&self) -> &PreparedQuery {
-        &self.query
-    }
-
-    pub fn slots(&self) -> &[usize] {
-        &self.slots
-    }
-
-    pub fn indexes(&self) -> &[usize] {
-        &self.indexes
-    }
-
-    fn into_parts(self) -> (PreparedQuery, Vec<usize>, Vec<usize>) {
-        (self.query, self.slots, self.indexes)
-    }
+pub struct QuerySession {
+    binding: QueryBinding,
+    shard: QueryShard,
+    params: YpirSchemeParams,
+    client: IPIRClient,
+    setup: ipir_sp::PublicQuerySetup,
+    public: Vec<Vec<u64>>,
 }
 
 impl QuerySession {
-    pub fn from_session(session: EnhanceSession) -> Result<Self, ClientError> {
-        let public_params = BASE64_STANDARD.decode(session.public_params_base64)?;
-        Self::new(session.generation, session.params, &public_params)
-    }
-
-    pub fn new(
-        generation: EnhanceGeneration,
-        ypir: YpirSchemeParams,
-        public_params: &[u8],
-    ) -> Result<Self, ClientError> {
-        if generation.schema_version != SCHEMA_VERSION
-            || generation.protocol_revision != PROTOCOL_REVISION
-            || generation.network != NETWORK
-            || generation.pool != POOL
+    pub fn new(manifest: &Manifest, session: ShardSession) -> Result<Self, ClientError> {
+        manifest.validate().map_err(ClientError::Generation)?;
+        let shard = manifest
+            .coverage
+            .shards
+            .iter()
+            .find(|s| s.id == session.shard_id)
+            .ok_or_else(|| ClientError::Generation("unknown shard".into()))?
+            .clone();
+        let reference = manifest
+            .sessions
+            .iter()
+            .find(|s| s.shard_id == shard.id)
+            .unwrap();
+        if session.generation != manifest.generation
+            || session.params != parameters(shard.logical_rows).map_err(ClientError::Generation)?
         {
             return Err(ClientError::Generation(
-                "wrong schema, protocol, network, or pool".to_string(),
+                "session binding or parameters mismatch".into(),
             ));
         }
-        if generation.setup_seed != ENHANCE_SETUP_SEED {
-            return Err(ClientError::Generation(
-                "setup seed does not match Enhance PIR".to_string(),
-            ));
-        }
-        if generation.pir_profile != PIR_PROFILE_ID {
-            return Err(ClientError::Generation(
-                "PIR profile does not match Enhance PIR".to_string(),
-            ));
-        }
-        if generation.record_bytes as usize != RECORD_BYTES
-            || generation.records_per_row as usize != RECORDS_PER_ROW
-            || generation.row_bytes as usize != ROW_BYTES
-            || generation.shard_rows as usize != SHARD_ROWS
-            || generation.logical_rows < generation.used_rows
-            || !generation.logical_rows.is_power_of_two()
-            || generation.logical_rows < SHARD_ROWS as u64
-            || generation.used_rows
-                != generation
-                    .ironwood_tree_size
-                    .div_ceil(RECORDS_PER_ROW as u64)
-        {
-            return Err(ClientError::Generation(
-                "invalid database geometry".to_string(),
-            ));
-        }
-        let (rlwe, expected) = ipir_sp::params_for_simplepir_profile(
-            generation.logical_rows,
+        let (rlwe, params) = ipir_sp::params_for_simplepir_profile(
+            shard.logical_rows,
             ITEM_SIZE_BITS,
             ipir_sp::SimplePirProfile::P16Q48,
         )
-        .map_err(|error| ClientError::Pir(error.to_string()))?;
-        if ypir != expected {
+        .map_err(|e| ClientError::Pir(e.to_string()))?;
+        let bytes = STANDARD.decode(session.public_params_base64)?;
+        let hash = Sha256::digest(&bytes);
+        let blocks = params.db_cols / rlwe.d;
+        if hex::encode(hash) != reference.public_params_sha256
+            || bytes.len() != blocks * published_c1_len(rlwe.d, rlwe.q)
+        {
             return Err(ClientError::Generation(
-                "parameters do not match the pinned generator".to_string(),
+                "public material digest or length mismatch".into(),
             ));
         }
-        let digest = Sha256::digest(public_params);
-        if hex::encode(digest) != generation.public_params_sha256 {
-            return Err(ClientError::Generation(
-                "public parameter digest mismatch".to_string(),
-            ));
-        }
-        let mut epoch = [0; 8];
-        epoch.copy_from_slice(&digest[..8]);
-        if hex::encode(epoch) != generation.public_params_epoch {
-            return Err(ClientError::Generation(
-                "public parameter epoch mismatch".to_string(),
-            ));
-        }
-        let blocks = ypir.db_cols / rlwe.d;
-        let expected_len = blocks * published_c1_len(rlwe.d, rlwe.q);
-        if public_params.len() != expected_len {
-            return Err(ClientError::Generation(format!(
-                "public parameters have {} bytes, expected {expected_len}",
-                public_params.len()
-            )));
-        }
-        let published_c1 = recover_published_c1(public_params, rlwe.d, blocks, rlwe.q);
         let client = IPIRClient::from_profile(
-            generation.logical_rows,
+            shard.logical_rows,
             ITEM_SIZE_BITS,
             ipir_sp::SimplePirProfile::P16Q48,
         )
-        .map_err(|error| ClientError::Pir(error.to_string()))?;
-        let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed_bytes());
+        .map_err(|e| ClientError::Pir(e.to_string()))?;
+        let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id));
+        let public = recover_published_c1(&bytes, rlwe.d, blocks, rlwe.q);
         Ok(Self {
-            generation,
-            ypir,
+            binding: QueryBinding {
+                generation: manifest.generation,
+                shard_id: shard.id,
+                epoch: hash[..8].try_into().unwrap(),
+            },
+            shard,
+            params,
             client,
             setup,
-            published_c1,
-            epoch,
+            public,
         })
-    }
-
-    pub fn generation(&self) -> &EnhanceGeneration {
-        &self.generation
-    }
-
-    pub fn params(&self) -> &YpirSchemeParams {
-        &self.ypir
-    }
-
-    pub fn setup(&self) -> &[Vec<u64>] {
-        self.setup.polys()
     }
 
     pub fn prepare_position(&self, position: u64) -> Result<(PreparedQuery, usize), ClientError> {
         let (row, slot) = self
-            .generation
-            .row_for_position(position)
+            .shard
+            .locate(position)
             .ok_or(ClientError::OutsideCoverage(position))?;
         Ok((self.prepare_row(row)?, slot))
     }
 
-    /// Groups positions into the PIR rows that contain them.
-    ///
-    /// Each distinct row appears once, in the order of its first position.
-    /// Slots and indexes keep request order inside that row. Any position at
-    /// or beyond the generation's `ironwood_tree_size` rejects the whole set.
-    pub fn rows_for_positions(&self, positions: &[u64]) -> Result<Vec<RowSlots>, ClientError> {
-        let mut groups: Vec<RowSlots> = Vec::new();
-        for (index, &position) in positions.iter().enumerate() {
-            let (row, slot) = self
-                .generation
-                .row_for_position(position)
-                .ok_or(ClientError::OutsideCoverage(position))?;
-            if let Some(group) = groups.iter_mut().find(|group| group.row == row) {
-                group.slots.push(slot);
-                group.indexes.push(index);
-            } else {
-                groups.push(RowSlots {
-                    row,
-                    slots: vec![slot],
-                    indexes: vec![index],
-                });
-            }
-        }
-        Ok(groups)
-    }
-
-    /// Prepares one encrypted query per distinct row occupied by `positions`.
-    pub fn prepare_positions(&self, positions: &[u64]) -> Result<Vec<PreparedRow>, ClientError> {
-        self.rows_for_positions(positions)?
-            .into_iter()
-            .map(|group| {
-                Ok(PreparedRow {
-                    query: self.prepare_row(group.row)?,
-                    slots: group.slots,
-                    indexes: group.indexes,
-                })
-            })
-            .collect()
-    }
-
     pub fn prepare_dummy(&self) -> Result<PreparedQuery, ClientError> {
-        self.prepare_row(OsRng.gen_range(0..self.ypir.db_rows))
+        self.prepare_row(OsRng.gen_range(0..self.params.db_rows))
     }
 
     pub fn prepare_row(&self, row: usize) -> Result<PreparedQuery, ClientError> {
-        if row >= self.ypir.db_rows {
+        if row >= self.params.db_rows {
             return Err(ClientError::OutsideCoverage(row as u64));
         }
-        let (query, packing_keys, seed) =
-            self.client.generate_fresh_query_simplepir(&self.setup, row);
-        let mut body = self.generation.generation.to_le_bytes().to_vec();
+        let (query, keys, seed) = self.client.generate_fresh_query_simplepir(&self.setup, row);
+        let mut body = self.binding.encode();
         body.extend(
-            serialize_packing_keys(self.client.rlwe_params(), &packing_keys)
-                .map_err(|error| ClientError::Pir(error.to_string()))?,
+            serialize_packing_keys(self.client.rlwe_params(), &keys)
+                .map_err(|e| ClientError::Pir(e.to_string()))?,
         );
-        body.extend(query.to_switched_bytes(self.client.rlwe_params().q, self.ypir.query_bits));
-        Ok(PreparedQuery { row, body, seed })
+        body.extend(query.to_switched_bytes(self.client.rlwe_params().q, self.params.query_bits));
+        Ok(PreparedQuery {
+            binding: self.binding,
+            seed,
+            body,
+        })
     }
 
     pub fn decode(&self, query: PreparedQuery, response: &[u8]) -> Result<Vec<u8>, ClientError> {
-        if response.get(..8) != Some(self.generation.generation.to_le_bytes().as_slice()) {
-            return Err(ClientError::Response("generation mismatch".to_string()));
-        }
-        if response.get(8..16) != Some(self.epoch.as_slice()) {
+        let binding = QueryBinding::decode(response).map_err(ClientError::Response)?;
+        let size = self.params.db_cols / self.client.rlwe_params().d
+            * response_body_len(self.client.rlwe_params().d, self.params.q_prime_1);
+        if binding != self.binding
+            || query.binding != self.binding
+            || response.len() != HEADER_BYTES + size
+        {
             return Err(ClientError::Response(
-                "public parameter epoch mismatch".to_string(),
+                "response binding or length mismatch".into(),
             ));
         }
-        let expected_body_len = (self.ypir.db_cols / self.client.rlwe_params().d)
-            * response_body_len(self.client.rlwe_params().d, self.ypir.q_prime_1);
-        if response.len() != 16 + expected_body_len {
-            return Err(ClientError::Response(format!(
-                "response has {} bytes, expected {}",
-                response.len(),
-                16 + expected_body_len
-            )));
-        }
-        let decoded =
-            self.client
-                .decode_response_simplepir(query.seed, &self.published_c1, &response[16..]);
+        let decoded = self.client.decode_response_simplepir(
+            query.seed,
+            &self.public,
+            &response[HEADER_BYTES..],
+        );
         decoded
             .get(..ROW_BYTES)
             .map(<[u8]>::to_vec)
-            .ok_or_else(|| ClientError::Response("decoded row is too short".to_string()))
+            .ok_or_else(|| ClientError::Response("short row".into()))
     }
+}
+
+/// A bounded, lazy cache for one generation. Callers refresh explicitly after HTTP 410.
+pub struct EnhancePirClient {
+    origin: String,
+    http: reqwest::Client,
+    manifest: Manifest,
+    sessions: BTreeMap<u64, Arc<QuerySession>>,
+}
+
+impl EnhancePirClient {
+    pub async fn connect(origin: &str) -> Result<Self, ClientError> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()?;
+        let origin = origin.trim_end_matches('/').to_owned();
+        let response = http.get(format!("{origin}/v1/enhance/init")).send().await?;
+        let manifest: Manifest =
+            serde_json::from_slice(&read_limited(response, 1024 * 1024).await?)?;
+        manifest.validate().map_err(ClientError::Generation)?;
+        Ok(Self {
+            origin,
+            http,
+            manifest,
+            sessions: BTreeMap::new(),
+        })
+    }
+
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+
+    pub async fn query_dummy(&mut self, shard_id: u64) -> Result<(), ClientError> {
+        let session = self.session(shard_id).await?;
+        let query = session.prepare_dummy()?;
+        self.send(&session, query).await?;
+        Ok(())
+    }
+
+    async fn send(
+        &self,
+        session: &QuerySession,
+        query: PreparedQuery,
+    ) -> Result<Vec<u8>, ClientError> {
+        let response = self
+            .http
+            .post(format!("{}/v1/enhance/query", self.origin))
+            .body(query.body.clone())
+            .send()
+            .await?;
+        let bytes = read_limited(response, 1024 * 1024).await?;
+        session.decode(query, &bytes)
+    }
+
+    /// Deduplicate within each immutable shard session and preserve caller order.
+    /// Expiry discards partial results before one bounded retry against a fresh manifest.
+    pub async fn query_positions(
+        &mut self,
+        positions: &[u64],
+    ) -> Result<Vec<EnhanceRecord>, ClientError> {
+        for attempt in 0..2 {
+            let result = self.query_positions_once(positions).await;
+            if matches!(result, Err(ClientError::HttpStatus(410))) && attempt == 0 {
+                *self = Self::connect(&self.origin).await?;
+                continue;
+            }
+            return result;
+        }
+        unreachable!("bounded refresh loop")
+    }
+
+    async fn query_positions_once(
+        &mut self,
+        positions: &[u64],
+    ) -> Result<Vec<EnhanceRecord>, ClientError> {
+        let mut groups = BTreeMap::<(u64, usize), Vec<(usize, usize)>>::new();
+        for (index, position) in positions.iter().enumerate() {
+            let (shard, row, slot) = self
+                .manifest
+                .coverage
+                .locate(*position)
+                .ok_or(ClientError::OutsideCoverage(*position))?;
+            groups
+                .entry((shard.id, row))
+                .or_default()
+                .push((index, slot));
+        }
+        let mut result = vec![None; positions.len()];
+        for ((shard, row), slots) in groups {
+            let session = self.session(shard).await?;
+            let decoded = self.send(&session, session.prepare_row(row)?).await?;
+            for (index, slot) in slots {
+                result[index] = Some(record_in_row(&decoded, slot)?);
+            }
+        }
+        Ok(result
+            .into_iter()
+            .map(|r| r.expect("every input position assigned once"))
+            .collect())
+    }
+
+    pub async fn session(&mut self, shard_id: u64) -> Result<Arc<QuerySession>, ClientError> {
+        if let Some(session) = self.sessions.get(&shard_id) {
+            return Ok(session.clone());
+        }
+        if !self
+            .manifest
+            .sessions
+            .iter()
+            .any(|s| s.shard_id == shard_id)
+        {
+            return Err(ClientError::Generation("unknown shard".into()));
+        }
+        let response = self
+            .http
+            .get(format!(
+                "{}/v1/enhance/sessions/{}/{}",
+                self.origin, self.manifest.generation, shard_id
+            ))
+            .send()
+            .await?;
+        let session: ShardSession =
+            serde_json::from_slice(&read_limited(response, 32 * 1024 * 1024).await?)?;
+        let session = Arc::new(QuerySession::new(&self.manifest, session)?);
+        // Do not retain every historical shard's expanded public setup in a wallet.
+        if self.sessions.len() >= 2 {
+            self.sessions.clear();
+        }
+        self.sessions.insert(shard_id, session.clone());
+        Ok(session)
+    }
+
+    pub async fn query_position_with_timing(
+        &mut self,
+        position: u64,
+    ) -> Result<(EnhanceRecord, QueryTiming), ClientError> {
+        let total_start = Instant::now();
+        for attempt in 0..2 {
+            let result = self.query_once(position).await;
+            if matches!(&result, Err(ClientError::HttpStatus(410))) && attempt == 0 {
+                *self = Self::connect(&self.origin).await?;
+                continue;
+            }
+            return result.map(|(record, mut timing)| {
+                timing.total = total_start.elapsed();
+                (record, timing)
+            });
+        }
+        unreachable!("bounded refresh loop returns on its second attempt")
+    }
+
+    async fn query_once(
+        &mut self,
+        position: u64,
+    ) -> Result<(EnhanceRecord, QueryTiming), ClientError> {
+        let start = Instant::now();
+        let shard = self
+            .manifest
+            .coverage
+            .locate(position)
+            .ok_or(ClientError::OutsideCoverage(position))?
+            .0
+            .id;
+        let session = self.session(shard).await?;
+        let (query, slot) = session.prepare_position(position)?;
+        let prepare = start.elapsed();
+        let at = Instant::now();
+        let response = self
+            .http
+            .post(format!("{}/v1/enhance/query", self.origin))
+            .body(query.body.clone())
+            .send()
+            .await?;
+        let bytes = read_limited(response, 1024 * 1024).await?;
+        let http = at.elapsed();
+        let at = Instant::now();
+        let row = session.decode(query, &bytes)?;
+        let record = record_in_row(&row, slot)?;
+        Ok((
+            record,
+            QueryTiming {
+                prepare,
+                http,
+                decode: at.elapsed(),
+                total: start.elapsed(),
+            },
+        ))
+    }
+}
+
+async fn read_limited(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, ClientError> {
+    if !response.status().is_success() {
+        return Err(ClientError::HttpStatus(response.status().as_u16()));
+    }
+    if response.content_length().is_some_and(|n| n > limit as u64) {
+        return Err(ClientError::Response("oversized body".into()));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > limit - bytes.len() {
+            return Err(ClientError::Response("oversized body".into()));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 pub fn record_in_row(row: &[u8], slot: usize) -> Result<EnhanceRecord, ClientError> {
@@ -313,312 +392,4 @@ pub fn record_in_row(row: &[u8], slot: usize) -> Result<EnhanceRecord, ClientErr
         .try_into()
         .expect("fixed record length");
     EnhanceRecord::from_bytes(bytes).map_err(|e| ClientError::Response(e.to_string()))
-}
-
-pub struct EnhancePirClient {
-    http: reqwest::Client,
-    base_url: String,
-    session: QuerySession,
-}
-
-impl EnhancePirClient {
-    pub async fn connect(base_url: &str) -> Result<Self, ClientError> {
-        let base_url = base_url.trim_end_matches('/').to_string();
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()?;
-        let session: EnhanceSession = serde_json::from_slice(
-            &read_limited(
-                http.get(format!("{base_url}/v1/enhance/init"))
-                    .send()
-                    .await?,
-                1024 * 1024,
-            )
-            .await?,
-        )?;
-        let session = QuerySession::from_session(session)?;
-        Ok(Self {
-            http,
-            base_url,
-            session,
-        })
-    }
-
-    pub fn generation(&self) -> &EnhanceGeneration {
-        self.session.generation()
-    }
-
-    pub async fn query_position(&self, position: u64) -> Result<EnhanceRecord, ClientError> {
-        let mut records = self.query_positions(&[position]).await?;
-        records
-            .pop()
-            .ok_or_else(|| ClientError::Response("position was not retrieved".to_string()))
-    }
-
-    /// Retrieves every position, issuing one query per distinct row.
-    ///
-    /// Records follow the order of `positions`. Positions that share a row are
-    /// read from that single decoded row.
-    pub async fn query_positions(
-        &self,
-        positions: &[u64],
-    ) -> Result<Vec<EnhanceRecord>, ClientError> {
-        let prepared = self.session.prepare_positions(positions)?;
-        let mut records = Vec::new();
-        records.resize_with(positions.len(), || None);
-        for group in prepared {
-            let (query, slots, indexes) = group.into_parts();
-            let row = self.send(query).await?;
-            for (slot, index) in slots.into_iter().zip(indexes) {
-                records[index] = Some(record_in_row(&row, slot)?);
-            }
-        }
-        records
-            .into_iter()
-            .map(|record| {
-                record
-                    .ok_or_else(|| ClientError::Response("position was not retrieved".to_string()))
-            })
-            .collect()
-    }
-
-    pub async fn query_position_with_timing(
-        &self,
-        position: u64,
-    ) -> Result<(EnhanceRecord, QueryTiming), ClientError> {
-        let total_started = Instant::now();
-
-        let prepare_started = Instant::now();
-        let (query, slot) = self.session.prepare_position(position)?;
-        let prepare = prepare_started.elapsed();
-
-        let http_started = Instant::now();
-        let response = self.request(&query).await?;
-        let http = http_started.elapsed();
-
-        let decode_started = Instant::now();
-        let row = self.session.decode(query, &response)?;
-        let record = record_in_row(&row, slot)?;
-        let decode = decode_started.elapsed();
-
-        Ok((
-            record,
-            QueryTiming {
-                prepare,
-                http,
-                decode,
-                total: total_started.elapsed(),
-            },
-        ))
-    }
-
-    pub async fn query_dummy(&self) -> Result<(), ClientError> {
-        self.send(self.session.prepare_dummy()?).await.map(|_| ())
-    }
-
-    async fn send(&self, query: PreparedQuery) -> Result<Vec<u8>, ClientError> {
-        let response = self.request(&query).await?;
-        self.session.decode(query, &response)
-    }
-
-    async fn request(&self, query: &PreparedQuery) -> Result<Vec<u8>, ClientError> {
-        let response = self
-            .http
-            .post(format!("{}/v1/enhance/query", self.base_url))
-            .body(query.body().to_vec())
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            return Err(ClientError::HttpStatus(response.status().as_u16()));
-        }
-        read_limited(response, 16 * 1024 * 1024).await
-    }
-}
-
-async fn read_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, ClientError> {
-    let mut response = response.error_for_status()?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err(ClientError::Response("HTTP body exceeds limit".to_string()));
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if body.len().saturating_add(chunk.len()) > limit {
-            return Err(ClientError::Response("HTTP body exceeds limit".to_string()));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn valid_session() -> EnhanceSession {
-        let (rlwe, params) = ipir_sp::params_for_simplepir_profile(
-            SHARD_ROWS as u64,
-            ITEM_SIZE_BITS,
-            ipir_sp::SimplePirProfile::P16Q48,
-        )
-        .expect("fixed Enhance geometry");
-        let public_params = vec![0; (params.db_cols / rlwe.d) * published_c1_len(rlwe.d, rlwe.q)];
-        let digest = Sha256::digest(&public_params);
-        let generation = EnhanceGeneration {
-            schema_version: SCHEMA_VERSION,
-            protocol_revision: PROTOCOL_REVISION.to_string(),
-            pir_profile: PIR_PROFILE_ID.to_string(),
-            network: NETWORK.to_string(),
-            pool: POOL.to_string(),
-            anchor_height: 3_428_143,
-            anchor_block_hash: "00".repeat(32),
-            ironwood_tree_size: 1,
-            generation: 1,
-            record_bytes: RECORD_BYTES as u32,
-            records_per_row: RECORDS_PER_ROW as u32,
-            row_bytes: ROW_BYTES as u32,
-            shard_rows: SHARD_ROWS as u32,
-            used_rows: 1,
-            logical_rows: SHARD_ROWS as u64,
-            parameter_id: "test".to_string(),
-            setup_seed: ENHANCE_SETUP_SEED,
-            public_params_epoch: hex::encode(&digest[..8]),
-            public_params_sha256: hex::encode(digest),
-            shards: vec![],
-        };
-        EnhanceSession {
-            generation,
-            params,
-            public_params_base64: BASE64_STANDARD.encode(public_params),
-        }
-    }
-
-    #[test]
-    fn constructs_an_atomic_session() {
-        QuerySession::from_session(valid_session()).expect("valid session");
-    }
-
-    #[test]
-    fn rejects_malformed_public_parameter_base64() {
-        let mut session = valid_session();
-        session.public_params_base64 = "not base64***".to_string();
-        assert!(matches!(
-            QuerySession::from_session(session),
-            Err(ClientError::PublicParamsBase64(_))
-        ));
-    }
-
-    #[test]
-    fn rejects_a_different_plaintext_profile_or_query_width() {
-        let mut session = valid_session();
-        session.generation.pir_profile = "simplepir-p14-v1".to_string();
-        assert!(matches!(
-            QuerySession::from_session(session),
-            Err(ClientError::Generation(message))
-                if message == "PIR profile does not match Enhance PIR"
-        ));
-
-        let mut session = valid_session();
-        session.params.query_bits = 45;
-        assert!(matches!(
-            QuerySession::from_session(session),
-            Err(ClientError::Generation(message))
-                if message == "parameters do not match the pinned generator"
-        ));
-    }
-
-    /// The compatibility direction that matters at cutover. The old fleet's
-    /// document is well-formed and internally consistent; only its layout is
-    /// wrong. Nothing but this check stands between a current client and a
-    /// 6,633-byte row read with 21,549-byte offsets, so it is checked against a
-    /// document shaped exactly like the one the public origin served.
-    #[test]
-    fn rejects_the_superseded_nine_record_session() {
-        let mut session = valid_session();
-        session.generation.schema_version = 7;
-        session.generation.records_per_row = 9;
-        session.generation.row_bytes = 9 * RECORD_BYTES as u32;
-        assert!(matches!(
-            QuerySession::from_session(session),
-            Err(ClientError::Generation(message))
-                if message == "wrong schema, protocol, network, or pool"
-        ));
-
-        // And with the schema field alone brought forward, so the rejection
-        // does not rest on the version number: the geometry must fail on its own.
-        let mut session = valid_session();
-        session.generation.records_per_row = 9;
-        session.generation.row_bytes = 9 * RECORD_BYTES as u32;
-        assert!(matches!(
-            QuerySession::from_session(session),
-            Err(ClientError::Generation(message)) if message == "invalid database geometry"
-        ));
-    }
-
-    /// `used_rows` is checked against the published tree size, so a server
-    /// cannot widen the answerable range by overstating it.
-    #[test]
-    fn rejects_a_used_row_count_that_does_not_follow_from_the_tree_size() {
-        let mut session = valid_session();
-        session.generation.ironwood_tree_size = RECORDS_PER_ROW as u64 + 1;
-        assert!(matches!(
-            QuerySession::from_session(session),
-            Err(ClientError::Generation(message)) if message == "invalid database geometry"
-        ));
-    }
-
-    #[test]
-    fn rejects_a_public_parameter_digest_mismatch() {
-        let mut session = valid_session();
-        session.generation.public_params_sha256 = "00".repeat(32);
-        assert!(matches!(
-            QuerySession::from_session(session),
-            Err(ClientError::Generation(message)) if message == "public parameter digest mismatch"
-        ));
-    }
-
-    fn covering_session(tree_size: u64) -> QuerySession {
-        let mut session = valid_session();
-        session.generation.ironwood_tree_size = tree_size;
-        session.generation.used_rows = tree_size.div_ceil(RECORDS_PER_ROW as u64);
-        QuerySession::from_session(session).expect("covering session")
-    }
-
-    #[test]
-    fn a_run_crossing_offset_33_prepares_two_rows() {
-        let session = covering_session(60);
-        let prepared = session
-            .prepare_positions(&[31, 32, 33])
-            .expect("positions in coverage");
-        assert_eq!(prepared.len(), 2);
-        assert_eq!(prepared[0].query().row(), 0);
-        assert_eq!(prepared[0].slots(), &[31, 32]);
-        assert_eq!(prepared[0].indexes(), &[0, 1]);
-        assert_eq!(prepared[1].query().row(), 1);
-        assert_eq!(prepared[1].slots(), &[0]);
-        assert_eq!(prepared[1].indexes(), &[2]);
-    }
-
-    #[test]
-    fn duplicates_inside_one_row_prepare_one_query() {
-        let session = covering_session(60);
-        let prepared = session
-            .prepare_positions(&[4, 11, 4])
-            .expect("positions in coverage");
-        assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].query().row(), 0);
-        assert_eq!(prepared[0].slots(), &[4, 11, 4]);
-        assert_eq!(prepared[0].indexes(), &[0, 1, 2]);
-    }
-
-    #[test]
-    fn a_position_outside_the_tree_rejects_the_whole_set() {
-        let session = covering_session(30);
-        assert!(matches!(
-            session.rows_for_positions(&[28, 30]),
-            Err(ClientError::OutsideCoverage(30))
-        ));
-    }
 }

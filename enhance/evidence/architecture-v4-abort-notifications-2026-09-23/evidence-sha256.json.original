@@ -1,0 +1,14 @@
+{
+  "README.md": "3bcfcc3e91f56d9461430999750a975122ce84a4aad6c74ed8623666fc67562e",
+  "http-regression.log": "0ca8f2fab220966e59ae409acd825361f5d1c926d78b03edcd61a6ca9962c38e",
+  "process-smoke/command.json": "bb87f2cac740e63e65239fe6bb2f78fbf9ffac6c9f395279ee25cbb96fa66717",
+  "process-smoke/exercise.json": "2ea4a3c2f314a54c080bb9bb470dcede3c70e48f8c94fb1b89610a4f74814249",
+  "process-smoke/exercise.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "process-smoke/publications.jsonl": "d9fd06e5064efd3175183991c6607479890989f936d999bb51cff4fcaacf1b29",
+  "process-smoke/run.json": "692e813e33afa463781c2234a2e3bc0849a7e1ea43e2475172bcb33457bb8896",
+  "process-smoke/v4-source-mode": "3a3436765885cdf2edc179512c22dd4c4259410f0d18f391cbc8d83a837c678e",
+  "process-smoke/worker-0.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "process-smoke/worker-1.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "source-sha256.json": "9ed6bca795fb215a8262d91d55d9eb8341fefe1948978afbbe7eed5c4a5ff375",
+  "validation.json": "c80be7bb92b62a2f788ac5315490660b88a6582f2da3de9f089eb59e268cc2e2"
+}

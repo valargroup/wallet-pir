@@ -1,16 +1,12 @@
 //! Client and protocol types for privately enhancing Ironwood compact actions.
-
-mod record;
-pub use record::{EnhanceTransactionMetadata, InvalidEnhanceRecord};
 pub mod client;
+pub mod protocol;
+mod record;
 pub mod types;
-pub mod v4;
-pub mod v4_client;
 
+pub use record::{EnhanceTransactionMetadata, InvalidEnhanceRecord};
 pub use types::{
-    group_index_for_shard, EnhanceGeneration, EnhanceRecord, EnhanceRecordParts, EnhanceSession,
-    ShardDescriptor, ACTIVATION_HEIGHT, ENHANCE_SETUP_SEED, FLAG_HAS_TRANSPARENT_INPUTS,
-    FLAG_HAS_TRANSPARENT_OUTPUTS, ITEM_SIZE_BITS, NETWORK, PIR_PROFILE_ID, POOL, PROTOCOL_REVISION,
-    RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES, SCHEMA_VERSION, SHARDS_PER_GROUP, SHARDS_PER_WORKER,
-    SHARD_POSITIONS, SHARD_ROWS,
+    EnhanceRecord, EnhanceRecordParts, ACTIVATION_HEIGHT, ENHANCE_SETUP_SEED,
+    FLAG_HAS_TRANSPARENT_INPUTS, FLAG_HAS_TRANSPARENT_OUTPUTS, ITEM_SIZE_BITS, NETWORK, POOL,
+    PROTOCOL_REVISION, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES, SCHEMA_VERSION, SHARD_ROWS,
 };

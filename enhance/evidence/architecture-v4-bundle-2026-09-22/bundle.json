@@ -1,8 +1,0 @@
-{
-  "archive": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/enhance-v4-bundle-ztzkzalv/bundles/enhance-pir-v4-candidate.tar.gz",
-  "archive_sha256": "85ba3c793b84addc3cdcdeafb849c907513d0d5d19d6a9e4a63303453cbb9ed4",
-  "kind": "enhance-pir-v4-candidate",
-  "profile": "release-fast",
-  "platform": "local native build; not Linux release qualification",
-  "runner_exit_code": 0
-}

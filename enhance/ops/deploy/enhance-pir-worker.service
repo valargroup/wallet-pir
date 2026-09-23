@@ -1,18 +1,20 @@
 [Unit]
-Description=Ironwood Enhance PIR shard worker
+Description=Ironwood Enhance PIR worker
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/enhance-pir-worker --listen 0.0.0.0:8091 --data-dir /srv/enhance-pir/artifacts-r33
+EnvironmentFile=/etc/enhance-pir/worker.env
+ExecStart=/opt/enhance-pir/current/enhance-pir-server --sealed-shards ${ENHANCE_SEALED_SHARDS} worker --listen ${ENHANCE_WORKER_LISTEN} --data-dir /srv/enhance-pir/worker
 Restart=on-failure
 RestartSec=3
-User=root
+User=enhance-pir
 LimitNOFILE=1048576
-MemoryHigh=6G
-MemoryMax=7G
+MemoryHigh=7G
+MemoryMax=7680M
 MemorySwapMax=2G
+ReadWritePaths=/srv/enhance-pir/worker
 Environment=RUST_LOG=info
 
 [Install]

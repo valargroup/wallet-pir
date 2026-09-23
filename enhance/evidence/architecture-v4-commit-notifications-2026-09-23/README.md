@@ -55,8 +55,8 @@ establish recovery from lost worker artifacts, unavailable pre-commit abort
 participants, all distributed failure phases, or full-size six-hour capacity.
 No production deployment or cloud mutation occurred.
 
-See the [implementation status](../../docs/architecture_2-implementation.md)
-and [operating semantics](../../ops/deploy/v4-candidate.md).
+See the [implementation status](../../docs/qualification.md)
+and [operating semantics](../../docs/qualification.md).
 
 [Source hashes](source-sha256.json) identify the changed implementation, tests and
 operating instructions. [Evidence hashes](evidence-sha256.json) cover the reports

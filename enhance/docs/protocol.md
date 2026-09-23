@@ -1,10 +1,9 @@
 # Protocol
 
-The supported server implements schema 11, `ironwood-enhance-pir-v6`, using the
-architecture-2 runtime. Its Rust modules and binary retain their `v4` names.
+The supported server implements schema 11, `ironwood-enhance-pir-v6`, using the current runtime.
 The wallet counterpart must use the v6/q48 profile and the same pinned IPIR
-implementation. The prior [schema-11 wallet PR #28](https://github.com/zakura-core/wallet-libraries/pull/28)
-uses v5/q46 and is incompatible without the q48 follow-up.
+implementation. [Wallet-libraries PR #28](https://github.com/zakura-core/wallet-libraries/pull/28)
+uses v5/q46 and requires a q48 follow-up before connecting.
 
 ## Record format
 
@@ -38,7 +37,7 @@ responses, expanded databases, or latency.
 
 ## Initialization and queries
 
-`GET /v1/enhance/init` returns the architecture-2 `Manifest`: schema/protocol,
+`GET /v1/enhance/init` returns the `Manifest`: schema/protocol,
 network/pool, generation, anchor height/hash, shard geometry and coverage,
 session references, and mutable-unit identities. The client validates the
 manifest and binds it to locally scanned chain state before requesting setup.
@@ -58,7 +57,7 @@ server. Same-transaction batching needs no new server endpoint.
 
 The PIR profile is `simplepir-p16-q48-v1`: 48-bit query transport, p16
 plaintexts, and unchanged 20-bit responses. The wider query reduces rounding
-noise; it does not change the decoding threshold. Query domains remain 4,096,
+noise without changing the decoding threshold. Query domains remain 4,096,
 8,192, 16,384, or 32,768 rows, with 2,048/4,096/8,192-row mutable units.
 The deterministic public setup seed and the literal domain
 `ironwood-enhance-pir-v4/main/ironwood/setup\0` are intentionally unchanged to
@@ -67,17 +66,16 @@ separate the new records and artifacts. Do not mechanically rename the header
 or setup domain to v6.
 
 The authoritative wire types and validation are in
-[the protocol module](../crates/enhance-pir/src/v4.rs); record encoding is in
+[the protocol module](../crates/enhance-pir/src/protocol.rs); record encoding is in
 [record.rs](../crates/enhance-pir/src/record.rs).
 
 ## Compatibility and trust
 
-Schema-9, schema-10, and schema-11/v5 q46 clients are incompatible.
-V6 changes query precision without changing the schema-11 record layout. The legacy serving commands
-are retired. Journals validate record width, controller state is version 6,
-worker state requires schema 11 and protocol v6, and preprocessing artifacts are version 9.
-Use fresh data directories and rebuild publications and caches. The older
-`migrate-v4-journal.py` only repacks full records and cannot prepare schema 11.
+Schema-9, schema-10, and schema-11/v5 q46 clients are incompatible. The
+repository serves only this protocol. Journals validate record width,
+controller state is version 6, worker state requires schema 11 and protocol v6,
+and preprocessing artifacts are version 9.
+Use fresh data directories and rebuild publications and caches. Re-ingest into fresh state; older journals cannot supply suffix records.
 
 Incoming authentication and stale wallet identities remain wallet obligations.
 Outgoing decryption should authenticate recoverable outputs; send-only association
