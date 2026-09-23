@@ -1,0 +1,6 @@
+{
+  "enhance/ops/scripts/v4-expansion-journal.py": "15ca05757da19b812cd46150d8c551f1a36c24406594d6b69bfa50e47db00377",
+  "enhance/ops/scripts/test-v4-local.py": "b4d38f4bc2855319b3dd4c228c7feea67498917fd9ed526e8eb46112e03767c9",
+  "enhance/ops/tests/test_v4_expansion_journal.py": "3c74d9d26dd20b8adfd38495b75bbe48279a123d705ecffc1dbf4a0d664f1ca1",
+  "ops/infra/digitalocean/enhance-v4/README.md": "ca06e6c07c585ea09702fce6a2a4da31c2e398d6a81ee0291466418ff7366162"
+}

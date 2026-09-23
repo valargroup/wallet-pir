@@ -1,0 +1,137 @@
+{
+  "qualification": "unqualified",
+  "scope": "native macOS worker HTTP; no Linux host measurements or load qualification",
+  "binary_sha256": "49b83ac1ef6d5a489f20d98d8df2884698efe56160169d329816c3c9087cee64",
+  "sampler_sha256": "71f744f98b36e5ba982bb115dbb158058e7c840fc6b960151a3444a1ab5731b5",
+  "observations": [
+    {
+      "phase": "fresh",
+      "health": {
+        "protocol": "ironwood-enhance-pir-v4",
+        "incarnation": "7ec78bb06175004efafa0921ef5c8d86",
+        "epoch": 0,
+        "revision": 0,
+        "published": [],
+        "resident_database_bytes": 0,
+        "candidate_present": false,
+        "candidate_sha256": null
+      },
+      "runtime_metrics": {
+        "values": {
+          "candidate_database_bytes": 0,
+          "candidate_present": 0,
+          "epoch": 0,
+          "latest_database_bytes": 0,
+          "live_database_bytes": 0,
+          "memory_model_available": 1,
+          "memory_model_uses_candidate": 0,
+          "memory_sample_available": 1,
+          "model_growth_reserved_bytes": 0,
+          "model_limit_bytes": 6979321856,
+          "model_overhead_bytes": 763363328,
+          "model_total_bytes": 763363328,
+          "model_transition_reserved_bytes": 0,
+          "model_union_database_bytes": 0,
+          "model_within_limit": 1,
+          "preparation_busy": 0,
+          "published_database_bytes": 0,
+          "queries_in_flight": 0,
+          "query_only_database_bytes": 0,
+          "retained_generations": 0,
+          "revision": 0,
+          "source_reclamation_database_bytes": 0,
+          "up": 1
+        },
+        "exposition_sha256": "c97339f5d7c74907b3a92c3effb0a9007b3b5dc1cea18d17c8cc94f197fbb59a",
+        "started_monotonic_ns": 290249436241208,
+        "finished_monotonic_ns": 290249440994500
+      }
+    },
+    {
+      "phase": "reserved",
+      "health": {
+        "protocol": "ironwood-enhance-pir-v4",
+        "incarnation": "7ec78bb06175004efafa0921ef5c8d86",
+        "epoch": 1,
+        "revision": 0,
+        "published": [],
+        "resident_database_bytes": 0,
+        "candidate_present": true,
+        "candidate_sha256": "275bcfeeb04ab6b9127856da3747e8180f37dd3ccdd9654baa52936bcedd808d"
+      },
+      "runtime_metrics": {
+        "values": {
+          "candidate_database_bytes": 0,
+          "candidate_present": 1,
+          "epoch": 1,
+          "latest_database_bytes": 0,
+          "live_database_bytes": 0,
+          "memory_model_available": 1,
+          "memory_model_uses_candidate": 1,
+          "memory_sample_available": 1,
+          "model_growth_reserved_bytes": 0,
+          "model_limit_bytes": 6979321856,
+          "model_overhead_bytes": 763363328,
+          "model_total_bytes": 763363328,
+          "model_transition_reserved_bytes": 0,
+          "model_union_database_bytes": 0,
+          "model_within_limit": 1,
+          "preparation_busy": 0,
+          "published_database_bytes": 0,
+          "queries_in_flight": 0,
+          "query_only_database_bytes": 0,
+          "retained_generations": 0,
+          "revision": 0,
+          "source_reclamation_database_bytes": 0,
+          "up": 1
+        },
+        "exposition_sha256": "53570c2d0266ffe9b5796e93dca9092eca5bbaca49ba6808b1985c2dca8023c0",
+        "started_monotonic_ns": 290249468503208,
+        "finished_monotonic_ns": 290249473142500
+      }
+    },
+    {
+      "phase": "aborted",
+      "health": {
+        "protocol": "ironwood-enhance-pir-v4",
+        "incarnation": "7ec78bb06175004efafa0921ef5c8d86",
+        "epoch": 1,
+        "revision": 0,
+        "published": [],
+        "resident_database_bytes": 0,
+        "candidate_present": false,
+        "candidate_sha256": null
+      },
+      "runtime_metrics": {
+        "values": {
+          "candidate_database_bytes": 0,
+          "candidate_present": 0,
+          "epoch": 1,
+          "latest_database_bytes": 0,
+          "live_database_bytes": 0,
+          "memory_model_available": 1,
+          "memory_model_uses_candidate": 0,
+          "memory_sample_available": 1,
+          "model_growth_reserved_bytes": 0,
+          "model_limit_bytes": 6979321856,
+          "model_overhead_bytes": 763363328,
+          "model_total_bytes": 763363328,
+          "model_transition_reserved_bytes": 0,
+          "model_union_database_bytes": 0,
+          "model_within_limit": 1,
+          "preparation_busy": 0,
+          "published_database_bytes": 0,
+          "queries_in_flight": 0,
+          "query_only_database_bytes": 0,
+          "retained_generations": 0,
+          "revision": 0,
+          "source_reclamation_database_bytes": 0,
+          "up": 1
+        },
+        "exposition_sha256": "159056e524c1264c268d20b71d73fc492d128f5020b27edf85249158070df7f8",
+        "started_monotonic_ns": 290249495891958,
+        "finished_monotonic_ns": 290249500740083
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "platform": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "http_test_threads": 2,
+  "qualification": "unqualified"
+}

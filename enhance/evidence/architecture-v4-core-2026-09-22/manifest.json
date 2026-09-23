@@ -1,0 +1,340 @@
+{
+  "kind": "local-smoke-not-hardware-qualification",
+  "platform": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "revision": "246423a1ce2377ab7b71d1c3e0745ebb153d1f99",
+  "dirty": true,
+  "binaries": {
+    "enhance-pir-v4": "8f62928fd26b599f723e3aff0a727f20936ba1a9eaef260f9f4115434ffffbb5",
+    "enhance-pir-load-test": "468601dca811c5bec9d0430e91e9fd107fb11648c6d69d33a244c34dfa3f5a14"
+  },
+  "seconds_per_step": 15,
+  "records": 67,
+  "results": [
+    {
+      "concurrency": 1,
+      "exit_code": 0,
+      "report": "load-c1.json",
+      "health": {
+        "anchor_height": 3428144,
+        "blocked_reason": null,
+        "generation": 2,
+        "operation": null,
+        "placement_revision": 2,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    },
+    {
+      "concurrency": 2,
+      "exit_code": 0,
+      "report": "load-c2.json",
+      "health": {
+        "anchor_height": 3428145,
+        "blocked_reason": null,
+        "generation": 3,
+        "operation": {
+          "affected_groups": [
+            "group-1"
+          ],
+          "assignments": {
+            "0": "group-1"
+          },
+          "attempt": 3,
+          "candidate_digest": "dc93a21c3a3746ebc0603129257672ced4e19dad6f253524f23e9dd0bdd10292",
+          "epoch": 1,
+          "expected_revision": 3,
+          "id": "generation-4",
+          "infrastructure_resources": {},
+          "phase": "PREPARING",
+          "readiness": [],
+          "require_both": [],
+          "source_generations": [
+            3,
+            2,
+            1
+          ]
+        },
+        "placement_revision": 3,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    },
+    {
+      "concurrency": 4,
+      "exit_code": 0,
+      "report": "load-c4.json",
+      "health": {
+        "anchor_height": 3428146,
+        "blocked_reason": null,
+        "generation": 4,
+        "operation": {
+          "affected_groups": [
+            "group-1"
+          ],
+          "assignments": {
+            "0": "group-1"
+          },
+          "attempt": 4,
+          "candidate_digest": "9c7d3c89e8957dd53e6674d6176be5fb203b2719d73dc34bbea4549e83f07646",
+          "epoch": 1,
+          "expected_revision": 4,
+          "id": "generation-5",
+          "infrastructure_resources": {},
+          "phase": "PREPARING",
+          "readiness": [],
+          "require_both": [],
+          "source_generations": [
+            4,
+            3,
+            2,
+            1
+          ]
+        },
+        "placement_revision": 4,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    },
+    {
+      "concurrency": 8,
+      "exit_code": 0,
+      "report": "load-c8.json",
+      "health": {
+        "anchor_height": 3428147,
+        "blocked_reason": null,
+        "generation": 5,
+        "operation": {
+          "affected_groups": [
+            "group-1"
+          ],
+          "assignments": {
+            "0": "group-1"
+          },
+          "attempt": 5,
+          "candidate_digest": "6eefe19599668ddc7681df1c904eefc05f925bab3f7613795cd2f75c884ed54b",
+          "epoch": 1,
+          "expected_revision": 5,
+          "id": "generation-6",
+          "infrastructure_resources": {},
+          "phase": "PREPARING",
+          "readiness": [],
+          "require_both": [],
+          "source_generations": [
+            5,
+            4,
+            3,
+            2,
+            1
+          ]
+        },
+        "placement_revision": 5,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    },
+    {
+      "offered_fraction": 0.5,
+      "exit_code": 0,
+      "report": "open-loop-0.5.json",
+      "health": {
+        "anchor_height": 3428149,
+        "blocked_reason": null,
+        "generation": 7,
+        "operation": null,
+        "placement_revision": 7,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    },
+    {
+      "offered_fraction": 0.75,
+      "exit_code": 0,
+      "report": "open-loop-0.75.json",
+      "health": {
+        "anchor_height": 3428150,
+        "blocked_reason": null,
+        "generation": 8,
+        "operation": null,
+        "placement_revision": 8,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    },
+    {
+      "offered_fraction": 1.0,
+      "exit_code": 0,
+      "report": "open-loop-1.0.json",
+      "health": {
+        "anchor_height": 3428151,
+        "blocked_reason": null,
+        "generation": 9,
+        "operation": {
+          "affected_groups": [
+            "group-1"
+          ],
+          "assignments": {
+            "0": "group-1"
+          },
+          "attempt": 9,
+          "candidate_digest": "621cf4947e626881026e5b502cef5833da51f48613af8f40d4d2666a8dcf9a02",
+          "epoch": 1,
+          "expected_revision": 9,
+          "id": "generation-10",
+          "infrastructure_resources": {},
+          "phase": "PREPARING",
+          "readiness": [],
+          "require_both": [],
+          "source_generations": [
+            9,
+            8,
+            7,
+            6,
+            5
+          ]
+        },
+        "placement_revision": 9,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    },
+    {
+      "offered_fraction": 1.25,
+      "exit_code": 0,
+      "report": "open-loop-1.25.json",
+      "health": {
+        "anchor_height": 3428152,
+        "blocked_reason": null,
+        "generation": 10,
+        "operation": {
+          "affected_groups": [
+            "group-1"
+          ],
+          "assignments": {
+            "0": "group-1"
+          },
+          "attempt": 10,
+          "candidate_digest": "04c438d383b093ba991c6d0e0203ad80ee3270ed257afa15bb58441294ee18a3",
+          "epoch": 1,
+          "expected_revision": 10,
+          "id": "generation-11",
+          "infrastructure_resources": {},
+          "phase": "PREPARING",
+          "readiness": [],
+          "require_both": [],
+          "source_generations": [
+            10,
+            9,
+            8,
+            7,
+            6
+          ]
+        },
+        "placement_revision": 10,
+        "protocol": "ironwood-enhance-pir-v4"
+      }
+    }
+  ],
+  "initial_manifest": {
+    "schema_version": 10,
+    "protocol_revision": "ironwood-enhance-pir-v4",
+    "network": "main",
+    "pool": "ironwood",
+    "generation": 1,
+    "anchor_height": 3428143,
+    "anchor_block_hash": "0000000000000000000000000000000000000000000000000000000000344f2f",
+    "geometry": {
+      "max_shard_rows": 32768,
+      "min_shard_rows": 4096,
+      "max_mutable_unit_rows": 8192,
+      "min_mutable_unit_rows": 2048
+    },
+    "coverage": {
+      "records": 67,
+      "shards": [
+        {
+          "id": 0,
+          "global_row_start": 0,
+          "records": 67,
+          "logical_rows": 4096,
+          "state": "GROWING",
+          "units": [
+            {
+              "local_row_start": 0,
+              "used_rows": 3,
+              "allocated_rows": 2048
+            }
+          ]
+        }
+      ],
+      "loan": null
+    },
+    "sessions": [
+      {
+        "shard_id": 0,
+        "public_params_sha256": "b864ad828a657635d8027f851abbcecc4c64cc89fdf8c17893ca5d0b82f44971",
+        "parameter_id": "ironwood-enhance-pir-v4/ce8bbd84ff64a3d46e1f00d3142ecac4b42acda912ab9f6f241f59908db76a53"
+      }
+    ],
+    "unit_identities": {
+      "0": [
+        {
+          "table": "enhance",
+          "shard_id": 0,
+          "local_row_start": 0,
+          "allocated_rows": 2048,
+          "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+          "parameter_id": "ironwood-enhance-pir-v4/unit/456fbd8ab131879c37e844348c35efc2898be25aef8d29ba00a3e2d153e0a144",
+          "content_sha256": "60458d018fc27a49228473df4611db9f4c682171caf8f398381254f9f3e3123e"
+        }
+      ]
+    }
+  },
+  "final_manifest": {
+    "schema_version": 10,
+    "protocol_revision": "ironwood-enhance-pir-v4",
+    "network": "main",
+    "pool": "ironwood",
+    "generation": 10,
+    "anchor_height": 3428152,
+    "anchor_block_hash": "0000000000000000000000000000000000000000000000000000000000344f38",
+    "geometry": {
+      "max_shard_rows": 32768,
+      "min_shard_rows": 4096,
+      "max_mutable_unit_rows": 8192,
+      "min_mutable_unit_rows": 2048
+    },
+    "coverage": {
+      "records": 76,
+      "shards": [
+        {
+          "id": 0,
+          "global_row_start": 0,
+          "records": 76,
+          "logical_rows": 4096,
+          "state": "GROWING",
+          "units": [
+            {
+              "local_row_start": 0,
+              "used_rows": 3,
+              "allocated_rows": 2048
+            }
+          ]
+        }
+      ],
+      "loan": null
+    },
+    "sessions": [
+      {
+        "shard_id": 0,
+        "public_params_sha256": "d19eec525279f2ef75fb6e6efdfddd4b100ab7492e42d0ce71879b1c1e2ee55f",
+        "parameter_id": "ironwood-enhance-pir-v4/ce8bbd84ff64a3d46e1f00d3142ecac4b42acda912ab9f6f241f59908db76a53"
+      }
+    ],
+    "unit_identities": {
+      "0": [
+        {
+          "table": "enhance",
+          "shard_id": 0,
+          "local_row_start": 0,
+          "allocated_rows": 2048,
+          "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+          "parameter_id": "ironwood-enhance-pir-v4/unit/456fbd8ab131879c37e844348c35efc2898be25aef8d29ba00a3e2d153e0a144",
+          "content_sha256": "d40087ca48f2efb9cd152ab2be5c701ab34ce12ed36eda2f44461442ff89c684"
+        }
+      ]
+    }
+  }
+}

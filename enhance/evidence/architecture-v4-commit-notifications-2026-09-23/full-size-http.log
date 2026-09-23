@@ -1,0 +1,9 @@
+    Finished `release-fast` profile [optimized] target(s) in 0.23s
+     Running tests/v4_http.rs (target/release-fast/deps/v4_http-b28d976fc31d3524)
+
+running 2 tests
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ok
+test full_shard_loan_return_over_http_preserves_old_queries ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 377.72s
+

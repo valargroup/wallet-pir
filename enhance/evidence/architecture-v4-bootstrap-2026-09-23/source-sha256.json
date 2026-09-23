@@ -1,0 +1,7 @@
+{
+  "enhance/ops/scripts/bootstrap-v4-worker.py": "0517af86758ff003082d3914f4e2924aa0d6f28cb85c1f8c795460af73b8f86a",
+  "enhance/ops/tests/test_v4_bootstrap.py": "233dec8da9e42ccb6be62e9028595f4aecb59aa5ac73fc488e33c43191f92d14",
+  "tools/ci/release.py": "08ef865aadb79a747411560d371378a8c02a586303a7184ae15255b562b826c0",
+  "enhance/ops/deploy/v4-candidate.md": "e0725832d0343d8c0732a4c7569e6ff867fc82479571d064e96d459d95e0df3a",
+  "ops/infra/digitalocean/enhance-v4/README.md": "165555a124c922ee8ff46f08aa9cfe860612933d790c95e49026a0169382084d"
+}

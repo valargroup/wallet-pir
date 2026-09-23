@@ -1,0 +1,5 @@
+{
+  "enhance/services/enhance-pir-server/src/v4/coordinator.rs": "a2704f7e35ecafef4d712ff398ee38caa585099d30493d739b9912cc4b338440",
+  "enhance/services/enhance-pir-server/src/v4/control.rs": "fe31b7562268ad9ca750ac14ff11cf21d395cdb9199d01a806e4042d0336b0a7",
+  "enhance/services/enhance-pir-server/tests/v4_http.rs": "c6b297c26d99637801af721385ac06d6753742fac365e58aee7ceab0cb2a0fab"
+}

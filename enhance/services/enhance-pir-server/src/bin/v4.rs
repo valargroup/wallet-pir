@@ -1,0 +1,358 @@
+//! Separate v4 process entrypoint; never changes legacy deployment defaults.
+use clap::{Parser, Subcommand};
+use enhance_pir_server::{
+    ingest::EnhanceJournal,
+    v4::{
+        control::{Group, Ledger, Replica},
+        coordinator::Coordinator,
+        worker::Worker,
+    },
+    zakura::ZakuraClient,
+};
+use serde::Deserialize;
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
+
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Synthetic workloads for isolated, unregistered workers only. Never grants qualification.
+    Exercise {
+        #[arg(long, required = true)]
+        isolated_workers: bool,
+        #[arg(long, value_enum)]
+        profile: enhance_pir_server::v4::exercise::Profile,
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        worker_config: PathBuf,
+        #[arg(long, default_value = "127.0.0.1:8280")]
+        listen: SocketAddr,
+        #[arg(long, default_value_t = 21600)]
+        seconds: u64,
+        #[arg(long, default_value_t = 300)]
+        min_publications: u64,
+        #[arg(long, default_value_t = 60)]
+        publication_interval: u64,
+        #[arg(long, default_value_t = 2)]
+        concurrency: usize,
+    },
+    /// Offline repair of journal-referenced rows from a peer row archive.
+    RepairRows {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        source_rows: PathBuf,
+    },
+    Worker {
+        #[arg(long, default_value = "127.0.0.1:8091")]
+        listen: SocketAddr,
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    Coordinator {
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        listen: SocketAddr,
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        worker_config: PathBuf,
+        #[arg(long, default_value = "http://127.0.0.1:8232")]
+        zakura_rpc_url: String,
+        #[arg(long)]
+        zakura_cookie: Option<PathBuf>,
+        /// Dedicated synthetic fixture environment only. Never use on serving production data.
+        #[arg(long)]
+        isolated_fixture: bool,
+        #[arg(long, default_value_t = 67)]
+        fixture_records: u64,
+        #[arg(long, default_value_t = 1)]
+        fixture_append_records: u64,
+        #[arg(long, default_value_t = 10)]
+        poll_seconds: u64,
+        #[arg(long, default_value_t = 1.0)]
+        capacity_fallback_rows_per_second: f64,
+        #[arg(long, default_value_t = 21600.0)]
+        capacity_readiness_seconds: f64,
+        #[arg(long, default_value_t = 4096)]
+        capacity_burst_rows: u64,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Inventory {
+    groups: Vec<InventoryGroup>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InventoryGroup {
+    name: String,
+    replicas: Vec<InventoryReplica>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InventoryReplica {
+    name: String,
+    url: String,
+}
+
+fn load_inventory(
+    path: &std::path::Path,
+) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
+    let config: Inventory = serde_json::from_slice(&std::fs::read(path)?)?;
+    Ok(config
+        .groups
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, g)| Group {
+            id: g.name,
+            sequence: sequence as u64,
+            settling: false,
+            replicas: g
+                .replicas
+                .into_iter()
+                .map(|r| Replica {
+                    name: r.name,
+                    url: r.url.trim_end_matches('/').into(),
+                    incarnation: String::new(),
+                    ledger: Ledger::default(),
+                })
+                .collect(),
+        })
+        .collect())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+    match Cli::parse().command {
+        Command::Exercise {
+            isolated_workers,
+            profile,
+            data_dir,
+            worker_config,
+            listen,
+            seconds,
+            min_publications,
+            publication_interval,
+            concurrency,
+        } => {
+            if !isolated_workers {
+                return Err("isolated worker acknowledgement required".into());
+            }
+            let groups = load_inventory(&worker_config)?;
+            enhance_pir_server::v4::exercise::run(
+                enhance_pir_server::v4::exercise::Config {
+                    profile,
+                    root: data_dir,
+                    listen,
+                    seconds,
+                    min_publications,
+                    interval: Duration::from_secs(publication_interval),
+                    concurrency,
+                },
+                groups,
+            )
+            .await?;
+        }
+        Command::RepairRows {
+            data_dir,
+            source_rows,
+        } => {
+            let restored = Worker::repair_rows(&data_dir, &source_rows)?;
+            println!(
+                "{}",
+                serde_json::json!({"status":"rows_verified", "restored_units":restored,
+                "readiness":"requires_worker_restart", "qualification":"unqualified"})
+            );
+        }
+        Command::Worker { listen, data_dir } => {
+            let worker = Worker::open(&data_dir)?;
+            axum::serve(
+                tokio::net::TcpListener::bind(listen).await?,
+                worker.router(),
+            )
+            .await?;
+        }
+        Command::Coordinator {
+            listen,
+            data_dir,
+            worker_config,
+            zakura_rpc_url,
+            zakura_cookie,
+            isolated_fixture,
+            fixture_records,
+            fixture_append_records,
+            poll_seconds,
+            capacity_fallback_rows_per_second,
+            capacity_readiness_seconds,
+            capacity_burst_rows,
+        } => {
+            let capacity_policy = enhance_pir_server::v4::capacity::Policy {
+                fallback_rows_per_second: capacity_fallback_rows_per_second,
+                readiness_seconds: capacity_readiness_seconds,
+                burst_rows: capacity_burst_rows,
+            };
+            capacity_policy.validate()?;
+            if poll_seconds == 0
+                || (isolated_fixture && zakura_cookie.is_some())
+                || (!isolated_fixture && zakura_cookie.is_none())
+            {
+                return Err("select either a canonical RPC cookie or an isolated fixture; polling must be nonzero".into());
+            }
+            let groups = load_inventory(&worker_config)?;
+            std::fs::create_dir_all(&data_dir)?;
+            let mode_path = data_dir.join("v4-source-mode");
+            let mode = if isolated_fixture {
+                "synthetic-fixture"
+            } else {
+                "canonical-archive"
+            };
+            if mode_path.exists() {
+                if std::fs::read_to_string(&mode_path)? != mode {
+                    return Err("cannot mix fixture and canonical data directories".into());
+                }
+            } else {
+                std::fs::write(mode_path, mode)?;
+            }
+            let coordinator = Coordinator::open(&data_dir.join("control"), groups)?;
+            let serving = coordinator.clone();
+            let task = tokio::spawn(async move {
+                axum::serve(
+                    tokio::net::TcpListener::bind(listen).await?,
+                    serving.router(),
+                )
+                .await
+            });
+            let mut journal = EnhanceJournal::open(&data_dir)?;
+            let rpc = zakura_cookie
+                .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
+                .transpose()?;
+            loop {
+                if let Err(error) = coordinator.reconcile().await {
+                    tracing::error!(%error, "publication recovery blocked");
+                    tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
+                    continue;
+                }
+                // Capacity registration is independent of journal advancement. A bad
+                // or unavailable addition must not stop serving/publishing on the
+                // already registered fleet. The infrastructure writer replaces this
+                // file atomically only after provisioning its replica pair.
+                let inventory_result = match load_inventory(&worker_config) {
+                    Ok(groups) => coordinator.reconcile_inventory(groups).await,
+                    Err(error) => Err(error.to_string()),
+                };
+                if let Err(error) = inventory_result {
+                    tracing::error!(%error, "inventory reconciliation deferred");
+                }
+                let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                    let (height, hash) = if let Some(rpc) = &rpc {
+                        let tip = rpc.tip_height().await?;
+                        while let Some(last) = journal.records.last_block().cloned() {
+                            if last.height <= tip && rpc.block_hash(last.height).await? == last.hash
+                            {
+                                break;
+                            }
+                            let previous = journal
+                                .records
+                                .blocks()
+                                .iter()
+                                .rev()
+                                .nth(1)
+                                .map(|b| b.height);
+                            journal.rewind_to_height(previous)?;
+                        }
+                        let next = journal
+                            .committed_height()
+                            .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
+                        for height in next..=tip {
+                            journal.append_block(&rpc.block(height).await?)?;
+                        }
+                        journal
+                            .highest_committed()
+                            .ok_or("empty canonical journal")?
+                    } else {
+                        let target = if journal.records.tree_size() == 0 {
+                            fixture_records
+                        } else {
+                            journal
+                                .records
+                                .tree_size()
+                                .checked_add(fixture_append_records)
+                                .ok_or("fixture overflow")?
+                        };
+                        if target == 0 || target > 23 * 32768 * 33 {
+                            return Err("fixture outside fleet coverage".into());
+                        }
+                        while journal.records.tree_size() < target {
+                            let start = journal.records.tree_size();
+                            let count = (target - start).min(4096);
+                            let records: Vec<_> = (start..start + count)
+                                .map(|p| {
+                                    let mut r = vec![0u8; enhance_pir::RECORD_BYTES];
+                                    r[..8].copy_from_slice(&p.to_le_bytes());
+                                    r
+                                })
+                                .collect();
+                            let height = journal
+                                .committed_height()
+                                .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
+                            journal.records.append_block(
+                                height,
+                                format!("{height:064x}"),
+                                &records,
+                            )?;
+                        }
+                        journal.highest_committed().ok_or("empty fixture")?
+                    };
+                    coordinator.observe_capacity(
+                        journal.records.tree_size(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs(),
+                        capacity_policy,
+                    )?;
+                    if coordinator
+                        .manifest()
+                        .await
+                        .is_some_and(|m| m.anchor_height == height && m.anchor_block_hash == hash)
+                    {
+                        return Ok(());
+                    }
+                    let verify_hash = hash.clone();
+                    coordinator
+                        .publish_checked(&journal.records, height, hash, || async {
+                            if let Some(rpc) = &rpc {
+                                if rpc.block_hash(height).await.map_err(|e| e.to_string())?
+                                    != verify_hash
+                                {
+                                    return Err(
+                                        "canonical anchor changed during preparation".into()
+                                    );
+                                }
+                            }
+                            Ok(())
+                        })
+                        .await?;
+                    Ok(())
+                }
+                .await;
+                if let Err(error) = result {
+                    tracing::error!(%error, "v4 ingestion/publication blocked");
+                }
+                if task.is_finished() {
+                    return Err("HTTP server stopped".into());
+                }
+                tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
+            }
+        }
+    }
+    Ok(())
+}

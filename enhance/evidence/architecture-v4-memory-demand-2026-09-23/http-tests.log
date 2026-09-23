@@ -1,0 +1,9 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.45s
+     Running tests/v4_http.rs (target/debug/deps/v4_http-abd8162fd4cc7d69)
+
+running 1 test
+test new_shard_uses_admitted_alternative_group_over_http ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 7.70s
+

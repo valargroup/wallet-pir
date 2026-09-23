@@ -1,0 +1,13 @@
+{
+  "ops/infra/digitalocean/enhance-v4/.terraform.lock.hcl": "dc54766af95776bc32215fe4cba96921de1c9a4832dd33ab9d65333240d4313b",
+  "ops/infra/digitalocean/enhance-v4/README.md": "91db0cb61eb0622492791625f26bfa5f407514d196e186baa37bdd4aef19716d",
+  "ops/infra/digitalocean/enhance-v4/cloud-init-worker.yaml": "36c32fb49229c5524517ac4316ce57cebf73430564d0ba078a19488a4e41de9c",
+  "ops/infra/digitalocean/enhance-v4/main.tf": "437190a963da2bdadcbf5992cb2d4cdeec1214cee2e15f6deda81dc0ee28b95d",
+  "ops/infra/digitalocean/enhance-v4/outputs.tf": "59fd0bd2e01deaa717f286b072b1e2e00f152aa2d89830bbb4fc51f7a5a0ebfe",
+  "ops/infra/digitalocean/enhance-v4/tests/fleet.tftest.hcl": "c190992797050f1a6cb47feebe1b1caf7895c027aaa531b0a29df1eaf7d7b156",
+  "ops/infra/digitalocean/enhance-v4/variables.tf": "f7d2e41e947d0f40a6371ed16066786c899668d1a9fcfceac8be5ee2230e4267",
+  "enhance/ops/scripts/v4-infra-plan.py": "9a29b6046cddd1f7005cf25c8da03c7ddec93611682eae89d8620f7d9455c4c2",
+  "enhance/ops/tests/test_v4_infra_plan.py": "e8ade64cece6104fb868ad806429571d6fd573c15f218e2f1174550f1fa79fc1",
+  "enhance/ops/fixtures/v4-infra-bootstrap.json": "2c0cc98d966fd055dc2dba8b5ef75245ac978b436aff86b6336849376f513344",
+  ".github/workflows/ci-full.yml": "7fb782eac5e39cfdbc851b87522c4e909eb89c56fa6837a563fbfdebb020f875"
+}

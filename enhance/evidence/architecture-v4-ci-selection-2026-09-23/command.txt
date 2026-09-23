@@ -1,0 +1,1 @@
+RUST_TEST_THREADS=1 tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --lib --bins --test operator_payloads --test record_layout --test sharded_vs_monolithic --test worker_migration --test v4_http --test v4_canonical_record --test v4_note_recovery --test v4_rpc

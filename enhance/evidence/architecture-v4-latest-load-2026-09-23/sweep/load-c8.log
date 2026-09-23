@@ -1,0 +1,7 @@
+Error: HTTP error: error sending request for url (http://127.0.0.1:49721/v1/enhance/query)
+
+Caused by:
+    0: error sending request for url (http://127.0.0.1:49721/v1/enhance/query)
+    1: client error (SendRequest)
+    2: error writing a body to connection
+    3: Connection reset by peer (os error 54)

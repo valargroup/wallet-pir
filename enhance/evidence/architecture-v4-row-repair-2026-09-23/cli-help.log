@@ -1,0 +1,13 @@
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling transparent-spend-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/transparent-spend-pir)
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.47s
+     Running `target/debug/enhance-pir-v4 repair-rows --help`
+Offline repair of journal-referenced rows from a peer row archive
+
+Usage: enhance-pir-v4 repair-rows --data-dir <DATA_DIR> --source-rows <SOURCE_ROWS>
+
+Options:
+      --data-dir <DATA_DIR>        
+      --source-rows <SOURCE_ROWS>  
+  -h, --help                       Print help

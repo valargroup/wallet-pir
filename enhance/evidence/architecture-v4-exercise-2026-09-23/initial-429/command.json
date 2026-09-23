@@ -1,0 +1,21 @@
+[
+  "/Users/roman/projects/wallet-pir/target/release-fast/enhance-pir-v4",
+  "exercise",
+  "--isolated-workers",
+  "--profile",
+  "smoke",
+  "--data-dir",
+  "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/v4-exercise-4b3974hc/exercise",
+  "--worker-config",
+  "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/v4-exercise-4b3974hc/workers.json",
+  "--listen",
+  "127.0.0.1:0",
+  "--seconds",
+  "10",
+  "--min-publications",
+  "6",
+  "--publication-interval",
+  "1",
+  "--concurrency",
+  "2"
+]

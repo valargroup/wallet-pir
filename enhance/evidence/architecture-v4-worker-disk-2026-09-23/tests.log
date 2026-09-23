@@ -1,0 +1,7 @@
+
+running 2 tests
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ok
+test full_shard_loan_return_over_http_preserves_old_queries ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 393.75s
+

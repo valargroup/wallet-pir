@@ -1,0 +1,412 @@
+{
+  "fixture": "Terraform mock-provider bootstrap; no cloud credentials or live resource IDs",
+  "resource_changes": [
+    {
+      "address": "digitalocean_droplet.worker[0]",
+      "mode": "managed",
+      "type": "digitalocean_droplet",
+      "name": "worker",
+      "index": 0,
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "backup_policy": [],
+          "backups": null,
+          "droplet_agent": null,
+          "gpu_partition_mode": null,
+          "graceful_shutdown": null,
+          "image": "ubuntu-24-04-x64",
+          "ipv6": true,
+          "monitoring": true,
+          "name": "enhance-pir-v4-g01-r1",
+          "region": "ams3",
+          "resize_disk": null,
+          "size": "c-4",
+          "ssh_keys": [
+            "12345"
+          ],
+          "tags": [
+            "enhance-pir-v4-worker"
+          ],
+          "timeouts": null,
+          "user_data": "#cloud-config\npackage_update: true\npackages:\n  - ca-certificates\n  - curl\n  - jq\n  - python3\nruncmd:\n  - install -d -m 0700 /srv/enhance-pir-v4\n  - test -f /swapfile || (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile)\n  - swapon /swapfile\n  - grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab\n  - echo 'vm.swappiness=10' > /etc/sysctl.d/90-enhance-pir-v4.conf\n  - sysctl -p /etc/sysctl.d/90-enhance-pir-v4.conf\n",
+          "vpc_uuid": "00000000-0000-4000-8000-000000000002"
+        },
+        "after_unknown": {
+          "backup_policy": [],
+          "created_at": true,
+          "disk": true,
+          "id": true,
+          "ipv4_address": true,
+          "ipv4_address_private": true,
+          "ipv6_address": true,
+          "locked": true,
+          "memory": true,
+          "price_hourly": true,
+          "price_monthly": true,
+          "private_networking": true,
+          "public_networking": true,
+          "ssh_keys": [
+            false
+          ],
+          "status": true,
+          "tags": [
+            false
+          ],
+          "urn": true,
+          "vcpus": true,
+          "volume_ids": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "backup_policy": [],
+          "ssh_keys": [
+            false
+          ],
+          "tags": [
+            false
+          ],
+          "volume_ids": []
+        }
+      }
+    },
+    {
+      "address": "digitalocean_droplet.worker[1]",
+      "mode": "managed",
+      "type": "digitalocean_droplet",
+      "name": "worker",
+      "index": 1,
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "backup_policy": [],
+          "backups": null,
+          "droplet_agent": null,
+          "gpu_partition_mode": null,
+          "graceful_shutdown": null,
+          "image": "ubuntu-24-04-x64",
+          "ipv6": true,
+          "monitoring": true,
+          "name": "enhance-pir-v4-g01-r2",
+          "region": "ams3",
+          "resize_disk": null,
+          "size": "c-4",
+          "ssh_keys": [
+            "12345"
+          ],
+          "tags": [
+            "enhance-pir-v4-worker"
+          ],
+          "timeouts": null,
+          "user_data": "#cloud-config\npackage_update: true\npackages:\n  - ca-certificates\n  - curl\n  - jq\n  - python3\nruncmd:\n  - install -d -m 0700 /srv/enhance-pir-v4\n  - test -f /swapfile || (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile)\n  - swapon /swapfile\n  - grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab\n  - echo 'vm.swappiness=10' > /etc/sysctl.d/90-enhance-pir-v4.conf\n  - sysctl -p /etc/sysctl.d/90-enhance-pir-v4.conf\n",
+          "vpc_uuid": "00000000-0000-4000-8000-000000000002"
+        },
+        "after_unknown": {
+          "backup_policy": [],
+          "created_at": true,
+          "disk": true,
+          "id": true,
+          "ipv4_address": true,
+          "ipv4_address_private": true,
+          "ipv6_address": true,
+          "locked": true,
+          "memory": true,
+          "price_hourly": true,
+          "price_monthly": true,
+          "private_networking": true,
+          "public_networking": true,
+          "ssh_keys": [
+            false
+          ],
+          "status": true,
+          "tags": [
+            false
+          ],
+          "urn": true,
+          "vcpus": true,
+          "volume_ids": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "backup_policy": [],
+          "ssh_keys": [
+            false
+          ],
+          "tags": [
+            false
+          ],
+          "volume_ids": []
+        }
+      }
+    },
+    {
+      "address": "digitalocean_firewall.worker",
+      "mode": "managed",
+      "type": "digitalocean_firewall",
+      "name": "worker",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "droplet_ids": null,
+          "inbound_rule": [
+            {
+              "action": null,
+              "port_range": "22",
+              "protocol": "tcp",
+              "source_addresses": [
+                "192.0.2.10/32",
+                "192.0.2.20/32"
+              ],
+              "source_droplet_ids": null,
+              "source_kubernetes_ids": null,
+              "source_load_balancer_uids": null,
+              "source_tags": null
+            },
+            {
+              "action": null,
+              "port_range": "8291",
+              "protocol": "tcp",
+              "source_addresses": [
+                "192.0.2.10/32"
+              ],
+              "source_droplet_ids": null,
+              "source_kubernetes_ids": null,
+              "source_load_balancer_uids": null,
+              "source_tags": null
+            }
+          ],
+          "name": "enhance-pir-v4-workers",
+          "outbound_rule": [
+            {
+              "action": null,
+              "destination_addresses": [
+                "0.0.0.0/0",
+                "::/0"
+              ],
+              "destination_droplet_ids": null,
+              "destination_kubernetes_ids": null,
+              "destination_load_balancer_uids": null,
+              "destination_tags": null,
+              "port_range": "1-65535",
+              "protocol": "tcp"
+            },
+            {
+              "action": null,
+              "destination_addresses": [
+                "0.0.0.0/0",
+                "::/0"
+              ],
+              "destination_droplet_ids": null,
+              "destination_kubernetes_ids": null,
+              "destination_load_balancer_uids": null,
+              "destination_tags": null,
+              "port_range": "1-65535",
+              "protocol": "udp"
+            },
+            {
+              "action": null,
+              "destination_addresses": [
+                "0.0.0.0/0",
+                "::/0"
+              ],
+              "destination_droplet_ids": null,
+              "destination_kubernetes_ids": null,
+              "destination_load_balancer_uids": null,
+              "destination_tags": null,
+              "port_range": null,
+              "protocol": "icmp"
+            }
+          ],
+          "tags": [
+            "enhance-pir-v4-worker"
+          ]
+        },
+        "after_unknown": {
+          "created_at": true,
+          "id": true,
+          "inbound_rule": [
+            {
+              "source_addresses": [
+                false,
+                false
+              ]
+            },
+            {
+              "source_addresses": [
+                false
+              ]
+            }
+          ],
+          "outbound_rule": [
+            {
+              "destination_addresses": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_addresses": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_addresses": [
+                false,
+                false
+              ]
+            }
+          ],
+          "pending_changes": true,
+          "status": true,
+          "tags": [
+            false
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "inbound_rule": [
+            {
+              "source_addresses": [
+                false,
+                false
+              ]
+            },
+            {
+              "source_addresses": [
+                false
+              ]
+            }
+          ],
+          "outbound_rule": [
+            {
+              "destination_addresses": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_addresses": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_addresses": [
+                false,
+                false
+              ]
+            }
+          ],
+          "pending_changes": [],
+          "tags": [
+            false
+          ]
+        }
+      }
+    },
+    {
+      "address": "digitalocean_project_resources.worker[0]",
+      "mode": "managed",
+      "type": "digitalocean_project_resources",
+      "name": "worker",
+      "index": 0,
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "00000000-0000-4000-8000-000000000001",
+          "resources": [
+            null
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "resources": [
+            true
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "resources": [
+            false
+          ]
+        }
+      }
+    },
+    {
+      "address": "digitalocean_project_resources.worker[1]",
+      "mode": "managed",
+      "type": "digitalocean_project_resources",
+      "name": "worker",
+      "index": 1,
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "00000000-0000-4000-8000-000000000001",
+          "resources": [
+            null
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "resources": [
+            true
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "resources": [
+            false
+          ]
+        }
+      }
+    },
+    {
+      "address": "digitalocean_tag.worker",
+      "mode": "managed",
+      "type": "digitalocean_tag",
+      "name": "worker",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "enhance-pir-v4-worker"
+        },
+        "after_unknown": {
+          "databases_count": true,
+          "droplets_count": true,
+          "id": true,
+          "images_count": true,
+          "total_resource_count": true,
+          "volume_snapshots_count": true,
+          "volumes_count": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "kind": "enhance-pir-v4-candidate",
+  "schema_version": 10,
+  "protocol_revision": "ironwood-enhance-pir-v4",
+  "qualification": "unqualified",
+  "source_revision": "246423a1ce2377ab7b71d1c3e0745ebb153d1f99",
+  "source_dirty": true
+}

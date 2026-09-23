@@ -1,0 +1,11 @@
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling enhance-pir-load-test v0.1.0 (/Users/roman/projects/wallet-pir/enhance/tools/loadtest)
+    Finished `test` profile [optimized + debuginfo] target(s) in 2.21s
+     Running unittests src/main.rs (target/debug/deps/enhance_pir_load_test-0c8ea745af1d956a)
+
+running 2 tests
+test v4::tests::warmup_does_not_hide_protocol_or_authorization_failures ... ok
+test v4::tests::warmup_preserves_transient_failures_and_exact_answer_failures ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+

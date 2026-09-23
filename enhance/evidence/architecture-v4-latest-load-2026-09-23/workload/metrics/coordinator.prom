@@ -1,0 +1,128 @@
+# HELP enhance_v4_capacity_observation_available enhance_v4_capacity_observation_available
+# TYPE enhance_v4_capacity_observation_available gauge
+enhance_v4_capacity_observation_available 0
+# HELP enhance_v4_consolidation_planner_moves enhance_v4_consolidation_planner_moves
+# TYPE enhance_v4_consolidation_planner_moves gauge
+enhance_v4_consolidation_planner_moves 0
+# HELP enhance_v4_consolidation_preview_available enhance_v4_consolidation_preview_available
+# TYPE enhance_v4_consolidation_preview_available gauge
+enhance_v4_consolidation_preview_available 1
+# HELP enhance_v4_controller_epoch enhance_v4_controller_epoch
+# TYPE enhance_v4_controller_epoch gauge
+enhance_v4_controller_epoch 1
+# HELP enhance_v4_draining_operations enhance_v4_draining_operations
+# TYPE enhance_v4_draining_operations gauge
+enhance_v4_draining_operations 4
+# HELP enhance_v4_expansion_requests_pending enhance_v4_expansion_requests_pending
+# TYPE enhance_v4_expansion_requests_pending gauge
+enhance_v4_expansion_requests_pending 0
+# HELP enhance_v4_fleet_ceiling_reached enhance_v4_fleet_ceiling_reached
+# TYPE enhance_v4_fleet_ceiling_reached gauge
+enhance_v4_fleet_ceiling_reached 0
+# HELP enhance_v4_group_assigned_shards enhance_v4_group_assigned_shards
+# TYPE enhance_v4_group_assigned_shards gauge
+enhance_v4_group_assigned_shards{group="g0"} 1
+# HELP enhance_v4_group_pending_replicas enhance_v4_group_pending_replicas
+# TYPE enhance_v4_group_pending_replicas gauge
+enhance_v4_group_pending_replicas{group="g0"} 0
+# HELP enhance_v4_group_role enhance_v4_group_role
+# TYPE enhance_v4_group_role gauge
+enhance_v4_group_role{group="g0",role="sealed_full"} 0
+enhance_v4_group_role{group="g0",role="active"} 1
+enhance_v4_group_role{group="g0",role="sealed_open"} 0
+enhance_v4_group_role{group="g0",role="settling"} 0
+enhance_v4_group_role{group="g0",role="standby"} 0
+# HELP enhance_v4_group_role_available enhance_v4_group_role_available
+# TYPE enhance_v4_group_role_available gauge
+enhance_v4_group_role_available{group="g0"} 1
+# HELP enhance_v4_group_sealed_shards enhance_v4_group_sealed_shards
+# TYPE enhance_v4_group_sealed_shards gauge
+enhance_v4_group_sealed_shards{group="g0"} 0
+# HELP enhance_v4_last_publication_attempt_seconds enhance_v4_last_publication_attempt_seconds
+# TYPE enhance_v4_last_publication_attempt_seconds gauge
+enhance_v4_last_publication_attempt_seconds 8.540949667
+# HELP enhance_v4_last_publication_attempt_succeeded enhance_v4_last_publication_attempt_succeeded
+# TYPE enhance_v4_last_publication_attempt_succeeded gauge
+enhance_v4_last_publication_attempt_succeeded 1
+# HELP enhance_v4_loan_active enhance_v4_loan_active
+# TYPE enhance_v4_loan_active gauge
+enhance_v4_loan_active 0
+# HELP enhance_v4_operation_phase enhance_v4_operation_phase
+# TYPE enhance_v4_operation_phase gauge
+enhance_v4_operation_phase{phase="RESERVED"} 0
+enhance_v4_operation_phase{phase="PREPARING"} 0
+enhance_v4_operation_phase{phase="COMMITTED"} 0
+enhance_v4_operation_phase{phase="COMPLETE"} 0
+enhance_v4_operation_phase{phase="NONE"} 1
+enhance_v4_operation_phase{phase="ABORTED"} 0
+enhance_v4_operation_phase{phase="READY"} 0
+enhance_v4_operation_phase{phase="DRAINING"} 0
+enhance_v4_operation_phase{phase="PLANNED"} 0
+# HELP enhance_v4_pending_abort_notifications enhance_v4_pending_abort_notifications
+# TYPE enhance_v4_pending_abort_notifications gauge
+enhance_v4_pending_abort_notifications 0
+# HELP enhance_v4_pending_commit_notifications enhance_v4_pending_commit_notifications
+# TYPE enhance_v4_pending_commit_notifications gauge
+enhance_v4_pending_commit_notifications 0
+# HELP enhance_v4_placement_revision enhance_v4_placement_revision
+# TYPE enhance_v4_placement_revision gauge
+enhance_v4_placement_revision 11
+# HELP enhance_v4_publication_blocked enhance_v4_publication_blocked
+# TYPE enhance_v4_publication_blocked gauge
+enhance_v4_publication_blocked 0
+# HELP enhance_v4_publication_pending_seconds enhance_v4_publication_pending_seconds
+# TYPE enhance_v4_publication_pending_seconds gauge
+enhance_v4_publication_pending_seconds 0
+# HELP enhance_v4_publication_target_available enhance_v4_publication_target_available
+# TYPE enhance_v4_publication_target_available gauge
+enhance_v4_publication_target_available 1
+# HELP enhance_v4_publication_target_current enhance_v4_publication_target_current
+# TYPE enhance_v4_publication_target_current gauge
+enhance_v4_publication_target_current 1
+# HELP enhance_v4_publication_target_height enhance_v4_publication_target_height
+# TYPE enhance_v4_publication_target_height gauge
+enhance_v4_publication_target_height 3428153
+# HELP enhance_v4_publication_target_height_delta enhance_v4_publication_target_height_delta
+# TYPE enhance_v4_publication_target_height_delta gauge
+enhance_v4_publication_target_height_delta 0
+# HELP enhance_v4_publication_target_records_delta enhance_v4_publication_target_records_delta
+# TYPE enhance_v4_publication_target_records_delta gauge
+enhance_v4_publication_target_records_delta 0
+# HELP enhance_v4_published_anchor_height enhance_v4_published_anchor_height
+# TYPE enhance_v4_published_anchor_height gauge
+enhance_v4_published_anchor_height 3428153
+# HELP enhance_v4_published_generation enhance_v4_published_generation
+# TYPE enhance_v4_published_generation gauge
+enhance_v4_published_generation 11
+# HELP enhance_v4_registered_groups enhance_v4_registered_groups
+# TYPE enhance_v4_registered_groups gauge
+enhance_v4_registered_groups 1
+# HELP enhance_v4_retained_generations enhance_v4_retained_generations
+# TYPE enhance_v4_retained_generations gauge
+enhance_v4_retained_generations 5
+# HELP enhance_v4_rows_before_next_carveout enhance_v4_rows_before_next_carveout
+# TYPE enhance_v4_rows_before_next_carveout gauge
+enhance_v4_rows_before_next_carveout 32756
+# HELP enhance_v4_shard_borrowing enhance_v4_shard_borrowing
+# TYPE enhance_v4_shard_borrowing gauge
+enhance_v4_shard_borrowing{shard="0"} 0
+# HELP enhance_v4_shard_logical_rows enhance_v4_shard_logical_rows
+# TYPE enhance_v4_shard_logical_rows gauge
+enhance_v4_shard_logical_rows{shard="0"} 4096
+# HELP enhance_v4_shard_published_ready_replicas enhance_v4_shard_published_ready_replicas
+# TYPE enhance_v4_shard_published_ready_replicas gauge
+enhance_v4_shard_published_ready_replicas{shard="0"} 2
+# HELP enhance_v4_shard_state enhance_v4_shard_state
+# TYPE enhance_v4_shard_state gauge
+enhance_v4_shard_state{shard="0",state="growing"} 1
+enhance_v4_shard_state{shard="0",state="lending"} 0
+enhance_v4_shard_state{shard="0",state="sealed"} 0
+# HELP enhance_v4_shard_used_rows enhance_v4_shard_used_rows
+# TYPE enhance_v4_shard_used_rows gauge
+enhance_v4_shard_used_rows{shard="0"} 13
+# HELP enhance_v4_unit_allocated_rows enhance_v4_unit_allocated_rows
+# TYPE enhance_v4_unit_allocated_rows gauge
+enhance_v4_unit_allocated_rows{local_row_start="0",shard="0"} 2048
+# HELP enhance_v4_unit_used_rows enhance_v4_unit_used_rows
+# TYPE enhance_v4_unit_used_rows gauge
+enhance_v4_unit_used_rows{local_row_start="0",shard="0"} 13

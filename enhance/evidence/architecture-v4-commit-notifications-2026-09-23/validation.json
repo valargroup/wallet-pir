@@ -1,0 +1,42 @@
+{
+  "qualification": "unqualified",
+  "revision": "246423a1ce2377ab7b71d1c3e0745ebb153d1f99",
+  "source_dirty": true,
+  "checks": [
+    {
+      "command": "cargo test --locked --profile release-fast -p enhance-pir-server --test v4_http committed_offline_participant_does_not_block_and_recovers_after_expiry -- --nocapture",
+      "exit_code": 0,
+      "passed": 1,
+      "duration_seconds": 68.82
+    },
+    {
+      "command": "cargo test --locked --profile release-fast -p enhance-pir-server --lib v4::",
+      "exit_code": 0,
+      "passed": 17,
+      "duration_seconds": 5.19
+    },
+    {
+      "command": "cargo clippy --locked --profile release-fast -p enhance-pir-server --lib --bin enhance-pir-v4 --test v4_http -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all --check && make check-docs && git diff --check",
+      "exit_code": 0,
+      "documentation_files": 114
+    },
+    {
+      "command": "cargo test --locked --profile release-fast -p enhance-pir-server --test v4_http -- --skip committed_offline_participant_does_not_block_and_recovers_after_expiry",
+      "exit_code": 0,
+      "passed": 2,
+      "ignored": 2,
+      "duration_seconds": 91.68
+    },
+    {
+      "command": "cargo test --locked --profile release-fast -p enhance-pir-server --test v4_http -- --ignored --test-threads=1",
+      "exit_code": 0,
+      "passed": 2,
+      "ignored": 0,
+      "duration_seconds": 377.72
+    }
+  ]
+}

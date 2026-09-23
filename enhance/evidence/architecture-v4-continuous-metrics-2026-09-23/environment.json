@@ -1,0 +1,9 @@
+{
+  "linux_image_id": "sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b",
+  "linux_architecture": "arm64",
+  "linux_container_removed": true,
+  "workspace_mount": "read_only",
+  "revision": "246423a1ce2377ab7b71d1c3e0745ebb153d1f99",
+  "source_dirty": true,
+  "qualification": "unqualified"
+}

@@ -1,0 +1,53 @@
+{
+  "background_correct_answers": 9165,
+  "background_errors": 0,
+  "background_p99_ms": 50.079,
+  "binary_sha256": "9c193897833340ba2a150448d875583b0ac3447266bdebe896442f736be7b6f9",
+  "concurrency": 2,
+  "exact_boundary_and_retained_probes": 64,
+  "expired_refreshes": 6,
+  "expired_reorg_target_reselections": 0,
+  "final_metrics": [
+    {
+      "file": "coordinator.prom",
+      "sha256": "3ba6a4ce1d9db3a586482c173aa5afa3296d0bbd63b7a42e98a53ca4ea6301e4",
+      "target": {
+        "role": "coordinator"
+      }
+    },
+    {
+      "file": "worker-0.prom",
+      "sha256": "f601216b9a0f49089fce5d868b43a0b63cf2e99ad450e20c12d4cb9d4d94dcfe",
+      "target": {
+        "group": "g0",
+        "replica": "worker-0",
+        "role": "worker"
+      }
+    },
+    {
+      "file": "worker-1.prom",
+      "sha256": "f601216b9a0f49089fce5d868b43a0b63cf2e99ad450e20c12d4cb9d4d94dcfe",
+      "target": {
+        "group": "g0",
+        "replica": "worker-1",
+        "role": "worker"
+      }
+    }
+  ],
+  "finished_wall_ns": 1790117288888778000,
+  "kind": "enhance-v4-workload",
+  "max_fixture_publication_ms": 9261,
+  "measurement_seconds": 87.5739235,
+  "measurement_started_wall_ns": 1790117201297894000,
+  "min_publications": 10,
+  "origin": "http://127.0.0.1:49458",
+  "profile": "smoke",
+  "publications": 10,
+  "publications_sha256": "f350da9af968da6fe4546d9e7398a88d6673e582badf7795ee916c20fe12606e",
+  "qualification": "unqualified",
+  "seconds_requested": 60,
+  "six_hour_publication_gate": false,
+  "started_wall_ns": 1790117194281186000,
+  "status": "recorded",
+  "workload_host_id_sha256": null
+}

@@ -1,0 +1,7 @@
+{
+  "enhance/services/enhance-pir-server/src/v4/coordinator.rs": "963ef15b723241ad51e597f386321d218a664f42eae187f7ca2dc6a63284ef36",
+  "enhance/services/enhance-pir-server/src/v4/worker.rs": "259c061c8b11be56ed45bad1d93e3a2bd6389c13500465c01f4465b32641bd22",
+  "enhance/services/enhance-pir-server/src/bin/v4.rs": "fb704793234f129724856f56d13c38d11b16250e93c4024871006d0607771d9e",
+  "enhance/services/enhance-pir-server/tests/v4_http.rs": "9a3b2f8a8fd668d1feb718b6b29487585236d2f7bb9a2e63eabc6b245ff67360",
+  "enhance/ops/scripts/test-v4-local.py": "7e6a6114cbbe6e0bca2b20de911036fef0d3e1e9dda05873e1343160f124484f"
+}

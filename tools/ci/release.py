@@ -13,12 +13,15 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARIES = {
+    'enhance-pir-v4-candidate': ['enhance-pir-v4', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'enhance-pir': ['enhance-pir-server', 'enhance-pir-worker', 'enhance-pir-qualify', 'enhance-pir-cli', 'pir-apm', 'transparent-filter-server'],
     'transparent-filter': ['transparent-filter-server'],
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
 }
 FILES = {
+    'enhance-pir-v4-candidate': ['enhance/ops/scripts/test-v4-local.py', 'enhance/ops/scripts/bootstrap-v4-worker.py', 'enhance/ops/scripts/sample-v4-worker.py',
+        'enhance/ops/deploy/workers-v4.example.json', 'enhance/ops/deploy/v4-candidate.md'],
     'enhance-pir': [
         'enhance/ops/deploy/enhance-pir-server.service', 'enhance/ops/deploy/enhance-pir-worker.service',
         'enhance/ops/deploy/pir-apm.service', 'transparent/ops/deploy/transparent-filter-server.service',
@@ -74,10 +77,12 @@ def resolve(sha, kind):
     raise ValueError(f'no qualified, unexpired {kind} artifact for {sha}; run CI full on main first')
 
 
-def assemble(sha, target, output):
+def assemble(sha, target, output, kind=None):
     check_sha(sha)
+    dirty = bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=ROOT))
     output.mkdir(parents=True, exist_ok=False)
-    for kind, binaries in BINARIES.items():
+    selected = {kind: BINARIES[kind]} if kind else BINARIES
+    for kind, binaries in selected.items():
         directory = output / kind
         directory.mkdir()
         for name in binaries:
@@ -85,6 +90,11 @@ def assemble(sha, target, output):
             (directory / name).chmod(0o755)
         for source in FILES[kind]:
             shutil.copy2(ROOT / source, directory / Path(source).name)
+        if kind == 'enhance-pir-v4-candidate':
+            (directory / 'candidate.json').write_text(json.dumps({
+                'kind': kind, 'schema_version': 10, 'protocol_revision': 'ironwood-enhance-pir-v4',
+                'qualification': 'unqualified', 'source_revision': sha, 'source_dirty': dirty,
+            }, indent=2) + '\n')
         if kind == 'enhance-pir':
             paths = subprocess.check_output(['git', 'ls-files', '-z', 'ops/infra/digitalocean/production'], cwd=ROOT).decode().split('\0')
             with tarfile.open(directory / 'wallet-pir-infra.tar.gz', 'w:gz') as archive:
@@ -112,6 +122,8 @@ def extract(archive_path, destination, sha, kind):
     required = set(BINARIES[kind]) | {Path(p).name for p in FILES[kind]} | {'revision', 'SHA256SUMS'}
     if kind == 'enhance-pir':
         required.add('wallet-pir-infra.tar.gz')
+    if kind == 'enhance-pir-v4-candidate':
+        required.add('candidate.json')
     if set(payload) != required:
         raise ValueError('release archive contents differ from the required artifact inventory')
     if payload['revision'].decode().strip() != sha:
@@ -127,6 +139,14 @@ def extract(archive_path, destination, sha, kind):
     for name, digest in checksums.items():
         if hashlib.sha256(payload[name]).hexdigest() != digest:
             raise ValueError(f'checksum mismatch: {name}')
+    if kind == 'enhance-pir-v4-candidate':
+        candidate = json.loads(payload['candidate.json'])
+        if (candidate.get('kind') != kind or candidate.get('source_revision') != sha
+                or candidate.get('schema_version') != 10
+                or candidate.get('protocol_revision') != 'ironwood-enhance-pir-v4'
+                or candidate.get('qualification') != 'unqualified'
+                or not isinstance(candidate.get('source_dirty'), bool)):
+            raise ValueError('invalid v4 candidate metadata; qualification is a separate gate')
     destination.mkdir(parents=True, exist_ok=False)
     for name, data in payload.items():
         path = destination / name
@@ -149,7 +169,7 @@ def main():
         head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
         if head != args.sha:
             raise ValueError('cannot label a build with a different checkout revision')
-        assemble(args.sha, args.target, args.output)
+        assemble(args.sha, args.target, args.output, args.kind)
     elif args.command == 'resolve':
         resolve(args.sha, args.kind)
     else:

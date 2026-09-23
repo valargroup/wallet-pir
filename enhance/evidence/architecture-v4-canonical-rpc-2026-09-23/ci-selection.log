@@ -1,0 +1,6 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 2.34s
+  Executable tests/v4_canonical_record.rs (target/release-fast/deps/v4_canonical_record-9922ab5aa9848fdb)
+  Executable tests/v4_http.rs (target/release-fast/deps/v4_http-ae29d6c3abec17e0)
+  Executable tests/v4_note_recovery.rs (target/release-fast/deps/v4_note_recovery-277575792f74d45d)
+  Executable tests/v4_rpc.rs (target/release-fast/deps/v4_rpc-4a247415eae0d663)

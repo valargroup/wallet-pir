@@ -4,6 +4,7 @@ use std::time::Duration;
 use clap::Parser;
 
 mod load;
+mod v4;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -11,6 +12,21 @@ mod load;
     about = "Apply sustained random-position load to an Enhance PIR origin"
 )]
 struct Args {
+    /// Exercise the architecture-2 client and session refresh path.
+    #[arg(long)]
+    v4: bool,
+
+    /// Exact-answer oracle for the explicitly isolated positional fixture.
+    #[arg(long, requires = "v4", conflicts_with = "oracle")]
+    fixture_oracle: bool,
+
+    /// JSON array of {position, record_hex} from an independent canonical extractor.
+    #[arg(long, requires = "v4")]
+    oracle: Option<PathBuf>,
+
+    /// Open-loop aggregate offered QPS; report scheduled-to-completion latency.
+    #[arg(long, requires = "v4")]
+    rate: Option<f64>,
     /// Enhance PIR server base URL.
     #[arg(long)]
     server: String,
@@ -46,5 +62,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    load::run(Args::parse()).await
+    let args = Args::parse();
+    if args.v4 {
+        v4::run(args).await
+    } else {
+        load::run(args).await
+    }
 }

@@ -4,6 +4,8 @@ mod record;
 pub use record::{EnhanceTransactionMetadata, InvalidEnhanceRecord};
 pub mod client;
 pub mod types;
+pub mod v4;
+pub mod v4_client;
 
 pub use types::{
     group_index_for_shard, EnhanceGeneration, EnhanceRecord, EnhanceRecordParts, EnhanceSession,

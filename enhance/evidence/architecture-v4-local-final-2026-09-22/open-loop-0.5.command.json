@@ -1,0 +1,21 @@
+[
+  "/Users/roman/projects/wallet-pir/target/release-fast/enhance-pir-load-test",
+  "--v4",
+  "--fixture-oracle",
+  "--server",
+  "http://127.0.0.1:49999",
+  "--parallelism",
+  "8",
+  "--rate",
+  "13.794682281585043",
+  "--warmup",
+  "2s",
+  "--duration",
+  "15s",
+  "--seed",
+  "20260922",
+  "--max-error-rate",
+  "1",
+  "--json-out",
+  "enhance/evidence/architecture-v4-local-final-2026-09-22/open-loop-0.5.json"
+]

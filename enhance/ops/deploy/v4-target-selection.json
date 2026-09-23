@@ -1,0 +1,73 @@
+{
+  "kind": "enhance-v4-deployment-inputs",
+  "status": "worker-profile-and-project-confirmed",
+  "qualification": "unqualified",
+  "purpose": "Isolated architecture-2 deployment and hardware qualification; not production cutover",
+  "organization": "Valargroup",
+  "proposed_workers": {
+    "initial_pairs": 1,
+    "replicas_per_pair": 2,
+    "region": "ams3",
+    "terraform_size_slug": "c-4",
+    "required_vcpus_per_worker": 4,
+    "nominal_memory": "8 GB class; usable RAM and limits must be measured",
+    "minimum_free_disk_gib": 32,
+    "confirmed": true,
+    "sealed_campaign_pairs": 2,
+    "provisioning": "new isolated workers",
+    "observed_production_root_disk_gb": 50
+  },
+  "required_target_inputs": {
+    "existing_project_name_or_id": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+    "existing_vpc_name_or_id": "c5bd6679-aa32-48fc-9d5d-51d422fb3468",
+    "coordinator_and_off_host_generator_host": null,
+    "coordinator_private_ipv4": null,
+    "operator_ssh_cidrs": null,
+    "isolated_remote_state_backend": null
+  },
+  "ssh": {
+    "authorize_public_key": "~/.ssh/id_ed25519.pub",
+    "copy_private_key_for_github": null,
+    "host_keys": "Verify and pin before bootstrap"
+  },
+  "credentials": "Runtime local environment or Infisical only; never add values to this file",
+  "execution_gates": [
+    "Project and worker profile confirmed; finish coordinator, disk and state-locking configuration",
+    "Verify organization, account, key authorization and dedicated state ownership",
+    "Produce a clean current Linux candidate with trusted revision and checksums",
+    "Review an additive initial-pair plan before applying it",
+    "Bootstrap dedicated services and measure actual host/cgroup limits",
+    "Run required native active/sealed and load campaigns with an off-host harness",
+    "Review qualification before registering serving capacity",
+    "Validate canonical data and wallets, rehearse rollback, then perform separate production cutover"
+  ],
+  "not_an_executable_policy": true,
+  "verified_target": {
+    "project_name": "wallet-pir",
+    "vpc_name": "wallet-pir-production",
+    "region": "ams3",
+    "production_worker_ids": [
+      "600225444",
+      "600225445"
+    ],
+    "production_worker_size": "c-4",
+    "production_worker_memory_mib": 8192,
+    "production_worker_vcpus": 4,
+    "existing_coordinator_provider_name": "wallet-pir-coordinator-01",
+    "existing_coordinator_id": "597174997",
+    "existing_coordinator_private_ipv4": "10.142.0.3",
+    "roman_registered_ssh_key_id": "56343657",
+    "roman_public_key_match": true
+  },
+  "remaining_decisions": [
+    "Dedicated qualification coordinator/load-generator host versus isolated service on existing coordinator",
+    "Isolated state key and reliable writer locking; existing Spaces backend does not enforce conditional lock writes"
+  ],
+  "storage_validation": {
+    "initial_worker_free_disk_gib": 32,
+    "full_size_tests_passed": 2,
+    "sampled_peak_per_worker_bytes": 15453517399,
+    "evidence": "enhance/evidence/architecture-v4-worker-disk-2026-09-23/results.json",
+    "qualification": "unqualified; native six-hour disk stability pending"
+  }
+}

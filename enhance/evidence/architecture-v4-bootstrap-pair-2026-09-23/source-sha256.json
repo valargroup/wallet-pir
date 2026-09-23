@@ -1,0 +1,8 @@
+{
+  "enhance/ops/scripts/v4-bootstrap-pair.py": "67974c58f917bfdf5671cd4ab7265504351149d07cd55f8fd87823f95fcf05b9",
+  "enhance/ops/scripts/v4-provision.py": "4440a328dbf8ee369cf716980d4a2bea94f758b2af815d081b8528171c2a7eb7",
+  "enhance/ops/scripts/bootstrap-v4-worker.py": "0517af86758ff003082d3914f4e2924aa0d6f28cb85c1f8c795460af73b8f86a",
+  "enhance/ops/tests/test_v4_bootstrap_pair.py": "cdb36f15f354e6f91575b9e8d05a3fc9d94690f0517b7cbc6b74c3a1f0dc8413",
+  "enhance/ops/tests/test_v4_bootstrap.py": "233dec8da9e42ccb6be62e9028595f4aecb59aa5ac73fc488e33c43191f92d14",
+  "ops/infra/digitalocean/enhance-v4/README.md": "f799e9df374281a94fc6275f078394cd1d81b62d83909c0760d28ee7d1fa9239"
+}

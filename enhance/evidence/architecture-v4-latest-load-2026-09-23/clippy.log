@@ -1,0 +1,7 @@
+    Checking valar-spiral-rs v0.5.2 (https://github.com/valargroup/spiral-rs.git?rev=584fee3893b1d2d17b5d774c83bd801fb70d5ace#584fee38)
+    Checking inspiring v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=225972648cc2982abfac66ba5b7a3930b223051a#22597264)
+    Checking simplepir-kernel v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=225972648cc2982abfac66ba5b7a3930b223051a#22597264)
+    Checking ipir-sp v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=225972648cc2982abfac66ba5b7a3930b223051a#22597264)
+    Checking enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+    Checking enhance-pir-load-test v0.1.0 (/Users/roman/projects/wallet-pir/enhance/tools/loadtest)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.88s

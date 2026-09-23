@@ -1,0 +1,13 @@
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling zakura-chain v6.0.0 (https://github.com/zakura-core/zakura.git?rev=1faf150fc3648aae22c55a6b30f8f5a9b9ce934e#1faf150f)
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.18s
+     Running unittests src/lib.rs (target/debug/deps/enhance_pir_server-8393a1e88cd4e8df)
+
+running 3 tests
+test v4::exercise::tests::exact_probes_include_borrowed_owned_and_unit_boundaries ... ok
+test v4::exercise::tests::full_profiles_preserve_assignment_limits_across_cycles ... ok
+test v4::exercise::tests::host_identity_matches_raw_linux_sampler_digest ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 66 filtered out; finished in 0.00s
+

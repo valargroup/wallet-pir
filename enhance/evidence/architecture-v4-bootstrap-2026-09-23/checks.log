@@ -1,0 +1,26 @@
+python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
+.....................................s....................................
+----------------------------------------------------------------------
+Ran 74 tests in 0.176s
+
+OK (skipped=1)
+python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK
+python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.004s
+
+OK
+python3 -m unittest discover -s tools/tests -p 'test_*.py'
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 0.293s
+
+OK
+tools/check-doc-links.sh
+check-doc-links: 109 files, no broken links

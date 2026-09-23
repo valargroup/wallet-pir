@@ -1,0 +1,19 @@
+[
+  "/out/placement-update/qemu-wrappers/enhance-pir-load-test",
+  "--v4",
+  "--fixture-oracle",
+  "--server",
+  "http://127.0.0.1:39933",
+  "--parallelism",
+  "2",
+  "--warmup",
+  "2s",
+  "--duration",
+  "90s",
+  "--seed",
+  "20260922",
+  "--max-error-rate",
+  "1",
+  "--json-out",
+  "/out/placement-update/campaign/load-c2.json"
+]

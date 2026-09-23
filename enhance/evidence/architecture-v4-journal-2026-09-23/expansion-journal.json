@@ -1,0 +1,22 @@
+{
+  "completed": {},
+  "operation": {
+    "attempts": [],
+    "before": 1,
+    "id": "successor-5-pair-2",
+    "inventory_digest": "89cd7ee6a607be53c91ff2b454059a0cacd932d320971fea4c99d97194b535f1",
+    "phase": "requested",
+    "policy_digest": "67ad1d7b273304f470814ddb02e56a97c59c4ade4c3a9fea0b804b5fedce01b6",
+    "request": {
+      "boundary_records": 5406720,
+      "id": "successor-5-pair-2",
+      "registered": false,
+      "requested_at": 1790107440,
+      "successor_ordinal": 5,
+      "target_groups": 2
+    },
+    "resources": {},
+    "target_groups": 2
+  },
+  "version": 1
+}

@@ -1,0 +1,7 @@
+{
+  "enhance/ops/scripts/v4-provision.py": "fa4e4aeeb9bbc87992ecfc72240a933d49b7fe5607025db13eaeda698f8cfe82",
+  "enhance/ops/scripts/v4-infra-plan.py": "9a29b6046cddd1f7005cf25c8da03c7ddec93611682eae89d8620f7d9455c4c2",
+  "enhance/ops/scripts/v4-expansion-journal.py": "15ca05757da19b812cd46150d8c551f1a36c24406594d6b69bfa50e47db00377",
+  "enhance/ops/tests/test_v4_provision.py": "db78e9d5f07c56500beda77fa6c8058086e471fd0819d755fb5574806e6748fc",
+  "ops/infra/digitalocean/enhance-v4/README.md": "6b28bbfff0fcb6ae6341aa6b74be22f896bfa8650a12919d499e28976d69eff5"
+}

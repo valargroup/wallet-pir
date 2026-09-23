@@ -1,0 +1,9 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.30s
+     Running tests/v4_http.rs (target/debug/deps/v4_http-abd8162fd4cc7d69)
+
+running 1 test
+test lost_worker_rows_repair_restores_current_and_retained_http_queries ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 18.15s
+

@@ -1,0 +1,32 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/enhance_pir_server-8393a1e88cd4e8df)
+
+running 25 tests
+test v4::capacity::tests::ceiling_never_requests_a_fifth_pair ... ok
+test v4::control::tests::lender_counts_and_new_successor_cannot_be_sixth_active_shard ... ok
+test v4::control::tests::reservations_materialize_once_and_pins_block_reclamation ... ok
+test v4::capacity::tests::missing_growth_is_nonzero_and_requests_survive_serialization ... ok
+test v4::exercise::tests::exact_probes_include_borrowed_owned_and_unit_boundaries ... ok
+test v4::capacity::tests::forecasts_lender_limit_and_uses_existing_spare_pair ... ok
+test v4::exercise::tests::full_profiles_preserve_assignment_limits_across_cycles ... ok
+test v4::capacity::tests::memory_limit_requests_once_survives_restart_and_expires_for_larger_fleet ... ok
+test v4::control::tests::consolidation_converges_across_multiple_boundaries_without_active_sixth_slot ... ok
+test v4::telemetry::tests::publication_targets_detect_reorg_and_preserve_retry_age ... ok
+test v4::telemetry::tests::geometry_roles_and_escaped_labels_survive_loan_return ... ok
+test v4::exercise::tests::host_identity_matches_raw_linux_sampler_digest ... ok
+test v4::control::tests::durable_epoch_fences_restarts_and_failed_transactions ... ok
+test v4::worker::tests::metrics_do_not_block_preparation_or_invent_zero_memory ... ok
+test v4::capacity::tests::clock_resolution_and_restarts_preserve_growth_and_demand ... ok
+test v4::worker::tests::abort_before_reserve_fences_delayed_attempt ... ok
+test v4::worker::tests::aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http ... ok
+test v4::control::tests::publication_commits_manifest_placement_and_outcome_together ... ok
+test v4::worker::tests::offline_repair_includes_durable_candidate_and_rejects_missing_journal ... ok
+test v4::coordinator::admission_tests::elective_consolidation_requires_both_admissions_and_does_not_reserve ... ok
+test v4::control::tests::abort_intent_survives_restart_without_overwriting_older_decisions ... ok
+test v4::control::tests::restart_at_every_phase_preserves_decision_and_fences_old_writer ... ok
+test v4::runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart ... ok
+test v4::worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows ... ok
+test v4::runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 6.00s
+

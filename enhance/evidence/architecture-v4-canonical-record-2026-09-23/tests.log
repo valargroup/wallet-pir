@@ -1,0 +1,9 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.53s
+     Running tests/v4_canonical_record.rs (target/debug/deps/v4_canonical_record-febe0e55910c7629)
+
+running 1 test
+test canonical_transaction_records_match_frozen_oracle_across_publication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.65s
+

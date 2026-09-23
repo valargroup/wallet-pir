@@ -1,0 +1,24 @@
+python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
+.....................................s................................................................s.....
+----------------------------------------------------------------------
+Ran 108 tests in 0.907s
+
+OK (skipped=2)
+python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK
+python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.004s
+
+OK
+python3 -m unittest discover -s tools/tests -p 'test_*.py'
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 0.288s
+
+OK

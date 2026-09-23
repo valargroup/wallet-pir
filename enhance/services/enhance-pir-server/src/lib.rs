@@ -13,6 +13,7 @@ pub mod spend;
 pub mod store;
 pub mod topology;
 pub mod types;
+pub mod v4;
 pub mod wire;
 pub mod worker;
 pub mod zakura;

@@ -1,0 +1,19 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 11.20s
+     Running tests/v4_http.rs (target/release-fast/deps/v4_http-b28d976fc31d3524)
+
+running 6 tests
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer has been running for over 60 seconds
+test committed_offline_participant_does_not_block_and_recovers_after_expiry has been running for over 60 seconds
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer ... ok
+test committed_offline_participant_does_not_block_and_recovers_after_expiry ... ok
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard has been running for over 60 seconds
+test distributed_round_trip_retention_failover_and_restart has been running for over 60 seconds
+test distributed_round_trip_retention_failover_and_restart ... ok
+test full_shard_loan_return_over_http_preserves_old_queries has been running for over 60 seconds
+test full_shard_loan_return_over_http_preserves_old_queries ... ok
+test inventory_expansion_is_atomic_idempotent_and_survives_restart ... ok
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 357.26s
+

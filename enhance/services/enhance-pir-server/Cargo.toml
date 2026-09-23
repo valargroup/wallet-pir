@@ -19,6 +19,10 @@ path = "src/bin/worker.rs"
 name = "enhance-pir-qualify"
 path = "src/bin/qualify.rs"
 
+[[bin]]
+name = "enhance-pir-v4"
+path = "src/bin/v4.rs"
+
 [dependencies]
 axum = "0.7"
 base64 = "0.22"
@@ -27,6 +31,7 @@ transparent-spend-pir = { path = "../../crates/transparent-spend-pir" }
 arc-swap = "1"
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+hdrhistogram = "7"
 inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "225972648cc2982abfac66ba5b7a3930b223051a" }
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "225972648cc2982abfac66ba5b7a3930b223051a" }
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
@@ -47,3 +52,5 @@ zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf1
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+orchard = { package = "zakura-orchard", version = "=1.0.1", default-features = false }
+zcash_note_encryption = "=0.4.2"

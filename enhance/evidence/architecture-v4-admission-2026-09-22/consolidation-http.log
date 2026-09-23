@@ -1,0 +1,9 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 4.30s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-28323747e753c4b7)
+
+running 1 test
+test v4::coordinator::admission_tests::elective_consolidation_requires_both_admissions_and_does_not_reserve ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.06s
+

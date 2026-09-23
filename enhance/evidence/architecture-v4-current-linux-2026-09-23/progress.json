@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "exit_code": 0,
+  "qualification": "unqualified",
+  "source_files": 1313,
+  "build_seconds": 29.81,
+  "generation_start": 1,
+  "generation_end": 4,
+  "publications": 3,
+  "correct_answers": 1212,
+  "warmup_correct_answers": 36,
+  "incorrect_answers": 0,
+  "request_errors": 0
+}

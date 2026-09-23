@@ -1,0 +1,11 @@
+{
+  "groups": [
+    {
+      "name": "group-1",
+      "replicas": [
+        {"name": "replica-1", "url": "http://127.0.0.1:8291"},
+        {"name": "replica-2", "url": "http://127.0.0.1:8292"}
+      ]
+    }
+  ]
+}

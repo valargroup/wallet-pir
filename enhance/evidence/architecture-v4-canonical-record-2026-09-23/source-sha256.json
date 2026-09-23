@@ -1,0 +1,9 @@
+{
+  "enhance/services/enhance-pir-server/tests/v4_canonical_record.rs": "884cf5960cfa79d1bedbc1deb2751e3fe2b551a5009003ceb4ca0224f9052b20",
+  "enhance/services/enhance-pir-server/tests/fixtures/ironwood-canonical-record-0.hex": "77dcc89bfa0d837996a6406188f526744f0765b4872ca80123a429d69629b0f5",
+  "enhance/services/enhance-pir-server/tests/fixtures/ironwood-canonical-record-1.hex": "e9525721b1edb9fa04d34f7696a66a0798122a6979d7a278543362c6357d815f",
+  "enhance/services/enhance-pir-server/tests/fixtures/ironwood-fee-expiry.hex": "00ce53b850b6963721f7dfb2ec35ea4b9d073f622da112b58a090860a6530f3e",
+  "enhance/services/enhance-pir-server/tests/fixtures/ironwood-fee-expiry.md": "49a318df3dffff51c0dacf87c9b839047c5e88abba1db86276f3b17853e1fe1f",
+  "enhance/services/enhance-pir-server/tests/fixtures/ironwood-record-oracle.json": "857642d5a87d1736a8152db5b75cfce3e8fffc1f6beceeab8704d401531c392e",
+  "enhance/services/enhance-pir-server/tests/fixtures/ironwood-record-oracle.md": "57f0eea08dfb5f803e4e05c544b2dc7a8479b70213f4cc34c194c4df03f11439"
+}

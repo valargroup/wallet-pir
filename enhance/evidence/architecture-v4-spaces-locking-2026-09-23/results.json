@@ -1,0 +1,50 @@
+{
+  "qualification": "unqualified",
+  "cloud_mutations": false,
+  "runs": [
+    {
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--platform",
+        "linux/amd64",
+        "-v",
+        "/Users/roman/projects/wallet-pir:/repo:ro",
+        "-w",
+        "/repo",
+        "wallet-pir-v4-linux-validation:20260923",
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "enhance/ops/tests",
+        "-p",
+        "test_v4_provision.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "enhance/ops/tests",
+        "-p",
+        "test_v4_bootstrap_pair.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "source_sha256": {
+    "enhance/ops/scripts/v4-provision.py": "6c4e3337ddeb44bac75c3a4f11fe5f8ca775dc782025ca6f3ca0e68b84f6c71a",
+    "enhance/ops/scripts/v4-bootstrap-pair.py": "a35209755d62beddfa2f49b4afeb9bd91fc5d11581454fbd5b2a0b7f7b0cc168",
+    "enhance/ops/tests/test_v4_provision.py": "3660a1bb995a1f034efcc153309d5f938b23f87b0340b7c8b5eeb5baab719c78",
+    "enhance/ops/tests/test_v4_bootstrap_pair.py": "cdb36f15f354e6f91575b9e8d05a3fc9d94690f0517b7cbc6b74c3a1f0dc8413"
+  }
+}

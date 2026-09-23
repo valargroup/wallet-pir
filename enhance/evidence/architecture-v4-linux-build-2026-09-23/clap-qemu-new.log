@@ -1,0 +1,6 @@
+Usage: probe [OPTIONS]
+
+Options:
+      --input <input>  
+  -h, --help           Print help
+exit=0

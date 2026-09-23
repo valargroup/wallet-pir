@@ -1,0 +1,11 @@
+concurrency=1 exit=0
+concurrency=2 exit=0
+concurrency=4 exit=0
+concurrency=8 exit=1
+Traceback (most recent call last):
+  File "/Users/roman/projects/wallet-pir/enhance/ops/scripts/test-v4-local.py", line 195, in <module>
+    main()
+    ~~~~^^
+  File "/Users/roman/projects/wallet-pir/enhance/ops/scripts/test-v4-local.py", line 162, in main
+    raise RuntimeError('load driver failed; inspect retained evidence')
+RuntimeError: load driver failed; inspect retained evidence

@@ -1,0 +1,19 @@
+[
+  "/Users/roman/projects/wallet-pir/target/release-fast/enhance-pir-load-test",
+  "--v4",
+  "--fixture-oracle",
+  "--server",
+  "http://127.0.0.1:62277",
+  "--parallelism",
+  "2",
+  "--warmup",
+  "2s",
+  "--duration",
+  "10s",
+  "--seed",
+  "20260922",
+  "--max-error-rate",
+  "1",
+  "--json-out",
+  "/tmp/enhance-v4-journal-current-20260923/load-c2.json"
+]

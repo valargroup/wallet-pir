@@ -1,0 +1,6 @@
+{
+  "name": "wallet-pir-v4-linux-build-slwogrt5",
+  "image": "sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4 amd64",
+  "qualification": "unqualified",
+  "image_reference": "ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
+}

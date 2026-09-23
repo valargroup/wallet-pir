@@ -1,0 +1,29 @@
+{
+  "qualification": "unqualified",
+  "revision": "246423a1ce2377ab7b71d1c3e0745ebb153d1f99",
+  "source_dirty": true,
+  "checks": [
+    {
+      "command": "cargo test --locked --profile release-fast -p enhance-pir-server --lib v4::",
+      "exit_code": 0,
+      "passed": 21,
+      "duration_seconds": 5.1
+    },
+    {
+      "command": "cargo clippy --locked --profile release-fast -p enhance-pir-server --lib --bin enhance-pir-v4 --test v4_http -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all --check && make check-docs && git diff --check",
+      "exit_code": 0,
+      "documentation_files": 116
+    },
+    {
+      "command": "cargo test --locked --profile release-fast -p enhance-pir-server --test v4_http -- --include-ignored --test-threads=2",
+      "exit_code": 0,
+      "passed": 6,
+      "ignored": 0,
+      "duration_seconds": 357.26
+    }
+  ]
+}

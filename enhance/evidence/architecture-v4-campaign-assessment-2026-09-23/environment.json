@@ -1,0 +1,9 @@
+{
+  "host_system": "Darwin",
+  "host_machine": "arm64",
+  "python": "3.14.6",
+  "linux_image": "sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b",
+  "linux_repository_mount": "read-only",
+  "live_deployment": false,
+  "qualification": "unqualified"
+}

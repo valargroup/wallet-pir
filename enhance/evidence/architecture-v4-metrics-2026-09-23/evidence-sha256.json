@@ -1,0 +1,17 @@
+{
+  "README.md": "731e658c1ceb97d44d5f4d12c0e26d80bd2d36e7f61b5a4fdd3414f8425957fa",
+  "http-tests.log": "7fe14dafdbc5eb2f2188d9ddbea3d97204322e5f87d55d4538d85eb940659934",
+  "process-smoke/command.json": "fe9a59c22308df3182f4f8e6e42db5dfc71992d18d6edcc77a3b76c5b6d2ab67",
+  "process-smoke/exercise.json": "d6ac5fc4a2a465f9f7d0542d25e9927fd0297b8a06ea2aaa2d99ee5c7450e6ba",
+  "process-smoke/exercise.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "process-smoke/metrics/coordinator.prom": "5971fa393f9b66ad5a8b5125dbb2fd008aac24a2c77d10222fde20fcdcb6e0bb",
+  "process-smoke/metrics/worker-0.prom": "dc15c36ea041449cdb75767b925ba9ab0e84887c21d95f3a764a41f9585548db",
+  "process-smoke/metrics/worker-1.prom": "dc15c36ea041449cdb75767b925ba9ab0e84887c21d95f3a764a41f9585548db",
+  "process-smoke/publications.jsonl": "eaa3f402de9e8968657c49de558d5ef1ca9985cc3241c9c1103ef766a903e125",
+  "process-smoke/run.json": "429ca3eac887d6072681665810bf91f247199d5ccfe8c45b789b0a622ee08bf9",
+  "process-smoke/v4-source-mode": "3a3436765885cdf2edc179512c22dd4c4259410f0d18f391cbc8d83a837c678e",
+  "process-smoke/worker-0.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "process-smoke/worker-1.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "source-sha256.json": "9c9df3021c8a05d3c095677e8f2e9e0c5562e555fca3d9096527d929e2cba0b4",
+  "validation.json": "8fb8a7c200bbace7a624190d121a07daf2f3d88aa5584deb1e3be20bd6cb911f"
+}

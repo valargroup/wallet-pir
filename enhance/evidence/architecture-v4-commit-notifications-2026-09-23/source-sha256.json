@@ -1,0 +1,9 @@
+{
+  "Cargo.lock": "201dbd2182cd698bfd63e9e99a701981f4800305a71af49ea7ded74d1b476abf",
+  "enhance/services/enhance-pir-server/src/v4/control.rs": "d78d3dd8264414f467315807523da58f55138a6cba864d958c8f1a86216f9c73",
+  "enhance/services/enhance-pir-server/src/v4/coordinator.rs": "d09802d95f288c9cb3cca0996048e0fd7ccabb92dc86646e68997b439cf51d6c",
+  "enhance/services/enhance-pir-server/src/v4/worker.rs": "a6aba157608fcca3429a06e8e5bf100380cc6c591b96519340edcf6b434bd5a5",
+  "enhance/services/enhance-pir-server/tests/v4_http.rs": "9fe1e0a437233205fcc601139d8772490281fd37a8bc095e7314beca4053fd3f",
+  "enhance/docs/architecture_2-implementation.md": "5ca6a491c23ef8e1e9eb544c37c56be0b6e6d982c6440d92b97bfadc0123627e",
+  "enhance/ops/deploy/v4-candidate.md": "0fcdad59deb9809573ab86cb269c2d24fae5a32cf6ffcd0db3a59240ab22a41b"
+}

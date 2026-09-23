@@ -1,0 +1,8 @@
+warning: Error disabling address space randomization: Operation not permitted
+warning: linux_ptrace_test_ret_to_nx: Cannot PTRACE_GETREGS: Input/output error
+warning: linux_ptrace_test_ret_to_nx: PC (nil) is neither near return address 0x7ffff8ebf000 nor is the return instruction 0x66ffb2!
+Couldn't get CS register: Input/output error.
+
+Thread 1 (process 321 "sh"):
+Couldn't get registers: Input/output error.
+Couldn't get registers: Input/output error.

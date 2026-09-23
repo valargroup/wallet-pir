@@ -1,0 +1,12 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.58s
+     Running unittests src/lib.rs (target/debug/deps/enhance_pir_server-8393a1e88cd4e8df)
+
+running 4 tests
+test v4::worker::tests::metrics_do_not_block_preparation_or_invent_zero_memory ... ok
+test v4::worker::tests::abort_before_reserve_fences_delayed_attempt ... ok
+test v4::worker::tests::aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http ... ok
+test v4::worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 66 filtered out; finished in 3.42s
+

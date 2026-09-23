@@ -1,0 +1,8 @@
+{
+  "enhance/ops/scripts/assess-v4-campaign.py": "e9d8bc3d58db2ec64bda49e3033e12cae3705f3f6fcfa698b7aeb3fcd5e13020",
+  "enhance/ops/scripts/observe-v4-pair.py": "599ad8206d78ad4b535b7b1dbb68081ddc433663a8497d431c6d834cfde08d5f",
+  "enhance/ops/scripts/sample-v4-worker.py": "5ed6d7763d0071c595b13114463552f6d9340b3c166c8bd9ca93e33beb2f67f6",
+  "enhance/ops/tests/test_v4_campaign_assessment.py": "020496e74bfbd99b6810ddad6e6526c8e65dfb7d73ba583951222a128aa58e6b",
+  "enhance/ops/tests/test_v4_observation.py": "e61d8fc9b97826cbcd8ffeb40f686b4d2fa6d225a1575f6e64542699b2486c6b",
+  "enhance/ops/tests/test_v4_sampling.py": "96648e89ae8ba84f295d46d1cf6ec1929b1f8bff31a714fcc9c66e407efd3fa4"
+}

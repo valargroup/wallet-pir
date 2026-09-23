@@ -1,0 +1,11 @@
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.79s
+     Running unittests src/lib.rs (target/debug/deps/enhance_pir-bebdc4aeabf29174)
+
+running 3 tests
+test v4::tests::adaptive_units_and_binding_reject_malformed_input ... ok
+test v4::tests::full_boundary_and_return_preserve_every_record ... ok
+test v4::tests::repeated_cycles_and_reorgs_keep_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+

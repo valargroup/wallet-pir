@@ -1,0 +1,23 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 5.04s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-28323747e753c4b7)
+
+running 15 tests
+test v4::capacity::tests::ceiling_never_requests_a_fifth_pair ... ok
+test v4::control::tests::lender_counts_and_new_successor_cannot_be_sixth_active_shard ... ok
+test v4::control::tests::reservations_materialize_once_and_pins_block_reclamation ... ok
+test v4::capacity::tests::forecasts_lender_limit_and_uses_existing_spare_pair ... ok
+test v4::control::tests::consolidation_converges_across_multiple_boundaries_without_active_sixth_slot ... ok
+test v4::capacity::tests::missing_growth_is_nonzero_and_requests_survive_serialization ... ok
+test v4::control::tests::durable_epoch_fences_restarts_and_failed_transactions ... ok
+test v4::worker::tests::abort_before_reserve_fences_delayed_attempt ... ok
+test v4::capacity::tests::clock_resolution_and_restarts_preserve_growth_and_demand ... ok
+test v4::worker::tests::aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http ... ok
+test v4::control::tests::publication_commits_manifest_placement_and_outcome_together ... ok
+test v4::coordinator::admission_tests::elective_consolidation_requires_both_admissions_and_does_not_reserve ... ok
+test v4::control::tests::restart_at_every_phase_preserves_decision_and_fences_old_writer ... ok
+test v4::runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart ... ok
+test v4::runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 5.13s
+

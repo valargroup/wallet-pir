@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "container": "wallet-pir-v4-qemu-native",
+  "seconds_per_step": 90,
+  "concurrency": [
+    1,
+    2
+  ],
+  "required_publications": 2,
+  "harness_sha256": "8ab3b72dd56a5c935ae17de16890c00a9735a46a144a7b001435e80cf688fc49",
+  "qualification": "unqualified",
+  "exit_code": 0,
+  "publication_gate": {
+    "required": 2,
+    "observed": 3,
+    "passed": true
+  },
+  "start_generation": 1,
+  "end_generation": 4,
+  "correct_answers": 1336,
+  "incorrect_answers": 0,
+  "request_errors": 0,
+  "warmup_correct_answers": 33
+}

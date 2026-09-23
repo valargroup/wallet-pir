@@ -1,0 +1,26 @@
+{
+  "kind": "enhance-v4-campaign-assessment",
+  "qualification": "unqualified",
+  "status": "evidence_checks_failed",
+  "failures": [
+    "requires_full_size_profile",
+    "workload_shorter_than_six_hours",
+    "fewer_than_300_publications",
+    "assignment_group_count_differs",
+    "assignment_profile_differs",
+    "missing_profile_transitions",
+    "missing_worker_pair_observations"
+  ],
+  "profile": "smoke",
+  "worker_statistics": {},
+  "query_p99_ms": 68.735,
+  "max_publication_ms": 10212,
+  "unproven_gates": [
+    "peak resident guard between observations",
+    "overhead-model calibration",
+    "hard-cap, pressure and reclaim acceptance",
+    "workload host identity and clock alignment",
+    "latency and open-loop capacity acceptance",
+    "protocol and wallet conformance"
+  ]
+}

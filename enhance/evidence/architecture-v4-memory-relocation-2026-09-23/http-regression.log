@@ -1,0 +1,19 @@
+    Finished `release-fast` profile [optimized] target(s) in 0.18s
+     Running tests/v4_http.rs (target/release-fast/deps/v4_http-ae29d6c3abec17e0)
+
+running 9 tests
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer has been running for over 60 seconds
+test committed_offline_participant_does_not_block_and_recovers_after_expiry has been running for over 60 seconds
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer ... ok
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ignored, seven shard domains across four workers; requires at least 32 GiB RAM and 64 GiB free disk
+test committed_offline_participant_does_not_block_and_recovers_after_expiry ... ok
+test full_shard_loan_return_over_http_preserves_old_queries ... ignored, full 32K lifecycle fixture; run on an isolated host with at least 16 GiB RAM
+test inventory_expansion_is_atomic_idempotent_and_survives_restart ... ok
+test lost_worker_rows_repair_restores_current_and_retained_http_queries ... ok
+test memory_refusal_moves_published_shard_with_complete_destination_pair ... ok
+test distributed_round_trip_retention_failover_and_restart has been running for over 60 seconds
+test new_shard_uses_admitted_alternative_group_over_http ... ok
+test distributed_round_trip_retention_failover_and_restart ... ok
+
+test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 148.10s
+

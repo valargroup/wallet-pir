@@ -1,0 +1,9 @@
+{
+  "enhance/ops/scripts/sample-v4-worker.py": "71f744f98b36e5ba982bb115dbb158058e7c840fc6b960151a3444a1ab5731b5",
+  "enhance/ops/scripts/observe-v4-pair.py": "aeecad4b4971ffc4bb8d1422296eb0501dd1a34598861618e8bf94d9a5a6a5c7",
+  "enhance/ops/tests/test_v4_sampling.py": "3545ab9c4d2f936d99f06726260612e5699538bf5a9ba1a78d4a654dbc0679c7",
+  "enhance/ops/tests/test_v4_observation.py": "756e29b24e08c56cb321d91379ff45b9b5ad9c78be2bb94187308446e2eb9477",
+  "enhance/ops/fixtures/v4-worker-metrics.prom": "dc15c36ea041449cdb75767b925ba9ab0e84887c21d95f3a764a41f9585548db",
+  "enhance/docs/architecture_2-implementation.md": "a8684624b286fb79af8eca7a9c309fff257d5e60861d638e12c112ae3aa83524",
+  "enhance/ops/deploy/v4-candidate.md": "cf5725f4d27eac36677b92f612e18b0db103184e88a1b94f0118c866d94c837c"
+}

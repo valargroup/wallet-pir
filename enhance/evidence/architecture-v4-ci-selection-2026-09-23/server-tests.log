@@ -1,0 +1,191 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 1.83s
+  Executable unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-bf60a77583138010)
+  Executable unittests src/bin/qualify.rs (target/release-fast/deps/enhance_pir_qualify-e155b6cfa78b2ff7)
+  Executable unittests src/bin/server.rs (target/release-fast/deps/enhance_pir_server-7764cf4f536c3b23)
+  Executable unittests src/bin/v4.rs (target/release-fast/deps/enhance_pir_v4-a89128c6dc479c32)
+  Executable unittests src/bin/worker.rs (target/release-fast/deps/enhance_pir_worker-b200b141daeae028)
+  Executable tests/operator_payloads.rs (target/release-fast/deps/operator_payloads-74a9df30aeb75230)
+  Executable tests/record_layout.rs (target/release-fast/deps/record_layout-d81fdc6231e7e7c6)
+  Executable tests/sharded_vs_monolithic.rs (target/release-fast/deps/sharded_vs_monolithic-7de1949b1f381333)
+  Executable tests/v4_canonical_record.rs (target/release-fast/deps/v4_canonical_record-9922ab5aa9848fdb)
+  Executable tests/v4_http.rs (target/release-fast/deps/v4_http-ae29d6c3abec17e0)
+  Executable tests/v4_note_recovery.rs (target/release-fast/deps/v4_note_recovery-277575792f74d45d)
+  Executable tests/v4_rpc.rs (target/release-fast/deps/v4_rpc-4a247415eae0d663)
+  Executable tests/worker_migration.rs (target/release-fast/deps/worker_migration-83625bed698130be)
+Advised reclaim of clean build cache pages in 0 files
+    Finished `release-fast` profile [optimized] target(s) in 0.16s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-bf60a77583138010)
+
+running 74 tests
+test artifact::tests::failed_atomic_write_keeps_previous_file_and_cleans_temporary ... ok
+test artifact::tests::failure_is_shared_but_partial_reads_and_interrupts_do_not_invalidate ... ok
+test artifact::tests::pinned_files_survive_replacement_and_have_independent_readers ... ok
+test artifact::tests::slow_consumer_bounds_read_ahead_and_cancellation_stops_reader ... ok
+test artifact::tests::stream_keeps_pin_after_eviction_and_reports_final_corruption ... ok
+test artifact::tests::verification_rejects_corruption_truncation_and_trailing_data ... ok
+test coordinator::streaming_hint_tests::remote_hint_decodes_chunks_and_rejects_invalid_or_oversized_bodies ... ok
+test coordinator::tests::health_graces_short_syncs_and_builds ... ok
+test coordinator::tests::only_the_enhance_table_is_served ... ok
+test coordinator::tests::readiness_follows_the_live_snapshot ... ok
+test coordinator::tests::same_height_reorg_gets_a_distinct_generation ... ok
+test coordinator::tests::worker_hint_limit_covers_every_table ... ok
+test ingest::tests::appends_only_the_active_enhancement_journal ... ok
+test ipir::persistence_tests::legacy_v7_artifacts_are_rejected_and_streamed_persistence_preserves_queries_and_bytes ... ok
+test ipir::persistence_tests::streamed_database_rejects_short_corrupt_and_failed_reads_without_panicking ... ok
+test ipir::tests::enhance_rows_use_six_ipir_instances ... ok
+test ipir::tests::every_layout_has_the_expected_instance_count ... ok
+test ipir::tests::shard_combiners_reject_malformed_contributions ... ok
+test ipir::tests::shard_sum_wraps_without_u64_overflow ... ok
+test ipir::tests::sixteen_bit_row_encoding_preserves_the_odd_tail_byte_and_zero_padding ... ok
+test metrics::tests::middleware_counts_allowlisted_requests_and_balances_in_flight ... ok
+test metrics::tests::observation_populates_snapshot_gauges ... ok
+test metrics::tests::only_fixed_client_routes_are_labelled ... ok
+test metrics::tests::worker_replica_timer_records_terminal_metrics_and_balances_inflight ... ok
+test spend::tests::partitions_at_the_trailing_100000_blocks_and_rewinds ... ok
+test spend::tests::restart_discards_an_uncheckpointed_tail ... ok
+test store::tests::append_restart_and_padding_are_deterministic ... ok
+test store::tests::incompatible_journals_are_rejected_without_mutation ... ok
+test store::tests::journal_refuses_concurrent_writers ... ok
+test store::tests::records_must_match_the_layout ... ok
+test store::tests::rewind_truncates_records_and_allows_replacement_blocks ... ok
+test topology::tests::append_is_durable_idempotent_and_preserves_prefix ... ok
+test topology::tests::failed_append_keeps_active_topology ... ok
+test v4::capacity::tests::ceiling_never_requests_a_fifth_pair ... ok
+test v4::capacity::tests::clock_resolution_and_restarts_preserve_growth_and_demand ... ok
+test v4::capacity::tests::forecasts_lender_limit_and_uses_existing_spare_pair ... ok
+test v4::capacity::tests::memory_limit_requests_once_survives_restart_and_expires_for_larger_fleet ... ok
+test v4::capacity::tests::missing_growth_is_nonzero_and_requests_survive_serialization ... ok
+test v4::control::tests::abort_intent_survives_restart_without_overwriting_older_decisions ... ok
+test v4::control::tests::consolidation_converges_across_multiple_boundaries_without_active_sixth_slot ... ok
+test v4::control::tests::durable_epoch_fences_restarts_and_failed_transactions ... ok
+test v4::control::tests::lender_counts_and_new_successor_cannot_be_sixth_active_shard ... ok
+test v4::control::tests::publication_commits_manifest_placement_and_outcome_together ... ok
+test v4::control::tests::reorg_move_into_existing_group_requires_both_destination_replicas ... ok
+test v4::control::tests::reservations_materialize_once_and_pins_block_reclamation ... ok
+test v4::control::tests::restart_at_every_phase_preserves_decision_and_fences_old_writer ... ok
+test v4::coordinator::admission_tests::elective_consolidation_requires_both_admissions_and_does_not_reserve ... ok
+test v4::coordinator::admission_tests::reorg_destination_memory_refusal_replans_to_complete_spare_pair ... ok
+test v4::exercise::tests::exact_probes_include_borrowed_owned_and_unit_boundaries ... ok
+test v4::exercise::tests::full_profiles_preserve_assignment_limits_across_cycles ... ok
+test v4::exercise::tests::host_identity_matches_raw_linux_sampler_digest ... ok
+test v4::runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart ... ok
+test v4::runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation ... ok
+test v4::telemetry::tests::geometry_roles_and_escaped_labels_survive_loan_return ... ok
+test v4::telemetry::tests::publication_targets_detect_reorg_and_preserve_retry_age ... ok
+test v4::worker::tests::abort_before_reserve_fences_delayed_attempt ... ok
+test v4::worker::tests::aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http ... ok
+test v4::worker::tests::metrics_do_not_block_preparation_or_invent_zero_memory ... ok
+test v4::worker::tests::offline_repair_includes_durable_candidate_and_rejects_missing_journal ... ok
+test v4::worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows ... ok
+test wire::streaming_tests::streaming_codec_matches_legacy_mph1_bytes ... ok
+test wire::streaming_tests::validation_reads_payload_in_bounded_chunks ... ok
+test wire::tests::crs_hint_round_trips_and_is_shape_strict ... ok
+test wire::tests::evaluate_request_rejects_bad_magic_truncation_and_shard_count ... ok
+test wire::tests::evaluate_response_round_trips_and_rejects_malformed_input ... ok
+test wire::tests::evaluate_wire_round_trips_and_rejects_trailing_bytes ... ok
+test worker::publication_recovery_tests::cancelled_preparation_keeps_slot_until_blocking_work_finishes ... ok
+test worker::publication_recovery_tests::preparation_slot_stays_owned_while_cache_insertion_is_blocked ... ok
+test worker::publication_recovery_tests::same_digest_reprepare_repairs_failed_and_early_cancelled_hints ... ok
+test worker::tests::activation_requires_prepared_shards ... ok
+test worker::tests::evaluation_requires_an_active_generation ... ok
+test worker::tests::every_table_has_shard_parameters_and_the_body_limit_covers_them ... ok
+test worker::tests::host_memory_reports_a_real_total ... ok
+test zakura::tests::canonical_ironwood_transaction_has_actual_fee_and_expiry ... ok
+
+test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.57s
+
+     Running unittests src/bin/qualify.rs (target/release-fast/deps/enhance_pir_qualify-e155b6cfa78b2ff7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/server.rs (target/release-fast/deps/enhance_pir_server-7764cf4f536c3b23)
+
+running 3 tests
+test tests::a_config_still_declaring_a_spend_pool_is_accepted_and_ignored ... ok
+test tests::a_config_without_a_spend_pool_is_accepted ... ok
+test tests::rejects_removed_tables_option ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/v4.rs (target/release-fast/deps/enhance_pir_v4-a89128c6dc479c32)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/worker.rs (target/release-fast/deps/enhance_pir_worker-b200b141daeae028)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/operator_payloads.rs (target/release-fast/deps/operator_payloads-74a9df30aeb75230)
+
+running 2 tests
+test init_payload_matches_the_operator_fixture ... ok
+test superseded_nine_record_payload_is_still_a_valid_document ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/record_layout.rs (target/release-fast/deps/record_layout-d81fdc6231e7e7c6)
+
+running 2 tests
+test field_offsets_are_pinned ... ok
+test records_survive_the_journal_and_padded_shard_read ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/sharded_vs_monolithic.rs (target/release-fast/deps/sharded_vs_monolithic-7de1949b1f381333)
+
+running 1 test
+test two_shards_equal_one_monolithic_server ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.31s
+
+     Running tests/v4_canonical_record.rs (target/release-fast/deps/v4_canonical_record-9922ab5aa9848fdb)
+
+running 1 test
+test canonical_transaction_records_match_frozen_oracle_across_publication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.45s
+
+     Running tests/v4_http.rs (target/release-fast/deps/v4_http-ae29d6c3abec17e0)
+
+running 9 tests
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer ... ok
+test committed_offline_participant_does_not_block_and_recovers_after_expiry ... ok
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ignored, seven shard domains across four workers; requires at least 32 GiB RAM and 64 GiB free disk
+test distributed_round_trip_retention_failover_and_restart ... ok
+test full_shard_loan_return_over_http_preserves_old_queries ... ignored, full 32K lifecycle fixture; run on an isolated host with at least 16 GiB RAM
+test inventory_expansion_is_atomic_idempotent_and_survives_restart ... ok
+test lost_worker_rows_repair_restores_current_and_retained_http_queries ... ok
+test memory_refusal_moves_published_shard_with_complete_destination_pair ... ok
+test new_shard_uses_admitted_alternative_group_over_http ... ok
+
+test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 254.16s
+
+     Running tests/v4_note_recovery.rs (target/release-fast/deps/v4_note_recovery-277575792f74d45d)
+
+running 1 test
+test incoming_and_outgoing_recovery_authenticate_pir_returned_record ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.07s
+
+     Running tests/v4_rpc.rs (target/release-fast/deps/v4_rpc-4a247415eae0d663)
+
+running 1 test
+test canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 50.17s
+
+     Running tests/worker_migration.rs (target/release-fast/deps/worker_migration-83625bed698130be)
+
+running 2 tests
+test appending_a_group_does_not_move_existing_in_range_shards ... ok
+test placement_rule_for_the_migration_is_as_documented ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.98s
+

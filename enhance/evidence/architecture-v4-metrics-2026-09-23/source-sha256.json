@@ -1,0 +1,13 @@
+{
+  "Cargo.lock": "201dbd2182cd698bfd63e9e99a701981f4800305a71af49ea7ded74d1b476abf",
+  "enhance/services/enhance-pir-server/src/v4/mod.rs": "9746b1600363c709e230e88846e4c12c2879fdb694cf3d8d6e4d1b73abf77edc",
+  "enhance/services/enhance-pir-server/src/v4/telemetry.rs": "a24a7ce2f66154406be7a83da82d44addd0f9ba9b53ae90c8717bba4f5fdafdc",
+  "enhance/services/enhance-pir-server/src/v4/capacity.rs": "1a3991e03d8b53b76cd02af95efaf3cc51b67d9695b42c6327f5ab9580cd3333",
+  "enhance/services/enhance-pir-server/src/v4/coordinator.rs": "1d30fc16b3ec6037820f4e8f396e162daf13e41124ceca346c97d2b9e593fcee",
+  "enhance/services/enhance-pir-server/src/v4/worker.rs": "a2539eb94dc5e6816c51ea5b4da2fac4601ea1f7a9227c34143f6027c5005bd3",
+  "enhance/services/enhance-pir-server/src/v4/exercise.rs": "b4294c52ab9f540d96473bdaa517db1aa69b2f540eaf11d358467f6765b50a07",
+  "enhance/services/enhance-pir-server/tests/v4_http.rs": "4996530b3d239a869f1627f6f9baba7df11f6471a34d82cb7d4c354b0a121f5b",
+  "enhance/ops/scripts/test-v4-exercise.py": "d15ff2afe742288e8aac5014eb2caf23932749f5b65553c63650fe6a8001c235",
+  "enhance/docs/architecture_2-implementation.md": "063423253f2d26cd36fb48ffe61c497fc318beea11c1f62ad7375af4e4ae5cdc",
+  "enhance/ops/deploy/v4-candidate.md": "65b36c19799dfff90ff578e734e035a6228c4f22f87c00917616904423c856a3"
+}

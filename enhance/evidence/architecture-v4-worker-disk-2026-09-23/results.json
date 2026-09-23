@@ -1,0 +1,62 @@
+{
+  "command": [
+    "/Users/roman/projects/wallet-pir/target/release-fast/deps/v4_http-ae29d6c3abec17e0",
+    "--ignored",
+    "--test-threads=1",
+    "--nocapture"
+  ],
+  "binary_sha256": "ef380b63198c27263ef7cdf85bcb19e797aeb9e7c82670a2b4a3b5471d9bee4b",
+  "source_sha256": {
+    "enhance/services/enhance-pir-server/src/v4/capacity.rs": "3367f514b09fefe2be2d8718c6f98e1003b60277effbcb9ad914e422013ad745",
+    "enhance/services/enhance-pir-server/src/v4/control.rs": "fe31b7562268ad9ca750ac14ff11cf21d395cdb9199d01a806e4042d0336b0a7",
+    "enhance/services/enhance-pir-server/src/v4/coordinator.rs": "a2704f7e35ecafef4d712ff398ee38caa585099d30493d739b9912cc4b338440",
+    "enhance/services/enhance-pir-server/src/v4/exercise.rs": "9fe68efd80e82ba1a7fb2bd840f16b3bb92515ef433675ccec636eaecb864590",
+    "enhance/services/enhance-pir-server/src/v4/mod.rs": "9746b1600363c709e230e88846e4c12c2879fdb694cf3d8d6e4d1b73abf77edc",
+    "enhance/services/enhance-pir-server/src/v4/runtime.rs": "f4c4dd833ad41c25fa3ac042b7c9d21cc0bc803c884cb078cbf0605f19da062c",
+    "enhance/services/enhance-pir-server/src/v4/telemetry.rs": "a24a7ce2f66154406be7a83da82d44addd0f9ba9b53ae90c8717bba4f5fdafdc",
+    "enhance/services/enhance-pir-server/src/v4/worker.rs": "3281f8d62bad4c0b8f2a55ccdf4644c71a9f7371f05db9306ed1c0af7b36debb"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 394.1998960971832,
+  "peaks": {
+    "journal": {
+      "logical_bytes": 4881467593,
+      "allocated_bytes": 4892110848
+    },
+    "g0-r1": {
+      "logical_bytes": 15453517399,
+      "allocated_bytes": 15453724672
+    },
+    "g0-r0": {
+      "logical_bytes": 15453517399,
+      "allocated_bytes": 15453724672
+    },
+    "g1-r0": {
+      "logical_bytes": 3815247104,
+      "allocated_bytes": 3815305216
+    },
+    "g1-r1": {
+      "logical_bytes": 3815247104,
+      "allocated_bytes": 3815305216
+    },
+    "control": {
+      "logical_bytes": 1611099630,
+      "allocated_bytes": 1611141120
+    },
+    "worker-0": {
+      "logical_bytes": 5824618378,
+      "allocated_bytes": 5824712704
+    },
+    "worker-1": {
+      "logical_bytes": 5824618378,
+      "allocated_bytes": 5824712704
+    }
+  },
+  "sample_period_seconds": 1,
+  "qualification": "unqualified",
+  "limitations": [
+    "macOS filesystem and native tests; not c-4 hardware",
+    "one-second sampling can miss short-lived peaks",
+    "full-size integration scenarios, not six-hour campaign"
+  ]
+}

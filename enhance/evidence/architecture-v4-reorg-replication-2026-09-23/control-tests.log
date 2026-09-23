@@ -1,0 +1,15 @@
+    Finished `release-fast` profile [optimized] target(s) in 0.16s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-bf60a77583138010)
+
+running 8 tests
+test v4::control::tests::lender_counts_and_new_successor_cannot_be_sixth_active_shard ... ok
+test v4::control::tests::reservations_materialize_once_and_pins_block_reclamation ... ok
+test v4::control::tests::reorg_move_into_existing_group_requires_both_destination_replicas ... ok
+test v4::control::tests::consolidation_converges_across_multiple_boundaries_without_active_sixth_slot ... ok
+test v4::control::tests::durable_epoch_fences_restarts_and_failed_transactions ... ok
+test v4::control::tests::publication_commits_manifest_placement_and_outcome_together ... ok
+test v4::control::tests::abort_intent_survives_restart_without_overwriting_older_decisions ... ok
+test v4::control::tests::restart_at_every_phase_preserves_decision_and_fences_old_writer ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.64s
+

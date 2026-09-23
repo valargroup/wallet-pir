@@ -1,0 +1,8 @@
+{
+  "emulator_image": "sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0",
+  "emulator_sha256": "ec12fffdcc022364c20aa9d12d5b1f8c22d037526da3f1fb119c5cd92d378130",
+  "runtime_image": "sha256:c1fc012913af7a4dd0d86553d9dae19b323e7fb60d5407e800cbfbc8f7e6aa63",
+  "rust_source_changed_since_build": false,
+  "harness_change": "Allow missing git and mark checkout provenance unavailable",
+  "qualification": "unqualified"
+}

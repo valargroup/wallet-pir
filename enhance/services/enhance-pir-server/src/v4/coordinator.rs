@@ -1,0 +1,1908 @@
+//! V4 coordinator with atomic manifests and generation-specific replica routes.
+use super::{
+    control::{self, Group, Operation, PendingCommit, Phase, ReadyAck, Store},
+    runtime::{self, DomainPlan, Packing},
+    worker,
+};
+use axum::{
+    body::to_bytes,
+    extract::{Path, Request, State},
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
+};
+use enhance_pir::v4::*;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File};
+use std::path::{Path as FsPath, PathBuf};
+use std::sync::{Arc, Mutex};
+use tokio::sync::{RwLock, Semaphore};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SavedSnapshot {
+    manifest: Manifest,
+    routes: BTreeMap<u64, Vec<String>>,
+    hints: BTreeMap<u64, String>,
+    domain_keys: BTreeMap<u64, String>,
+}
+
+struct Snapshot {
+    saved: SavedSnapshot,
+    packing: BTreeMap<u64, Arc<Packing>>,
+}
+
+fn hint_name(name: &str) -> bool {
+    name.strip_suffix(".bin")
+        .is_some_and(|stem| stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Remove only owned, unreferenced artifacts after validating the entire keep set.
+/// The caller must hold publication exclusion and have no unresolved candidate.
+fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result<(), String> {
+    let mut snapshots = BTreeSet::new();
+    let mut hints = BTreeSet::new();
+    for manifest in published {
+        let name = format!("{}.json", manifest.generation);
+        let saved: SavedSnapshot = serde_json::from_slice(
+            &fs::read(root.join("snapshots").join(&name)).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        if &saved.manifest != manifest
+            || saved.hints.len() != manifest.coverage.shards.len()
+            || manifest
+                .coverage
+                .shards
+                .iter()
+                .any(|s| !saved.hints.contains_key(&s.id))
+        {
+            return Err(
+                "cannot collect artifacts: retained snapshot differs from durable decision".into(),
+            );
+        }
+        for name in saved.hints.values() {
+            if !hint_name(name) || !root.join("hints").join(name).is_file() {
+                return Err("cannot collect artifacts: invalid or missing retained hint".into());
+            }
+            hints.insert(name.clone());
+        }
+        snapshots.insert(name);
+    }
+    for (directory, keep) in [("snapshots", snapshots), ("hints", hints)] {
+        let directory_path = root.join(directory);
+        for entry in fs::read_dir(&directory_path).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let owned = if directory == "snapshots" {
+                name.strip_suffix(".json")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .is_some_and(|g| name == format!("{g}.json"))
+            } else {
+                hint_name(&name)
+            };
+            if owned && !keep.contains(&name) {
+                fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
+            }
+        }
+        File::open(directory_path)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn restore(root: &FsPath, manifest: &Manifest) -> Result<Arc<Snapshot>, String> {
+    manifest.validate()?;
+    let saved: SavedSnapshot = serde_json::from_slice(
+        &fs::read(
+            root.join("snapshots")
+                .join(format!("{}.json", manifest.generation)),
+        )
+        .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    if &saved.manifest != manifest {
+        return Err("snapshot differs from durable decision".into());
+    }
+    let mut packing = BTreeMap::new();
+    for shard in &manifest.coverage.shards {
+        let name = saved.hints.get(&shard.id).ok_or("missing persisted hint")?;
+        if !hint_name(name) {
+            return Err("invalid persisted hint identity".into());
+        }
+        let params = parameters(shard.logical_rows)?;
+        let file = File::open(root.join("hints").join(name)).map_err(|e| e.to_string())?;
+        let blocks = crate::wire::read_crs_blocks(
+            file,
+            params.db_cols / runtime::rlwe().d,
+            runtime::rlwe().d,
+        )
+        .map_err(|e| e.to_string())?;
+        let pack = Packing::new(shard.logical_rows, &blocks)?;
+        if !manifest.sessions.contains(&pack.reference(shard.id)?) {
+            return Err("restored session digest differs".into());
+        }
+        packing.insert(shard.id, Arc::new(pack));
+    }
+    Ok(Arc::new(Snapshot { saved, packing }))
+}
+
+#[derive(Clone)]
+pub struct Coordinator {
+    store: Arc<Mutex<Store>>,
+    snapshots: Arc<RwLock<Vec<Arc<Snapshot>>>>,
+    publication: Arc<Semaphore>,
+    queries: Arc<Semaphore>,
+    http: reqwest::Client,
+    root: PathBuf,
+    blocked: Arc<Mutex<Option<String>>>,
+    telemetry: Arc<Mutex<super::telemetry::Publication>>,
+}
+
+fn validate_inventory(groups: &[Group]) -> Result<(), String> {
+    let mut names = BTreeSet::new();
+    let mut urls = BTreeSet::new();
+    if groups.is_empty() || groups.len() > 4 {
+        return Err("requires one to four replica pairs".into());
+    }
+    for (sequence, group) in groups.iter().enumerate() {
+        if group.id.is_empty()
+            || group.sequence != sequence as u64
+            || !names.insert(group.id.clone())
+            || group.replicas.len() != 2
+        {
+            return Err("invalid group inventory".into());
+        }
+        for r in &group.replicas {
+            let url = reqwest::Url::parse(&r.url).map_err(|e| e.to_string())?;
+            if r.name.is_empty()
+                || !names.insert(r.name.clone())
+                || !urls.insert(url.to_string())
+                || url.scheme() != "http"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || url.path() != "/"
+            {
+                return Err("invalid or duplicate private worker origin".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn inventory_extends(existing: &[Group], configured: &[Group]) -> bool {
+    configured.len() >= existing.len()
+        && existing.iter().zip(configured).all(|(a, b)| {
+            a.id == b.id
+                && a.sequence == b.sequence
+                && a.replicas.len() == b.replicas.len()
+                && a.replicas
+                    .iter()
+                    .zip(&b.replicas)
+                    .all(|(a, b)| a.name == b.name && a.url == b.url)
+        })
+}
+
+impl Coordinator {
+    pub fn observe_capacity(
+        &self,
+        records: u64,
+        now: u64,
+        policy: super::capacity::Policy,
+    ) -> Result<(), String> {
+        self.store.lock().unwrap().update(|state| {
+            state.capacity.observe(
+                records,
+                now,
+                policy,
+                &state.groups,
+                &state.lifecycle,
+                &state.assignments,
+            )
+        })
+    }
+    // Run synchronously under the caller's publication permit: a detached cleanup
+    // task must never outlive that permit and race creation of the next candidate.
+    fn collect_retired_artifacts(&self) {
+        let store = self.store.lock().unwrap();
+        if store.state().operation.is_some() {
+            return;
+        }
+        if let Err(error) = collect_artifacts(&self.root, &store.state().published) {
+            tracing::warn!(%error, "coordinator artifact cleanup deferred");
+        }
+    }
+
+    pub fn open(root: &FsPath, groups: Vec<Group>) -> Result<Self, String> {
+        validate_inventory(&groups)?;
+        fs::create_dir_all(root.join("hints")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("snapshots")).map_err(|e| e.to_string())?;
+        let mut store = Store::open(root)?;
+        store.update(|s| {
+            if !inventory_extends(&s.groups, &groups) {
+                return Err("inventory must preserve all registered groups and endpoints".into());
+            }
+            if s.groups.is_empty() {
+                s.groups = groups;
+            }
+            Ok(())
+        })?;
+        let mut snapshots = Vec::new();
+        for manifest in &store.state().published {
+            snapshots.push(restore(root, manifest)?);
+        }
+        Ok(Self {
+            store: Arc::new(Mutex::new(store)),
+            snapshots: Arc::new(RwLock::new(snapshots)),
+            publication: Arc::new(Semaphore::new(1)),
+            queries: Arc::new(Semaphore::new(2)),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(180))
+                .build()
+                .map_err(|e| e.to_string())?,
+            root: root.into(),
+            blocked: Arc::new(Mutex::new(None)),
+            telemetry: Arc::new(Mutex::new(super::telemetry::Publication::default())),
+        })
+    }
+
+    /// Register only additional replica pairs. Existing placements and worker
+    /// endpoints are immutable here; replacement/removal require a drain protocol.
+    /// Readiness is a liveness check, not hardware qualification.
+    pub async fn reconcile_inventory(&self, configured: Vec<Group>) -> Result<(), String> {
+        validate_inventory(&configured)?;
+        let _permit = self
+            .publication
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "publication already in progress")?;
+        let (existing, epoch, revision) = {
+            let store = self.store.lock().unwrap();
+            if !inventory_extends(&store.state().groups, &configured) {
+                return Err("inventory must preserve all registered groups and endpoints".into());
+            }
+            if store.state().groups.len() == configured.len() {
+                return Ok(());
+            }
+            if store.state().operation.is_some() {
+                return Err("recover publication before registering capacity".into());
+            }
+            (
+                store.state().groups.len(),
+                store.state().epoch,
+                store.state().revision,
+            )
+        };
+        let mut additions = configured[existing..].to_vec();
+        let mut incarnations = BTreeSet::new();
+        for group in &mut additions {
+            group.settling = false;
+            for replica in &mut group.replicas {
+                let response = checked(
+                    self.http
+                        .get(format!("{}/internal/v4/health", replica.url))
+                        .timeout(std::time::Duration::from_secs(10))
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                let health: serde_json::Value =
+                    serde_json::from_slice(&bounded(response, 65536).await?)
+                        .map_err(|e| e.to_string())?;
+                let incarnation = health["incarnation"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or("new replica has no process identity")?;
+                if health["protocol"].as_str() != Some(PROTOCOL_REVISION)
+                    || health["published"].as_array().is_none_or(|s| !s.is_empty())
+                    || health["candidate"] != serde_json::Value::Null
+                    || health["epoch"].as_u64() != Some(0)
+                    || health["revision"].as_u64() != Some(0)
+                    || !incarnations.insert(incarnation.to_owned())
+                {
+                    return Err(
+                        "new replica must be a distinct, idle v4 process with fresh state".into(),
+                    );
+                }
+                replica.incarnation = incarnation.to_owned();
+                replica.ledger = control::Ledger::default();
+            }
+        }
+        self.store.lock().unwrap().update(|state| {
+            if state.epoch != epoch
+                || state.revision != revision
+                || state.operation.is_some()
+                || state.groups.len() != existing
+            {
+                return Err("inventory changed during readiness checks".into());
+            }
+            state.revision = state
+                .revision
+                .checked_add(1)
+                .ok_or("placement revision exhausted")?;
+            state.groups.extend(additions);
+            for request in state.capacity.requests.values_mut() {
+                request.registered |= state.groups.len() >= request.target_groups;
+            }
+            state.capacity.requested = state
+                .capacity
+                .requests
+                .values()
+                .find(|r| !r.registered)
+                .map(|r| r.id.clone());
+            Ok(())
+        })
+    }
+
+    async fn assignment_admitted(
+        &self,
+        group: &Group,
+        plans: &[DomainPlan],
+        assignments: &BTreeMap<u64, String>,
+    ) -> bool {
+        let pending = self.pending_replicas();
+        if group.replicas.len() != 2 || group.replicas.iter().any(|r| pending.contains(&r.name)) {
+            return false;
+        }
+        let own: Vec<_> = plans
+            .iter()
+            .filter(|p| assignments.get(&p.shard.id) == Some(&group.id))
+            .collect();
+        for replica in &group.replicas {
+            let admission = self
+                .http
+                .post(format!("{}/internal/v4/admit", replica.url))
+                .timeout(std::time::Duration::from_secs(3))
+                .json(&own)
+                .send()
+                .await;
+            if !admission.is_ok_and(|r| r.status() == StatusCode::NO_CONTENT) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Try spare registered capacity for new domains without moving published
+    /// domains. Preflight never reserves; actual reservation repeats admission.
+    async fn place_new_if_admitted(
+        &self,
+        coverage: &Coverage,
+        groups: &[Group],
+        plans: &[DomainPlan],
+        previous: &BTreeMap<u64, String>,
+        mut assignments: BTreeMap<u64, String>,
+    ) -> Result<(BTreeMap<u64, String>, BTreeSet<String>), String> {
+        let mut strict = BTreeSet::new();
+        let mut ordered: Vec<_> = groups.iter().collect();
+        ordered.sort_by_key(|g| g.sequence);
+        for shard in coverage
+            .shards
+            .iter()
+            .filter(|s| !previous.contains_key(&s.id))
+        {
+            let source = assignments
+                .get(&shard.id)
+                .ok_or("new shard unassigned")?
+                .clone();
+            let preferred = groups
+                .iter()
+                .find(|g| g.id == source)
+                .ok_or("unknown placement group")?;
+            if self
+                .assignment_admitted(preferred, plans, &assignments)
+                .await
+            {
+                continue;
+            }
+            for destination in &ordered {
+                if destination.id == source || destination.settling {
+                    continue;
+                }
+                let mut proposed = assignments.clone();
+                proposed.insert(shard.id, destination.id.clone());
+                if destination.role(coverage, &proposed).is_err()
+                    || !self
+                        .assignment_admitted(destination, plans, &proposed)
+                        .await
+                {
+                    continue;
+                }
+                strict.insert(destination.id.clone());
+                assignments = proposed;
+                break;
+            }
+        }
+        Ok((assignments, strict))
+    }
+
+    /// Relocate a published shard only after explicit memory refusal and loss of
+    /// required admission quorum. Busy or unreachable replicas alone are not a
+    /// placement signal. Retained source snapshots remain charged until expiry.
+    async fn relocate_if_memory_refused(
+        &self,
+        coverage: &Coverage,
+        groups: &[Group],
+        plans: &[DomainPlan],
+        previous: &BTreeMap<u64, String>,
+        mut assignments: BTreeMap<u64, String>,
+    ) -> BTreeMap<u64, String> {
+        let pending = self.pending_replicas();
+        let mut ordered: Vec<_> = groups.iter().collect();
+        ordered.sort_by_key(|g| g.sequence);
+        for source in &ordered {
+            let required_pairs = control::required_destination_pairs(&assignments, previous);
+            let own: Vec<_> = plans
+                .iter()
+                .filter(|p| assignments.get(&p.shard.id) == Some(&source.id))
+                .collect();
+            if own.is_empty() {
+                continue;
+            }
+            let mut refused = false;
+            let mut admitted = 0;
+            for replica in &source.replicas {
+                if pending.contains(&replica.name) {
+                    continue;
+                }
+                if let Ok(response) = self
+                    .http
+                    .post(format!("{}/internal/v4/admit", replica.url))
+                    .timeout(std::time::Duration::from_secs(3))
+                    .json(&own)
+                    .send()
+                    .await
+                {
+                    refused |= response.status() == StatusCode::INSUFFICIENT_STORAGE;
+                    admitted += usize::from(response.status() == StatusCode::NO_CONTENT);
+                }
+            }
+            let quorum = if required_pairs.contains(&source.id) {
+                2
+            } else {
+                1
+            };
+            if !refused || admitted >= quorum {
+                continue;
+            }
+            // Try a whole-shard move. Both complete post-move assignments must
+            // fit, including retained data. If no such move fits, reservation
+            // preserves the existing failure path and requests more capacity.
+            'search: for shard in &coverage.shards {
+                if assignments.get(&shard.id) != Some(&source.id)
+                    || !previous.contains_key(&shard.id)
+                {
+                    continue;
+                }
+                for destination in &ordered {
+                    if destination.id == source.id || destination.settling {
+                        continue;
+                    }
+                    let mut proposed = assignments.clone();
+                    proposed.insert(shard.id, destination.id.clone());
+                    if destination.role(coverage, &proposed).is_err()
+                        || !self
+                            .assignment_admitted(destination, plans, &proposed)
+                            .await
+                    {
+                        continue;
+                    }
+                    if proposed.values().any(|id| id == &source.id)
+                        && !self.assignment_admitted(source, plans, &proposed).await
+                    {
+                        continue;
+                    }
+                    assignments = proposed;
+                    break 'search;
+                }
+            }
+        }
+        assignments
+    }
+
+    /// Elective moves must not hold the canonical update behind a known lack of
+    /// destination capacity. Preflight has no side effects; reservation still
+    /// repeats admission and both destination replicas remain mandatory.
+    async fn consolidate_if_admitted(
+        &self,
+        coverage: &Coverage,
+        groups: &[Group],
+        plans: &[DomainPlan],
+        original: BTreeMap<u64, String>,
+    ) -> Result<(BTreeMap<u64, String>, BTreeSet<String>), String> {
+        let mut proposed = original.clone();
+        let destinations = control::consolidate(coverage, groups, &mut proposed)?;
+        for group in groups.iter().filter(|g| destinations.contains(&g.id)) {
+            if !self.assignment_admitted(group, plans, &proposed).await {
+                tracing::info!(group = %group.id,
+                    "elective consolidation deferred; preserving canonical update placement");
+                return Ok((original, BTreeSet::new()));
+            }
+        }
+        Ok((proposed, destinations))
+    }
+
+    pub fn router(self) -> Router {
+        Router::new()
+            .route("/v1/enhance/init", get(init))
+            .route("/v1/enhance/sessions/:generation/:shard", get(session))
+            .route("/v1/enhance/query", post(query))
+            .route("/v1/health", get(health))
+            .route("/ready", get(ready))
+            .route("/metrics", get(metrics))
+            .with_state(self)
+    }
+
+    pub async fn manifest(&self) -> Option<Manifest> {
+        self.snapshots
+            .read()
+            .await
+            .first()
+            .map(|s| s.saved.manifest.clone())
+    }
+
+    async fn synchronize_retention(&self) {
+        let (epoch, groups, generations, pending) = {
+            let store = self.store.lock().unwrap();
+            (
+                store.state().epoch,
+                store.state().groups.clone(),
+                store
+                    .state()
+                    .published
+                    .iter()
+                    .map(|m| m.generation)
+                    .collect::<Vec<_>>(),
+                store.state().pending_replicas(),
+            )
+        };
+        if generations.is_empty() {
+            return;
+        }
+        for group in groups {
+            for replica in group.replicas {
+                if pending.contains(&replica.name) {
+                    continue;
+                }
+                let response = self
+                    .http
+                    .post(format!("{}/internal/v4/retain", replica.url))
+                    .timeout(std::time::Duration::from_secs(3))
+                    .json(&worker::Retain {
+                        epoch,
+                        generations: generations.clone(),
+                    })
+                    .send()
+                    .await;
+                if !response.is_ok_and(|r| r.status().is_success()) {
+                    tracing::warn!(replica = %replica.name, "retention synchronization deferred; worker continues charging old runtimes");
+                }
+            }
+        }
+    }
+
+    fn pending_replicas(&self) -> BTreeSet<String> {
+        self.store.lock().unwrap().state().pending_replicas()
+    }
+
+    // Retry decisions independently; no disconnected participant authorizes
+    // dropping its reservation or putting a second candidate on that worker.
+    async fn deliver_decisions(&self) -> Result<(), String> {
+        self.deliver_commits().await?;
+        let (pending, groups, epoch) = {
+            let store = self.store.lock().unwrap();
+            (
+                store.state().pending_aborts.clone(),
+                store.state().groups.clone(),
+                store.state().epoch,
+            )
+        };
+        for notification in pending {
+            let replica = groups
+                .iter()
+                .flat_map(|g| &g.replicas)
+                .find(|r| r.name == notification.replica)
+                .ok_or("pending abort has no registered worker")?;
+            let delivered: Result<(), String> = async {
+                checked(
+                    self.http
+                        .post(format!("{}/internal/v4/abort", replica.url))
+                        .timeout(std::time::Duration::from_secs(3))
+                        .json(&worker::Abort {
+                            epoch,
+                            operation: notification.operation.clone(),
+                            attempt: notification.attempt,
+                        })
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                Ok(())
+            }
+            .await;
+            match delivered {
+                Ok(()) => self.store.lock().unwrap().update(|s| {
+                    s.pending_aborts.retain(|p| p != &notification);
+                    Ok(())
+                })?,
+                Err(error) => {
+                    tracing::warn!(replica = %replica.name, %error, "abort notification remains pending; worker excluded from new candidates")
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Caller owns the publication permit. Errors for one participant must not
+    // prevent delivery to its peer; intent remains durable until an exact ack.
+    async fn deliver_commits(&self) -> Result<(), String> {
+        let (pending, groups, epoch) = {
+            let store = self.store.lock().unwrap();
+            (
+                store.state().pending_commits.clone(),
+                store.state().groups.clone(),
+                store.state().epoch,
+            )
+        };
+        for notification in pending {
+            let replica = groups
+                .iter()
+                .flat_map(|g| &g.replicas)
+                .find(|r| r.name == notification.replica)
+                .ok_or("pending commit has no registered worker")?;
+            let delivered: Result<(), String> = async {
+                let health: serde_json::Value = checked(
+                    self.http
+                        .get(format!("{}/internal/v4/health", replica.url))
+                        .timeout(std::time::Duration::from_secs(3))
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+                let generation = notification.manifest.generation;
+                if health["published"]
+                    .as_array()
+                    .is_some_and(|gs| gs.iter().any(|g| g.as_u64() == Some(generation)))
+                {
+                    // Commit was durable but its response was lost. Match the
+                    // exact decision before releasing this replica's quarantine.
+                    if health["published_manifest_digests"][generation.to_string()]
+                        != digest(&notification.manifest)
+                    {
+                        return Err(
+                            "published worker manifest differs from committed decision".into()
+                        );
+                    }
+                    return Ok(());
+                }
+                let candidate: worker::Candidate =
+                    serde_json::from_value(health["candidate"].clone())
+                        .map_err(|e| e.to_string())?;
+                if candidate.operation != notification.operation
+                    || candidate.attempt != notification.attempt
+                    || candidate.generation != generation
+                {
+                    return Err("worker lost committed candidate; repair required".into());
+                }
+                checked(
+                    self.http
+                        .post(format!("{}/internal/v4/prepare", replica.url))
+                        .json(&candidate)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                let revision = health["revision"]
+                    .as_u64()
+                    .ok_or("missing revision")?
+                    .checked_add(1)
+                    .ok_or("worker revision exhausted")?;
+                checked(
+                    self.http
+                        .post(format!("{}/internal/v4/commit", replica.url))
+                        .json(&worker::Commit {
+                            epoch,
+                            revision,
+                            generation,
+                            manifest_digest: digest(&notification.manifest),
+                            retained: notification.retained.clone(),
+                        })
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                Ok(())
+            }
+            .await;
+            match delivered {
+                Ok(()) => self.store.lock().unwrap().update(|s| {
+                    s.pending_commits.retain(|p| p != &notification);
+                    Ok(())
+                })?,
+                Err(error) => {
+                    tracing::warn!(replica = %replica.name, %error, "committed notification remains pending; worker excluded from new candidates")
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Recover the durable decision. A committed placement is never rolled back by cancellation.
+    pub async fn reconcile(&self) -> Result<(), String> {
+        let _permit = self
+            .publication
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "publication already in progress")?;
+        self.reconcile_inner().await
+    }
+
+    // Caller owns the publication permit, including fallback within publication.
+    async fn reconcile_inner(&self) -> Result<(), String> {
+        let (op, published) = {
+            let store = self.store.lock().unwrap();
+            let s = store.state();
+            (s.operation.clone(), s.published.clone())
+        };
+        let Some(op) = op else {
+            self.deliver_decisions().await?;
+            self.synchronize_retention().await;
+            self.collect_retired_artifacts();
+            return Ok(());
+        };
+        let committed = matches!(
+            op.phase,
+            Phase::Committed | Phase::Draining | Phase::Complete
+        );
+        if committed {
+            // Also migrate a pre-outbox committed journal before releasing its
+            // candidate slot. Notification intent is durable before release.
+            let manifest = published
+                .first()
+                .ok_or("committed operation missing manifest")?;
+            self.store.lock().unwrap().update(|s| {
+                for ack in &op.readiness {
+                    if !s.pending_commits.iter().any(|p| p.replica == ack.replica) {
+                        s.pending_commits.push(PendingCommit {
+                            replica: ack.replica.clone(),
+                            operation: op.id.clone(),
+                            attempt: op.attempt,
+                            manifest: manifest.clone(),
+                            retained: published.iter().map(|m| m.generation).collect(),
+                        });
+                    }
+                }
+                s.cancel_participants(
+                    &op,
+                    &op.readiness.iter().map(|ack| ack.replica.clone()).collect(),
+                );
+                Ok(())
+            })?;
+        } else {
+            self.store.lock().unwrap().abort_operation()?;
+        }
+
+        if committed {
+            let manifest = published.first().ok_or("missing committed manifest")?;
+            if self.manifest().await.as_ref() != Some(manifest) {
+                let root = self.root.clone();
+                let manifest = manifest.clone();
+                let restored = tokio::task::spawn_blocking(move || restore(&root, &manifest))
+                    .await
+                    .map_err(|e| e.to_string())??;
+                let mut snapshots = self.snapshots.write().await;
+                snapshots.insert(0, restored);
+                snapshots.retain(|s| {
+                    published
+                        .iter()
+                        .any(|m| m.generation == s.saved.manifest.generation)
+                });
+            }
+        }
+        self.store.lock().unwrap().update(|s| {
+            if committed {
+                if let Some(mut operation) = s.operation.take() {
+                    operation.phase = Phase::Draining;
+                    s.draining.push(operation);
+                }
+                s.draining.retain(|op| {
+                    op.source_generations
+                        .iter()
+                        .any(|g| s.published.iter().any(|m| m.generation == *g))
+                });
+            }
+            Ok(())
+        })?;
+        self.deliver_decisions().await?;
+        self.synchronize_retention().await;
+        self.collect_retired_artifacts();
+        Ok(())
+    }
+
+    /// Serialize candidate preparation. Cancellation leaves a durable operation that must
+    /// be reconciled before another candidate can be prepared.
+    pub async fn publish(
+        &self,
+        journal: &crate::store::RecordJournal,
+        height: u64,
+        hash: String,
+    ) -> Result<(), String> {
+        self.publish_checked(journal, height, hash, || async { Ok(()) })
+            .await
+    }
+
+    pub async fn publish_checked<F, Fut>(
+        &self,
+        journal: &crate::store::RecordJournal,
+        height: u64,
+        hash: String,
+        validate: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        let _permit = self
+            .publication
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "publication already in progress")?;
+        let began = std::time::Instant::now();
+        self.telemetry
+            .lock()
+            .unwrap()
+            .observe(height, journal.tree_size(), &hash);
+        let mut validate = Some(validate);
+        let mut result = self
+            .publish_inner(journal, height, hash.clone(), &mut validate, true)
+            .await;
+        let retry = result.is_err() && validate.is_some() && {
+            let store = self.store.lock().unwrap();
+            store.state().operation.as_ref().is_some_and(|op| {
+                op.phase == Phase::Planned
+                    && op
+                        .require_both
+                        .iter()
+                        .any(|group| store.state().assignments.values().any(|g| g == group))
+            })
+        };
+        if retry {
+            // No preparation or durable publication has occurred. Persist the
+            // abort decision before retrying; unacknowledged workers stay excluded.
+            result = match self.reconcile_inner().await {
+                Ok(()) => {
+                    self.publish_inner(journal, height, hash, &mut validate, false)
+                        .await
+                }
+                Err(error) => Err(format!(
+                    "consolidation fallback awaits abort recovery: {error}"
+                )),
+            };
+        }
+        *self.blocked.lock().unwrap() = result.as_ref().err().cloned();
+        let mut telemetry = self.telemetry.lock().unwrap();
+        telemetry.last_attempt_seconds = Some(began.elapsed().as_secs_f64());
+        telemetry.last_attempt_succeeded = Some(result.is_ok());
+        result
+    }
+
+    async fn publish_inner<F, Fut>(
+        &self,
+        journal: &crate::store::RecordJournal,
+        height: u64,
+        hash: String,
+        validate: &mut Option<F>,
+        allow_consolidation: bool,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        self.deliver_decisions().await?;
+        let (mut lifecycle, generation, attempt, epoch, revision, mut groups, previous) = {
+            let store = self.store.lock().unwrap();
+            let s = store.state();
+            if s.operation.is_some() {
+                return Err(
+                    "unfinished operation requires reconciliation before publication".into(),
+                );
+            }
+            (
+                s.lifecycle.clone(),
+                s.next_generation,
+                s.next_attempt,
+                s.epoch,
+                s.revision,
+                s.groups.clone(),
+                s.assignments.clone(),
+            )
+        };
+        let coverage = lifecycle.coverage(journal.tree_size(), Geometry::default())?;
+        let base_assignments = control::assign(&coverage, &groups, &previous)?;
+        let read = |start, count| {
+            journal
+                .read_records(start, count)
+                .map_err(|e| e.to_string())
+        };
+        let plans: Vec<DomainPlan> = coverage
+            .shards
+            .iter()
+            .map(|s| runtime::plan(s.clone(), read))
+            .collect::<Result<_, _>>()?;
+        let (base_assignments, admission_destinations) = self
+            .place_new_if_admitted(&coverage, &groups, &plans, &previous, base_assignments)
+            .await?;
+        let base_assignments = self
+            .relocate_if_memory_refused(&coverage, &groups, &plans, &previous, base_assignments)
+            .await;
+        let (assignments, consolidation_destinations) = if allow_consolidation {
+            self.consolidate_if_admitted(&coverage, &groups, &plans, base_assignments)
+                .await?
+        } else {
+            (base_assignments, BTreeSet::new())
+        };
+        let operation_id = format!("generation-{generation}");
+        let mut require_both = control::required_destination_pairs(&assignments, &previous);
+        require_both.extend(consolidation_destinations);
+        require_both.extend(admission_destinations);
+        let strict_groups = require_both.clone();
+        let operation = Operation {
+            id: operation_id.clone(),
+            attempt,
+            epoch,
+            expected_revision: revision,
+            candidate_digest: digest(&plans),
+            phase: Phase::Planned,
+            assignments: assignments.clone(),
+            affected_groups: assignments
+                .values()
+                .chain(previous.values())
+                .cloned()
+                .collect(),
+            source_generations: self
+                .store
+                .lock()
+                .unwrap()
+                .state()
+                .published
+                .iter()
+                .map(|m| m.generation)
+                .collect(),
+            require_both,
+            readiness: Vec::new(),
+            infrastructure_resources: BTreeMap::new(),
+        };
+        self.store.lock().unwrap().plan(operation)?;
+        let mut candidates = BTreeMap::new();
+        // Reserve all destinations before any expensive preparation. A failure leaves the operation visible.
+        for group in &mut groups {
+            let own: Vec<_> = plans
+                .iter()
+                .filter(|p| assignments[&p.shard.id] == group.id)
+                .cloned()
+                .collect();
+            if own.is_empty() && !previous.values().any(|id| id == &group.id) {
+                continue;
+            }
+            for replica in &mut group.replicas {
+                if self.pending_replicas().contains(&replica.name) {
+                    if strict_groups.contains(&group.id) {
+                        return Err("required replica awaits decision recovery".into());
+                    }
+                    continue;
+                }
+                let reservation: Result<_, String> = async {
+                    let health: serde_json::Value = self
+                        .http
+                        .get(format!("{}/internal/v4/health", replica.url))
+                        .timeout(std::time::Duration::from_secs(3))
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .error_for_status()
+                        .map_err(|e| e.to_string())?
+                        .json()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    replica.incarnation = health["incarnation"]
+                        .as_str()
+                        .ok_or("missing worker incarnation")?
+                        .into();
+                    let worker_revision = health["revision"]
+                        .as_u64()
+                        .ok_or("missing worker revision")?;
+                    let candidate = worker::Candidate {
+                        operation: operation_id.clone(),
+                        attempt,
+                        epoch,
+                        expected_revision: worker_revision,
+                        generation,
+                        plans: own.clone(),
+                    };
+                    let response = self
+                        .http
+                        .post(format!("{}/internal/v4/reserve", replica.url))
+                        .json(&candidate)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if response.status() == StatusCode::INSUFFICIENT_STORAGE {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_err(|e| e.to_string())?
+                            .as_secs();
+                        self.store.lock().unwrap().update(|state| {
+                            state.capacity.memory_refused(
+                                journal.tree_size(),
+                                now,
+                                state.groups.len(),
+                            )
+                        })?;
+                    }
+                    let missing: Vec<String> = checked(response)
+                        .await?
+                        .json()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok((candidate, missing, worker_revision))
+                }
+                .await;
+                match reservation {
+                    Ok(reserved) => {
+                        candidates.insert(replica.name.clone(), reserved);
+                    }
+                    Err(error) if !strict_groups.contains(&group.id) => {
+                        tracing::warn!(replica = %replica.name, %error, "replica unavailable; ordinary publication may use its peer");
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        for group in &groups {
+            if !assignments.values().any(|id| id == &group.id) {
+                continue;
+            }
+            let reserved = group
+                .replicas
+                .iter()
+                .filter(|r| candidates.contains_key(&r.name))
+                .count();
+            if reserved
+                < if strict_groups.contains(&group.id) {
+                    2
+                } else {
+                    1
+                }
+            {
+                return Err("group lacks its required reservation quorum".into());
+            }
+        }
+        self.store.lock().unwrap().update(|s| {
+            s.groups = groups.clone();
+            Ok(())
+        })?;
+        self.store
+            .lock()
+            .unwrap()
+            .advance(epoch, &operation_id, attempt, Phase::Reserved)?;
+        self.store
+            .lock()
+            .unwrap()
+            .advance(epoch, &operation_id, attempt, Phase::Preparing)?;
+        let mut packing = BTreeMap::new();
+        let mut hints = BTreeMap::new();
+        let domain_keys: BTreeMap<_, _> = plans
+            .iter()
+            .map(|p| (p.shard.id, digest(&(p.shard.logical_rows, &p.units))))
+            .collect();
+        {
+            let previous = self.snapshots.read().await;
+            for snapshot in previous.iter() {
+                for (shard, key) in &domain_keys {
+                    if !packing.contains_key(shard)
+                        && snapshot.saved.domain_keys.get(shard) == Some(key)
+                    {
+                        packing.insert(*shard, snapshot.packing[shard].clone());
+                        hints.insert(*shard, snapshot.saved.hints[shard].clone());
+                    }
+                }
+            }
+        }
+        let reusable: BTreeSet<_> = packing.keys().copied().collect();
+        let mut routes = BTreeMap::<u64, Vec<String>>::new();
+        for group in &groups {
+            for replica in &group.replicas {
+                let Some((candidate, missing, _)) = candidates.get(&replica.name) else {
+                    continue;
+                };
+                for plan in &candidate.plans {
+                    for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
+                        if !missing.contains(&unit.digest()) {
+                            continue;
+                        }
+                        let rows = runtime::unit_rows(&plan.shard, spec, &mut { read })?;
+                        checked(
+                            self.http
+                                .put(format!(
+                                    "{}/internal/v4/rows/{}",
+                                    replica.url,
+                                    unit.digest()
+                                ))
+                                .header("x-enhance-epoch", candidate.epoch)
+                                .header("x-enhance-attempt", candidate.attempt)
+                                .header("x-enhance-operation", &candidate.operation)
+                                .body(rows)
+                                .send()
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        )
+                        .await?;
+                    }
+                }
+                checked(
+                    self.http
+                        .post(format!("{}/internal/v4/prepare", replica.url))
+                        .json(candidate)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                for plan in &candidate.plans {
+                    if reusable.contains(&plan.shard.id) {
+                        routes
+                            .entry(plan.shard.id)
+                            .or_default()
+                            .push(replica.url.clone());
+                        continue;
+                    }
+                    let response = checked(
+                        self.http
+                            .get(format!(
+                                "{}/internal/v4/hint/{}",
+                                replica.url, plan.shard.id
+                            ))
+                            .send()
+                            .await
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .await?;
+                    let bytes = bounded(response, 256 * 1024 * 1024).await?;
+                    let params = parameters(plan.shard.logical_rows)?;
+                    let hint = crate::wire::read_crs_blocks(
+                        bytes.as_slice(),
+                        params.db_cols / runtime::rlwe().d,
+                        runtime::rlwe().d,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let pack = Arc::new(Packing::new(plan.shard.logical_rows, &hint)?);
+                    let reference = pack.reference(plan.shard.id)?;
+                    if let Some(existing) = packing.get(&plan.shard.id) {
+                        let existing: &Arc<Packing> = existing;
+                        if existing.reference(plan.shard.id)? != reference {
+                            return Err("replica public material differs".into());
+                        }
+                    } else {
+                        let name = format!("{}.bin", reference.public_params_sha256);
+                        crate::artifact::write_atomic(&self.root.join("hints"), &name, |f| {
+                            f.write_all(&bytes)
+                        })
+                        .map_err(|e| e.to_string())?;
+                        hints.insert(plan.shard.id, name);
+                        packing.insert(plan.shard.id, pack);
+                    }
+                    routes
+                        .entry(plan.shard.id)
+                        .or_default()
+                        .push(replica.url.clone());
+                }
+            }
+        }
+        let sessions = coverage
+            .shards
+            .iter()
+            .map(|s| packing[&s.id].reference(s.id))
+            .collect::<Result<_, _>>()?;
+        let manifest = Manifest {
+            schema_version: SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation,
+            anchor_height: height,
+            anchor_block_hash: hash,
+            geometry: Geometry::default(),
+            coverage,
+            sessions,
+            unit_identities: plans
+                .iter()
+                .map(|p| (p.shard.id, p.units.clone()))
+                .collect(),
+        };
+        manifest.validate()?;
+        let manifest_digest = digest(&manifest);
+        let mut readiness = Vec::new();
+        for group in &groups {
+            for replica in &group.replicas {
+                if !candidates.contains_key(&replica.name) {
+                    continue;
+                }
+                let request = worker::Activation {
+                    operation: operation_id.clone(),
+                    attempt,
+                    epoch,
+                    manifest: manifest.clone(),
+                };
+                let ack: serde_json::Value = checked(
+                    self.http
+                        .post(format!("{}/internal/v4/activate", replica.url))
+                        .json(&request)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+                if ack["incarnation"].as_str() != Some(&replica.incarnation)
+                    || ack["candidate_digest"].as_str() != Some(&manifest_digest)
+                {
+                    return Err("stale worker readiness".into());
+                }
+                readiness.push(ReadyAck {
+                    replica: replica.name.clone(),
+                    incarnation: replica.incarnation.clone(),
+                    candidate_digest: manifest_digest.clone(),
+                });
+            }
+        }
+        let saved = SavedSnapshot {
+            manifest: manifest.clone(),
+            routes,
+            hints,
+            domain_keys,
+        };
+        // Wait for admitted HTTP queries before retiring worker routes. Preparations did not block them.
+        let mut snapshots = self.snapshots.write().await;
+        validate
+            .take()
+            .ok_or("canonical validation already consumed")?()
+        .await?;
+        crate::artifact::write_atomic(
+            &self.root.join("snapshots"),
+            &format!("{generation}.json"),
+            |f| serde_json::to_writer(f, &saved).map_err(std::io::Error::other),
+        )
+        .map_err(|e| e.to_string())?;
+        File::open(self.root.join("snapshots"))
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        self.store.lock().unwrap().update(|s| {
+            let op = s.operation.as_mut().ok_or("candidate disappeared")?;
+            op.candidate_digest = manifest_digest.clone();
+            op.readiness = readiness;
+            Ok(())
+        })?;
+        self.store
+            .lock()
+            .unwrap()
+            .advance(epoch, &operation_id, attempt, Phase::Ready)?;
+        self.store
+            .lock()
+            .unwrap()
+            .commit(manifest.clone(), lifecycle)?;
+        snapshots.insert(0, Arc::new(Snapshot { saved, packing }));
+        snapshots.truncate(RETAINED_GENERATIONS);
+        drop(snapshots);
+        self.reconcile_inner().await
+    }
+}
+
+async fn checked(response: reqwest::Response) -> Result<reqwest::Response, String> {
+    if response.status().is_success() {
+        Ok(response)
+    } else {
+        let status = response.status();
+        let reason = bounded(response, 4096).await.unwrap_or_default();
+        Err(format!(
+            "worker returned {status}: {}",
+            String::from_utf8_lossy(&reason)
+        ))
+    }
+}
+
+async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+    if response.content_length().is_some_and(|n| n > limit as u64) {
+        return Err("oversized worker response".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if chunk.len() > limit - bytes.len() {
+            return Err("oversized worker response".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+type ApiResult<T> = Result<T, (StatusCode, String)>;
+async fn init(State(c): State<Coordinator>) -> ApiResult<Json<Manifest>> {
+    c.manifest().await.map(Json).ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no published generation".into(),
+    ))
+}
+async fn session(
+    State(c): State<Coordinator>,
+    Path((generation, shard)): Path<(u64, u64)>,
+) -> ApiResult<Json<ShardSession>> {
+    let snapshots = c.snapshots.read().await;
+    let s = snapshots
+        .iter()
+        .find(|s| s.saved.manifest.generation == generation)
+        .ok_or((StatusCode::GONE, "expired session".into()))?;
+    let pack = s
+        .packing
+        .get(&shard)
+        .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+    Ok(Json(pack.session(generation, shard)))
+}
+async fn query(State(c): State<Coordinator>, request: Request) -> ApiResult<Vec<u8>> {
+    let permit = c
+        .queries
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "query limit".into()))?;
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        to_bytes(request.into_body(), 64 * 1024 * 1024),
+    )
+    .await
+    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
+    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let generation_pin = c.snapshots.clone().read_owned().await;
+    let snapshot = generation_pin
+        .iter()
+        .find(|s| s.saved.manifest.generation == binding.generation)
+        .cloned()
+        .ok_or((StatusCode::GONE, "expired session".into()))?;
+    let pack = snapshot
+        .packing
+        .get(&binding.shard_id)
+        .cloned()
+        .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+    let coefficients = pack
+        .query_coefficients(&body, binding)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let request = worker::Evaluate {
+        generation: binding.generation,
+        shard_id: binding.shard_id,
+        epoch: hex::encode(binding.epoch),
+        coefficients,
+    };
+    let mut answer = None;
+    for url in &snapshot.saved.routes[&binding.shard_id] {
+        let result = async {
+            let response = c
+                .http
+                .post(format!("{url}/internal/v4/evaluate"))
+                .timeout(std::time::Duration::from_secs(30))
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let bytes = bounded(checked(response).await?, 1024 * 1024).await?;
+            let intermediate: worker::Intermediate =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            if intermediate.generation != binding.generation
+                || intermediate.shard_id != binding.shard_id
+                || intermediate.epoch != request.epoch
+            {
+                return Err("worker binding mismatch".into());
+            }
+            Ok::<_, String>(intermediate.coefficients)
+        }
+        .await;
+        if let Ok(partial) = result {
+            answer = Some(partial);
+            break;
+        }
+    }
+    let answer = answer.ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no ready replica answered".into(),
+    ))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let _snapshot = snapshot;
+        let _generation_pin = generation_pin;
+        pack.pack(&body, &answer)
+    })
+    .await
+    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))
+}
+async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
+    let snapshots = c.snapshots.read().await;
+    let manifest = snapshots.first().map(|s| &s.saved.manifest);
+    let store = c.store.lock().unwrap();
+    let mut published_replica_counts = BTreeMap::new();
+    if let Some(snapshot) = snapshots.first() {
+        for (shard, routes) in &snapshot.saved.routes {
+            if let Some(group) = store.state().assignments.get(shard) {
+                published_replica_counts
+                    .entry(group.clone())
+                    .and_modify(|n: &mut usize| *n = (*n).min(routes.len()))
+                    .or_insert(routes.len());
+            }
+        }
+    }
+    Json(
+        serde_json::json!({"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
+        "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":store.state().revision,
+        "registered_groups":store.state().groups.len(),
+        "capacity":store.state().capacity,
+        "published_replica_counts":published_replica_counts,
+        "pending_commit_notifications":store.state().pending_commits.len(),
+        "pending_abort_notifications":store.state().pending_aborts.len(),
+        "operation":store.state().operation,"blocked_reason":*c.blocked.lock().unwrap()}),
+    )
+}
+async fn ready(State(c): State<Coordinator>) -> StatusCode {
+    if c.manifest().await.is_some() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+async fn metrics(
+    State(c): State<Coordinator>,
+) -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
+    let snapshots = c.snapshots.read().await;
+    let manifest = snapshots.first().map(|s| &s.saved.manifest);
+    let routes = snapshots
+        .first()
+        .map(|s| {
+            s.saved
+                .routes
+                .iter()
+                .map(|(id, replicas)| (*id, replicas.len()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let store = c.store.lock().unwrap();
+    let blocked = c.blocked.lock().unwrap().is_some();
+    let telemetry = c.telemetry.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        super::telemetry::coordinator(store.state(), manifest, &routes, blocked, &telemetry, now),
+    )
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use axum::response::IntoResponse;
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn reorg_destination_memory_refusal_replans_to_complete_spare_pair() {
+        let root = tempfile::tempdir().unwrap();
+        let memory_refusal = Arc::new(AtomicBool::new(true));
+        let mut groups = Vec::new();
+        let mut tasks = Vec::new();
+        for sequence in 0..3 {
+            let mut replicas = Vec::new();
+            for index in 0..2 {
+                let refuse = memory_refusal.clone();
+                let router = Router::new().route(
+                    "/internal/v4/admit",
+                    post(move || {
+                        let refuse = refuse.clone();
+                        async move {
+                            if sequence == 1 && index == 1 {
+                                if refuse.load(Ordering::SeqCst) {
+                                    StatusCode::INSUFFICIENT_STORAGE
+                                } else {
+                                    StatusCode::SERVICE_UNAVAILABLE
+                                }
+                            } else {
+                                StatusCode::NO_CONTENT
+                            }
+                        }
+                    }),
+                );
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let url = format!("http://{}", listener.local_addr().unwrap());
+                tasks.push(tokio::spawn(async move {
+                    axum::serve(listener, router).await.unwrap();
+                }));
+                replicas.push(control::Replica {
+                    name: format!("g{sequence}-r{index}"),
+                    url,
+                    incarnation: String::new(),
+                    ledger: control::Ledger::default(),
+                });
+            }
+            groups.push(Group {
+                id: format!("g{sequence}"),
+                sequence,
+                replicas,
+                settling: false,
+            });
+        }
+        let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
+        let mut lifecycle = enhance_pir::v4::Lifecycle::default();
+        let old = lifecycle
+            .coverage((6 * 32768 + 4096) * 33, Geometry::default())
+            .unwrap();
+        let previous: BTreeMap<_, _> = old
+            .shards
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id, if i < 6 { "g0" } else { "g1" }.to_owned()))
+            .collect();
+        let coverage = lifecycle
+            .coverage((5 * 32768 + 4096) * 33, Geometry::default())
+            .unwrap();
+        let planned = control::assign(&coverage, &groups, &previous).unwrap();
+        let frontier = coverage.shards.last().unwrap().id;
+        assert_eq!(previous[&frontier], "g0");
+        assert_eq!(planned[&frontier], "g1");
+        // Valid plan geometry and identities, but no materialized data: these
+        // endpoints model admission outcomes, not measured memory qualification.
+        let plans: Vec<_> = coverage
+            .shards
+            .iter()
+            .map(|shard| DomainPlan {
+                shard: shard.clone(),
+                units: shard
+                    .units
+                    .iter()
+                    .map(|u| UnitIdentity {
+                        table: "enhance".into(),
+                        shard_id: shard.id,
+                        local_row_start: u.local_row_start,
+                        allocated_rows: u.allocated_rows,
+                        setup_sha256: hex::encode(Sha256::digest(setup_seed(shard.id))),
+                        parameter_id: unit_parameter_id(u.allocated_rows).unwrap(),
+                        content_sha256: "00".repeat(32),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let relocated = coordinator
+            .relocate_if_memory_refused(&coverage, &groups, &plans, &previous, planned.clone())
+            .await;
+        assert_eq!(
+            relocated[&frontier], "g2",
+            "one admitting replica cannot satisfy a moved shard's pair quorum"
+        );
+        assert_eq!(
+            control::required_destination_pairs(&relocated, &previous),
+            ["g2".to_owned()].into()
+        );
+        for (shard, group) in &planned {
+            if *shard != frontier {
+                assert_eq!(&relocated[shard], group);
+            }
+        }
+        memory_refusal.store(false, Ordering::SeqCst);
+        assert_eq!(
+            coordinator
+                .relocate_if_memory_refused(&coverage, &groups, &plans, &previous, planned.clone())
+                .await,
+            planned,
+            "unavailable peer alone must not be interpreted as memory pressure"
+        );
+        memory_refusal.store(true, Ordering::SeqCst);
+        let mut unavailable = groups.clone();
+        unavailable[2].replicas.pop();
+        assert_eq!(
+            coordinator
+                .relocate_if_memory_refused(
+                    &coverage,
+                    &unavailable,
+                    &plans,
+                    &previous,
+                    planned.clone()
+                )
+                .await,
+            planned,
+            "an incomplete spare pair cannot receive the reorg shard"
+        );
+        for task in tasks {
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn elective_consolidation_requires_both_admissions_and_does_not_reserve() {
+        let root = tempfile::tempdir().unwrap();
+        let reject_peer = Arc::new(AtomicBool::new(true));
+        let mut tasks = Vec::new();
+        let mut groups = Vec::new();
+        let mut original_files = Vec::new();
+        for sequence in 0..2 {
+            let mut replicas = Vec::new();
+            for index in 0..2 {
+                let name = format!("g{sequence}-r{index}");
+                let path = root.path().join(&name);
+                let worker = worker::Worker::open(&path).unwrap();
+                let state_file = path.join("worker-v4.json");
+                original_files.push((state_file.clone(), fs::read(state_file).ok()));
+                let reject = reject_peer.clone();
+                let router = worker.router().layer(axum::middleware::from_fn(
+                    move |request: Request, next: axum::middleware::Next| {
+                        let reject = reject.clone();
+                        async move {
+                            if sequence == 0
+                                && index == 1
+                                && request.uri().path() == "/internal/v4/admit"
+                                && reject.load(Ordering::SeqCst)
+                            {
+                                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                            }
+                            next.run(request).await
+                        }
+                    },
+                ));
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let url = format!("http://{}", listener.local_addr().unwrap());
+                tasks.push(tokio::spawn(async move {
+                    axum::serve(listener, router).await.unwrap();
+                }));
+                replicas.push(control::Replica {
+                    name,
+                    url,
+                    incarnation: String::new(),
+                    ledger: control::Ledger::default(),
+                });
+            }
+            groups.push(Group {
+                id: format!("g{sequence}"),
+                sequence,
+                replicas,
+                settling: false,
+            });
+        }
+        let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
+        let coverage = Lifecycle::default()
+            .coverage((6 * 32768 + 4096) * 33, Geometry::default())
+            .unwrap();
+        let original: BTreeMap<_, _> = coverage
+            .shards
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id, if i < 5 { "g0" } else { "g1" }.to_owned()))
+            .collect();
+        // Full-sized plan metadata is enough to exercise the real admission model;
+        // these hashes do not stand for materialized or qualified databases.
+        let plans: Vec<_> = coverage
+            .shards
+            .iter()
+            .map(|shard| DomainPlan {
+                shard: shard.clone(),
+                units: shard
+                    .units
+                    .iter()
+                    .map(|u| UnitIdentity {
+                        table: "enhance".into(),
+                        shard_id: shard.id,
+                        local_row_start: u.local_row_start,
+                        allocated_rows: u.allocated_rows,
+                        setup_sha256: hex::encode(Sha256::digest(setup_seed(shard.id))),
+                        parameter_id: unit_parameter_id(u.allocated_rows).unwrap(),
+                        content_sha256: "00".repeat(32),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let mut previous = original.clone();
+        let new_shard = coverage.shards[0].id;
+        previous.remove(&new_shard);
+        let (alternative, strict) = coordinator
+            .place_new_if_admitted(&coverage, &groups, &plans, &previous, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(alternative[&new_shard], "g1");
+        assert_eq!(strict, ["g1".to_owned()].into());
+        for (shard, group) in &previous {
+            assert_eq!(alternative[shard], *group);
+        }
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.push(control::PendingAbort {
+                    replica: groups[1].replicas[1].name.clone(),
+                    operation: "pending".into(),
+                    attempt: 1,
+                });
+                Ok(())
+            })
+            .unwrap();
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &groups, &plans, &previous, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged, original,
+            "pending decision excludes an alternative despite free memory"
+        );
+        assert!(strict.is_empty());
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.clear();
+                Ok(())
+            })
+            .unwrap();
+        let mut unavailable = groups.clone();
+        unavailable[1].replicas.pop();
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &unavailable, &plans, &previous, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged, original,
+            "one alternative replica cannot authorize relocation"
+        );
+        assert!(strict.is_empty());
+        let mut settling = groups.clone();
+        settling[1].settling = true;
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &settling, &plans, &previous, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(unchanged, original);
+        assert!(strict.is_empty());
+        // No newly introduced shards means the fallback cannot relocate published data.
+        let (unchanged, strict) = coordinator
+            .place_new_if_admitted(&coverage, &groups, &plans, &original, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(unchanged, original);
+        assert!(strict.is_empty());
+        let (deferred, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            deferred, original,
+            "one available destination cannot force an elective move"
+        );
+        assert!(strict.is_empty());
+        reject_peer.store(false, Ordering::SeqCst);
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.push(control::PendingAbort {
+                    replica: groups[0].replicas[0].name.clone(),
+                    operation: "pending".into(),
+                    attempt: 2,
+                });
+                Ok(())
+            })
+            .unwrap();
+        let (unchanged, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged, original,
+            "pending decision defers elective consolidation too"
+        );
+        assert!(strict.is_empty());
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.pending_aborts.clear();
+                Ok(())
+            })
+            .unwrap();
+
+        let (admitted, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(strict, ["g0".to_owned()].into());
+        assert_eq!(admitted[&coverage.shards[5].id], "g0");
+        assert_eq!(admitted[&coverage.shards[6].id], "g1");
+        for (path, before) in original_files {
+            assert_eq!(fs::read(path).ok(), before);
+        }
+        assert!(coordinator
+            .store
+            .lock()
+            .unwrap()
+            .state()
+            .operation
+            .is_none());
+        let origin = &groups[0].replicas[0].url;
+        let mut invalid = plans[..6].to_vec();
+        invalid[0].shard.state = ShardState::Growing;
+        assert_eq!(
+            coordinator
+                .http
+                .post(format!("{origin}/internal/v4/admit"))
+                .json(&invalid)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        // An unresolved candidate also defers consolidation; admission must not
+        // implicitly cancel it or consume another operation attempt.
+        let candidate = worker::Candidate {
+            operation: "held".into(),
+            attempt: 0,
+            epoch: 1,
+            expected_revision: 0,
+            generation: 1,
+            plans: vec![plans[0].clone()],
+        };
+        assert!(coordinator
+            .http
+            .post(format!("{origin}/internal/v4/reserve"))
+            .json(&candidate)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        let (deferred, strict) = coordinator
+            .consolidate_if_admitted(&coverage, &groups, &plans, original.clone())
+            .await
+            .unwrap();
+        assert_eq!(deferred, original);
+        assert!(strict.is_empty());
+        let health: serde_json::Value = coordinator
+            .http
+            .get(format!("{origin}/internal/v4/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(health["candidate"]["operation"], "held");
+        for task in tasks {
+            task.abort();
+        }
+    }
+}

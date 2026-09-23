@@ -450,6 +450,10 @@ mod tests {
 
     fn args() -> Args {
         Args {
+            v4: false,
+            fixture_oracle: false,
+            oracle: None,
+            rate: None,
             server: "https://example.invalid".to_string(),
             parallelism: 2,
             duration: Duration::from_secs(10),

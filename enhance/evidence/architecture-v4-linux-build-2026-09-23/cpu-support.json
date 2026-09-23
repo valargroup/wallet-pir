@@ -1,0 +1,6 @@
+{
+  "cpu_probe": "avx2=1 bmi2=1 fma=1 pclmul=1",
+  "glibc_x86_64_v3_supported": true,
+  "environment": "Docker x86-64 emulation",
+  "performance_qualification": false
+}

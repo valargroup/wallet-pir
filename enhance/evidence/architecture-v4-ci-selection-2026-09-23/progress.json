@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "exit_code": 0,
+  "completed_executables": 13,
+  "passed": 94,
+  "failed": 0,
+  "ignored": 2,
+  "sum_reported_test_seconds": 367.8,
+  "test_threads": 1,
+  "platform": "macOS native",
+  "remote_ci": false,
+  "qualification": "unqualified"
+}

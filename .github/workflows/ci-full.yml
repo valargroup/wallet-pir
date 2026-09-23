@@ -78,6 +78,23 @@ jobs:
           -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
           -p transparent-measure -p transparent-regression
 
+  validate-v4-infra:
+    name: Validate isolated v4 infrastructure
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.8
+          terraform_wrapper: false
+      - name: Validate provider schema and mock fleet plans
+        working-directory: ops/infra/digitalocean/enhance-v4
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate -no-color
+          terraform test -no-color
+
   validate-ops:
     name: Validate Enhance operations
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
@@ -223,12 +240,14 @@ jobs:
           tools/ci/full-test.sh --locked --profile release-fast \
             -p enhance-pir-server --lib --bins \
             --test operator_payloads --test record_layout \
-            --test sharded_vs_monolithic --test worker_migration
+            --test sharded_vs_monolithic --test worker_migration \
+            --test v4_http --test v4_canonical_record --test v4_note_recovery \
+            --test v4_rpc
 
   release:
     name: Prepare qualified release artifacts
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [transparent-lint, transparent-test, enhance-lint, enhance-test, validate-ops]
+    needs: [transparent-lint, transparent-test, enhance-lint, enhance-test, validate-ops, validate-v4-infra]
     runs-on: ${{ fromJSON(vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     permissions:
@@ -245,9 +264,10 @@ jobs:
       - name: Build optimized release binaries once
         run: >-
           cargo build --locked --release
-          -p enhance-pir-server -p enhance-pir -p pir-apm
+          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p pir-apm
           -p transparent-filter-server -p transparent-shard-server
           --bin enhance-pir-server --bin enhance-pir-worker --bin enhance-pir-qualify
+          --bin enhance-pir-v4 --bin enhance-pir-load-test
           --bin enhance-pir-cli --bin pir-apm --bin transparent-filter-server
           --bin transparent-shard-server --bin shard-assign --bin shard-prune
           --bin shard-control --bin transparent-publish-controller --features enhance-pir/cli
@@ -255,6 +275,14 @@ jobs:
         env:
           SHA: ${{ github.sha }}
         run: python3 tools/ci/release.py assemble --sha "$SHA" --output release-bundles
+      - uses: actions/upload-artifact@v4
+        with:
+          name: enhance-pir-v4-candidate-${{ github.sha }}
+          path: release-bundles/enhance-pir-v4-candidate.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: enhance-pir-${{ github.sha }}

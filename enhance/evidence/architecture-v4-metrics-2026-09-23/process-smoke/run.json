@@ -1,0 +1,10 @@
+{
+  "kind": "v4-workload-driver-smoke",
+  "qualification": "unqualified",
+  "revision": "246423a1ce2377ab7b71d1c3e0745ebb153d1f99",
+  "dirty": true,
+  "revision_source": "checkout",
+  "binary_sha256": "49b83ac1ef6d5a489f20d98d8df2884698efe56160169d329816c3c9087cee64",
+  "report_sha256": "d6ac5fc4a2a465f9f7d0542d25e9927fd0297b8a06ea2aaa2d99ee5c7450e6ba",
+  "exit_code": 0
+}

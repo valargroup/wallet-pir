@@ -1,0 +1,5 @@
+{
+  "enhance/services/enhance-pir-server/src/v4/exercise.rs": "9fe68efd80e82ba1a7fb2bd840f16b3bb92515ef433675ccec636eaecb864590",
+  "enhance/ops/scripts/assess-v4-campaign.py": "2e98a5c4e4554b9489d4804f4423d8babbc420e4235a14b740642070863bf7c6",
+  "enhance/ops/tests/test_v4_campaign_assessment.py": "bf22fee26ffaf5676a31e415db063b1b3e69e31af82afecbf245a4d2474982d6"
+}

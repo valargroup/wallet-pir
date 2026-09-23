@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "linux_build_container": "wallet-pir-v4-linux-debug-slwogrt5",
+  "stage": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/wallet-pir-v4-linux-build-slwogrt5",
+  "qualification": "unqualified",
+  "linux_build": "passed",
+  "linux_runtime_container": "wallet-pir-v4-qemu-native",
+  "linux_runtime": "passed",
+  "linux_summary": {
+    "gate": {
+      "required": 2,
+      "observed": 3,
+      "passed": true
+    },
+    "generation_start": 1,
+    "generation_end": 4,
+    "correct_answers": 1265,
+    "warmup_correct_answers": 25,
+    "errors": 0,
+    "incorrect_answers": 0
+  },
+  "native_http": {
+    "passed": 2,
+    "failed": 0,
+    "ignored": 0,
+    "seconds": 419.1
+  },
+  "diagnostic_containers": "stopped"
+}

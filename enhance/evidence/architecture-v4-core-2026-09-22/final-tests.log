@@ -1,0 +1,138 @@
+    Blocking waiting for file lock on build directory
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+   Compiling enhance-pir-load-test v0.1.0 (/Users/roman/projects/wallet-pir/enhance/tools/loadtest)
+    Finished `release-fast` profile [optimized] target(s) in 11.58s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir-476533e6799aecf3)
+
+running 19 tests
+test record::tests::every_reserved_flag_encoding_is_rejected ... ok
+test record::tests::schema7_frozen_vector_and_metadata_validation ... ok
+test record::tests::schema_v7_preserves_ciphertext_offsets ... ok
+test types::tests::geometry_is_fixed_and_aligned ... ok
+test types::tests::logical_rows_double_at_the_published_boundary ... ok
+test types::tests::positions_map_to_the_expected_row_and_slot ... ok
+test types::tests::record_layout_contains_only_enhancement_fields ... ok
+test client::tests::rejects_malformed_public_parameter_base64 ... ok
+test v4::tests::adaptive_units_and_binding_reject_malformed_input ... ok
+test v4::tests::full_boundary_and_return_preserve_every_record ... ok
+test client::tests::constructs_an_atomic_session ... ok
+test client::tests::a_position_outside_the_tree_rejects_the_whole_set ... ok
+test client::tests::rejects_a_different_plaintext_profile_or_query_width ... ok
+test client::tests::rejects_a_used_row_count_that_does_not_follow_from_the_tree_size ... ok
+test client::tests::rejects_a_public_parameter_digest_mismatch ... ok
+test client::tests::rejects_the_superseded_nine_record_session ... ok
+test v4::tests::repeated_cycles_and_reorgs_keep_identity ... ok
+test client::tests::duplicates_inside_one_row_prepare_one_query ... ok
+test client::tests::a_run_crossing_offset_33_prepares_two_rows ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (target/release-fast/deps/enhance_pir_load_test-28b7dccc9945cf8f)
+
+running 4 tests
+test load::tests::errors_are_classified_for_overload_and_decode_failures ... ok
+test load::tests::seeded_query_pool_is_repeatable_and_bounded ... ok
+test load::tests::thresholds_check_error_rate_and_p99 ... ok
+test load::tests::collector_reports_latency_throughput_and_errors ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-faad3b1b7b1ccacd)
+
+running 56 tests
+test coordinator::tests::readiness_follows_the_live_snapshot ... ok
+test coordinator::tests::health_graces_short_syncs_and_builds ... ok
+test coordinator::tests::same_height_reorg_gets_a_distinct_generation ... ok
+test coordinator::tests::worker_hint_limit_covers_every_table ... ok
+test coordinator::tests::only_the_enhance_table_is_served ... ok
+test ipir::tests::shard_sum_wraps_without_u64_overflow ... ok
+test ipir::tests::enhance_rows_use_six_ipir_instances ... ok
+test ipir::tests::shard_combiners_reject_malformed_contributions ... ok
+test ipir::tests::sixteen_bit_row_encoding_preserves_the_odd_tail_byte_and_zero_padding ... ok
+test ipir::tests::every_layout_has_the_expected_instance_count ... ok
+test metrics::tests::observation_populates_snapshot_gauges ... ok
+test metrics::tests::middleware_counts_allowlisted_requests_and_balances_in_flight ... ok
+test artifact::tests::verification_rejects_corruption_truncation_and_trailing_data ... ok
+test coordinator::streaming_hint_tests::remote_hint_decodes_chunks_and_rejects_invalid_or_oversized_bodies ... ok
+test artifact::tests::failure_is_shared_but_partial_reads_and_interrupts_do_not_invalidate ... ok
+test metrics::tests::only_fixed_client_routes_are_labelled ... ok
+test metrics::tests::worker_replica_timer_records_terminal_metrics_and_balances_inflight ... ok
+test artifact::tests::pinned_files_survive_replacement_and_have_independent_readers ... ok
+test artifact::tests::slow_consumer_bounds_read_ahead_and_cancellation_stops_reader ... ok
+test artifact::tests::failed_atomic_write_keeps_previous_file_and_cleans_temporary ... ok
+test artifact::tests::stream_keeps_pin_after_eviction_and_reports_final_corruption ... ok
+test v4::control::tests::consolidation_converges_across_multiple_boundaries_without_active_sixth_slot ... ok
+test v4::control::tests::lender_counts_and_new_successor_cannot_be_sixth_active_shard ... ok
+test v4::control::tests::reservations_materialize_once_and_pins_block_reclamation ... ok
+test ipir::persistence_tests::streamed_database_rejects_short_corrupt_and_failed_reads_without_panicking ... ok
+test store::tests::journal_refuses_concurrent_writers ... ok
+test ingest::tests::appends_only_the_active_enhancement_journal ... ok
+test wire::streaming_tests::streaming_codec_matches_legacy_mph1_bytes ... ok
+test store::tests::records_must_match_the_layout ... ok
+test wire::streaming_tests::validation_reads_payload_in_bounded_chunks ... ok
+test wire::tests::crs_hint_round_trips_and_is_shape_strict ... ok
+test wire::tests::evaluate_request_rejects_bad_magic_truncation_and_shard_count ... ok
+test wire::tests::evaluate_response_round_trips_and_rejects_malformed_input ... ok
+test wire::tests::evaluate_wire_round_trips_and_rejects_trailing_bytes ... ok
+test worker::publication_recovery_tests::cancelled_preparation_keeps_slot_until_blocking_work_finishes ... ok
+test spend::tests::partitions_at_the_trailing_100000_blocks_and_rewinds ... ok
+test v4::control::tests::durable_epoch_fences_restarts_and_failed_transactions ... ok
+test worker::tests::activation_requires_prepared_shards ... ok
+test store::tests::incompatible_journals_are_rejected_without_mutation ... ok
+test spend::tests::restart_discards_an_uncheckpointed_tail ... ok
+test worker::tests::host_memory_reports_a_real_total ... ok
+test zakura::tests::canonical_ironwood_transaction_has_actual_fee_and_expiry ... ok
+test topology::tests::failed_append_keeps_active_topology ... ok
+test store::tests::append_restart_and_padding_are_deterministic ... ok
+test worker::tests::evaluation_requires_an_active_generation ... ok
+test worker::tests::every_table_has_shard_parameters_and_the_body_limit_covers_them ... ok
+test topology::tests::append_is_durable_idempotent_and_preserves_prefix ... ok
+test store::tests::rewind_truncates_records_and_allows_replacement_blocks ... ok
+test v4::worker::tests::aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http ... ok
+test v4::control::tests::publication_commits_manifest_placement_and_outcome_together ... ok
+test v4::control::tests::restart_at_every_phase_preserves_decision_and_fences_old_writer ... ok
+test ipir::persistence_tests::legacy_v7_artifacts_are_rejected_and_streamed_persistence_preserves_queries_and_bytes ... ok
+test worker::publication_recovery_tests::preparation_slot_stays_owned_while_cache_insertion_is_blocked ... ok
+test v4::runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart ... ok
+test v4::runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation ... ok
+test worker::publication_recovery_tests::same_digest_reprepare_repairs_failed_and_early_cancelled_hints ... ok
+
+test result: ok. 56 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.74s
+
+     Running unittests src/bin/qualify.rs (target/release-fast/deps/enhance_pir_qualify-72836791a0af82c8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/server.rs (target/release-fast/deps/enhance_pir_server-7a7ee35436ab6dd8)
+
+running 3 tests
+test tests::rejects_removed_tables_option ... ok
+test tests::a_config_still_declaring_a_spend_pool_is_accepted_and_ignored ... ok
+test tests::a_config_without_a_spend_pool_is_accepted ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/v4.rs (target/release-fast/deps/enhance_pir_v4-5615a8dd8c334fa5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/worker.rs (target/release-fast/deps/enhance_pir_worker-5db8397bf61d31f7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/v4_http.rs (target/release-fast/deps/v4_http-00dd7166ce717f2c)
+
+running 2 tests
+test full_shard_loan_return_over_http_preserves_old_queries ... ignored, full 32K lifecycle fixture; run on an isolated host with at least 16 GiB RAM
+test distributed_round_trip_retention_failover_and_restart has been running for over 60 seconds
+test distributed_round_trip_retention_failover_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 121.13s
+

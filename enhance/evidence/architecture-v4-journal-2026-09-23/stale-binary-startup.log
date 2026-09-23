@@ -1,0 +1,5 @@
+error: unexpected argument '--capacity-fallback-rows-per-second' found
+
+Usage: enhance-pir-v4 coordinator --data-dir <DATA_DIR> --worker-config <WORKER_CONFIG> --listen <LISTEN> --isolated-fixture --fixture-records <FIXTURE_RECORDS> --fixture-append-records <FIXTURE_APPEND_RECORDS> --poll-seconds <POLL_SECONDS>
+
+For more information, try '--help'.

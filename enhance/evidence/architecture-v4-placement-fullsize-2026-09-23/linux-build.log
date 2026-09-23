@@ -1,0 +1,5 @@
+   Compiling enhance-pir v0.1.0 (/work/enhance/crates/enhance-pir)
+   Compiling transparent-spend-pir v0.1.0 (/work/enhance/crates/transparent-spend-pir)
+   Compiling enhance-pir-server v0.1.0 (/work/enhance/services/enhance-pir-server)
+   Compiling enhance-pir-load-test v0.1.0 (/work/enhance/tools/loadtest)
+    Finished `release-fast` profile [optimized] target(s) in 37.50s

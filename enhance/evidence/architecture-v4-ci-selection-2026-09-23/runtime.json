@@ -1,0 +1,7 @@
+{
+  "platform": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.91.0 (f8297e351 2025-10-28)",
+  "coordinator_binary_sha256": "7d93cdca51baab76e330110b28b9e31c80058101f38d32ddc67a66d1cca795c8",
+  "remote_ci": false,
+  "qualification": "unqualified"
+}

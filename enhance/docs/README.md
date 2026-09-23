@@ -18,6 +18,7 @@ actually been observed.
 | [Integration](integration.md) | Rust client, CLI, wallet responsibilities, sessions and failures |
 | [Protocol](protocol.md) | Records, initialization, binary messages and validation |
 | [Architecture](architecture.md) | Repository layout, ingestion, storage, queries and replicas |
+| [Architecture 2 implementation](architecture_2-implementation.md) | Opt-in v4 runtime, local validation, and outstanding qualification gates |
 | [Deployment](deployment.md) | Local operation, release preparation, cutover, rollback and monitoring |
 | [Capacity expansion](capacity-expansion.md) | Infrastructure migration, qualification and controller operation |
 | [16-bit expansion](plaintext16-expansion.md) | Rationale, exact capacity benefit, correctness evidence and migration contract |

@@ -1,0 +1,14 @@
+#cloud-config
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - jq
+  - python3
+runcmd:
+  - install -d -m 0700 /srv/enhance-pir-v4
+  - test -f /swapfile || (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile)
+  - swapon /swapfile
+  - grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - echo 'vm.swappiness=10' > /etc/sysctl.d/90-enhance-pir-v4.conf
+  - sysctl -p /etc/sysctl.d/90-enhance-pir-v4.conf

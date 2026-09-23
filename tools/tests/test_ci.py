@@ -109,6 +109,36 @@ class ReleaseTests(unittest.TestCase):
             for kind in release.BINARIES:
                 release.extract(root / 'bundles' / f'{kind}.tar.gz', root / kind, SHA, kind)
 
+    def test_v4_candidate_is_separate_and_cannot_claim_qualification(self):
+        kind = 'enhance-pir-v4-candidate'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'target/release').mkdir(parents=True)
+            for name in release.BINARIES[kind]:
+                (root / 'target/release' / name).write_bytes(b'candidate binary')
+            release.assemble(SHA, root / 'target', root / 'bundles', kind)
+            archive = root / 'bundles' / f'{kind}.tar.gz'
+            release.extract(archive, root / 'verified', SHA, kind)
+            metadata = json.loads((root / 'verified/candidate.json').read_text())
+            self.assertEqual(metadata['qualification'], 'unqualified')
+            self.assertIsInstance(metadata['source_dirty'], bool)
+            self.assertFalse((root / 'bundles/enhance-pir.tar.gz').exists())
+            with self.assertRaises(ValueError):
+                release.extract(archive, root / 'legacy', SHA, 'enhance-pir')
+            data = {p.name: p.read_bytes() for p in (root / 'verified').iterdir()}
+            metadata['qualification'] = 'passed'
+            data['candidate.json'] = json.dumps(metadata).encode()
+            data['SHA256SUMS'] = ''.join(f'{hashlib.sha256(v).hexdigest()}  {k}\n'
+                                        for k, v in data.items() if k != 'SHA256SUMS').encode()
+            with tarfile.open(root / 'forged.tar.gz', 'w:gz') as forged:
+                for name, value in data.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(value)
+                    forged.addfile(member, io.BytesIO(value))
+            with self.assertRaises(ValueError):
+                release.extract(root / 'forged.tar.gz', root / 'forged', SHA, kind)
+            self.assertFalse((root / 'forged').exists())
+
 
 class TimingTests(unittest.TestCase):
     def test_nearest_rank_p95(self):
