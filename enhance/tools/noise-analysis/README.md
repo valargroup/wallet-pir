@@ -71,7 +71,7 @@ cargo test --locked --release --manifest-path enhance/tools/noise-analysis/Cargo
 When switching executables, use a new output directory and `--reuse-results DIR`
 only for explicitly trusted prior results whose extractor equivalence has been
 checked. The manifest records prior manifest hashes and summaries retain each
-case executable hash. `compare.py LEFT RIGHT` checks deterministic evidence
+case executable hash. `compare.py LEFT RIGHT --expected-cases 432` requires full coverage and checks deterministic evidence
 across platforms; fresh-query empirical samples naturally differ.
 
 ## Captured snapshots

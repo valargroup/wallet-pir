@@ -27,7 +27,10 @@ def main():
     parser.add_argument('left', type=Path)
     parser.add_argument('right', type=Path)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--expected-cases', type=int, help='Fail unless both directories contain exactly this many matching cases')
     args = parser.parse_args()
+    if args.expected_cases is not None and args.expected_cases <= 0:
+        parser.error('expected case count must be positive')
     left = {p.name: p for p in args.left.glob('r*-u*-*-s*.json')}
     right = {p.name: p for p in args.right.glob('r*-u*-*-s*.json')}
     shared = sorted(left.keys() & right.keys())
@@ -41,6 +44,8 @@ def main():
         args.output.write_text(text)
     else:
         print(text, end='')
+    if args.expected_cases is not None and (len(shared) != args.expected_cases or result['left_only'] or result['right_only']):
+        raise SystemExit('incomplete cross-platform campaign')
 
 
 if __name__ == '__main__':
