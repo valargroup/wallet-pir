@@ -19,6 +19,15 @@ pub fn weights(
     pre: &[QueryPackPreprocessed<'_>],
     top: &TopKeyImages<'_>,
 ) -> Vec<Value> {
+    weights_using(r, pre, top, true)
+}
+
+fn weights_using(
+    r: &RlweParams,
+    pre: &[QueryPackPreprocessed<'_>],
+    top: &TopKeyImages<'_>,
+    fast: bool,
+) -> Vec<Value> {
     let n = r.d;
     let ell = r.gadget.ell;
     let exps: Vec<usize> = top
@@ -77,8 +86,12 @@ pub fn weights(
             assert!(d[..(ell-1)*n].iter().all(|v| (-z/2..z/2).contains(v)));
             assert!(d[(ell-1)*n..].iter().all(|v| (0..=z).contains(v)));
         }
+        let fast_g = fast.then(|| crate::fast_weights::grouped(r, block, top));
         let (sq, absolute, signed, action, maximum) = (0..n).into_par_iter().map(|t| {
             let mut w = vec![0_i64; ell*n];
+            if let Some(g) = &fast_g {
+                for j in 0..ell { w[j*n..(j+1)*n].copy_from_slice(&g[j][t*n..(t+1)*n]); }
+            } else {
             for (step, &exp) in exps.iter().enumerate() {
                 let pos = t*exp % (2*n); let shift=pos%n; let sign=if pos<n {1} else {-1};
                 for j in 0..ell {
@@ -86,6 +99,7 @@ pub fn weights(
                     for k in shift..n { dst[k] += sign*src[k-shift]; }
                     for k in 0..shift { dst[k] -= sign*src[n+k-shift]; }
                 }
+            }
             }
             let mut sq=vec![0_u128;n]; let mut ab=vec![0_u128;n]; let mut si=vec![0_i128;n];
             let mut ac=vec![[0_i128;2];n]; let mut mx=vec![0_u128;n];
@@ -117,6 +131,34 @@ mod tests {
     use inspiring::GadgetParams;
 
     #[test]
+    #[ignore = "explicit full-degree reference/fast equivalence check"]
+    fn fast_matches_full_degree_reference() {
+        let profile = ipir_sp::ProductionSimplePirParams::new(
+            4096,
+            2048 * 16,
+            ipir_sp::SimplePirProfile::P16Q46,
+        )
+        .unwrap();
+        let r = profile.rlwe();
+        let mut crs = PolyMatrixRaw::zero(&r.spiral, r.d, 1);
+        for (i, v) in crs.as_mut_slice().iter_mut().enumerate() {
+            *v = (i as u64).wrapping_mul(0x9e3779b97f4a7c15).rotate_left(13) % r.q;
+        }
+        let pre = vec![QueryPackPreprocessed::build(r, &crs.ntt()).unwrap()];
+        let top = TopKeyImages::build(r);
+        let at = std::time::Instant::now();
+        let reference = weights_using(r, &pre, &top, false);
+        let reference_seconds = at.elapsed().as_secs_f64();
+        let at = std::time::Instant::now();
+        let fast = weights_using(r, &pre, &top, true);
+        assert_eq!(fast, reference);
+        eprintln!(
+            "full-degree exact reference equality: reference={reference_seconds:.3}s fast={:.3}s",
+            at.elapsed().as_secs_f64()
+        );
+    }
+
+    #[test]
     fn grouped_weights_match_every_tiny_basis_vector() {
         let r = RlweParams::new(
             8,
@@ -136,6 +178,7 @@ mod tests {
         let pre = vec![QueryPackPreprocessed::build(&r, &crs.ntt()).unwrap()];
         let top = TopKeyImages::build(&r);
         let grouped = weights(&r, &pre, &top);
+        let fast = crate::fast_weights::grouped(&r, &pre[0], &top);
         let mut sq = vec![0u128; r.d];
         let mut ab = vec![0u128; r.d];
         let mut si = vec![0i128; r.d];
@@ -143,7 +186,7 @@ mod tests {
         // A dense independent oracle: inject every original error basis vector
         // through the backend and center the output. Tiny weights cannot wrap q/2.
         for family in 0..2 {
-            for j in 0..r.gadget.ell {
+            for (j, fast_digit) in fast.iter().enumerate() {
                 for t in 0..r.d {
                     let mut g = PolyMatrixRaw::zero(&r.spiral, 1, r.gadget.ell);
                     let mut h = PolyMatrixRaw::zero(&r.spiral, 1, r.gadget.ell);
@@ -164,6 +207,9 @@ mod tests {
                         } else {
                             v as i128
                         };
+                        if family == 0 {
+                            assert_eq!(fast_digit[t * r.d + k] as i128, w);
+                        }
                         assert!(w.abs() < 1000);
                         sq[k] += (w * w) as u128;
                         ab[k] += w.unsigned_abs();

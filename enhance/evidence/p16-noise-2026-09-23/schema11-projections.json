@@ -1,0 +1,30 @@
+[
+  {
+    "generation": 69,
+    "source_record_sha256": "12f5eb4c466c0ce0c367993938daa651bf4c9fe91674d0447b97c39dcb990eea",
+    "projected_record_sha256": "a44d8e3882144e4c29bc08be16368313437608f78b34d8bb7a42073d7fd8bf27",
+    "transformation": "drop each schema-10 record first 84 bytes (ephemeral key and ciphertext prefix)",
+    "deployed_setup_match": false
+  },
+  {
+    "generation": 71,
+    "source_record_sha256": "11c97f49b48d524612dce5f69147a5d537e46a6e3fa1a598f2b94a53011fa712",
+    "projected_record_sha256": "f413559b020182b5dd4b45073f4e6304fabfe4671096bdd8939221e28d666402",
+    "transformation": "drop each schema-10 record first 84 bytes (ephemeral key and ciphertext prefix)",
+    "deployed_setup_match": false
+  },
+  {
+    "generation": 72,
+    "source_record_sha256": "dc9c43bef1f966091cb1b21b33529be3fcab5b4aee537d146591c86660b5fac0",
+    "projected_record_sha256": "d20e1e134833d94c110d192cc5e653a8201673e0b9e5b4071a092810435c7625",
+    "transformation": "drop each schema-10 record first 84 bytes (ephemeral key and ciphertext prefix)",
+    "deployed_setup_match": false
+  },
+  {
+    "generation": 73,
+    "source_record_sha256": "10603666e6c9de6d4203ae02025d4e0e3f7cc98b3bd83f1496655f2fcd8aa49f",
+    "projected_record_sha256": "d1a1914f46d3193f1a8fda23990a38212204945eb0e6353730e447ba7a20eb23",
+    "transformation": "drop each schema-10 record first 84 bytes (ephemeral key and ciphertext prefix)",
+    "deployed_setup_match": false
+  }
+]

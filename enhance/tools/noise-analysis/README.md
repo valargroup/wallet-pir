@@ -55,6 +55,21 @@ no partial case is silently counted as successful. A process error without a
 complete result stops the campaign. A decoding failure is saved and remains a
 failure while other cases are evaluated.
 
+The accelerated extractor uses exact backend NTT transforms and centered lifting
+to compute the same grouped weights faster. The original method remains as a
+reference. Run the full-degree equivalence regression explicitly:
+
+```sh
+cargo test --locked --release --manifest-path enhance/tools/noise-analysis/Cargo.toml \
+  --bin accelerated -- --include-ignored
+```
+
+When switching executables, use a new output directory and `--reuse-results DIR`
+only for explicitly trusted prior results whose extractor equivalence has been
+checked. The manifest records prior manifest hashes and summaries retain each
+case executable hash. `compare.py LEFT RIGHT` checks deterministic evidence
+across platforms; fresh-query empirical samples naturally differ.
+
 ## Captured snapshots
 
 Supply a read-only captured contiguous record file with `--pattern records

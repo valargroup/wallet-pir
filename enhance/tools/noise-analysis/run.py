@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import itertools
+import shutil
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ def main():
     p.add_argument('--jobs', type=int, default=4)
     p.add_argument('--reverse', action='store_true', help='Evaluate larger configurations first')
     p.add_argument('--source-revision')
+    p.add_argument('--reuse-results', type=Path, action='append', default=[], help='Explicitly trusted, equivalence-checked prior campaigns')
     args = p.parse_args()
     binary = args.binary.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -32,6 +34,17 @@ def main():
                   shards=args.shards, patterns=args.patterns, edge=args.edge,
                   rayon_threads=os.environ.get('RAYON_NUM_THREADS'),
                   source_revision=args.source_revision or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip())
+    reuse = []
+    accepted_binaries = {digest}
+    for directory in args.reuse_results:
+        prior_bytes = (directory / 'manifest.json').read_bytes()
+        prior = json.loads(prior_bytes)
+        for field in ('matrix', 'queries', 'shards', 'patterns', 'edge'):
+            if prior[field] != config[field]:
+                raise SystemExit(f'reuse configuration mismatch: {field}')
+        accepted_binaries.add(prior['binary_sha256'])
+        reuse.append(dict(path=str(directory.resolve()), manifest_sha256=hashlib.sha256(prior_bytes).hexdigest()))
+    config['trusted_reuse'] = reuse
     manifest = args.output / 'manifest.json'
     if manifest.exists() and json.loads(manifest.read_text()) != config:
         raise SystemExit('resume manifest mismatch; use a new output directory')
@@ -44,6 +57,20 @@ def main():
         name = f'r{shape["domain_rows"]}-u{used}-{pattern}-s{shard}'
         path = args.output / f'{name}.json'
         if not path.exists():
+            for directory in args.reuse_results:
+                candidate = directory / path.name
+                if not candidate.exists():
+                    continue
+                try:
+                    previous = json.loads(candidate.read_bytes())
+                except json.JSONDecodeError:
+                    continue  # A concurrent producer has not finished this case.
+                if previous['binary_sha256'] not in accepted_binaries:
+                    raise SystemExit('untrusted prior executable')
+                analyze(previous)
+                shutil.copyfile(candidate, path)
+                break
+        if not path.exists():
             with (args.output / f'{name}.log').open('w') as log:
                 command = [str(binary), '--used-rows', str(used), '--pattern', pattern,
                            '--shard', shard, '--queries', str(args.queries), '--output', str(path)]
@@ -51,9 +78,9 @@ def main():
                 if completed.returncode and not path.exists():
                     raise SystemExit(f'{name}: extraction failed; see log')
         x = json.loads(path.read_text())
-        if x['binary_sha256'] != digest or x['used_rows'] != used or x['pattern'] != pattern or x['shard'] != int(shard) or len(x['queries']) != args.queries:
+        if x['binary_sha256'] not in accepted_binaries or x['used_rows'] != used or x['pattern'] != pattern or x['shard'] != int(shard) or len(x['queries']) != args.queries:
             raise SystemExit(f'{name}: stale/mismatched case')
-        row = dict(case=name, sha256=hashlib.sha256(path.read_bytes()).hexdigest(), **analyze(x))
+        row = dict(case=name, binary_sha256=x['binary_sha256'], sha256=hashlib.sha256(path.read_bytes()).hexdigest(), **analyze(x))
         return row
     specs = list(itertools.product(matrix, edges, args.patterns.split(','), args.shards.split(',')))
     if args.reverse:

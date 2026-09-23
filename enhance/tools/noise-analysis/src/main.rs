@@ -1,4 +1,5 @@
 mod certificate;
+mod fast_weights;
 use clap::Parser;
 use enhance_pir::{
     v4::{self, Geometry},
@@ -179,20 +180,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = IPIRClient::new(&profile);
     let seed = v4::setup_seed(args.shard);
     let setup = client.generate_public_query_setup_simplepir_from_seed(seed);
-    let mono = YServer::from_profile(
-        &profile,
-        (0..p.db_rows).flat_map(|row| (0..p.db_cols).map(move |col| value(row, col))),
-        false,
-        true,
-    );
+    // Generate the public fixture once; both production/reference servers own
+    // separate transposed copies. This avoids recomputing record bytes while
+    // hashing and constructing each partition.
+    let database: Vec<u16> = (0..p.db_rows)
+        .flat_map(|row| (0..p.db_cols).map(move |col| value(row, col)))
+        .collect();
+    let mono = YServer::from_profile(&profile, database.iter().copied(), false, true);
     let mut db_hash = Sha256::new();
     let mut sums = vec![0u64; p.db_cols];
-    for row in 0..p.db_rows {
-        for (col, sum) in sums.iter_mut().enumerate() {
-            let v = value(row, col);
-            db_hash.update(v.to_le_bytes());
+    let mut encoded_row = vec![0; p.db_cols * 2];
+    for row in database.chunks_exact(p.db_cols) {
+        for (col, (&v, sum)) in row.iter().zip(&mut sums).enumerate() {
+            encoded_row[col * 2..col * 2 + 2].copy_from_slice(&v.to_le_bytes());
             *sum += u64::from(v);
         }
+        db_hash.update(&encoded_row);
     }
     let mut units = Vec::new();
     let mut combined: Option<Vec<ipir_sp::server::CrsBlock>> = None;
@@ -206,7 +209,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let count = spec.allocated_rows as usize;
         let server = YServer::new_auto_kernel_from_profile(
             &up,
-            (offset..offset + count).flat_map(|row| (0..p.db_cols).map(move |col| value(row, col))),
+            database[offset * p.db_cols..(offset + count) * p.db_cols]
+                .iter()
+                .copied(),
             false,
             true,
         );
@@ -274,8 +279,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             (mix(i as u64) % used as u64) as usize
         };
-        let expected: Vec<u64> = (0..p.db_cols)
-            .map(|col| u64::from(value(target, col)))
+        let expected: Vec<u64> = database[target * p.db_cols..(target + 1) * p.db_cols]
+            .iter()
+            .map(|&v| u64::from(v))
             .collect();
         let (query, keys, private_seed) = client.generate_fresh_query_simplepir(&setup, target);
         let bytes = query.to_switched_bytes(r.q, p.query_bits);

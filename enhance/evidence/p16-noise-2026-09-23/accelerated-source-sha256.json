@@ -1,0 +1,9 @@
+{
+  "source_sha256": {
+    "main.rs": "584d8e619e987f8b871b7e3d63e0e4772e48e410eb979b157cf5e37cf529a0a6",
+    "certificate.rs": "daff31bb2722c43e3a1b7095c63d79e6846c950faf6a9b831eec7bfd4b2d1ef1",
+    "fast_weights.rs": "9b37376afacffda1be8c04f00c28586b71bc01fd82c5b92219abd271f64b6b48",
+    "bin/accelerated.rs": "7502725ef10ebb560e3063b19f3681dafc222ad792a9414d1a8742475d29f502"
+  },
+  "note": "Archived sources are those compiled for accelerated campaigns. Final source changes only the tiny-basis test loop to iterator/enumerate for Clippy; runtime source is identical."
+}

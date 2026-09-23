@@ -2,8 +2,8 @@
 
 **Decision: not cleared for an unrestricted production rollout.** Current-data
 numerical results meet the requested `2^-128` full-query target, but dense larger
-databases exhaust the current sufficient budget. Independent review of the
-adapted bound remains pending. No decoding failure has been observed in the
+databases exhaust the current sufficient budget. The independent code-and-mathematics review accepted the conditional bound;
+see `independent-review.md`. This is not an external cryptographic audit. No decoding failure has been observed in the
 completed cases. These are distinct claims.
 
 The assessed wallet source is `8e6b6c5` (schema 11), with IPIR+SP pinned to
@@ -22,6 +22,9 @@ remain separate. A numerical pass is not an independent review.
 | All-maximum reference | 8,192 / 8,192 | 128 / 128 | 8.96% | `2^-216`, target met |
 | All-maximum largest domain | 32,768 / 32,768 | 128 / 128 | 9.83% | Not certified: deterministic budget exhausted |
 | Canonical generation 69 data projected to schema 11 | 17,419 / 32,768 | 128 / 128 | 9.09% | `2^-185`, target met |
+| Generation 71 projection | 17,421 / 32,768 | 128 / 128 | 9.11% | `2^-186`, target met |
+| Generation 72 projection | 17,422 / 32,768 | 128 / 128 | 8.99% | `2^-186`, target met |
+| Generation 73 projection | 17,423 / 32,768 | 128 / 128 | 9.32% | `2^-185`, target met |
 
 `priority-results.json` contains exact numbers. Compressed source evidence is
 included beside this report and can be checked without running Rust:
@@ -32,8 +35,10 @@ python3 enhance/tools/noise-analysis/verify.py enhance/evidence/p16-noise-2026-0
 
 The reference 8K result used the portable worker kernel. The campaign and other
 priority results use runtime-selected worker kernels compared against the
-portable monolithic reference. The source-identity file records the sole
-lint-only parity-expression change after campaign binaries were built.
+portable monolithic reference. Source-identity files and compressed source archives
+distinguish the original reference, v2 campaign, and accelerated extractors.
+Machine-readable verifier output retains its generic independent-review-pending
+label; the separate review report records the completed conditional review.
 
 ## Why the wide dense cases are not certified
 
@@ -92,6 +97,8 @@ Completed harness checks:
 
 - Exhaustive tiny-ring basis-vector comparison of grouped weight moments with
   the packing backend, plus two full-size public error-action crosschecks.
+- Full-degree exact equality of reference and accelerated extractors on ARM and
+  native AVX512 Linux, plus end-to-end equality on 8K maximum and generation 69.
 - Six Python verifier tests, including malformed/incomplete evidence,
   profile mismatch, exhausted budgets, decoding failures, and the optimized
   rational Chernoff parameter.
@@ -103,10 +110,10 @@ The existing production persistence/reload benchmark completed successfully: all
 2K/4K/8K units persisted and reloaded, all four query domains reused and reloaded
 without canonical rereads, and 16 exact-answer queries passed. See
 `persistence.jsonl`. This is functional evidence, not hardware qualification.
-Remaining captured-data projections will be recorded here.
+All four unique captured-data projections are recorded above.
 
 For production acceptance, finish the required coverage, resolve the wide-dense
-proof gap, independently review the adapted extractor/bound, and certify the
+proof gap, retain the reviewed extractor/bound and certify the
 actual release's snapshot/setup pair. Continued publication needs fresh
 certificates or a reviewed theorem covering future snapshots. This PR adds
 analysis tooling and evidence only; it does not enforce a publication gate.
