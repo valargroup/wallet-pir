@@ -189,6 +189,25 @@ class Journal:
         operation['phase'] = 'provisioned' if complete else 'retryable'
         self.save()
 
+    def finish_registration(self, health, inventory):
+        """Close an expansion only after the coordinator acknowledges its pair."""
+        operation = self.state['operation']
+        if operation is None or operation['phase'] != 'bootstrapped':
+            raise ValueError('registration requires a bootstrapped operation')
+        request = health.get('capacity', {}).get('requests', {}).get(operation['id'], {})
+        if (health.get('protocol') != PROTOCOL
+                or health.get('registered_groups') != operation['target_groups']
+                or request.get('registered') is not True
+                or inventory_count(inventory) != operation['target_groups']
+                or len(operation['resources']) != operation['target_groups'] * 2):
+            raise ValueError('coordinator has not acknowledged the complete pair')
+        result = copy.deepcopy(operation)
+        result['phase'] = 'registered'
+        result['registered_inventory_digest'] = digest(inventory)
+        self.state['completed'][operation['id']] = result
+        self.state['operation'] = None
+        self.save()
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

@@ -235,7 +235,7 @@ class SamplingTests(unittest.TestCase):
         self.assertGreater(rollup['Rss'], 0)
         self.assertGreater(module.start_ticks(Path('/proc/self/stat')), 0)
         group = Path('/sys/fs/cgroup')
-        if (group / 'memory.stat').exists():
+        if (group / 'memory.stat').exists() and (group / 'memory.events').exists():
             memory = module.counters((group / 'memory.stat').read_text())
             self.assertTrue({'anon', 'file', 'shmem', 'kernel'} <= memory.keys())
         # The root cgroup exposes memory.stat but not memory.events, which only

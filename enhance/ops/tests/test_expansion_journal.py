@@ -96,6 +96,32 @@ class ExpansionJournalTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 journal.observe(HEALTH, inventory, POLICY)
 
+    def test_registration_requires_coordinator_acknowledgement_and_closes_request(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with module.Journal(temp) as journal:
+                journal.observe(HEALTH, INVENTORY, POLICY)
+                journal.record_resources(ALL)
+                journal.state['operation']['phase'] = 'bootstrapped'
+                journal.save()
+                updated = {'groups': [*INVENTORY['groups'], {'name': 'g2', 'replicas': [
+                    {'name': 'r3', 'url': 'http://192.0.2.3:8291'},
+                    {'name': 'r4', 'url': 'http://192.0.2.4:8291'}]}]}
+                acknowledged = copy.deepcopy(HEALTH)
+                acknowledged['registered_groups'] = 2
+                acknowledged['capacity']['requests'][REQUEST['id']]['registered'] = True
+                for denied in (HEALTH, dict(acknowledged, registered_groups=3)):
+                    with self.assertRaises(ValueError):
+                        journal.finish_registration(denied, updated)
+                    self.assertEqual(journal.state['operation']['phase'], 'bootstrapped')
+                journal.finish_registration(acknowledged, updated)
+            with module.Journal(temp) as journal:
+                self.assertIsNone(journal.state['operation'])
+                completed = journal.state['completed'][REQUEST['id']]
+                self.assertEqual(completed['phase'], 'registered')
+                self.assertEqual(completed['registered_inventory_digest'], module.digest(updated))
+                with self.assertRaises(ValueError):
+                    journal.observe(HEALTH, INVENTORY, POLICY)
+
     def test_invalid_or_cross_protocol_demand_never_creates_operation(self):
         mutations = [
             lambda h: h.update(protocol='ironwood-enhance-pir-v3'),
