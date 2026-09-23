@@ -1,0 +1,16 @@
+{
+  "binary_sha256": "258fc7d0070b821d34710d5c25edbf9176472c6e39defca020f8944a045c1def",
+  "concurrency": 2,
+  "error": "error sending request for url (http://10.142.0.16:8091/internal/v4/prepare)",
+  "finished_wall_ns": 1790167655160073770,
+  "kind": "enhance-v4-workload",
+  "min_publications": 300,
+  "origin": "http://127.0.0.1:8280",
+  "profile": "sealed",
+  "publications": 0,
+  "qualification": "unqualified",
+  "seconds_requested": 21600,
+  "started_wall_ns": 1790167124303951368,
+  "status": "failed",
+  "workload_host_id_sha256": "dff17613609d6a64aa857c10121d3f5c006e6b6120d12e5299660f5206b8b81a"
+}

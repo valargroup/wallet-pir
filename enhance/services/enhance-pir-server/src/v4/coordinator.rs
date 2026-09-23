@@ -19,6 +19,16 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{RwLock, Semaphore};
 
+// Native full-group cold preparation exceeded the shared 180-second HTTP
+// deadline during sealed qualification. Queries/control probes keep their short
+// deadlines; this bounded offline operation also covers recovery replay.
+const PREPARATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn preparation_request(http: &reqwest::Client, worker_url: &str) -> reqwest::RequestBuilder {
+    http.post(format!("{worker_url}/internal/v4/prepare"))
+        .timeout(PREPARATION_TIMEOUT)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SavedSnapshot {
     manifest: Manifest,
@@ -699,8 +709,7 @@ impl Coordinator {
                     return Err("worker lost committed candidate; repair required".into());
                 }
                 checked(
-                    self.http
-                        .post(format!("{}/internal/v4/prepare", replica.url))
+                    preparation_request(&self.http, &replica.url)
                         .json(&candidate)
                         .send()
                         .await
@@ -1156,8 +1165,7 @@ impl Coordinator {
                     }
                 }
                 checked(
-                    self.http
-                        .post(format!("{}/internal/v4/prepare", replica.url))
+                    preparation_request(&self.http, &replica.url)
                         .json(candidate)
                         .send()
                         .await
@@ -1506,6 +1514,35 @@ async fn metrics(
 
 #[cfg(test)]
 mod admission_tests {
+    #[tokio::test]
+    async fn preparation_outlives_default_http_deadline() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = axum::Router::new().route(
+            "/internal/v4/prepare",
+            axum::routing::post(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                axum::http::StatusCode::OK
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(10))
+            .build()
+            .unwrap();
+        let ordinary = http
+            .post(format!("http://{address}/internal/v4/prepare"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(ordinary.is_timeout());
+        let result = super::preparation_request(&http, &format!("http://{address}"))
+            .send()
+            .await;
+        server.abort();
+        assert_eq!(result.unwrap().status(), axum::http::StatusCode::OK);
+    }
+
     use super::*;
     use axum::response::IntoResponse;
     use sha2::{Digest, Sha256};

@@ -1,6 +1,6 @@
 # Architecture 2 conformance audit
 
-Status: **deployed; six-sealed campaign building; qualification incomplete**.
+Status: **deployed; first sealed attempt failed; qualification incomplete**.
 This maps [architecture 2](architecture_2.md) to implementation and observed tests.
 It is not a release certificate. Source and binary hashes bound each evidence set.
 
@@ -36,9 +36,10 @@ is restored with both replicas. The active workload completed six hours and
 Worker 1 has a measurement gap from 06:51:47 to 09:50:33 UTC on September 23.
 The failed sampler restart and failed initial automatic restoration are recorded
 in the production evidence. Neither the gap nor missing observations are treated
-as passing measurements. The six-sealed campaign is now building on the c-4 pair with coordinator-hosted
-helper replicas. Canonical serving is temporarily stopped for that campaign,
-with automatic restoration supervised. See production evidence `sealed-start/`.
+as passing measurements. The first six-sealed attempt failed before measurement during cold preparation.
+The supervisor restored canonical serving. A preparation-specific request
+deadline fix is tested locally; deployment and a fresh campaign remain. See
+[the failure evidence](../evidence/architecture-v4-sealed-deadline-2026-09-23/README.md).
 
 ## Scope and acceptance rules
 

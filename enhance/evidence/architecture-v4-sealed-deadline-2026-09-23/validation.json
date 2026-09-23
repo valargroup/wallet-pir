@@ -1,0 +1,8 @@
+{
+  "command": "cargo test --locked -p enhance-pir-server --lib",
+  "passed": 75,
+  "failed": 0,
+  "ignored": 0,
+  "scope": "local server library regression; new preparation timeout included",
+  "deployment": "pending"
+}
