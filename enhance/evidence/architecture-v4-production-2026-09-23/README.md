@@ -57,8 +57,8 @@ state is back at `worker`. Legacy services and automatic provisioning remain off
 
 Implementation and cleanup were pushed to main at
 `436dcc7efda3e09a6734342fd4f55e07bf1d9d95`; this evidence update follows it.
-Sealed-role, full-size overload, uninterrupted worker-1 qualification and legacy
-rollback rehearsal remain outstanding.
+Sealed-role, full-size overload and uninterrupted worker-1 qualification
+remain outstanding.
 
 The deployed canonical peer-row repair rehearsal passed. The CLI refused repair
 while worker 1 held its live lock. After stopping it, one 8K-row artifact was
@@ -73,3 +73,15 @@ generation 50 was published on both replicas. See
 proves this canonical missing-row recovery case, not all corruption or full-size
 recovery scenarios. The preserved original and peer copy remain on worker 1 at
 `/srv/enhance-pir-v4/validation/repair-20260923`.
+
+Legacy rollback and return to v4 were rehearsed on the production fleet. The
+preserved schema-8 CLI matched its recorded release checksum. Legacy workers
+and coordinator recovered the canonical journal and all nine public HTTPS PIR
+queries matched the preserved-record oracle. The fleet then returned to v4:
+443 measured and 28 warmup answers were correct, zero errors, 244.223 ms measured
+p99 at concurrency two. Both replicas were published after restoration. Legacy
+services and autoscaling remain disabled. `completed/rollback-rehearsal.json`
+records the protocol metadata, positions, client checksum and return-to-v4 load.
+Large public-parameter base64 is represented by its encoded length and SHA-256.
+This verifies service rollback with preserved separate data directories; it does
+not imply that a legacy binary can open a v4 data directory.

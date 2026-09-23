@@ -94,6 +94,13 @@ Keep legacy autoscaling disabled because the user requested no new hosts.
 
 ## Legacy rollback rehearsal
 
+Rehearsed successfully on September 23: nine exact schema-8 public queries, then
+443 exact v4 public load queries after returning to v4. See the production
+evidence `completed/rollback-rehearsal.json`. The preserved schema-8 CLI at
+`/opt/enhance-pir-v4/legacy-validation/enhance-pir-cli` is compatible with the
+legacy server; the current v4 load client must not be used to validate v2 wire.
+
+
 Stop the v4 coordinator and both v4 worker services first. Start the existing
 `enhance-pir-worker.service` on both workers, then `enhance-pir-server.service` on
 the coordinator. Their original binaries, units and data remain in place. Verify

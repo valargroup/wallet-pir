@@ -77,9 +77,9 @@ A result applies only to the source and binary hashes recorded with it.
 4. Run offered-load/overload characterization on the full-size assignments.
    Record rejected/unstarted work and scheduled latency; an allowed-error
    characterization run is not a zero-error acceptance result.
-5. Rehearse rollback to the preserved legacy installation and return to v4.
-   Canonical restoration and public/private checks after the active campaign
-   have passed; preserve them and verify serving again after further tests.
+5. Preserve successful deployed repair and rollback evidence. Legacy rollback
+   passed nine exact queries; return to v4 passed 443 measured queries with zero
+   errors. Verify canonical serving again after subsequent campaigns.
 6. Keep subsequent fixes and evidence on main. The implementation was merged
    and pushed at `436dcc7efda3e09a6734342fd4f55e07bf1d9d95`. CI may be skipped
    as requested; preserve local and production validation evidence.

@@ -1,0 +1,219 @@
+{
+  "case": "legacy rollback and return to v4",
+  "qualification": "unqualified",
+  "started_wall_ns": 1790166646708407000,
+  "legacy_init": {
+    "generation": {
+      "schema_version": 8,
+      "protocol_revision": "ironwood-enhance-pir-v2",
+      "network": "main",
+      "pool": "ironwood",
+      "anchor_height": 3493413,
+      "anchor_block_hash": "00000000000ff00cb0f3e1b1849480c0f3d7782dc95accb153812d6375525ae3",
+      "ironwood_tree_size": 574258,
+      "generation": 3493413,
+      "record_bytes": 737,
+      "records_per_row": 29,
+      "row_bytes": 21373,
+      "shard_rows": 8192,
+      "used_rows": 19802,
+      "logical_rows": 32768,
+      "parameter_id": "ironwood-enhance-pir-v2-enhance-d2048-p16384-rows32768-cols12288",
+      "setup_seed": 11877852325592565855,
+      "public_params_epoch": "bcc396e4cabd340d",
+      "public_params_sha256": "bcc396e4cabd340d056f627aebae1fca746ae201037c65925f018a20f2882dcd",
+      "shards": [
+        {
+          "shard_id": 0,
+          "global_row_start": 0,
+          "populated_positions": 237568,
+          "rows_sha256": "eccfc3515010238207f663165fd624b7ac0ba378b7f4e52535c2088e051ba64e",
+          "sealed": true,
+          "worker": "shard-group-01"
+        },
+        {
+          "shard_id": 1,
+          "global_row_start": 8192,
+          "populated_positions": 237568,
+          "rows_sha256": "9b5aa882a795d97436b644d6d54d359d8b6a1ab21232bb2bb641aade618e828b",
+          "sealed": true,
+          "worker": "shard-group-01"
+        },
+        {
+          "shard_id": 2,
+          "global_row_start": 16384,
+          "populated_positions": 99122,
+          "rows_sha256": "5c923e2240392e5881fa445fbfaf884fbf435204ea03e3ae18e6948764f77376",
+          "sealed": false,
+          "worker": "shard-group-01"
+        }
+      ]
+    },
+    "params": {
+      "num_items": 32768,
+      "item_size_bits": 170984,
+      "poly_len": 2048,
+      "db_dim_1": 4,
+      "db_dim_2": 1,
+      "instances": 6,
+      "db_rows": 32768,
+      "db_cols": 12288,
+      "p": 16384,
+      "q_prime_1": 1048576,
+      "q_prime_2": 268369921,
+      "q2_bits": 28,
+      "t_exp_left": 3,
+      "t_exp_right": 2,
+      "query_bits": 42
+    },
+    "public_params_base64_sha256": "35afdb5c21557ba15852ef4e3b8cb858de9d226b425c169aa5590953f01b32dd",
+    "public_params_base64_length": 114688
+  },
+  "legacy_exact_positions": [
+    0,
+    1,
+    32,
+    33,
+    270335,
+    270336,
+    540671,
+    540672,
+    565000
+  ],
+  "legacy_status": "passed",
+  "restored_init": {
+    "schema_version": 10,
+    "protocol_revision": "ironwood-enhance-pir-v4",
+    "network": "main",
+    "pool": "ironwood",
+    "generation": 51,
+    "anchor_height": 3493411,
+    "anchor_block_hash": "00000000006d03d16a57c7040c01ef6571bdd721cd7f1bff2fc70ce5e7bdbcc5",
+    "geometry": {
+      "max_shard_rows": 32768,
+      "min_shard_rows": 4096,
+      "max_mutable_unit_rows": 8192,
+      "min_mutable_unit_rows": 2048
+    },
+    "coverage": {
+      "records": 574221,
+      "shards": [
+        {
+          "id": 0,
+          "global_row_start": 0,
+          "records": 574221,
+          "logical_rows": 32768,
+          "state": "GROWING",
+          "units": [
+            {
+              "local_row_start": 0,
+              "used_rows": 8192,
+              "allocated_rows": 8192
+            },
+            {
+              "local_row_start": 8192,
+              "used_rows": 8192,
+              "allocated_rows": 8192
+            },
+            {
+              "local_row_start": 16384,
+              "used_rows": 1017,
+              "allocated_rows": 2048
+            }
+          ]
+        }
+      ],
+      "loan": null
+    },
+    "sessions": [
+      {
+        "shard_id": 0,
+        "public_params_sha256": "0fda9c06a5f5c1b1f197ccc393661fa45944f1608184bd707c8a11aa92d6be83",
+        "parameter_id": "ironwood-enhance-pir-v4/208000fbc74571b0feb1541ba6ee0a41ef65abdf88facb4f01ddbd398fd903b4"
+      }
+    ],
+    "unit_identities": {
+      "0": [
+        {
+          "table": "enhance",
+          "shard_id": 0,
+          "local_row_start": 0,
+          "allocated_rows": 8192,
+          "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+          "parameter_id": "ironwood-enhance-pir-v4/unit/608af38e184441669d69a2d3aea1856c6dc138d48d3234cfcb47ef749a95f184",
+          "content_sha256": "38695af3a7d7244f1567180a8987bab286a93316e81620719a2497b4d1d9eba6"
+        },
+        {
+          "table": "enhance",
+          "shard_id": 0,
+          "local_row_start": 8192,
+          "allocated_rows": 8192,
+          "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+          "parameter_id": "ironwood-enhance-pir-v4/unit/608af38e184441669d69a2d3aea1856c6dc138d48d3234cfcb47ef749a95f184",
+          "content_sha256": "84b85e9c9c149fc7d32573f41a7ee5da153a47e63ec6397341e94b8ad64ad25d"
+        },
+        {
+          "table": "enhance",
+          "shard_id": 0,
+          "local_row_start": 16384,
+          "allocated_rows": 2048,
+          "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+          "parameter_id": "ironwood-enhance-pir-v4/unit/456fbd8ab131879c37e844348c35efc2898be25aef8d29ba00a3e2d153e0a144",
+          "content_sha256": "8718d79b39b5f00d4fcfbcd3727b8b90b8be412f5f288f652cd2071f78a5e5c5"
+        }
+      ]
+    }
+  },
+  "restored_load": {
+    "protocol": "ironwood-enhance-pir-v4",
+    "seconds": 30.057724141,
+    "concurrency": 2,
+    "offered_qps": null,
+    "completed": 443,
+    "succeeded": 443,
+    "incorrect_answers": 0,
+    "errors": {},
+    "unstarted_arrivals": 0,
+    "correct_queries_per_second": 14.738308127451651,
+    "p50_ms": 127.871,
+    "p95_ms": 185.855,
+    "p99_ms": 244.223,
+    "scheduled_p99_ms": 244.223,
+    "exact_answer_oracle": true,
+    "warmup_errors": {},
+    "warmup_correct_answers": 28,
+    "warmup_incorrect_answers": 0
+  },
+  "restored_health": {
+    "anchor_height": 3493417,
+    "blocked_reason": null,
+    "capacity": {
+      "burst_rows": 4096,
+      "effective_rows_per_second": 1.0,
+      "fleet_ceiling_reached": false,
+      "memory_limit": null,
+      "observation": {
+        "at": 1790166920,
+        "records": 574328
+      },
+      "peak_rows_per_second": 0.4121212121212121,
+      "readiness_seconds": 21600.0,
+      "remaining_rows": 146437,
+      "requested": null,
+      "requests": {}
+    },
+    "generation": 53,
+    "operation": null,
+    "pending_abort_notifications": 0,
+    "pending_commit_notifications": 0,
+    "placement_revision": 53,
+    "protocol": "ironwood-enhance-pir-v4",
+    "published_replica_counts": {
+      "shard-group-01": 2
+    },
+    "registered_groups": 1
+  },
+  "status": "passed",
+  "finished_wall_ns": 1790166920426239000,
+  "legacy_client_sha256": "003615f774c63fa3374831c65b9d1301b20d6dfc8c2f464cc9e1c314ba586bff"
+}
