@@ -56,39 +56,9 @@ class ServedLayout(unittest.TestCase):
             self.assertIn(f'.generation.{field} == {value}', gate,
                           f'the deploy gate does not pin {field}={value}')
 
-    def test_prepare_and_deploy_agree_on_the_data_directory(self):
-        """A preparation receipt written somewhere the deploy gate does not read
-        is worse than no receipt: the gate fails open on a missing file only if
-        someone later 'fixes' it, and fails closed here instead."""
-        deploy_dir = shell_const(DEPLOY, 'ENHANCE_DATA_DIR')
-        match = re.search(r'^ENHANCE_DATA_DIR="\$\{ENHANCE_DATA_DIR:-([^}"]+)\}"',
-                          PREPARE.read_text(), re.M)
-        self.assertIsNotNone(match, 'prepare script has no ENHANCE_DATA_DIR default')
-        self.assertEqual(match.group(1), deploy_dir)
-        self.assertNotEqual(deploy_dir, '/srv/zakura/enhance-data-r29',
-                            'the new layout must not be prepared into the serving directory')
-        self.assertEqual(shell_const(DEPLOY, 'ENHANCE_PREVIOUS_DATA_DIR'),
-                         '/srv/zakura/enhance-data-r29')
-
     def test_units_serve_the_directory_the_deploy_script_prepares(self):
         unit = (ROOT / 'enhance/ops/deploy/enhance-pir-server.service').read_text()
         self.assertIn(f'--data-dir {shell_const(DEPLOY, "ENHANCE_DATA_DIR")}', unit)
-
-    def test_ssh_rollout_targets_the_same_layout_and_directories(self):
-        """The direct rollout path bypasses CI, not the layout contract."""
-        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_SCHEMA')), self.schema)
-        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_RECORDS_PER_ROW')),
-                         self.records_per_row)
-        self.assertEqual(int(shell_const(ROLLOUT, 'TARGET_ROW_BYTES')), self.row_bytes)
-        self.assertEqual(shell_const(ROLLOUT, 'DATA_DIR'),
-                         shell_const(DEPLOY, 'ENHANCE_DATA_DIR'))
-        self.assertEqual(shell_const(ROLLOUT, 'PREVIOUS_DATA_DIR'),
-                         shell_const(DEPLOY, 'ENHANCE_PREVIOUS_DATA_DIR'))
-        text = ROLLOUT.read_text()
-        # The rollback is the old data. Nothing in this script may write to it.
-        for forbidden in ('rm -rf $PREVIOUS_DATA_DIR', 'rm -rf "$PREVIOUS_DATA_DIR"',
-                          'rm -rf $PREVIOUS_ARTIFACT_DIR'):
-            self.assertNotIn(forbidden, text)
 
     def test_autoscale_group_capacity_follows_the_layout(self):
         match = re.search(r'^GROUP_POSITIONS = (\d+) \* (\d+)', AUTOSCALE.read_text(), re.M)

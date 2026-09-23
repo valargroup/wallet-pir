@@ -65,7 +65,8 @@ isolates width changes rather than comparing separate historical binaries.
   a corrupt live response rejects the entire batch; valid suffixes apply atomically.
 
 Formatting and strict Clippy pass for client, server and load-test targets.
-Operational Python tests pass (121 passed, 3 skipped); tooling tests pass (17).
+The complete documentation, tooling, operations and report suites pass.
+The Enhance operations subset has 119 passes and 3 skips; tooling tests have 17 passes.
 
 Reproduce the cross-repository tests with:
 
