@@ -1,0 +1,63 @@
+{
+  "kind": "enhance-v4-local-sample-summary",
+  "qualification": "unqualified",
+  "records": 533,
+  "valid_samples": 533,
+  "error_samples": 0,
+  "findings": [],
+  "first_wall_ns": 1790168689033862658,
+  "last_wall_ns": 1790169221182510198,
+  "max_gap_seconds": 1.005664648,
+  "max_sampled_rss_plus_kernel_bytes": 4829184000,
+  "resident_guard_bytes": 6979321856,
+  "max_cgroup_current_bytes": 7516008448,
+  "max_cgroup_peak_bytes": 7516688384,
+  "max_swap_current_bytes": 0,
+  "min_disk_free_bytes": 24241205248,
+  "runtime_unavailable_samples": 175,
+  "runtime_inconsistent_samples": 0,
+  "max_model_total_bytes": 4789895168,
+  "max_live_database_bytes": 0,
+  "max_pressure_avg10": {
+    "full": 0.74,
+    "some": 0.74
+  },
+  "pressure_total_delta_us": {
+    "full": 412110,
+    "some": 420032
+  },
+  "trace_sha256": "ebda542b43890203db751d7caf45332628aa281be77793246dfc73281f71b27e",
+  "measurement_window_wall_ns": null,
+  "maximum_allowed_gap_seconds": 3,
+  "identities": [
+    {
+      "host_id_sha256": "13f1218373ba90005a26ae2d8a4457fe6623749fb94c1e6cf9a6c67920b9ee7f",
+      "boot_id": "647e22bd-07d1-4685-8114-684a9651de26",
+      "main_pid": 117536,
+      "main_start_ticks": 82239728,
+      "source_revision": "b1863b1d270df52d213d7dd389e5b8bf96bca224",
+      "binary_sha256": "4c3b0a0f12c4a275afd5fd5e89ea7556627c4fc3fb2969b275ec02b499464478"
+    }
+  ],
+  "counter_deltas": {
+    "memory.events": {
+      "high": 1799,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "host_swap_pages": {
+      "pswpin": 0,
+      "pswpout": 76
+    }
+  },
+  "sampled_guard_headroom_bytes": 2150137856,
+  "limitations": [
+    "Sampled peaks do not bound between-sample resident memory.",
+    "Cgroup peaks and counters may include time before this capture.",
+    "This report does not validate workload placement, duration, replication, latency or host provenance.",
+    "A window uses wall clocks; clock alignment requires separate evidence."
+  ]
+}

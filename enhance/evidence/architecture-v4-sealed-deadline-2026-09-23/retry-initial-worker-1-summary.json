@@ -1,0 +1,63 @@
+{
+  "kind": "enhance-v4-local-sample-summary",
+  "qualification": "unqualified",
+  "records": 532,
+  "valid_samples": 532,
+  "error_samples": 0,
+  "findings": [],
+  "first_wall_ns": 1790168686018009305,
+  "last_wall_ns": 1790169217173016690,
+  "max_gap_seconds": 1.004073802,
+  "max_sampled_rss_plus_kernel_bytes": 5034516480,
+  "resident_guard_bytes": 6979321856,
+  "max_cgroup_current_bytes": 7516143616,
+  "max_cgroup_peak_bytes": 7516717056,
+  "max_swap_current_bytes": 0,
+  "min_disk_free_bytes": 23804604416,
+  "runtime_unavailable_samples": 177,
+  "runtime_inconsistent_samples": 0,
+  "max_model_total_bytes": 4789895168,
+  "max_live_database_bytes": 4026531840,
+  "max_pressure_avg10": {
+    "full": 1.07,
+    "some": 1.07
+  },
+  "pressure_total_delta_us": {
+    "full": 1626188,
+    "some": 1643093
+  },
+  "trace_sha256": "872317179c832aa68f4d919a5a580acb0ed3051f5199fd49f617df2652b91b88",
+  "measurement_window_wall_ns": null,
+  "maximum_allowed_gap_seconds": 3,
+  "identities": [
+    {
+      "host_id_sha256": "b39d1464c07b9d39e4b14ec8a52418c70033b2eca7c3fa25f4bd6d76e3c5dc3d",
+      "boot_id": "ecdb01e9-1555-4c4b-b3cc-baad0e0673dc",
+      "main_pid": 109022,
+      "main_start_ticks": 82239385,
+      "source_revision": "b1863b1d270df52d213d7dd389e5b8bf96bca224",
+      "binary_sha256": "4c3b0a0f12c4a275afd5fd5e89ea7556627c4fc3fb2969b275ec02b499464478"
+    }
+  ],
+  "counter_deltas": {
+    "memory.events": {
+      "high": 7385,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "host_swap_pages": {
+      "pswpin": 3,
+      "pswpout": 7
+    }
+  },
+  "sampled_guard_headroom_bytes": 1944805376,
+  "limitations": [
+    "Sampled peaks do not bound between-sample resident memory.",
+    "Cgroup peaks and counters may include time before this capture.",
+    "This report does not validate workload placement, duration, replication, latency or host provenance.",
+    "A window uses wall clocks; clock alignment requires separate evidence."
+  ]
+}

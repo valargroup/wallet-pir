@@ -48,3 +48,35 @@ Coordinator-hosted helper replicas remain test support, not qualified c-4 hosts.
 The failed synthetic worker directories were removed only after retaining their
 measurement evidence, to restore at least 32 GiB free disk before this new run.
 No passing sealed qualification result exists yet.
+
+## Retry initialization sampling
+
+`retry-initial-worker-{1,2}-summary.json` summarizes complete prefixes of the
+worker-local traces during cold preparation: 532 and 533 samples respectively.
+The original traces remain in the remote sampling directories above; exact
+prefix snapshots are retained locally under
+`.local-pir/v4-production-rollout/sealed-retry-initial-snapshots/worker-{1,2}.jsonl`.
+Each summary binds the consumed prefix with SHA-256 and records its wall-clock
+endpoints. These are incomplete initialization observations, not a measured
+six-hour campaign or proof that all six sealed shards are serving.
+
+No sample errors or gaps over three seconds were observed in these prefixes.
+RSS plus kernel peaked at 5,034,516,480 and 4,829,184,000 bytes; worker swap was
+zero. Both workers had memory.high reclaim events, and host-wide swap counters
+increased slightly. Host counters include other processes and must not be
+reported as worker swap. Hard-limit/OOM event deltas were zero.
+
+The read-only summary tool accepts a copied trace (never a concurrently modified
+input):
+
+```sh
+python3 enhance/ops/scripts/summarize-v4-samples.py worker-1.jsonl
+# Optional endpoint coverage check, using nanoseconds from the workload report:
+python3 enhance/ops/scripts/summarize-v4-samples.py worker-1.jsonl --window START_NS END_NS
+```
+
+The optional window only checks capture endpoints; statistics cover the entire
+supplied trace. This tool does not replace placement/publication checks or issue
+qualification. Eight tests cover gaps, collection errors, restart/counter reset,
+resident guard violations, swap/OOM, pressure deltas, missing window coverage,
+invalid JSON and incomplete records.
