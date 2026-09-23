@@ -9,9 +9,17 @@ report two published replicas covering the selected height. The raw chain
 transaction parser is the same `zakura-chain` dependency used by the server,
 so a separate wallet release test remains necessary.
 
-Build with `cargo build --locked --release -p enhance-chain-oracle` from the
-pinned source on a Linux build host and verify the binary checksum when copying
-it to the coordinator. Run it there after latency measurements to
+Build from the pinned source on a Linux build host with an explicit portable
+CPU target:
+
+```sh
+RUSTFLAGS='-C target-cpu=x86-64' cargo build --locked --release -p enhance-chain-oracle
+```
+
+The workspace `.cargo/config.toml` otherwise uses `target-cpu=native`, which
+can produce an illegal instruction when the build host and coordinator have
+different CPUs. Verify the binary checksum and execute it on the coordinator
+before relying on the build. Run it there after latency measurements to
 avoid making node RPC reads part of the public load experiment. Set `END_HEIGHT`
 to a published anchor from `/v1/health`, then use a new output directory:
 

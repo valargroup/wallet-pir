@@ -79,8 +79,12 @@ unavailable. Database byte counts describe loaded PIR data; modeled capacity
 includes reservations and overhead and is not total machine RAM usage. This
 monitoring does not add worker host or request-latency instrumentation.
 
-For a sidecar-only deployment, build `cargo build --locked --release -p pir-apm`,
-preserve `/usr/local/bin/pir-apm` and `/etc/default/pir-apm` for rollback, install
+For a sidecar-only deployment, build
+`RUSTFLAGS='-C target-cpu=x86-64' cargo build --locked --release -p pir-apm`.
+The workspace `.cargo/config.toml` uses `target-cpu=native` by default; an
+artifact built on a different CPU can start and then fail with an illegal
+instruction on the coordinator. Run the candidate on the target host before
+installation. Preserve `/usr/local/bin/pir-apm` and `/etc/default/pir-apm` for rollback, install
 the binary atomically, and configure the inventory and current data directory in
 that environment file. Preserve the existing encrypted Slack credential drop-in.
 Run `systemctl enable pir-apm` and `systemctl restart pir-apm`, then verify the

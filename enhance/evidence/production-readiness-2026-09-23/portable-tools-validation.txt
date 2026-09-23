@@ -1,0 +1,23 @@
+2026-09-23 UTC: tool portability validation for source archive 06611d0ba1b21485a3bcfae939c8425283a2eca4.
+
+The first Linux build ran on wallet-pir-ci-01 (DO-Premium-AMD) with the
+workspace default .cargo/config.toml target-cpu=native. pir-apm SHA-256
+31f0606370a8847011f2f704fa4607a1f659c2944d0ddd07c5e41ce674df1e32
+started on the production Intel Xeon Gold 6548N coordinator and then exited
+with SIGILL. The installed pir-apm service remained active with zero restarts.
+
+Rebuilt pir-apm and enhance-chain-oracle on the same CI host with
+RUSTFLAGS='-C target-cpu=x86-64', CARGO_BUILD_JOBS=2, and a separate Cargo
+target directory. The transient build service completed successfully in
+3m18s. The resulting SHA-256 digests, checked again on the coordinator, are:
+
+pir-apm c7056957168e4322d155fe837c4c2318d3edc65b17cd9701e48ea4b6ad1aa077
+enhance-chain-oracle da744651cdfee7c57700c574574f48e688c971d0fa5639c593aba90347e9d905
+
+With Slack webhook unset, the candidate APM scraped the local coordinator on
+port 8080 and listened on loopback port 3003. After 17 seconds, /healthz and
+/coordinator/ returned HTTP 200; the page showed scrape ok, health 200,
+ready 200, publication blocked 0, and query rejected total 0. It was then
+stopped. The chain oracle --help command ran
+successfully on the coordinator without making node RPC requests. Neither
+portable tool has replaced the installed production service at this point.
