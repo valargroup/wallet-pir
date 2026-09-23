@@ -30,17 +30,24 @@ async fn distributed_round_trip_retention_failover_and_restart() {
     let mut replicas = Vec::new();
     let mut failures = Vec::new();
     let mut commit_failures = Vec::new();
+    let mut evaluations = Vec::new();
     for index in 0..2 {
         let worker = Worker::open(&root.path().join(format!("worker-{index}"))).unwrap();
         let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         failures.push(failed.clone());
         let commit_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         commit_failures.push(commit_failed.clone());
+        let evaluation_count = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        evaluations.push(evaluation_count.clone());
         let router = worker.router().layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
                 let failed = failed.clone();
                 let commit_failed = commit_failed.clone();
+                let evaluation_count = evaluation_count.clone();
                 async move {
+                    if request.uri().path() == "/internal/evaluate" {
+                        evaluation_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     if failed.load(std::sync::atomic::Ordering::SeqCst)
                         || (request.uri().path() == "/internal/commit"
                             && commit_failed.load(std::sync::atomic::Ordering::SeqCst))
@@ -112,6 +119,9 @@ async fn distributed_round_trip_retention_failover_and_restart() {
         let (got, _) = client.query_position_with_timing(position).await.unwrap();
         assert_eq!(got.as_ref(), record(position));
     }
+    assert!(evaluations
+        .iter()
+        .all(|count| { count.load(std::sync::atomic::Ordering::Relaxed) >= 2 }));
     let old_generation = client.manifest().generation;
     for block in 1..=5u64 {
         let position = journal.tree_size();

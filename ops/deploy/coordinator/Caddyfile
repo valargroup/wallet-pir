@@ -32,6 +32,16 @@ ENHANCE_PUBLIC_HOST {
 	handle_path /apm* {
 		reverse_proxy 127.0.0.1:3002
 	}
+	# Query admission can reject overload before evaluation. Use a fresh local
+	# upstream connection so a stale keepalive socket cannot turn that response
+	# into a public 502.
+	handle /v1/enhance/query {
+		reverse_proxy 127.0.0.1:8080 {
+			transport http {
+				keepalive off
+			}
+		}
+	}
 	handle {
 		reverse_proxy 127.0.0.1:8080
 	}
