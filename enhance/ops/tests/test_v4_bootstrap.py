@@ -20,7 +20,7 @@ FACTS = {'hostname': 'enhance-pir-v4-g02-r1', 'machine': 'x86_64', 'cpus': 4,
          'boot_id': 'fixture-boot'}
 LIMITS = {'memory_high_bytes': 7 * module.GIB, 'memory_max_bytes': 15 * module.GIB // 2,
           'memory_swap_max_bytes': 2 * module.GIB, 'host_reserve_bytes': 512 * module.MIB}
-HEALTH = {'protocol': module.PROTOCOL, 'epoch': 0, 'revision': 0, 'candidate': None,
+HEALTH = {'placement_policy': {'sealed_shards': 6}, 'protocol': module.PROTOCOL, 'epoch': 0, 'revision': 0, 'candidate': None,
           'published': [], 'incarnation': 'fixture-process'}
 
 

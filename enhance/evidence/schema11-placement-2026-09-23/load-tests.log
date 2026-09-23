@@ -1,0 +1,18 @@
+   Compiling inspiring v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=dac5b050cfa00770405f9d6b464b8adb2b17a3c0#dac5b050)
+   Compiling simplepir-kernel v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=dac5b050cfa00770405f9d6b464b8adb2b17a3c0#dac5b050)
+   Compiling ipir-sp v0.1.0 (https://github.com/valargroup/ipir-sp.git?rev=dac5b050cfa00770405f9d6b464b8adb2b17a3c0#dac5b050)
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling enhance-pir-load-test v0.1.0 (/Users/roman/projects/wallet-pir/enhance/tools/loadtest)
+    Finished `release` profile [optimized] target(s) in 42.65s
+     Running unittests src/main.rs (target/release/deps/enhance_pir_load_test-0e235a5c6958424c)
+
+running 6 tests
+test load::tests::seeded_query_pool_is_repeatable_and_bounded ... ok
+test load::tests::thresholds_check_error_rate_and_p99 ... ok
+test v4::tests::warmup_does_not_hide_protocol_or_authorization_failures ... ok
+test load::tests::errors_are_classified_for_overload_and_decode_failures ... ok
+test load::tests::collector_reports_latency_throughput_and_errors ... ok
+test v4::tests::warmup_preserves_transient_failures_and_exact_answer_failures ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -13,6 +13,9 @@ uses the supplied wallet checkout and the current server sources, and writes
 build artifacts under `target/schema11-interop`. It does not modify the wallet.
 Cargo may download dependencies; tests use loopback servers and synthetic keys.
 
+The server processes use the seven-sealed placement policy; these small fixtures
+verify wallet interoperability, not full-size placement or hardware capacity.
+
 The test covers:
 
 - Actual wallet client queries against a coordinator and two workers, including

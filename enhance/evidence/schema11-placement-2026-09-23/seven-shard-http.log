@@ -1,0 +1,11 @@
+    Blocking waiting for file lock on build directory
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 2m 09s
+     Running tests/v4_http.rs (target/release/deps/v4_http-0caa7e4fcb5209d6)
+
+running 1 test
+test seven_sealed_consolidation_preserves_retained_queries has been running for over 60 seconds
+test seven_sealed_consolidation_preserves_retained_queries ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 1101.18s
+

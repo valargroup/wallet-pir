@@ -4,7 +4,7 @@ use enhance_pir_server::{
     store::RecordJournal,
     types::{DatabaseId, ENHANCE_LAYOUT},
     v4::{
-        control::{Group, Ledger, Replica},
+        control::{Group, Ledger, PlacementPolicy, Replica},
         coordinator::Coordinator,
         worker::Worker,
     },
@@ -100,7 +100,11 @@ async fn wallet_client_round_trips_real_v4_http_and_requires_fresh_acceptance() 
     let mut tasks = Vec::new();
     let mut replicas = Vec::new();
     for index in 0..2 {
-        let worker = Worker::open(&root.path().join(format!("worker-{index}"))).unwrap();
+        let worker = Worker::open_with_policy(
+            &root.path().join(format!("worker-{index}")),
+            PlacementPolicy { sealed_shards: 7 },
+        )
+        .unwrap();
         let (url, task) = serve(worker.router()).await;
         tasks.push(task);
         replicas.push(Replica {
@@ -113,6 +117,7 @@ async fn wallet_client_round_trips_real_v4_http_and_requires_fresh_acceptance() 
     let coordinator = Coordinator::open(
         &root.path().join("control"),
         vec![Group {
+            placement_policy: PlacementPolicy { sealed_shards: 7 },
             id: "group-1".into(),
             sequence: 0,
             replicas,
@@ -297,9 +302,12 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
     let mut replicas = Vec::new();
     for i in 0..2 {
         let (url, task) = serve(
-            Worker::open(&root.path().join(format!("worker-{i}")))
-                .unwrap()
-                .router(),
+            Worker::open_with_policy(
+                &root.path().join(format!("worker-{i}")),
+                PlacementPolicy { sealed_shards: 7 },
+            )
+            .unwrap()
+            .router(),
         )
         .await;
         tasks.push(task);
@@ -313,6 +321,7 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
     let coordinator = Coordinator::open(
         &root.path().join("control"),
         vec![Group {
+            placement_policy: PlacementPolicy { sealed_shards: 7 },
             id: "g0".into(),
             sequence: 0,
             replicas,
@@ -406,4 +415,23 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
     for task in tasks {
         task.abort();
     }
+}
+
+#[test]
+fn frozen_wallet_and_server_share_the_24_shard_ceiling() {
+    let span = 32768 * 33;
+    let server = enhance_pir::v4::Lifecycle::default()
+        .coverage(24 * span - 1, enhance_pir::v4::Geometry::default())
+        .unwrap();
+    let wallet: zakura_pir_enhance::types::Coverage =
+        serde_json::from_value(serde_json::to_value(server).unwrap()).unwrap();
+    wallet
+        .validate(zakura_pir_enhance::types::Geometry::default())
+        .unwrap();
+    assert!(enhance_pir::v4::Lifecycle::default()
+        .coverage(24 * span, enhance_pir::v4::Geometry::default())
+        .is_err());
+    assert!(zakura_pir_enhance::types::Lifecycle::default()
+        .coverage(24 * span, zakura_pir_enhance::types::Geometry::default())
+        .is_err());
 }

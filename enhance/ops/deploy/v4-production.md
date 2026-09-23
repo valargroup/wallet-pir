@@ -1,10 +1,30 @@
-# Direct v4 deployment on existing production hosts
+# Production deployment and historical v4 campaigns
 
 The user authorized direct SSH deployment and testing on production, shutdown of
 legacy Enhance services, no new hosts, and CI bypass where possible. Do not run
 the old Enhance deployment workflow or autoscaler over this deployment.
 
-## Inventory and artifact
+## Schema-11 cutover — September 23, 2026
+
+The schema-10 sealed retry campaign was stopped before its six-hour gate; it is
+unqualified. Its supervisor restored canonical serving and passed the four
+public/private validation cases. The campaign data is preserved.
+
+Schema 11 is rebuilt directly from canonical RPC into `/srv/enhance-pir-v11`,
+with fresh journals, publications and worker caches. Never use the historical
+737-byte migration procedure below for schema 11. The new workers use private
+port 8291, allowed only from the coordinator firewall tag. Public HTTP routes,
+Caddy and DNS remain unchanged. The selected placement policy is six sealed
+shards; seven remains unqualified pending the native hardware campaign.
+
+The cutover retains the existing `enhance-pir-v4-*` service and binary names.
+Back up their units under `/var/backups/enhance-pir-schema11/<revision>` before
+switching to the new data paths. Keep `/srv/enhance-pir-v4` and the original
+release intact for rollback. Stop the new coordinator and workers before
+restoring the backed-up units, then start old workers before the coordinator.
+Never point an old binary at the new data or reuse old caches with the new one.
+
+## Historical schema-10 inventory and artifact
 
 | Role | Host | Private address |
 |---|---|---|
@@ -31,7 +51,7 @@ The release directory is `/opt/enhance-pir-v4/releases/<revision>` on each host.
 The local archive is under `.local-pir/v4-candidates/<revision>/`. Runtime secrets
 remain on the host; the coordinator uses its existing Zakura cookie file.
 
-## Qualification campaign in progress
+## Historical interrupted qualification campaign
 
 The sealed retry uses `enhance-pir-v4-sealed-retry-campaign.service` and private
 loopback port 8280. Measurement began at 2026-09-23 13:17:31 UTC. Canonical serving

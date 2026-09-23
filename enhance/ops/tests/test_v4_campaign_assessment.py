@@ -22,12 +22,12 @@ def fixture(root):
     workload.mkdir()
     stages = ['loan_growth', 'return', 'owned_8k', 'owned_16k', 'owned_near_32k', 'rewind_return']
     publications = [{'manifest': {'generation': i + 2}, 'elapsed_seconds': 72 * (i + 1), 'publication_ms': 1,
-        'stage': stages[i % 6], 'placement': {'groups': [{'role': 'ACTIVE', 'shards': 5}],
+        'stage': stages[i % 6], 'placement': {'groups': [{'role': 'ACTIVE', 'shards': 5, 'placement_policy': {'sealed_shards': 6}}],
         'published_replica_counts': {'g0': 2}, 'retained_generations': list(range(i + 2, max(0, i - 3), -1))}}
         for i in range(300)]
     path = workload / 'publications.jsonl'
     path.write_text(''.join(json.dumps(v) + '\n' for v in publications))
-    report = {'status': 'recorded', 'profile': 'active', 'measurement_seconds': 21600, 'publications': 300,
+    report = {'placement_policy': {'sealed_shards': 6}, 'status': 'recorded', 'profile': 'active', 'measurement_seconds': 21600, 'publications': 300,
         'background_correct_answers': 1000, 'background_errors': 0, 'expired_refreshes': 296,
         'exact_boundary_and_retained_probes': 300, 'background_p99_ms': 100, 'started_wall_ns': 10**9,
         'finished_wall_ns': 21601 * 10**9, 'publications_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -63,6 +63,19 @@ def fixture(root):
 
 
 class AssessmentTests(unittest.TestCase):
+    def test_six_shard_evidence_cannot_qualify_seven(self):
+        with tempfile.TemporaryDirectory() as temp:
+            workload, observation = fixture(Path(temp))
+            report = module.read(workload / 'exercise.json')
+            report['placement_policy'] = {'sealed_shards': 7}
+            write(workload / 'exercise.json', report)
+            failures = module.assess(workload, [observation])['failures']
+            self.assertIn('bootstrap_placement_policy_differs', failures)
+            self.assertIn('assignment_policy_differs', failures)
+            del report['placement_policy']
+            write(workload / 'exercise.json', report)
+            self.assertIn('missing_or_invalid_placement_policy', module.assess(workload, [observation])['failures'])
+
     def test_complete_synthetic_metadata_is_never_a_qualification_receipt(self):
         with tempfile.TemporaryDirectory() as temp:
             workload, observation = fixture(Path(temp))

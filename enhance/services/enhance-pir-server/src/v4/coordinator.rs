@@ -155,6 +155,12 @@ pub struct Coordinator {
 }
 
 fn validate_inventory(groups: &[Group]) -> Result<(), String> {
+    for group in groups {
+        group.placement_policy.validate()?;
+        if group.placement_policy != groups[0].placement_policy {
+            return Err("inventory placement policies differ".into());
+        }
+    }
     let mut names = BTreeSet::new();
     let mut urls = BTreeSet::new();
     if groups.is_empty() || groups.len() > 4 {
@@ -192,6 +198,7 @@ fn inventory_extends(existing: &[Group], configured: &[Group]) -> bool {
     configured.len() >= existing.len()
         && existing.iter().zip(configured).all(|(a, b)| {
             a.id == b.id
+                && a.placement_policy == b.placement_policy
                 && a.sequence == b.sequence
                 && a.replicas.len() == b.replicas.len()
                 && a.replicas
@@ -312,7 +319,9 @@ impl Coordinator {
                     .as_str()
                     .filter(|s| !s.is_empty())
                     .ok_or("new replica has no process identity")?;
-                if health["protocol"].as_str() != Some(PROTOCOL_REVISION)
+                if health["placement_policy"]
+                    != serde_json::to_value(group.placement_policy).unwrap()
+                    || health["protocol"].as_str() != Some(PROTOCOL_REVISION)
                     || health["published"].as_array().is_none_or(|s| !s.is_empty())
                     || health["candidate"] != serde_json::Value::Null
                     || health["epoch"].as_u64() != Some(0)
@@ -1029,6 +1038,12 @@ impl Coordinator {
                         .json()
                         .await
                         .map_err(|e| e.to_string())?;
+                    if health["protocol"].as_str() != Some(PROTOCOL_REVISION)
+                        || health["placement_policy"]
+                            != serde_json::to_value(group.placement_policy).unwrap()
+                    {
+                        return Err("worker protocol or placement policy mismatch".into());
+                    }
                     replica.incarnation = health["incarnation"]
                         .as_str()
                         .ok_or("missing worker incarnation")?
@@ -1037,6 +1052,7 @@ impl Coordinator {
                         .as_u64()
                         .ok_or("missing worker revision")?;
                     let candidate = worker::Candidate {
+                        placement_policy: group.placement_policy,
                         operation: operation_id.clone(),
                         attempt,
                         epoch,
@@ -1514,6 +1530,30 @@ async fn metrics(
 
 #[cfg(test)]
 mod admission_tests {
+    #[test]
+    fn restart_rejects_changed_placement_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let group = Group {
+            placement_policy: control::PlacementPolicy { sealed_shards: 7 },
+            id: "g0".into(),
+            sequence: 0,
+            settling: false,
+            replicas: (0..2)
+                .map(|i| control::Replica {
+                    name: format!("r{i}"),
+                    url: format!("http://127.0.0.1:{}", 9100 + i),
+                    incarnation: String::new(),
+                    ledger: Default::default(),
+                })
+                .collect(),
+        };
+        drop(Coordinator::open(root.path(), vec![group.clone()]).unwrap());
+        let mut changed = group.clone();
+        changed.placement_policy.sealed_shards = 6;
+        assert!(Coordinator::open(root.path(), vec![changed]).is_err());
+        assert!(Coordinator::open(root.path(), vec![group]).is_ok());
+    }
+
     #[tokio::test]
     async fn preparation_outlives_default_http_deadline() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1588,6 +1628,7 @@ mod admission_tests {
                 });
             }
             groups.push(Group {
+                placement_policy: Default::default(),
                 id: format!("g{sequence}"),
                 sequence,
                 replicas,
@@ -1723,6 +1764,7 @@ mod admission_tests {
                 });
             }
             groups.push(Group {
+                placement_policy: Default::default(),
                 id: format!("g{sequence}"),
                 sequence,
                 replicas,
@@ -1906,6 +1948,7 @@ mod admission_tests {
         // An unresolved candidate also defers consolidation; admission must not
         // implicitly cancel it or consume another operation attempt.
         let candidate = worker::Candidate {
+            placement_policy: Default::default(),
             operation: "held".into(),
             attempt: 0,
             epoch: 1,

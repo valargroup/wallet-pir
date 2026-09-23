@@ -1,0 +1,15 @@
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 2m 48s
+     Running unittests src/lib.rs (target/release/deps/enhance_pir_server-ce9475c81b77925f)
+
+running 6 tests
+test v4::capacity::tests::ceiling_never_requests_a_fifth_pair ... ok
+test v4::capacity::tests::forecasts_lender_limit_and_uses_existing_spare_pair ... ok
+test v4::capacity::tests::missing_growth_is_nonzero_and_requests_survive_serialization ... ok
+test v4::capacity::tests::memory_limit_requests_once_survives_restart_and_expires_for_larger_fleet ... ok
+test v4::capacity::tests::seven_sealed_extends_historical_capacity_not_first_active_pair ... ok
+test v4::capacity::tests::clock_resolution_and_restarts_preserve_growth_and_demand ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 73 filtered out; finished in 0.04s
+

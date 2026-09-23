@@ -138,7 +138,14 @@ def validate_limits(facts, limits):
         raise ValueError('candidate limits do not fit measured RAM, host overhead or swap')
 
 
-def unit(binary_sha256, private_ipv4, limits):
+def placement_policy(sealed_shards=6):
+    if type(sealed_shards) is not int or sealed_shards not in (6, 7):
+        raise ValueError('sealed shard limit must be six or seven')
+    return {'sealed_shards': sealed_shards}
+
+
+def unit(binary_sha256, private_ipv4, limits, sealed_shards=6):
+    placement_policy(sealed_shards)
     if not re.fullmatch('[0-9a-f]{64}', binary_sha256) or str(ipaddress.IPv4Address(private_ipv4)) != private_ipv4:
         raise ValueError('invalid binary identity or private address')
     return f'''[Unit]
@@ -150,7 +157,7 @@ Wants=network-online.target
 Type=simple
 User={USER}
 Group={USER}
-ExecStart=/opt/enhance-pir-v4/releases/{binary_sha256}/enhance-pir-v4 worker --listen {private_ipv4}:8291 --data-dir /srv/enhance-pir-v4/worker
+ExecStart=/opt/enhance-pir-v4/releases/{binary_sha256}/enhance-pir-v4 worker --sealed-shards {sealed_shards} --listen {private_ipv4}:8291 --data-dir /srv/enhance-pir-v4/worker
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1048576
@@ -219,7 +226,7 @@ def verify_service(binary, limits):
     return {'main_pid': int(properties['MainPID']), 'cgroup': group}
 
 
-def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits, facts, root=Path('/')):
+def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits, facts, root=Path('/'), sealed_shards=6):
     identity = verify_bundle(bundle, revision, manifest_sha256)
     validate_limits(facts, limits)
     if not re.fullmatch('enhance-pir-v4-g0[1-4]-r[12]', worker_name) or facts['hostname'] != worker_name:
@@ -227,7 +234,7 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
     address = ipaddress.IPv4Address(private_ipv4)
     if not any(address in ipaddress.IPv4Network(cidr) for cidr in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')):
         raise ValueError('worker must bind its private VPC address')
-    content = unit(identity['binary_sha256'], private_ipv4, limits)
+    content = unit(identity['binary_sha256'], private_ipv4, limits, sealed_shards)
     base = root / 'srv/enhance-pir-v4'
     unit_path = root / 'etc/systemd/system' / SERVICE
     receipt = base / 'bootstrap.json'
@@ -235,7 +242,7 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
     binary = root / 'opt/enhance-pir-v4/releases' / identity['binary_sha256'] / 'enhance-pir-v4'
     previous = None
     expected = {**identity, 'worker_name': worker_name, 'private_ipv4': private_ipv4, 'limits': limits,
-                'unit_sha256': sha256(content), 'qualification': 'unqualified'}
+                'placement_policy': placement_policy(sealed_shards), 'unit_sha256': sha256(content), 'qualification': 'unqualified'}
     if receipt.exists():
         previous = json.loads(receipt.read_text())
         if any(previous.get(k) != v for k, v in expected.items()):
@@ -256,6 +263,8 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
         if not unit_path.exists() or not binary.is_file() or binary.is_symlink() or sha256(binary.read_bytes()) != identity['binary_sha256']:
             raise ValueError('previously bootstrapped installation needs explicit repair')
         health = idle_health(private_ipv4)
+        if health.get('placement_policy') != placement_policy(sealed_shards):
+            raise ValueError('worker placement policy differs from bootstrap policy')
         runtime = verify_service(binary, limits)
         result = {**expected, 'phase': 'bootstrapped', 'host': facts, 'health': health, 'runtime': runtime}
         save(receipt, result)
@@ -288,6 +297,8 @@ def install(bundle, revision, manifest_sha256, worker_name, private_ipv4, limits
         while True:
             try:
                 health = idle_health(private_ipv4)
+                if health.get('placement_policy') != placement_policy(sealed_shards):
+                    raise ValueError('worker placement policy differs from bootstrap policy')
                 break
             except OSError:
                 if time.monotonic() >= deadline:
@@ -318,6 +329,7 @@ def main():
     parser.add_argument('--worker-name')
     parser.add_argument('--private-ipv4')
     parser.add_argument('--limits', type=Path)
+    parser.add_argument('--sealed-shards', type=int, choices=(6, 7), default=6)
     args = parser.parse_args()
     os.umask(0o077)
     try:
@@ -330,7 +342,7 @@ def main():
         with open('/run/enhance-pir-v4-bootstrap.lock', 'a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             receipt = install(args.bundle, args.revision, args.manifest_sha256, args.worker_name,
-                              args.private_ipv4, json.loads(args.limits.read_text()), facts)
+                              args.private_ipv4, json.loads(args.limits.read_text()), facts, sealed_shards=args.sealed_shards)
         print(json.dumps(receipt, sort_keys=True))
     except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.SubprocessError):
         raise SystemExit('v4 worker bootstrap stopped; inspect the dedicated host and bootstrap receipt') from None

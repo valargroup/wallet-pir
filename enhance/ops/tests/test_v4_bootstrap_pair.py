@@ -41,9 +41,10 @@ def receipt(target, bundle, config):
     limits = config['limits'][target['name']]
     return {**identity, 'worker_name': target['name'], 'private_ipv4': target['private_ipv4'],
             'phase': 'bootstrapped', 'qualification': 'unqualified', 'limits': limits,
-            'unit_sha256': module.installer.sha256(module.installer.unit(identity['binary_sha256'], target['private_ipv4'], limits)),
+            'placement_policy': {'sealed_shards': config.get('sealed_shards', 6)},
+            'unit_sha256': module.installer.sha256(module.installer.unit(identity['binary_sha256'], target['private_ipv4'], limits, config.get('sealed_shards', 6))),
             'host': dict(fixtures.FACTS, hostname=target['name']),
-            'health': dict(fixtures.HEALTH, incarnation='process-' + target['resource_id']),
+            'health': dict(fixtures.HEALTH, placement_policy={'sealed_shards': config.get('sealed_shards', 6)}, incarnation='process-' + target['resource_id']),
             'runtime': {'main_pid': 123, 'cgroup': '/system.slice/' + module.installer.SERVICE}}
 
 
@@ -60,6 +61,21 @@ class FakeRemote:
 
 
 class PairBootstrapTests(unittest.TestCase):
+    def test_seven_shard_receipt_binds_unit_and_worker_health(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            # The fixture supplies the same frozen artifact used by the installer.
+            bundle = root / 'bundle'
+            digest = fixtures.bundle_at(bundle)
+            config = {'revision': fixtures.SHA, 'manifest_sha256': digest, 'sealed_shards': 7,
+                      'limits': {t['name']: copy.deepcopy(fixtures.LIMITS) for t in PAIR}}
+            value = receipt(PAIR[0], bundle, config)
+            identity = module.installer.verify_bundle(bundle, config['revision'], digest)
+            module.validate_receipt(value, PAIR[0], config, identity)
+            value['health']['placement_policy']['sealed_shards'] = 6
+            with self.assertRaises(ValueError):
+                module.validate_receipt(value, PAIR[0], config, identity)
+
     def test_partial_pair_survives_restart_and_remains_unqualified(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)

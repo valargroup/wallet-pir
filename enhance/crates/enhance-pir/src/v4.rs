@@ -3,6 +3,8 @@ use crate::types::{RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// Frozen schema-11 wallet limit, independent of worker placement density.
+pub const MAX_QUERY_SHARDS: u64 = 24;
 pub const SCHEMA_VERSION: u16 = 11;
 pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v5";
 pub const RETAINED_GENERATIONS: usize = 5;
@@ -149,8 +151,8 @@ impl Lifecycle {
         let complete = records / span;
         let remainder = records % span;
         let count = complete.checked_add(1).ok_or("shard count overflow")?;
-        // The fleet ceiling is four groups of six shards. Reject absurd input before allocation.
-        if count > 24 {
+        // Preserve the pinned wallet protocol ceiling, even with denser worker placement.
+        if count > MAX_QUERY_SHARDS {
             return Err("coverage exceeds the four-group fleet ceiling".into());
         }
         while self.identities.len() < count as usize {

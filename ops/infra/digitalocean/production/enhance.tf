@@ -74,6 +74,13 @@ resource "digitalocean_firewall" "enhance_worker" {
     source_tags = [digitalocean_tag.coordinator.name]
   }
 
+  # Schema-11 candidate and serving workers; retain 8091 for the rollback fleet.
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "8291"
+    source_tags = [digitalocean_tag.coordinator.name]
+  }
+
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"

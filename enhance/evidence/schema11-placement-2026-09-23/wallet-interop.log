@@ -1,0 +1,34 @@
+    Updating crates.io index
+    Updating git repository `https://github.com/valargroup/ipir-sp.git`
+    Updating git repository `https://github.com/zakura-core/zakura.git`
+    Updating git repository `https://github.com/valargroup/ipir-sp.git`
+    Updating git repository `https://github.com/valargroup/spiral-rs.git`
+     Locking 512 packages to latest compatible versions
+      Adding axum v0.7.9 (available: v0.8.9)
+      Adding bip32 v0.6.0-pre.1 (available: v0.6.0)
+      Adding block-buffer v0.11.0-rc.3 (available: v0.11.0)
+      Adding crypto-common v0.2.0-rc.1 (available: v0.2.2)
+      Adding digest v0.11.0-pre.9 (available: v0.11.3)
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding hmac v0.13.0-pre.4 (available: v0.13.0)
+      Adding proptest v1.6.0 (available: v1.11.0)
+      Adding reqwest v0.12.28 (available: v0.13.5)
+      Adding ripemd v0.2.0-pre.4 (available: v0.2.0)
+      Adding sha2 v0.11.0-pre.4 (available: v0.11.0)
+      Adding zcash_note_encryption v0.4.2 (available: v0.5.0)
+   Compiling zakura-client-backend v0.1.0-rc5 (/Users/roman/projects/wallet-libraries/librustzcash/zcash_client_backend)
+   Compiling enhance-pir v0.1.0 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+   Compiling zakura-client-sqlite v0.1.0-rc5 (/Users/roman/projects/wallet-libraries/librustzcash/zcash_client_sqlite)
+   Compiling zakura-pir-enhance v0.1.0 (/Users/roman/projects/wallet-libraries/zakura/pir-enhance)
+   Compiling schema11-interop v0.0.0 (/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/schema11-interop-0e1pcqiv)
+    Finished `test` profile [optimized] target(s) in 41.07s
+     Running /Users/roman/projects/wallet-pir/enhance/tools/schema11-interop/interop.rs (target/schema11-interop/debug/deps/interop-a2fdfd7104ffc54b)
+
+running 3 tests
+test frozen_wallet_and_server_share_the_24_shard_ceiling ... ok
+test scanned_wallet_applies_one_real_pir_row_atomically ... ok
+test wallet_client_round_trips_real_v4_http_and_requires_fresh_acceptance ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 133.45s
+

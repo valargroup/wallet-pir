@@ -32,6 +32,29 @@ packing and cannot create suffix records.
 No deployment is performed by implementing or testing this change. New candidate
 bundles remain unqualified until the hardware and operational gates pass.
 
+## Placement policy and release acceptance
+
+Use the newer runtime's explicit placement policy: five total shards for active
+or lending groups, six sealed by default, or seven sealed after qualification.
+See [capacity expansion](capacity-expansion.md) for the gates. Pass
+`--sealed-shards 7` to every candidate worker and coordinator only when qualifying
+or deploying the seven-shard profile. Pair bootstrap configuration records
+`"sealed_shards": 7`; mismatches in bootstrap receipts or worker requests fail.
+Persisted assignments cannot be reopened with a different policy.
+
+Freeze a release receipt containing revision and binary hashes, schema 11,
+`ironwood-enhance-pir-v5`, 653 record bytes, 33 records per row, geometry/setup
+identity, selected sealed limit, canonical anchor and preparation evidence hashes.
+Attach native active/sealed campaign results and wallet interoperability results
+pinned to `de3ec78f31b6fd184596fc952fe4f78d3a63cd0a`. Local tests and the historical
+seven-shard benchmark do not substitute for these receipts.
+
+The cutover uses fresh data alongside the old deployment. Provision enough
+independent capacity for concurrent runtimes; an 8 GiB replica qualified for one
+runtime is not qualified to host both. Keep rollback data and service definitions
+intact. If seven-shard qualification fails, prepare/qualify the six-shard profile
+without reducing memory reserves. Do not run the old deployment workflow.
+
 ## Historical schema-9 operations
 
 The following procedures describe the retired serving path and are retained as

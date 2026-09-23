@@ -1,5 +1,74 @@
 # Capacity expansion and qualification
 
+The supported schema-11 runtime uses whole 32K-row shards and explicit placement,
+not the legacy three-unit ownership groups. The authoritative design is
+[architecture 2](architecture_2.md). The newer fleet retains two c-4 replicas per
+group, five published generations plus a candidate, and a four-group ceiling.
+
+## Selected placement policy
+
+Active or lending groups hold at most five total shards. Fully sealed groups hold
+six by default, or seven after hardware qualification. Every replica holds the
+complete assignment. The seventh slot adds 1,081,344 positions per sealed group;
+it does not expand the first active pair or increase throughput automatically.
+
+Use `--sealed-shards 7` consistently on `enhance-pir-v4 worker`, `coordinator`,
+and `exercise`. Bootstrap accepts the same option; the pair bootstrap policy uses
+`"sealed_shards": 7`. Default/omitted means six. Bootstrap receipts, generated
+units, worker health, persisted placement and reservation requests bind the
+policy. Changing a policy on occupied persisted state is not an online migration.
+A lower limit requires explicit redistribution or a fresh separately prepared
+candidate, never editing JSON to make old state open.
+
+The seventh slot is a count ceiling, not guaranteed admission. Both destination
+replicas must reserve and prepare elective consolidation. Memory refusal may
+request a new pair before count capacity is exhausted. Retained sessions, old
+source allocations, pending operations and query pins remain charged. Reorgs
+that reopen sealed shards must fit the active limit through atomic relocation.
+
+## Qualification gate
+
+Run the existing [candidate campaign workflow](../ops/deploy/v4-candidate.md)
+with the selected policy. Use isolated native 8 GiB replicas, an off-worker
+workload host, one pair for active and two pairs for sealed. Do not run fixtures
+against canonical serving workers. The sealed exercise fills the selected number
+of shards on the first pair and appends on the second; boundary probes cover all
+shards. Both replicas need complete observation evidence.
+
+Require six hours and at least 300 publications for each profile, exact answers,
+zero acceptance-workload errors, and two concurrent query clients. Preserve at
+least 512 MiB resident headroom below the 7 GiB soft limit, measured host reserve,
+zero hard-limit/OOM events and no sustained worker swap. Report file-cache reclaim
+separately. Keep the existing p99 <=5 s and publication-lag <=60 s above baseline
+gates; fixture write time is not canonical publication lag.
+
+Separately exercise cold/warm restart, one-replica failure/recovery, seventh-slot
+consolidation, delayed source reclamation, old sessions, loan/return transitions,
+and reorgs reopening packed sealed groups. Overload tests cannot replace the
+zero-error acceptance campaign. Preserve raw traces and hashes. The assessor
+binds report and per-publication placement policy to the bootstrap policy and
+continues to report `qualification: unqualified`; independent operational review
+is required to approve a release.
+
+Compare schema-10 baseline and schema-11 candidate at identical geometry. Record
+raw storage, derived dimensions, artifacts, response bytes, memory and latency.
+The raw row shrinks from 24,321 to 21,549 bytes; encoded databases remain 24,576
+bytes per row. Do not credit raw savings to PIR memory. The reproducible local
+comparison is `suffix_width` with widths 737 and 653 and the same row count;
+local results do not establish native worker qualification.
+
+If seven fails qualification, run the six-sealed candidate through its own gates
+and deploy that profile. Never relax the guard or reinterpret a seven-shard
+receipt as six-shard evidence. Deployment and provisioning are separate actions;
+see [cutover](deployment.md). Existing infrastructure resource identities and
+internal v4 naming remain unchanged.
+
+## Historical capacity expansion
+
+The procedures below apply only to retired releases and their original state.
+They are retained as historical evidence, not schema-11 deployment instructions.
+
+
 This runbook describes the implemented c-4 expansion target and the evidence
 required to adopt it. It does not establish which machines currently serve the
 public origin. Read [status](status.md) before applying migration steps: some
@@ -330,3 +399,22 @@ named release; a subsequent binary revision requires its own acceptance.
 Operator acceptance leaves release checksum verification, removal of legacy
 workers, live chain/replica checks, three capacity samples, cooldown, the fleet
 ceiling, additive-plan validation, and new-worker bootstrap checks in force.
+
+## Pinned wallet fleet ceiling
+
+PR #28 at `de3ec78f31b6fd184596fc952fe4f78d3a63cd0a` validates at most
+24 query shards. Keep that protocol ceiling independent of placement policy.
+At an exact full-shard boundary the lifecycle opens a successor, so publication
+must stop before `24 * 32768 * 33` records (25,952,256). The last compatible
+record count is 25,952,255; do not advertise the placement-only 26-span capacity.
+
+| Replica groups | Six-sealed next blocked boundary (full-shard spans) | Seven-sealed next blocked boundary |
+|---:|---:|---:|
+| 1 | 5 | 5 |
+| 2 | 11 | 12 |
+| 3 | 17 | 19 |
+| 4 | 23 | 24 (wallet protocol ceiling) |
+
+These are count forecasts, subject to earlier memory refusal and advance
+provisioning. Raising the protocol ceiling requires a separately coordinated
+wallet change; denser placement does not authorize it.

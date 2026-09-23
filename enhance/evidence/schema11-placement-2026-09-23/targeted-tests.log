@@ -1,0 +1,54 @@
+   Compiling enhance-pir-server v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 3m 10s
+     Running tests/schema11_cutover.rs (target/release/deps/schema11_cutover-aec6de3fe25b991a)
+
+running 3 tests
+test full_ciphertext_journal_is_rejected_without_truncation ... ok
+test old_controller_and_worker_state_are_rejected_without_rewrite ... ok
+test legacy_serving_binaries_exit_before_creating_data ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/v4_canonical_record.rs (target/release/deps/v4_canonical_record-96034c6f32171cde)
+
+running 1 test
+test canonical_transaction_records_match_frozen_oracle_across_publication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.72s
+
+     Running tests/v4_http.rs (target/release/deps/v4_http-0caa7e4fcb5209d6)
+
+running 10 tests
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ignored, seven shard domains across four workers; requires at least 32 GiB RAM and 64 GiB free disk
+test full_shard_loan_return_over_http_preserves_old_queries ... ignored, full 32K lifecycle fixture; run on an isolated host with at least 16 GiB RAM
+test seven_sealed_consolidation_preserves_retained_queries ... ignored, eight shard domains across four workers; requires 32 GiB RAM and 64 GiB free disk
+test inventory_expansion_is_atomic_idempotent_and_survives_restart ... ok
+test new_shard_uses_admitted_alternative_group_over_http ... ok
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer has been running for over 60 seconds
+test committed_offline_participant_does_not_block_and_recovers_after_expiry has been running for over 60 seconds
+test distributed_round_trip_retention_failover_and_restart has been running for over 60 seconds
+test lost_worker_rows_repair_restores_current_and_retained_http_queries has been running for over 60 seconds
+test memory_refusal_moves_published_shard_with_complete_destination_pair has been running for over 60 seconds
+test lost_worker_rows_repair_restores_current_and_retained_http_queries ... ok
+test memory_refusal_moves_published_shard_with_complete_destination_pair ... ok
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer ... ok
+test committed_offline_participant_does_not_block_and_recovers_after_expiry ... ok
+test distributed_round_trip_retention_failover_and_restart ... ok
+
+test result: ok. 7 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 300.29s
+
+     Running tests/v4_note_recovery.rs (target/release/deps/v4_note_recovery-35e24ca0e3bacbac)
+
+running 1 test
+test incoming_and_outgoing_recovery_authenticate_pir_returned_record ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.67s
+
+     Running tests/v4_rpc.rs (target/release/deps/v4_rpc-1d309b46dbbf69bd)
+
+running 1 test
+test canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplication has been running for over 60 seconds
+test canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 128.36s
+

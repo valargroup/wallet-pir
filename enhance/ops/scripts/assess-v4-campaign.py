@@ -76,6 +76,9 @@ def assess(workload, observations):
 
     report = read(workload / 'exercise.json')
     check(report['status'] == 'recorded', 'workload_not_recorded')
+    policy = report.get('placement_policy')
+    check(isinstance(policy, dict) and set(policy) == {'sealed_shards'} and type(policy['sealed_shards']) is int and policy['sealed_shards'] in (6, 7), 'missing_or_invalid_placement_policy')
+    sealed_shards = policy['sealed_shards'] if isinstance(policy, dict) and policy.get('sealed_shards') in (6, 7) else 6
     profile = report['profile']
     check(profile in ('active', 'sealed'), 'requires_full_size_profile')
     check(finite(report['measurement_seconds']) >= MIN_SECONDS, 'workload_shorter_than_six_hours')
@@ -98,9 +101,10 @@ def assess(workload, observations):
         max_publication = max(max_publication, integer(publication['publication_ms']))
         placement = publication['placement']
         check(len(placement['groups']) == (1 if profile == 'active' else 2), 'assignment_group_count_differs')
-        check(all(integer(g['shards']) <= (6 if g['role'] in ('SEALED_OPEN', 'SEALED_FULL') else 5) for g in placement['groups']), 'group_role_limit_exceeded')
+        check(all(integer(g['shards']) <= (sealed_shards if g['role'] in ('SEALED_OPEN', 'SEALED_FULL') else 5) for g in placement['groups']), 'group_role_limit_exceeded')
+        check(all(g.get('placement_policy') == policy for g in placement['groups']), 'assignment_policy_differs')
         first = placement['groups'][0]
-        expected = ('ACTIVE', 5) if profile == 'active' else ('SEALED_FULL', 6)
+        expected = ('ACTIVE', 5) if profile == 'active' else ('SEALED_FULL', sealed_shards)
         check((first['role'], first['shards']) == expected, 'assignment_profile_differs')
         check(bool(placement['published_replica_counts']) and all(type(n) is int and n == 2 for n in placement['published_replica_counts'].values()), 'missing_complete_replication')
         check(placement['retained_generations'] == list(range(generation, max(0, generation - 5), -1)), 'retention_window_differs')
@@ -114,6 +118,7 @@ def assess(workload, observations):
     check(isinstance(workload_host, str) and len(workload_host) == 64 and all(c in '0123456789abcdef' for c in workload_host), 'missing_workload_host_identity')
     resource_ids, host_ids = set(), set()
     for manifest, path, targets, config in observations:
+        check(policy == observer.pair_module.installer.placement_policy(config.get('sealed_shards', 6)), 'bootstrap_placement_policy_differs')
         check(manifest['status'] == 'recorded' and manifest.get('sample_version') == 2, 'observation_not_recorded_v2')
         check(manifest['targets'] == targets, 'observation_target_binding_differs')
         check(manifest['bootstrap_config_digest'] == observer.pair_module.journal_module.digest(config), 'observation_policy_binding_differs')

@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use enhance_pir_server::{
     ingest::EnhanceJournal,
     v4::{
-        control::{Group, Ledger, Replica},
+        control::{Group, Ledger, PlacementPolicy, Replica},
         coordinator::Coordinator,
         worker::Worker,
     },
@@ -14,6 +14,9 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 #[derive(Parser)]
 struct Cli {
+    /// Deployment policy; seven sealed shards require independent qualification.
+    #[arg(long, global = true, default_value_t = 6)]
+    sealed_shards: usize,
     #[command(subcommand)]
     command: Command,
 }
@@ -110,6 +113,7 @@ fn load_inventory(
         .into_iter()
         .enumerate()
         .map(|(sequence, g)| Group {
+            placement_policy: Default::default(),
             id: g.name,
             sequence: sequence as u64,
             settling: false,
@@ -132,7 +136,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    let placement_policy = PlacementPolicy {
+        sealed_shards: cli.sealed_shards,
+    };
+    placement_policy.validate()?;
+    match cli.command {
         Command::Exercise {
             isolated_workers,
             profile,
@@ -147,7 +156,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if !isolated_workers {
                 return Err("isolated worker acknowledgement required".into());
             }
-            let groups = load_inventory(&worker_config)?;
+            let mut groups = load_inventory(&worker_config)?;
+            for group in &mut groups {
+                group.placement_policy = placement_policy;
+            }
             enhance_pir_server::v4::exercise::run(
                 enhance_pir_server::v4::exercise::Config {
                     profile,
@@ -174,7 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             );
         }
         Command::Worker { listen, data_dir } => {
-            let worker = Worker::open(&data_dir)?;
+            let worker = Worker::open_with_policy(&data_dir, placement_policy)?;
             axum::serve(
                 tokio::net::TcpListener::bind(listen).await?,
                 worker.router(),
@@ -207,7 +219,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             {
                 return Err("select either a canonical RPC cookie or an isolated fixture; polling must be nonzero".into());
             }
-            let groups = load_inventory(&worker_config)?;
+            let mut groups = load_inventory(&worker_config)?;
+            for group in &mut groups {
+                group.placement_policy = placement_policy;
+            }
             std::fs::create_dir_all(&data_dir)?;
             let mode_path = data_dir.join("v4-source-mode");
             let mode = if isolated_fixture {
@@ -246,7 +261,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 // already registered fleet. The infrastructure writer replaces this
                 // file atomically only after provisioning its replica pair.
                 let inventory_result = match load_inventory(&worker_config) {
-                    Ok(groups) => coordinator.reconcile_inventory(groups).await,
+                    Ok(mut groups) => {
+                        for group in &mut groups {
+                            group.placement_policy = placement_policy;
+                        }
+                        coordinator.reconcile_inventory(groups).await
+                    }
                     Err(error) => Err(error.to_string()),
                 };
                 if let Err(error) = inventory_result {

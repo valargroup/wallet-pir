@@ -5,8 +5,8 @@
 This document specifies the target Enhance architecture. It is not a description
 of deployed behavior or authorization to deploy infrastructure. The existing
 implementation is described in [architecture](architecture.md) and
-[protocol](protocol.md). Record encoding and wallet-side authentication remain
-unchanged; this design changes the database's query domains, update granularity,
+[protocol](protocol.md). Schema 11 uses 653-byte suffix records and protocol v5; wallet-side
+authentication reconstructs the ciphertext using compact context. Relative to that protocol, this design changes the database's query domains, update granularity,
 and placement, not the underlying PIR cryptography.
 
 The coordinator ingests canonical records into a journal and publishes immutable
@@ -23,9 +23,9 @@ once it has enough records of its own.
 
 Whole shards are assigned to groups of two 8 GiB worker replicas. Each replica
 holds the complete assignment. A group may hold at most five total shards while
-receiving appends, or six sealed shards. The coordinator reserves memory for
+receiving appends, or seven sealed shards after qualification (six by default). The coordinator reserves memory for
 future growth and transitions, prepares new groups before capacity runs out, and
-moves sealed shards into older groups to fill their sixth slot. All placement
+moves sealed shards into older groups to fill their qualified sealed slots. All placement
 limits remain subject to measured memory admission.
 
 ```mermaid
@@ -51,8 +51,8 @@ shard. A group describes placement and replication, not a query domain.
 
 | Term | Meaning |
 |---|---|
-| Record | One position-indexed Ironwood enhancement record, currently 737 bytes |
-| Row | Plaintext retrieved by one PIR query: 33 consecutive records, or 24,321 bytes, in schema 9 with profile `simplepir-p16-q46-v1` |
+| Record | One position-indexed Ironwood enhancement record, 653 bytes in schema 11 |
+| Row | Plaintext retrieved by one PIR query: 33 consecutive records, or 21,549 bytes, in schema 11 with profile `simplepir-p16-q46-v1` |
 | Shard | An independent PIR database with its own parameters, public material, and separately generated query/upload-key material |
 | Upload keys | Fresh packing/evaluation keys carried with each query; they are not persistent keys reused across requests |
 | Mutable unit (`mutable_unit`) | A shard subdivision controlling preprocessing, caching, and retention; all units share the shard's query domain and upload keys |
@@ -73,10 +73,10 @@ Here, 1K means 1,024 rows. The defaults are:
 | `min_shard_rows` | 4,096 | Fixed loan size and successor-owned population required for return |
 | `max_mutable_unit_rows` | 8,192 | Maximum unit size |
 | `min_mutable_unit_rows` | 2,048 | Allocation floor compatible with preprocessing alignment |
-| `records_per_row` | 33 | Schema-9 packing with 16-bit plaintext coefficients |
+| `records_per_row` | 33 | Schema-11 packing with 16-bit plaintext coefficients |
 | Retained published generations | 5 | Includes current; one unpublished candidate is additional |
 | Active group | 5 total shards | Normally four sealed plus one active; lenders also count |
-| Fully sealed group | 6 shards | No shard receiving appends |
+| Fully sealed group | 6 shards by default; 7 after qualification | No shard receiving appends |
 | Replicas per group | 2 | Alternative complete copies; their capacities are not additive |
 | Worker RAM | 8 GiB | Per replica, shared with the host's other activity |
 
@@ -311,8 +311,8 @@ internal shards per group” arithmetic with explicit placement and memory
 admission. Both replicas must independently fit the assignment, retained
 revisions, preparation, transitions, serving overhead, and operating headroom.
 
-The encoded schema-9 database has 12,288 `u16` columns: 24,576 bytes per row,
-compared with 24,321 bytes of record payload. A full 32K database is 768 MiB;
+The encoded schema-11 database has 12,288 `u16` columns: 24,576 bytes per row,
+compared with 21,549 bytes of record payload. A full 32K database is 768 MiB;
 an 8K unit is 192 MiB. These sizes explain the base storage cost, not the full
 worker peak. Sharing unchanged units between generations is essential; retaining
 whole-shard copies for every snapshot would defeat the budget.
@@ -320,7 +320,7 @@ whole-shard copies for every snapshot would defeat the budget.
 ### Five-generation placement model and memory estimates
 
 The selected policy is five total shards with at most one receiving appends,
-or six sealed shards, per replica. These are alternative roles, not additive
+or seven sealed shards after qualification (six by default), per replica. These are alternative roles, not additive
 capacities. Maximum unit size stays at 8K; no separate 4K frontier cap is required
 by the selected model. A sealed group must pass active admission before it can
 receive appends again.
@@ -335,46 +335,46 @@ active group database budget = 5 * 768 MiB       current full shards
                              + 4 * 192 MiB       modeled transition allowance
                              = 5,568 MiB = 5.4375 GiB
 
-sealed group database budget = 6 * 768 MiB
-                             = 4,608 MiB = 4.5 GiB
+sealed group database budget = 7 * 768 MiB
+                             = 5,376 MiB = 5.25 GiB
 ```
 
-Reducing retention from eight to five published generations removes three extra
-8K revisions, saving 576 MiB in this single-changing-unit model. Multi-unit
-changes, reorgs, and older query pins require separate accounting.
+The shared placement policy fixes active groups at five total shards and supports
+six or seven sealed shards. The CLI defaults to six. Select `--sealed-shards 7`
+on the coordinator, workers and exercise command only for isolated qualification
+or an independently qualified deployment. Persisted group/worker policy and
+reservation requests bind this selection; restart with a different policy is
+rejected. A group containing a lender is still subject to the active limit.
 
-The [schema-9 capacity report](../evidence/schema9-worker-capacity-2026-09-22/REPORT.md)
-measured approximately 0.695–0.702 GiB of preparation/process plus conservative
-kernel overhead above live query databases. Use 0.71 GiB as a rounded planning
-allowance for the same one-preparation/two-evaluation workload. It includes
-transient CRS construction and request copies, but excludes reclaimable artifact
-file cache. It is an empirical estimate, not a worst-case allocation bound.
+The [historical capacity report](../evidence/schema9-worker-capacity-2026-09-22/REPORT.md)
+measured seven sealed shards at 5.945 GiB on an isolated larger host with a worker
+cgroup. It does not qualify schema 11 or actual 8 GiB hosts. Using the runtime's
+728 MiB preparation/process/kernel allowance gives these planning estimates:
 
-| Per-replica component | Five total, one active | Six sealed |
-|---|---:|---:|
-| Current full-shard query databases | 3.7500 GiB | 4.5000 GiB |
-| Extra frontier revisions: five published plus candidate | 0.9375 GiB | 0 GiB |
-| Modeled transition-runtime allowance | 0.7500 GiB | 0 GiB |
-| Distinct query-database subtotal | 5.4375 GiB | 4.5000 GiB |
-| Rounded preparation/process + kernel allowance | 0.7100 GiB | 0.7100 GiB |
-| Estimated resident + kernel peak | 6.1475 GiB (~6.15) | 5.2100 GiB (~5.21) |
-| Headroom below 7 GiB | ~873 MiB | ~1,833 MiB |
-| Required resident guard within that headroom | 512 MiB | 512 MiB |
-| Margin remaining after the guard | ~361 MiB | ~1,321 MiB |
+| Placement | Database subtotal | Estimated resident + kernel | Margin after 512 MiB guard below 7 GiB |
+|---|---:|---:|---:|
+| Five total with active frontier | 5,568 MiB | 6,296 MiB | 360 MiB |
+| Six sealed | 4,608 MiB | 5,336 MiB | 1,320 MiB |
+| Seven sealed | 5,376 MiB | 6,104 MiB | 552 MiB |
+| Six total with active frontier | 6,336 MiB | 7,064 MiB | Fails |
+| Eight sealed | 6,144 MiB | 6,872 MiB | Fails |
 
-These are derived five-generation estimates, not new benchmark results. The
-five-total active measurement used eight published generations plus a candidate
-and reached 6.702 GiB of conservative resident-plus-kernel memory. Subtracting
-576 MiB projects about 6.139 GiB; the rounded allowance above gives 6.148 GiB.
-Six sealed shards were not separately measured; seven sealed measured 5.945 GiB.
-The selected configurations are projected to preserve the 512 MiB guard, subject
-to qualification with five-generation retention, real lifecycle overlap, and
-bounded request buffering.
+The active subtotal includes five extra frontier revisions and a 768 MiB
+transition allowance. Sealed estimates assume unchanged databases; transitions,
+reorgs and query pins require additional byte admission. Both replicas must fit
+independently. Never count a source allocation as freed until retained snapshots
+and admitted queries release it. A reorg reopening a packed sealed group must
+relocate assignments before publishing; if admission fails, preserve the previous
+answerable generation and report blocked progress.
 
-The sealed estimate assumes unchanged shards without loan/restoration work.
-Such work requires an additional reservation. The active model's 768 MiB
-transition allowance is a stress allocation, not a proved bound on every loan,
-reorg, or migration. It must not also be spent on a successor's growth.
+Both 737-byte and 653-byte rows require six PIR instances and 12,288 `u16`
+columns. The 11.4% raw storage reduction does not reduce the 768 MiB full-shard
+query database or imply smaller encrypted responses. Seven sealed shards store
+7,569,408 record positions per pair, 16.7% more than six; replica capacities are
+not additive. Active capacity and first-pair expansion timing do not increase.
+
+See [capacity qualification](capacity-expansion.md) for the hardware gate,
+fallback and evidence requirements. Keep the guard and host reserve unchanged.
 
 ### Memory limits and admission
 
@@ -442,8 +442,8 @@ independently nor request infrastructure.
 Use one authoritative placement writer and a durable controller epoch to fence
 stale writers. Infrastructure operations retain their own serialized journal and
 locking; a placement epoch does not serialize infrastructure state changes.
-Growing from one group to two means growing from two machines to four. Six sealed
-shards per worker means six distinct shards per group, copied onto both replicas.
+Growing from one group to two means growing from two machines to four. Seven sealed
+shards per worker means seven distinct shards per group, copied onto both replicas.
 
 Group role describes the current assignment and its remaining transition work.
 Replica health is tracked separately.
@@ -453,8 +453,8 @@ Replica health is tracked separately.
 | `STANDBY` | No current shards; ready for an admitted assignment |
 | `ACTIVE` | At most five current shards, at most one receiving appends |
 | `SETTLING` | No appending shard, but restoration or residual active reservations prevent sealed-role admission |
-| `SEALED_OPEN` | Fewer than six current shards, all sealed; may accept consolidation after memory admission |
-| `SEALED_FULL` | Six current shards, all sealed |
+| `SEALED_OPEN` | Fewer than the configured sealed limit of current shards, all sealed; may accept consolidation after memory admission |
+| `SEALED_FULL` | Configured sealed limit (six or seven), all sealed |
 
 ```mermaid
 stateDiagram-v2
@@ -463,7 +463,7 @@ stateDiagram-v2
     ACTIVE --> SETTLING: Successor placed elsewhere
     SETTLING --> SEALED_OPEN: Restore lender and satisfy sealed budget
     ACTIVE --> SEALED_OPEN: No residual settling work
-    SEALED_OPEN --> SEALED_FULL: Consolidate to six sealed shards
+    SEALED_OPEN --> SEALED_FULL: Consolidate to configured sealed limit
     SEALED_OPEN --> ACTIVE: Full active readmission
 ```
 
@@ -562,10 +562,10 @@ Do not exceed a worker budget or publish an oversized shard. Journal ingestion
 may continue within its independent storage limits; resume publication from
 canonical coverage once capacity is ready.
 
-### Filling historical groups to six sealed shards
+### Filling historical groups to the qualified sealed limit
 
 Rollover alone leaves a formerly active five-shard group with five sealed shards.
-Consolidation fills the sixth slot by moving a shard after it seals elsewhere.
+Consolidation fills the remaining qualified slots by moving shards after they seal elsewhere.
 This is routine placement work; moving an active shard remains exceptional.
 
 After sealing, choose the oldest eligible `SEALED_OPEN` destination by persisted
@@ -594,7 +594,7 @@ admitting a sixth shard into an active group. Once eligible transitions and move
 drain, historical shards should occupy groups of six, allowing a partially filled
 historical group and capacity reserved for active growth. Health, memory, and
 retained references can delay this convergence; report the blocking reason.
-Six shards on every worker at every moment is not a requirement.
+The maximum shard count on every worker at every moment is not a requirement.
 
 ## Worker updates and recovery
 
@@ -684,8 +684,8 @@ make this exceptional.
 | Reorg changes a full sealed group | Readmit the changed workload; relocate into qualified capacity or block publication |
 | Actual memory exceeds the qualified model | Stop new admissions, report the discrepancy, preserve published service where possible |
 
-Six sealed shards is a steady-state target, not a guarantee that arbitrary
-changes to all six fit at once. Reserve actual recovery runtimes, including
+Seven sealed shards is a steady-state target, not a guarantee that arbitrary
+changes to all seven fit at once. Reserve actual recovery runtimes, including
 retained-snapshot overlap, before preparing. If one shard cannot qualify even
 alone, the design or implementation must be corrected; splitting it across
 groups or silently raising memory limits is not a fallback.
@@ -708,10 +708,10 @@ Qualification must cover the following behavior, not just shard counts:
 | Lifecycle | Before/at/after 32K carve-out and 4K-owned return; excess records in crossing blocks, multiple transitions per batch, repeated cycles; complete disjoint coverage and no published query dimension over 32K |
 | Session binding | Old queries survive carve-out, growth, return, and moves; reject wrong shard, generation, epoch, dimensions, and framing; prevent incompatible cache reuse; enforce five-generation expiry and safe admitted-query completion |
 | Recovery | Restart and reorg on both sides of transitions, failed preparation/provisioning, one failed replica, interrupted return |
-| Memory and performance | Full shard alone, five-total active and six-sealed placements, real carve-out/return overlap, consolidation, reorgs, and delayed source reclamation on 8 GiB hosts |
+| Memory and performance | Full shard alone, five-total active and seven-sealed placements, real carve-out/return overlap, consolidation, reorgs, and delayed source reclamation on 8 GiB hosts |
 | Privacy and routing | Borrowed records route through the borrower; no target-dependent alternative current domains; document shard selection and transition correlation without treating 4K as a cryptographic guarantee |
 | Rollover | Same-group and new-group successors, `2 * min_shard_rows` loan reservation, restoration with retained snapshots, growth through 32K, direct destination preparation, early provisioning, delayed readiness, burst crossings, fleet limits, exceptional active moves |
-| Consolidation | Several group boundaries converge toward six sealed shards where eligible; active groups never exceed five; verify lender counting, settling, source retention, destination replication, and publication priority |
+| Consolidation | Several group boundaries converge toward the configured sealed limit where eligible; active groups never exceed five; verify lender counting, settling, source retention, destination replication, and publication priority |
 | Operation recovery | Restart at every phase and around commit; reject stale epochs, revisions, process incarnations, and conflicting idempotency payloads; no duplicate provisioning, partial commit, second candidate, or premature reservation release |
 
 Run memory qualification beyond the retention window with five published
@@ -733,3 +733,22 @@ This specification fixes the logical policy. Safe packing counts still require
 qualification of the selected model; provisioning lead time requires operational
 evidence, and the versioned wire encoding remains implementation work. Existing
 deployment constants do not establish any of those results.
+
+## Pinned wallet fleet ceiling
+
+PR #28 at `de3ec78f31b6fd184596fc952fe4f78d3a63cd0a` validates at most
+24 query shards. Keep that protocol ceiling independent of placement policy.
+At an exact full-shard boundary the lifecycle opens a successor, so publication
+must stop before `24 * 32768 * 33` records (25,952,256). The last compatible
+record count is 25,952,255; do not advertise the placement-only 26-span capacity.
+
+| Replica groups | Six-sealed next blocked boundary (full-shard spans) | Seven-sealed next blocked boundary |
+|---:|---:|---:|
+| 1 | 5 | 5 |
+| 2 | 11 | 12 |
+| 3 | 17 | 19 |
+| 4 | 23 | 24 (wallet protocol ceiling) |
+
+These are count forecasts, subject to earlier memory refusal and advance
+provisioning. Raising the protocol ceiling requires a separately coordinated
+wallet change; denser placement does not authorize it.

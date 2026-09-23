@@ -1,5 +1,5 @@
 //! Private v4 worker API. A candidate never evicts a published assignment.
-use super::control::{MIB, OVERHEAD, RESIDENT_LIMIT};
+use super::control::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT};
 use super::runtime::{DomainPlan, Engine, Evaluation};
 use axum::{
     body::{to_bytes, Body},
@@ -23,6 +23,7 @@ use tokio::sync::Semaphore;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Candidate {
+    pub placement_policy: PlacementPolicy,
     pub operation: String,
     pub attempt: u64,
     pub epoch: u64,
@@ -79,6 +80,8 @@ pub struct Intermediate {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct DiskState {
+    #[serde(default)]
+    placement_policy: PlacementPolicy,
     schema_version: u16,
     epoch: u64,
     revision: u64,
@@ -92,6 +95,7 @@ struct DiskState {
 impl Default for DiskState {
     fn default() -> Self {
         Self {
+            placement_policy: PlacementPolicy::default(),
             schema_version: enhance_pir::v4::SCHEMA_VERSION,
             epoch: 0,
             revision: 0,
@@ -105,10 +109,18 @@ impl Default for DiskState {
 }
 impl DiskState {
     fn validate_format(&self) -> Result<(), String> {
+        self.placement_policy.validate()?;
         if self.schema_version != enhance_pir::v4::SCHEMA_VERSION {
             return Err(
                 "incompatible worker state; rebuild schema 11 in a separate data directory".into(),
             );
+        }
+        if self
+            .candidate
+            .as_ref()
+            .is_some_and(|c| c.placement_policy != self.placement_policy)
+        {
+            return Err("persisted candidate placement policy mismatch".into());
         }
         for manifest in self
             .activated
@@ -216,7 +228,7 @@ impl Inner {
             .filter(|p| p.shard.state == ShardState::Growing)
             .count();
         let active = plans.iter().any(|p| p.shard.state != ShardState::Sealed);
-        if growing > 1 || plans.len() > if active { 5 } else { 6 } {
+        if growing > 1 || plans.len() > self.disk.placement_policy.limit(active) {
             return Err("group role limit exceeded".into());
         }
         let mut ids = BTreeSet::new();
@@ -360,6 +372,11 @@ impl Worker {
     }
 
     pub fn open(root: &FsPath) -> Result<Self, String> {
+        Self::open_with_policy(root, PlacementPolicy::default())
+    }
+
+    pub fn open_with_policy(root: &FsPath, policy: PlacementPolicy) -> Result<Self, String> {
+        policy.validate()?;
         fs::create_dir_all(root.join("rows")).map_err(|e| e.to_string())?;
         fs::create_dir_all(root.join("hints")).map_err(|e| e.to_string())?;
         let lock = OpenOptions::new()
@@ -376,9 +393,22 @@ impl Worker {
             serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?
         } else {
-            DiskState::default()
+            DiskState {
+                placement_policy: policy,
+                ..DiskState::default()
+            }
         };
         disk.validate_format()?;
+        if disk.placement_policy != policy {
+            return Err("persisted worker placement policy mismatch; explicit redistribution or fresh state required".into());
+        }
+        crate::artifact::write_atomic(root, "worker-v4.json", |f| {
+            serde_json::to_writer(f, &disk).map_err(std::io::Error::other)
+        })
+        .map_err(|e| e.to_string())?;
+        File::open(root)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
         let mut engine = Engine::new(root);
         let mut published = BTreeMap::new();
         for (generation, (_, plans)) in &disk.published {
@@ -572,7 +602,7 @@ async fn metrics(
 async fn health(State(w): State<Worker>) -> Json<serde_json::Value> {
     let inner = w.inner.lock().unwrap();
     Json(
-        serde_json::json!({"protocol":PROTOCOL_REVISION,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
+        serde_json::json!({"protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
         "resident_database_bytes":inner.engine.try_lock().ok().map(|e| e.live_bytes()),"published":inner.disk.published.keys().collect::<Vec<_>>(),
         "published_manifest_digests":inner.disk.published.iter().map(|(g,(m,_))| (g.to_string(), digest(m))).collect::<BTreeMap<_,_>>(),
         "candidate":inner.disk.candidate}),
@@ -649,6 +679,9 @@ async fn reserve(
         .try_acquire_owned()
         .map_err(unavailable)?;
     let mut i = w.inner.lock().unwrap();
+    if candidate.placement_policy != i.disk.placement_policy {
+        return Err(unavailable("worker placement policy mismatch"));
+    }
     if candidate.epoch < i.disk.epoch || candidate.expected_revision != i.disk.revision {
         return Err(unavailable("stale epoch or placement revision"));
     }
@@ -997,6 +1030,41 @@ mod tests {
     use super::*;
     use tower::ServiceExt;
 
+    #[tokio::test]
+    async fn placement_policy_is_persisted_and_fences_reservations() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = PlacementPolicy { sealed_shards: 7 };
+        let worker = Worker::open_with_policy(root.path(), policy).unwrap();
+        let router = worker.router();
+        let mut candidate = Candidate {
+            placement_policy: PlacementPolicy::default(),
+            operation: "policy".into(),
+            attempt: 1,
+            epoch: 1,
+            expected_revision: 0,
+            generation: 1,
+            plans: vec![],
+        };
+        assert_eq!(
+            command(&router, "/internal/v4/reserve", &candidate).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        candidate.placement_policy = policy;
+        assert_eq!(
+            command(&router, "/internal/v4/reserve", &candidate).await,
+            StatusCode::OK
+        );
+        drop(router);
+        assert!(Worker::open(root.path())
+            .err()
+            .unwrap()
+            .contains("placement policy"));
+        assert!(Worker::open_with_policy(root.path(), policy).is_ok());
+        assert!(
+            Worker::open_with_policy(root.path(), PlacementPolicy { sealed_shards: 8 }).is_err()
+        );
+    }
+
     #[test]
     fn restart_rebuilds_lost_cache_only_from_verified_durable_rows() {
         use super::super::runtime::{plan, unit_rows, Packing};
@@ -1116,6 +1184,7 @@ mod tests {
             .unwrap()
             .save(DiskState {
                 candidate: Some(Candidate {
+                    placement_policy: Default::default(),
                     operation: "pending".into(),
                     attempt: 2,
                     epoch: 3,
@@ -1195,6 +1264,7 @@ mod tests {
             StatusCode::OK
         );
         let mut candidate = Candidate {
+            placement_policy: Default::default(),
             epoch: 1,
             operation: "cancelled".into(),
             attempt: 0,
@@ -1230,6 +1300,7 @@ mod tests {
         })
         .unwrap();
         let mut candidate = Candidate {
+            placement_policy: Default::default(),
             operation: "test".into(),
             attempt: 0,
             epoch: 1,

@@ -93,7 +93,8 @@ class Remote:
         output = self.command(['python3', remote_bundle + '/bootstrap-v4-worker.py', 'install',
                                '--bundle', remote_bundle, '--revision', config['revision'],
                                '--manifest-sha256', config['manifest_sha256'], '--worker-name', target['name'],
-                               '--private-ipv4', target['private_ipv4'], '--limits', base + '/limits.json'], timeout=180)
+                               '--private-ipv4', target['private_ipv4'], '--limits', base + '/limits.json',
+                               '--sealed-shards', str(config.get('sealed_shards', 6))], timeout=180)
         if len(output) > 1024 * 1024:
             raise ValueError('oversized bootstrap receipt')
         return json.loads(output)
@@ -102,15 +103,17 @@ class Remote:
 def validate_receipt(receipt, target, config, identity):
     limits = config['limits'][target['name']]
     expected = {**identity, 'worker_name': target['name'], 'private_ipv4': target['private_ipv4'],
+                'placement_policy': installer.placement_policy(config.get('sealed_shards', 6)),
                 'limits': limits, 'phase': 'bootstrapped', 'qualification': 'unqualified',
-                'unit_sha256': installer.sha256(installer.unit(identity['binary_sha256'], target['private_ipv4'], limits))}
+                'unit_sha256': installer.sha256(installer.unit(identity['binary_sha256'], target['private_ipv4'], limits, config.get('sealed_shards', 6)))}
     if any(receipt.get(k) != v for k, v in expected.items()):
         raise ValueError('remote bootstrap receipt differs from the requested installation')
     host, health, runtime = (receipt[k] for k in ('host', 'health', 'runtime'))
     installer.validate_limits(host, limits)
     if host.get('hostname') != target['name'] or not isinstance(host.get('boot_id'), str) or not host['boot_id']:
         raise ValueError('bootstrap receipt lacks matching host/boot identity')
-    if (health.get('protocol') != installer.PROTOCOL or type(health.get('epoch')) is not int or health['epoch'] != 0
+    if (health.get('placement_policy') != installer.placement_policy(config.get('sealed_shards', 6))
+            or health.get('protocol') != installer.PROTOCOL or type(health.get('epoch')) is not int or health['epoch'] != 0
             or type(health.get('revision')) is not int or health['revision'] != 0
             or health.get('published') != [] or 'candidate' not in health or health['candidate'] is not None
             or not isinstance(health.get('incarnation'), str) or not health['incarnation']):

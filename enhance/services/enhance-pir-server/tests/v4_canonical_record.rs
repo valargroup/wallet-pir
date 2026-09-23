@@ -125,6 +125,7 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
     let coordinator = Coordinator::open(
         &root.path().join("control"),
         vec![Group {
+            placement_policy: Default::default(),
             id: "g0".into(),
             sequence: 0,
             replicas,

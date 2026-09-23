@@ -22,6 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-dir', type=Path, default=Path('target/release-fast'))
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--sealed-shards', type=int, choices=(6, 7), default=6)
     parser.add_argument('--seconds', type=int, default=10)
     parser.add_argument('--min-publications', type=int, default=6)
     args = parser.parse_args()
@@ -42,7 +43,7 @@ def main():
                 replicas.append(replica)
                 log = (args.out / f'worker-{index}.log').open('w')
                 logs.append(log)
-                processes.append(subprocess.Popen([str(binary), 'worker', '--listen', f'127.0.0.1:{port}',
+                processes.append(subprocess.Popen([str(binary), 'worker', '--sealed-shards', str(args.sealed_shards), '--listen', f'127.0.0.1:{port}',
                                                    '--data-dir', str(root / f'worker-{index}')], stdout=log, stderr=log))
             deadline = time.monotonic() + 30
             for replica in replicas:
@@ -58,7 +59,7 @@ def main():
                         time.sleep(0.1)
             inventory = root / 'workers.json'
             inventory.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': replicas}]}))
-            command = [str(binary), 'exercise', '--isolated-workers', '--profile', 'smoke',
+            command = [str(binary), 'exercise', '--sealed-shards', str(args.sealed_shards), '--isolated-workers', '--profile', 'smoke',
                        '--data-dir', str(root / 'exercise'), '--worker-config', str(inventory), '--listen', '127.0.0.1:0',
                        '--seconds', str(args.seconds), '--min-publications', str(args.min_publications),
                        '--publication-interval', '1', '--concurrency', '2']

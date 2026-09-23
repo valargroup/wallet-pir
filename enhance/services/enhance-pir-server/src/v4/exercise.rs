@@ -40,11 +40,13 @@ pub enum Profile {
     Sealed,
 }
 impl Profile {
-    fn seeds(self) -> Vec<u64> {
+    fn seeds(self, sealed_shards: usize) -> Vec<u64> {
         match self {
             Self::Smoke => vec![67],
             Self::Active => vec![4 * SPAN - RECORDS_PER_ROW as u64, 4 * SPAN],
-            Self::Sealed => vec![5 * SPAN + LOAN, 6 * SPAN + LOAN],
+            Self::Sealed => (5..=sealed_shards as u64)
+                .map(|n| n * SPAN + LOAN)
+                .collect(),
         }
     }
     fn target(self, index: u64, records: u64) -> (u64, &'static str) {
@@ -175,7 +177,7 @@ fn assignments(root: &Path, manifest: &Manifest, profile: Profile) -> Result<Val
             .values()
             .filter(|id| *id == &group.id)
             .count();
-        groups.push(json!({"id":group.id,"role":role,"shards":count}));
+        groups.push(json!({"id":group.id,"placement_policy":group.placement_policy,"role":role,"shards":count}));
     }
     let first = &state.groups[0];
     let count = state
@@ -185,7 +187,8 @@ fn assignments(root: &Path, manifest: &Manifest, profile: Profile) -> Result<Val
         .count();
     let role = first.role(&manifest.coverage, &state.assignments)?;
     if (profile == Profile::Active && (count != 5 || role != Role::Active))
-        || (profile == Profile::Sealed && (count != 6 || role != Role::SealedFull))
+        || (profile == Profile::Sealed
+            && (count != first.placement_policy.sealed_shards || role != Role::SealedFull))
     {
         return Err("published assignment does not match requested capacity profile".into());
     }
@@ -231,6 +234,7 @@ pub async fn run(config: Config, groups: Vec<Group>) -> Result<()> {
     std::fs::create_dir(&config.root)?;
     std::fs::write(config.root.join("v4-source-mode"), "synthetic-fixture")?;
     let mut summary = json!({"kind":"enhance-v4-workload","qualification":"unqualified","status":"building",
+        "placement_policy":groups[0].placement_policy,
         "profile":config.profile,"seconds_requested":config.seconds,"min_publications":config.min_publications,
         "workload_host_id_sha256":host_id(Path::new("/")),
         "concurrency":config.concurrency,"started_wall_ns":now_ns(),"publications":0,
@@ -280,6 +284,7 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
                 .map(|r| (g.id.clone(), r.name.clone(), r.url.clone()))
         })
         .collect();
+    let sealed_shards = groups[0].placement_policy.sealed_shards;
     let coordinator = Coordinator::open(&config.root.join("control"), groups)?;
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let address = listener.local_addr()?;
@@ -307,7 +312,7 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
         ENHANCE_LAYOUT,
     )?;
     let mut manifest = None;
-    for target in config.profile.seeds() {
+    for target in config.profile.seeds(sealed_shards) {
         append(&mut journal, target, 0)?;
         manifest = Some(publish(&coordinator, &journal).await?);
     }
@@ -541,9 +546,15 @@ mod tests {
 
     #[test]
     fn full_profiles_preserve_assignment_limits_across_cycles() {
-        for profile in [Profile::Active, Profile::Sealed] {
+        for (profile, sealed_shards) in [
+            (Profile::Active, 6),
+            (Profile::Active, 7),
+            (Profile::Sealed, 6),
+            (Profile::Sealed, 7),
+        ] {
             let groups: Vec<_> = (0..if profile == Profile::Sealed { 2 } else { 1 })
                 .map(|i| Group {
+                    placement_policy: super::super::control::PlacementPolicy { sealed_shards },
                     id: format!("g{i}"),
                     sequence: i,
                     replicas: vec![],
@@ -553,7 +564,7 @@ mod tests {
             let mut lifecycle = Lifecycle::default();
             let mut placement = BTreeMap::new();
             let mut records = 0;
-            for target in profile.seeds() {
+            for target in profile.seeds(sealed_shards) {
                 records = target;
                 let coverage = lifecycle.coverage(records, Geometry::default()).unwrap();
                 placement = assign(&coverage, &groups, &placement).unwrap();
@@ -566,7 +577,11 @@ mod tests {
                 consolidate(&coverage, &groups, &mut placement).unwrap();
                 assert_eq!(
                     placement.values().filter(|g| **g == groups[0].id).count(),
-                    if profile == Profile::Active { 5 } else { 6 }
+                    if profile == Profile::Active {
+                        5
+                    } else {
+                        sealed_shards
+                    }
                 );
                 assert_eq!(
                     groups[0].role(&coverage, &placement).unwrap(),

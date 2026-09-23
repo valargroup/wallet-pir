@@ -1,4 +1,4 @@
-//! Local width comparison at equal 4096-row geometry. Does not contact a service.
+//! Local width comparison at equal selectable row geometry. Does not contact a service.
 use enhance_pir_server::{
     ipir::{deserialize_first_dim_query, PreparedShard},
     types::{DatabaseId, DatabaseLayout},
@@ -17,15 +17,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if ![737, 653].contains(&width) {
         return Err("pass 737 or 653".into());
     }
+    let rows_count: usize = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "4096".into())
+        .parse()?;
+    if ![4096, 32768].contains(&rows_count) {
+        return Err("rows must be 4096 or 32768".into());
+    }
     let layout = DatabaseLayout {
         record_bytes: width,
         records_per_row: 33,
-        shard_rows: 4096,
+        shard_rows: rows_count,
         pir_profile: SimplePirProfile::P16Q46,
     };
-    let (rlwe, params) =
-        ipir_sp::params_for_simplepir_profile(4096, layout.item_size_bits(), layout.pir_profile)?;
-    let client = IPIRClient::from_profile(4096, layout.item_size_bits(), layout.pir_profile)?;
+    let (rlwe, params) = ipir_sp::params_for_simplepir_profile(
+        rows_count as u64,
+        layout.item_size_bits(),
+        layout.pir_profile,
+    )?;
+    let client = IPIRClient::from_profile(
+        rows_count as u64,
+        layout.item_size_bits(),
+        layout.pir_profile,
+    )?;
     let setup =
         client.generate_public_query_setup_simplepir_from_seed(enhance_pir::v4::setup_seed(0));
     let mut rows = vec![0; layout.shard_bytes()];
@@ -56,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut response_bytes = 0;
     let mut query_bytes = 0;
     for i in 0..13 {
-        let target = i * 311 % 4096;
+        let target = i * 311 % rows_count;
         let (query, keys, secret) = client.generate_fresh_query_simplepir(&setup, target);
         let query = query.to_switched_bytes(rlwe.q, params.query_bits);
         query_bytes = 28 + serialize_packing_keys(&rlwe, &keys)?.len() + query.len();
@@ -80,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{}",
         serde_json::json!({
-            "record_bytes": width, "rows": 4096, "records_per_row": 33,
+            "record_bytes": width, "rows": rows_count, "records_per_row": 33,
             "raw_row_bytes": layout.row_bytes(), "raw_shard_bytes": rows.len(),
             "instances": params.instances, "db_cols": params.db_cols,
             "database_u16_bytes": params.db_rows * params.db_cols * 2,

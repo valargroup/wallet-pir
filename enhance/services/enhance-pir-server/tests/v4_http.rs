@@ -65,6 +65,7 @@ async fn distributed_round_trip_retention_failover_and_restart() {
         });
     }
     let groups = vec![Group {
+        placement_policy: Default::default(),
         id: "group-1".into(),
         sequence: 0,
         replicas,
@@ -289,6 +290,7 @@ async fn full_shard_loan_return_over_http_preserves_old_queries() {
     let coordinator = Coordinator::open(
         &root.path().join("control"),
         vec![Group {
+            placement_policy: Default::default(),
             id: "group-1".into(),
             sequence: 0,
             replicas,
@@ -559,6 +561,7 @@ async fn inventory_expansion_is_atomic_idempotent_and_survives_restart() {
             });
         }
         groups.push(Group {
+            placement_policy: Default::default(),
             id: format!("group-{sequence}"),
             sequence,
             replicas,
@@ -627,6 +630,17 @@ async fn inventory_expansion_is_atomic_idempotent_and_survives_restart() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "seven shard domains across four workers; requires at least 32 GiB RAM and 64 GiB free disk"]
 async fn consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard() {
+    consolidation_campaign(6).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "eight shard domains across four workers; requires 32 GiB RAM and 64 GiB free disk"]
+async fn seven_sealed_consolidation_preserves_retained_queries() {
+    consolidation_campaign(7).await;
+}
+
+async fn consolidation_campaign(sealed_shards: usize) {
+    let policy = enhance_pir_server::v4::control::PlacementPolicy { sealed_shards };
     use axum::{
         body::{to_bytes, Body},
         response::IntoResponse,
@@ -644,7 +658,7 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
         let mut replicas = Vec::new();
         for index in 0..2 {
             let name = format!("g{sequence}-r{index}");
-            let worker = Worker::open(&root.path().join(&name)).unwrap();
+            let worker = Worker::open_with_policy(&root.path().join(&name), policy).unwrap();
             let fail = fail_reservation.clone();
             let observed_attempt = failed_attempt.clone();
             let router = worker.router().layer(axum::middleware::from_fn(
@@ -660,7 +674,9 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
                             let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
                             let candidate: enhance_pir_server::v4::worker::Candidate =
                                 serde_json::from_slice(&bytes).unwrap();
-                            if candidate.plans.len() == 6 && fail.swap(false, Ordering::SeqCst) {
+                            if candidate.plans.len() == sealed_shards
+                                && fail.swap(false, Ordering::SeqCst)
+                            {
                                 observed_attempt.store(candidate.attempt, Ordering::SeqCst);
                                 return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
                             }
@@ -682,6 +698,7 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
             });
         }
         groups.push(Group {
+            placement_policy: policy,
             id: format!("g{sequence}"),
             sequence,
             replicas,
@@ -700,7 +717,7 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
     .unwrap();
     let mut height = 3428143;
     // Bounded fixture construction rather than keeping several GiB of records in a Vec.
-    for target in [(5 * 32768 + 4096) * 33u64, (6 * 32768 + 4096) * 33u64] {
+    for target in (5..=sealed_shards as u64).map(|n| (n * 32768 + 4096) * 33) {
         while journal.tree_size() < target {
             let start = journal.tree_size();
             let end = (start + 8192).min(target);
@@ -722,7 +739,8 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
     let state: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path.join("controller-v4.json")).unwrap()).unwrap();
     assert_eq!(
-        state["assignments"]["5"], "g1",
+        state["assignments"][(sealed_shards - 1).to_string()],
+        "g1",
         "canonical update used the original placement"
     );
     assert!(state["operation"].is_null());
@@ -731,7 +749,7 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
         failed_attempt.load(Ordering::SeqCst) + 2
     );
     let mut before_move = EnhancePirClient::connect(&origin).await.unwrap();
-    let position = 5 * 32768 * 33;
+    let position = (sealed_shards as u64 - 1) * 32768 * 33;
     assert_eq!(
         before_move
             .query_position_with_timing(position)
@@ -748,7 +766,7 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
         .unwrap();
     let state: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path.join("controller-v4.json")).unwrap()).unwrap();
-    assert_eq!(state["assignments"]["5"], "g0");
+    assert_eq!(state["assignments"][(sealed_shards - 1).to_string()], "g0");
     assert_eq!(
         state["assignments"]
             .as_object()
@@ -756,7 +774,7 @@ async fn consolidation_reservation_failure_retries_canonical_update_then_moves_s
             .values()
             .filter(|v| v.as_str() == Some("g0"))
             .count(),
-        6
+        sealed_shards
     );
     let mut after_move = EnhancePirClient::connect(&origin).await.unwrap();
     assert_eq!(
@@ -868,6 +886,7 @@ async fn committed_offline_participant_does_not_block_and_recovers_after_expiry(
         });
     }
     let groups = vec![Group {
+        placement_policy: Default::default(),
         id: "g0".into(),
         sequence: 0,
         replicas,
@@ -1122,6 +1141,7 @@ async fn abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_p
         });
     }
     let groups = vec![Group {
+        placement_policy: Default::default(),
         id: "g0".into(),
         sequence: 0,
         replicas,
@@ -1374,6 +1394,7 @@ async fn lost_worker_rows_repair_restores_current_and_retained_http_queries() {
     let (first_url, first) = start(&worker_root, "127.0.0.1:0").await;
     let (peer_url, peer) = start(&peer_root, "127.0.0.1:0").await;
     let groups = vec![Group {
+        placement_policy: Default::default(),
         id: "group-1".into(),
         sequence: 0,
         settling: false,
@@ -1552,6 +1573,7 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
             });
         }
         groups.push(Group {
+            placement_policy: Default::default(),
             id: format!("g{sequence}"),
             sequence,
             replicas,
@@ -1729,6 +1751,7 @@ async fn memory_refusal_moves_published_shard_with_complete_destination_pair() {
             });
         }
         groups.push(Group {
+            placement_policy: Default::default(),
             id: format!("g{sequence}"),
             sequence,
             replicas,

@@ -409,6 +409,7 @@ mod tests {
         let mut state = State::default();
         let name = "group\"\\\nname";
         state.groups.push(control::Group {
+            placement_policy: Default::default(),
             id: name.into(),
             sequence: 0,
             replicas: vec![],

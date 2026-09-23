@@ -1,3 +1,11 @@
+> Schema-11 placement policy: six sealed shards remain the default. To qualify
+> seven, set `"sealed_shards": 7` in the frozen pair bootstrap policy and pass
+> `--sealed-shards 7` to the coordinator/exercise. The installer propagates it to
+> worker units and receipts. Active groups still contain at most five shards.
+> A seven-sealed campaign must actually publish seven on the first pair; the
+> assessor rejects mismatched workload, placement and bootstrap policies.
+> See [capacity qualification](../../docs/capacity-expansion.md).
+
 # Enhance v4 candidate bundle
 
 This bundle is **unqualified** and does not authorize production cutover. It is
@@ -170,7 +178,7 @@ enhance-pir-v4 exercise --isolated-workers --profile active \
 ```
 
 The active schedule keeps five assigned shards and cycles through loan growth,
-return, owned-tail growth and rewind across return. The sealed schedule holds six
+return, owned-tail growth and rewind across return. The sealed schedule holds the configured six or seven
 sealed shards on the oldest group while publishing appends on the second group.
 Both require two published-ready replicas per shard after every publication.
 Readiness at publication is not continuous replica health. Each publication

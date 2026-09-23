@@ -1,7 +1,7 @@
 //! Durable expansion demand. This predicts placement limits; workers still enforce memory admission.
 use super::control::{assign, consolidate, Group, GrowthForecast};
 use enhance_pir::{
-    v4::{Geometry, Lifecycle},
+    v4::{Geometry, Lifecycle, MAX_QUERY_SHARDS},
     RECORDS_PER_ROW,
 };
 use serde::{Deserialize, Serialize};
@@ -214,8 +214,16 @@ fn placement_limit(
     let geometry = Geometry::default();
     let span = geometry.max_shard_rows * RECORDS_PER_ROW as u64;
     let loan = geometry.min_shard_rows * RECORDS_PER_ROW as u64;
-    if records >= 24 * span {
-        return Ok((24 * span, 24));
+    for group in groups {
+        group.placement_policy.validate()?;
+    }
+    let ceiling: u64 = groups
+        .iter()
+        .map(|g| g.placement_policy.sealed_shards as u64)
+        .sum::<u64>()
+        .min(MAX_QUERY_SHARDS);
+    if records >= ceiling * span {
+        return Ok((ceiling * span, ceiling));
     }
     let mut lifecycle = lifecycle.clone();
     let coverage = lifecycle.coverage(records, geometry)?;
@@ -229,7 +237,7 @@ fn placement_limit(
         placements = assign(&returned, groups, &placements)?;
         consolidate(&returned, groups, &mut placements)?;
     }
-    for ordinal in records / span + 1..24 {
+    for ordinal in records / span + 1..ceiling {
         let boundary = ordinal * span;
         let coverage = lifecycle.coverage(boundary, geometry)?;
         let Ok(next) = assign(&coverage, groups, &placements) else {
@@ -240,7 +248,7 @@ fn placement_limit(
         placements = assign(&returned, groups, &placements)?;
         consolidate(&returned, groups, &mut placements)?;
     }
-    Ok((24 * span, 24))
+    Ok((ceiling * span, ceiling))
 }
 
 #[cfg(test)]
@@ -249,6 +257,7 @@ mod tests {
     fn groups(count: usize) -> Vec<Group> {
         (0..count)
             .map(|i| Group {
+                placement_policy: Default::default(),
                 id: format!("g{i}"),
                 sequence: i as u64,
                 replicas: vec![],
@@ -256,6 +265,29 @@ mod tests {
             })
             .collect()
     }
+    #[test]
+    fn seven_sealed_extends_historical_capacity_not_first_active_pair() {
+        let span = 32768 * 33;
+        for count in 1..=4 {
+            let six = groups(count);
+            let mut seven = six.clone();
+            for g in &mut seven {
+                g.placement_policy.sealed_shards = 7;
+            }
+            let before = placement_limit(1, &six, &Lifecycle::default(), &BTreeMap::new())
+                .unwrap()
+                .0;
+            let after = placement_limit(1, &seven, &Lifecycle::default(), &BTreeMap::new())
+                .unwrap()
+                .0;
+            assert_eq!(before, (5 + 6 * (count as u64 - 1)) * span);
+            assert_eq!(
+                after,
+                (5 + 7 * (count as u64 - 1)).min(MAX_QUERY_SHARDS) * span
+            );
+        }
+    }
+
     #[test]
     fn memory_limit_requests_once_survives_restart_and_expires_for_larger_fleet() {
         let mut capacity = Capacity::default();

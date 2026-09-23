@@ -11,6 +11,33 @@ pub const MIB: u64 = 1024 * 1024;
 pub const RESIDENT_LIMIT: u64 = 7 * 1024 * MIB - 512 * MIB;
 pub const OVERHEAD: u64 = 728 * MIB;
 
+/// Versioned deployment policy. Seven sealed shards require hardware qualification.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PlacementPolicy {
+    pub sealed_shards: usize,
+}
+impl Default for PlacementPolicy {
+    fn default() -> Self {
+        Self { sealed_shards: 6 }
+    }
+}
+impl PlacementPolicy {
+    pub fn validate(self) -> Result<(), String> {
+        if !matches!(self.sealed_shards, 6 | 7) {
+            return Err("sealed shard limit must be six or seven".into());
+        }
+        Ok(())
+    }
+    pub fn limit(self, active: bool) -> usize {
+        if active {
+            5
+        } else {
+            self.sealed_shards
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ledger {
     /// Runtime IDs include complete cache identity; shared allocations are counted once.
@@ -100,6 +127,8 @@ pub struct Replica {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Group {
+    #[serde(default)]
+    pub placement_policy: PlacementPolicy,
     pub id: String,
     pub sequence: u64,
     pub replicas: Vec<Replica>,
@@ -112,6 +141,7 @@ impl Group {
         coverage: &Coverage,
         assignments: &BTreeMap<u64, String>,
     ) -> Result<Role, String> {
+        self.placement_policy.validate()?;
         let shards: Vec<_> = coverage
             .shards
             .iter()
@@ -122,7 +152,7 @@ impl Group {
             .filter(|s| s.state == ShardState::Growing)
             .count();
         let active = shards.iter().any(|s| s.state != ShardState::Sealed);
-        if growing > 1 || shards.len() > if active { 5 } else { 6 } {
+        if growing > 1 || shards.len() > self.placement_policy.limit(active) {
             return Err("group shard limit exceeded".into());
         }
         Ok(if growing > 0 {
@@ -131,7 +161,7 @@ impl Group {
             Role::Settling
         } else if shards.is_empty() {
             Role::Standby
-        } else if shards.len() == 6 {
+        } else if shards.len() == self.placement_policy.sealed_shards {
             Role::SealedFull
         } else {
             Role::SealedOpen
@@ -629,11 +659,54 @@ impl GrowthForecast {
 mod tests {
     use super::*;
     #[test]
+    fn seven_sealed_policy_preserves_active_limit_and_reorg_relocation() {
+        let span = 32768 * 33;
+        let mut lifecycle = Lifecycle::default();
+        let mut groups: Vec<_> = (0..2)
+            .map(|i| Group {
+                placement_policy: PlacementPolicy { sealed_shards: 7 },
+                id: format!("g{i}"),
+                sequence: i,
+                replicas: vec![],
+                settling: false,
+            })
+            .collect();
+        let coverage = lifecycle
+            .coverage(8 * span + 4096 * 33, Geometry::default())
+            .unwrap();
+        let mut placement = assign(&coverage, &groups, &BTreeMap::new()).unwrap();
+        consolidate(&coverage, &groups, &mut placement).unwrap();
+        assert_eq!(placement.values().filter(|id| **id == "g0").count(), 7);
+        assert_eq!(
+            groups[0].role(&coverage, &placement).unwrap(),
+            Role::SealedFull
+        );
+        let eighth = coverage.shards[7].id;
+        let mut invalid = placement.clone();
+        invalid.insert(eighth, "g0".into());
+        assert!(groups[0].role(&coverage, &invalid).is_err());
+        groups[0].placement_policy.sealed_shards = 6;
+        assert!(groups[0].role(&coverage, &placement).is_err());
+        groups[0].placement_policy.sealed_shards = 7;
+        // Reopening historical coverage must not leave an active seventh shard in place.
+        let reorg = lifecycle
+            .coverage(6 * span + 1, Geometry::default())
+            .unwrap();
+        let relocated = assign(&reorg, &groups, &placement).unwrap();
+        for group in &groups {
+            group.role(&reorg, &relocated).unwrap();
+        }
+        assert_ne!(relocated[&reorg.shards.last().unwrap().id], "g0");
+        assert!(PlacementPolicy { sealed_shards: 8 }.validate().is_err());
+    }
+
+    #[test]
     fn reorg_move_into_existing_group_requires_both_destination_replicas() {
         let groups: Vec<_> = ["a", "b"]
             .into_iter()
             .enumerate()
             .map(|(sequence, id)| Group {
+                placement_policy: Default::default(),
                 id: id.into(),
                 sequence: sequence as u64,
                 replicas: Vec::new(),
@@ -712,12 +785,14 @@ mod tests {
         let c = l.coverage(5 * 32768 * 33, g).unwrap();
         let groups = vec![
             Group {
+                placement_policy: Default::default(),
                 id: "a".into(),
                 sequence: 0,
                 replicas: vec![],
                 settling: false,
             },
             Group {
+                placement_policy: Default::default(),
                 id: "b".into(),
                 sequence: 1,
                 replicas: vec![],
@@ -795,6 +870,7 @@ mod tests {
                 .update(|s| {
                     s.pending_aborts.push(older.clone());
                     s.groups.push(Group {
+                        placement_policy: Default::default(),
                         id: "g".into(),
                         sequence: 0,
                         settling: false,
@@ -865,6 +941,7 @@ mod tests {
     fn consolidation_converges_across_multiple_boundaries_without_active_sixth_slot() {
         let groups: Vec<_> = (0..3)
             .map(|i| Group {
+                placement_policy: Default::default(),
                 id: format!("g{i}"),
                 sequence: i,
                 replicas: vec![],
@@ -949,6 +1026,7 @@ mod tests {
         store
             .update(|s| {
                 s.groups = vec![Group {
+                    placement_policy: Default::default(),
                     id: "group".into(),
                     sequence: 0,
                     settling: false,

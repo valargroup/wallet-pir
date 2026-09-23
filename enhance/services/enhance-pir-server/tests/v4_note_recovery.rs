@@ -113,6 +113,7 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let coordinator = Coordinator::open(
         &root.path().join("control"),
         vec![Group {
+            placement_policy: Default::default(),
             id: "g0".into(),
             sequence: 0,
             replicas,

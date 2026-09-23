@@ -5,7 +5,13 @@ records. Binary, module, service and internal route names retain `v4`. Historica
 qualification results below belong to their recorded revisions; they do not
 qualify schema 11. Use fresh data directories as described in [deployment](deployment.md).
 
-## Current state
+The placement policy defaults to five total shards in an active/lending group
+and six sealed shards. Seven sealed shards are the qualification target; select
+`--sealed-shards 7` consistently across coordinator, workers and workloads.
+[Capacity qualification](capacity-expansion.md) defines the gate and six-shard
+fallback. This policy is persisted and mismatched restarts are rejected.
+
+## Recorded deployment state (September 23, before schema 11)
 
 The implementation is deployed directly to the existing production hosts using
 Linux candidate `b1863b1d270df52d213d7dd389e5b8bf96bca224`. Public canonical
@@ -80,7 +86,7 @@ A result applies only to the source and binary hashes recorded with it.
 1. Repeat uninterrupted active hardware measurement on worker 1 and assess both
    workers against resource and latency limits. The completed workload met six
    hours and 300 publications, but its sampling gap is not qualification evidence.
-2. Exercise six-sealed placement, delayed reclamation, replica recovery and
+2. Exercise the selected schema-11 sealed placement (seven target, six fallback), delayed reclamation, replica recovery and
    rollback on existing resources. Any helper processes on the coordinator must
    be identified as test support; they do not count as qualified 8 GiB workers.
 3. Review cgroup peaks/events, swap, PSI, process RSS/kernel accounting, disk
