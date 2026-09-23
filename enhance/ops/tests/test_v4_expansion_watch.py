@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import urllib.error
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/v4-isolated-expansion.py'
@@ -45,6 +46,16 @@ class WatchTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, 'pinned request'):
                         module.watch_request('http://127.0.0.1:8280', 'successor-5-pair-2', 2,
                                              Path(temp) / 'capacity.jsonl', 30, 1)
+
+    def test_preserves_outside_sample_across_fixture_restart(self):
+        with tempfile.TemporaryDirectory() as temp:
+            trace = Path(temp) / 'capacity.jsonl'
+            with patch.object(module, 'health', side_effect=[
+                    health(25697), urllib.error.URLError('fixture restart'),
+                    health(25696, 'successor-5-pair-2')]), patch.object(module.time, 'sleep'):
+                module.watch_request('http://127.0.0.1:8280', 'successor-5-pair-2', 2, trace, 30, 1)
+            self.assertEqual([json.loads(line)['event'] for line in trace.read_text().splitlines()],
+                             ['sample', 'health-unavailable', 'sample', 'provision-start'])
 
 
 if __name__ == '__main__':

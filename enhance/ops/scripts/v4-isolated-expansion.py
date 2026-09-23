@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -128,7 +129,14 @@ def watch_request(origin, operation_id, target_groups, trace_path, timeout, inte
     with trace_path.open('x') as trace:
         while time.monotonic() - started < timeout:
             began = time.monotonic()
-            current = health(origin)
+            try:
+                current = health(origin)
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                trace.write(json.dumps({'event': 'health-unavailable',
+                                        'at_ns': time.time_ns()}, sort_keys=True) + '\n')
+                trace.flush()
+                time.sleep(max(0, interval - (time.monotonic() - began)))
+                continue
             capacity = current['capacity']
             observation = capacity.get('observation') or {}
             remaining = capacity.get('remaining_rows')
