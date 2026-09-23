@@ -1,0 +1,9 @@
+{
+  "wallet_revision": "8e6b6c50b747efd368b0d3e88ab564dc158b2e9c",
+  "ipir_revision": "dac5b050cfa00770405f9d6b464b8adb2b17a3c0",
+  "campaign_main_rs_sha256": "40b2ee267a5a81810e2fdf17d3be7a58377862860e8635d5565a8d219f2ab600",
+  "campaign_certificate_rs_sha256": "9f3d7f2fc4e759fe1c0144af604900c143a1532f8ba4dafcb54c291a8073bae1",
+  "lockfile_sha256": "e3d65b36119050d2deb80272011902832d7599021013873a9e3f5aa6f13a1973",
+  "source_difference": "Reference v2 campaign sources are archived as v2-extractor-{main,certificate}.rs.gz. Later accelerated campaigns use the exact NTT extractor and cached public fixtures, checked for equivalence against v2; see accelerated-source-sha256.json.",
+  "reference_8k_source": "reference-extractor-main.rs.gz and reference-extractor-certificate.rs.gz retain the initial portable-kernel extractor; the final Cargo.toml and lockfile apply."
+}
