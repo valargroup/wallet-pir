@@ -28,7 +28,7 @@ decryption does not authenticate those fields. Send-only association can require
 server trust when decryption cannot authenticate the action. Network timing and
 row-query counts remain observable; batching does not add cover traffic.
 
-## Local CLI
+## CLI smoke checks
 
 The internal `v4` module and CLI option name are retained for operational
 continuity. They now speak schema 11:
