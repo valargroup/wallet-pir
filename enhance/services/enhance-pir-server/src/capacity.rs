@@ -434,6 +434,44 @@ mod tests {
         assert!(capacity.requests[&id].registered);
         assert!(capacity.requested.is_none());
     }
+
+    #[test]
+    fn requests_pair_at_inclusive_readiness_threshold_before_successor() {
+        let span = 32768 * RECORDS_PER_ROW as u64;
+        let boundary = 5 * span;
+        let lead_rows = 21600 + 4096;
+        let mut capacity = Capacity::default();
+        let lifecycle = Lifecycle::default();
+        let policy = Policy::default();
+        capacity
+            .observe(
+                boundary - (lead_rows + 1) * RECORDS_PER_ROW as u64,
+                100,
+                policy,
+                &groups(1),
+                &lifecycle,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        assert_eq!(capacity.remaining_rows, Some(lead_rows + 1));
+        assert!(capacity.requested.is_none());
+
+        capacity
+            .observe(
+                boundary - lead_rows * RECORDS_PER_ROW as u64,
+                101,
+                policy,
+                &groups(1),
+                &lifecycle,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        assert_eq!(capacity.remaining_rows, Some(lead_rows));
+        let request = &capacity.requests[capacity.requested.as_ref().unwrap()];
+        assert_eq!(request.boundary_records, boundary);
+        assert_eq!(request.target_groups, 2);
+        assert_eq!(request.requested_at, 101);
+    }
     #[test]
     fn missing_growth_is_nonzero_and_requests_survive_serialization() {
         let mut c = Capacity::default();

@@ -23,12 +23,22 @@ def observe(state_path, origin):
     init = get(origin, '/v1/enhance/init')
     if init['generation'] != health['generation']:
         raise ValueError('health and init generations differ')
+    capacity = health['capacity']
+    forecast = {key: capacity.get(key) for key in
+                ('requested', 'remaining_rows', 'effective_rows_per_second',
+                 'readiness_seconds', 'burst_rows')}
+    forecast['requests'] = [
+        {key: request.get(key) for key in
+         ('id', 'target_groups', 'requested_at', 'boundary_records', 'registered')}
+        for request in sorted(capacity.get('requests', {}).values(), key=lambda r: r['id'])
+    ]
     return {'at_ns': time.time_ns(), 'generation': init['generation'],
             'records': init['coverage']['records'],
             'shards': [{'id': shard['id'], 'state': shard['state'],
                         'global_row_start': shard['global_row_start'], 'records': shard['records']}
                        for shard in init['coverage']['shards']],
             'assignments': state['assignments'],
+            'capacity': forecast,
             'registered_groups': health['registered_groups'],
             'published_replica_counts': health['published_replica_counts'],
             'blocked_reason': health.get('blocked_reason')}

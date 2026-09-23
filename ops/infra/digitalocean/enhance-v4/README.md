@@ -206,6 +206,18 @@ restart after the inventory write verifies the same pair rather than writing a
 different inventory. All receipts remain `unqualified`; this path cannot be used
 to promote a production worker or claim the six-hour hardware gate.
 
+To test expansion timing, start `observe-v4-isolated-placement.py` before demand
+with only the first group registered. Use controlled fixture growth that begins
+outside the forecast window, then crosses it. The observer records remaining
+rows, effective growth rate, readiness time, burst allowance, request identity
+and timestamp, registered group count, and first shard placement. Assert one
+request at the first observation satisfying `remaining_rows <= rate * 21600 +
+burst_rows`, no request just before it, and both new replicas registered before
+the boundary-crossing shard appears. Hold provisioning behind a test barrier
+once to verify the request persists without duplicate pairs. This live timing
+campaign is separate from the completed fast-growth test, which started inside
+the six-hour forecast window.
+
 ## Spaces state locking
 
 The live wallet-pir backend documents failed conditional lock-write enforcement

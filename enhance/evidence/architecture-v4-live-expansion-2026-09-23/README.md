@@ -28,6 +28,12 @@ new worker capacity was ready at least 4 minutes 40 seconds before that
 published shard. This trace establishes advance worker provisioning. It does
 not record whether shard 5's candidate data was prepared in worker memory
 before publication; that would need a reserve/prepare trace from both replicas.
+The fast fixture was already inside the six-hour forecast window at startup,
+so this run also does not measure whether the coordinator issued its capacity
+request at the exact forecast threshold. A deterministic coordinator test in
+`v4/capacity.rs` checks the inclusive threshold with a fixed one-row-per-second
+growth rate; a live timing campaign would need request, readiness, and first
+shard timestamps while growth crosses that threshold.
 
 The shard 5 move followed rollover of shard 6. The placement trace recorded
 no blocked reason through these transitions. It ended at generation 17 and
