@@ -23,7 +23,9 @@ use std::sync::{
 };
 use tokio::sync::{RwLock, Semaphore};
 
-const QUERY_ACTIVE_LIMIT: usize = 2;
+// Two replicas each admit two evaluations. Keep the coordinator aligned with
+// that aggregate worker capacity so it does not queue behind idle replicas.
+const QUERY_ACTIVE_LIMIT: usize = 4;
 const QUERY_WAIT_LIMIT: usize = 16;
 const QUERY_WAIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
 const QUERY_BODY_LIMIT: usize = 512 * 1024;
@@ -1707,32 +1709,40 @@ mod admission_tests {
             .unwrap()
     }
 
+    async fn occupy_query_slots(
+        coordinator: &Coordinator,
+    ) -> Vec<tokio::sync::OwnedSemaphorePermit> {
+        let mut permits = Vec::new();
+        for _ in 0..QUERY_ACTIVE_LIMIT {
+            permits.push(coordinator.queries.clone().acquire_owned().await.unwrap());
+        }
+        permits
+    }
+
     #[tokio::test]
     async fn queue_waits_for_a_slot_and_releases_it() {
         let coordinator = test_coordinator();
-        let first = coordinator.queries.clone().acquire_owned().await.unwrap();
-        let second = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let mut active = occupy_query_slots(&coordinator).await;
         let waiting = tokio::spawn(query(State(coordinator.clone()), empty_query()));
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         assert_eq!(
             coordinator.query_waiters.available_permits(),
             QUERY_WAIT_LIMIT - 1
         );
-        drop(first);
+        drop(active.pop());
         let error = waiting.await.unwrap().unwrap_err();
         assert_eq!(error.0, StatusCode::BAD_REQUEST);
         assert_eq!(
             coordinator.query_waiters.available_permits(),
             QUERY_WAIT_LIMIT
         );
-        drop(second);
+        drop(active);
     }
 
     #[tokio::test]
     async fn full_queue_and_expired_wait_return_retryable_429() {
         let coordinator = test_coordinator();
-        let _first = coordinator.queries.clone().acquire_owned().await.unwrap();
-        let _second = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let _active = occupy_query_slots(&coordinator).await;
         let mut waiters = Vec::new();
         for _ in 0..QUERY_WAIT_LIMIT {
             waiters.push(tokio::spawn(query(
@@ -1761,8 +1771,7 @@ mod admission_tests {
     #[tokio::test]
     async fn cancelled_waiter_releases_capacity() {
         let coordinator = test_coordinator();
-        let _first = coordinator.queries.clone().acquire_owned().await.unwrap();
-        let _second = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let _active = occupy_query_slots(&coordinator).await;
         let waiting = tokio::spawn(query(State(coordinator.clone()), empty_query()));
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         assert_eq!(
