@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 // The legacy helpers use the current record layout, but their serving binaries
 // are retired. The supported public manifest and runtime live in `v4`.
 pub use crate::v4::{PROTOCOL_REVISION, SCHEMA_VERSION};
-pub const PIR_PROFILE_ID: &str = "simplepir-p16-q49-v1";
+pub const PIR_PROFILE_ID: &str = "simplepir-p16-q48-v1";
 pub const NETWORK: &str = "main";
 pub const POOL: &str = "ironwood";
 pub const ACTIVATION_HEIGHT: u64 = 3_428_143;

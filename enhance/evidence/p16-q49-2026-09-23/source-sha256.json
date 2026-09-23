@@ -1,0 +1,12 @@
+{
+  "wallet_revision": "a6d243ab243423d15065dc6fa2f572f518207f9c",
+  "ipir_revision": "b1c540f90f62e112c834a0f57f025e3c605e55d1",
+  "files": {
+    "src/main.rs": "8cb5c5a547c9b0fab3c7273fd0f922d6bd1e428eefc487689bfa433ba756c369",
+    "src/certificate.rs": "ade62e316e244feeec2c7d03fe17e84ae8f424c8a204295e3751f838be54a3d3",
+    "src/fast_weights.rs": "9b37376afacffda1be8c04f00c28586b71bc01fd82c5b92219abd271f64b6b48",
+    "src/bin/q49.rs": "ef1ea389adfc488b3f3a21a29a5b3142474fe9b1aa687598f0460b77fa6596c9",
+    "Cargo.toml": "957688d7e67657a65c6820370f202fa10087774defba453021d3d6d22243a01a",
+    "Cargo.lock": "99d6d012ded964f416b38fc2efd14ce9bf52fceae69432b44b253300235b40f1"
+  }
+}

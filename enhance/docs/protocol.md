@@ -1,9 +1,10 @@
 # Protocol
 
-The supported server implements schema 11, `ironwood-enhance-pir-v5`, using the
+The supported server implements schema 11, `ironwood-enhance-pir-v6`, using the
 architecture-2 runtime. Its Rust modules and binary retain their `v4` names.
-The exact wallet counterpart is [wallet-libraries PR #28](https://github.com/zakura-core/wallet-libraries/pull/28),
-commit `de3ec78f31b6fd184596fc952fe4f78d3a63cd0a`.
+The wallet counterpart must use the v6/q48 profile and the same pinned IPIR
+implementation. The prior [schema-11 wallet PR #28](https://github.com/zakura-core/wallet-libraries/pull/28)
+uses v5/q46 and is incompatible without the q48 follow-up.
 
 ## Record format
 
@@ -55,13 +56,15 @@ Expired generations return HTTP 410; a refreshed manifest requires fresh wallet
 acceptance. A row result is selected locally; action identities never go to the
 server. Same-transaction batching needs no new server endpoint.
 
-The PIR profile remains `simplepir-p16-q46-v1`. Query domains remain 4,096,
+The PIR profile is `simplepir-p16-q48-v1`: 48-bit query transport, p16
+plaintexts, and unchanged 20-bit responses. The wider query reduces rounding
+noise; it does not change the decoding threshold. Query domains remain 4,096,
 8,192, 16,384, or 32,768 rows, with 2,048/4,096/8,192-row mutable units.
 The deterministic public setup seed and the literal domain
 `ironwood-enhance-pir-v4/main/ironwood/setup\0` are intentionally unchanged to
 match the wallet. Schema, protocol, parameter identities, and content hashes
 separate the new records and artifacts. Do not mechanically rename the header
-or setup domain to v5.
+or setup domain to v6.
 
 The authoritative wire types and validation are in
 [the protocol module](../crates/enhance-pir/src/v4.rs); record encoding is in
@@ -69,9 +72,10 @@ The authoritative wire types and validation are in
 
 ## Compatibility and trust
 
-Schema-9 and schema-10 clients are incompatible. The legacy serving commands
-are retired. Journals validate record width, controller state is version 5,
-worker state requires schema 11, and preprocessing artifacts are version 9.
+Schema-9, schema-10, and schema-11/v5 q46 clients are incompatible.
+V6 changes query precision without changing the schema-11 record layout. The legacy serving commands
+are retired. Journals validate record width, controller state is version 6,
+worker state requires schema 11 and protocol v6, and preprocessing artifacts are version 9.
 Use fresh data directories and rebuild publications and caches. The older
 `migrate-v4-journal.py` only repacks full records and cannot prepare schema 11.
 

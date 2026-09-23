@@ -12,7 +12,7 @@ a final `complete` entry indicates successful completion. Failure leaves partial
 results and disposable artifacts for diagnosis. Successful cases remove only
 their own temporary artifacts. The binary does not contact or modify services.
 
-Measurements use production code, P16Q46 and the deployed row layout:
+Measurements use production code, P16Q48 and the schema-11 row layout:
 
 - Full 32K public query setup construction.
 - 2K/4K/8K unit construction (row encoding plus offline PIR precomputation),

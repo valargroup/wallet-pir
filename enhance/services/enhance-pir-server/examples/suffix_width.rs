@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         record_bytes: width,
         records_per_row: 33,
         shard_rows: 4096,
-        pir_profile: SimplePirProfile::P16Q49,
+        pir_profile: SimplePirProfile::P16Q48,
     };
     let (rlwe, params) =
         ipir_sp::params_for_simplepir_profile(4096, layout.item_size_bits(), layout.pir_profile)?;

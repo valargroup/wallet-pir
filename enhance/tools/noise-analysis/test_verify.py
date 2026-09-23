@@ -97,6 +97,28 @@ class VerifierTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             analyze(x)
 
+    def test_q48_has_explicit_78_bit_target_without_weakening_other_profiles(self):
+        from verify import Q48_PIN, WIDE_PIN, Q, ceildiv
+        x = copy.deepcopy(self.x)
+        x['implementation'] = Q48_PIN
+        x['params']['query_bits'] = 48
+        x['rows'] = x['params']['db_rows'] = 32768
+        x['column_sums'] = [32768 * 65535] * 12288
+        x['deterministic_bounds'] = [(65 + ceildiv(Q, 1 << 49) + 1) * v + ceildiv(Q, 1 << 21) + 1 + Q % 65536 for v in x['column_sums']]
+        for block in x['blocks']:
+            block['maximum_weight'] = [270596803] * 2048
+            block['sum_squares'] = [286651564758432568] * 2048
+            block['sum_absolute'] = [10**10] * 2048
+        result = analyze(x)
+        self.assertEqual(result['target_failure_bits'], 78)
+        self.assertTrue(result['analytical_pass'])
+        self.assertLessEqual(result['union_log2_upper'], -78)
+        self.assertGreater(result['union_log2_upper'], -128)
+        self.assertEqual(analyze(self.x)['target_failure_bits'], 128)
+        x['implementation'] = WIDE_PIN
+        with self.assertRaises(ValueError):
+            analyze(x)
+
     def test_finite_cdf_validation(self):
         with self.assertRaises(ValueError):
             sampler((1 << 64,) * 131)

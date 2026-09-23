@@ -1,9 +1,11 @@
 # Wallet integration
 
-Use the schema-11 wallet implementation in [wallet-libraries PR #28](https://github.com/zakura-core/wallet-libraries/pull/28).
-The server publishes `ironwood-enhance-pir-v5` with 653-byte records and 33
+Use the protocol-v6/q48 wallet follow-up to [wallet-libraries PR #28](https://github.com/zakura-core/wallet-libraries/pull/28).
+PR #28 alone uses q46 and must not connect to this server.
+The server publishes `ironwood-enhance-pir-v6` with 653-byte records and 33
 records per row. The HTTP routes, `EPQ4` binding header, and setup domain are
-unchanged from the architecture-2 transport; the record encoding is incompatible.
+unchanged from the architecture-2 transport. The schema-11 record encoding is
+unchanged from v5; query precision and profile identities are incompatible.
 See [protocol](protocol.md) for offsets and validation.
 
 ## Wallet flow

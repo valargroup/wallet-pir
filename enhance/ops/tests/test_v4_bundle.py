@@ -15,7 +15,7 @@ spec.loader.exec_module(runner)
 class CandidateProvenanceTests(unittest.TestCase):
     def metadata(self):
         return {'kind': 'enhance-pir-v4-candidate', 'qualification': 'unqualified',
-                'protocol_revision': 'ironwood-enhance-pir-v5', 'schema_version': 11,
+                'protocol_revision': 'ironwood-enhance-pir-v6', 'schema_version': 11,
                 'source_revision': 'a' * 40, 'source_dirty': True}
 
     def test_bundle_does_not_need_git_and_preserves_dirty_status(self):

@@ -80,6 +80,7 @@ pub struct Intermediate {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct DiskState {
     schema_version: u16,
+    protocol_revision: String,
     epoch: u64,
     revision: u64,
     last_attempt: Option<(u64, u64)>,
@@ -93,6 +94,7 @@ impl Default for DiskState {
     fn default() -> Self {
         Self {
             schema_version: enhance_pir::v4::SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
             epoch: 0,
             revision: 0,
             last_attempt: None,
@@ -105,9 +107,12 @@ impl Default for DiskState {
 }
 impl DiskState {
     fn validate_format(&self) -> Result<(), String> {
-        if self.schema_version != enhance_pir::v4::SCHEMA_VERSION {
+        if self.schema_version != enhance_pir::v4::SCHEMA_VERSION
+            || self.protocol_revision != PROTOCOL_REVISION
+        {
             return Err(
-                "incompatible worker state; rebuild schema 11 in a separate data directory".into(),
+                "incompatible worker state; rebuild protocol v6 in a separate data directory"
+                    .into(),
             );
         }
         for manifest in self
@@ -995,6 +1000,23 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn q46_worker_state_is_rejected_without_rewriting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("worker-v4.json");
+        let mut old = serde_json::to_value(DiskState::default()).unwrap();
+        old.as_object_mut().unwrap().remove("protocol_revision");
+        for revision in [None, Some("ironwood-enhance-pir-v5")] {
+            if let Some(revision) = revision {
+                old["protocol_revision"] = revision.into();
+            }
+            let bytes = serde_json::to_vec(&old).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            assert!(Worker::open(root.path()).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+    }
+
     use tower::ServiceExt;
 
     #[test]

@@ -16,7 +16,9 @@ from pathlib import Path
 PIN = 'dac5b050cfa00770405f9d6b464b8adb2b17a3c0'
 Q = 72057594037641217
 WIDE_PIN = 'b1c540f90f62e112c834a0f57f025e3c605e55d1'
-PROFILE_BITS = {PIN: 46, WIDE_PIN: 49}
+Q48_PIN = '6f74a2d754b58934f925fc8a347f46620148ad47'
+PROFILE_BITS = {PIN: 46, WIDE_PIN: 49, Q48_PIN: 48}
+TARGET_BITS = {PIN: 128, WIDE_PIN: 128, Q48_PIN: 78}
 N = 2048
 COLS = 12288
 
@@ -91,7 +93,8 @@ def validate(x):
 def analyze(x):
     mean, deterministic = validate(x)
     threshold = x['threshold']
-    result = dict(query_bits=x['params']['query_bits'], status='not certified', analytical_pass=False, independent_review='pending',
+    target_bits = TARGET_BITS[x['implementation']]
+    result = dict(target_failure_bits=target_bits, query_bits=x['params']['query_bits'], status='not certified', analytical_pass=False, independent_review='pending',
                   failures=x['failures'], queries=len(x['queries']),
                   min_deterministic_allowance=threshold-max(deterministic),
                   max_expected_phase_error=x['max_expected_phase_error'],
@@ -133,11 +136,11 @@ def analyze(x):
             if worst is None or exponent < worst['exponent_bits_floor']:
                 worst = item
     bound = (2 * COLS - 1).bit_length() - worst['exponent_bits_floor']
-    passed = bound <= -128 and worst['key_allowance'] > 0
+    passed = bound <= -target_bits and worst['key_allowance'] > 0
     result.update(analytical_pass=passed, union_log2_upper=bound, limiting_coefficient=worst)
     if x['failures'] == 0:
         result['reason'] = ('analytical target met; independent review pending' if passed
-                            else 'current sufficient bound does not meet 2^-128 per full query')
+                            else f'current sufficient bound does not meet 2^-{target_bits} per full query')
     return result
 
 
