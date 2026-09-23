@@ -76,18 +76,20 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def worker_get(address, path, limit):
+def worker_get(address, path, limit, port=8291):
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError("invalid worker port")
     address = str(ipaddress.IPv4Address(address))
     with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(
-            f'http://{address}:8291/internal/v4/{path}', timeout=3) as response:
+            f'http://{address}:{port}/internal/v4/{path}', timeout=3) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError('oversized worker response')
     return data
 
 
-def health(address):
-    value = json.loads(worker_get(address, 'health', 1024 * 1024))
+def health(address, port=8291):
+    value = json.loads(worker_get(address, 'health', 1024 * 1024, port))
     if not isinstance(value, dict) or value.get('protocol') != PROTOCOL:
         raise ValueError('worker health protocol differs')
     return {key: value[key] for key in ('protocol', 'incarnation', 'epoch', 'revision', 'published', 'resident_database_bytes')} | {
@@ -133,9 +135,9 @@ def parse_runtime_metrics(data):
     return values
 
 
-def runtime_metrics(address):
+def runtime_metrics(address, port=8291):
     started = time.monotonic_ns()
-    data = worker_get(address, 'metrics', 65536)
+    data = worker_get(address, 'metrics', 65536, port)
     return {'values': parse_runtime_metrics(data), 'exposition_sha256': hashlib.sha256(data).hexdigest(),
             'started_monotonic_ns': started, 'finished_monotonic_ns': time.monotonic_ns()}
 
@@ -178,10 +180,15 @@ def collect(root=Path('/'), properties=None):
     identity = start_ticks(process / 'stat')
     binary = (process / 'exe').resolve()
     relative = str(binary.relative_to(root.resolve()))
-    match = re.fullmatch('opt/enhance-pir-v4/releases/([0-9a-f]{64})/enhance-pir-v4', relative)
-    if not match or hashlib.sha256(binary.read_bytes()).hexdigest() != match[1] or match[1] != receipt['binary_sha256']:
+    match = re.fullmatch('opt/enhance-pir-v4/releases/([0-9a-f]{40}|[0-9a-f]{64})/enhance-pir-v4', relative)
+    binary_sha256 = hashlib.sha256(binary.read_bytes()).hexdigest()
+    expected_directory = receipt['revision'] if match and len(match[1]) == 40 else binary_sha256
+    if not match or match[1] != expected_directory or binary_sha256 != receipt['binary_sha256']:
         raise ValueError('running binary differs from bootstrap identity')
-    sample.update(binary_sha256=match[1], source_revision=receipt['revision'], worker_private_ipv4=receipt['private_ipv4'],
+    port = receipt.get('private_port', 8291)
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError('invalid worker port in bootstrap receipt')
+    sample.update(binary_sha256=binary_sha256, source_revision=receipt['revision'], worker_private_ipv4=receipt['private_ipv4'], worker_private_port=port,
                   bootstrap_manifest_sha256=receipt['manifest_sha256'], main_pid=pid, main_start_ticks=identity)
     group = root / 'sys/fs/cgroup' / properties['ControlGroup'].lstrip('/')
     pids = sorted(int(p) for p in (group / 'cgroup.procs').read_text().split())
@@ -226,10 +233,10 @@ def collect(root=Path('/'), properties=None):
             raise ValueError('process identity changed during sampling')
         sample['process_memory'].append({'pid': child_pid, 'start_ticks': child_start, 'bytes': rollup, 'status_bytes': status_memory})
     sample['host_memory_finished_monotonic_ns'] = time.monotonic_ns()
-    sample['worker'] = health(receipt['private_ipv4'])
+    sample['worker'] = health(receipt['private_ipv4'], port)
     try:
-        runtime = runtime_metrics(receipt['private_ipv4'])
-        after = health(receipt['private_ipv4'])
+        runtime = runtime_metrics(receipt['private_ipv4'], port)
+        after = health(receipt['private_ipv4'], port)
         runtime['state_consistent'] = runtime_consistent(sample['worker'], runtime['values'], after)
         sample['worker_after_metrics'] = after
         sample['runtime_metrics'] = runtime

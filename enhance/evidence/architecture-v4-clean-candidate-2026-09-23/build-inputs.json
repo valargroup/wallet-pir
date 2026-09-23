@@ -1,0 +1,17 @@
+{
+  "source_revision": "9718a6dcf9801385f69f31bb71f02efd261914f0",
+  "source_tree": "1d91f14565e5adaa86b652e13811ccd1ddeb7767",
+  "source_archive_sha256": "99b745052073634745ea136bede860eeb11c3ca587bffcaf83439b2ec8261e3d",
+  "container_image": "sha256:325ef3679c504cb36b0c6097394db20561b9097171f6e8aff6d1cedcb92b2033",
+  "rust_toolchain": "1.91.0",
+  "platform": "linux/amd64",
+  "profile": "release",
+  "lto": "fat",
+  "codegen_units": 1,
+  "cargo_build_jobs": 1,
+  "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+  "cflags": "-mpclmul",
+  "cxxflags": "-mpclmul",
+  "offline": true,
+  "locked": true
+}

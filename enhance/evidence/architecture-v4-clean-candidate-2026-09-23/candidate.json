@@ -1,0 +1,31 @@
+{
+  "stage": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/wallet-pir-v4-clean-candidate-mybshaaf",
+  "source": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/wallet-pir-v4-clean-candidate-mybshaaf/source",
+  "revision": "9718a6dcf9801385f69f31bb71f02efd261914f0",
+  "parent": "246423a1ce2377ab7b71d1c3e0745ebb153d1f99",
+  "tree": "1d91f14565e5adaa86b652e13811ccd1ddeb7767",
+  "ref": "refs/heads/codex/architecture-v4-candidate-20260923",
+  "qualification": "unqualified",
+  "remote_published": false,
+  "linux_build_output": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/wallet-pir-v4-linux-build-slwogrt5/out/clean-release",
+  "linux_build_log": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/wallet-pir-v4-linux-build-slwogrt5/out/clean-release-build.log",
+  "release_build_status": "passed",
+  "artifact_status": "assembled and verified",
+  "archive": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/wallet-pir-v4-clean-candidate-mybshaaf/bundles/enhance-pir-v4-candidate.tar.gz",
+  "archive_sha256": "21a5f0dd9319bb8077f64eddd9baf5f6961d2cae8d0ac658d46e2823db4e36a7",
+  "bundle": "/var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/wallet-pir-v4-linux-build-slwogrt5/out/clean-verified-bundle",
+  "manifest_sha256": "563727a892497be2910086b7bad8529da5296b4d080fbc7f553c8eca64b8d0ec",
+  "bootstrap_identity": {
+    "revision": "9718a6dcf9801385f69f31bb71f02efd261914f0",
+    "manifest_sha256": "563727a892497be2910086b7bad8529da5296b4d080fbc7f553c8eca64b8d0ec",
+    "binary_sha256": "258fc7d0070b821d34710d5c25edbf9176472c6e39defca020f8944a045c1def"
+  },
+  "smoke_status": "passed",
+  "release_build_session_id": null,
+  "smoke_session_id": null,
+  "stable_archive": "/Users/roman/projects/wallet-pir/.local-pir/v4-candidates/9718a6dcf9801385f69f31bb71f02efd261914f0/enhance-pir-v4-candidate.tar.gz",
+  "correct_answers": 1176,
+  "warmup_correct_answers": 24,
+  "observed_publications": 3,
+  "ci_provenance": "local build and validation only; no remote CI run"
+}

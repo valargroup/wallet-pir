@@ -1,0 +1,5 @@
+{
+  "enhance/ops/scripts/migrate-v4-journal.py": "5b8d45cc02832d06678f14b0861f7119feda9e21858a351fc7e3762a1fd600e7",
+  "enhance/ops/scripts/sample-v4-worker.py": "f6da513d7b8faf01d8d7a02cb65cd839348c74081b0a4db9b76cc09269b9a03e",
+  "enhance/ops/scripts/sample-v4-loop.py": "a2471960d66f11a963f750936ee38e6dc45eff70742612862775141d0547ed3d"
+}

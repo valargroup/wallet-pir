@@ -1,0 +1,9 @@
+{
+  "coordinator_unit": "enhance-pir-v4-active-campaign.service",
+  "worker_sampling_unit": "enhance-pir-v4-active-sampling.service",
+  "canonical_service": "stopped during synthetic capacity test",
+  "canonical_worker_state": "/srv/enhance-pir-v4/worker.canonical",
+  "workload": "/srv/enhance-pir-v4/validation/active",
+  "seconds": 21600,
+  "qualification": "unqualified"
+}

@@ -1,0 +1,4 @@
+{"memory_high_bytes": 7516192768, "memory_max_bytes": 7609516032, "memory_swap_max_bytes": 2147479552, "host_reserve_bytes": 716980224}
+active
+Removed "/etc/systemd/system/multi-user.target.wants/enhance-pir-worker.service".
+Created symlink /etc/systemd/system/multi-user.target.wants/enhance-pir-v4-worker.service → /etc/systemd/system/enhance-pir-v4-worker.service.

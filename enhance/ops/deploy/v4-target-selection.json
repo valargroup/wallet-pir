@@ -1,8 +1,8 @@
 {
   "kind": "enhance-v4-deployment-inputs",
-  "status": "worker-profile-and-project-confirmed",
-  "qualification": "unqualified",
-  "purpose": "Isolated architecture-2 deployment and hardware qualification; not production cutover",
+  "status": "deployed-native-active-campaign-running",
+  "qualification": "in progress; not passed",
+  "purpose": "Reuse existing production hosts, stop legacy Enhance services, deploy and test v4 directly over SSH",
   "organization": "Valargroup",
   "proposed_workers": {
     "initial_pairs": 1,
@@ -14,16 +14,16 @@
     "minimum_free_disk_gib": 32,
     "confirmed": true,
     "sealed_campaign_pairs": 2,
-    "provisioning": "new isolated workers",
+    "provisioning": "reuse existing production workers; no new hosts",
     "observed_production_root_disk_gb": 50
   },
   "required_target_inputs": {
     "existing_project_name_or_id": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
     "existing_vpc_name_or_id": "c5bd6679-aa32-48fc-9d5d-51d422fb3468",
-    "coordinator_and_off_host_generator_host": null,
-    "coordinator_private_ipv4": null,
+    "coordinator_and_off_host_generator_host": "wallet-pir-coordinator-01",
+    "coordinator_private_ipv4": "10.142.0.3",
     "operator_ssh_cidrs": null,
-    "isolated_remote_state_backend": null
+    "isolated_remote_state_backend": "not used: no infrastructure creation or Terraform changes"
   },
   "ssh": {
     "authorize_public_key": "~/.ssh/id_ed25519.pub",
@@ -32,14 +32,13 @@
   },
   "credentials": "Runtime local environment or Infisical only; never add values to this file",
   "execution_gates": [
-    "Project and worker profile confirmed; finish coordinator, disk and state-locking configuration",
-    "Verify organization, account, key authorization and dedicated state ownership",
-    "Produce a clean current Linux candidate with trusted revision and checksums",
-    "Review an additive initial-pair plan before applying it",
-    "Bootstrap dedicated services and measure actual host/cgroup limits",
-    "Run required native active/sealed and load campaigns with an off-host harness",
-    "Review qualification before registering serving capacity",
-    "Validate canonical data and wallets, rehearse rollback, then perform separate production cutover"
+    "Preserve rollback binaries/configuration and stopped canonical journal",
+    "Disable legacy Enhance autoscaling; no provisioning",
+    "Verify local clean release archive on each existing host",
+    "Stop legacy services and launch v4 with measured worker limits",
+    "Validate live canonical data and public end-to-end queries",
+    "Run native load, lifecycle, recovery and sustained campaigns on existing hosts",
+    "Clean up implementation and merge final tested code to main"
   ],
   "not_an_executable_policy": true,
   "verified_target": {
@@ -59,15 +58,29 @@
     "roman_registered_ssh_key_id": "56343657",
     "roman_public_key_match": true
   },
-  "remaining_decisions": [
-    "Dedicated qualification coordinator/load-generator host versus isolated service on existing coordinator",
-    "Isolated state key and reliable writer locking; existing Spaces backend does not enforce conditional lock writes"
-  ],
+  "remaining_decisions": [],
   "storage_validation": {
     "initial_worker_free_disk_gib": 32,
     "full_size_tests_passed": 2,
     "sampled_peak_per_worker_bytes": 15453517399,
     "evidence": "enhance/evidence/architecture-v4-worker-disk-2026-09-23/results.json",
     "qualification": "unqualified; native six-hour disk stability pending"
+  },
+  "user_authorization": {
+    "direct_production_deployment": true,
+    "shutdown_legacy_enhance_services": true,
+    "bypass_ci_where_possible": true,
+    "new_hosts": false,
+    "merge_final_tested_code_to_main": true,
+    "qualification_before_cutover": "User explicitly authorized deployment and testing on production before qualification; do not claim qualification passed"
+  },
+  "production_deployment": {
+    "revision": "9718a6dcf9801385f69f31bb71f02efd261914f0",
+    "worker_port": 8091,
+    "coordinator_listen": "127.0.0.1:8080",
+    "legacy_services": "disabled",
+    "public_canonical_service": "temporarily stopped for full-size synthetic qualification",
+    "new_hosts_created": 0,
+    "active_campaign_unit": "enhance-pir-v4-active-campaign.service"
   }
 }

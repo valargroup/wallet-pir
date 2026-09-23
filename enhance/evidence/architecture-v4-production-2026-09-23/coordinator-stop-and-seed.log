@@ -1,0 +1,5 @@
+inactive
+5ab51089db27257ed24175a7e117889456b6ca55f95e40151b5b9b7370863a8f  /srv/zakura/enhance-data-r29/enhance/records.bin
+5ab51089db27257ed24175a7e117889456b6ca55f95e40151b5b9b7370863a8f  /srv/enhance-pir-v4/canonical/enhance/records.bin
+Removed "/etc/systemd/system/timers.target.wants/enhance-autoscale.timer".
+Removed "/etc/systemd/system/multi-user.target.wants/enhance-pir-server.service".

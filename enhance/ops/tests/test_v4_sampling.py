@@ -93,6 +93,33 @@ class SamplingTests(unittest.TestCase):
             after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
             self.assertEqual(before, after)
 
+    def test_revision_release_directory_and_existing_worker_port(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            properties = fixture(root)
+            process_binary = root / 'proc/123/exe'
+            original = process_binary.resolve()
+            revised = original.parent.parent / ('a' * 40) / 'enhance-pir-v4'
+            revised.parent.mkdir()
+            original.rename(revised)
+            process_binary.unlink()
+            process_binary.symlink_to(revised)
+            path = root / 'srv/enhance-pir-v4/bootstrap.json'
+            receipt = json.loads(path.read_text())
+            receipt['private_port'] = 8091
+            path.write_text(json.dumps(receipt))
+            with patch.object(module, 'health', return_value=HEALTH) as health, \
+                    patch.object(module, 'runtime_metrics', return_value={'values': VALUES.copy()}) as metrics, \
+                    patch.object(module.socket, 'gethostname', return_value='fixture-host'):
+                result = module.collect(root, properties)
+                self.assertEqual(result['worker_private_port'], 8091)
+                health.assert_called_with('10.0.0.3', 8091)
+                metrics.assert_called_once_with('10.0.0.3', 8091)
+                receipt['revision'] = 'b' * 40
+                path.write_text(json.dumps(receipt))
+                with self.assertRaisesRegex(ValueError, 'binary differs'):
+                    module.collect(root, properties)
+
     def test_inactive_service_is_an_error_sample_not_zero_usage(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

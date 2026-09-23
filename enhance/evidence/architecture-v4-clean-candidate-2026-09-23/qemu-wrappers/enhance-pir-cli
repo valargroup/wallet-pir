@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /tmp/qemu-x86_64-new -cpu max -L /out/x86-root /out/clean-verified-bundle/enhance-pir-cli enhance-pir-cli "$@"
