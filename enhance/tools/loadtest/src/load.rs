@@ -301,6 +301,9 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             *total.errors.entry(class).or_default() += n;
         }
     }
+    // An open-loop schedule can finish its last arrival before the window ends.
+    // Include the whole requested interval in rates and qualification duration.
+    tokio::time::sleep_until(tokio::time::Instant::from_std(end)).await;
     let seconds = start.elapsed().as_secs_f64();
     let report = Report {
         protocol: enhance_pir::protocol::PROTOCOL_REVISION,
