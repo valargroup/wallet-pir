@@ -1,11 +1,14 @@
 # P16Q49 qualification — 2026-09-23
 
-**Status: candidate qualification in progress, not production clearance.**
+**Status: superseded comparison profile, not production clearance.**
+The user selected q48 with a `2^-78` correctness target after reviewing this
+comparison. The q49 campaigns were stopped after partial coverage; the recorded
+q49 results retain their original `2^-128` target.
 The actual q49 six-instance campaign has passed the dense 32K maximum-value
 fixture under all three public setups. Each gives an ideal independent-sampler
 full-query failure upper bound of `2^-255`, against the requested `2^-128` target,
-and each decoded all 128 fresh queries correctly. Full 432-case campaigns on
-ARM64 and native AVX512 Linux are still running.
+and each decoded all 128 fresh queries correctly. The planned full q49 campaigns on ARM64 and native AVX512 Linux were not
+completed; no full-matrix q49 qualification is claimed.
 
 The IPIR prerequisite is [ipir-sp PR #20](https://github.com/valargroup/ipir-sp/pull/20),
 commit `b1c540f90f62e112c834a0f57f025e3c605e55d1`. The paired wallet is
