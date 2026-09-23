@@ -1,6 +1,6 @@
 {
   "kind": "enhance-v4-deployment-inputs",
-  "status": "deployed-canonical-restored-sealed-attempt-failed",
+  "status": "deadline-fix-deployed-sealed-retry-building",
   "qualification": "incomplete: worker-1 sampling gap; sealed and other qualification tests pending",
   "purpose": "Reuse existing production hosts, stop legacy Enhance services, deploy and test v4 directly over SSH",
   "organization": "Valargroup",
@@ -75,14 +75,14 @@
     "qualification_before_cutover": "User explicitly authorized deployment and testing on production before qualification; do not claim qualification passed"
   },
   "production_deployment": {
-    "revision": "9718a6dcf9801385f69f31bb71f02efd261914f0",
+    "revision": "b1863b1d270df52d213d7dd389e5b8bf96bca224",
     "worker_port": 8091,
     "coordinator_listen": "127.0.0.1:8080",
     "legacy_services": "disabled",
-    "public_canonical_service": "restored after failed sealed preparation; validation in progress",
+    "public_canonical_service": "temporarily stopped for fresh sealed campaign; restoration supervised",
     "new_hosts_created": 0,
     "active_campaign_unit": "enhance-pir-v4-active-campaign.service",
     "active_campaign_status": "completed; six-hour publication gate passed; not hardware qualification",
-    "sealed_campaign_unit": "enhance-pir-v4-sealed-campaign.service"
+    "sealed_campaign_unit": "enhance-pir-v4-sealed-retry-campaign.service"
   }
 }

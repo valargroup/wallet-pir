@@ -1,0 +1,59 @@
+{
+  "identity": {
+    "revision": "b1863b1d270df52d213d7dd389e5b8bf96bca224",
+    "archive": ".local-pir/v4-candidates/b1863b1d270df52d213d7dd389e5b8bf96bca224/bundle/enhance-pir-v4-candidate.tar.gz",
+    "archive_sha256": "fec6141be3512dbf5646f3dd4912ea6015c7079cf8fef8d53e9996645f4e6f66",
+    "manifest_sha256": "7f203cedd08f4dd113ac21b616ef5fa7b349d6512270a8fea1f9d0672afcd127",
+    "binary_sha256": "4c3b0a0f12c4a275afd5fd5e89ea7556627c4fc3fb2969b275ec02b499464478"
+  },
+  "load": {
+    "protocol": "ironwood-enhance-pir-v4",
+    "seconds": 30.087573248,
+    "concurrency": 2,
+    "offered_qps": null,
+    "completed": 460,
+    "succeeded": 460,
+    "incorrect_answers": 0,
+    "errors": {},
+    "unstarted_arrivals": 0,
+    "correct_queries_per_second": 15.28870395124264,
+    "p50_ms": 126.591,
+    "p95_ms": 153.343,
+    "p99_ms": 234.623,
+    "scheduled_p99_ms": 234.623,
+    "exact_answer_oracle": true,
+    "warmup_errors": {},
+    "warmup_correct_answers": 48,
+    "warmup_incorrect_answers": 0
+  },
+  "health": {
+    "anchor_height": 3493444,
+    "blocked_reason": null,
+    "capacity": {
+      "burst_rows": 4096,
+      "effective_rows_per_second": 1.0,
+      "fleet_ceiling_reached": false,
+      "memory_limit": null,
+      "observation": {
+        "at": 1790168599,
+        "records": 574935
+      },
+      "peak_rows_per_second": 0.4121212121212121,
+      "readiness_seconds": 21600.0,
+      "remaining_rows": 146418,
+      "requested": null,
+      "requests": {}
+    },
+    "generation": 72,
+    "operation": null,
+    "pending_abort_notifications": 0,
+    "pending_commit_notifications": 0,
+    "placement_revision": 72,
+    "protocol": "ironwood-enhance-pir-v4",
+    "published_replica_counts": {
+      "shard-group-01": 1
+    },
+    "registered_groups": 1
+  },
+  "status": "deployed_canonical_checked"
+}

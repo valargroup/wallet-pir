@@ -3,7 +3,7 @@
 ## Current state
 
 The implementation is deployed directly to the existing production hosts using
-clean Linux candidate `9718a6dcf9801385f69f31bb71f02efd261914f0`. Public canonical
+Linux candidate `b1863b1d270df52d213d7dd389e5b8bf96bca224`. Public canonical
 queries, native load, single-replica failover and coordinator restart checks
 passed. Full-size sustained qualification is **in progress, not passed**.
 
@@ -21,8 +21,9 @@ records the gap and the corrected restoration-supervisor failure.
 
 The first six-sealed attempt failed during cold preparation, before measurement.
 Samples indicate preparation exceeded the shared 180-second request deadline;
-a preparation-specific bounded deadline fix is tested but not yet deployed.
-The supervisor restored canonical serving. See the
+the preparation-specific bounded deadline fix is deployed and passed 460 public
+exact-answer load queries. A fresh sealed campaign is building, with canonical
+serving temporarily stopped and restoration supervised. See the
 [deadline failure evidence](../evidence/architecture-v4-sealed-deadline-2026-09-23/README.md).
 
 ## Implementation delivered
@@ -62,9 +63,9 @@ The supervisor restored canonical serving. See the
 | Operational tools | 115 tests passed with three environment-specific skips; 17 CI-tool tests passed. Journal migration, source locks, record continuity and explicit-port sampling have targeted tests. |
 | Sustained capacity | Active campaign completed six hours and 320 publications; zero background errors. Worker-1 sampling gap prevents qualification; sealed-role and overload tests remain. |
 
-The current Rust runtime sources are byte-identical to the clean deployed
-candidate; the production evidence records that comparison. Deployment fixes so
-far concern journal migration and sampling, not cryptographic runtime behavior.
+The deployed source includes the preparation-deadline fix. Source/Cargo hashes
+and bundle identity are recorded in the deadline-failure evidence; the fix changes
+coordinator HTTP preparation deadlines, not cryptographic runtime behavior.
 Raw historical evidence remains under `enhance/evidence/architecture-v4-*`.
 A result applies only to the source and binary hashes recorded with it.
 

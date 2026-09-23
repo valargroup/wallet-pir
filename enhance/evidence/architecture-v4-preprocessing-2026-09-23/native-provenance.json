@@ -1,0 +1,18 @@
+{
+  "source_revision": "fd428b130e3d1aa97e2a8c732d1919ba21c52903",
+  "binary_sha256": "f16d6c8d9f60325e65cd3005529d2d34a311bdb060a9a3b76ae37d9600415e7c",
+  "host": "enhance-pir-worker-01",
+  "private_ipv4": "10.142.0.15",
+  "profile": "DigitalOcean ams3 c-4; four dedicated vCPUs, nominal 8 GiB",
+  "service": "enhance-pir-v4-preprocess-native.service",
+  "memory_high_bytes": 7516192768,
+  "memory_max_bytes": 7609516032,
+  "swap_max_bytes": 2147479552,
+  "cpu_quota_percent": 400,
+  "canonical_worker": "stopped during benchmark, restarted afterward; peer served canonical traffic",
+  "compiler": "rustc 1.91.0",
+  "profile_build": "release, fat LTO",
+  "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+  "command": "v4-preprocess-linux --output /srv/enhance-pir-v4/validation/preprocess-native --repetitions 3",
+  "scope": "single-worker offline phase characterization; not concurrent full-fleet qualification"
+}

@@ -1,6 +1,6 @@
 # Architecture 2 conformance audit
 
-Status: **deployed; first sealed attempt failed; qualification incomplete**.
+Status: **deadline fix deployed; fresh sealed campaign building; qualification incomplete**.
 This maps [architecture 2](architecture_2.md) to implementation and observed tests.
 It is not a release certificate. Source and binary hashes bound each evidence set.
 
@@ -38,7 +38,8 @@ The failed sampler restart and failed initial automatic restoration are recorded
 in the production evidence. Neither the gap nor missing observations are treated
 as passing measurements. The first six-sealed attempt failed before measurement during cold preparation.
 The supervisor restored canonical serving. A preparation-specific request
-deadline fix is tested locally; deployment and a fresh campaign remain. See
+deadline fix is deployed and a fresh sealed campaign is building. Canonical
+serving is temporarily stopped during that campaign. See
 [the failure evidence](../evidence/architecture-v4-sealed-deadline-2026-09-23/README.md).
 
 ## Scope and acceptance rules
