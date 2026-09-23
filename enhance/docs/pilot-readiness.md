@@ -132,11 +132,12 @@ old release/data directories; never open new state with an incompatible binary.
 Verify worker port 8091 is unreachable from the public internet and private
 coordinator services bind only to their intended interfaces. Check TLS, request
 limits and deadlines. Exercise alerts for stale publication, missing replicas,
-errors/rejections, resource pressure and missing scrapes. For the 1-second pilot
-query budget, set the APM sidecar's `PIR_APM_LATENCY_P99_OVERRIDES` query entry
-to `1.0`; its production value of `5.0` does not match this release gate. The
-sidecar now has distinct ingestion failure, blocked or stale publication, and
-new-rejection alerts. Name incident and release owners. Preserve rollback data
+errors/rejections, resource pressure and missing scrapes. The sidecar has
+distinct ingestion failure, blocked or stale publication, and new-rejection
+alerts. The v6 coordinator does not export an HTTP latency histogram, so the
+sidecar's query p99 setting cannot monitor the 1-second public budget. Use a
+separate public HTTPS latency monitor during the pilot. Name incident and release
+owners. Preserve rollback data
 for the entire qualification and pilot
 window, including checking any scheduled cleanup timers.
 
