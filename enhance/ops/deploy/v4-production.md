@@ -16,15 +16,48 @@ Workers are c-4, four dedicated vCPUs and nominal 8 GiB RAM. The coordinator is
 m-8vcpu-64gb-intel. All are existing wallet-pir resources in ams3. Worker SSH uses
 Roman's local key through the coordinator; no private key was copied to a host.
 
-Deployed candidate revision: `9718a6dcf9801385f69f31bb71f02efd261914f0`.
+Deployed candidate revision: `b1863b1d270df52d213d7dd389e5b8bf96bca224`.
 Worker binary SHA-256:
-`258fc7d0070b821d34710d5c25edbf9176472c6e39defca020f8944a045c1def`.
+`4c3b0a0f12c4a275afd5fd5e89ea7556627c4fc3fb2969b275ec02b499464478`.
 Archive SHA-256:
-`21a5f0dd9319bb8077f64eddd9baf5f6961d2cae8d0ac658d46e2823db4e36a7`.
+`fec6141be3512dbf5646f3dd4912ea6015c7079cf8fef8d53e9996645f4e6f66`.
+
+This candidate adds the bounded 600-second preparation-request deadline. Its
+binary hash was rechecked on the coordinator and both workers after sealed
+measurement began. Earlier evidence and rollback paths naming `9718a6dc` are
+historical and must not be treated as the current deployed runtime identity.
 
 The release directory is `/opt/enhance-pir-v4/releases/<revision>` on each host.
 The local archive is under `.local-pir/v4-candidates/<revision>/`. Runtime secrets
 remain on the host; the coordinator uses its existing Zakura cookie file.
+
+## Qualification campaign in progress
+
+The sealed retry uses `enhance-pir-v4-sealed-retry-campaign.service` and private
+loopback port 8280. Measurement began at 2026-09-23 13:17:31 UTC. Canonical serving
+is stopped for the campaign; the canonical worker directories are preserved as
+`worker.canonical`. Do not start the canonical coordinator against workers while
+they hold the synthetic fixture.
+
+The first measured publication confirms six sealed shards on `shard-group-01`,
+one active shard on `test-support-active`, and two published-ready replicas for
+each group. The support group's workers run on the coordinator and are not
+qualified c-4 hosts. The physical worker samplers are
+`enhance-pir-v4-sealed-retry-sampling.service` and retain raw traces under
+`/srv/enhance-pir-v4/validation/sealed-retry-samples`.
+
+The local `finish-sealed-retry.py` supervisor monitors the campaign and sampler
+freshness, restores canonical directories/services after termination, then runs
+four canonical public/private load cases. Inspect its live PID and the remote
+systemd MainPID, not just its status file, when checking supervision. Its source
+and launch instructions are preserved in the
+[deadline evidence](../../evidence/architecture-v4-sealed-deadline-2026-09-23/README.md).
+
+Keep overload and fault injection outside the six-hour zero-error measurement.
+After preserving final reports and sample hashes, use a separate fixture window
+for offered-load saturation, replica recovery and delayed reclamation. Record
+scheduled latency and unstarted work as well as completed query latency. An
+allowed-error overload run cannot replace the zero-error acceptance campaign.
 
 ## Services and persistent state
 
