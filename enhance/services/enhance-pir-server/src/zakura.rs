@@ -33,8 +33,10 @@ pub enum ZakuraError {
 pub struct ZakuraClient {
     http: reqwest::Client,
     rpc_url: String,
-    username: String,
-    password: String,
+    // zakurad rewrites its cookie on every start. Keep the path so a 401 after
+    // a node restart reloads the credential instead of failing forever.
+    cookie_path: Option<std::path::PathBuf>,
+    credentials: std::sync::Arc<std::sync::RwLock<(String, String)>>,
 }
 
 #[derive(Debug)]
@@ -77,22 +79,30 @@ impl ZakuraClient {
         rpc_url: impl Into<String>,
         cookie_path: impl AsRef<Path>,
     ) -> Result<Self, ZakuraError> {
-        let cookie = std::fs::read_to_string(cookie_path)?;
-        let (username, password) = cookie
-            .trim()
-            .split_once(':')
-            .ok_or(ZakuraError::InvalidCookie)?;
-        if username.is_empty() || password.is_empty() {
-            return Err(ZakuraError::InvalidCookie);
-        }
+        let credentials = read_cookie(cookie_path.as_ref())?;
         Ok(Self {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .build()?,
             rpc_url: rpc_url.into(),
-            username: username.to_string(),
-            password: password.to_string(),
+            cookie_path: Some(cookie_path.as_ref().to_path_buf()),
+            credentials: std::sync::Arc::new(std::sync::RwLock::new(credentials)),
         })
+    }
+
+    /// Re-reads the cookie file the client was created from. Returns `Ok(false)`
+    /// when the client has no cookie file or its contents are unchanged.
+    pub fn reload_cookie(&self) -> Result<bool, ZakuraError> {
+        let Some(path) = &self.cookie_path else {
+            return Ok(false);
+        };
+        let fresh = read_cookie(path)?;
+        let mut current = self.credentials.write().unwrap();
+        if *current == fresh {
+            return Ok(false);
+        }
+        *current = fresh;
+        Ok(true)
     }
 
     pub async fn tip_height(&self) -> Result<u64, ZakuraError> {
@@ -161,17 +171,17 @@ impl ZakuraClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, ZakuraError> {
-        let response = self
-            .http
-            .post(&self.rpc_url)
-            .basic_auth(&self.username, Some(&self.password))
-            .json(
-                &json!({"jsonrpc": "1.0", "id": "enhance-pir", "method": method, "params": params}),
-            )
-            .send()
-            .await?;
+        let mut response = self.send(method, &params).await?;
         if response.status() == StatusCode::UNAUTHORIZED {
-            return Err(ZakuraError::InvalidCookie);
+            // Every RPC this client issues is read-only, so one retry with a
+            // freshly read cookie is safe. A second 401 is a real credential error.
+            if !self.reload_cookie()? {
+                return Err(ZakuraError::InvalidCookie);
+            }
+            response = self.send(method, &params).await?;
+            if response.status() == StatusCode::UNAUTHORIZED {
+                return Err(ZakuraError::InvalidCookie);
+            }
         }
         let response: RpcResponse<T> = response.error_for_status()?.json().await?;
         if let Some(error) = response.error {
@@ -179,6 +189,35 @@ impl ZakuraClient {
         }
         response.result.ok_or(ZakuraError::MissingResult)
     }
+
+    async fn send(
+        &self,
+        method: &str,
+        params: &serde_json::Value,
+    ) -> Result<reqwest::Response, ZakuraError> {
+        let (username, password) = self.credentials.read().unwrap().clone();
+        Ok(self
+            .http
+            .post(&self.rpc_url)
+            .basic_auth(username, Some(password))
+            .json(
+                &json!({"jsonrpc": "1.0", "id": "enhance-pir", "method": method, "params": params}),
+            )
+            .send()
+            .await?)
+    }
+}
+
+fn read_cookie(path: &Path) -> Result<(String, String), ZakuraError> {
+    let cookie = std::fs::read_to_string(path)?;
+    let (username, password) = cookie
+        .trim()
+        .split_once(':')
+        .ok_or(ZakuraError::InvalidCookie)?;
+    if username.is_empty() || password.is_empty() {
+        return Err(ZakuraError::InvalidCookie);
+    }
+    Ok((username.to_string(), password.to_string()))
 }
 
 /// Derive metadata from canonical transaction data, never from a fee estimate.

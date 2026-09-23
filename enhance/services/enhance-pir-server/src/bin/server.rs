@@ -10,6 +10,11 @@ use enhance_pir_server::{
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
+// Each rewound block is durable on its own, so a deeper reorg simply continues
+// on the next poll. Bounding one pass keeps a runaway mismatch observable in
+// the log and in health rather than silently erasing the whole journal.
+const MAX_REWIND_PER_POLL: u64 = 100;
+
 #[derive(Parser)]
 struct Cli {
     /// Deployment policy; seven sealed shards require independent qualification.
@@ -438,9 +443,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if let Err(error) = inventory_result {
                     tracing::error!(%error, "inventory reconciliation deferred");
                 }
-                let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-                    let (height, hash) = if let Some(rpc) = &rpc {
+                // Ingestion and publication are reported separately: a stalled
+                // journal (node lag, rotated cookie, continuity mismatch) must be
+                // visible in health/metrics even though serving stays green.
+                let ingested: Result<(u64, String), Box<dyn std::error::Error + Send + Sync>> = async {
+                    if let Some(rpc) = &rpc {
                         let tip = rpc.tip_height().await?;
+                        if let Some(last) = journal.records.last_block() {
+                            // A node whose tip is below the journal is lagging or
+                            // resyncing, not reorged. Never truncate canonical
+                            // history on that signal; wait for it to catch up.
+                            if tip < last.height {
+                                return Err(format!(
+                                    "node tip {tip} is below journal height {}; waiting for the node",
+                                    last.height
+                                )
+                                .into());
+                            }
+                        }
                         let mut ancestor = None;
                         for block in journal.records.blocks().iter().rev() {
                             if block.height <= tip
@@ -465,7 +485,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                         journal
                             .highest_committed()
-                            .ok_or("empty canonical journal")?
+                            .ok_or("empty canonical journal".into())
                     } else {
                         let target = if journal.records.tree_size() == 0 {
                             fixture_records
@@ -498,42 +518,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 &records,
                             )?;
                         }
-                        journal.highest_committed().ok_or("empty fixture")?
-                    };
-                    coordinator.observe_capacity(
-                        journal.records.tree_size(),
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)?
-                            .as_secs(),
-                        capacity_policy,
-                    )?;
-                    if coordinator
-                        .manifest()
-                        .await
-                        .is_some_and(|m| m.anchor_height == height && m.anchor_block_hash == hash)
-                    {
-                        return Ok(());
+                        journal.highest_committed().ok_or("empty fixture".into())
                     }
-                    let verify_hash = hash.clone();
-                    coordinator
-                        .publish_checked(&journal.records, height, hash, || async {
-                            if let Some(rpc) = &rpc {
-                                if rpc.block_hash(height).await.map_err(|e| e.to_string())?
-                                    != verify_hash
-                                {
-                                    return Err(
-                                        "canonical anchor changed during preparation".into()
-                                    );
-                                }
-                            }
-                            Ok(())
-                        })
-                        .await?;
-                    Ok(())
                 }
                 .await;
-                if let Err(error) = result {
-                    tracing::error!(%error, "ingestion/publication blocked");
+                coordinator
+                    .observe_ingestion(ingested.as_ref().map(|_| ()).map_err(|e| e.to_string()));
+                let published: Result<(), Box<dyn std::error::Error + Send + Sync>> =
+                    async {
+                        let (height, hash) = match &ingested {
+                            Ok(anchor) => anchor.clone(),
+                            Err(error) => {
+                                tracing::error!(%error, "ingestion blocked");
+                                return Ok(());
+                            }
+                        };
+                        coordinator.observe_capacity(
+                            journal.records.tree_size(),
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)?
+                                .as_secs(),
+                            capacity_policy,
+                        )?;
+                        if coordinator.manifest().await.is_some_and(|m| {
+                            m.anchor_height == height && m.anchor_block_hash == hash
+                        }) {
+                            return Ok(());
+                        }
+                        let verify_hash = hash.clone();
+                        coordinator
+                            .publish_checked(&journal.records, height, hash, || async {
+                                if let Some(rpc) = &rpc {
+                                    if rpc.block_hash(height).await.map_err(|e| e.to_string())?
+                                        != verify_hash
+                                    {
+                                        return Err(
+                                            "canonical anchor changed during preparation".into()
+                                        );
+                                    }
+                                }
+                                Ok(())
+                            })
+                            .await?;
+                        Ok(())
+                    }
+                    .await;
+                if let Err(error) = published {
+                    tracing::error!(%error, "publication blocked");
                 }
                 if task.is_finished() {
                     return Err("HTTP server stopped".into());

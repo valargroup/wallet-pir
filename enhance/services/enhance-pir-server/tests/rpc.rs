@@ -33,20 +33,24 @@ struct Rpc {
     selected: Arc<AtomicUsize>,
     calls: Arc<AtomicUsize>,
     tree_size: Arc<AtomicUsize>,
+    // Public, test-only credentials. No developer or service credentials are used.
+    authorization: Arc<std::sync::Mutex<String>>,
+    tip: Arc<AtomicUsize>,
 }
+const TEST_AUTHORIZATION: &str = "Basic dGVzdDp0ZXN0"; // test:test
 async fn rpc(
     State(state): State<Rpc>,
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
-    // Public, test-only credential. No developer or service credentials are used.
-    if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Basic dGVzdDp0ZXN0") {
+    let expected = state.authorization.lock().unwrap().clone();
+    if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some(expected.as_str()) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     state.calls.fetch_add(1, Ordering::SeqCst);
     let (raw, hash) = &state.blocks[state.selected.load(Ordering::SeqCst)];
     let result = match request["method"].as_str().unwrap() {
-        "getblockcount" => json!(ACTIVATION_HEIGHT),
+        "getblockcount" => json!(state.tip.load(Ordering::SeqCst)),
         "getblockhash" => {
             assert_eq!(request["params"], json!([ACTIVATION_HEIGHT]));
             json!(hash)
@@ -159,6 +163,8 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         selected: Arc::new(AtomicUsize::new(0)),
         calls: Arc::new(AtomicUsize::new(0)),
         tree_size: Arc::new(AtomicUsize::new(2)),
+        authorization: Arc::new(std::sync::Mutex::new(TEST_AUTHORIZATION.into())),
+        tip: Arc::new(AtomicUsize::new(ACTIVATION_HEIGHT as usize)),
     };
     let root = tempfile::tempdir().unwrap();
     let (rpc_url, rpc_task) = serve(
@@ -409,6 +415,92 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
             .0
             .as_ref(),
         expected[1]
+    );
+
+    // A node whose tip is below the journal is lagging or resyncing. The
+    // journal must not be rewound on that signal; the stall is reported in
+    // health while the published generation keeps serving.
+    let health_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let health = |label: &'static str, predicate: fn(&Value) -> bool| {
+        let client = health_client.clone();
+        let origin = origin.clone();
+        let root = root.path().to_path_buf();
+        async move {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Ok(response) = client.get(format!("{origin}/v1/health")).send().await {
+                    if let Ok(value) = response.json::<Value>().await {
+                        if predicate(&value) {
+                            return value;
+                        }
+                    }
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "{label}: {}",
+                    std::fs::read_to_string(root.join("coordinator.log")).unwrap()
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    };
+    let manifest_path = root.path().join("data/enhance/manifest.json");
+    let before_lag = std::fs::read(&manifest_path).unwrap();
+    state
+        .tip
+        .store(ACTIVATION_HEIGHT as usize - 1, Ordering::SeqCst);
+    health("node lag not reported", |h| {
+        h["ingestion_error"]
+            .as_str()
+            .is_some_and(|e| e.contains("below journal height"))
+    })
+    .await;
+    assert_eq!(
+        std::fs::read(&manifest_path).unwrap(),
+        before_lag,
+        "a lagging node must not rewind the canonical journal"
+    );
+    assert_eq!(
+        published(&mut process, root.path(), &origin, &state.blocks[2].1).await,
+        third
+    );
+    state
+        .tip
+        .store(ACTIVATION_HEIGHT as usize, Ordering::SeqCst);
+    health("node lag not cleared", |h| h["ingestion_error"].is_null()).await;
+
+    // zakurad rewrites its cookie on restart. The coordinator reloads the
+    // cookie file on 401 instead of failing every call until it is restarted.
+    *state.authorization.lock().unwrap() = "Basic bmV3Om5ldw==".into(); // new:new
+    health("rotated cookie not reported", |h| {
+        h["ingestion_error"]
+            .as_str()
+            .is_some_and(|e| e.contains("invalid RPC cookie"))
+    })
+    .await;
+    std::fs::write(root.path().join("cookie"), "new:new").unwrap();
+    health("rotated cookie not reloaded", |h| {
+        h["ingestion_error"].is_null()
+    })
+    .await;
+    let metrics = health_client
+        .get(format!("{origin}/metrics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        metrics.contains("enhance_ingestion_failed 0\n"),
+        "{metrics}"
+    );
+    assert!(
+        metrics.contains("enhance_last_ingest_age_seconds "),
+        "{metrics}"
     );
     drop(process);
     rpc_task.abort();

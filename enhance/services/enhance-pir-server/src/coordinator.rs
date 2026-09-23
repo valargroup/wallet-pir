@@ -144,6 +144,21 @@ fn inventory_extends(existing: &[Group], configured: &[Group]) -> bool {
 }
 
 impl Coordinator {
+    /// Records the outcome of the latest canonical ingestion pass. Ingestion
+    /// failures never block serving, so they are reported separately from the
+    /// publication `blocked_reason` in health and metrics.
+    pub fn observe_ingestion(&self, result: Result<(), String>) {
+        let mut telemetry = self.telemetry.lock().unwrap();
+        match result {
+            Ok(()) => {
+                telemetry.ingestion_error = None;
+                telemetry.last_ingest_success = Some(std::time::Instant::now());
+            }
+            Err(error) => telemetry.ingestion_error = Some(error),
+        }
+    }
+
+
     pub fn observe_capacity(
         &self,
         records: u64,
@@ -1130,7 +1145,8 @@ async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
         "published_replica_counts":published_replica_counts,
         "pending_commit_notifications":store.state().pending_commits.len(),
         "pending_abort_notifications":store.state().pending_aborts.len(),
-        "operation":store.state().operation,"blocked_reason":*c.blocked.lock().unwrap()}),
+        "operation":store.state().operation,"blocked_reason":*c.blocked.lock().unwrap(),
+        "ingestion_error":c.telemetry.lock().unwrap().ingestion_error}),
     )
 }
 async fn ready(State(c): State<Coordinator>) -> StatusCode {
