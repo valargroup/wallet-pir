@@ -11,6 +11,7 @@ validates the answer against its own chain context.
 - [Architecture](architecture.md): publication, placement, retention, and recovery.
 - [Deployment](deployment.md): fresh-state release and coordinated cutover.
 - [Qualification](qualification.md): dated results and open production gates.
+- [Changelog](../CHANGELOG.md): Enhance PIR release history.
 - [Evidence](../evidence/README.md): retained raw runs and provenance.
 
 The transparent script-history product has its own [documentation](../../transparent/docs/README.md).
