@@ -1,0 +1,7 @@
+Model name:                              Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
+BIOS Model name:                         pc-i440fx-6.1  CPU @ 2.0GHz
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault pti ssbd ibrs ibpb tpr_shadow flexpriority ept vpid ept_ad fsgsbase bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap clflushopt clwb avx512cd avx512bw avx512vl xsaveopt xsavec xgetbv1 wbnoinvd arat vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq
+ac11769cb1bf380ffd0a82878635e1ae0de47c414d84d53a512b7dbd77346d1c  /tmp/wallet-pir-readiness-source-73233a1.tar.gz
+06dfc631e0fdc509713346df3578b420aca17c3cfde476acc435eefa58d43e7c  /root/wallet-pir-readiness-target/release/enhance-noise-analysis
+31: r4096-u2048-random-s1: analytical target met; independent review pending; empirical=8.8165%
+32: r4096-u2048-random-s0: analytical target met; independent review pending; empirical=8.7073%

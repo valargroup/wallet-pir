@@ -1,0 +1,14 @@
+{
+  "enhance-pir-server": {
+    "sha256": "21313c17d9be199ccfe4df3956d9c3080e36383dfab4917fa6902552993cba36",
+    "bytes": 7275456
+  },
+  "enhance-pir-cli": {
+    "sha256": "15bee2f1cea73c1cd19764428171d5908a981a88892e1f589e325ccf40eb2b09",
+    "bytes": 3493104
+  },
+  "enhance-pir-load-test": {
+    "sha256": "ff0c3365012d35c138e4b5b18eb41e78d5816f84d8fdc89dbe01f187c23d252f",
+    "bytes": 3730576
+  }
+}

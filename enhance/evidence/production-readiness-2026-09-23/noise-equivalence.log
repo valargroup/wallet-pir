@@ -1,0 +1,9 @@
+    Finished `release` profile [optimized] target(s) in 0.22s
+     Running unittests src/bin/accelerated.rs (enhance/tools/noise-analysis/target/release/deps/accelerated-a92362ad325edcdf)
+
+running 2 tests
+test certificate::tests::grouped_weights_match_every_tiny_basis_vector ... ok
+test certificate::tests::fast_matches_full_degree_reference ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.97s
+

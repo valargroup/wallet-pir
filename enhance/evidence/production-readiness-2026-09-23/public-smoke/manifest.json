@@ -1,0 +1,37 @@
+{
+  "kind": "enhance-public-qualification",
+  "qualification": "unqualified",
+  "source_revision": "69840f3df91ebde3f893a77d867e40e8088a8ced",
+  "server_revision": "682ee124621fb155033200c6a1565a8cae75c863",
+  "binary_sha256": "801b76b9fe98ce875db12465be9399a5124cd1a55270f28652fd8a0a3afbd62f",
+  "oracle_sha256": "161d34f6de465ee48ccc1530f3b94108a13eb32d5785ee8f58d01f72c810173b",
+  "server": "https://enhance-pir.valargroup.dev",
+  "client_platform": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "started_ns": 1790192664981593000,
+  "required_step_seconds": 1800,
+  "required_soak_seconds": 21600,
+  "limitations": [
+    "Oracle provenance and live binary identity require independent verification",
+    "Worker sampling, wallet lifecycle, noise qualification and recovery are separate gates"
+  ],
+  "runs": [
+    {
+      "name": "rate-1",
+      "started_ns": 1790192664982005000,
+      "status": "failed",
+      "exit_code": 1,
+      "finished_ns": 1790192701945651000,
+      "failures": [
+        "short_measurement",
+        "successful_p99_ms_missing_or_exceeds_1000",
+        "successful_scheduled_p99_ms_missing_or_exceeds_1000",
+        "scheduled_p99_ms_missing_or_exceeds_1000",
+        "load_process_failed"
+      ],
+      "report_sha256": "bd50b61f1a14f670a120abe3029c51026ba2dc3fe84c19d6b9c0b4be01a5ff64"
+    }
+  ],
+  "status": "failed",
+  "failure": "RuntimeError: rate-1: short_measurement, successful_p99_ms_missing_or_exceeds_1000, successful_scheduled_p99_ms_missing_or_exceeds_1000, scheduled_p99_ms_missing_or_exceeds_1000, load_process_failed",
+  "finished_ns": 1790192701946141000
+}

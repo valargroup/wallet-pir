@@ -1,0 +1,26 @@
+   Compiling enhance-noise-analysis v0.1.0 (/Users/roman/projects/wallet-pir-production-readiness/enhance/tools/noise-analysis)
+    Finished `release` profile [optimized] target(s) in 1.95s
+     Running unittests src/bin/accelerated.rs (enhance/tools/noise-analysis/target/release/deps/accelerated-a92362ad325edcdf)
+
+running 2 tests
+test certificate::tests::fast_matches_full_degree_reference ... ignored, explicit full-degree reference/fast equivalence check
+test certificate::tests::grouped_weights_match_every_tiny_basis_vector ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (enhance/tools/noise-analysis/target/release/deps/enhance_noise_analysis-bdf61e6443e83568)
+
+running 2 tests
+test certificate::tests::fast_matches_full_degree_reference ... ignored, explicit full-degree reference/fast equivalence check
+test certificate::tests::grouped_weights_match_every_tiny_basis_vector ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/q48.rs (enhance/tools/noise-analysis/target/release/deps/q48-e3f7cf54f4cb5f0f)
+
+running 2 tests
+test certificate::tests::fast_matches_full_degree_reference ... ignored, explicit full-degree reference/fast equivalence check
+test certificate::tests::grouped_weights_match_every_tiny_basis_vector ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

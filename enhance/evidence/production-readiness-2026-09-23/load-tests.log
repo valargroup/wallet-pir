@@ -1,0 +1,11 @@
+   Compiling enhance-pir-load-test v0.0.1 (/Users/roman/projects/wallet-pir-production-readiness/enhance/tools/loadtest)
+    Finished `release` profile [optimized] target(s) in 17.42s
+     Running unittests src/main.rs (target/readiness-driver/release/deps/enhance_pir_load_test-a494abfe56d7f8ac)
+
+running 3 tests
+test load::tests::warmup_does_not_hide_protocol_or_authorization_failures ... ok
+test load::tests::fast_rejections_cannot_mask_slow_successes ... ok
+test load::tests::warmup_preserves_transient_failures_and_exact_answer_failures ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

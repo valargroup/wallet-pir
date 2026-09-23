@@ -1,0 +1,23 @@
+[
+  "/Users/roman/projects/wallet-pir-production-readiness/target/readiness-driver/release/enhance-pir-load-test",
+  "--server",
+  "https://enhance-pir.valargroup.dev",
+  "--oracle",
+  "/private/tmp/wallet-pir-readiness/journal-oracle.json",
+  "--parallelism",
+  "8",
+  "--duration",
+  "30s",
+  "--warmup",
+  "3s",
+  "--seed",
+  "20260923",
+  "--max-error-rate",
+  "0.001",
+  "--json-out",
+  "/private/tmp/wallet-pir-readiness/public-smoke/rate-1.json",
+  "--rate",
+  "1",
+  "--slo-p99-ms",
+  "1000"
+]

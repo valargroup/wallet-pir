@@ -1,0 +1,79 @@
+{
+  "kind": "enhance-pilot-readiness",
+  "qualification": "unqualified",
+  "status": "acceptance_incomplete",
+  "recorded_ns": 1790193044922818000,
+  "source_revision": "73233a1a6f44e4149bcf387f826ed3ba40406bc7",
+  "base_revision": "8b9bacf33c49522be1b1d437566f34cd33535d7d",
+  "wallet_revision": "9b190657d129d08e964623d0ecc1d8e4ffb31b1d",
+  "client_platform": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "pilot_qps": 2,
+  "qualification_qps": 4,
+  "latency_p99_ms": 1000,
+  "observed_fleet": {
+    "coordinator_revision": "682ee124621fb155033200c6a1565a8cae75c863",
+    "worker_revision": "afdb4b6d70d6947fa60688a3cf4df21fe5eeae69",
+    "worker_count": 2,
+    "placement_policy": {
+      "sealed_shards": 6
+    },
+    "worker_memory_swap_current_bytes": [
+      0,
+      0
+    ],
+    "worker_restarts": [
+      0,
+      0
+    ]
+  },
+  "validation": {
+    "make_check": {
+      "exit_code": 0,
+      "rust_passed": 633,
+      "rust_ignored": 5,
+      "limitation": "Ran before the final load-driver interval adjustment; targeted release tests and clippy cover that adjustment"
+    },
+    "wallet_http_sqlite_tests_passed": 3,
+    "q48_layouts_passed": 12,
+    "historical_noise_cases_per_platform": 432,
+    "historical_noise_queries_per_platform": 55296,
+    "historical_noise_incorrect_answers": 0,
+    "full_size_loan_return": {
+      "passed": true,
+      "seconds": 139.32
+    },
+    "current_captured_snapshot": {
+      "generation": 116,
+      "records": 586953,
+      "queries": 128,
+      "failures": 0,
+      "target_failure_bits": 78,
+      "scope": "captured generation only"
+    },
+    "operations_final": {
+      "tests": 101,
+      "skipped": 3,
+      "failed": 0
+    },
+    "noise_verifier_and_comparison_tests": 10
+  },
+  "open_gates": [
+    "Full CI on final commit",
+    "Complete rc.2 matrices and independent acceptance of current snapshot evidence",
+    "Uniform pinned fleet candidate",
+    "External one-second p99 not achieved by local smoke",
+    "Six-hour active and sealed physical-worker campaigns",
+    "Actual consuming-wallet release over HTTPS and independent chain oracle",
+    "Failure recovery and alert exercises",
+    "Named release/incident owners and 24-hour pilot observation"
+  ],
+  "operations_changes": [
+    "Disabled enhance-pir-v5-retention-cleanup.timer on coordinator and both workers to retain rollback data through qualification"
+  ],
+  "limitations": [
+    "External smoke used the canonical journal oracle, not independent chain extraction",
+    "Local client concurrently ran qualification work; second smoke overlapped snapshot transfer",
+    "No serving binary or data was changed"
+  ],
+  "implementation_revision": "d5b1e74fc754405c3d72c4e8902ce1326a013d78"
+}

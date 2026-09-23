@@ -1,0 +1,119 @@
+# Enhance production readiness checks — September 23, 2026
+
+**Disposition: not qualified for the pilot.** This record accompanies the
+[2 QPS pilot gates](../../docs/pilot-readiness.md). It records completed checks
+and preserves failures; it is not an approval to admit wallets.
+
+Implementation started from `8b9bacf33c49522be1b1d437566f34cd33535d7d` in an
+isolated worktree. Commit `69840f3df91ebde3f893a77d867e40e8088a8ced` repaired the
+wallet/noise tools and added the public qualifier and successful latency fields.
+Commit `73233a1a6f44e4149bcf387f826ed3ba40406bc7` corrected the open-loop measurement
+window. The [manifest](manifest.json) records identities and outstanding gates.
+
+## Completed local checks
+
+- [Repository checks](make-check.log): `make check` exited zero, including
+  633 passing Rust tests and five ignored tests. This ran before the final
+  load-driver interval adjustment; [targeted tests](load-tests.log) and
+  [clippy](load-clippy.log) cover the load-driver changes.
+- [Wallet HTTP/SQLite](wallet-interop.log): all three tests passed with wallet
+  `9b190657d129d08e964623d0ecc1d8e4ffb31b1d`, including actual note recovery,
+  atomic corrupted-record rejection, expiry and fresh generation acceptance.
+- [Independent q48 SDK](q48-interop.log): all 12 allocation cases passed. This is
+  a wire/engine test, not an actual wallet release over public HTTPS.
+- [Operations](ops-tests.log): 100 tests, three skipped. The new public qualifier
+  rejects missing/slow latency, wrong answers, incomplete demand and hidden failures.
+- [Noise verifier](noise-verifier-tests.log): nine tests passed; [Rust tests](noise-rust-tests.log)
+  and the explicit [full-degree reference equivalence](noise-equivalence.log) passed.
+
+The additional [full-size loan/return test](full-shard.log) passed in 139.32 seconds,
+including retained queries and reorg/alternate-branch recovery. The six-sealed
+consolidation test is a separate running check. Final helper checks have
+[101 operations tests](ops-final-tests.log), three skipped, and
+[10 noise-verifier/comparison tests](noise-verifier-final-tests.log), all passing.
+The [release build](release-build.log) completed; [binary hashes](release-binaries.json)
+identify the ARM64 artifacts, not production Linux binaries.
+
+## Historical noise matrices
+
+The previously unfinished documentation lagged the completed raw runs. Reverification
+checked every case hash, executable identity and analytical result:
+
+- ARM64: 432 cases and 55,296 queries, zero failures.
+- Native Linux: 288 cases on `roman-ipir-bench-8vcpu` plus 144 on
+  `roman-pir-avx512-test`, 55,296 queries total, zero failures.
+- All cases meet the original 78-bit sufficient bound; all 432 deterministic
+  inputs, public setup values and grouped moments match across platforms.
+
+[Reverified case identities](noise-historical-reverified.json) and
+[cross-platform comparison](noise-historical-cross-platform.json) retain exact
+hashes. Raw ARM results remain in `/tmp/p16-q48-arm64`; Linux originals remain in
+`/root/p16-q48-results-s01` and `/root/p16-q48-results-s2` on their respective hosts,
+with local copies under `/tmp/wallet-pir-readiness/noise/`.
+
+These are the historical `6f74a2d7` results. They do not qualify the later rc.2
+executable. A fresh rc.2 ARM run uses
+`/tmp/wallet-pir-readiness/noise/rc2-arm64`; current matrix/snapshot acceptance
+must be recorded separately after completion. The verifier does not authenticate
+extraction or grant cryptographic review.
+
+## External HTTPS smoke and retained failures
+
+Both smoke runs originated on the macOS operator machine through the public
+HTTPS origin, using nine records from the canonical journal. That oracle checks
+retrieval against ingestion output, not independent chain extraction. Local
+qualification work was concurrent, and the second run overlapped a snapshot
+transfer; neither run is an uncontended sustained capacity result.
+
+| Run | Correct / offered | Request errors | Successful p99 | Result |
+|---|---:|---:|---:|---|
+| [Initial](public-smoke/rate-1.json) | 30 / 30 | 0 | 1,455.103 ms | Failed latency and exposed short measurement window |
+| [Interval corrected](public-smoke-interval-fixed/rate-1.json) | 30 / 30 | 0 | 1,517.567 ms | Failed latency; full 30.027-second window recorded |
+
+The qualifier correctly stopped after the 1 QPS stage. No 2/4 QPS or soak result
+is claimed. Neither run recorded 429, 502, wrong answers or warmup failures.
+The initial driver's last arrival completed before 30 seconds; the corrected
+driver includes the complete requested interval in throughput and duration.
+The one-second p99 threshold remains unchanged.
+
+## Captured production snapshot
+
+The rc.2 extractor checked generation 116, shard 0, containing 586,953 records.
+Every padded unit hash matched the captured manifest, and the reconstructed
+public setup matched its published digest. All 128 fresh queries decoded exactly;
+the analytical result met the 78-bit target. See the [capture identity](snapshot/capture.json),
+[manifest](snapshot/manifest.json) and [summary](snapshot/summary.json.gz). The
+compressed raw numerical result is retained alongside the summary. The full
+record file remains outside Git at the path and hash in the capture identity.
+This result covers the captured generation, not future publication or an
+independent review of the extractor.
+
+The [current campaign progress snapshot](current-campaign-progress.json) records
+partial rc.2 ARM64/Linux coverage. Both campaigns were still running when sampled;
+no full current-matrix clearance is claimed.
+
+## Read-only fleet checks and rollback retention
+
+The live coordinator runs `682ee124621fb155033200c6a1565a8cae75c863`; both workers
+run `afdb4b6d70d6947fa60688a3cf4df21fe5eeae69`. These are not the uniform candidate
+required for final acceptance. Both workers reported zero restarts, zero current
+swap and more than 32 GiB free disk at the sampled points. This is a spot check.
+
+[External probes](public-worker-ports.json) timed out on both workers' public
+port 8091. Provider rules restrict 8091 to the coordinator tag. Coordinator
+listeners for PIR, RPC and APM were loopback-only; public node P2P remains separate.
+
+The old-release retention timers would delete rollback state on September 24 at
+17:05 UTC, before a new qualification plus 24-hour pilot window could finish.
+They were disabled and verified inactive on the
+[coordinator](operations/coordinator-retention-timer.txt),
+[first worker](operations/worker-1-retention-timer.txt) and
+[second worker](operations/worker-2-retention-timer.txt). No serving process,
+binary, canonical state or worker data was changed. Re-enable cleanup only after
+rollback retention is no longer required by the final acceptance decision.
+
+Full hardware campaigns require isolated workers or an explicitly planned
+maintenance window. The current provider inventory contains only the two serving
+c-4 workers. CI, current matrix/snapshot qualification, wallet release acceptance,
+sustained physical-worker traces, fault/alert exercises and pilot observation
+remain separate gates.

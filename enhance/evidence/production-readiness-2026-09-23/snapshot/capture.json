@@ -1,0 +1,23 @@
+{
+  "kind": "captured-production-snapshot-analysis",
+  "source_revision": "69840f3df91ebde3f893a77d867e40e8088a8ced",
+  "implementation": "611a29284264d844bf4dba00de2874c5b762f8c2",
+  "command": [
+    "python3",
+    "enhance/tools/noise-analysis/snapshots.py",
+    "--records",
+    "/tmp/wallet-pir-readiness/snapshot/records.bin",
+    "--manifests",
+    "/tmp/wallet-pir-readiness/snapshot/manifest.json",
+    "--record-width",
+    "653",
+    "--binary",
+    "enhance/tools/noise-analysis/target/release/enhance-noise-analysis",
+    "--output",
+    "/tmp/wallet-pir-readiness/snapshot/analysis"
+  ],
+  "raw_records_path": "/tmp/wallet-pir-readiness/snapshot/records.bin",
+  "records_file_sha256": "ee263a65b3441a4e547c9df61ec4b3da74cc0568d6879cac59d6a80ad6a68786",
+  "qualification": "unqualified",
+  "limitation": "This captured generation only; trusted extraction and independent review remain required"
+}

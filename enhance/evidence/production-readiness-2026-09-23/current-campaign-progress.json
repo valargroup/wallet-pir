@@ -1,0 +1,679 @@
+{
+  "recorded_ns": 1790193667395792000,
+  "qualification": "unqualified",
+  "arm64": {
+    "directory": "/tmp/wallet-pir-readiness/noise/rc2-arm64",
+    "manifest": {
+      "binary_sha256": "9baf2288f84b1c7ba3b127f24005b8d8f86db0e27bc611d4ea42d8c5bca7e9cb",
+      "matrix": [
+        {
+          "domain_rows": 4096,
+          "first_used_rows": 1,
+          "last_used_rows": 2048,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 1,
+            "db_dim_2": 1,
+            "db_rows": 4096,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 4096,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            2048
+          ]
+        },
+        {
+          "domain_rows": 4096,
+          "first_used_rows": 2049,
+          "last_used_rows": 4096,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 1,
+            "db_dim_2": 1,
+            "db_rows": 4096,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 4096,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            4096
+          ]
+        },
+        {
+          "domain_rows": 8192,
+          "first_used_rows": 4097,
+          "last_used_rows": 8192,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 2,
+            "db_dim_2": 1,
+            "db_rows": 8192,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 8192,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192
+          ]
+        },
+        {
+          "domain_rows": 16384,
+          "first_used_rows": 8193,
+          "last_used_rows": 10240,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 3,
+            "db_dim_2": 1,
+            "db_rows": 16384,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 16384,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            2048
+          ]
+        },
+        {
+          "domain_rows": 16384,
+          "first_used_rows": 10241,
+          "last_used_rows": 12288,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 3,
+            "db_dim_2": 1,
+            "db_rows": 16384,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 16384,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            4096
+          ]
+        },
+        {
+          "domain_rows": 16384,
+          "first_used_rows": 12289,
+          "last_used_rows": 16384,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 3,
+            "db_dim_2": 1,
+            "db_rows": 16384,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 16384,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 16385,
+          "last_used_rows": 18432,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            2048
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 18433,
+          "last_used_rows": 20480,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            4096
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 20481,
+          "last_used_rows": 24576,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 24577,
+          "last_used_rows": 26624,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192,
+            2048
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 26625,
+          "last_used_rows": 28672,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192,
+            4096
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 28673,
+          "last_used_rows": 32768,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192,
+            8192
+          ]
+        }
+      ],
+      "queries": 128,
+      "shards": "0,1,2",
+      "patterns": "zero,max,alternating,impulse,random,records",
+      "edge": "both",
+      "rayon_threads": "2",
+      "source_revision": "69840f3df91ebde3f893a77d867e40e8088a8ced",
+      "trusted_reuse": []
+    },
+    "cases": 225,
+    "failures": 0,
+    "complete": false
+  },
+  "linux": {
+    "manifest": {
+      "binary_sha256": "06dfc631e0fdc509713346df3578b420aca17c3cfde476acc435eefa58d43e7c",
+      "matrix": [
+        {
+          "domain_rows": 4096,
+          "first_used_rows": 1,
+          "last_used_rows": 2048,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 1,
+            "db_dim_2": 1,
+            "db_rows": 4096,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 4096,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            2048
+          ]
+        },
+        {
+          "domain_rows": 4096,
+          "first_used_rows": 2049,
+          "last_used_rows": 4096,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 1,
+            "db_dim_2": 1,
+            "db_rows": 4096,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 4096,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            4096
+          ]
+        },
+        {
+          "domain_rows": 8192,
+          "first_used_rows": 4097,
+          "last_used_rows": 8192,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 2,
+            "db_dim_2": 1,
+            "db_rows": 8192,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 8192,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192
+          ]
+        },
+        {
+          "domain_rows": 16384,
+          "first_used_rows": 8193,
+          "last_used_rows": 10240,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 3,
+            "db_dim_2": 1,
+            "db_rows": 16384,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 16384,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            2048
+          ]
+        },
+        {
+          "domain_rows": 16384,
+          "first_used_rows": 10241,
+          "last_used_rows": 12288,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 3,
+            "db_dim_2": 1,
+            "db_rows": 16384,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 16384,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            4096
+          ]
+        },
+        {
+          "domain_rows": 16384,
+          "first_used_rows": 12289,
+          "last_used_rows": 16384,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 3,
+            "db_dim_2": 1,
+            "db_rows": 16384,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 16384,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 16385,
+          "last_used_rows": 18432,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            2048
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 18433,
+          "last_used_rows": 20480,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            4096
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 20481,
+          "last_used_rows": 24576,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 24577,
+          "last_used_rows": 26624,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192,
+            2048
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 26625,
+          "last_used_rows": 28672,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192,
+            4096
+          ]
+        },
+        {
+          "domain_rows": 32768,
+          "first_used_rows": 28673,
+          "last_used_rows": 32768,
+          "params": {
+            "db_cols": 12288,
+            "db_dim_1": 4,
+            "db_dim_2": 1,
+            "db_rows": 32768,
+            "instances": 6,
+            "item_size_bits": 172392,
+            "num_items": 32768,
+            "p": 65536,
+            "poly_len": 2048,
+            "q2_bits": 28,
+            "q_prime_1": 1048576,
+            "q_prime_2": 268369921,
+            "query_bits": 48,
+            "t_exp_left": 3,
+            "t_exp_right": 2
+          },
+          "units": [
+            8192,
+            8192,
+            8192,
+            8192
+          ]
+        }
+      ],
+      "queries": 128,
+      "shards": "0,1,2",
+      "patterns": "zero,max,alternating,impulse,random,records",
+      "edge": "both",
+      "rayon_threads": "2",
+      "source_revision": "73233a1a6f44e4149bcf387f826ed3ba40406bc7",
+      "trusted_reuse": []
+    },
+    "cases": 53,
+    "failures": 0,
+    "complete": false,
+    "host": "roman-ipir-bench-8vcpu",
+    "directory": "/root/wallet-pir-readiness-rc2-linux"
+  },
+  "expected_cases_per_platform": 432,
+  "queries_per_case": 128
+}

@@ -48,3 +48,7 @@ The [architecture](architecture.md) states the placement contract and the
 The [pilot readiness gates](pilot-readiness.md) define the 2 QPS opt-in envelope,
 4 QPS qualification workload, wallet checks, recovery budgets and observation
 window. They require new evidence for the selected release and every worker.
+
+The [September 23 readiness check](../evidence/production-readiness-2026-09-23/README.md)
+records repaired q48 tooling, passing local checks, completed historical matrices,
+external smoke latency failures and the outstanding candidate-specific gates.

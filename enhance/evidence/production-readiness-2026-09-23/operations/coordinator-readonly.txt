@@ -1,0 +1,5 @@
+eab1a8dc35e8934f92192044988948096b050e1f983caf01c9ee2da9b0053982  /opt/enhance-pir-v6/releases/682ee124621fb155033200c6a1565a8cae75c863/enhance-pir-server
+NRestarts=0
+MemoryCurrent=8584871936
+ActiveState=active
+{"anchor_height":3493782,"blocked_reason":null,"capacity":{"burst_rows":4096,"effective_rows_per_second":1.0,"fleet_ceiling_reached":false,"memory_limit":null,"observation":{"at":1790193763,"records":587161},"peak_rows_per_second":0.4727272727272728,"readiness_seconds":21600.0,"remaining_rows":146048,"requested":null,"requests":{}},"generation":132,"operation":null,"pending_abort_notifications":0,"pending_commit_notifications":0,"placement_revision":132,"protocol":"ironwood-enhance-pir-v6","published_replica_counts":{"shard-group-01":2},"registered_groups":1}

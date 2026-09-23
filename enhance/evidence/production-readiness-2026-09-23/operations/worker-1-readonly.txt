@@ -1,0 +1,8 @@
+2a421799ff260dc3696bf7ccc34cd2bcf6bb8c86f3fe3782a681912adedad42c  /opt/enhance-pir-v6/releases/afdb4b6d70d6947fa60688a3cf4df21fe5eeae69/enhance-pir-server
+NRestarts=0
+MemoryCurrent=2909208576
+MemoryPeak=4651896832
+MemorySwapCurrent=0
+ActiveState=active
+Filesystem       1B-blocks        Used   Available Use% Mounted on
+/dev/vda1      50884108288 12380397568 38486933504  25% /

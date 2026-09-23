@@ -1,0 +1,46 @@
+   Compiling futures-sink v0.3.32
+   Compiling zakura-pasta-curves v1.0.1
+   Compiling tokio v1.51.1
+   Compiling regex-automata v0.4.14
+   Compiling secp256k1-sys v0.10.1
+   Compiling rustls-webpki v0.103.10
+   Compiling chrono v0.4.45
+   Compiling futures-channel v0.3.32
+   Compiling futures-util v0.3.32
+   Compiling rustls v0.23.37
+   Compiling futures-executor v0.3.32
+   Compiling axum-core v0.4.5
+   Compiling futures v0.3.32
+   Compiling regex v1.12.3
+   Compiling matchers v0.2.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling env_filter v1.0.1
+   Compiling env_logger v0.11.10
+   Compiling ipir-sp v0.1.0-rc.2 (https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a2928)
+   Compiling zakura-reddsa v1.0.1
+   Compiling zakura-sinsemilla v1.0.1
+   Compiling zakura-halo2-proofs v1.0.1
+   Compiling zakura-halo2-poseidon v1.0.1
+   Compiling zakura-redjubjub v1.0.1
+   Compiling zakura-sapling-crypto v1.0.1
+   Compiling hyper v1.9.0
+   Compiling tower v0.5.3
+   Compiling tokio-rustls v0.26.4
+   Compiling tokio-stream v0.1.19
+   Compiling tower-http v0.6.8
+   Compiling hyper-util v0.1.20
+   Compiling hyper-rustls v0.27.7
+   Compiling axum v0.7.9
+   Compiling reqwest v0.12.28
+   Compiling enhance-pir v0.0.1 (/Users/roman/projects/wallet-pir-production-readiness/enhance/crates/enhance-pir)
+   Compiling zakura-halo2-gadgets v1.0.1
+   Compiling secp256k1 v0.29.1
+   Compiling bip32 v0.6.0-pre.1
+   Compiling zcash_script v0.4.5
+   Compiling zcash_transparent v0.10.0
+   Compiling zakura-orchard v1.0.1
+   Compiling enhance-pir-load-test v0.0.1 (/Users/roman/projects/wallet-pir-production-readiness/enhance/tools/loadtest)
+   Compiling zakura-primitives v1.0.1
+   Compiling zakura-chain v6.0.0 (https://github.com/zakura-core/zakura.git?rev=1faf150fc3648aae22c55a6b30f8f5a9b9ce934e#1faf150f)
+   Compiling enhance-pir-server v0.0.1 (/Users/roman/projects/wallet-pir-production-readiness/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 1m 28s
