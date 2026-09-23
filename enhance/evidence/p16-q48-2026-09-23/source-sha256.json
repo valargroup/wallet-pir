@@ -1,0 +1,17 @@
+{
+  "revision": "2a06d5f29cb5409c7369dc3fc0d12fc7a9137570",
+  "files": {
+    "enhance/tools/noise-analysis/snapshots.py": "b0b8c672b76c8252d9bae60504d343cd1e6d2d17afff4024726068125a60f35d",
+    "enhance/tools/noise-analysis/run.py": "81be56326233e27bbfa1bc6f22aa4215526170575a72658297b9cf5c6d1da82f",
+    "enhance/tools/noise-analysis/test_verify.py": "3efff3bd51cc0a74fd78bb718957e1105587870486cfbb5492a705fdcf71d79d",
+    "enhance/tools/noise-analysis/verify.py": "ef78da49ede63c0fe3e76f00da4e450fd47d8d2964f540affca776b0eb5e626f",
+    "enhance/tools/noise-analysis/compare.py": "d380c779162751eb4bd725e58302e092aa327ef4c531fa9efd0bf482a4fd4042",
+    "enhance/tools/noise-analysis/src/certificate.rs": "0a4a7057cfbcc5f02275aaede9a4f35b8c44032c5f8581a77e0b0a965f561260",
+    "enhance/tools/noise-analysis/src/fast_weights.rs": "9b37376afacffda1be8c04f00c28586b71bc01fd82c5b92219abd271f64b6b48",
+    "enhance/tools/noise-analysis/src/main.rs": "c6c9461344336caa39bce12559419f3f04ffc165faadc6520a48ce00eae24c44",
+    "enhance/tools/noise-analysis/src/bin/accelerated.rs": "7502725ef10ebb560e3063b19f3681dafc222ad792a9414d1a8742475d29f502",
+    "enhance/tools/noise-analysis/src/bin/q48.rs": "ef1ea389adfc488b3f3a21a29a5b3142474fe9b1aa687598f0460b77fa6596c9",
+    "enhance/tools/noise-analysis/Cargo.lock": "ef232a5008685fadb5d2a4cac125703a1cb524a765f85637f52664f44b3c00fa",
+    "enhance/tools/noise-analysis/Cargo.toml": "c2a8042087486a0de130ed792abd20022aed22efc39be9979a34f8f0a741ad48"
+  }
+}

@@ -89,9 +89,13 @@ candidate evidence, not a certificate for the old published setup.
 
 The resumable campaign covers both occupancy edges of all 12 production-derived
 unit layouts, six fixture patterns, three public shard setups, and 128 fresh
-queries per case: 432 cases / 55,296 queries per platform. macOS ARM64 and Linux
-x86-64 campaigns are in progress; incomplete coverage is not treated as passed.
-The machine-readable campaign summaries will be added when complete.
+queries per case: 432 cases / 55,296 queries per platform. The macOS ARM64 campaign completed all 432 cases / 55,296 queries with zero
+wrong answers. 300 cases meet the original `2^-128` analytical target and 132 do
+not. Compressed complete summaries and the execution manifest are retained here.
+The Linux baseline was stopped after partial coverage to prioritize the selected
+q48 profile; incomplete Linux coverage is not treated as passed. The user selected
+a separate `2^-78` correctness target for q48, without changing the target attached
+to this historical q46 evidence.
 
 Completed harness checks:
 
@@ -117,3 +121,12 @@ proof gap, retain the reviewed extractor/bound and certify the
 actual release's snapshot/setup pair. Continued publication needs fresh
 certificates or a reviewed theorem covering future snapshots. This PR adds
 analysis tooling and evidence only; it does not enforce a publication gate.
+
+Completed ARM numerical results by query domain:
+
+| Domain | Cases | Meet original bound | Wrong answers |
+|---:|---:|---:|---:|
+| 4,096 | 72 | 72 | 0 |
+| 8,192 | 36 | 36 | 0 |
+| 16,384 | 108 | 93 | 0 |
+| 32,768 | 216 | 99 | 0 |
