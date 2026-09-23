@@ -14,7 +14,8 @@ spec.loader.exec_module(module)
 POLICY = {'region': 'ams3', 'vpc_id': '00000000-0000-4000-8000-000000000002',
           'project_id': '00000000-0000-4000-8000-000000000001', 'ssh_key_ids': ['12345'],
           'operator_ssh_cidrs': ['192.0.2.20/32'], 'coordinator_private_ipv4': '192.0.2.10',
-          'state_lineage': 'fixture-lineage', 'account_uuid': 'fixture-account'}
+          'state_lineage': 'fixture-lineage', 'account_uuid': 'fixture-user',
+          'project_owner_uuid': 'fixture-team'}
 INVENTORY = {'groups': [{'name': 'g1', 'replicas': [
     {'name': f'enhance-pir-v4-g01-r{i + 1}', 'url': f'http://10.0.0.{i + 1}:8291'} for i in range(2)]}]}
 REQUEST = {'id': 'successor-5-pair-2', 'target_groups': 2, 'successor_ordinal': 5, 'registered': False}
@@ -60,7 +61,7 @@ class Provider:
     def __init__(self, terraform):
         self.terraform = terraform
         self.account = {'uuid': POLICY['account_uuid'], 'status': 'active'}
-        self.project = {'id': POLICY['project_id'], 'owner_uuid': POLICY['account_uuid']}
+        self.project = {'id': POLICY['project_id'], 'owner_uuid': POLICY['project_owner_uuid']}
         self.vpc = {'id': POLICY['vpc_id'], 'region': POLICY['region'], 'ip_range': '192.0.2.0/24'}
 
     def get(self, path):

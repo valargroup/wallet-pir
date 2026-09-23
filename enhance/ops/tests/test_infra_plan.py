@@ -66,6 +66,21 @@ class V4PlanTests(unittest.TestCase):
             resource(plan, address)['change']['actions'] = ['no-op']
         self.assertEqual(len(module.validate(plan, POLICY, 1, existing)['creates']), 4)
 
+    def test_provider_computed_firewall_membership_is_not_a_configuration_edit(self):
+        plan = fixture()
+        change = resource(plan, 'digitalocean_firewall.worker')['change']
+        change['actions'] = ['no-op']
+        after = copy.deepcopy(change['after'])
+        before = copy.deepcopy(after)
+        before['droplet_ids'] = []
+        after['droplet_ids'] = [1000, 1001]
+        plan['resource_drift'] = [{'address': 'digitalocean_firewall.worker',
+                                   'change': {'actions': ['update'], 'before': before, 'after': after}}]
+        self.assertEqual(module.validate(plan, POLICY, 0, {})['target_groups'], 1)
+        plan['resource_drift'][0]['change']['after']['inbound_rule'] = []
+        with self.assertRaises(ValueError):
+            module.validate(plan, POLICY, 0, {})
+
     def test_mutations_rejected(self):
         def worker(plan):
             return resource(plan, 'digitalocean_droplet.worker[0]')['change']

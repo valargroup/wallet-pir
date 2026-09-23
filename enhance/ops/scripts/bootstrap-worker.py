@@ -132,7 +132,10 @@ def validate_limits(facts, limits):
             or not 8_000_000_000 <= facts['memory_total_bytes'] <= 8 * GIB
             or facts['disk_free_bytes'] < MIN_FREE_DISK_BYTES):
         raise ValueError('host does not match the isolated four-CPU nominal 8 GB worker profile')
-    if (high != 7 * GIB or not high < maximum <= 15 * GIB // 2 or reserve < 512 * MIB
+    # The selected x86-64 worker kernel exposes 4 KiB cgroup pages. A value
+    # rounded by the kernel cannot pass the installer's exact limit check.
+    if (high != 7 * GIB or maximum % 4096 or swap % 4096
+            or not high < maximum <= 15 * GIB // 2 or reserve < 512 * MIB
             or maximum + max(reserve, baseline + 128 * MIB) > facts['memory_total_bytes']
             or not 0 <= swap <= min(2 * GIB, facts['swap_total_bytes'])):
         raise ValueError('candidate limits do not fit measured RAM, host overhead or swap')

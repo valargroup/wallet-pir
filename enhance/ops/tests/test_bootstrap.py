@@ -107,7 +107,8 @@ class BootstrapTests(unittest.TestCase):
                            ('disk_free_bytes', module.MIN_FREE_DISK_BYTES - 1), ('swap_total_bytes', 0)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 module.validate_limits(dict(FACTS, **{key: value}), LIMITS)
-        for key, value in [('memory_max_bytes', 8 * module.GIB), ('host_reserve_bytes', 0),
+        for key, value in [('memory_max_bytes', 8 * module.GIB),
+                           ('memory_max_bytes', 7_600_000_000), ('host_reserve_bytes', 0),
                            ('memory_high_bytes', 6 * module.GIB), ('memory_swap_max_bytes', -1)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 module.validate_limits(FACTS, dict(LIMITS, **{key: value}))

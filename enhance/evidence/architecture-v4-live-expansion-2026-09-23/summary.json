@@ -1,0 +1,241 @@
+{
+  "load": {
+    "completed": 17976,
+    "concurrency": 2,
+    "correct_queries_per_second": 9.98475094632123,
+    "errors": {
+      "http_429": 2
+    },
+    "exact_answer_oracle": true,
+    "incorrect_answers": 0,
+    "offered_qps": null,
+    "p50_ms": 195.583,
+    "p95_ms": 257.151,
+    "p99_ms": 362.239,
+    "protocol": "ironwood-enhance-pir-v4",
+    "scheduled_p99_ms": 362.239,
+    "seconds": 1800.145050851,
+    "succeeded": 17974,
+    "unstarted_arrivals": 0,
+    "warmup_correct_answers": 42,
+    "warmup_errors": {},
+    "warmup_incorrect_answers": 0
+  },
+  "load_exit_code": 1,
+  "placement": {
+    "blocked_samples": 3,
+    "errors": 0,
+    "final_blocked_reason": "fleet capacity exhausted; preserve published generation",
+    "samples": 360,
+    "sha256": "de7b5a5936002a4a21b37e7e2fcf1c9be1d44347509b442d05e7ea7b2124481d",
+    "transitions": [
+      {
+        "assignments": {
+          "0": "group-1",
+          "1": "group-1",
+          "2": "group-1",
+          "3": "group-1",
+          "4": "group-1"
+        },
+        "at_utc": "2026-09-23T13:16:32.631141+00:00",
+        "generation": 4,
+        "published_replica_counts": {
+          "group-1": 2
+        },
+        "records": 4460514
+      },
+      {
+        "assignments": {
+          "0": "group-1",
+          "1": "group-1",
+          "2": "group-1",
+          "3": "group-1",
+          "4": "group-1",
+          "5": "group-2"
+        },
+        "at_utc": "2026-09-23T13:21:12.627547+00:00",
+        "generation": 6,
+        "published_replica_counts": {
+          "group-1": 2,
+          "group-2": 2
+        },
+        "records": 5677026
+      },
+      {
+        "assignments": {
+          "0": "group-1",
+          "1": "group-1",
+          "2": "group-1",
+          "3": "group-1",
+          "4": "group-1",
+          "5": "group-1",
+          "6": "group-2"
+        },
+        "at_utc": "2026-09-23T13:26:27.661646+00:00",
+        "generation": 8,
+        "published_replica_counts": {
+          "group-1": 2,
+          "group-2": 2
+        },
+        "records": 6758370
+      },
+      {
+        "assignments": {
+          "0": "group-1",
+          "1": "group-1",
+          "2": "group-1",
+          "3": "group-1",
+          "4": "group-1",
+          "5": "group-1",
+          "6": "group-2",
+          "7": "group-2"
+        },
+        "at_utc": "2026-09-23T13:30:32.671113+00:00",
+        "generation": 10,
+        "published_replica_counts": {
+          "group-1": 2,
+          "group-2": 2
+        },
+        "records": 7839714
+      },
+      {
+        "assignments": {
+          "0": "group-1",
+          "1": "group-1",
+          "2": "group-1",
+          "3": "group-1",
+          "4": "group-1",
+          "5": "group-1",
+          "6": "group-2",
+          "7": "group-2",
+          "8": "group-2"
+        },
+        "at_utc": "2026-09-23T13:34:52.687301+00:00",
+        "generation": 12,
+        "published_replica_counts": {
+          "group-1": 2,
+          "group-2": 2
+        },
+        "records": 8921058
+      },
+      {
+        "assignments": {
+          "0": "group-1",
+          "1": "group-1",
+          "2": "group-1",
+          "3": "group-1",
+          "4": "group-1",
+          "5": "group-1",
+          "6": "group-2",
+          "7": "group-2",
+          "8": "group-2",
+          "9": "group-2"
+        },
+        "at_utc": "2026-09-23T13:39:12.702342+00:00",
+        "generation": 14,
+        "published_replica_counts": {
+          "group-1": 2,
+          "group-2": 2
+        },
+        "records": 10002402
+      },
+      {
+        "assignments": {
+          "0": "group-1",
+          "1": "group-1",
+          "10": "group-2",
+          "2": "group-1",
+          "3": "group-1",
+          "4": "group-1",
+          "5": "group-1",
+          "6": "group-2",
+          "7": "group-2",
+          "8": "group-2",
+          "9": "group-2"
+        },
+        "at_utc": "2026-09-23T13:43:52.715995+00:00",
+        "generation": 16,
+        "published_replica_counts": {
+          "group-1": 2,
+          "group-2": 2
+        },
+        "records": 11083746
+      }
+    ]
+  },
+  "qualification": "unqualified",
+  "workers": [
+    {
+      "boot_id_count": 1,
+      "elapsed_seconds": 1799.015320502,
+      "errors": 0,
+      "high_event_delta": 6265,
+      "host_swap_in_pages_delta": 0,
+      "host_swap_out_pages_delta": 0,
+      "max_cgroup_current_bytes": 7516164096,
+      "max_cgroup_peak_bytes": 7517097984,
+      "max_rss_plus_kernel_bytes": 6950289408,
+      "max_swap_current_bytes": 0,
+      "min_disk_free_bytes": 28003745792,
+      "oom_kill_delta": 0,
+      "samples": 1799,
+      "trace_sha256": "22b797b28392a164436fd8c2e65ce2d8a7884e4e2e62dd7142e5f7eac12ac985",
+      "worker": "enhance-pir-v4-g01-r1",
+      "worker_process_count": 1
+    },
+    {
+      "boot_id_count": 1,
+      "elapsed_seconds": 1799.3248617579998,
+      "errors": 0,
+      "high_event_delta": 6200,
+      "host_swap_in_pages_delta": 0,
+      "host_swap_out_pages_delta": 3,
+      "max_cgroup_current_bytes": 7516225536,
+      "max_cgroup_peak_bytes": 7516884992,
+      "max_rss_plus_kernel_bytes": 6727225344,
+      "max_swap_current_bytes": 0,
+      "min_disk_free_bytes": 27981795328,
+      "oom_kill_delta": 0,
+      "samples": 1800,
+      "trace_sha256": "c80cb515110240b04d0cc362b8a00eb2f14ce2c734afa72037eab04e35b55cd0",
+      "worker": "enhance-pir-v4-g01-r2",
+      "worker_process_count": 1
+    },
+    {
+      "boot_id_count": 1,
+      "elapsed_seconds": 1799.4574187219998,
+      "errors": 0,
+      "high_event_delta": 11769,
+      "host_swap_in_pages_delta": 0,
+      "host_swap_out_pages_delta": 119,
+      "max_cgroup_current_bytes": 7516422144,
+      "max_cgroup_peak_bytes": 7517134848,
+      "max_rss_plus_kernel_bytes": 6320295936,
+      "max_swap_current_bytes": 0,
+      "min_disk_free_bytes": 30208638976,
+      "oom_kill_delta": 0,
+      "samples": 1800,
+      "trace_sha256": "1d2bd8ede198796c4a2c76907a2c89124ab9ba18597a9d2e84f49419695fa51e",
+      "worker": "enhance-pir-v4-g02-r1",
+      "worker_process_count": 1
+    },
+    {
+      "boot_id_count": 1,
+      "elapsed_seconds": 1799.3959954149998,
+      "errors": 0,
+      "high_event_delta": 12514,
+      "host_swap_in_pages_delta": 0,
+      "host_swap_out_pages_delta": 119,
+      "max_cgroup_current_bytes": 7516176384,
+      "max_cgroup_peak_bytes": 7516966912,
+      "max_rss_plus_kernel_bytes": 6044352512,
+      "max_swap_current_bytes": 0,
+      "min_disk_free_bytes": 30208647168,
+      "oom_kill_delta": 0,
+      "samples": 1800,
+      "trace_sha256": "f13bcb371fd54076851688183ef8fedf3a7da93b34bc655d22726c3d2859d9d2",
+      "worker": "enhance-pir-v4-g02-r2",
+      "worker_process_count": 1
+    }
+  ]
+}

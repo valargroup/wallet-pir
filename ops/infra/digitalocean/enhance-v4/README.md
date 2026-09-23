@@ -29,10 +29,12 @@ shared resources for bootstrap. It rejects updates, replacements, removals,
 unexpected resources, changed identities, profile/ingress changes, and drift.
 Terraform plans may contain credentials and must remain private.
 
-The command validates only: it does not apply, bootstrap, qualify, or register.
-The durable demand journal and provisioning adapter are implemented. Pair bootstrap orchestration is implemented; live validation, qualification,
-registration, and automatic orphan recovery remain unfinished. Initialization, planning, and applying against a live account have
-not been performed as part of the local mock tests.
+The plan validator only validates: it does not apply, bootstrap, qualify, or
+register. The durable demand journal, provisioning adapter, pair bootstrap,
+and isolated fixture registration driver have been exercised against a live
+Valargroup test fleet. Production registration still requires hardware
+qualification; automatic orphan recovery remains unfinished. See the isolated
+live expansion evidence under `enhance/evidence/`.
 
 Local provider/schema checks use no cloud credentials:
 
@@ -70,14 +72,15 @@ establish that nothing was created.
 This journal does not itself verify provider observations or run Terraform.
 The provisioning adapter below performs those checks and resource execution.
 A host-local bootstrap installer is included in the candidate bundle and the
-pair driver below invokes it. Live validation, hardware qualification receipt
-verification, and pair registration remain separate unfinished steps. `provisioned` describes resource
+pair driver below invokes it. The isolated fixture driver below performs test
+registration after live bootstrap. Production qualification receipt verification
+and registration remain separate. `provisioned` describes resource
 reconciliation only and never implies worker readiness or qualification.
 
 The disposable local runner accepts `--journal-script enhance/ops/scripts/v4-expansion-journal.py` with `--expand-inventory` to check
 that two separate journal processes consume the same real coordinator request.
-Its later direct fixture registration does not exercise the unfinished live
-adapter or bypass production qualification.
+Its direct fixture registration does not exercise the live adapter or bypass
+production qualification. Use the isolated live driver below for that path.
 
 ## Provisioning adapter
 
@@ -93,7 +96,11 @@ SSH public key. Supply credentials through runtime environment variables.
 
 Its nonsecret policy contains the six Terraform inputs listed above plus:
 
-- `account_uuid`: the verified Valargroup account UUID.
+- `account_uuid`: the verified UUID returned for the authenticated user by
+  DigitalOcean `/v2/account`.
+- `project_owner_uuid`: the verified Valargroup team UUID returned as the
+  wallet-pir project's `owner_uuid`. Team-owned projects need not share the
+  authenticated user's UUID.
 - `state_lineage`: the existing isolated Terraform state lineage.
 - `module_sha256`: `module_digest(root)` from the provisioning script, covering
   the three Terraform files, cloud-init, and provider lock. Extra Terraform or
@@ -126,7 +133,7 @@ private plan JSON and reconciliation evidence beneath the journal directory;
 these may contain sensitive infrastructure data and must not be published.
 
 Tests use synthetic provider/state responses and Terraform-generated mock plan
-fixtures. No live cloud execution has been validated yet. The API checks follow
+fixtures. One isolated live cloud expansion has also been exercised. The API checks follow
 DigitalOcean's [account](https://docs.digitalocean.com/reference/api/reference/account/),
 [project](https://docs.digitalocean.com/reference/api/reference/projects/),
 [VPC](https://docs.digitalocean.com/reference/api/reference/vpcs/), and
@@ -175,7 +182,29 @@ means `qualification: unqualified`.
 Seven driver tests cover partial-pair recovery, frozen inputs, receipt binding,
 duplicate process rejection, recorded-ID/private-origin selection, strict host-key
 checking, remote argument quoting, and transfer verification order. SSH and cloud
-operations in these tests are synthetic. Live fleet bootstrap remains unverified.
+operations in these tests are synthetic. The isolated live expansion evidence is
+recorded separately from these unit tests.
+
+## Disposable synthetic expansion test
+
+`enhance/ops/scripts/v4-isolated-expansion.py` joins demand observation,
+provisioning, pair bootstrap, and inventory registration for an isolated fixture
+coordinator. It requires the coordinator's local `v4-source-mode` marker to read
+`synthetic-fixture`, a loopback health origin, runtime provider credentials, and
+`--acknowledge-unqualified-test`. Pin the intended request with
+`--expected-operation-id` and `--expected-target-groups`; a later forecast cannot
+expand this campaign again. It never creates the first pair or a coordinator.
+Build those on isolated resources under a dedicated Terraform state key before
+running this test driver.
+
+Run `--stage provision` first. Inspect the new hosts, verify and pin their SSH
+host keys, measure limits, and create the frozen bootstrap policy. A subsequent
+`--stage complete` rechecks provider/state identities, bootstraps both replicas,
+atomically adds the pair to the fixture inventory, waits for the coordinator to
+acknowledge the original capacity request, and closes the durable journal. A
+restart after the inventory write verifies the same pair rather than writing a
+different inventory. All receipts remain `unqualified`; this path cannot be used
+to promote a production worker or claim the six-hour hardware gate.
 
 ## Spaces state locking
 

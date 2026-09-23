@@ -281,8 +281,11 @@ def inspect_fleet(terraform, provider, policy, operation, inventory):
             raise ValueError('project and VPC require explicit UUIDs')
     project = provider.get('/v2/projects/' + policy['project_id'])['project']
     vpc = provider.get('/v2/vpcs/' + policy['vpc_id'])['vpc']
-    if project.get('id') != policy['project_id'] or project.get('owner_uuid') != account['uuid']:
-        raise ValueError('project differs from the pinned account')
+    # A team-owned project identifies the team, while /v2/account identifies
+    # the authenticated user. Pin both instead of assuming they are equal.
+    if (project.get('id') != policy['project_id']
+            or project.get('owner_uuid') != policy['project_owner_uuid']):
+        raise ValueError('project differs from the pinned owner')
     if (vpc.get('id') != policy['vpc_id'] or vpc.get('region') != policy['region']
             or ipaddress.ip_address(policy['coordinator_private_ipv4']) not in ipaddress.ip_network(vpc['ip_range'])):
         raise ValueError('VPC does not contain the pinned coordinator in the selected region')

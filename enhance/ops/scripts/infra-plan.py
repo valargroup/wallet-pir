@@ -31,6 +31,15 @@ def validate(plan, policy, before, existing):
                     and old.get('name') == new.get('name') == 'enhance-pir-v4-worker'
                     and changed <= {'total_resource_count', 'droplets_count'}):
                 continue
+            if (drift.get('address') == 'digitalocean_firewall.worker'
+                    and old.get('name') == new.get('name') == 'enhance-pir-v4-workers'
+                    and old.get('tags') == new.get('tags') == ['enhance-pir-v4-worker']
+                    and changed <= {'droplet_ids'}
+                    and any(r.get('address') == 'digitalocean_firewall.worker'
+                            and r.get('change', {}).get('actions') == ['no-op']
+                            for r in plan.get('resource_changes', []))):
+                # The provider refreshes the computed IDs selected by the tag.
+                continue
             raise ValueError('reconcile infrastructure drift before expansion')
     seen = set()
     created = []
