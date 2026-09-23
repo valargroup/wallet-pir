@@ -93,6 +93,9 @@ pub fn inventory(text: &str) -> Result<BTreeMap<String, Worker>, String> {
             }
         }
     }
+    if out.is_empty() {
+        return Err("Worker inventory has no replicas".into());
+    }
     Ok(out)
 }
 
@@ -234,6 +237,8 @@ mod tests {
     use super::*;
     #[test]
     fn inventory_rejects_duplicates_and_embedded_credentials() {
+        assert!(inventory(r#"{"groups":[]}"#).is_err());
+        assert!(inventory(r#"{"groups":[{"name":"g","replicas":[]}]}"#).is_err());
         assert!(inventory(r#"{"groups":[{"name":"g","replicas":[{"name":"w","url":"http://user:secret@localhost"}]}]}"#).is_err());
         assert!(inventory(r#"{"groups":[{"name":"g","replicas":[{"name":"w","url":"http://localhost"},{"name":"w","url":"http://localhost"}]}]}"#).is_err());
     }
