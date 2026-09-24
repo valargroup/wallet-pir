@@ -24,6 +24,10 @@ passed the conservative freshness assessment with 42 bounded tip advances,
 70.001-second worst lag and no findings. These public answers still use a
 journal-derived oracle. Full worker traces and the complete six-hour freshness
 window must be assessed after the run.
+The [first 90-minute assessment](soak-first90min-freshness.json) also passed:
+57 bounded tip advances, 70.001-second worst lag and no findings. Its copied
+trace digest is recorded in the report; the continuous worker-local and
+coordinator traces remain on their hosts until the run completes.
 
 Fresh rc.2 ARM64 and native Linux noise matrices each completed 432 cases and
 55,296 queries with zero decoding failures. Deterministic cross-platform
@@ -34,6 +38,8 @@ production with a chain-derived anchor. The portable APM update is installed,
 with the old binary retained; after restart it reported both private workers
 reachable and zero active alerts. Its build and rollout checks are recorded in
 [portable tool validation](portable-tools-validation.txt).
+The [rc.2 review packet](numerical-review-packet.md) identifies the exact
+matrix inputs, source hashes, assumptions and required independent checks.
 
 The remaining gates include the completed public soak and burst, independent
 chain extraction and wallet release recovery over HTTPS, full hardware active
@@ -41,6 +47,8 @@ and six-sealed campaigns, recovery/alert exercises, independent cryptographic
 review, and the 24-hour opt-in observation. The two serving workers cannot host
 the isolated six-sealed campaign concurrently with this load; no extra workers
 have been provisioned and no production outage has been scheduled.
+The [provider inventory](operations/c4-provider-inventory.json) records the
+two serving hosts as the only c-4 droplets at its observation time.
 
 The sections below preserve earlier checks and failures in their original
 context. Their earlier fleet revisions and incomplete-run statements do not

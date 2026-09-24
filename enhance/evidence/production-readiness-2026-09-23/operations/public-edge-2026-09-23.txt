@@ -14,3 +14,9 @@ These are point-in-time route and TLS checks. The coordinator query handler
 sets a 512 KiB request-body limit and 30-second body deadline, and its worker
 route timeout is 10 seconds in source revision 5270482; those limits were
 reviewed in source, not exercised by this probe.
+
+2026-09-24 00:04 UTC: public APM `/apm/`, `/apm/coordinator/` and
+`/apm/workers/enhance-pir-worker-01/` each returned HTTP 200. Their rendered
+HTML did not contain the worker private CIDR string `10.142.`, a loopback
+address `127.0.0.1`, or a `/root/` path. This checks those specific strings
+in the sampled pages; it is not a general content-security audit.

@@ -1,0 +1,26 @@
+{
+  "kind": "enhance-freshness-assessment",
+  "qualification": "unqualified",
+  "status": "freshness_observation_passed",
+  "window_wall_ns": [
+    1790202786506972057,
+    1790208186506972057
+  ],
+  "sampled_tip_advances": 57,
+  "conservatively_bounded": 57,
+  "bounded_pre_window_tips": 0,
+  "ambiguous_tip_advances": 0,
+  "max_conservative_lag_seconds": 70.001092561,
+  "findings": [],
+  "limits": {
+    "freshness_seconds": 300,
+    "maximum_sample_gap_seconds": 20
+  },
+  "limitations": [
+    "Tip availability is bounded by the prior sample; exact node arrival time is unknown.",
+    "Height-only observations require separate review across reorgs.",
+    "This assesses freshness only, not wallet correctness or hardware qualification."
+  ],
+  "trace_sha256": "2b2c8f9f0826dc32bb75f805228f1deb612d1fa0e49d0e9b92e5567f07311f04",
+  "samples": 1097
+}

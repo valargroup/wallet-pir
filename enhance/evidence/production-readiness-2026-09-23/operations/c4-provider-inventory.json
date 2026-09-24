@@ -1,0 +1,23 @@
+{
+  "kind": "enhance-qualification-c4-inventory",
+  "observed_at_utc": "2026-09-24T00:05:23.046139+00:00",
+  "provider": "DigitalOcean",
+  "workers": [
+    {
+      "id": 600225444,
+      "name": "enhance-pir-worker-01",
+      "size_slug": "c-4",
+      "memory_mib": 8192,
+      "vcpus": 4,
+      "status": "active"
+    },
+    {
+      "id": 600225445,
+      "name": "enhance-pir-worker-02",
+      "size_slug": "c-4",
+      "memory_mib": 8192,
+      "vcpus": 4,
+      "status": "active"
+    }
+  ]
+}
