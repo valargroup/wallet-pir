@@ -8,6 +8,12 @@ beside their canonical service. With no additional hosts, the two profiles
 require at least **12 hours of interrupted serving**, plus preparation and
 restoration. Obtain an explicit outage decision before stopping a service.
 
+Read-only preflight at 2026-09-24 02:20 UTC confirmed both workers still run as
+`enhance-pir-v4` with `ProtectSystem=strict`, only the canonical worker directory
+in `ReadWritePaths`, and the stated memory limits. Each had about 38 GB free on
+its root filesystem. Recheck these values immediately before the campaign;
+this observation does not reserve disk or authorize the outage.
+
 ## Pinned deployment and isolation
 
 - Candidate server revision: `527048217f8cb83d27c838e94dbaac21ac25837d`;
@@ -22,6 +28,14 @@ restoration. Obtain an explicit outage decision before stopping a service.
   to a fresh, separately owned directory for each profile. Remove only that
   temporary drop-in during restoration. The existing candidate drop-in at
   `50-candidate-5270482.conf` and the canonical data are rollback inputs.
+- The worker unit runs as `enhance-pir-v4` with `ProtectSystem=strict` and
+  `ReadWritePaths=/srv/enhance-pir-v6/worker`. Create each new profile directory
+  under `/srv/enhance-pir-v6/qualification/` with ownership for that service
+  user. The temporary drop-in must **also** add that exact profile directory to
+  `ReadWritePaths`; changing `--data-dir` alone leaves the directory read-only
+  inside the service. Verify the effective `ReadWritePaths` and a service-owned
+  write in the isolated directory before starting the exercise. Preserve the
+  canonical path's existing access for restoration.
 - The active profile uses one physical replica group. The sealed profile uses
   the same physical pair plus two coordinator-local helper workers solely to
   exercise placement. Helper samples do not substitute for either physical
@@ -54,11 +68,15 @@ restoration. Obtain an explicit outage decision before stopping a service.
 1. Stop the canonical coordinator, then both canonical worker services. Record
    the public outage start. Install the temporary worker service override with
    the **same verified binary, private listen address and port 8091**, changing
-   only `--data-dir` to that profile's new directory. Preserve the existing
+   only `--data-dir` and adding that profile's directory to `ReadWritePaths`.
+   Use a drop-in ordered after `50-candidate-5270482.conf`; reset `ExecStart`
+   before setting its replacement, and inspect `systemctl show` after daemon
+   reload. Preserve the existing
    `MemoryHigh=7516192768`, `MemoryMax=7609516032`, and
    `MemorySwapMax=2147479552` limits. Reload systemd and start the two worker
    services; verify their actual command lines, binary digests, cgroups,
-   private health, and empty isolated state.
+   private health, effective writable paths, service-user write access, and
+   empty isolated state.
 2. Write a new root-only direct sampling policy on each worker with the verified
    release identity, existing memory limits, `sealed_shards: 6`, and the exact
    isolated `data_dir` and `campaign_profile` (`active` or `sealed`). The
@@ -71,13 +89,15 @@ restoration. Obtain an explicit outage decision before stopping a service.
    `enhance-pir-worker.service`; using a separately named transient worker
    service would leave this hardware gate unobserved.
 3. Start `enhance-pir-server --sealed-shards 6 exercise
-   --isolated-workers --profile PROFILE --seconds 21600
+   --isolated-workers --profile PROFILE --data-dir NEW_EXERCISE_DIRECTORY
+   --worker-config PROFILE_INVENTORY_JSON --seconds 21600
    --min-publications 300 --publication-interval 60 --concurrency 2`
    on the coordinator with a new exercise data directory and the appropriate
    private worker inventory. For `sealed`, start and verify the two fresh
    coordinator-local helpers and include them as a second group. Set an
    explicit runtime deadline that permits preparation and the measured six
-   hours while preventing an orphan exercise.
+   hours while preventing an orphan exercise. The exercise creates its own
+   `--data-dir`; pass a path that does not exist yet.
 4. Observe the exercise and both samplers throughout initialization and
    measurement. Stop and restore on wrong answers, failed publication, service
    restart, missing or invalid worker sample, OOM, swap, or uncontrolled disk
