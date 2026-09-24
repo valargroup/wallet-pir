@@ -1,4 +1,11 @@
-# Enhance limited production rollout
+# Historical v6 pilot readiness gates
+
+This document preserves the September 23–24 v6 pilot proposal and its incomplete
+qualification gates. It does not qualify the current v7 packing-router deployment.
+The pinned v6 wallet, paths, memory envelope, and commands below are historical;
+use [the current architecture](architecture.md), [deployment](deployment.md), and
+[wallet integration](integration.md) for the active protocol. No production
+qualification is implied by merging this evidence or its observation tools.
 
 This is the release gate for an opt-in pilot at **2 aggregate queries/second**,
 qualified at **4 queries/second**. It is not a record of completed acceptance.

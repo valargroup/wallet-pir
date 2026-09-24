@@ -10,11 +10,6 @@ use enhance_pir_server::{
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-// Each rewound block is durable on its own, so a deeper reorg simply continues
-// on the next poll. Bounding one pass keeps a runaway mismatch observable in
-// the log and in health rather than silently erasing the whole journal.
-const MAX_REWIND_PER_POLL: u64 = 100;
-
 #[derive(Parser)]
 struct Cli {
     /// Deployment policy; seven sealed shards require independent qualification.

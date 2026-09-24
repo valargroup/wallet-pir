@@ -2000,6 +2000,12 @@ async fn committed_notification_is_forfeited_for_a_worker_with_fresh_state() {
                     } else {
                         next.run(request).await
                     };
+                    if mode == 2 || (mode == 1 && commit) {
+                        // This middleware rejected the request before worker admission.
+                        response
+                            .headers_mut()
+                            .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                    }
                     response
                         .headers_mut()
                         .insert(axum::http::header::CONNECTION, "close".parse().unwrap());

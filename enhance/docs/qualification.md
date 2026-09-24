@@ -45,9 +45,10 @@ The [architecture](architecture.md) states the placement contract and the
 
 ## Limited production rollout
 
-The [pilot readiness gates](pilot-readiness.md) define the 2 QPS opt-in envelope,
-4 QPS qualification workload, wallet checks, recovery budgets and observation
-window. They require new evidence for the selected release and every worker.
+The [historical v6 pilot readiness gates](pilot-readiness.md) preserve the proposed
+2 QPS envelope and incomplete September qualification work. They are not acceptance
+criteria or production qualification for the current v7 deployment. Current release
+and worker changes require fresh evidence against the active architecture.
 
 The [September 23 readiness check](../evidence/production-readiness-2026-09-23/README.md)
 records repaired q48 tooling, passing local checks, completed historical matrices,
