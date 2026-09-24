@@ -23,7 +23,7 @@ in the coordinator, and placement retains the existing replica groups. It keeps 
 profile, public setup domain, 24-shard wallet ceiling, memory admission ledger,
 and persisted operation phases.
 
-Worker-side packing, a separate request router and pool placement are deferred
+A separate packing-router tier and pool placement are deferred
 to [the post-launch proposal](architecture_update_2.md). The current coordinator
 capacity limit is accepted for this scope; this proposal makes no throughput
 improvement claim.
@@ -213,9 +213,9 @@ hardware. Moving the queue to workers alone does not demonstrate a gain.
 
 ### D6. Direct worker serving is deferred
 
-Coordinator decoding and packing remain in the launch query path. Worker-side
-packing and a separate request router are specified in the
-[post-launch proposal](architecture_update_2.md#d6-workers-pack-a-request-router-replaces-the-coordinator-in-the-query-path).
+Coordinator decoding and packing remain in the launch query path. A separate
+packing-router tier is specified in the
+[post-launch proposal](architecture_update_2.md#d6-a-separate-packing-router-owns-decoding-replica-selection-and-packing).
 Their implementation and measurement gates do not block this proposal.
 
 ### D7. Session validity is separate from routing freshness and placement
@@ -511,7 +511,7 @@ memory with concurrent queries, publication, retained-session expiry and
 recovery. Include cover-like traffic, slow clients, disconnects and replica
 loss. Validate the supported boundary burst envelope and safe behavior when
 preparation or admission cannot proceed. This qualifies the retained serving
-path; worker-side packing is not a launch gate.
+path; packing-router extraction is not a launch gate.
 
 ## Resulting architecture
 

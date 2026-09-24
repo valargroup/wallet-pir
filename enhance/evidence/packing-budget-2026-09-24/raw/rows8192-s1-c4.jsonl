@@ -1,0 +1,3 @@
+{"detail":{"body_bytes":135196,"concurrency":4,"copies":1,"fixture_samples":4,"hold_ms":100,"intermediate_bytes":98304,"iterations":16,"overlap":false,"rows":8192},"heap_live":1574641,"heap_peak":1582177,"rss":["VmHWM:\t    4164 kB","VmRSS:\t    4164 kB"],"stage":"baseline"}
+{"detail":{"copies":1,"setup_ms":2964.44272},"heap_live":724145303,"heap_peak":1609796225,"rss":["VmHWM:\t 1829860 kB","VmRSS:\t 1829860 kB"],"stage":"resident"}
+{"detail":{"overlap_retained":false,"pack_p50_ms":79.398073,"pack_p99_ms":87.222763,"responses_verified":64,"seconds":2.8951128329999998},"heap_live":724146008,"heap_peak":729505537,"rss":["VmHWM:\t 1832188 kB","VmRSS:\t 1831008 kB"],"stage":"complete"}

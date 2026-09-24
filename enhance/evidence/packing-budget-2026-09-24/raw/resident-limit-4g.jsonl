@@ -1,0 +1,5 @@
+{"detail":{"body_bytes":282652,"concurrency":1,"copies":16,"fixture_samples":16,"hold_ms":0,"intermediate_bytes":98304,"iterations":1,"overlap":false,"rows":32768},"heap_live":10489170,"heap_peak":10496706,"rss":["VmHWM:\t    9508 kB","VmRSS:\t    9508 kB"],"stage":"baseline"}
+{"detail":{"copies":1,"setup_ms":4432.262723},"heap_live":732914504,"heap_peak":1320247362,"rss":["VmHWM:\t 1407380 kB","VmRSS:\t 1407380 kB"],"stage":"resident"}
+{"detail":{"copies":2,"setup_ms":4186.562666000001},"heap_live":1455039336,"heap_peak":2041439586,"rss":["VmHWM:\t 2114628 kB","VmRSS:\t 2114628 kB"],"stage":"resident"}
+{"detail":{"copies":3,"setup_ms":4162.855689},"heap_live":2177164168,"heap_peak":2762745218,"rss":["VmHWM:\t 2821108 kB","VmRSS:\t 2821108 kB"],"stage":"resident"}
+{"detail":{"copies":4,"setup_ms":4178.254523},"heap_live":2899289000,"heap_peak":3486868898,"rss":["VmHWM:\t 3528212 kB","VmRSS:\t 3528212 kB"],"stage":"resident"}

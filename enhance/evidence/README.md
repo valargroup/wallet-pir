@@ -17,6 +17,8 @@ release and must not be read as current source paths.
 
 ## Production and qualification
 
+- [Packing-router memory limits under 4/7/8 GiB caps](packing-budget-2026-09-24/README.md)
+
 - [Adaptive batching on isolated 8 GiB Linux workers](batching-linux-2026-09-24/README.md)
   and [earlier local batching comparison](batching-local-2026-09-24/README.md)
 - [Isolated worker expansion at the forecast threshold](architecture-v4-live-threshold-2026-09-23/README.md)

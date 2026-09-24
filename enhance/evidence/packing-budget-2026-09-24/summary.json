@@ -1,0 +1,1596 @@
+[
+  {
+    "name": "prepare16384",
+    "result": "success",
+    "memory_peak_bytes": 3319214080,
+    "memory_peak_gib": 3.091259,
+    "baseline": null,
+    "last_resident": null,
+    "complete": {
+      "detail": {
+        "exact_answers": 4,
+        "hint_bytes": 201375776,
+        "rows": 16384
+      },
+      "heap_live": 1327168938,
+      "heap_peak": 1998172968,
+      "rss": [
+        "VmHWM:\t 2224408 kB",
+        "VmRSS:\t 2224408 kB"
+      ],
+      "stage": "fixture_complete"
+    },
+    "elapsed": 18.32113552093506,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-prepare16384",
+      "-p",
+      "MemoryMax=12G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/prepare16384.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/prepare16384.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "prepare",
+      "--output",
+      "/root/packing-budget-20260924/fixture16384",
+      "--rows",
+      "16384",
+      "--queries",
+      "4"
+    ]
+  },
+  {
+    "name": "prepare32-v3",
+    "result": "success",
+    "memory_peak_bytes": 4573970432,
+    "memory_peak_gib": 4.259842,
+    "baseline": null,
+    "last_resident": null,
+    "complete": {
+      "detail": {
+        "exact_answers": 16,
+        "hint_bytes": 201375776,
+        "rows": 32768
+      },
+      "heap_live": 1729955754,
+      "heap_peak": 2397158456,
+      "rss": [
+        "VmHWM:\t 2622824 kB",
+        "VmRSS:\t 2616396 kB"
+      ],
+      "stage": "fixture_complete"
+    },
+    "elapsed": 34.371936082839966,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-prepare32-v3",
+      "-p",
+      "MemoryMax=12G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/prepare32-v3.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/prepare32-v3.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "prepare",
+      "--output",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--rows",
+      "32768",
+      "--queries",
+      "16"
+    ]
+  },
+  {
+    "name": "prepare32",
+    "result": "exit-code",
+    "memory_peak_bytes": 4546830336,
+    "memory_peak_gib": 4.234566,
+    "baseline": null,
+    "last_resident": null,
+    "complete": null,
+    "elapsed": 33.41152501106262,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-prepare32",
+      "-p",
+      "MemoryMax=12G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/prepare32.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/prepare32.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "prepare",
+      "--output",
+      "/root/packing-budget-20260924/fixture32",
+      "--rows",
+      "32768",
+      "--queries",
+      "16"
+    ]
+  },
+  {
+    "name": "prepare4096",
+    "result": "success",
+    "memory_peak_bytes": 2497253376,
+    "memory_peak_gib": 2.325748,
+    "baseline": null,
+    "last_resident": null,
+    "complete": {
+      "detail": {
+        "exact_answers": 4,
+        "hint_bytes": 201375776,
+        "rows": 4096
+      },
+      "heap_live": 1025079415,
+      "heap_peak": 1619127965,
+      "rss": [
+        "VmHWM:\t 1928908 kB",
+        "VmRSS:\t 1928908 kB"
+      ],
+      "stage": "fixture_complete"
+    },
+    "elapsed": 8.215064525604248,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-prepare4096",
+      "-p",
+      "MemoryMax=12G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/prepare4096.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/prepare4096.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "prepare",
+      "--output",
+      "/root/packing-budget-20260924/fixture4096",
+      "--rows",
+      "4096",
+      "--queries",
+      "4"
+    ]
+  },
+  {
+    "name": "prepare8192",
+    "result": "success",
+    "memory_peak_bytes": 2702073856,
+    "memory_peak_gib": 2.516502,
+    "baseline": null,
+    "last_resident": null,
+    "complete": {
+      "detail": {
+        "exact_answers": 4,
+        "hint_bytes": 201375776,
+        "rows": 8192
+      },
+      "heap_live": 1125775527,
+      "heap_peak": 1811246749,
+      "rss": [
+        "VmHWM:\t 2027344 kB",
+        "VmRSS:\t 2027344 kB"
+      ],
+      "stage": "fixture_complete"
+    },
+    "elapsed": 10.741896867752075,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-prepare8192",
+      "-p",
+      "MemoryMax=12G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/prepare8192.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/prepare8192.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "prepare",
+      "--output",
+      "/root/packing-budget-20260924/fixture8192",
+      "--rows",
+      "8192",
+      "--queries",
+      "4"
+    ]
+  },
+  {
+    "name": "resident-limit-4g",
+    "result": "oom-kill",
+    "memory_peak_bytes": 4294967296,
+    "memory_peak_gib": 4.0,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 1,
+        "copies": 16,
+        "fixture_samples": 16,
+        "hold_ms": 0,
+        "intermediate_bytes": 98304,
+        "iterations": 1,
+        "overlap": false,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9508 kB",
+        "VmRSS:\t    9508 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 4,
+        "setup_ms": 4178.254523
+      },
+      "heap_live": 2899289000,
+      "heap_peak": 3486868898,
+      "rss": [
+        "VmHWM:\t 3528212 kB",
+        "VmRSS:\t 3528212 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": null,
+    "elapsed": 21.56668734550476,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-resident-limit-4g",
+      "-p",
+      "MemoryMax=4G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0,1",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/resident-limit-4g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/resident-limit-4g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "16",
+      "--concurrency",
+      "1",
+      "--iterations",
+      "1"
+    ]
+  },
+  {
+    "name": "resident-limit-8g",
+    "result": "oom-kill",
+    "memory_peak_bytes": 8589934592,
+    "memory_peak_gib": 8.0,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 1,
+        "copies": 16,
+        "fixture_samples": 16,
+        "hold_ms": 0,
+        "intermediate_bytes": 98304,
+        "iterations": 1,
+        "overlap": false,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9528 kB",
+        "VmRSS:\t    9528 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 10,
+        "setup_ms": 2698.7168189999998
+      },
+      "heap_live": 7232187160,
+      "heap_peak": 8118019586,
+      "rss": [
+        "VmHWM:\t 8262604 kB",
+        "VmRSS:\t 8262604 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": null,
+    "elapsed": 29.144007921218872,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-resident-limit-8g",
+      "-p",
+      "MemoryMax=8G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/resident-limit-8g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/resident-limit-8g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "16",
+      "--concurrency",
+      "1",
+      "--iterations",
+      "1"
+    ]
+  },
+  {
+    "name": "rows16384-s1-c4",
+    "result": "success",
+    "memory_peak_bytes": 1878478848,
+    "memory_peak_gib": 1.74947,
+    "baseline": {
+      "detail": {
+        "body_bytes": 184348,
+        "concurrency": 4,
+        "copies": 1,
+        "fixture_samples": 4,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 16,
+        "overlap": false,
+        "rows": 16384
+      },
+      "heap_live": 1574642,
+      "heap_peak": 1582178,
+      "rss": [
+        "VmHWM:\t    4560 kB",
+        "VmRSS:\t    4560 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 1,
+        "setup_ms": 2985.273478
+      },
+      "heap_live": 724145304,
+      "heap_peak": 1612008066,
+      "rss": [
+        "VmHWM:\t 1829952 kB",
+        "VmRSS:\t 1829952 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": false,
+        "pack_p50_ms": 79.773286,
+        "pack_p99_ms": 90.606348,
+        "responses_verified": 64,
+        "seconds": 2.897841945
+      },
+      "heap_live": 724146009,
+      "heap_peak": 730078946,
+      "rss": [
+        "VmHWM:\t 1832932 kB",
+        "VmRSS:\t 1832272 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 6.12458348274231,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-rows16384-s1-c4",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/rows16384-s1-c4.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/rows16384-s1-c4.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture16384",
+      "--copies",
+      "1",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "16",
+      "--hold-ms",
+      "100"
+    ]
+  },
+  {
+    "name": "rows4096-s1-c4",
+    "result": "success",
+    "memory_peak_bytes": 1877635072,
+    "memory_peak_gib": 1.748684,
+    "baseline": {
+      "detail": {
+        "body_bytes": 110620,
+        "concurrency": 4,
+        "copies": 1,
+        "fixture_samples": 4,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 16,
+        "overlap": false,
+        "rows": 4096
+      },
+      "heap_live": 1050353,
+      "heap_peak": 1057889,
+      "rss": [
+        "VmHWM:\t    4240 kB",
+        "VmRSS:\t    4240 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 1,
+        "setup_ms": 3000.1506459999996
+      },
+      "heap_live": 723621015,
+      "heap_peak": 1611172481,
+      "rss": [
+        "VmHWM:\t 1829912 kB",
+        "VmRSS:\t 1829912 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": false,
+        "pack_p50_ms": 80.504599,
+        "pack_p99_ms": 88.009492,
+        "responses_verified": 64,
+        "seconds": 2.9048613359999997
+      },
+      "heap_live": 723621720,
+      "heap_peak": 728606065,
+      "rss": [
+        "VmHWM:\t 1832220 kB",
+        "VmRSS:\t 1831164 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 6.128237009048462,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-rows4096-s1-c4",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/rows4096-s1-c4.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/rows4096-s1-c4.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture4096",
+      "--copies",
+      "1",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "16",
+      "--hold-ms",
+      "100"
+    ]
+  },
+  {
+    "name": "rows8192-s1-c4",
+    "result": "success",
+    "memory_peak_bytes": 1877356544,
+    "memory_peak_gib": 1.748425,
+    "baseline": {
+      "detail": {
+        "body_bytes": 135196,
+        "concurrency": 4,
+        "copies": 1,
+        "fixture_samples": 4,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 16,
+        "overlap": false,
+        "rows": 8192
+      },
+      "heap_live": 1574641,
+      "heap_peak": 1582177,
+      "rss": [
+        "VmHWM:\t    4164 kB",
+        "VmRSS:\t    4164 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 1,
+        "setup_ms": 2964.44272
+      },
+      "heap_live": 724145303,
+      "heap_peak": 1609796225,
+      "rss": [
+        "VmHWM:\t 1829860 kB",
+        "VmRSS:\t 1829860 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": false,
+        "pack_p50_ms": 79.398073,
+        "pack_p99_ms": 87.222763,
+        "responses_verified": 64,
+        "seconds": 2.8951128329999998
+      },
+      "heap_live": 724146008,
+      "heap_peak": 729505537,
+      "rss": [
+        "VmHWM:\t 1832188 kB",
+        "VmRSS:\t 1831008 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 6.020269155502319,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-rows8192-s1-c4",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/rows8192-s1-c4.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/rows8192-s1-c4.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture8192",
+      "--copies",
+      "1",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "16",
+      "--hold-ms",
+      "100"
+    ]
+  },
+  {
+    "name": "s3-c4-build-4g",
+    "result": "success",
+    "memory_peak_bytes": 3824861184,
+    "memory_peak_gib": 3.56218,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 3,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 32,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9488 kB",
+        "VmRSS:\t    9488 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 3,
+        "setup_ms": 4180.262565999999
+      },
+      "heap_live": 2177164168,
+      "heap_peak": 2762171778,
+      "rss": [
+        "VmHWM:\t 2821088 kB",
+        "VmRSS:\t 2821088 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 149.402757,
+        "pack_p99_ms": 4127.612853,
+        "responses_verified": 128,
+        "seconds": 11.224849361
+      },
+      "heap_live": 2899290217,
+      "heap_peak": 3489122114,
+      "rss": [
+        "VmHWM:\t 3730768 kB",
+        "VmRSS:\t 3728244 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 24.381221532821655,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s3-c4-build-4g",
+      "-p",
+      "MemoryMax=4G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0,1",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s3-c4-build-4g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s3-c4-build-4g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "3",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "32",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s4-c1-4g",
+    "result": "success",
+    "memory_peak_bytes": 3618054144,
+    "memory_peak_gib": 3.369576,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 1,
+        "copies": 4,
+        "fixture_samples": 16,
+        "hold_ms": 0,
+        "intermediate_bytes": 98304,
+        "iterations": 32,
+        "overlap": false,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9520 kB",
+        "VmRSS:\t    9520 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 4,
+        "setup_ms": 4153.4453109999995
+      },
+      "heap_live": 2899289000,
+      "heap_peak": 3483805090,
+      "rss": [
+        "VmHWM:\t 3528224 kB",
+        "VmRSS:\t 3528224 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": false,
+        "pack_p50_ms": 39.315171,
+        "pack_p99_ms": 48.670027,
+        "responses_verified": 32,
+        "seconds": 1.339866654
+      },
+      "heap_live": 2899289449,
+      "heap_peak": 2900654086,
+      "rss": [
+        "VmHWM:\t 3529304 kB",
+        "VmRSS:\t 3528844 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 18.63734245300293,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s4-c1-4g",
+      "-p",
+      "MemoryMax=4G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0,1",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s4-c1-4g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s4-c1-4g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "4",
+      "--concurrency",
+      "1",
+      "--iterations",
+      "32"
+    ]
+  },
+  {
+    "name": "s6-c4-build-7g-cold",
+    "result": "success",
+    "memory_peak_bytes": 6727647232,
+    "memory_peak_gib": 6.26561,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 6,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 128,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9540 kB",
+        "VmRSS:\t    9540 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 6,
+        "setup_ms": 2703.106957
+      },
+      "heap_live": 4343685272,
+      "heap_peak": 5230828418,
+      "rss": [
+        "VmHWM:\t 5435000 kB",
+        "VmRSS:\t 5435000 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 79.83325099999999,
+        "pack_p99_ms": 153.32316500000002,
+        "responses_verified": 512,
+        "seconds": 24.774226373
+      },
+      "heap_live": 5065814393,
+      "heap_peak": 5956789378,
+      "rss": [
+        "VmHWM:\t 6343920 kB",
+        "VmRSS:\t 6341476 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 42.356077671051025,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s6-c4-build-7g-cold",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s6-c4-build-7g-cold.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s6-c4-build-7g-cold.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "6",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "128",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s7-c16-build-7g",
+    "result": "success",
+    "memory_peak_bytes": 7247114240,
+    "memory_peak_gib": 6.749401,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 16,
+        "copies": 7,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 16,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9456 kB",
+        "VmRSS:\t    9456 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 7,
+        "setup_ms": 2716.9474330000003
+      },
+      "heap_live": 5065810104,
+      "heap_peak": 5954100130,
+      "rss": [
+        "VmHWM:\t 6142300 kB",
+        "VmRSS:\t 6142300 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 321.104806,
+        "pack_p99_ms": 1852.253313,
+        "responses_verified": 256,
+        "seconds": 8.900225833
+      },
+      "heap_live": 5787937177,
+      "heap_peak": 6686031130,
+      "rss": [
+        "VmHWM:\t 7065408 kB",
+        "VmRSS:\t 7055040 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 28.817005395889282,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s7-c16-build-7g",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s7-c16-build-7g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s7-c16-build-7g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "7",
+      "--concurrency",
+      "16",
+      "--iterations",
+      "16",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s7-c4-build-7g-cold",
+    "result": "success",
+    "memory_peak_bytes": 7454908416,
+    "memory_peak_gib": 6.942924,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 7,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 128,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9352 kB",
+        "VmRSS:\t    9352 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 7,
+        "setup_ms": 2709.675057
+      },
+      "heap_live": 5065810104,
+      "heap_peak": 5954952098,
+      "rss": [
+        "VmHWM:\t 6141700 kB",
+        "VmRSS:\t 6141700 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 88.951429,
+        "pack_p99_ms": 107.51096,
+        "responses_verified": 512,
+        "seconds": 26.992249924
+      },
+      "heap_live": 5787939225,
+      "heap_peak": 6681064546,
+      "rss": [
+        "VmHWM:\t 7052744 kB",
+        "VmRSS:\t 7050184 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 46.81365084648132,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s7-c4-build-7g-cold",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s7-c4-build-7g-cold.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s7-c4-build-7g-cold.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "7",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "128",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s7-c4-build-7g-r1",
+    "result": "success",
+    "memory_peak_bytes": 7232102400,
+    "memory_peak_gib": 6.73542,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 7,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 128,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9512 kB",
+        "VmRSS:\t    9512 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 7,
+        "setup_ms": 2768.635567
+      },
+      "heap_live": 5065810104,
+      "heap_peak": 5950577570,
+      "rss": [
+        "VmHWM:\t 6141816 kB",
+        "VmRSS:\t 6141816 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 85.147609,
+        "pack_p99_ms": 153.861106,
+        "responses_verified": 512,
+        "seconds": 25.940424311
+      },
+      "heap_live": 5787939225,
+      "heap_peak": 6674113698,
+      "rss": [
+        "VmHWM:\t 7051084 kB",
+        "VmRSS:\t 7048624 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 45.78228497505188,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s7-c4-build-7g-r1",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s7-c4-build-7g-r1.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s7-c4-build-7g-r1.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "7",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "128",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s7-c4-build-7g-r2",
+    "result": "success",
+    "memory_peak_bytes": 7233576960,
+    "memory_peak_gib": 6.736794,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 7,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 128,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9520 kB",
+        "VmRSS:\t    9520 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 7,
+        "setup_ms": 2696.516243
+      },
+      "heap_live": 5065810104,
+      "heap_peak": 5947644834,
+      "rss": [
+        "VmHWM:\t 6141800 kB",
+        "VmRSS:\t 6141800 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 80.051806,
+        "pack_p99_ms": 108.143963,
+        "responses_verified": 512,
+        "seconds": 25.559564253
+      },
+      "heap_live": 5787939225,
+      "heap_peak": 6674591570,
+      "rss": [
+        "VmHWM:\t 7052692 kB",
+        "VmRSS:\t 7050240 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 45.378117084503174,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s7-c4-build-7g-r2",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s7-c4-build-7g-r2.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s7-c4-build-7g-r2.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "7",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "128",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s7-c4-build-7g-r3",
+    "result": "success",
+    "memory_peak_bytes": 7200473088,
+    "memory_peak_gib": 6.705963,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 7,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 128,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9448 kB",
+        "VmRSS:\t    9448 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 7,
+        "setup_ms": 2703.4999009999997
+      },
+      "heap_live": 5065810104,
+      "heap_peak": 5941107618,
+      "rss": [
+        "VmHWM:\t 6141576 kB",
+        "VmRSS:\t 6141576 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 80.630846,
+        "pack_p99_ms": 112.358737,
+        "responses_verified": 512,
+        "seconds": 25.920618708
+      },
+      "heap_live": 5787939225,
+      "heap_peak": 6666875138,
+      "rss": [
+        "VmHWM:\t 7020236 kB",
+        "VmRSS:\t 7017840 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 45.78538966178894,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s7-c4-build-7g-r3",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s7-c4-build-7g-r3.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s7-c4-build-7g-r3.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "7",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "128",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s8-c4-build-7g",
+    "result": "oom-kill",
+    "memory_peak_bytes": 7516192768,
+    "memory_peak_gib": 7.0,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 8,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 128,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9472 kB",
+        "VmRSS:\t    9472 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 8,
+        "setup_ms": 2722.0938260000003
+      },
+      "heap_live": 5787934936,
+      "heap_peak": 6673013698,
+      "rss": [
+        "VmHWM:\t 6848848 kB",
+        "VmRSS:\t 6848848 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": null,
+    "elapsed": 24.439888954162598,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s8-c4-build-7g",
+      "-p",
+      "MemoryMax=7G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s8-c4-build-7g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s8-c4-build-7g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "8",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "128",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s8-c4-build-8g",
+    "result": "success",
+    "memory_peak_bytes": 7959674880,
+    "memory_peak_gib": 7.413025,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 8,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 32,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9512 kB",
+        "VmRSS:\t    9512 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 8,
+        "setup_ms": 2737.065845
+      },
+      "heap_live": 5787934936,
+      "heap_peak": 6608427970,
+      "rss": [
+        "VmHWM:\t 6848776 kB",
+        "VmRSS:\t 6848776 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": {
+      "detail": {
+        "overlap_retained": true,
+        "pack_p50_ms": 80.41484899999999,
+        "pack_p99_ms": 2579.07899,
+        "responses_verified": 128,
+        "seconds": 8.342614159
+      },
+      "heap_live": 6510060985,
+      "heap_peak": 7404368450,
+      "rss": [
+        "VmHWM:\t 7760364 kB",
+        "VmRSS:\t 7757908 kB"
+      ],
+      "stage": "complete"
+    },
+    "elapsed": 30.852915287017822,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s8-c4-build-8g",
+      "-p",
+      "MemoryMax=8G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s8-c4-build-8g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s8-c4-build-8g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "8",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "32",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  },
+  {
+    "name": "s9-c4-build-8g",
+    "result": "oom-kill",
+    "memory_peak_bytes": 8589934592,
+    "memory_peak_gib": 8.0,
+    "baseline": {
+      "detail": {
+        "body_bytes": 282652,
+        "concurrency": 4,
+        "copies": 9,
+        "fixture_samples": 16,
+        "hold_ms": 100,
+        "intermediate_bytes": 98304,
+        "iterations": 32,
+        "overlap": true,
+        "rows": 32768
+      },
+      "heap_live": 10489170,
+      "heap_peak": 10496706,
+      "rss": [
+        "VmHWM:\t    9548 kB",
+        "VmRSS:\t    9548 kB"
+      ],
+      "stage": "baseline"
+    },
+    "last_resident": {
+      "detail": {
+        "copies": 9,
+        "setup_ms": 2721.901968
+      },
+      "heap_live": 6510062328,
+      "heap_peak": 7370365922,
+      "rss": [
+        "VmHWM:\t 7522848 kB",
+        "VmRSS:\t 7522848 kB"
+      ],
+      "stage": "resident"
+    },
+    "complete": null,
+    "elapsed": 28.78748846054077,
+    "command": [
+      "systemd-run",
+      "--unit=packing-budget-s9-c4-build-8g",
+      "-p",
+      "MemoryMax=8G",
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      "MemoryAccounting=yes",
+      "-p",
+      "AllowedCPUs=0-3",
+      "-p",
+      "RemainAfterExit=yes",
+      "-p",
+      "RuntimeMaxSec=900",
+      "-p",
+      "StandardOutput=file:/root/packing-budget-20260924/results/s9-c4-build-8g.jsonl",
+      "-p",
+      "StandardError=file:/root/packing-budget-20260924/results/s9-c4-build-8g.stderr",
+      "/root/packing-budget-20260924/packing_budget",
+      "measure",
+      "--fixture",
+      "/root/packing-budget-20260924/fixture32-v3",
+      "--copies",
+      "9",
+      "--concurrency",
+      "4",
+      "--iterations",
+      "32",
+      "--hold-ms",
+      "100",
+      "--overlap"
+    ]
+  }
+]

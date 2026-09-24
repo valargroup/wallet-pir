@@ -1,0 +1,105 @@
+{
+  "run_id": "packing-budget-2026-09-24",
+  "captured_utc": "2026-09-24T12:51:50.391801+00:00",
+  "source_commit": "a3c7626a54b6fee95be61a8629567fd29e14cf1e",
+  "source_overlay": "packing_budget_measured.rs",
+  "overlay_sha256": "394b996f08000b159be6aab07778c102961626b3c8b5880f09e5673844880255",
+  "linux_binary_sha256": "d7f4fed9602772b63820a16bb7391b7fe7c2da09b2bc001da4202e4af6db2715",
+  "cargo_lock_sha256": "0be3fc19b20cedfd2e38ac0d29842cc7bc6f577fc4988c58fe4fcf81010bb6d9",
+  "build_command": "CARGO_TARGET_DIR=/root/wallet-pir-candidate-a652e88/target cargo build --locked --release -p enhance-pir-server --example packing_budget",
+  "build_profile": {
+    "name": "release",
+    "lto": "fat",
+    "codegen_units": 1,
+    "rust": "1.91.0",
+    "target": "x86_64-unknown-linux-gnu",
+    "allocator": "std::alloc::System with requested-live-byte counters"
+  },
+  "backend": "ipir-sp p16/q48 production Packing",
+  "ipir_revision": "611a29284264d844bf4dba00de2874c5b762f8c2",
+  "protocol": "ironwood-enhance-pir-v6",
+  "schema": 11,
+  "geometry": {
+    "logical_rows": [
+      4096,
+      8192,
+      16384,
+      32768
+    ],
+    "columns": 12288,
+    "record_bytes": 653,
+    "records_per_row": 33,
+    "row_bytes": 21549,
+    "rlwe_degree": 2048,
+    "hint_blocks": 6,
+    "seal_policy": "not applicable; isolated packing objects"
+  },
+  "fixture": {
+    "kind": "offline synthetic deterministic nonzero records",
+    "full_records": 1081343,
+    "full_queries": 16,
+    "other_geometry_queries": 4,
+    "positions": "0,32,33,last repeated",
+    "fixture32_sha256": "a725d05e968d18cc131d940c67d92cb4ce3b6a7ab21d21044d433136533ec3b2",
+    "hint32_sha256": "291cb47cc98ded6e7d6efdb6b124fd8b541f1a865ff16c2a5a2efa23fe0eaba1",
+    "network": "main (protocol-required fixture label)",
+    "pool": "ironwood",
+    "anchor_height": 0,
+    "anchor_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "genesis": null,
+    "journal": null,
+    "height_range": null,
+    "cutoff": null,
+    "events": null,
+    "scripts": null
+  },
+  "host": {
+    "name": "roman-ipir-bench-8vcpu",
+    "provider": "DigitalOcean",
+    "region": "ams3",
+    "sku": "unrecorded existing 8-vCPU/32-GiB VM; not provisioned for this task",
+    "cpu": "Intel Xeon Platinum 8358 @ 2.60GHz",
+    "cpu_count": 8,
+    "physical_ram_gib": 32,
+    "sharing": "KVM VM; underlying hardware sharing unverified",
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "6.8.0-124-generic",
+    "storage": "116 GiB root disk; see host-and-hashes.txt",
+    "swap": 0,
+    "client_network": "no HTTP or client network in measurement"
+  },
+  "constraints": {
+    "memory_caps_bytes": [
+      4294967296,
+      7516192768,
+      8589934592
+    ],
+    "fixture_preparation_cap_bytes": 12884901888,
+    "swap_max": 0,
+    "cpus_4g": "0,1",
+    "cpus_8g_campaign": "0-3",
+    "timeout_seconds": 900,
+    "separate_cgroup_per_trial": true
+  },
+  "workload": {
+    "resident_objects": "independent allocations from one valid hint; no Arc reuse",
+    "request_keys": "fresh for each fixture query; finite corpus reused by measurement",
+    "concurrency": [
+      1,
+      4,
+      16
+    ],
+    "iterations": "recorded per command in summary.json",
+    "output_hold_ms": "0 or 100, recorded per trial",
+    "overlap": "one new Packing construction, retained until measurement ends",
+    "repetitions": "three warm repeats at seven-plus-one; additional cold seven-plus-one and cold six-plus-one",
+    "cache": "warm except named cold cases; cold uses per-file POSIX_FADV_DONTNEED",
+    "generation_churn": "one extra object; no repeated replacement cycle",
+    "exact_answer_check": "fixture decrypted against source; measurement packed bytes SHA-256 compared to fixture"
+  },
+  "qualification": "component memory envelope only; not full router, physical SKU, production throughput or deployment qualification",
+  "sampling_correction": "final sample after ControlGroup disappears reads root counters in run_measured.py; ignore it. Summary uses preserved unit MemoryPeak property. run.py corrects future sampling.",
+  "raw_results": "raw/",
+  "summary": "summary.json",
+  "limitations": "README.md"
+}

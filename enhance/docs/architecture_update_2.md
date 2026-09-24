@@ -2,16 +2,18 @@
 
 Design proposal, September 24, 2026. This follows the launch changes in
 [the immediate architecture update](architecture_update.md); it describes no
-deployed behavior and is not a launch prerequisite. All capacity figures remain
-planning inputs until qualified on the intended 8 GiB Linux hosts.
+deployed behavior and is not a launch prerequisite. A dedicated 8 GiB packing
+router and 8 GiB evaluation workers are the sizing targets. The packing component
+has a measured memory envelope below; the complete serving path remains unqualified.
 
 ## Scope and compatibility
 
 After the immutable-shard and wallet-protocol launch, move query decoding and
-packing to workers behind a request router, then replace replica groups with
-per-domain pool placement. The launch retains coordinator decoding and packing,
-existing replica groups, and existing admission limits unless separately
-qualified. Its coordinator bottleneck remains until this follow-up is deployed.
+packing to a separate packing-router tier, then replace replica groups with
+per-domain pool placement. Workers continue to evaluate queries and return
+intermediates. The launch retains coordinator decoding and packing, existing
+replica groups, and existing admission limits unless separately qualified. Its
+coordinator bottleneck remains until this follow-up is deployed.
 
 Both changes preserve the launched wallet protocol, public endpoint, session
 identities, request bindings and response format. Session identity binds packing
@@ -26,81 +28,115 @@ retained for continuity with the original proposal.
 
 ## Deferred decisions
 
-### D6. Workers pack; a request router replaces the coordinator in the query path
+### D6. A separate packing router owns decoding, replica selection and packing
 
 Caddy continues to terminate TLS at the public wallet endpoint. It sends
-manifest and control routes to the coordinator, and queries to a separate
-request-router process. The router reads the launched protocol's fixed
-query-binding prefix (`EPQ4` in the investigated framing), selects an eligible replica from an atomically loaded placement revision, and
-forwards the otherwise opaque body. The worker evaluates, packs with the
-query's own upload keys, and returns its response through the router.
-
-The router does not decode PIR keys, evaluate, pack, own placement or make a
-replica ready. The coordinator continues ingestion and publication of
-manifests, routing and placement. It publishes an internal, revisioned
-placement snapshot that the router loads and swaps atomically, without a
-synchronous coordinator lookup for each query. Wallets neither select nor
-learn the physical replica.
-
-Phase 1 puts the router behind the existing Caddy origin on the coordinator
-host:
+manifest and control routes to the coordinator, and queries to a packing router
+on a separate host, initially targeting 8 GiB. The packing router validates the
+launched request binding and upload keys, decodes the query, selects an eligible
+evaluation replica from an atomically loaded placement revision, and sends the
+bound evaluation request over the private network. The worker evaluates and
+returns a bound intermediate. The packing router validates that result, packs
+it with the query's own upload keys and the exact session's resident packing
+material, and returns the existing wallet response.
 
 ```text
-wallet -> Caddy on coordinator host -> request router -> selected worker
-                                      ^
-                                      |
-                         atomic placement snapshot
-                                      |
-                                 coordinator
+wallet -> public Caddy -> packing router -> selected evaluation worker
+                              ^                        |
+                              +----- intermediate -----+
+                              |
+                         packed response -> wallet
+
+coordinator -> revisioned placement and session artifacts -> packing routers
+            -> domain preparation and activation         -> workers
 ```
 
-The coordinator process no longer receives query bodies. Query bytes still
-cross its host in Phase 1. The router can later move to another host or run as
-multiple instances without changing the wallet endpoint; its location is not
-part of a protocol or identity.
+The coordinator retains ingestion, publication, placement and recovery control.
+It publishes internal, revisioned snapshots and immutable session artifacts;
+packing routers load and activate them without a synchronous coordinator lookup
+per query. Routers neither own placement nor make workers ready. The coordinator
+process no longer receives query bodies or performs per-query packing.
+
+The initial deployment separates the packing-router host from the coordinator.
+If Caddy initially remains on the coordinator host, all public query traffic
+still crosses that host's NIC, and host failure still removes the endpoint.
+Moving or replicating the public origin is separate deployment work; packing
+router separation alone does not provide origin high availability.
+
+#### Why packing belongs in this tier
+
+The current `runtime::Packing` owns preprocessed domain hint material, published
+parameters and top-key images. `coordinator::Snapshot` retains these objects;
+workers already expose an evaluation API returning intermediates. Extracting
+that serving path preserves the existing evaluation/packing split. Naively
+adding packing to every worker would charge that resident state to each replica
+and compete with database storage within its 8 GiB budget.
+
+A packing router holds one packing-state object for each distinct domain session
+it serves, shared across all evaluation replicas for that session. Retained
+frontier sessions still require their own state where their material differs;
+identical immutable material may be shared only under verified identity. Public
+routing revisions alone must not cause a new copy. Per-query wallet upload keys
+remain request-scoped and are separate from reusable server packing material.
+
+For a session with resident packing material `P`, `r` evaluation replicas and
+`k` packing-router copies, worker-side packing costs approximately `r × P` in
+resident serving material; this design costs `k × P`, excluding preparation and
+per-request allocations. Increasing `r` does not increase packing residency.
+This is not a claim that the entire fleet needs only one copy: router replication
+for availability or packing throughput requires additional copies of the sessions
+those routers serve.
+
+#### Scaling and admission
+
+Packing-router assignment and evaluation-worker placement are separate maps.
+Initially one router can serve all domains that fit its qualified budget. As the
+resident session set grows, partition domains across routers. The query ingress
+reads the launched protocol's fixed binding prefix (`EPQ4` in the investigated
+framing) to select a router assigned to that exact session. It must enforce
+bounded buffering and must not become another packing tier. The wallet URL and
+framing remain unchanged. Ordinary Caddy load balancing alone does not provide
+this domain-aware assignment; that ingress contract must be implemented before
+partitioning the tier.
+
+Replicate selected packing-router assignments when availability or hot-domain
+packing throughput requires it. Do not load every domain on every router by
+default: that would duplicate the full packing working set as the tier grows.
+A single router per domain is a failure and throughput boundary for that domain,
+even if many evaluation replicas are ready. Spare capacity and exact-session
+readiness are required before a replacement router can receive its traffic.
 
 | Responsibility | Owner | Rule |
 |---|---|---|
-| Eligibility | Coordinator placement | Publish replicas holding the exact domain session and ready at the placement revision |
-| Selection | Request router | Choose the eligible replica with the fewest requests outstanding through that router; rotate equal-load ties |
-| Admission | Worker | Admit or reject the complete request lifetime under local resource limits |
-| Scheduling | Worker | Run one evaluation per query within local limits |
+| Eligibility and assignment | Coordinator placement | Publish exact-session-ready workers and packing routers at the placement revision |
+| Worker selection | Packing router | Choose the eligible replica with the fewest evaluations outstanding through that router; rotate equal-load ties |
+| Public request admission | Packing router | Reserve the complete request lifetime, including waiting for evaluation and packing |
+| Evaluation admission and scheduling | Worker | Reserve local resources and run one evaluation per query within local limits |
 
-The router's outstanding-request counts guide selection; the worker decides
-whether capacity is available. This requires no live worker queue-depth feed.
-A fixed preferred replica would leave replicated capacity idle, including extra
-capacity assigned to a hot frontier.
+The router's outstanding-evaluation counts guide selection; each worker decides
+whether it has capacity. This requires no live worker queue-depth feed. Multiple
+routers have independent counts, so local worker admission remains authoritative.
+Router admission must reserve capacity before reading a public body, bound queued
+requests and packing work, and retain charges until cancelled work actually ends.
+Worker permits must cover internal body reception, decoded coefficients,
+evaluation, serialization and bounded output buffering, not just the kernel.
 
-The worker protocol must distinguish rejection before accepting evaluation
-from evaluation, packing and ambiguous post-acceptance failures. The router
-may replay a request once, to one different eligible replica, only after an
-explicit not-admitted/not-ready response or an upstream failure known to
-precede acceptance. It must not automatically replay any other failure.
-Although queries are read-only, this restriction bounds duplicate cryptographic
-work and retry storms. Retaining bodies for replay requires a fixed body-size
-limit, a bounded number of concurrently buffered bodies, and router overload
-rejection.
+The worker protocol must distinguish rejection before accepting evaluation from
+ambiguous post-acceptance failures. The router may retry evaluation once, on one
+different eligible worker, only after an explicit not-admitted/not-ready response
+or an upstream failure known to precede acceptance. It must not automatically
+replay evaluation after an ambiguous failure or after packing fails. Ingress must
+likewise not replay a public query to another packing router after ambiguous
+acceptance. Bound retained request data, deadlines, connections and retry counts
+at both tiers to prevent duplicate cryptographic work and retry storms.
 
-In the September 23, 2026 baseline, the coordinator buffered every 282 KB body,
-decoded it, forwarded to one replica at a time, packed the result, and enforced
-a fleet-wide slot count. Its sampled cgroup peak was about 8 GB. Its compute and memory ceiling does not grow
-with the fleet, and it is a single point of failure. Moving decoding and packing
-to workers removes that work from the coordinator while preserving the public
-endpoint and private worker network. Phase 1 requires no wallet or host migration.
-
-Worker-side packing must fit the same 8 GiB worker budget. Admission must cover
-body reception, decoding, queued requests, evaluation, packing and response
-buffering; evaluation slots alone cannot bound queued bodies. On the
-coordinator host, router CPU, bounded body buffers, connections and TLS/network
-overhead remain charged to that host and may contend with publication. All
-query traffic still crosses its NIC, and host failure still removes the public
-endpoint. Separate processes permit later relocation or replication, but Phase
-1 does not provide origin high availability or horizontal network scaling.
-
-The [direct worker serving investigation](worker_serving_investigation.md)
-audits the current route and memory model, specifies request-lifetime and
-origin-routing contracts, and defines the production measurement gate.
-Worker-side packing has not yet passed that gate.
+The September 23, 2026 baseline coordinator buffered every 282 KB body, decoded
+it, forwarded to one replica at a time, packed the result, and enforced a
+fleet-wide slot count. Its sampled cgroup peak was about 8 GB. That combined
+process measurement does not establish how much memory a standalone packing
+router needs, or that 8 GiB will suffice. This split makes packing capacity
+independent of coordinator publication and evaluation replication; it does not
+remove packing CPU or intermediate-transfer costs.
 
 ### D10. Pool placement with a replication factor instead of rigid replica pairs
 
@@ -111,82 +147,147 @@ the reservation ledger and persisted operation phases carry over.
 Rigid pairs require growth in units of two machines and give a hot frontier the
 same replica count as an idle sealed shard. A pool allows finer growth, better
 utilization and extra replicas for hotspots. Two copies still provide roughly
-50 percent raw storage efficiency. This is the lowest-priority change.
+50 percent raw storage efficiency. This is the lowest-priority change. Worker
+replication does not change packing-router assignment or its replication factor.
 
 ## Routing and recovery prerequisites
 
-The router must enforce the launched routing revision and recovery epoch checks,
-including stale-view and invalidated-session errors. Workers validate the exact
-session and pin its evaluation and packing resources. Responses retain the
-launched binding; recovery revocation must fence affected responses even when
-work was admitted before revocation.
+Packing routers enforce the launched routing revision and recovery epoch checks,
+including stale-view and invalidated-session errors. Workers validate and pin the
+exact evaluation session. Packing routers pin the matching packing state and
+validate the intermediate's binding, shape and coefficient range before packing.
+Responses retain the launched binding; recovery revocation must fence affected
+responses at the packing router even when evaluation began before revocation.
 
 Before cutover, define publication and acknowledgment ordering across coordinator,
-routers and workers, how disconnected or stale participants lose serving
-authority, and restart behavior. An atomic local snapshot swap alone does not
-make every router current. Test ordinary routing switches separately from
-recovery revocation, where affected in-flight responses must be fenced.
+ingress, packing routers and workers, how disconnected or stale participants lose
+serving authority, and restart behavior. Publishing a route requires both packing
+and evaluation readiness for the exact session. An atomic local snapshot swap
+alone does not make every participant current. Test ordinary routing switches
+separately from recovery revocation, where affected in-flight responses must be
+fenced. Router assignment moves reserve both source and destination state until
+preparation, activation and draining complete.
 
-The `EPQ4` reference above describes the investigated framing. The implementation
-must read the binding prefix of the launched protocol without introducing a new
-wallet framing requirement solely to relocate packing.
+Packing preparation must have explicit ownership: the coordinator may produce
+immutable hint/session artifacts during publication, while routers build or load
+the serving representation before acknowledging readiness. Verify artifact
+identity against the published session. The coordinator can retain public session
+metadata needed by its wallet routes without retaining every serving `Packing`
+object; any construction overlap remains charged to publication memory. Reusing
+the current `Snapshot` unchanged would leave those objects resident there.
+
+The `EPQ4` reference describes the investigated framing. The implementation must
+use the binding of the launched protocol without a new wallet framing requirement
+solely to relocate packing. Keep evaluation APIs private and restrict access to
+the serving and control tiers under the existing trust model.
 
 ## Memory ownership and qualification
 
 Workers inherit the immediate proposal's database, retained revision, tail-unit,
-preparation and query-pin charges. Add packing state for every retained domain
-and the complete public-request lifetime: body reception, decoded keys,
-evaluation intermediates, transient packing allocations and buffered responses.
-Account for concurrent publication and retain charges while work continues after
-client cancellation. A fixed overhead or evaluation semaphore is not evidence
-that these allocations fit.
+preparation and query-pin charges. They do not gain resident packing state or
+public upload keys. Their internal request and intermediate-response allocations
+still need explicit bounds, including concurrent publication and cancellation.
 
-Bound router bodies retained for replay, connections and output buffering
-separately. Initially charge them, Caddy and TLS/network overhead to the
-coordinator host. Keep the existing public query path until the
-[worker-serving measurement gate](worker_serving_investigation.md#production-measurement-required-before-the-cutover)
-passes with exact-answer checks, slow uploads/readers, disconnects, replica loss,
-retained-session expiry and concurrent publication. No worker-packing capacity
-claim is established by this proposal.
+For a packing router, budget at least:
+
+```text
+resident material for every distinct retained/pinned session assigned here
++ packing-state construction/loading overlap and assignment-move overlap
++ admitted requests × (body + decoded keys/coefficients + intermediate
+                      + transient packing allocations + buffered response)
++ bounded queues, connections, runtime overhead and host reserve
+```
+
+Peak overlap matters; per-stage maxima cannot replace this sum without proving
+that allocations have disjoint lifetimes. Slow readers, cancelled work and
+retained-session expiry must not release charges before their resources are
+actually freed. Bound ingress/TLS buffers separately and charge them to their
+own host. A fixed per-domain overhead or semaphore is not evidence of fit.
+
+The [direct worker serving investigation](worker_serving_investigation.md)
+records the current path and the earlier worker-packing alternative. Its
+worker-packing budget is not the gate for this revised design. Before cutover:
+
+1. On the intended 8 GiB Linux router, measure resident `Packing::new` output by
+   domain geometry and session count, including retained frontier sessions and
+   setup peaks. Record exact binary revision, assignments, allocation high water,
+   cgroup current/peak memory, CPU and network utilization. Reset peaks between
+   trials. Derive a maximum resident assignment and admission budget with host
+   headroom; increase host size or partition assignments if it does not fit.
+2. Exercise the actual ingress/router/worker HTTP path with fresh wallet queries,
+   full-size domains, cover-like traffic and concurrent publication. Sweep offered
+   rates; measure exact-answer successful QPS, p50/p95/p99 latency, 429/502/503,
+   evaluation rejection rate, packing queue/CPU, intermediate transfer bytes and
+   peak memory for each tier. Isolated packing timings do not qualify throughput.
+3. Exercise slow uploads/readers, disconnects, worker and router loss, retained
+   session expiry, assignment moves, stale placement, restart and recovery
+   revocation during evaluation and packing. Verify bounded retry, fail-closed
+   routing, pinned-resource accounting and coordinator publication responsiveness.
+
+The [September 24 packing-budget experiment](../evidence/packing-budget-2026-09-24/README.md)
+measures the production packing component from frozen commit `a3c7626` under Linux
+cgroup caps. Each independently allocated packing object retains about 689 MiB
+of live heap. Ten objects can be constructed under an 8 GiB cap, but constructing
+the eleventh is OOM-killed. That hard boundary is not a serving assignment limit.
+
+The initial assignment target is six retained serving objects, one additional
+construction/activation slot, and four concurrent packing requests, within a
+7 GiB process ceiling on the proposed 8 GiB host. The six-plus-one cold-cache
+trial peaked at 6.27 GiB with 512 verified responses. Seven serving objects plus
+one construction slot also passed, but its cold-cache peak was about 6.94 GiB;
+keep that as a measured limit rather than the default assignment. Count distinct sessions,
+including retained versions and request pins, rather than domains or evaluation
+replicas. Six retained frontier sessions consume the default serving allocation;
+adding sealed domains then requires another router assignment or explicit
+qualification of the higher limit.
+Release an expired/unpinned object before reusing the construction slot; overlapping
+multiple publications or assignment moves requires additional reservation or
+refusal. The 1 GiB host reserve must also cover any ingress/TLS service placed here.
+
+These measurements exercise packing allocations, separately allocated copies and
+construction overlap, not the extracted router's HTTP lifecycle, recovery, aged
+allocator behavior or production throughput. Requalify the final binary and its
+full path on the intended host before cutover. Keep the existing public query path
+until those checks pass.
 
 ## Implementation phases
 
-### Phase 1: direct worker serving
+### Phase 1: extract the packing router
 
-Deploy the router behind Caddy on the coordinator host. Workers receive query
-bodies, evaluate each independently, pack and answer. The router applies D6's
-placement, selection and bounded-retry rules. The coordinator publishes routing
-and placement and stops receiving query bodies. Worker admission covers the
-complete request lifetime; router buffering is bounded independently. The
-public route is preserved, so this phase requires no wallet change.
+Extract the coordinator's decode/evaluate/pack serving path into a separate
+process and host. Keep worker evaluation private. Add revisioned placement and
+session-artifact loading, readiness acknowledgment, recovery fencing and
+independent admission budgets. Route public queries to the packing router while
+manifest/control routes stay on the coordinator. This requires no wallet change.
 
-Before cutover, pass the worker-packing gate. For phase acceptance, sweep target
-offered rates with concurrent publication and cover-like traffic. Verify that:
+Pass the revised memory and end-to-end gate before cutover. Verify that both
+worker replicas receive traffic, pre-admission rejection can spill to the peer
+within the retry bound, and removed replicas receive no new evaluations. Verify
+that router restart or missing session material fails closed. Report the maximum
+qualified domain/session assignment and request concurrency for the router size.
 
-- Both replicas receive traffic, and admission saturation on one spills to its
-  peer within the retry bound.
-- Replica loss or a placement revision change stops new requests from reaching
-  the removed replica.
-- Router restart and stale placement fail closed rather than guessing.
+### Phase 2: scale packing-router assignments
 
-Report successful QPS, latency, public 429/502/503 responses, worker rejection rate,
-coordinator publication responsiveness, coordinator-host/router peak memory and
-network throughput, and worker peak memory.
+Add domain-aware ingress and revisioned router assignments when one router's
+resident state or compute limit requires it. Qualify assignment moves, overlap,
+draining and independent router replication before relying on them for capacity
+or availability. Adding evaluation replicas must not allocate additional packing
+objects on existing routers. Validate public-origin availability separately.
 
-### Phase 2: pool placement
+### Phase 3: pool placement
 
-Replace groups with per-domain placements and a replication factor. Validate
-consolidation and hotspot replication under the existing operation phases,
-with the ledger counting both copies at the default factor.
-
-For pool placement, also verify interrupted moves and controller restart under
-the persisted operation phases, exact-session readiness before placement
-publication, and reservations for both source and destination during moves.
+Replace worker groups with per-domain placements and a replication factor.
+Validate consolidation and hotspot replication under the existing operation
+phases, with the ledger counting both copies at the default factor. Also verify
+interrupted moves and controller restart, exact-session readiness before placement
+publication, and reservations for source and destination during moves. This work
+can proceed independently of packing-router scale-out after Phase 1.
 
 ## Resulting architecture
 
-The coordinator retains ingestion, publication and placement control, while the
-router forwards opaque public queries and workers evaluate and pack. Pool
-placement permits independent replication of hot domains. Initial router
-co-location retains the public origin's host and network failure boundary;
-origin high availability requires separate future deployment work.
+The coordinator retains ingestion, publication and placement control. Separately
+sized packing routers decode requests, select evaluation replicas and pack their
+results using resident material for assigned domain sessions. Workers retain the
+evaluation/database role. Evaluation replicas, packing capacity and publication
+capacity can grow independently, with packing material duplicated only across
+the packing-router copies assigned to serve each session.

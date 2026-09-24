@@ -1,0 +1,44 @@
+d7f4fed9602772b63820a16bb7391b7fe7c2da09b2bc001da4202e4af6db2715  packing_budget
+0be3fc19b20cedfd2e38ac0d29842cc7bc6f577fc4988c58fe4fcf81010bb6d9  Cargo.lock
+394b996f08000b159be6aab07778c102961626b3c8b5880f09e5673844880255  enhance/services/enhance-pir-server/examples/packing_budget.rs
+a725d05e968d18cc131d940c67d92cb4ce3b6a7ab21d21044d433136533ec3b2  fixture32-v3/fixture.json
+291cb47cc98ded6e7d6efdb6b124fd8b541f1a865ff16c2a5a2efa23fe0eaba1  fixture32-v3/hint.bin
+Linux roman-ipir-bench-8vcpu 6.8.0-124-generic #124-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 13:00:45 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           40 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  8
+On-line CPU(s) list:                     0-7
+Vendor ID:                               GenuineIntel
+BIOS Vendor ID:                          QEMU
+Model name:                              Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
+BIOS Model name:                         pc-i440fx-6.1  CPU @ 2.0GHz
+BIOS CPU family:                         1
+CPU family:                              6
+Model:                                   106
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+Socket(s):                               1
+Stepping:                                6
+BogoMIPS:                                5187.81
+               total        used        free      shared  buff/cache   available
+Mem:     33654890496  5550985216 21235908608     4263936  7358304256 28103905280
+Swap:              0           0           0
+Filesystem        1B-blocks        Used   Available Use% Mounted on
+/dev/vda1      123690532864 27188256768 96485498880  22% /
+rustc 1.91.0 (f8297e351 2025-10-28)
+PRETTY_NAME="Ubuntu 24.04.4 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.4 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=noble
+LOGO=ubuntu-logo
+ams3

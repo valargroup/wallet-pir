@@ -1,0 +1,27 @@
+   Compiling enhance-pir-server v0.0.1 (/root/packing-budget-20260924/enhance/services/enhance-pir-server)
+error[E0560]: struct `enhance_pir::protocol::Manifest` has no field named `recovery_epoch`
+   --> enhance/services/enhance-pir-server/examples/packing_budget.rs:162:9
+    |
+162 |         recovery_epoch: 0,
+    |         ^^^^^^^^^^^^^^ `enhance_pir::protocol::Manifest` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0560]: struct `enhance_pir::protocol::Manifest` has no field named `placement_revision`
+   --> enhance/services/enhance-pir-server/examples/packing_budget.rs:163:9
+    |
+163 |         placement_revision: 0,
+    |         ^^^^^^^^^^^^^^^^^^ `enhance_pir::protocol::Manifest` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0560]: struct `enhance_pir::protocol::Manifest` has no field named `domain_recovery_epochs`
+   --> enhance/services/enhance-pir-server/examples/packing_budget.rs:164:9
+    |
+164 |         domain_recovery_epochs: Default::default(),
+    |         ^^^^^^^^^^^^^^^^^^^^^^ `enhance_pir::protocol::Manifest` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+For more information about this error, try `rustc --explain E0560`.
+error: could not compile `enhance-pir-server` (example "packing_budget") due to 3 previous errors

@@ -3,6 +3,11 @@
 Status: investigation for D6 of [the architecture update](architecture_update.md),
 September 24, 2026. No direct worker serving path is implemented by this note.
 
+The [post-launch proposal](architecture_update_2.md) now selects a separate
+packing-router tier instead of worker-side packing. This note preserves the
+earlier alternative and current-code investigation; its worker-packing gate does
+not qualify the revised packing-router design.
+
 ## What the current code actually does
 
 | Stage | Current owner and bound | Consequence for D6 |
