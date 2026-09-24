@@ -46,7 +46,7 @@ impl Coordinator {
     }
 
     pub(super) async fn deliver_revocations(&self) -> Result<(), String> {
-        let (fence, groups) = {
+        let (fence, groups, optional) = {
             let store = self.store.lock().unwrap();
             (
                 worker::Revocation {
@@ -54,6 +54,12 @@ impl Coordinator {
                     sessions: store.state().recovery.revoked.clone(),
                 },
                 store.state().groups.clone(),
+                store
+                    .state()
+                    .pool
+                    .as_ref()
+                    .map(|p| p.optional_workers())
+                    .unwrap_or_default(),
             )
         };
         if fence.sessions.is_empty() {
@@ -80,7 +86,7 @@ impl Coordinator {
             }
             .await;
             if let Err(error) = result {
-                if self.serving.is_some() {
+                if self.serving.is_some() && !optional.contains(&replica.name) {
                     return Err(error);
                 }
                 tracing::warn!(replica = %replica.name, %error, "replica excluded until recovery fence acknowledged");

@@ -140,6 +140,9 @@ impl ServingControl {
                 snapshot
                     .routes
                     .retain(|id, _| snapshot.artifacts.contains_key(id));
+                snapshot
+                    .preferred
+                    .retain(|id, _| snapshot.artifacts.contains_key(id));
             }
             let view = View {
                 version: packing_router::CONTROL_VERSION,

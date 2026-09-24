@@ -56,6 +56,12 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
                 let count = count.clone();
                 let mode = mode.clone();
                 async move {
+                    if index == 2
+                        && mode.load(Ordering::SeqCst) == 3
+                        && request.uri().path().starts_with("/internal/")
+                    {
+                        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
                     if request.uri().path() == "/internal/evaluate" {
                         count.fetch_add(1, Ordering::SeqCst);
                         match mode.load(Ordering::SeqCst) {
@@ -104,6 +110,7 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         } else {
             let packing =
                 PackingRouter::open(&root.path().join("packing"), &artifact_origin, 6, 4).unwrap();
+            packing.start_worker_health_monitor();
             let (control, task) = serve(packing.control_router()).await;
             tasks.push(task);
             let (query, task) = serve(packing.public_router()).await;
@@ -315,6 +322,104 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         health["pool"]["placements"]["0"].as_array().unwrap().len(),
         3
     );
+    coordinator
+        .configure_pool(
+            2,
+            enhance_pir_server::pool::Policy {
+                domain_replication: Default::default(),
+                optional_mirrors: [("worker-2".into(), "worker-1".into())].into(),
+                domain_optional_workers: Default::default(),
+            },
+        )
+        .unwrap();
+    journal
+        .append_block(3428145, "03".repeat(32), &Vec::<Vec<u8>>::new())
+        .unwrap();
+    coordinator
+        .publish(&journal, 3428145, "03".repeat(32))
+        .await
+        .unwrap();
+    // The optional worker can disappear without blocking publication or answers.
+    modes[2].store(3, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let packing_health: serde_json::Value = http
+        .get(format!("{packing_control}/internal/health"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(packing_health["preferred_workers"][&replicas[2].url], false);
+    let mut client = EnhancePirClient::connect(&public).await.unwrap();
+    assert_eq!(
+        client
+            .query_position_with_timing(33)
+            .await
+            .unwrap()
+            .0
+            .as_ref(),
+        record(33)
+    );
+    journal
+        .append_block(3428146, "04".repeat(32), &Vec::<Vec<u8>>::new())
+        .unwrap();
+    coordinator
+        .publish(&journal, 3428146, "04".repeat(32))
+        .await
+        .unwrap();
+    let health: serde_json::Value = http
+        .get(format!("{control_origin}/v1/health"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        health["pool"]["placements"]["0"].as_array().unwrap().len(),
+        2
+    );
+    let mut client = EnhancePirClient::connect(&public).await.unwrap();
+    assert_eq!(
+        client
+            .query_position_with_timing(33)
+            .await
+            .unwrap()
+            .0
+            .as_ref(),
+        record(33)
+    );
+    modes[2].store(0, Ordering::SeqCst);
+    journal
+        .append_block(3428147, "05".repeat(32), &Vec::<Vec<u8>>::new())
+        .unwrap();
+    coordinator
+        .publish(&journal, 3428147, "05".repeat(32))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let packing_health: serde_json::Value = http
+        .get(format!("{packing_control}/internal/health"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(packing_health["preferred_workers"][&replicas[2].url], true);
+    let gpu_queries_before = counts[2].load(Ordering::SeqCst);
+    let mut client = EnhancePirClient::connect(&public).await.unwrap();
+    assert_eq!(
+        client
+            .query_position_with_timing(33)
+            .await
+            .unwrap()
+            .0
+            .as_ref(),
+        record(33)
+    );
+    assert!(counts[2].load(Ordering::SeqCst) > gpu_queries_before);
     assert_eq!(
         http.post(format!("{control_origin}/v1/enhance/query"))
             .body(vec![0; 116])
@@ -346,8 +451,8 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
                 latencies
             });
         }
-        let height = 3428145 + revision;
-        let hash = format!("{:064x}", revision + 3);
+        let height = 3428148 + revision;
+        let hash = format!("{:064x}", revision + 6);
         journal
             .append_block(
                 height,

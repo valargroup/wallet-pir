@@ -38,29 +38,48 @@ impl Coordinator {
             .observe(height, journal.tree_size(), &hash);
         let mut validate = Some(validate);
         let mut result = self
-            .publish_inner(journal, height, hash.clone(), &mut validate, true)
+            .publish_inner(
+                journal,
+                height,
+                hash.clone(),
+                &mut validate,
+                true,
+                &BTreeSet::new(),
+            )
             .await;
-        let retry = result.is_err() && validate.is_some() && {
-            let store = self.store.lock().unwrap();
-            store.state().operation.as_ref().is_some_and(|op| {
-                op.phase == Phase::Planned
-                    && op
-                        .require_both
-                        .iter()
-                        .any(|group| store.state().assignments.values().any(|g| g == group))
-            })
-        };
+        let optional_retry = result
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.starts_with("optional worker "));
+        let suppressed: BTreeSet<String> = result
+            .as_ref()
+            .err()
+            .filter(|_| optional_retry)
+            .and_then(|e| e.split_whitespace().nth(2))
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
+        let retry = result.is_err()
+            && validate.is_some()
+            && (optional_retry || {
+                let store = self.store.lock().unwrap();
+                store.state().operation.as_ref().is_some_and(|op| {
+                    op.phase == Phase::Planned
+                        && op
+                            .require_both
+                            .iter()
+                            .any(|group| store.state().assignments.values().any(|g| g == group))
+                })
+            });
         if retry {
             // No preparation or durable publication has occurred. Persist the
             // abort decision before retrying; unacknowledged workers stay excluded.
             result = match self.reconcile_inner().await {
                 Ok(()) => {
-                    self.publish_inner(journal, height, hash, &mut validate, false)
+                    self.publish_inner(journal, height, hash, &mut validate, false, &suppressed)
                         .await
                 }
-                Err(error) => Err(format!(
-                    "consolidation fallback awaits abort recovery: {error}"
-                )),
+                Err(error) => Err(format!("publication retry awaits abort recovery: {error}")),
             };
         }
         *self.blocked.lock().unwrap() = result.as_ref().err().cloned();
@@ -77,6 +96,7 @@ impl Coordinator {
         hash: String,
         validate: &mut Option<F>,
         allow_consolidation: bool,
+        suppressed: &BTreeSet<String>,
     ) -> Result<(), String>
     where
         F: FnOnce() -> Fut,
@@ -181,8 +201,15 @@ impl Coordinator {
             .collect::<Result<_, _>>()?;
         let pool_assignments = if let Some(pool) = &pool_state {
             Some(
-                self.plan_pool(&coverage, &groups, &plans, pool, allow_consolidation)
-                    .await?,
+                self.plan_pool(
+                    &coverage,
+                    &groups,
+                    &plans,
+                    pool,
+                    allow_consolidation,
+                    suppressed,
+                )
+                .await?,
             )
         } else {
             None
@@ -192,9 +219,17 @@ impl Coordinator {
                 let assignments = placements
                     .iter()
                     .map(|(id, workers)| {
+                        let optional = pool_state
+                            .as_ref()
+                            .map(|p| p.optional_workers())
+                            .unwrap_or_default();
                         let group = groups
                             .iter()
-                            .find(|g| g.replicas.iter().any(|r| workers.contains(&r.name)))
+                            .find(|g| {
+                                g.replicas.iter().any(|r| {
+                                    workers.contains(&r.name) && !optional.contains(&r.name)
+                                })
+                            })
                             .expect("validated pool inventory");
                         (*id, group.id.clone())
                     })
@@ -391,6 +426,16 @@ impl Coordinator {
                     {
                         tracing::warn!(replica = %replica.name, %error, "replica unavailable; ordinary publication may use its peer");
                     }
+                    Err(error)
+                        if pool_state
+                            .as_ref()
+                            .is_some_and(|p| p.optional_workers().contains(&replica.name)) =>
+                    {
+                        return Err(format!(
+                            "optional worker {} reservation failed: {error}",
+                            replica.name
+                        ));
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -460,88 +505,106 @@ impl Coordinator {
                 let Some((candidate, missing, _)) = candidates.get(&replica.name) else {
                     continue;
                 };
-                for plan in &candidate.plans {
-                    for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
-                        if !missing.contains(&unit.digest()) {
-                            continue;
+                let prepared: Result<(), String> = async {
+                    for plan in &candidate.plans {
+                        for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
+                            if !missing.contains(&unit.digest()) {
+                                continue;
+                            }
+                            let rows = runtime::unit_rows(&plan.shard, spec, &mut { read })?;
+                            checked(
+                                self.http
+                                    .put(format!("{}/internal/rows/{}", replica.url, unit.digest()))
+                                    .header("x-enhance-epoch", candidate.epoch)
+                                    .header("x-enhance-attempt", candidate.attempt)
+                                    .header("x-enhance-operation", &candidate.operation)
+                                    .body(rows)
+                                    .send()
+                                    .await
+                                    .map_err(|e| e.to_string())?,
+                            )
+                            .await?;
                         }
-                        let rows = runtime::unit_rows(&plan.shard, spec, &mut { read })?;
-                        checked(
-                            self.http
-                                .put(format!("{}/internal/rows/{}", replica.url, unit.digest()))
-                                .header("x-enhance-epoch", candidate.epoch)
-                                .header("x-enhance-attempt", candidate.attempt)
-                                .header("x-enhance-operation", &candidate.operation)
-                                .body(rows)
-                                .send()
-                                .await
-                                .map_err(|e| e.to_string())?,
-                        )
-                        .await?;
                     }
-                }
-                checked(
-                    preparation_request(&self.http, &replica.url)
-                        .json(candidate)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?;
-                for plan in &candidate.plans {
-                    if reusable.contains(&plan.shard.id) {
-                        routes
-                            .entry(plan.shard.id)
-                            .or_default()
-                            .push(replica.url.clone());
-                        continue;
-                    }
-                    let response = checked(
-                        self.http
-                            .get(format!("{}/internal/hint/{}", replica.url, plan.shard.id))
+                    checked(
+                        preparation_request(&self.http, &replica.url)
+                            .json(candidate)
                             .send()
                             .await
                             .map_err(|e| e.to_string())?,
                     )
                     .await?;
-                    let bytes = bounded(response, 256 * 1024 * 1024).await?;
-                    let params = parameters(plan.shard.logical_rows)?;
-                    let hint = crate::wire::read_crs_blocks(
-                        bytes.as_slice(),
-                        params.db_cols / runtime::rlwe().d,
-                        runtime::rlwe().d,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let pack = Packing::new(plan.shard.logical_rows, &hint, &self.packing_budget)?;
-                    let pack = Arc::new(PublishedPacking::new(
-                        plan.shard.logical_rows,
-                        pack,
-                        self.serving.is_none(),
-                    ));
-                    let reference = pack.reference(plan.shard.id)?;
-                    if let Some(existing) = packing.get(&plan.shard.id) {
-                        let existing: &Arc<PublishedPacking> = existing;
-                        if existing.reference(plan.shard.id)? != reference {
-                            return Err("replica public material differs".into());
+                    for plan in &candidate.plans {
+                        if reusable.contains(&plan.shard.id) {
+                            routes
+                                .entry(plan.shard.id)
+                                .or_default()
+                                .push(replica.url.clone());
+                            continue;
                         }
-                    } else {
-                        let name = format!("{}.bin", reference.public_params_sha256);
-                        crate::artifact::write_atomic(&self.root.join("hints"), &name, |f| {
-                            f.write_all(&bytes)
-                        })
+                        let response = checked(
+                            self.http
+                                .get(format!("{}/internal/hint/{}", replica.url, plan.shard.id))
+                                .send()
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        )
+                        .await?;
+                        let bytes = bounded(response, 256 * 1024 * 1024).await?;
+                        let params = parameters(plan.shard.logical_rows)?;
+                        let hint = crate::wire::read_crs_blocks(
+                            bytes.as_slice(),
+                            params.db_cols / runtime::rlwe().d,
+                            runtime::rlwe().d,
+                        )
                         .map_err(|e| e.to_string())?;
-                        crate::artifact::write_atomic(&self.root.join("public"), &name, |f| {
-                            f.write_all(&pack.public)
-                        })
-                        .map_err(|e| e.to_string())?;
-                        hints.insert(plan.shard.id, name);
-                        packing.insert(plan.shard.id, pack);
+                        let pack =
+                            Packing::new(plan.shard.logical_rows, &hint, &self.packing_budget)?;
+                        let pack = Arc::new(PublishedPacking::new(
+                            plan.shard.logical_rows,
+                            pack,
+                            self.serving.is_none(),
+                        ));
+                        let reference = pack.reference(plan.shard.id)?;
+                        if let Some(existing) = packing.get(&plan.shard.id) {
+                            let existing: &Arc<PublishedPacking> = existing;
+                            if existing.reference(plan.shard.id)? != reference {
+                                return Err("replica public material differs".into());
+                            }
+                        } else {
+                            let name = format!("{}.bin", reference.public_params_sha256);
+                            crate::artifact::write_atomic(&self.root.join("hints"), &name, |f| {
+                                f.write_all(&bytes)
+                            })
+                            .map_err(|e| e.to_string())?;
+                            crate::artifact::write_atomic(&self.root.join("public"), &name, |f| {
+                                f.write_all(&pack.public)
+                            })
+                            .map_err(|e| e.to_string())?;
+                            hints.insert(plan.shard.id, name);
+                            packing.insert(plan.shard.id, pack);
+                        }
+                        routes
+                            .entry(plan.shard.id)
+                            .or_default()
+                            .push(replica.url.clone());
                     }
-                    routes
-                        .entry(plan.shard.id)
-                        .or_default()
-                        .push(replica.url.clone());
+                    Ok(())
                 }
+                .await;
+                prepared.map_err(|error| {
+                    if pool_state
+                        .as_ref()
+                        .is_some_and(|p| p.optional_workers().contains(&replica.name))
+                    {
+                        format!(
+                            "optional worker {} preparation failed: {error}",
+                            replica.name
+                        )
+                    } else {
+                        error
+                    }
+                })?;
             }
         }
         let sessions = coverage
@@ -599,22 +662,47 @@ impl Coordinator {
                     epoch,
                     manifest: manifest.clone(),
                 };
-                let ack: serde_json::Value = checked(
-                    self.http
-                        .post(format!("{}/internal/activate", replica.url))
-                        .json(&request)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?
-                .json()
-                .await
-                .map_err(|e| e.to_string())?;
+                let ack: Result<serde_json::Value, String> = async {
+                    checked(
+                        self.http
+                            .post(format!("{}/internal/activate", replica.url))
+                            .json(&request)
+                            .send()
+                            .await
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .await?
+                    .json()
+                    .await
+                    .map_err(|e| e.to_string())
+                }
+                .await;
+                let ack = ack.map_err(|error| {
+                    if pool_state
+                        .as_ref()
+                        .is_some_and(|p| p.optional_workers().contains(&replica.name))
+                    {
+                        format!(
+                            "optional worker {} activation failed: {error}",
+                            replica.name
+                        )
+                    } else {
+                        error
+                    }
+                })?;
                 if ack["incarnation"].as_str() != Some(&replica.incarnation)
                     || ack["candidate_digest"].as_str() != Some(&manifest_digest)
                 {
-                    return Err("stale worker readiness".into());
+                    return Err(
+                        if pool_state
+                            .as_ref()
+                            .is_some_and(|p| p.optional_workers().contains(&replica.name))
+                        {
+                            format!("optional worker {} stale readiness", replica.name)
+                        } else {
+                            "stale worker readiness".into()
+                        },
+                    );
                 }
                 readiness.push(ReadyAck {
                     replica: replica.name.clone(),

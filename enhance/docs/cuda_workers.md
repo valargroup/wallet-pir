@@ -47,7 +47,36 @@ and resolved device ordinal (zero when omitted for CUDA).
 
 Packing and coordinator behavior remain on CPU. Matrix-only speedups must not be
 reported as whole-request PIR speedups. CPU capacity qualification does not qualify
-a GPU worker, and this change does not introduce GPU-aware placement or fleet deployment.
+a GPU worker. The optional-worker pool policy lets a GPU mirror a CPU worker's
+domains without making GPU availability part of the publication quorum.
+
+## Optional pool assignment
+
+The coordinator accepts `--pool-policy /etc/enhance-pir/pool-policy.json` alongside
+`--pool-placement`. The policy file is loaded on each reconciliation loop. For a
+three-worker pool with two required CPU replicas, this policy mirrors the second
+CPU worker onto a GPU while preserving the two-copy publication requirement:
+
+```json
+{
+  "domain_replication": {},
+  "optional_mirrors": {"enhance-pir-gpu-01": "enhance-pir-worker-02"},
+  "domain_optional_workers": {}
+}
+```
+
+`domain_replication` overrides the required CPU count for a domain ID; an entry
+such as `"7": 3` requires three non-optional workers for domain 7.
+`domain_optional_workers` assigns additional optional workers by domain ID.
+Both settings allow later domains to use different counts and GPUs. Mirror rules
+follow the source worker's actual placement, including sealed domains, subject
+to the GPU's own admission limit. Inventory additions remain append-only.
+
+The packing router probes optional workers every two seconds. It removes a
+worker from new query selection after two failed one-second probes, or immediately
+after an explicit rejection or connection failure, and restores it after two
+successful probes confirming the exact published generation. An ambiguous
+in-flight evaluation is never replayed. CPU replicas remain eligible throughout.
 
 ## Validation
 

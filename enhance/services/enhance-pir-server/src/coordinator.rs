@@ -349,13 +349,21 @@ impl Coordinator {
 
     /// One-way schema migration preserves current data and exact session identities.
     pub fn enable_pool(&self, frontier_replication: usize) -> Result<(), String> {
+        self.configure_pool(frontier_replication, crate::pool::Policy::default())
+    }
+
+    pub fn configure_pool(
+        &self,
+        frontier_replication: usize,
+        policy: crate::pool::Policy,
+    ) -> Result<(), String> {
         if self.serving.is_none() {
             return Err("pool placement requires remote packing".into());
         }
         self.store.lock().unwrap().update(|state| {
             if state.operation.is_some()
-                || !state.pending_commits.is_empty()
-                || !state.pending_aborts.is_empty()
+                || (state.pool.is_none()
+                    && (!state.pending_commits.is_empty() || !state.pending_aborts.is_empty()))
             {
                 return Err("reconcile durable operations before enabling pool placement".into());
             }
@@ -381,6 +389,9 @@ impl Coordinator {
             let pool = crate::pool::Pool {
                 replication: 2,
                 frontier_replication,
+                domain_replication: policy.domain_replication,
+                optional_mirrors: policy.optional_mirrors,
+                domain_optional_workers: policy.domain_optional_workers,
                 placements,
             };
             pool.validate(&state.groups)?;
@@ -397,8 +408,14 @@ impl Coordinator {
         plans: &[DomainPlan],
         pool: &crate::pool::Pool,
         consolidate: bool,
+        suppressed: &BTreeSet<String>,
     ) -> Result<crate::pool::Placements, String> {
         let mut forbidden = BTreeSet::new();
+        for name in suppressed {
+            for shard in &coverage.shards {
+                forbidden.insert((shard.id, name.clone()));
+            }
+        }
         for name in self.pending_replicas() {
             for shard in &coverage.shards {
                 forbidden.insert((shard.id, name.clone()));
@@ -675,6 +692,35 @@ impl Coordinator {
         let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
         let mut artifacts = BTreeMap::new();
         let mut routes = saved.routes.clone();
+        let preferred = {
+            let store = self.store.lock().unwrap();
+            let optional = store
+                .state()
+                .pool
+                .as_ref()
+                .map(|p| p.optional_workers())
+                .unwrap_or_default();
+            let origins: BTreeSet<_> = store
+                .state()
+                .groups
+                .iter()
+                .flat_map(|g| &g.replicas)
+                .filter(|r| optional.contains(&r.name))
+                .map(|r| r.url.clone())
+                .collect();
+            routes
+                .iter()
+                .map(|(id, urls)| {
+                    (
+                        *id,
+                        urls.iter()
+                            .filter(|url| origins.contains(*url))
+                            .cloned()
+                            .collect(),
+                    )
+                })
+                .collect::<BTreeMap<_, Vec<_>>>()
+        };
         for (id, name) in &saved.hints {
             if revoked.contains(&hex::encode(saved.manifest.session_id(*id)?)) {
                 routes.remove(id);
@@ -685,6 +731,10 @@ impl Coordinator {
         Ok(super::packing_router::ServingSnapshot {
             manifest: saved.manifest.clone(),
             routes,
+            preferred: preferred
+                .into_iter()
+                .filter(|(id, _)| artifacts.contains_key(id))
+                .collect(),
             artifacts,
         })
     }

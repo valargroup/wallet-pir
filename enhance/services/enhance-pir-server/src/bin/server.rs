@@ -97,6 +97,9 @@ enum Command {
         pool_placement: bool,
         #[arg(long, default_value_t = 2, requires = "pool_placement")]
         frontier_replicas: usize,
+        /// Per-domain required counts and optional accelerator mirror rules.
+        #[arg(long, requires = "pool_placement")]
+        pool_policy: Option<PathBuf>,
         /// Immutable packing artifacts; never expose this listener publicly.
         #[arg(long, requires = "packing_router_config")]
         artifact_listen: Option<SocketAddr>,
@@ -287,6 +290,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 max_objects,
                 requests,
             )?;
+            router.start_worker_health_monitor();
             tokio::try_join!(
                 async {
                     axum::serve(
@@ -309,6 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             query_ingress,
             pool_placement,
             frontier_replicas,
+            pool_policy,
             artifact_listen,
             listen,
             data_dir,
@@ -405,13 +410,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
                     continue;
                 }
-                if pool_placement {
-                    if let Err(error) = coordinator.enable_pool(frontier_replicas) {
-                        tracing::error!(%error,"pool migration waiting for durable decisions");
-                        tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
-                        continue;
-                    }
-                }
                 // Capacity registration is independent of journal advancement. A bad
                 // or unavailable addition must not stop serving/publishing on the
                 // already registered fleet. The infrastructure writer replaces this
@@ -427,6 +425,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 };
                 if let Err(error) = inventory_result {
                     tracing::error!(%error, "inventory reconciliation deferred");
+                }
+                if pool_placement {
+                    let policy = pool_policy
+                        .as_ref()
+                        .map(|path| {
+                            std::fs::read(path)
+                                .map_err(|e| e.to_string())
+                                .and_then(|bytes| {
+                                    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+                                })
+                        })
+                        .transpose();
+                    if let Err(error) = policy.and_then(|p| {
+                        coordinator.configure_pool(frontier_replicas, p.unwrap_or_default())
+                    }) {
+                        tracing::error!(%error,"pool policy waiting for inventory or durable decisions");
+                        tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
+                        continue;
+                    }
                 }
                 let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
                     let (height, hash) = if let Some(rpc) = &rpc {

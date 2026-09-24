@@ -46,6 +46,8 @@ pub struct RouterRegistration {
 pub struct ServingSnapshot {
     pub manifest: Manifest,
     pub routes: BTreeMap<u64, Vec<String>>,
+    #[serde(default)]
+    pub preferred: BTreeMap<u64, Vec<String>>,
     /// Domain -> (owned artifact filename, SHA-256 of the complete artifact).
     pub artifacts: BTreeMap<u64, (String, String)>,
 }
@@ -92,6 +94,14 @@ struct Inner {
     refreshed: Option<Instant>,
     outstanding: BTreeMap<String, usize>,
     cursor: usize,
+    worker_health: BTreeMap<String, WorkerHealth>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct WorkerHealth {
+    available: bool,
+    successes: u8,
+    failures: u8,
 }
 
 #[derive(Clone)]
@@ -119,6 +129,9 @@ struct Stats {
     retries: std::sync::atomic::AtomicU64,
     intermediate_bytes: std::sync::atomic::AtomicU64,
     packing_micros: std::sync::atomic::AtomicU64,
+    preferred_selections: std::sync::atomic::AtomicU64,
+    health_demotions: std::sync::atomic::AtomicU64,
+    health_recoveries: std::sync::atomic::AtomicU64,
 }
 
 type Error = (StatusCode, String);
@@ -181,6 +194,7 @@ impl PackingRouter {
                 refreshed: None,
                 outstanding: BTreeMap::new(),
                 cursor: 0,
+                worker_health: BTreeMap::new(),
             })),
             preparation: Arc::new(AsyncMutex::new(())),
             admission: Arc::new(Semaphore::new(requests)),
@@ -214,6 +228,96 @@ impl PackingRouter {
             .route("/internal/health", get(health))
             .route("/internal/metrics", get(metrics))
             .with_state(self.clone())
+    }
+
+    /// Probe preferred workers independently of query traffic. A restarted
+    /// worker is eligible only after it holds the exact active generation.
+    pub fn start_worker_health_monitor(&self) {
+        let router = self.clone();
+        tokio::spawn(async move {
+            loop {
+                router.probe_preferred_workers().await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+    }
+
+    async fn probe_preferred_workers(&self) {
+        let targets: BTreeMap<String, Vec<(u64, String)>> = {
+            let inner = self.inner.lock().unwrap();
+            let mut targets = BTreeMap::new();
+            if let Some(active) = &inner.active {
+                for snapshot in &active.view.snapshots {
+                    for urls in snapshot.preferred.values() {
+                        for url in urls {
+                            targets
+                                .entry(url.clone())
+                                .or_insert_with(Vec::new)
+                                .push((snapshot.manifest.generation, digest(&snapshot.manifest)));
+                        }
+                    }
+                }
+            }
+            targets
+        };
+        for (url, generations) in targets {
+            let healthy = match self
+                .http
+                .get(format!("{url}/internal/health"))
+                .timeout(Duration::from_secs(1))
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => response
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .is_some_and(|health| {
+                        health["incarnation"]
+                            .as_str()
+                            .is_some_and(|id| !id.is_empty())
+                            && generations.iter().all(|(generation, expected)| {
+                                health["published_manifest_digests"][generation.to_string()]
+                                    .as_str()
+                                    == Some(expected.as_str())
+                            })
+                    }),
+                _ => false,
+            };
+            let mut inner = self.inner.lock().unwrap();
+            let state = inner.worker_health.entry(url).or_default();
+            if healthy {
+                state.failures = 0;
+                state.successes = state.successes.saturating_add(1);
+                if state.successes >= 2 && !state.available {
+                    state.available = true;
+                    self.stats
+                        .health_recoveries
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            } else {
+                state.successes = 0;
+                state.failures = state.failures.saturating_add(1);
+                if state.failures >= 2 && state.available {
+                    state.available = false;
+                    self.stats
+                        .health_demotions
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    fn demote_worker(&self, url: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(state) = inner.worker_health.get_mut(url) {
+            if state.available {
+                self.stats
+                    .health_demotions
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            *state = WorkerHealth::default();
+        }
     }
 
     fn save_fence(
@@ -278,7 +382,8 @@ async fn health(State(r): State<PackingRouter>) -> Json<serde_json::Value> {
         "ready":i.refreshed.is_some_and(|t| t.elapsed() <= CONTROL_WATCHDOG),
         "resident_objects":i.material.values().filter(|v| v.strong_count()>0).count(),
         "packing_charged_bytes":r.packing_budget.charged_bytes(),
-        "available_requests":r.admission.available_permits(),"outstanding":i.outstanding}),
+        "available_requests":r.admission.available_permits(),"outstanding":i.outstanding,
+        "preferred_workers":i.worker_health.iter().map(|(url, state)| (url.clone(), state.available)).collect::<BTreeMap<_,_>>()}),
     )
 }
 
@@ -290,6 +395,22 @@ async fn metrics(State(r): State<PackingRouter>) -> impl IntoResponse {
         ("rejected_queries_total", r.stats.rejected.load(Relaxed)),
         ("failed_queries_total", r.stats.failed.load(Relaxed)),
         ("evaluation_retries_total", r.stats.retries.load(Relaxed)),
+        (
+            "preferred_selections_total",
+            r.stats.preferred_selections.load(Relaxed),
+        ),
+        (
+            "worker_health_demotions_total",
+            r.stats.health_demotions.load(Relaxed),
+        ),
+        (
+            "worker_health_recoveries_total",
+            r.stats.health_recoveries.load(Relaxed),
+        ),
+        (
+            "preferred_workers_available",
+            i.worker_health.values().filter(|s| s.available).count() as u64,
+        ),
         (
             "intermediate_bytes_total",
             r.stats.intermediate_bytes.load(Relaxed),
@@ -560,20 +681,52 @@ impl Drop for Outstanding {
 fn select(
     r: &PackingRouter,
     eligible: &[String],
+    preferred: &[String],
     excluded: Option<&str>,
 ) -> Result<Outstanding, Error> {
     let mut i = r.inner.lock().unwrap();
-    let min = eligible
-        .iter()
-        .filter(|u| Some(u.as_str()) != excluded)
-        .map(|u| *i.outstanding.get(u).unwrap_or(&0))
-        .min()
-        .ok_or_else(|| unavailable("no ready worker"))?;
-    let tied: Vec<_> = eligible
-        .iter()
-        .filter(|u| Some(u.as_str()) != excluded && *i.outstanding.get(*u).unwrap_or(&0) == min)
-        .collect();
-    let worker = tied[i.cursor % tied.len()].clone();
+    let ready_preferred = |url: &String| {
+        i.worker_health
+            .get(url)
+            .is_some_and(|state| state.available)
+    };
+    let idle_preferred = preferred.iter().find(|url| {
+        eligible.contains(url)
+            && Some(url.as_str()) != excluded
+            && ready_preferred(url)
+            && i.outstanding.get(*url).copied().unwrap_or(0) == 0
+    });
+    let worker = if let Some(url) = idle_preferred {
+        url.clone()
+    } else {
+        let ordinary: Vec<_> = eligible
+            .iter()
+            .filter(|url| !preferred.contains(url) && Some(url.as_str()) != excluded)
+            .collect();
+        let choices: Vec<_> = if ordinary.is_empty() {
+            eligible
+                .iter()
+                .filter(|url| Some(url.as_str()) != excluded && ready_preferred(url))
+                .collect()
+        } else {
+            ordinary
+        };
+        let min = choices
+            .iter()
+            .map(|u| *i.outstanding.get(*u).unwrap_or(&0))
+            .min()
+            .ok_or_else(|| unavailable("no ready worker"))?;
+        let tied: Vec<_> = choices
+            .iter()
+            .filter(|u| *i.outstanding.get(**u).unwrap_or(&0) == min)
+            .collect();
+        (*tied[i.cursor % tied.len()]).clone()
+    };
+    if preferred.contains(&worker) {
+        r.stats
+            .preferred_selections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     i.cursor = i.cursor.wrapping_add(1);
     *i.outstanding.entry(worker.clone()).or_default() += 1;
     Ok(Outstanding {
@@ -667,9 +820,17 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .routes
             .get(&binding.shard_id)
             .ok_or_else(|| unavailable("unassigned session"))?;
+        let preferred = loaded.view.snapshots[0]
+            .preferred
+            .get(&binding.shard_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let answer =
             crate::query_serving::evaluate(&router.http, &request, routes.len(), |excluded| {
-                let lease = select(&router, routes, excluded)?;
+                if let Some(url) = excluded {
+                    router.demote_worker(url);
+                }
+                let lease = select(&router, routes, preferred, excluded)?;
                 if excluded.is_some() {
                     router
                         .stats
@@ -741,6 +902,7 @@ mod tests {
             snapshots: vec![ServingSnapshot {
                 manifest: serde_json::from_value(vector["manifest"].clone()).unwrap(),
                 routes: BTreeMap::new(),
+                preferred: BTreeMap::new(),
                 artifacts: BTreeMap::new(),
             }],
         }
@@ -782,17 +944,48 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let r = router(root.path());
         let routes = vec!["http://a".into(), "http://b".into()];
-        let a = select(&r, &routes, None).unwrap();
-        let b = select(&r, &routes, None).unwrap();
+        let a = select(&r, &routes, &[], None).unwrap();
+        let b = select(&r, &routes, &[], None).unwrap();
         assert_ne!(a.worker, b.worker);
         let excluded = a.worker.clone();
         drop(a);
         drop(b);
         assert_eq!(
-            select(&r, &routes, Some(&excluded)).unwrap().worker,
+            select(&r, &routes, &[], Some(&excluded)).unwrap().worker,
             routes.iter().find(|s| **s != excluded).unwrap().clone()
         );
-        assert!(select(&r, &routes[..1], Some(&routes[0])).is_err());
+        assert!(select(&r, &routes[..1], &[], Some(&routes[0])).is_err());
+    }
+    #[test]
+    fn preferred_worker_is_skipped_when_unhealthy_or_busy() {
+        let root = tempfile::tempdir().unwrap();
+        let r = router(root.path());
+        let routes = vec!["http://cpu".into(), "http://gpu".into()];
+        let preferred = vec!["http://gpu".into()];
+        assert_eq!(
+            select(&r, &routes, &preferred, None).unwrap().worker,
+            "http://cpu"
+        );
+        r.inner.lock().unwrap().worker_health.insert(
+            "http://gpu".into(),
+            WorkerHealth {
+                available: true,
+                successes: 2,
+                failures: 0,
+            },
+        );
+        let gpu = select(&r, &routes, &preferred, None).unwrap();
+        assert_eq!(gpu.worker, "http://gpu");
+        assert_eq!(
+            select(&r, &routes, &preferred, None).unwrap().worker,
+            "http://cpu"
+        );
+        drop(gpu);
+        r.demote_worker("http://gpu");
+        assert_eq!(
+            select(&r, &routes, &preferred, None).unwrap().worker,
+            "http://cpu"
+        );
     }
     #[tokio::test]
     async fn watchdog_stops_admission_without_authorizing_recovery() {

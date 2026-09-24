@@ -55,6 +55,9 @@ mod tests {
                 s.pool = Some(crate::pool::Pool {
                     replication: 2,
                     frontier_replication: 2,
+                    domain_replication: Default::default(),
+                    optional_mirrors: Default::default(),
+                    domain_optional_workers: Default::default(),
                     placements: [(0, ["a".into(), "b".into()].into_iter().collect())]
                         .into_iter()
                         .collect(),

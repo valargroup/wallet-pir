@@ -6,29 +6,85 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub type Placements = BTreeMap<u64, BTreeSet<String>>;
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Policy {
+    #[serde(default)]
+    pub domain_replication: BTreeMap<u64, usize>,
+    #[serde(default)]
+    pub optional_mirrors: BTreeMap<String, String>,
+    #[serde(default)]
+    pub domain_optional_workers: BTreeMap<u64, BTreeSet<String>>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Pool {
     pub replication: usize,
     pub frontier_replication: usize,
+    #[serde(default)]
+    pub domain_replication: BTreeMap<u64, usize>,
+    /// Optional workers follow a required worker's assignments. They do not
+    /// contribute to the publication quorum.
+    #[serde(default)]
+    pub optional_mirrors: BTreeMap<String, String>,
+    #[serde(default)]
+    pub domain_optional_workers: BTreeMap<u64, BTreeSet<String>>,
     pub placements: Placements,
 }
 impl Pool {
     pub fn validate(&self, groups: &[Group]) -> Result<(), String> {
-        let count = groups.iter().map(|g| g.replicas.len()).sum::<usize>();
+        let names: BTreeSet<_> = groups
+            .iter()
+            .flat_map(|g| g.replicas.iter().map(|r| r.name.clone()))
+            .collect();
+        let count = names.len().saturating_sub(self.optional_workers().len());
         if self.replication < 2
             || self.frontier_replication < self.replication
             || self.frontier_replication > count
+            || self
+                .domain_replication
+                .values()
+                .any(|n| *n < 2 || *n > count)
+            || self.optional_mirrors.iter().any(|(worker, source)| {
+                worker == source
+                    || !names.contains(worker)
+                    || !names.contains(source)
+                    || self.optional_workers().contains(source)
+            })
+            || self
+                .domain_optional_workers
+                .values()
+                .any(|workers| workers.iter().any(|w| !names.contains(w)))
         {
             return Err("pool replication exceeds registered workers".into());
         }
         Ok(())
     }
-    pub fn factor(&self, state: ShardState) -> usize {
-        if state == ShardState::Sealed {
+    pub fn factor(&self, id: u64, state: ShardState) -> usize {
+        if let Some(n) = self.domain_replication.get(&id) {
+            *n
+        } else if state == ShardState::Sealed {
             self.replication
         } else {
             self.frontier_replication
         }
+    }
+    pub fn optional_workers(&self) -> BTreeSet<String> {
+        self.optional_mirrors
+            .keys()
+            .cloned()
+            .chain(
+                self.domain_optional_workers
+                    .values()
+                    .flat_map(|v| v.iter().cloned()),
+            )
+            .collect()
+    }
+    pub fn required(&self, id: u64, state: ShardState, placements: &BTreeSet<String>) -> bool {
+        placements
+            .iter()
+            .filter(|w| !self.optional_workers().contains(*w))
+            .count()
+            == self.factor(id, state)
     }
 }
 fn fits(coverage: &Coverage, groups: &[Group], placements: &Placements, worker: &str) -> bool {
@@ -69,7 +125,20 @@ pub fn validate(
     }
     for shard in &coverage.shards {
         let copies = placements.get(&shard.id).ok_or("unplaced domain")?;
-        if copies.len() != pool.factor(shard.state) || !copies.is_subset(&workers) {
+        let optional = pool.optional_workers();
+        if !pool.required(shard.id, shard.state, copies)
+            || !copies.is_subset(&workers)
+            || copies.iter().filter(|w| optional.contains(*w)).any(|w| {
+                !pool
+                    .domain_optional_workers
+                    .get(&shard.id)
+                    .is_some_and(|v| v.contains(w))
+                    && !pool
+                        .optional_mirrors
+                        .get(w)
+                        .is_some_and(|source| copies.contains(source))
+            })
+        {
             return Err("invalid domain replication".into());
         }
     }
@@ -91,11 +160,16 @@ pub fn place(
 ) -> Result<Placements, String> {
     pool.validate(groups)?;
     let mut placements = Placements::new();
-    let workers: Vec<_> = groups.iter().flat_map(|g| &g.replicas).collect();
+    let optional = pool.optional_workers();
+    let workers: Vec<_> = groups
+        .iter()
+        .flat_map(|g| &g.replicas)
+        .filter(|r| !optional.contains(&r.name))
+        .collect();
     for shard in &coverage.shards {
         let old = pool.placements.get(&shard.id);
         let mut selected = BTreeSet::new();
-        for _ in 0..pool.factor(shard.state) {
+        for _ in 0..pool.factor(shard.id, shard.state) {
             let mut eligible: Vec<_> = workers
                 .iter()
                 .filter(|w| {
@@ -126,6 +200,28 @@ pub fn place(
             }
             if !found {
                 return Err("worker pool capacity exhausted; preserve published placement".into());
+            }
+        }
+        for worker in groups
+            .iter()
+            .flat_map(|g| &g.replicas)
+            .filter(|r| optional.contains(&r.name))
+        {
+            let assigned = pool
+                .domain_optional_workers
+                .get(&shard.id)
+                .is_some_and(|v| v.contains(&worker.name))
+                || pool
+                    .optional_mirrors
+                    .get(&worker.name)
+                    .is_some_and(|source| selected.contains(source));
+            if assigned && !forbidden.contains(&(shard.id, worker.name.clone())) {
+                selected.insert(worker.name.clone());
+                placements.insert(shard.id, selected.clone());
+                if !fits(coverage, groups, &placements, &worker.name) {
+                    selected.remove(&worker.name);
+                    placements.insert(shard.id, selected.clone());
+                }
             }
         }
     }
@@ -218,6 +314,9 @@ mod tests {
         let mut pool = Pool {
             replication: 2,
             frontier_replication: 3,
+            domain_replication: BTreeMap::new(),
+            optional_mirrors: BTreeMap::new(),
+            domain_optional_workers: BTreeMap::new(),
             placements: Placements::new(),
         };
         let first = place(&coverage, &groups, &pool, &BTreeSet::new()).unwrap();
@@ -242,6 +341,9 @@ mod tests {
         let pool = Pool {
             replication: 2,
             frontier_replication: 2,
+            domain_replication: BTreeMap::new(),
+            optional_mirrors: BTreeMap::new(),
+            domain_optional_workers: BTreeMap::new(),
             placements: Placements::new(),
         };
         assert!(place(&coverage, &groups, &pool, &[(0, "worker-0".into())].into()).is_err());
@@ -252,5 +354,39 @@ mod tests {
             &[(0, ["worker-0".into()].into())].into()
         )
         .is_err());
+    }
+
+    #[test]
+    fn optional_gpu_mirrors_cpu_without_entering_required_quorum() {
+        let groups = groups(3);
+        let coverage = enhance_pir::protocol::Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let pool = Pool {
+            replication: 2,
+            frontier_replication: 2,
+            domain_replication: [(0, 2)].into(),
+            optional_mirrors: [("worker-2".into(), "worker-1".into())].into(),
+            domain_optional_workers: BTreeMap::new(),
+            placements: Placements::new(),
+        };
+        let with_gpu = place(&coverage, &groups, &pool, &BTreeSet::new()).unwrap();
+        assert_eq!(
+            with_gpu[&0],
+            ["worker-0", "worker-1", "worker-2"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        );
+        let without_gpu =
+            place(&coverage, &groups, &pool, &[(0, "worker-2".into())].into()).unwrap();
+        assert_eq!(
+            without_gpu[&0],
+            ["worker-0", "worker-1"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        );
+        validate(&coverage, &groups, &pool, &without_gpu).unwrap();
     }
 }
