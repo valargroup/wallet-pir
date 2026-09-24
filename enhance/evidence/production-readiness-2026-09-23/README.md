@@ -29,6 +29,16 @@ The [partial corrected-run freshness assessment](corrected-first3h51m-freshness.
 through 07:25 UTC bounded 173 of 173 sampled tip advances within 70.003
 seconds with no findings. Its copied trace is retained locally with the digest
 in the report; this does not cover the remainder of the soak or burst.
+The matching [worker 1](corrected-first3h51m-worker-1.json) and
+[worker 2](corrected-first3h51m-worker-2.json) partial summaries cover that
+window with zero sample errors, zero worker swap or OOM, stable process/release
+identities, and no findings. The maximum sample gaps were 1.003 and 1.005
+seconds. Runtime metrics were unavailable or inconsistent in some otherwise
+valid samples. The server deliberately omits memory gauges while preparation
+holds its engine lock; a publication between the sampler's health/metrics/health
+reads can also mark a one-second sample inconsistent. The sampled cgroup and
+process memory evidence remains present in those records. The summaries retain
+the runtime counts, and full-window assessment is still required.
 
 ## Historical pre-rollout snapshot (September 24, 03:18 UTC)
 

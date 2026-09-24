@@ -1,0 +1,66 @@
+{
+  "kind": "enhance-local-sample-summary",
+  "qualification": "unqualified",
+  "records": 14787,
+  "valid_samples": 14787,
+  "error_samples": 0,
+  "findings": [],
+  "first_wall_ns": 1790220534488871938,
+  "last_wall_ns": 1790235323727197649,
+  "max_gap_seconds": 1.004572066,
+  "max_sampled_rss_plus_kernel_bytes": 1792782336,
+  "resident_guard_bytes": 6979321856,
+  "max_cgroup_current_bytes": 4814110720,
+  "max_cgroup_peak_bytes": 4821188608,
+  "max_swap_current_bytes": 0,
+  "min_disk_free_bytes": 37534130176,
+  "runtime_unavailable_samples": 505,
+  "runtime_inconsistent_samples": 11,
+  "max_model_total_bytes": 3380609024,
+  "max_live_database_bytes": 704643072,
+  "max_pressure_avg10": {
+    "full": 0,
+    "some": 0
+  },
+  "pressure_total_delta_us": {
+    "full": 0,
+    "some": 0
+  },
+  "trace_sha256": "f60cb3c2d85d3f7f95b523c1aa91a0d5d37867993f899273ca8ac2b896f79a22",
+  "measurement_window_wall_ns": [
+    1790220834069337508,
+    1790234700000000000
+  ],
+  "maximum_allowed_gap_seconds": 3,
+  "identities": [
+    {
+      "host_id_sha256": "13f1218373ba90005a26ae2d8a4457fe6623749fb94c1e6cf9a6c67920b9ee7f",
+      "boot_id": "647e22bd-07d1-4685-8114-684a9651de26",
+      "main_pid": 174236,
+      "main_start_ticks": 87383798,
+      "source_revision": "216b9993cc3ae4e0f1820d60c6b8f03d104b5e46",
+      "binary_sha256": "7be19ca82108c2046d571ce6b901dd348d2e43435510a74257d530a49b309fe1"
+    }
+  ],
+  "counter_deltas": {
+    "memory.events": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "host_swap_pages": {
+      "pswpin": 12,
+      "pswpout": 0
+    }
+  },
+  "sampled_guard_headroom_bytes": 5186539520,
+  "limitations": [
+    "Sampled peaks do not bound between-sample resident memory.",
+    "Cgroup peaks and counters may include time before this capture.",
+    "This report does not validate workload placement, duration, replication, latency or host provenance.",
+    "A window uses wall clocks; clock alignment requires separate evidence."
+  ]
+}
