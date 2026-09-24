@@ -1,8 +1,9 @@
 # Temporary c-4 qualification workers
 
-Status at 2026-09-24 03:45 UTC: four isolated workers provisioned and idle;
-neither six-hour hardware campaign has started or passed. The existing
-production coordinator and serving pair continue to serve the public origin.
+Status at 2026-09-24 06:20 UTC: four isolated workers provisioned; the active
+six-hour campaign is running on group `g01` and the sealed group `g02` is idle.
+Neither hardware campaign has passed. The existing production coordinator and
+serving pair continue to serve the public origin.
 
 The workers were created from `ops/infra/digitalocean/enhance-v4` in the
 Valargroup wallet-pir project `85639967-fecb-4c8d-88be-c0e3dee3f86c`, AMS3,
@@ -38,7 +39,7 @@ whose SHA-256 is
 `4c24c30c0adbd19779671ee731adc09bad3ea77b941ca51fb01e235bcd26a3ac`.
 Every release file passed `SHA256SUMS` verification. The server binary SHA-256
 is `7be19ca82108c2046d571ce6b901dd348d2e43435510a74257d530a49b309fe1`.
-The worker units use a dedicated service account, separate profile data
+At provisioning, the worker units used a dedicated service account, separate profile data
 directories under `/srv/enhance-pir-v6/qualification/`, exact private IPs on
 port 8291, six sealed shard slots, and cgroup limits of 7 GiB high,
 7,609,516,032 bytes max and 2,147,479,552 bytes swap max. All four workers
@@ -47,9 +48,29 @@ data. Three one-second direct samples on each host recorded zero errors and
 bound the running binary, exact data directory, private listener, manifest and
 cgroup limits.
 
-The hosts are reserved for independent active and sealed campaigns after the
-corrected public load completes. Each campaign needs at least six measured
-hours, 300 publications, two physical replica traces, a complete assessor
-report and operator review. The Terraform root has `prevent_destroy` guards;
-retire these temporary hosts by a separate reviewed cleanup plan after their
-evidence is secured.
+## Current campaign staging
+
+The first active campaign was stopped after both workers swapped; its raw
+traces and exercise record were retained. A fresh active retry started on
+`g01` at 04:21:29 UTC with new data directories and `MemorySwapMax=0`, while
+keeping the same high and hard memory limits. Direct one-second samplers began
+before the exercise. This stricter swap limit differs from the production
+serving units and cannot alone qualify them. The first attempt's inactive data
+directories were removed after the raw evidence digests were verified, leaving
+about 31 GB free on each active worker.
+
+The idle `g02` pair was moved to fresh sealed-profile data directories and
+`MemorySwapMax=0`; both workers passed pinned-release idle health and effective
+limit checks. A separate root-only inventory at
+`/etc/enhance-pir-v6/qualification-sealed-four-physical-workers-216b999.json`
+on the coordinator names `g02` as the sealed shard group and `g01` as the
+physical active support group. Its SHA-256 is
+`cf0512c2200c3718bf1751e8c908092bba47be3ea9eea7638c3e9df4846182d9`.
+It has not been used. After the active run completes, `g01` needs fresh support
+data directories and new samplers before the sealed exercise starts; the
+ongoing active data and traces must first be finalized and preserved.
+
+Each campaign needs at least six measured hours, 300 publications, complete
+physical replica traces, an assessor report and operator review. The Terraform
+root has `prevent_destroy` guards; retire these temporary hosts by a separate
+reviewed cleanup plan after their evidence is secured.
