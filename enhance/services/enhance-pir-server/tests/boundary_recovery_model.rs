@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const M: usize = 8;
 const MIN: usize = 2;
-const DEPTH: u64 = 2;
+const SMALL_TEST_DEPTH: u64 = 2;
+const ZAKURA_DEPTH: u64 = 1_000;
 
 #[derive(Clone)]
 struct Block {
@@ -42,17 +43,37 @@ struct Publication {
     domains: BTreeMap<usize, Domain>,
 }
 
-#[derive(Default)]
 struct Model {
     blocks: Vec<Block>,
+    depth: u64,
     recovery_epoch: u64,
     recovery_events: Vec<(usize, u64)>,
+    sealed_boundaries: BTreeMap<usize, (u64, &'static str)>,
     known_sessions: BTreeMap<usize, BTreeSet<Session>>,
     revoked: BTreeSet<Session>,
     publication: Publication,
 }
 
+impl Default for Model {
+    fn default() -> Self {
+        Self::with_depth(SMALL_TEST_DEPTH)
+    }
+}
+
 impl Model {
+    fn with_depth(depth: u64) -> Self {
+        Self {
+            blocks: Vec::new(),
+            depth,
+            recovery_epoch: 0,
+            recovery_events: Vec::new(),
+            sealed_boundaries: BTreeMap::new(),
+            known_sessions: BTreeMap::new(),
+            revoked: BTreeSet::new(),
+            publication: Publication::default(),
+        }
+    }
+
     fn append(&mut self, height: u64, hash: &'static str, rows: Vec<u64>) {
         assert_eq!(height, self.blocks.last().map_or(1, |b| b.height + 1));
         self.blocks.push(Block { height, hash, rows });
@@ -106,21 +127,23 @@ impl Model {
 
     fn publish(&mut self) {
         let mut rows = Vec::new();
-        let mut completion_height = BTreeMap::new();
+        let mut completion = BTreeMap::new();
         for block in &self.blocks {
             for row in &block.rows {
                 rows.push(*row);
                 if rows.len() % M == 0 {
-                    completion_height.insert(rows.len() / M, block.height);
+                    completion.insert(rows.len() / M, (block.height, block.hash));
                 }
             }
         }
         let tip = self.blocks.last().map(|b| b.height);
-        let seals: BTreeSet<_> = completion_height
-            .into_iter()
-            .filter(|(_, height)| tip.is_some_and(|tip| tip - height >= DEPTH))
-            .map(|(boundary, _)| boundary)
-            .collect();
+        self.sealed_boundaries
+            .retain(|boundary, stamp| completion.get(boundary) == Some(stamp));
+        for (boundary, stamp) in completion {
+            if tip.is_some_and(|tip| tip - stamp.0 >= self.depth) {
+                self.sealed_boundaries.insert(boundary, stamp);
+            }
+        }
         let mut routes: Vec<_> = (0..rows.len())
             .map(|position| Route {
                 domain: position / M,
@@ -153,8 +176,8 @@ impl Model {
             domains.insert(
                 id,
                 Domain {
-                    sealed: seals.contains(&(id + 1)),
-                    provisional: id > 0 && !seals.contains(&id),
+                    sealed: self.sealed_boundaries.contains_key(&(id + 1)),
+                    provisional: id > 0 && !self.sealed_boundaries.contains_key(&id),
                     session: Session {
                         domain: id,
                         recovery_epoch,
@@ -197,6 +220,30 @@ impl Model {
 
 fn rows(range: std::ops::Range<u64>) -> Vec<u64> {
     range.collect()
+}
+
+#[test]
+fn zakura_window_seals_at_1000_and_preserves_a_surviving_finalized_boundary() {
+    let mut model = Model::with_depth(ZAKURA_DEPTH);
+    model.append(1, "crossing", rows(0..9));
+    for height in 2..=1_000 {
+        model.append(height, "depth", vec![]);
+    }
+    assert!(!model.publication.domains[&0].sealed);
+    assert!(model.publication.domains[&1].provisional);
+
+    model.append(1_001, "finalized", vec![]);
+    assert!(model.publication.domains[&0].sealed);
+    assert!(!model.publication.domains[&1].provisional);
+    let sealed_session = model.session(0);
+
+    // Replacing all 1,000 blocks above the crossing remains inside Zakura's
+    // rollback window. The crossing block itself survives its finalized pin.
+    model.rewind(1);
+    assert_eq!(model.recovery_epoch, 0);
+    assert!(model.publication.domains[&0].sealed);
+    assert!(!model.publication.domains[&1].provisional);
+    assert!(model.current(&sealed_session));
 }
 
 #[test]

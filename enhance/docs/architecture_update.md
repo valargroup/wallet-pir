@@ -229,7 +229,12 @@ repeated content revisions; sealed domains still need safe resource lifetimes.
 the tip anchor. Partition records by fixed global row range even when one block
 crosses several `M` boundaries; retain its excess records and partial final row.
 The block that fills a predecessor's last row starts that boundary's confirmation
-clock. Depth is measured from that block, not from a later publication.
+clock. Use `1,000` blocks, matching [Zakura's local maximum reorg window](https://github.com/zakura-core/zakura/blob/8a88926d0bf7e75eaab2d26bd0ad90c0fc88787f/crates/zakura-chain/src/parameters/constants.rs#L22-L30): seal
+only when the tip is at least 1,000 blocks above that block and its hash remains
+canonical. Depth is measured from the crossing block, not a later publication.
+This is an explicit dependency on Zakura's local finality policy, not a measured
+Ironwood reorg bound or a consensus guarantee. Reorgs wholly inside the window
+remain ordinary provisional rollbacks.
 
 | State | Tip publication | After the boundary confirms |
 |---|---|---|
@@ -249,16 +254,20 @@ durable lifecycle transitions, while provisional routing provides tip latency.
 
 **Rollback.** Find the common canonical ancestor and discard all later blocks
 before replay. Withdraw provisional successors and tail routes invalidated by
-the rollback, recompute fixed-range coverage and confirmation clocks from the
-surviving chain, and atomically publish a complete replacement view. Mutable
+the rollback, recompute fixed-range coverage and pending confirmation clocks
+from the surviving chain, and atomically publish a complete replacement view.
+Keep a finalized seal when its completing block remains canonical, even if the
+new tip is fewer than 1,000 blocks above it. Mutable
 domains receive new content revisions as needed. A removed provisional domain
 cannot remain in the canonical routing view. Retained snapshots follow D3's
 stale-view rule; wallets must reject their orphaned anchors. A replayed crossing
 uses B-local row coordinates again; neither rows nor an entire crossing block
 are deferred to fit a boundary.
 
-**Deep-reorg recovery.** A seal can become noncanonical despite its confirmation
-depth. If rollback removes or replaces a record in a sealed range, pause further
+**Deep-reorg recovery.** A sealed boundary should not be crossed by an ordinary
+reorg accepted under the same Zakura policy. A node reset, source switch or
+history inconsistency can still make it noncanonical. If rollback removes or
+replaces a record in a sealed range, pause further
 publication and fence every current and retained session of affected domains on
 all serving replicas. The affected set starts at the first changed global row's
 domain and includes downstream domains whose content or coordinates can change;
@@ -382,8 +391,10 @@ guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unch
    intersection attack against the persistent-set policy.
 7. **Wire encoding.** Version the routing table, domain descriptors and
    session identities, and extend the interop harness to the new manifest.
-9. **Confirmation depth value.** Choose the depth from Ironwood reorg data, and
-   record the row-growth burst that a single block can produce.
+9. **Boundary capacity evidence.** The 1,000-block depth is a Zakura local
+   policy choice, not an empirical reorg claim. Measure Ironwood block row
+   bursts and successor prewarming and preparation time on intended hosts;
+   provisional B must be ready at the crossing, before any depth accrues.
 
 ## Implementation phases
 
