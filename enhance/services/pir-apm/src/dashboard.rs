@@ -123,6 +123,8 @@ pub async fn healthz() -> &'static str {
 const STYLE: &str = r#"
 .mini-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px;text-align:left;font-family:var(--sans);white-space:normal;margin:10px 0 20px}
 .mini-charts svg{display:block;width:100%;max-height:180px;color:var(--p62)}
+.chart-hit{cursor:crosshair}.chart-hit line{visibility:hidden;pointer-events:none}.chart-hit:hover line,.chart-hit:focus-within line{visibility:visible}
+.chart-tooltip{position:fixed;z-index:1000;pointer-events:none;white-space:pre;max-width:calc(100vw - 16px);padding:10px 12px;border:1px solid var(--gold);border-radius:4px;background:var(--vellum);color:var(--ink);font:12px/1.6 var(--mono);box-shadow:0 4px 18px #0008}
 .chart-heading{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--p62)}
 .chart-legend{font-size:11px;color:var(--p42);margin:4px 0}
 .percentile-buttons button{background:transparent;color:var(--p62);border:1px solid var(--p22);padding:3px 8px;cursor:pointer}
@@ -320,6 +322,33 @@ const SCRIPT: &str = r#"
 (function () {
   var PERIOD = 5000;
   var timer;
+  var hoverPosition;
+  var tooltip = document.createElement('div');
+  tooltip.className = 'chart-tooltip';
+  tooltip.setAttribute('role', 'status');
+  tooltip.hidden = true;
+  document.body.appendChild(tooltip);
+  function showReadout(target, x, y) {
+    var point = target && target.closest && target.closest('.chart-hit');
+    tooltip.hidden = !point;
+    if (!point) return;
+    var chart = point.closest('[data-percentile]');
+    var percentile = chart ? chart.dataset.percentile : 'p99';
+    tooltip.textContent = point.dataset.time + '\n' + point.dataset[percentile];
+    tooltip.style.left = Math.max(8, Math.min(x + 14, window.innerWidth - tooltip.offsetWidth - 8)) + 'px';
+    tooltip.style.top = Math.max(8, Math.min(y + 14, window.innerHeight - tooltip.offsetHeight - 8)) + 'px';
+  }
+  document.addEventListener('pointermove', function(event) {
+    hoverPosition = { x: event.clientX, y: event.clientY };
+    showReadout(event.target, event.clientX, event.clientY);
+  });
+  document.addEventListener('focusin', function(event) {
+    var rect = event.target.getBoundingClientRect();
+    showReadout(event.target, rect.left + rect.width / 2, rect.top);
+  });
+  document.addEventListener('focusout', function() { tooltip.hidden = true; });
+  document.documentElement.addEventListener('pointerleave', function() { tooltip.hidden = true; hoverPosition = null; });
+  window.addEventListener('scroll', function() { tooltip.hidden = true; hoverPosition = null; }, true);
   function schedule() { clearTimeout(timer); timer = setTimeout(run, PERIOD); }
   function run() {
     if (document.hidden) { schedule(); return; }
@@ -336,6 +365,8 @@ const SCRIPT: &str = r#"
             if (match) match.dataset.percentile = el.dataset.percentile;
           });
           current.replaceWith(next);
+          tooltip.hidden = true;
+          if (hoverPosition) showReadout(document.elementFromPoint(hoverPosition.x, hoverPosition.y), hoverPosition.x, hoverPosition.y);
         }
       })
       .catch(function () {})

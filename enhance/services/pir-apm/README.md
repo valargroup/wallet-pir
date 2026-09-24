@@ -15,7 +15,9 @@ response transmission. Stage percentiles are independent and are not additive.
 Missing worker timing suppresses all three samples; it is never recorded as zero.
 
 Each endpoint has one-hour latency and arriving-request charts with one-minute
-points. Query has a p50/p99 toggle (default p99), preserved during refresh.
+points. Hover anywhere over a sample column (or focus it with the keyboard)
+to see the UTC timestamp and latency in milliseconds for each visible series.
+Query has a p50/p99 toggle (default p99), preserved during refresh.
 History is bounded and held only in memory; restarting APM clears it. Missing
 samples, scrape failures and process restarts create gaps. Headlines refresh
 and telemetry samples every five seconds; fleet inventory remains 15 seconds.

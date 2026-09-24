@@ -72,6 +72,46 @@ fn svg(
     if !any {
         out.push_str("<text x=\"165\" y=\"68\" fill=\"currentColor\" font-size=\"12\">Awaiting one-minute samples</text>");
     }
+    let visible: Vec<_> = points
+        .iter()
+        .filter(|p| p.at >= start && p.at <= now)
+        .collect();
+    let x_at = |p: &Point| {
+        42.0 + p.at.duration_since(start).unwrap_or_default().as_secs_f64() / 3600.0 * 450.0
+    };
+    for (index, point) in visible.iter().enumerate() {
+        let x = x_at(point);
+        let left = if index == 0 {
+            42.0
+        } else {
+            (x_at(visible[index - 1]) + x) / 2.0
+        };
+        let right = visible
+            .get(index + 1)
+            .map(|p| (x_at(p) + x) / 2.0)
+            .unwrap_or(492.0);
+        let readout = |percentile: bool| {
+            series
+                .iter()
+                .filter(|(_, _, _, p99)| traffic || series.len() == 2 || *p99 == percentile)
+                .map(|(stage, label, _, p99)| {
+                    let number = value(point, stage, *p99)
+                        .filter(|n| n.is_finite() && *n >= 0.0)
+                        .map(|n| {
+                            if traffic {
+                                format!("{n:.0} requests")
+                            } else {
+                                format!("{n:.2} ms")
+                            }
+                        })
+                        .unwrap_or_else(|| "Unavailable".into());
+                    format!("{label}: {number}")
+                })
+                .collect::<Vec<_>>()
+                .join("&#10;")
+        };
+        out.push_str(&format!("<g class=\"chart-hit\" data-time=\"{}\" data-p50=\"{}\" data-p99=\"{}\"><line x1=\"{x:.2}\" x2=\"{x:.2}\" y1=\"20\" y2=\"108\" stroke=\"currentColor\" stroke-dasharray=\"3 3\"/><rect x=\"{left:.2}\" y=\"20\" width=\"{:.2}\" height=\"88\" fill=\"transparent\" tabindex=\"0\" aria-label=\"{}; {}\"/></g>", stamp(point.at), readout(false), readout(true), right-left, stamp(point.at), readout(true)));
+    }
     out.push_str("</svg>");
     out
 }
@@ -116,6 +156,27 @@ pub fn render(endpoint: &str, points: &VecDeque<Point>, now: SystemTime) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hover_readout_converts_seconds_and_distinguishes_percentiles() {
+        let now = UNIX_EPOCH + Duration::from_secs(7200);
+        let points = VecDeque::from([Point {
+            at: now,
+            latencies: std::collections::BTreeMap::from([(
+                "total".into(),
+                crate::metrics::LatencyWindow {
+                    p50: Some(0.01234),
+                    p99: Some(0.05678),
+                    ..Default::default()
+                },
+            )]),
+            arrivals: Some(120.0),
+        }]);
+        let chart = render("query", &points, now);
+        assert!(chart.contains("data-p50=\"Total p50: 12.34 ms&#10;Worker p50: Unavailable"));
+        assert!(chart.contains("data-p99=\"Total p99: 56.78 ms&#10;Worker p99: Unavailable"));
+        assert!(chart.contains("Arrivals: 120 requests"));
+        assert!(chart.contains("tabindex=\"0\""));
+    }
     #[test]
     fn missing_samples_break_paths_and_query_has_toggle() {
         let now = UNIX_EPOCH + Duration::from_secs(7200);

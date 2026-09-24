@@ -1,0 +1,18 @@
+{
+  "deployed_utc": "2026-09-24T17:22:33Z",
+  "apm_sha256": "d6fdb815cba45dbb219ae8fa2e36a0a38b707da1722a8d393445eaa3dc166ac3",
+  "source_files": {
+    "enhance/services/pir-apm/src/charts.rs": "15593317732acd82086dbabc2feeca4802ebbace18d15e661035cb0c355fff4c",
+    "enhance/services/pir-apm/src/dashboard.rs": "7a199b78ee5bbba2fe969c341cb80c2812aa89152420e83ce6f31a7e1a6b32a4"
+  },
+  "tests": "72 APM tests passed; JavaScript syntax and tooltip value, percentile, positioning and hide checks passed",
+  "rollout": "APM sidecar only; server services and review load continued",
+  "review_load": {
+    "query_qps": 2,
+    "init_qps": 1,
+    "started_utc": "2026-09-24T17:19:39Z",
+    "duration_seconds": 1800,
+    "service": "apm-graph-review-20260924.service"
+  },
+  "rollback_binary": "/root/apm-hour-deploy/pir-apm-before-hover"
+}
