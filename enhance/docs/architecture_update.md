@@ -193,6 +193,13 @@ alone does not establish that gain.
 
 ### D6. Workers pack; a request router replaces the coordinator in the query path
 
+The first implementation slice adds a private worker `/internal/query` endpoint.
+It accepts the existing EPQ4 body, holds worker admission across buffering,
+decoding, evaluation and packing, and returns the existing wallet response.
+The public coordinator query route and `/internal/evaluate` remain in use;
+only tests call the new endpoint. Worker packing memory and CPU on 8 GiB
+hardware remain unqualified, so this endpoint is not yet a router target.
+
 **Decision.** Split the public origin, request routing and control plane into
 explicit components. Caddy terminates TLS and preserves the public wallet
 endpoint. It sends manifest and control routes to the coordinator and the

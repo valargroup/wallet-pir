@@ -119,6 +119,92 @@ async fn distributed_round_trip_retention_failover_and_restart() {
         let (got, _) = client.query_position_with_timing(position).await.unwrap();
         assert_eq!(got.as_ref(), record(position));
     }
+    // The private full-query path must produce the same wallet row without
+    // changing the public coordinator path or its intermediate worker RPC.
+    let session = client.session(0).await.unwrap();
+    let http = reqwest::Client::new();
+    for position in [0, 32, 66] {
+        let (public_query, public_slot) = session.prepare_position(position).unwrap();
+        let (direct_query, direct_slot) = session.prepare_position(position).unwrap();
+        let public = http
+            .post(format!("{origin}/v1/enhance/query"))
+            .body(public_query.body().to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let direct = http
+            .post(format!("{}/internal/query", groups[0].replicas[0].url))
+            .body(direct_query.body().to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let public_row = session.decode(public_query, &public).unwrap();
+        let direct_row = session.decode(direct_query, &direct).unwrap();
+        assert_eq!(public_row, direct_row);
+        assert_eq!(
+            public_row[public_slot * RECORD_BYTES..(public_slot + 1) * RECORD_BYTES],
+            record(position)
+        );
+        assert_eq!(direct_slot, public_slot);
+    }
+    let (valid, _) = session.prepare_position(0).unwrap();
+    for (offset, replacement, status) in [
+        (4, u64::MAX, reqwest::StatusCode::GONE),
+        (12, u64::MAX, reqwest::StatusCode::BAD_REQUEST),
+    ] {
+        let mut body = valid.body().to_vec();
+        body[offset..offset + 8].copy_from_slice(&replacement.to_le_bytes());
+        let public = http
+            .post(format!("{origin}/v1/enhance/query"))
+            .body(body.clone())
+            .send()
+            .await
+            .unwrap();
+        let direct = http
+            .post(format!("{}/internal/query", groups[0].replicas[0].url))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(public.status(), status);
+        assert_eq!(public.status(), direct.status());
+        assert_eq!(public.bytes().await.unwrap(), direct.bytes().await.unwrap());
+    }
+    for body in [
+        b"bad".to_vec(),
+        {
+            let mut body = valid.body().to_vec();
+            body[20] ^= 1;
+            body
+        },
+        vec![0; 512 * 1024 + 1],
+    ] {
+        let public = http
+            .post(format!("{origin}/v1/enhance/query"))
+            .body(body.clone())
+            .send()
+            .await
+            .unwrap();
+        let direct = http
+            .post(format!("{}/internal/query", groups[0].replicas[0].url))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(public.status(), direct.status());
+        assert_eq!(public.bytes().await.unwrap(), direct.bytes().await.unwrap());
+    }
+    drop(http);
     assert!(evaluations
         .iter()
         .all(|count| { count.load(std::sync::atomic::Ordering::Relaxed) >= 2 }));
@@ -206,6 +292,14 @@ async fn distributed_round_trip_retention_failover_and_restart() {
         .unwrap();
     assert_eq!(expired.status(), reqwest::StatusCode::GONE);
     drop(expired);
+    let worker_expired = reqwest::Client::new()
+        .post(format!("{}/internal/query", groups[0].replicas[0].url))
+        .body(valid.body().to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(worker_expired.status(), reqwest::StatusCode::GONE);
+    drop(worker_expired);
     assert!(!coordinator_root
         .join("snapshots")
         .join(format!("{old_generation}.json"))

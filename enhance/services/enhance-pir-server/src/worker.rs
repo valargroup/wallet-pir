@@ -1,6 +1,6 @@
 //! Private worker API. A candidate never evicts a published assignment.
 use super::control::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT};
-use super::runtime::{DomainPlan, Engine, Evaluation};
+use super::runtime::{DomainPlan, Engine, Evaluation, Packing};
 use axum::{
     body::{to_bytes, Body},
     extract::{Path, Request, State},
@@ -10,7 +10,8 @@ use axum::{
     Json, Router,
 };
 use enhance_pir::protocol::{
-    digest, Manifest, ShardState, UnitIdentity, PROTOCOL_REVISION, RETAINED_GENERATIONS,
+    digest, Manifest, QueryBinding, ShardState, UnitIdentity, PROTOCOL_REVISION,
+    RETAINED_GENERATIONS,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -152,8 +153,11 @@ pub struct Worker {
     inner: Arc<Mutex<Inner>>,
     preparation: Arc<Semaphore>,
     evaluation: Arc<Semaphore>,
+    packing: Arc<Mutex<BTreeMap<(u64, u64), Arc<Packing>>>>,
     pub incarnation: String,
 }
+
+const QUERY_BODY_LIMIT: usize = 512 * 1024;
 
 type ApiResult<T> = Result<T, (StatusCode, String)>;
 fn unavailable(e: impl ToString) -> (StatusCode, String) {
@@ -439,6 +443,7 @@ impl Worker {
             })),
             preparation: Arc::new(Semaphore::new(1)),
             evaluation: Arc::new(Semaphore::new(2)),
+            packing: Arc::new(Mutex::new(BTreeMap::new())),
             incarnation,
         })
     }
@@ -457,6 +462,7 @@ impl Worker {
             .route("/internal/abort", post(abort))
             .route("/internal/retain", post(retain))
             .route("/internal/evaluate", post(evaluate))
+            .route("/internal/query", post(query))
             .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
             .with_state(self)
     }
@@ -640,6 +646,10 @@ async fn abort(State(w): State<Worker>, Json(request): Json<Abort>) -> ApiResult
     disk.activated = None;
     i.save(disk).map_err(unavailable)?;
     i.candidate.clear();
+    w.packing
+        .lock()
+        .unwrap()
+        .retain(|(generation, _), _| i.disk.published.contains_key(generation));
     Ok(StatusCode::OK)
 }
 
@@ -667,6 +677,10 @@ async fn retain(State(w): State<Worker>, Json(request): Json<Retain>) -> ApiResu
     disk.published.retain(|g, _| generations.contains(g));
     i.save(disk).map_err(unavailable)?;
     i.published.retain(|g, _| generations.contains(g));
+    w.packing
+        .lock()
+        .unwrap()
+        .retain(|(generation, _), _| generations.contains(generation));
     if i.disk.candidate.is_none() {
         i.collect_unused().map_err(unavailable)?;
     }
@@ -963,6 +977,10 @@ async fn commit(State(w): State<Worker>, Json(request): Json<Commit>) -> ApiResu
     let prepared = std::mem::take(&mut i.candidate);
     i.published.insert(request.generation, prepared);
     i.published.retain(|g, _| request.retained.contains(g));
+    w.packing
+        .lock()
+        .unwrap()
+        .retain(|(generation, _), _| request.retained.contains(generation));
     i.collect_unused().map_err(unavailable)?;
     Ok(StatusCode::OK)
 }
@@ -1029,10 +1047,150 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
     Ok(Json(result))
 }
 
+/// Private full-query path. The permit covers the body, decoding, evaluation,
+/// packing and the complete response buffer. No public route targets this path.
+async fn query(State(w): State<Worker>, request: Request) -> ApiResult<Response> {
+    let permit = w
+        .evaluation
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        to_bytes(request.into_body(), QUERY_BODY_LIMIT),
+    )
+    .await
+    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
+    .map_err(|e| (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
+    let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let (evaluation, session) = {
+        let i = w.inner.lock().unwrap();
+        let (manifest, assignment) =
+            if let Some((manifest, _)) = i.disk.published.get(&binding.generation) {
+                (manifest, &i.published[&binding.generation])
+            } else if let Some(manifest) = i
+                .disk
+                .activated
+                .as_ref()
+                .filter(|m| m.generation == binding.generation)
+            {
+                (manifest, &i.candidate)
+            } else {
+                return Err((StatusCode::GONE, "expired session".into()));
+            };
+        let session = manifest
+            .sessions
+            .iter()
+            .find(|s| s.shard_id == binding.shard_id)
+            .cloned()
+            .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+        if session.public_params_sha256[..16] != hex::encode(binding.epoch) {
+            return Err((StatusCode::BAD_REQUEST, "query session mismatch".into()));
+        }
+        let evaluation = assignment
+            .get(&binding.shard_id)
+            .cloned()
+            .ok_or((StatusCode::BAD_REQUEST, "wrong group".into()))?;
+        (evaluation, session)
+    };
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let pack = {
+            let mut packing = w.packing.lock().unwrap();
+            if let Some(pack) = packing.get(&(binding.generation, binding.shard_id)) {
+                pack.clone()
+            } else {
+                let hint = evaluation.hint().map_err(unavailable)?;
+                let pack = Arc::new(
+                    Packing::new(evaluation.plan.shard.logical_rows, &hint).map_err(unavailable)?,
+                );
+                if pack.reference(binding.shard_id).map_err(unavailable)? != session {
+                    return Err(unavailable("worker packing session mismatch"));
+                }
+                packing.insert((binding.generation, binding.shard_id), pack.clone());
+                pack
+            }
+        };
+        let result = (|| {
+            let coefficients = pack
+                .query_coefficients(&body, binding)
+                .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+            let answer = evaluation
+                .evaluate(&coefficients)
+                .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+            pack.pack(&body, &answer)
+                .map(IntoResponse::into_response)
+                .map_err(|e| (StatusCode::BAD_REQUEST, e))
+        })();
+        // A retention command may have expired this generation while the
+        // admitted query was running. Do not leave its packing cache resident.
+        let i = w.inner.lock().unwrap();
+        if !i.disk.published.contains_key(&binding.generation)
+            && i.disk.activated.as_ref().map(|m| m.generation) != Some(binding.generation)
+        {
+            w.packing
+                .lock()
+                .unwrap()
+                .remove(&(binding.generation, binding.shard_id));
+        }
+        result
+    })
+    .await
+    .map_err(unavailable)?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn full_query_admission_precedes_body_buffering() {
+        let root = tempfile::tempdir().unwrap();
+        let worker = Worker::open(root.path()).unwrap();
+        let router = worker.clone().router();
+        let mut senders = Vec::new();
+        let mut requests = Vec::new();
+        for _ in 0..2 {
+            let (sender, receiver) =
+                tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(1);
+            senders.push(sender);
+            let request = Request::builder()
+                .method("POST")
+                .uri("/internal/query")
+                .body(Body::from_stream(
+                    tokio_stream::wrappers::ReceiverStream::new(receiver),
+                ))
+                .unwrap();
+            requests.push(tokio::spawn(router.clone().oneshot(request)));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while worker.evaluation.available_permits() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let rejected = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/internal/query")
+                    .body(Body::from(vec![0; QUERY_BODY_LIMIT + 1]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::TOO_MANY_REQUESTS);
+        drop(senders);
+        for request in requests {
+            assert_eq!(
+                request.await.unwrap().unwrap().status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert_eq!(worker.evaluation.available_permits(), 2);
+    }
 
     #[test]
     fn q46_worker_state_is_rejected_without_rewriting_it() {
