@@ -1,0 +1,102 @@
+{
+  "run_id": "cuda-p4000-2026-09-24",
+  "date_utc": "2026-09-24",
+  "source_commit": "3279d835b5977b6aa3b78b496885180bae5eb247",
+  "dependency_commit": "1d8aea341d844df97ef6eb244c24b0a050eb3e9b",
+  "profile": "release-fast",
+  "rust": "1.91.0",
+  "features": [
+    "cuda"
+  ],
+  "rustflags": "-C target-cpu=native",
+  "cflags": "-mpclmul",
+  "cxxflags": "-mpclmul",
+  "rayon_threads": 8,
+  "host": {
+    "provider": "Paperspace",
+    "machine": "wallet-pir-p4000-ams1",
+    "region": "AMS1",
+    "gpu": "Quadro P4000",
+    "gpu_memory_mib": 8192,
+    "cpu": "Intel Xeon E5-2623 v4 @ 2.60GHz",
+    "vcpus": 8,
+    "cpu_sharing": "Xen VM; physical contention unknown; user.slice cpu.max=max 100000",
+    "ram": "29 GiB as reported by free -h; exact bytes in environment.txt",
+    "storage": "48 GiB root volume; peak disk not measured",
+    "os": "Ubuntu 22.04.5",
+    "driver": "580.178.04",
+    "nvrtc": "12.2.140",
+    "warning": "nvidia-smi reported corrupted infoROM; no test or benchmark device error"
+  },
+  "workload": {
+    "schema": "current Enhance v7 source at recorded commit",
+    "network": "synthetic records; no chain/genesis",
+    "journal_anchor": "HTTP fixture local journal at height 3428143 and subsequent test blocks; no production anchor",
+    "geometry": {
+      "logical_rows": 32768,
+      "coefficients": 12288,
+      "units": 4,
+      "host_database_bytes": 805306368
+    },
+    "packing": "benchmark omits packing; separate encrypted tests exercise CPU packing",
+    "key_reuse": "existing encrypted test fixture; deterministic canonical vectors in benchmark",
+    "seal_policy": "Lifecycle and Geometry defaults at source commit",
+    "coverage_records": 1081344,
+    "queries_per_repetition": 100,
+    "repetitions": 3,
+    "concurrent_callers": [
+      1,
+      2
+    ],
+    "warmup_gpu_queries": 10,
+    "baseline": "same records, queries, process, host, and release-fast profile; CPU auto kernel",
+    "cache": "CPU creates fresh artifacts; GPU reloads those artifacts and reuses unit Arcs; retained generation/restart exercised separately",
+    "transport": "benchmark in process; HTTP test uses loopback; no remote-network latency measurement",
+    "revision_churn": "none during benchmark",
+    "duration_seconds": 57.34
+  },
+  "commands": [
+    "cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib cuda_encrypted_bootstrap_round_trip_and_cached_restart -- --ignored --nocapture",
+    "cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test http cuda_distributed_round_trip_retention_failover_and_restart -- --ignored --nocapture",
+    "cargo build --locked --profile release-fast -p enhance-pir-server --features cuda --example cuda_domain",
+    "bash benchmark.sh"
+  ],
+  "results": {
+    "gpu_library_test": "pass",
+    "gpu_http_test": "pass",
+    "cpu_ms_per_query": [
+      27.499,
+      28.049,
+      28.647
+    ],
+    "gpu_one_caller_ms_per_query": [
+      9.794,
+      8.987,
+      8.988
+    ],
+    "gpu_two_callers_ms_per_completed_query": [
+      8.458,
+      8.401,
+      8.443
+    ],
+    "cpu_build_ms": 27813.157,
+    "gpu_artifact_reload_prepare_ms": 8937.453,
+    "sampled_peak_gpu_mib": 887,
+    "gpu_sample_interval_ms": 100,
+    "gpu_samples": 559,
+    "post_process_gpu_mib": 3,
+    "combined_cpu_gpu_process_max_rss_kib": 1794192,
+    "failures": 0,
+    "timeouts": 0,
+    "incomplete": 0,
+    "all_outputs_equal": true,
+    "runtime_arcs_released": true
+  },
+  "limits": [
+    "Throughput-derived time per completed query; no request latency percentiles.",
+    "GPU reload includes artifact IO, host construction, compile and upload; not isolated transfer time.",
+    "No whole-request speedup, wallet capacity, fleet admission, 8 GiB router sizing or production qualification claim.",
+    "Host RSS includes both CPU and GPU engines. GPU memory is additional to retained host data.",
+    "No upload/response/transport byte measurement; benchmark has no network; disk peak unmeasured."
+  ]
+}
