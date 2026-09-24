@@ -1,10 +1,10 @@
 # Enhance PIR v7 architecture
 
-This is the implemented architecture for `ironwood-enhance-pir-v7`, schema 11.
-The accepted design is [architecture_update.md](architecture_update.md).
-Deployment evidence and remaining hardware qualification are tracked separately;
-implementation is not a capacity certificate. The [v6 design](archive/architecture-v6.md)
-is retained for historical context.
+Enhance PIR serves `ironwood-enhance-pir-v7`, schema 11, using fixed storage
+shards, composed query domains and content-bound wallet sessions. The coordinator
+owns publication and query packing; worker replicas evaluate private row queries.
+Deployment evidence and hardware qualification are tracked in
+[qualification](qualification.md).
 
 ## Data and query path
 
@@ -20,6 +20,24 @@ response packing. Workers evaluate singleton queries. Whole domains are assigned
 to replica groups; each replica holds the full assignment. A separate packing
 router and pooled placement remain deferred to [the later proposal](architecture_update_2.md).
 This revision makes no throughput improvement claim.
+
+Workers run one evaluation per admitted query, without waiting to collect a
+batch. On the tested 8 GiB x86 workers, singleton scans completed 458 of 480
+queries at 16 offered QPS with 2.4-second p99 latency; experimental batches
+completed 416 with 10.5-second p99. The
+[Linux comparison](../evidence/batching-linux-2026-09-24/README.md) records the
+hardware and workload. Batching needs a demonstrated gain on the intended
+hardware before it becomes part of the serving path.
+
+Storage ownership, query coordinates and serving placement are separate:
+
+| Object | Meaning | Identity |
+|---|---|---|
+| Storage shard | Fixed global row range; immutable once sealed | Global row start divided by 32,768 |
+| Query domain | Ordered units evaluated under one setup seed | Domain ID and content-derived session ID |
+| Routing view | Canonical mapping from populated global rows to domain-local rows | Routing revision, recovery epoch and chain anchor |
+| Session | Content, geometry, setup and packing material used by the wallet | Digest of the bound material and domain recovery epoch |
+| Placement | Ready replicas serving the domain | Placement revision |
 
 ## Composed domains and canonical routing
 
@@ -41,6 +59,20 @@ Progressive frontier units retain the 8,192-row cap. Tail units refer to the
 predecessor's source rows without transferring storage ownership. Their hashes
 commit to the padded bytes and their recovery epoch.
 
+The first shard has no predecessor and keeps the bootstrap exception to the
+population floor. For later shards, composition supplies that floor without
+moving records or rebuilding the predecessor. B's own units use B's setup seed
+and keep their local offsets when the tail is removed. The extra unit is
+prepared under the same seed and occupies 96 MiB at the default geometry.
+Changing the unit set changes the whole-domain hint and requires new packing
+state even when B's owned units are reused.
+
+A growing unit starts at 2,048 allocated rows, expands to 4,096 and then 8,192,
+and rolls over when full. A smaller completed-unit cap saves retained database
+memory but increases the number of units read and summed for every hint rebuild.
+The 8K cap retains that publication and evaluation tradeoff; it does not qualify
+an additional sealed shard for placement.
+
 ## Confirmation and recovery
 
 A shard is growing, full but provisional, or sealed. Sealing requires 1,000
@@ -48,6 +80,16 @@ canonical successor blocks after the block that completes the shard. Confirmatio
 alone does not change its session or padded contents. Provisional full shards
 count toward active placement until confirmation. The existing six-sealed-shard
 policy remains the default; seven requires separate hardware qualification.
+The confirmation clock starts at the completing block, even when publication
+occurs later. This depth follows the chain source's local reorg policy; it is
+not a consensus guarantee.
+
+Tip routing includes provisional successors and composed tails before sealing.
+Every affected domain must be prepared and admitted before the complete anchored
+view is published. Failed preparation leaves the previous view in service.
+Each crossed boundary has its own confirmation clock. A finalized seal survives
+an ordinary rollback while its completing block remains canonical, even if the
+new tip is less than 1,000 blocks above it.
 
 Ordinary rollback affects provisional coverage and advances routing. It preserves
 sealed sessions. A deep rollback that invalidates a seal durably increments the
@@ -81,6 +123,14 @@ Only then may it rebind cached material. Each query uses fresh PIR randomness an
 a fresh request ID. Responses must match routing, domain, packing material,
 recovery epoch, session, request and anchor.
 
+The coordinator rejects stale routing at admission with HTTP 409 and unavailable
+or revoked sessions with HTTP 410. A routine routing switch does not revoke
+already admitted work against its pinned domain. Recovery does: affected
+responses must pass the final revocation fence. Unchanged sealed material can
+be reused across publications, but a cached session never substitutes for a
+current routing view. Packing keys remain per-query; session-scoped key reuse
+requires a separate protocol review.
+
 ## Resource ownership
 
 Worker ledgers account for resident runtimes, candidates, request work, pinned
@@ -97,6 +147,14 @@ keys share packing objects after restart. Retired/revoked objects are removed fr
 the publication cache while outstanding requests retain their pins. Health reports
 expose charged memory.
 
+Each replica must fit its complete assignment independently. The budget includes
+provisional successors, retained mutable revisions, preparation overlap and
+recovery replacements as well as sealed databases. Public request bodies,
+decoded keys, evaluation results and packing transients belong to the coordinator;
+internal request buffers and evaluation intermediates belong to workers. Caddy
+and TLS buffers belong to their host. Services sharing a host must fit their
+combined peak during publication and serving.
+
 ## Wallet privacy and trust
 
 PIR hides the row within the selected public domain under the existing q48 IPIR
@@ -106,12 +164,28 @@ prevent accidental cross-context acceptance; they are not proof of canonical cha
 membership or authentication of indexer metadata. Canonical anchor acceptance and
 note authentication remain wallet responsibilities.
 
+Domain selection remains public. Whole-database fan-out would scan every shard
+for each query, reaching 24 times the single-shard work at the wallet ceiling.
+The selected domain therefore exposes a coarse range of note positions.
+
+During composition, compliant queries to B may target its occupied rows or A's
+4,096-row suffix; queries to A canonically target the earlier rows. A still
+physically holds its suffix, and PIR prevents the server from detecting a client
+that queries those rows through A. Retained material can likewise describe old
+coordinates. Routing freshness constrains accepted requests, but cannot make
+those rows cryptographically unqueryable. The floor is a population policy for
+clients following canonical routing, with the bootstrap and transition limits
+above.
+
 Default operation exposes selected domains, timing and query counts. Optional
 birthday-based cover traffic queries every domain since the wallet birthday with
 uniform round counts, fresh dummy queries and randomized order. A transient failure
 retries a complete round; partial round results are not returned. Cover is off by
 default and does not conceal timing, the birthday window, transport identity or
-server availability. See [wallet integration](integration.md).
+server availability. A persistent cover set and uniform behavior matter:
+independently resampling decoys permits intersection across requests, while
+retrying only the real query reveals its domain. Cover multiplies evaluation
+work by the number of queried domains. See [wallet integration](integration.md).
 
 ## Validation and deployment
 
@@ -121,7 +195,12 @@ ordinary and deep rollback, an admitted-response recovery fence, worker restart,
 real HTTP wallet reuse/cover, and transactional SQLite application. The focused
 Linux workload exercises composition growth, tail removal, frontier expansion and
 rewind using independent process/cgroup sampling. Its 30-minute run does not replace
-the outstanding six-hour hardware qualification.
+the outstanding six-hour hardware qualification. The dated deployment run
+returned correct answers but failed the strict memory gate through reclaim
+pressure and swap growth; public load runs also exceeded the proposed p99
+regression gate. Worker memory calibration, publication latency and the supported
+block-burst envelope remain open. Existing placement and admission limits are
+not increased by these results.
 
 SSH rollout uses fresh v7 controller and worker directories. A stopped, validated
 schema-11 canonical journal can be copied from v6; caches and publications must be

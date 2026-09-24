@@ -1,7 +1,8 @@
 # Direct worker serving: implementation and measurement gate
 
-Status: investigation for D6 of [the architecture update](architecture_update.md),
-September 24, 2026. No direct worker serving path is implemented by this note.
+Status: serving-path investigation, September 24, 2026. The
+[main architecture](architecture.md) describes the implemented coordinator/worker
+path. No direct worker serving path is implemented by this note.
 
 The [post-launch proposal](architecture_update_2.md) now selects a separate
 packing-router tier instead of worker-side packing. This note preserves the

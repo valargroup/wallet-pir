@@ -1,7 +1,7 @@
 # Enhance PIR architecture update 2: post-launch serving and placement
 
 Design proposal, September 24, 2026. This follows the launch changes in
-[the immediate architecture update](architecture_update.md); it describes no
+[the main architecture](architecture.md); it describes no
 deployed behavior and is not a launch prerequisite. A dedicated 8 GiB packing
 router and 8 GiB evaluation workers are the sizing targets. The packing component
 has a measured memory envelope below; the complete serving path remains unqualified.
@@ -18,13 +18,13 @@ coordinator bottleneck remains until this follow-up is deployed.
 Both changes preserve the launched wallet protocol, public endpoint, session
 identities, request bindings and response format. Session identity binds packing
 parameters, not the process or host performing packing. Wallets neither select
-nor learn a physical replica. Session-scoped packing-key reuse is outside both
-proposals and still requires a separate protocol review.
+nor learn a physical replica. Session-scoped packing-key reuse remains outside this scope and requires a
+separate protocol review.
 
-The immediate proposal owns domain composition, canonical routing, recovery
+The main architecture defines domain composition, canonical routing, recovery
 semantics and wallet behavior. This proposal changes where those contracts are
 enforced, not their externally visible meaning. Decision numbers D6 and D10 are
-retained for continuity with the original proposal.
+retained for continuity with earlier design discussions.
 
 ## Deferred decisions
 
@@ -183,7 +183,7 @@ the serving and control tiers under the existing trust model.
 
 ## Memory ownership and qualification
 
-Workers inherit the immediate proposal's database, retained revision, tail-unit,
+Workers retain the main architecture's database, retained revision, tail-unit,
 preparation and query-pin charges. They do not gain resident packing state or
 public upload keys. Their internal request and intermediate-response allocations
 still need explicit bounds, including concurrent publication and cancellation.
