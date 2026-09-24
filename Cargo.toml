@@ -9,7 +9,6 @@ members = [
     "transparent/crates/transparent-shard",
     "transparent/crates/transparent-wallet",
     "transparent/crates/transparent-wallet-store",
-    "enhance/crates/transparent-spend-pir",
     # Services and operational dashboard.
     "enhance/services/enhance-pir-server",
     "enhance/services/pir-apm",
@@ -22,7 +21,7 @@ members = [
     "transparent/tools/transparent-regression",
     "transparent/tools/transparent-measure",
 ]
-exclude = ["demos/legacy-spendability"]
+exclude = ["demos/legacy-spendability", "enhance/crates/transparent-spend-pir"]
 
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`
 # computes `zy * cr1 + tmp3 + carry` and relies on it wrapping modulo 2^64. That

@@ -1,5 +1,5 @@
-//! Executable D8 transition contract. The composed-routing protocol is not yet
-//! implemented; this small row-level model pins its expected publication states.
+//! Executable D8 reference model for composed-routing publication states.
+//! These row-level assertions complement, but do not exercise, the implementation.
 
 use std::collections::{BTreeMap, BTreeSet};
 

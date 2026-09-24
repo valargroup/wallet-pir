@@ -18,11 +18,22 @@ Operations-only changes run helper checks without compiling Rust.
 Rust feedback runs library unit tests in `release-fast`. Six full-geometry/cache, RPC publication
 and real HTTP retry tests embedded in library targets run only in full CI;
 `tools/ci/slow-tests.json` records the exact names and reasons. Packages with only
-binaries get `cargo check --bins`. Integration executables, doctests, binary unit
-tests and all-feature lint run in **CI full**, including on PRs. This avoids
-compiling every integration target just to exclude its tests at runtime. Helper
+binaries get `cargo check --bins`. When the Enhance server is selected, fast CI also
+runs the integration targets classified as `fast` in
+[`tools/ci/enhance-tests.json`](../tools/ci/enhance-tests.json). The remaining
+integration targets, doctests, binary unit tests and all-feature lint run in
+**CI full**, including on PRs. This avoids compiling every integration target just
+to exclude its tests at runtime. Helper
 checks run concurrently with Rust; independent operations suites also run in
 four parallel make slots, and failures in any task fail fast CI.
+
+Every Enhance server integration target must be classified exactly once.
+`make check-tools` validates the registry against Cargo metadata, rejecting new
+unclassified targets and stale entries. Full CI runs both tiers serially, including
+the real-crypto `packing_http` path; it clears `QUALIFY_*` overrides so that CI uses
+the bounded default fixture. Existing ignored hardware/GPU cases remain explicit
+manual checks. The boundary recovery target is a reference model, not evidence that
+the implementation follows every modeled transition.
 
 CI full on main runs both Transparent and Enhance suites and offline deployment
 acceptance checks. After all pass, it builds optimized release binaries and uploads

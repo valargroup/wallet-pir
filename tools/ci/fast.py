@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Select affected workspace packages and execute the fast feedback gate.
 
-Unknown/build-config changes broaden selection. Full CI owns integration tests,
+Unknown/build-config changes broaden selection. Full CI owns full integration tests,
 examples, doctests and all-feature lint; this gate never qualifies a release.
 """
 import argparse
@@ -91,6 +91,8 @@ def main():
             slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
             print('Full-CI-only library cases: ' + ', '.join(slow), flush=True)
             run([*command, '--', *sum((['--skip', name] for name in slow), [])])
+        if 'enhance-pir-server' in selected:
+            run(['python3', 'tools/ci/enhance_tests.py', '--tier', 'fast'])
         if binary_only:
             run(['cargo', 'check', '--locked', '--profile', 'release-fast', '--bins', *sum((['-p', p] for p in binary_only), [])])
 
