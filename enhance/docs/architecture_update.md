@@ -1,103 +1,103 @@
 # Enhance PIR architecture update: immutable shards, composed routing, direct worker serving
 
-Status: design proposal dated September 24, 2026. It does not describe deployed
-behavior and does not amend [architecture](architecture.md) until accepted.
-Every capacity figure below is a planning input that must be qualified on the
-intended 8 GiB Linux hosts before it is treated as a limit.
+Design proposal, September 24, 2026. This describes proposed behavior and does
+not amend [architecture](architecture.md) until accepted. Capacity figures are
+planning inputs; they must be qualified on the intended 8 GiB Linux hosts
+before they can be treated as limits.
 
 ## Motivation and measured baseline
 
-The current architecture spends most of its complexity on shard lifecycle
-(loans, return, restoration, lender counting, reorg undo across two shards)
-while the measured limit is the data plane. The production admission
-measurement on September 23, 2026 reached about 33 correct queries per second on
-two replicas holding one shard, with a fleet-global cap of four active queries
-and every query body proxied, decoded and packed on the coordinator. An
-isolated full-shard test on 8 GiB x86 workers found that multi-query batching
-reduced throughput at load. D5 records the decision to use singleton scans.
+The current architecture devotes much of its complexity to shard lifecycle:
+loans, returns, restoration, lender counting, and reorg undo across two shards.
+The measured bottleneck, however, is query serving. On September 23, 2026, the
+production admission measurement reached about 33 correct queries per second
+on two replicas holding one shard. The fleet had a global cap of four active
+queries, and the coordinator proxied, decoded and packed every query body.
+Separately, an isolated full-shard test on 8 GiB x86 workers found that batching
+queries reduced throughput under load (D5).
 
-This proposal keeps the record format, the p16 q48 profile, the public setup
-domain, the 24-shard wallet ceiling, the memory admission ledger and the
-persisted operation phases. It changes what a shard is, how the population floor
-is produced, where queries are served, and how sessions expire.
+This proposal replaces loans with composed query domains, makes sealed storage
+shards immutable, moves query serving to workers, and separates session validity
+from routing freshness. It keeps the 653-byte record, 33-record row, p16 q48
+profile, public setup domain, 24-shard wallet ceiling, memory admission ledger,
+and persisted operation phases.
 
-## Objects
+## Objects and identities
 
-The update separates six things the current document folds together.
+The design distinguishes six objects:
 
 | Object | Meaning | Identity |
 |---|---|---|
 | Storage shard | Fixed global row range of `max_shard_rows`; immutable once sealed | Shard ID = global row start / `max_shard_rows` |
 | Query domain | Ordered mapping of stored rows into PIR coordinates under one setup seed, with logical rows and units | Domain ID, setup seed, unit identities, logical rows |
-| Routing view | The manifest's assignment of every populated global row to exactly one query domain and local row | Routing revision plus chain anchor |
-| Session | A query domain's content, geometry, setup and packing parameters as the wallet must use them | Content digest over the domain's unit identities and parameters, with the domain's recovery epoch |
-| Placement | Which replicas hold which query domains and are ready | Placement revision |
-| Request router | Stateless data-plane service that reads the fixed query-binding prefix, selects an eligible replica from the current placement, forwards the opaque query and returns the worker's packed response | Deployed instance plus loaded placement revision |
+| Routing view | Manifest assignment of every populated global row to exactly one query domain and local row | Routing revision plus chain anchor; recovery epoch carried in the view |
+| Session | Domain content, geometry, setup and packing parameters used by the wallet | Digest binding these identities, the protocol revision, domain ID and domain recovery epoch (D7–D8) |
+| Placement | Replicas that hold query domains and are ready to serve them | Placement revision |
+| Request router | Stateless service that reads the fixed query-binding prefix, selects an eligible replica, forwards the opaque query and returns the packed response | Deployed instance plus loaded placement revision |
 
-The invariant is unique canonical routing, not unique physical presence or
-unique queryability. A storage shard may physically hold rows the routing view
-sends elsewhere.
+Every populated row has exactly one canonical route. A storage shard may still
+physically contain rows routed through another domain, and those rows may
+remain queryable through retained sessions. D3 states the privacy consequences.
 
 ## Decisions
 
 ### D1. Public shard selection stays; no whole-database fan-out
 
-**Decision.** A wallet publicly selects one query domain and hides its row
-within it. Fan-out across all domains with coordinator-side summation is not
-the design, not even as an optional mode.
+A wallet publicly selects the query domain assigned by the routing view and
+hides its row within that domain. This design excludes whole-database fan-out
+with coordinator-side summation, including as an optional mode. D4 separately
+allows wallets to issue cover queries.
 
-**Rationale.** Single-server PIR is a linear scan, so whole-history privacy
-costs one full scan of the chain per query, forever. At the 24-shard wallet
-ceiling that is 24 times the per-query work of one shard. Twenty-four
-independent q48 requests upload 6.78 MB at the measured 282,652 bytes per
-32K query; only about
-4.7 MB of that is query vectors, and a shared-key framing would need a protocol
-that does not exist. Non-uniform shards are not the obstacle, since unit
-summation already handles unequal unit sizes. Packing in the coordinator was a
-consequence of fan-out, not a privacy property: the query is encrypted under
-the wallet's key end to end, so a worker that packs learns nothing a
-coordinator that packs would not.
+Single-server PIR performs a linear scan. Hiding a row across the whole history
+therefore requires a full-chain scan for every query, indefinitely. At the
+24-shard wallet ceiling, that costs 24 times the work of one shard. At the
+measured 282,652 bytes per 32K query, twenty-four independent q48 requests upload
+6.78 MB. About 4.7 MB consists of query vectors; sharing keys across requests
+would require a protocol that does not yet exist. Unequal shard sizes are
+already supported by unit summation and do not prevent fan-out.
 
-**Cost.** The server learns which domain a wallet's notes fall in, at a
-granularity of about a million actions. The timing prior on fresh notes is
-identical under every design.
+Coordinator packing was a consequence of that fan-out design. The query is
+encrypted under the wallet's key end to end, so a worker that packs learns no
+more than a coordinator that packs.
+
+The privacy cost is public domain selection: the server learns where the
+wallet's notes fall at a granularity of about a million actions. The timing
+prior on fresh notes is the same under all the designs considered here.
 
 ### D2. Fixed storage shards, immutable once sealed, no loans
 
-**Decision.** A storage shard is the fixed range `[k * M, (k + 1) * M)` rows.
-Once its last row is populated at confirmation depth it is sealed and its
-runtime is never modified. Records never move between shards. The only
-durable lifecycle event is the frontier reaching `M` rows and a successor
-opening after confirmation; D8 defines provisional tip routing until then.
+Storage shard `k` contains the fixed row range `[k * M, (k + 1) * M)`. Records
+never move between shards. Once the last row is full and its completing block
+has reached confirmation depth, the shard is sealed and its runtime is never
+modified. Reaching `M` rows and opening a successor become durable after
+confirmation; D8 defines provisional routing before then.
 
-**Rationale.** The loan exists solely to give a successor a population floor.
-It costs two atomic two-shard publications, two rebuilds of the lender's last
-unit, a restoration reservation, lender counting, the SETTLING role, and reorg
-undo on both sides. D3 produces the same floor without any of it. Immutable
-sealed shards are also what make D7's long-lived sessions sound.
+Loans exist solely to give a successor a population floor. They require two
+atomic two-shard publications, two rebuilds of the lender's last unit, a
+restoration reservation, lender counting, the SETTLING role, and reorg undo on
+both sides. D3 supplies the same floor without these operations. Immutability
+also supports the long-lived sessions in D7.
 
-**Cost.** None in density. The first shard of the database has no predecessor
-and keeps today's bootstrap exception.
+There is no density cost. The first shard has no predecessor and retains the
+existing bootstrap exception.
 
 ### D3. Population floor from a composed tail domain with manifest-owned routing
 
-**Decision.** When successor B first has rows, the manifest publishes B's
-query domain and a routing table. B uses the tail layout while `n < m` and may
-be provisional until A's seal confirms (D8). Using `n` for B's occupied rows,
-including a partially populated last row, and the defaults `M = 32,768`,
-`m = 4,096`:
+When successor B first contains rows, the manifest publishes B's query domain
+and the routes into it. Let `n` be B's occupied rows, including a partially
+populated last row. With defaults `M = 32,768` and `m = 4,096`, routing is:
 
 | State | A's first `M - m` rows | A's last `m` rows | B's rows |
 |---|---|---|---|
 | B open, `n < m` | Domain A | Tail domain | Tail domain |
 | `n >= m` | Domain A | Domain A | Domain B |
 
-Wallets make no choice. The routing table assigns every populated global row to
-exactly one domain and local row, and the wallet validates coverage, overlap,
-bounds and revision before use.
+B uses the tail layout while `n < m`; its opening may remain provisional until
+A's seal confirms (D8). Wallets follow the manifest's assignment of each
+populated global row to one domain and local row. Before use, they validate
+coverage, overlap, bounds and revision.
 
-**Tail domain layout.** The tail domain is B's own domain with one extra unit.
-It uses B's setup seed and B's local coordinates:
+The tail is B's own domain with one extra unit, using B's setup seed:
 
 ```text
 B's rows          at tail local rows [0, m)         B's own units, offsets unchanged
@@ -105,105 +105,112 @@ A's last m rows   at tail local rows [m, 2m)        one extra unit, prepared und
 logical rows      2m during the compose window
 ```
 
-Because `n < m` throughout the window, B's rows never reach local row `m`.
-When B first occupies its `m`th row, the extra unit is dropped, the routing
-table sends A's suffix back to domain A, and B's units keep their offsets.
+B's rows cannot reach local row `m` while `n < m`. When B first occupies its
+`m`th row, the extra unit is dropped and A's suffix routes back to domain A.
+B's units keep their offsets throughout.
 
-**Rationale.** The anonymity sets are identical to the loan design at every
-stage: a tail query is any of `m + n` rows, an A query is any of `M - m` rows.
-A's runtime is never touched, and ending the window is a routing change plus
-dropping one unit. The layout was chosen so that B's units keep their
-coordinates: the runtime derives each unit's setup slice from a full-size setup
-generated from the shard's seed at the unit's local offset, and the code
-comments that this keeps unit slices stable through logical growth
-(`enhance/services/enhance-pir-server/src/runtime.rs`, `Engine::prepare`).
-That is the property the composition relies on.
+During composition, the anonymity sets match the loan design: a tail query
+could target any of `m + n` rows, and an A query any of `M - m` rows. A's
+runtime is untouched. Ending composition requires a routing change and removal
+of one unit. Stable B coordinates make this possible: `Engine::prepare` in
+`enhance/services/enhance-pir-server/src/runtime.rs` derives each unit's setup
+slice at its local offset from a full-size setup generated with the shard's
+seed. Those slices remain stable as the domain grows.
 
-**Cost.** One extra preprocessed unit of `m` rows, 96 MiB at the defaults,
-prepared once when B opens and dropped when the window ends. The coordinator's
-packing state for the domain is rebuilt when its unit set changes, which is
-already the per-publication cost for any growing domain.
+The cost is one extra preprocessed unit of `m` rows: 96 MiB at the defaults,
+prepared when B opens and dropped when composition ends. Changing the unit set
+requires rebuilding the domain's packing state, as already happens on each
+publication for a growing domain. That state currently belongs to the
+coordinator and moves to workers under D6.
 
-**Status.** A construction-level test in
-`enhance/services/enhance-pir-server/src/runtime.rs` independently prepares B
-in plain and tail contexts under B's seed. B's unit identity, persisted
-database, persisted partial CRS, and partial hint are byte-identical. Fresh
-wallet-construction queries for B-local rows 0, 2047, and 2048 decode the same
-rows at the same coordinates with and without A's suffix. The whole-domain
-hint differs because the tail includes A's extra unit; its packing state must
-be rebuilt when that unit is dropped, as D6 already requires. This proves the
-unit reuse rule for the current P16Q48 construction and tested 4K/8K shapes;
-it does not implement or validate manifest routing. Run with
-`cargo test -p enhance-pir-server --lib tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates`.
+A construction test in the same runtime file independently prepares B in plain
+and tail contexts under B's seed. B's unit identity, persisted database,
+persisted partial CRS and partial hint are byte-identical. Fresh queries built
+through the wallet construction for B-local rows 0, 2047 and 2048 decode the
+same rows at the same coordinates with and without A's suffix. The
+whole-domain hint differs because the tail includes A's extra unit, so packing
+state must still be rebuilt when it is removed. This establishes unit reuse
+for the current P16Q48 construction and tested 4K/8K shapes; it does not
+implement or validate manifest routing. Run it with:
 
-**Accepted deviation.** A physically still holds its suffix, so a client that
-ignores the routing table can query those rows through domain A, and a client
-holding a retained tail session can query them through the old tail domain
-after the switch. The server cannot detect either. The population claim
-therefore applies to compliant clients using the current routing view, with
-transition and stale-view limitations stated. The floor remains a population
-policy, not a proof, as the current document already states for 4K.
+```sh
+cargo test -p enhance-pir-server --lib tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates
+```
+
+The design accepts a limitation: A still physically holds its suffix. A client
+that ignores the routing table can query those rows through A; a client with a
+retained tail session can query them through that old domain after the switch.
+The server cannot detect the selected row in either case. D7's public routing
+checks constrain stale requests, but do not make these rows cryptographically
+unqueryable. The population claim applies to compliant clients using the
+current routing view, subject to transition and stale-view limits. As in the
+existing 4K design, the floor is a population policy, not a proof.
 
 ### D4. Shard-selection privacy beyond the floor is a defined client policy
 
-**Decision.** Cover traffic is optional, but when enabled it follows one
-baseline policy: a persistent cover set chosen for a stated interval, fresh
-query randomness per request, and identical timing, ordering and retry
-behavior for every domain in the set. The guarantee is indistinguishability of
-the target within the observable cover set under that policy, against an
-observer of the whole service.
+Cover traffic is optional. When enabled, the baseline policy uses a persistent
+cover set for a stated interval, fresh randomness for each query, and identical
+timing, ordering and retry behavior for every domain in the set. Under that
+policy, the target should be indistinguishable within the observable cover set
+to an observer of the whole service.
 
-**Rationale.** Independently resampled decoys leak the target by intersection
-across repeated requests, and sending the real request first, retrying only it,
-or fetching several rows only from it leaks structure. A persistent set with
-uniform behavior removes those channels. "All domains since birthday" is easier
-to state precisely and reveals only the birthday range, which compact scanning
-already reveals, at higher cost.
+Independently resampling decoys lets an observer intersect repeated sets to
+identify the target. Sending the real query first, retrying only it, or fetching
+several rows only from its domain also reveals structure. A persistent set
+with uniform behavior removes these channels. Using all domains since the
+wallet's birthday is easier to specify precisely and reveals only the birthday
+range already exposed by compact scanning, at greater cost.
 
-**Cost.** Cover queries multiply server work by the set size. This is the
-fan-out trade chosen per wallet instead of imposed on the fleet.
+Cover queries multiply server work by the set size. Each wallet chooses that
+cost rather than imposing it on every query served by the fleet.
 
 ### D5. Use singleton query scans; do not move batching to workers
 
-**Decision.** Do not include multi-query evaluation or a coalescing window in
-this architecture update. Each admitted query gets its own worker evaluation.
-When packing moves to workers, use a bounded per-worker admission queue and
-independent evaluation slots, without waiting to form batches. The measured
-batching prototype is retained as evidence, not included in this design.
+Each admitted query gets its own worker evaluation. Workers use bounded
+admission queues and independent evaluation slots, with no multi-query
+evaluation or wait to collect a batch. The batching prototype remains evidence
+for this decision.
 
-**Evidence.** Two isolated 8 GiB `c-4` workers each held a 768 MiB shard; the
-coordinator shared one worker host. In
-matched 30-second runs at 16 offered QPS, singleton evaluation completed
-458/480 queries, versus 416/480 with experimental SSE2 batching up to eight;
-p99 latency was 2.4 versus 10.5 seconds. The earlier scalar batch path
-completed only 143/480, although that run preceded a scheduler fix and is a
-less direct comparison. On the worker-only host, the SSE2 batch run used
-131 ms of scan time per query versus 86 ms for singleton scans. Three repeated
-singleton runs completed every query at 12 and 14 QPS; 16 QPS was marginal.
-At 0.1, 1, 2, 4 and 8 QPS, singleton scans added no collection wait and
-returned every answer correctly. The
-[Linux measurement and raw reports](../evidence/batching-linux-2026-09-24/README.md)
-record the topology and limits. A local M4 Max had shown a twofold scan gain
-for eight-query bursts, but that did not transfer to the target x86 hardware.
+The Linux comparison used two isolated 8 GiB `c-4` workers, each holding a
+768 MiB shard; the coordinator shared one worker host. Matched 30-second runs
+at 16 offered QPS produced:
 
-**Revisit rule.** Consider batching only after a different worker CPU or
-evaluation kernel demonstrates higher sustained correct QPS at an acceptable
-latency and memory cost on the intended hardware. Moving the queue to workers
-alone does not establish that gain.
+| Measurement | Singleton scans | Experimental SSE2 batches, up to eight queries |
+|---|---:|---:|
+| Completed queries | 458/480 | 416/480 |
+| p99 latency | 2.4 seconds | 10.5 seconds |
+| Scan time per query on the worker-only host | 86 ms | 131 ms |
+
+An earlier scalar batch run completed 143/480 queries. It preceded a scheduler
+fix, so it is a less direct comparison. Three repeated singleton runs completed
+every query at 12 and 14 QPS; 16 QPS was marginal. At 0.1, 1, 2, 4 and 8 QPS,
+singleton scans returned every answer correctly without a collection wait.
+The [Linux measurement and raw reports](../evidence/batching-linux-2026-09-24/README.md)
+record the topology and limits. A local M4 Max showed a twofold scan gain for
+eight-query bursts, but that gain did not transfer to the target x86 hardware.
+
+Revisit batching only if a different worker CPU or evaluation kernel sustains
+more correct QPS at acceptable latency and memory cost on the intended
+hardware. Moving the queue to workers alone does not demonstrate a gain.
 
 ### D6. Workers pack; a request router replaces the coordinator in the query path
 
-**Decision.** Split the public origin, request routing and control plane into
-explicit components. Caddy terminates TLS and preserves the public wallet
-endpoint. It sends manifest and control routes to the coordinator and the
-query route to a request-router process. The router reads the fixed `EPQ4`
-query-binding prefix, selects an eligible replica from an atomically loaded
-placement revision, forwards the otherwise opaque query and returns the
-worker's packed response. It does not decode PIR keys, evaluate, pack, own
-placement or make a replica ready.
+Caddy continues to terminate TLS at the public wallet endpoint. It sends
+manifest and control routes to the coordinator, and queries to a separate
+request-router process. The router reads the fixed `EPQ4` query-binding prefix,
+selects an eligible replica from an atomically loaded placement revision, and
+forwards the otherwise opaque body. The worker evaluates, packs with the
+query's own upload keys, and returns its response through the router.
 
-Phase 1 deploys the router as a separate process on the coordinator host,
-behind the existing Caddy origin:
+The router does not decode PIR keys, evaluate, pack, own placement or make a
+replica ready. The coordinator continues ingestion and publication of
+manifests, routing and placement. It publishes an internal, revisioned
+placement snapshot that the router loads and swaps atomically, without a
+synchronous coordinator lookup for each query. Wallets neither select nor
+learn the physical replica.
+
+Phase 1 puts the router behind the existing Caddy origin on the coordinator
+host:
 
 ```text
 wallet -> Caddy on coordinator host -> request router -> selected worker
@@ -214,129 +221,119 @@ wallet -> Caddy on coordinator host -> request router -> selected worker
                                  coordinator
 ```
 
-The coordinator publishes an internal, revisioned placement snapshot. The
-router loads and swaps that snapshot atomically; it does not synchronously ask
-the coordinator where to send each request. Co-location is a deployment choice,
-not an identity or protocol dependency: the router can later move to another
-host or run as multiple instances without changing the wallet endpoint. Thus
-"the coordinator leaves the query path" means that the coordinator process
-never receives a query body, not that query bytes bypass its host in Phase 1.
-Wallets neither select nor learn a physical replica.
+The coordinator process no longer receives query bodies. Query bytes still
+cross its host in Phase 1. The router can later move to another host or run as
+multiple instances without changing the wallet endpoint; its location is not
+part of a protocol or identity.
 
-Within a domain, responsibilities are:
-
-| Step | Owner | Rule |
+| Responsibility | Owner | Rule |
 |---|---|---|
-| Eligibility | Coordinator placement | Publish replicas that hold the exact domain session and are ready at the placement revision |
-| Selection | Request router | Choose the eligible replica with the fewest requests currently outstanding through that router; rotate equal-load ties |
-| Admission | Worker | Independently admit or reject the complete request lifetime under local resource limits |
-| Scheduling | Worker | Admit each request under local limits and run one evaluation per query |
+| Eligibility | Coordinator placement | Publish replicas holding the exact domain session and ready at the placement revision |
+| Selection | Request router | Choose the eligible replica with the fewest requests outstanding through that router; rotate equal-load ties |
+| Admission | Worker | Admit or reject the complete request lifetime under local resource limits |
+| Scheduling | Worker | Run one evaluation per query within local limits |
 
-Router-local outstanding-request counts are a routing hint, not an admission
-claim, and require no live worker queue-depth feed. The worker remains
-authoritative for capacity. A fixed preferred replica is not used because it
-would leave replicated query capacity idle, including capacity added for a hot
-frontier.
+The router's outstanding-request counts guide selection; the worker decides
+whether capacity is available. This requires no live worker queue-depth feed.
+A fixed preferred replica would leave replicated capacity idle, including extra
+capacity assigned to a hot frontier.
 
-The worker protocol must distinguish rejection before evaluation is accepted
-from evaluation, packing and ambiguous post-acceptance failures. The router may
-replay once to one different eligible replica only after that explicit
-not-admitted/not-ready response or an upstream failure known to precede
-acceptance. It never automatically replays any other failure. Although queries
-are read-only, this bound prevents duplicate cryptographic work and retry
-storms. Replay requires the router to retain the body, so it enforces the fixed
-body-size limit, a bounded number of concurrent buffered bodies and its own
-overload rejection.
+The worker protocol must distinguish rejection before accepting evaluation
+from evaluation, packing and ambiguous post-acceptance failures. The router
+may replay a request once, to one different eligible replica, only after an
+explicit not-admitted/not-ready response or an upstream failure known to
+precede acceptance. It must not automatically replay any other failure.
+Although queries are read-only, this restriction bounds duplicate cryptographic
+work and retry storms. Retaining bodies for replay requires a fixed body-size
+limit, a bounded number of concurrently buffered bodies, and router overload
+rejection.
 
-The selected replica receives the body, evaluates, packs with the query's own
-upload keys, and answers. The coordinator continues to ingest and publish
-manifests, routing and placement, but does not process query bodies.
+Today the coordinator buffers every 282 KB body, decodes it, forwards to one
+replica at a time, packs the result, and enforces a fleet-wide slot count. Its
+sampled cgroup peak was about 8 GB. Its compute and memory ceiling does not grow
+with the fleet, and it is a single point of failure. Moving decoding and packing
+to workers removes that work from the coordinator while preserving the public
+endpoint and private worker network. Phase 1 requires no wallet or host migration.
 
-**Rationale.** Today the coordinator buffers every 282 KB body, decodes it,
-forwards to one replica at a time, packs, and gates the fleet with a global
-slot count. Its sampled cgroup peak was about 8 GB. It is a single point of
-failure and a fixed compute and memory ceiling that does not grow with the
-fleet. A logically separate router removes decoding and packing from that
-process while preserving the current public endpoint and private worker
-network, so Phase 1 needs no wallet or host migration.
-
-**Cost.** Packing moves its CPU and memory onto the 8 GiB workers and must be
-measured against the same worker budget. Worker admission must cover the complete
-request lifetime: bounded body reception, decoding, queued requests,
-evaluation, packing, and response buffering. An execution slot alone does not
-bound queued bodies. While co-located, router CPU, bounded body buffers,
-connections and TLS/network overhead are charged to the coordinator host and
-can contend with publication. All query bytes still cross that host's NIC, and
-host failure still removes the public query endpoint. Process separation
-permits later relocation or replication; co-location alone does not provide
-origin high availability or horizontal network scaling.
+Worker-side packing must fit the same 8 GiB worker budget. Admission must cover
+body reception, decoding, queued requests, evaluation, packing and response
+buffering; evaluation slots alone cannot bound queued bodies. On the
+coordinator host, router CPU, bounded body buffers, connections and TLS/network
+overhead remain charged to that host and may contend with publication. All
+query traffic still crosses its NIC, and host failure still removes the public
+endpoint. Separate processes permit later relocation or replication, but Phase
+1 does not provide origin high availability or horizontal network scaling.
 
 The [direct worker serving investigation](worker_serving_investigation.md)
-audits the current route and memory model, defines the request-lifetime and
-origin-routing contracts, and gives the production measurement gate for this
-decision. The gate is open; this proposal has not qualified worker-side packing.
+audits the current route and memory model, specifies request-lifetime and
+origin-routing contracts, and defines the production measurement gate.
+Worker-side packing has not yet passed that gate.
 
 ### D7. Session validity is separate from routing freshness and placement
 
-**Decision.** Three independent identities, each versioned in the manifest:
+The manifest versions session, routing and placement identities separately. A
+session binds a domain's content, geometry, setup and packing parameters. The
+routing view assigns rows to domains at a chain anchor. Placement identifies
+ready replicas. Moving a replica does not invalidate a session.
 
-- Session: the query domain's content, geometry, setup and packing parameters.
-- Routing view: the manifest's assignment of rows to domains, with chain anchor.
-- Placement: which replicas hold which domains.
+A sealed domain's session remains valid until its content changes or recovery
+marks it noncanonical. Wallets refresh routing on a defined cadence and reuse
+unchanged session material. The current generation limit expires sessions after
+five publications, forcing refreshes roughly every six minutes even for sealed
+shards. Removing that expiry is sound for immutable content, but a cached
+session cannot tell a wallet whether a row now routes through A or the tail.
+Routing therefore needs its own, cheaper refresh.
 
-A sealed domain's session is valid until its content changes or a recovery
-epoch marks it noncanonical. Wallets refresh the routing view on a defined
-cadence and reuse unchanged session material. A replica move never
-invalidates a session.
+The draft wallet contract has been validated as a standalone model and is not
+deployed. A routing view contains a strictly increasing revision, recovery
+epoch, chain anchor, domain descriptors, and ordered half-open row intervals.
+Each route specifies a global interval, domain ID and local-row start. Wallets
+reject gaps, overlaps in global or domain-local rows, unknown or duplicate
+domains, intervals outside populated local spans, malformed hashes, and unknown
+wire fields.
 
-**Draft wallet contract (validated as a standalone model, not deployed).** A
-versioned routing view carries a strictly increasing revision, recovery epoch,
-chain anchor, domain descriptors and ordered half-open row intervals. Each
-route gives a global interval, domain ID and local-row start. Wallet validation
-rejects gaps, overlaps in global or domain-local rows, unknown domains,
-intervals outside a populated local span, duplicate domains, malformed hashes
-and unknown wire fields. A domain session ID hashes a domain-separated encoding
-of domain ID, logical geometry, populated spans, content digest, setup digest
-and parameter ID. Publication revision, anchor and replica placement do not
-enter this ID. The content digest must cover the complete queryable PIR
-database, including padding and unit order; a hash of source records alone is
+The session ID hashes a domain-separated encoding of domain ID, logical
+geometry, populated spans, content digest, setup digest and parameter ID, with
+the protocol revision and domain recovery epoch specified in D8. It binds the
+domain's packing parameters. Publication revision, chain anchor and replica
+placement are excluded. The content digest covers the entire queryable PIR
+database, including padding and unit order; source-record hashes alone are
 insufficient.
 
-The candidate refresh policy is one routing fetch at sync start and at most
-30 seconds between fetches while querying. Each query carries both the
-session ID and routing revision/recovery epoch. The public request router
-checks the current view when admitting it: a superseded view returns HTTP 409,
-prompting a refresh and a fresh query under the new route. An invalidated
-session returns HTTP 410. A query admitted before a switch may finish against
-its pinned domain; the wallet still checks the returned binding and its locally
-accepted chain anchor. This gives bounded routine staleness and immediate
-detection at a routing switch, provided all public query entry points enforce
-the revision check. The 30-second value remains a candidate pending wallet
-traffic and transition measurements.
+The candidate refresh policy fetches routing at sync start and at most every
+30 seconds while querying. Each query carries its session ID and routing
+revision/recovery epoch. The public router checks the current view at admission:
 
-**Rationale.** A sealed shard never changes, so binding its queries to a
-generation that expires after five publications forces wallets to refresh
-about every six minutes for no reason. But a cached sealed session cannot tell
-a wallet whether its position currently routes through A or through the tail,
-so routing freshness must be a separate, cheaper refresh.
+- A superseded routing view returns HTTP 409. The wallet refreshes and builds
+  a fresh query under the new route.
+- An invalidated session returns HTTP 410.
+- A query admitted before a routing switch may finish against its pinned
+  domain. The wallet checks the response binding and its locally accepted
+  chain anchor. D8 additionally fences responses from revoked sessions.
 
-**Cost.** Every admitted query still needs a lifetime pin, including queries
-against sealed domains during eviction or a move. Only mutable domains need
-repeated content revisions; sealed domains still need safe resource lifetimes.
+This bounds routine staleness and detects routing switches immediately at
+admission, provided every public query entry point enforces the revision check.
+The 30-second interval remains a candidate pending wallet traffic and
+transition measurements.
+
+Every admitted query still needs a lifetime pin, including queries against
+sealed domains during eviction or a move. Only mutable domains need repeated
+content revisions, but all domains need safe resource lifetimes.
 
 ### D8. Tip routing is provisional until boundary confirmation
 
-**Decision.** Ingest complete canonical blocks and publish every new record at
-the tip anchor. Partition records by fixed global row range even when one block
-crosses several `M` boundaries; retain its excess records and partial final row.
-The block that fills a predecessor's last row starts that boundary's confirmation
-clock. Use `1,000` blocks, matching
+Ingest complete canonical blocks and publish every new record at the tip
+anchor. Partition records by fixed global row range, even if one block crosses
+several `M` boundaries. Retain excess records and the partial final row.
+
+The block that fills a predecessor's last row starts that boundary's
+confirmation clock. Seal the shard only when the tip is at least `1,000` blocks
+above that block and its hash remains canonical. Measure depth from the crossing
+block, not a later publication. The depth follows
 [Zakura's local maximum reorg window](https://github.com/zakura-core/zakura/blob/8a88926d0bf7e75eaab2d26bd0ad90c0fc88787f/crates/zakura-chain/src/parameters/constants.rs#L22-L30).
-Seal only when the tip is at least 1,000 blocks above that block and its hash remains
-canonical. Depth is measured from the crossing block, not a later publication.
-This is an explicit dependency on Zakura's local finality policy, not a measured
-Ironwood reorg bound or a consensus guarantee. Reorgs wholly inside the window
-remain ordinary provisional rollbacks.
+It is a dependency on Zakura's local finality policy, not a measured Ironwood
+reorg bound or a consensus guarantee. Reorgs within the window are ordinary
+provisional rollbacks.
 
 | State | Tip publication | After the boundary confirms |
 |---|---|---|
@@ -345,212 +342,225 @@ remain ordinary provisional rollbacks.
 | B reaches `m` occupied rows before A's seal confirms | Provisionally drop the tail unit, route A's suffix back to A and serve plain B | Finalize the already current routing state |
 
 Each tip publication has one anchor and one complete routing view. Prepare and
-admit all affected domains before publishing it; if preparation fails, retain
-the previous anchored view rather than advertise uncovered tip rows. Process
-multiple crossings in order within a block. Only the final occupied range is
+admit every affected domain before publication. If preparation fails, retain
+the previous anchored view so no uncovered tip rows are advertised. Process
+multiple crossings within a block in order. Only the final occupied range is
 the growing frontier; intermediate full ranges remain provisional until their
-own boundary clocks confirm. Promotion changes lifecycle status and routing
-revision, but an unchanged domain session need not change identity. A finalized
-sealed runtime is never modified by ordinary appends. Thus confirmation delays
-durable lifecycle transitions, while provisional routing provides tip latency.
+own confirmation clocks complete.
 
-**Rollback.** Find the common canonical ancestor and discard all later blocks
-before replay. Withdraw provisional successors and tail routes invalidated by
-the rollback, recompute fixed-range coverage and pending confirmation clocks
-from the surviving chain, and atomically publish a complete replacement view.
-Keep a finalized seal when its completing block remains canonical, even if the
-new tip is fewer than 1,000 blocks above it. Mutable domains receive new
-content revisions as needed. A removed provisional domain
-cannot remain in the canonical routing view. Retained snapshots follow D3's
-stale-view rule; wallets must reject their orphaned anchors. A replayed crossing
-uses B-local row coordinates again; neither rows nor an entire crossing block
+Promotion changes lifecycle status and routing revision; an unchanged domain
+session can keep its identity. Ordinary appends never modify a finalized sealed
+runtime. Confirmation delays durable lifecycle changes while provisional
+routing serves the tip, subject to successful preparation and admission.
+
+#### Ordinary rollback
+
+Find the common canonical ancestor and discard later blocks before replay.
+Withdraw invalidated provisional successors and tail routes, recompute
+fixed-range coverage and pending confirmation clocks from the surviving chain,
+and atomically publish a complete replacement view. Removed provisional domains
+must not remain in canonical routing. Mutable domains receive new content
+revisions as needed.
+
+Keep a finalized seal if its completing block remains canonical, even when the
+new tip is fewer than 1,000 blocks above it. Retained snapshots remain subject
+to D3's stale-view limits, and wallets must reject orphaned anchors. Replayed
+crossings use B-local coordinates again. Neither rows nor whole crossing blocks
 are deferred to fit a boundary.
 
-**Deep-reorg recovery.** A sealed boundary should not be crossed by an ordinary
-reorg accepted under the same Zakura policy. A node reset, source switch or
-history inconsistency can still make it noncanonical. If rollback removes or
-replaces a record in a sealed range, pause further publication and fence every
-current and retained session of affected domains on
-all serving replicas. The affected set starts at the first changed global row's
-domain and includes downstream domains whose content or coordinates can change;
-earlier sealed domains remain valid. The durable manifest recovery epoch starts
-at zero and increments once
-per such rollback, independently of the controller and PIR parameter epochs.
-Encode this unsigned 64-bit value as a decimal string in JSON and a fixed-width
-unsigned integer in the versioned binary protocol; fail closed on exhaustion.
+#### Deep-reorg recovery
 
-The manifest carries the current recovery epoch and each domain descriptor
-carries the epoch of its last recovery. A session identity hashes the protocol
-revision, domain ID, that domain recovery epoch, and its content, geometry,
-setup and packing identities. Affected replacement domains take the new epoch,
-even if replay produces identical bytes. Publish revocation before replacement
-content; old affected queries receive a noncanonical-session error, not an
-answer from an orphaned snapshot. Already admitted work retains its resource
-pin but its response must be rejected if the session was fenced. Wallets
-refresh the routing view on that error or an increased manifest recovery epoch,
+An ordinary reorg accepted under the same Zakura policy should not cross a
+sealed boundary. A node reset, source switch or history inconsistency can still
+make a sealed range noncanonical. If rollback removes or replaces a record in
+such a range, pause publication and fence every current and retained session of
+affected domains on every serving replica. The affected set starts with the
+domain of the first changed global row and includes downstream domains whose
+content or coordinates can change. Earlier sealed domains remain valid.
+
+The durable manifest recovery epoch starts at zero and increments once per such
+rollback, independently of controller and PIR parameter epochs. Encode it as an
+unsigned 64-bit value: a decimal string in JSON and a fixed-width unsigned
+integer in the versioned binary protocol. Fail closed on exhaustion. The
+manifest carries the current epoch; each domain descriptor carries the epoch
+of that domain's last recovery.
+
+Session identity hashes the protocol revision, domain ID, domain recovery epoch,
+and content, geometry, setup and packing identities. Affected replacement
+domains receive the new epoch even when replay produces identical bytes.
+Publish revocation before replacement content. Old affected queries receive a
+noncanonical-session error. Already admitted work keeps its resource pin, but
+its response must be rejected if its session has been fenced.
+
+On that error or an increased manifest recovery epoch, wallets refresh routing,
 discard revoked sessions, and reuse unchanged sessions for unaffected domains.
-Build replacement artifacts under new identities and never overwrite a sealed
-artifact. Resume publication only after the replacement view and its ready
+Build replacement artifacts under new identities; never overwrite sealed
+artifacts. Resume publication only when the replacement view and ready
 placements can be committed atomically.
 
-**Cost.** Provisional successors, their tail units, mutable revisions and
-recovery replacements require retention and memory admission, including a block
-that crosses multiple boundaries. Immutable artifacts remain immutable; their
-canonical status can change. Tip latency remains subject to the same successful
-preparation and admission requirement as any publication.
+Provisional successors, tail units, retained mutable revisions and recovery
+replacements all require memory admission, including when one block crosses
+multiple boundaries. Sealed artifacts remain immutable even when their
+canonical status changes.
 
 ### D9. Keep progressive frontier units with an 8K cap
 
-**Decision.** Keep the current allocation progression: the growing unit starts
-at 2,048 allocated rows, grows to 4,096 and then 8,192, and rolls over only
-when the 8K unit is full. Do not cap every completed unit at 2K or allocate
-8K from the first row.
+Keep the current progression: a growing unit starts at 2,048 allocated rows,
+grows to 4,096 and then 8,192, and rolls over only when the 8K unit is full.
+Neither a 2K cap on every completed unit nor an initial 8K allocation is adopted.
 
-**Rationale.** A matched full-size schema-11 / p16 q48 local comparison found
-that six retained 2K frontier versions saved 0.873 GiB of process peak RSS
-relative to six 8K versions. But the current hint assembly reads and sums all
-units on every frontier change: 16 units at a 2K cap took a median 7.81 seconds,
-versus 1.94 seconds for four 8K units. Savings in frontier preprocessing and
-persistence did not compensate; the measured phases summed to about 9.37
-seconds per 2K revision versus 4.34 seconds per 8K revision. Median encrypted
-evaluation rose from 7.25 to 11.11 ms per sequential query. Packing rebuild
-time was similar. The [D9 evidence in closed PR #100](https://github.com/valargroup/wallet-pir/pull/100)
-retains the benchmark, commands, raw timings, and provenance.
+A matched full-size schema-11 / p16 q48 comparison measured the tradeoff:
 
-**Qualification limit.** The comparison ran on a 128 GiB M4 Max, without an
-8 GiB Linux cgroup or concurrent traffic. The observed memory saving is about
-one 768 MiB sealed database image, not proof that another sealed domain passes
-worker admission. Keep the worst-case six retained 8K revisions, about 1.1 GiB
-of database bytes, in the ledger. Revisit a 2K cap only after incremental
-hint assembly and a matched 8 GiB Linux load and memory run demonstrate a net
-gain without a material publication or query latency regression. The separate
-96 MiB tail unit remains a ledger component, not a complete admission budget.
+| Measurement | 2K unit cap | 8K unit cap |
+|---|---:|---:|
+| Units in a full shard | 16 | 4 |
+| Median hint assembly | 7.81 seconds | 1.94 seconds |
+| Sum of measured phases per revision | About 9.37 seconds | About 4.34 seconds |
+| Median encrypted evaluation per sequential query | 11.11 ms | 7.25 ms |
+
+With six retained frontier versions, the 2K cap saved 0.873 GiB of process peak
+RSS. However, hint assembly reads and sums every unit on every frontier change.
+Its added cost outweighed the savings in frontier preprocessing and persistence.
+Packing rebuild time was similar. The
+[D9 evidence in closed PR #100](https://github.com/valargroup/wallet-pir/pull/100)
+contains the benchmark, commands, raw timings and provenance.
+
+The comparison ran on a 128 GiB M4 Max, without an 8 GiB Linux cgroup or
+concurrent traffic. Saving roughly one 768 MiB sealed database image does not
+establish that another domain fits worker admission. The ledger must retain the
+worst case of six retained 8K revisions, about 1.1 GiB of database bytes. The
+separate 96 MiB tail unit is also only one component of the admission budget.
+
+Revisit a 2K cap after incremental hint assembly and a matched 8 GiB Linux load
+and memory run demonstrate a net gain without a material regression in
+publication or query latency.
 
 ### D10. Pool placement with a replication factor instead of rigid replica pairs
 
-**Decision.** Each query domain is placed on `r` workers drawn from a pool,
-with `r = 2` by default and a higher `r` allowed for the frontier. Groups are
-replaced by per-domain placements; the reservation ledger and persisted
-operation phases carry over.
+Place each query domain on `r` workers from a pool, with `r = 2` by default and
+a higher factor allowed for the frontier. Per-domain placements replace groups;
+the reservation ledger and persisted operation phases carry over.
 
-**Rationale.** Rigid pairs force growth in units of two machines and give the
-hot frontier the same replica count as an idle sealed shard. A pool improves
-utilization, growth granularity and hotspot replication.
-
-**Cost.** Two copies still give roughly 50 percent raw storage efficiency.
-Pool placement does not remove duplication. This is the lowest-priority item.
+Rigid pairs require growth in units of two machines and give a hot frontier the
+same replica count as an idle sealed shard. A pool allows finer growth, better
+utilization and extra replicas for hotspots. Two copies still provide roughly
+50 percent raw storage efficiency. This is the lowest-priority change.
 
 ### D11. Protocol semantics are versioned; packing-key reuse is deferred
 
-**Decision.** Composed routing, the routing table, and content-bound sessions
-are a new protocol revision even though record bytes, p16 q48 and the encrypted
-query payload are unchanged. Legacy clients reject the new manifest. Session-
-scoped packing keys are not part of this update; they need a separate protocol
-review covering linkability and key-reuse safety, and transport-level
-linkability alone is not sufficient justification.
+Composed routing, routing tables and content-bound sessions require a new
+protocol revision, even though record bytes, p16 q48 and the encrypted query
+payload stay unchanged. Legacy clients reject the new manifest.
 
-**Investigation status.** `enhance/crates/enhance-pir/tests/routing_contract.rs`
-is an executable draft of the v7 JSON contract. It verifies strict decoding,
-canonical interval coverage, composed A/B coordinates, session identity
-changes, and stale-view fencing across tail removal and a recovery epoch.
-It does not change the v6 manifest, HTTP framing, production server, or wallet.
-Before migration, settle the recovery epoch lifecycle in D8, define the actual
-wire error payload and response binding, and run the interop harness against
-a wallet implementation of this revision.
+Session-scoped packing keys are deferred to a separate protocol review of
+linkability and key-reuse safety. Existing transport-level linkability alone
+does not justify key reuse.
+
+`enhance/crates/enhance-pir/tests/routing_contract.rs` is an executable draft of
+the v7 JSON contract. It tests strict decoding, canonical interval coverage,
+composed A/B coordinates, session identity changes, and stale-view fencing
+across tail removal and a recovery epoch. It does not change the v6 manifest,
+HTTP framing, production server or wallet. Before migration, implement and
+validate D8's recovery lifecycle, define the actual wire error payload and
+response binding, and run the interop harness against a wallet implementing the
+new revision.
 
 ## Memory ledger components per replica
 
-These are the components the admission ledger must count. None is a complete
-budget, and both replicas of a domain must fit independently.
+Every replica must fit independently, including both copies at the default
+replication factor. The ledger must count all of these components; no individual
+entry is a complete budget.
 
-```text
-sealed domains           768 MiB each at 32K logical rows
-frontier domain          allocated units + retained revisions of the growing unit
-                         (up to 6 x 192 MiB at the retained 8K cap)
-tail unit                96 MiB while a compose window is open, including a provisional one
-provisional domains      prepared successors and retained revisions pending confirmation
-packing state            per domain, rebuilt when its unit set changes (D6 moves it here)
-per-request lifetime     body, decoded keys, evaluation slot, intermediate, packed response
-query pins               admitted queries on retained or moving domains
-preparation transient    CRS construction and artifact cache charged to the cgroup
-guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unchanged
-```
+| Component | Charge |
+|---|---|
+| Sealed domains | 768 MiB each at 32K logical rows |
+| Frontier domain | Allocated units plus retained revisions of the growing unit, up to 6 x 192 MiB at the retained 8K cap |
+| Tail unit | 96 MiB during composition, including a provisional window |
+| Provisional domains | Prepared successors and retained revisions pending confirmation |
+| Packing state | Per domain, rebuilt when its unit set changes; moves to workers under D6 |
+| Per-request lifetime | Body, decoded keys, evaluation slot, intermediate and packed response |
+| Query pins | Admitted queries on retained or moving domains |
+| Preparation transient | CRS construction and artifact cache charged to the cgroup |
+| Guard and host reserve | Existing 512 MiB resident guard below the 7 GiB soft limit |
 
-The request router is not a replica ledger component. While it is co-located
-with the coordinator, separately bound its retained request bodies, connection
-state and other resident memory and charge them to that host's admission and
-measurement.
+Bound the router's retained request bodies, connection state and other resident
+memory separately. While it shares the coordinator host, charge these resources
+to that host's admission and measurements rather than a replica's ledger.
 
-## Open questions and what to quantify
+## Remaining validation and open decisions
 
-1. **Tail removal reuse rule (resolved).** The construction test demonstrates
-   byte-identical B unit artifacts and partial hints, plus B-local wallet
-   query decoding in the tail. Whole-domain packing still changes when A's
-   extra unit is removed. D3's remaining work is routing implementation and
-   lifecycle validation, not a plain-B preparation fallback.
-2. **Deep-reorg recovery epoch (design resolved).** D8 specifies the epoch,
-   revocation and replacement contract. The transition-model test covers a
-   reorg across a sealed boundary; production routing and wallet interop remain
-   Phase 2 work.
-3. **Worker-side packing cost.** Measure packing CPU and memory per query on
-   the workers and add it to the ledger before removing the coordinator from
-   the query path.
-4. **Routing refresh cadence.** Decide how often wallets refetch the routing
-   view and how a stale view is detected, and test a query sent under a
-   superseded routing view during a compose window.
-5. **Cover policy adversary model.** State whether the baseline protects
-   against one worker or an observer of the whole service, and test the
-   intersection attack against the persistent-set policy.
-6. **Wire encoding.** Version the routing table, domain descriptors and
-   session identities, and extend the interop harness to the new manifest.
-7. **Boundary capacity evidence.** The 1,000-block depth is a Zakura local
-   policy choice, not an empirical reorg claim. Measure Ironwood block row
-   bursts and successor prewarming and preparation time on intended hosts;
-   provisional B must be ready at the crossing, before any depth accrues.
+D3's unit reuse rule is established for the tested construction; production
+routing and lifecycle validation remain. No plain-B preparation fallback is
+needed. D8's recovery epoch, revocation and replacement contract is settled at
+the design level, and a transition-model test covers a reorg across a sealed
+boundary. Production recovery and wallet interop remain Phase 2 work.
+
+The remaining work is:
+
+- Measure worker packing CPU and memory per query, include it in admission, and
+  pass the D6 gate before removing the coordinator from the query path.
+- Validate D7's stale-view detection during composition and choose the routing
+  refresh cadence using wallet traffic and transition measurements. The
+  proposed interval is 30 seconds.
+- Test intersection attacks against D4's persistent cover-set policy under its
+  stated adversary: an observer of the whole service.
+- Complete the versioned wire encoding of routing tables, domain descriptors
+  and session identities, including error payloads and response bindings, and
+  extend wallet interop to the new manifest.
+- Measure Ironwood block row bursts and successor prewarming and preparation
+  time on intended hosts. Provisional B must be ready at the crossing, before
+  any confirmation depth accrues. The 1,000-block depth remains a local policy
+  choice rather than an empirical reorg claim.
 
 ## Implementation phases
 
-**Phase 1: direct worker serving.** Deploy the request router behind Caddy on
-the coordinator host. Workers receive query bodies, evaluate them individually,
-pack and answer; the router applies D6's placement, selection and bounded-retry rules;
-the coordinator publishes routing and placement and leaves the query path.
-Per-replica admission covers the full request lifetime, and router buffering is
-bounded independently.
+### Phase 1: direct worker serving
 
-Exit: sweep the target offered rates with concurrent publication and
-cover-like traffic. Show that both replicas receive traffic, that one
-replica's admission saturation spills boundedly to its peer, and that replica
-loss or a placement-revision change stops new
-requests from reaching the removed replica. Restart the router and exercise a
-stale placement so it fails closed rather than guessing. Report successful
-QPS, latency, public 429/502 responses, worker rejection rate,
-coordinator publication responsiveness, coordinator-host/router
-peak memory and network throughput, and worker peak memory. No wallet change
-is needed because Caddy preserves the public route.
+Deploy the router behind Caddy on the coordinator host. Workers receive query
+bodies, evaluate each independently, pack and answer. The router applies D6's
+placement, selection and bounded-retry rules. The coordinator publishes routing
+and placement and stops receiving query bodies. Worker admission covers the
+complete request lifetime; router buffering is bounded independently. The
+public route is preserved, so this phase requires no wallet change.
 
-**Phase 2: immutable shards and composed routing.** Fixed storage shards, the
-tail domain, manifest-owned routing, separated session, routing and placement
-identities, confirmation-depth transitions with the recovery epoch, and the 8K
-frontier cap. Exit: replay the D8 model cases against the implementation, run
-full-size lifecycle tests through two successive compose windows, and complete
-a versioned wallet interop run. This phase changes the wallet protocol.
+Before cutover, pass the worker-packing gate. For phase acceptance, sweep target
+offered rates with concurrent publication and cover-like traffic. Verify that:
 
-**Phase 3: pool placement.** Replace groups with per-domain placements and a
-replication factor. Exit: consolidation and hotspot replication under the
-existing operation phases, with the ledger counting both copies.
+- Both replicas receive traffic, and admission saturation on one spills to its
+  peer within the retry bound.
+- Replica loss or a placement revision change stops new requests from reaching
+  the removed replica.
+- Router restart and stale placement fail closed rather than guessing.
 
-The D3 reuse rule and D8 recovery contract are resolved at the design level.
-Their production routing and wallet behavior remain Phase 2 work.
+Report successful QPS, latency, public 429/502 responses, worker rejection rate,
+coordinator publication responsiveness, coordinator-host/router peak memory and
+network throughput, and worker peak memory.
 
-## What this removes and what it keeps
+### Phase 2: immutable shards and composed routing
 
-Removed: loans and both loan transitions, the lender and SETTLING roles,
+Implement fixed storage shards, tail domains, manifest-owned routing, separate
+session/routing/placement identities, confirmation transitions and recovery
+epochs, retaining the 8K frontier cap. This phase changes the wallet protocol.
+
+Acceptance requires replaying D8's model cases against the implementation,
+full-size lifecycle tests through two successive compose windows, and a
+versioned wallet interop run.
+
+### Phase 3: pool placement
+
+Replace groups with per-domain placements and a replication factor. Validate
+consolidation and hotspot replication under the existing operation phases,
+with the ledger counting both copies at the default factor.
+
+## Resulting architecture
+
+This removes loans and both loan transitions, lender and SETTLING roles,
 restoration reservations, reorg undo across shard pairs, generation-bound
-expiry for sealed domains, wallet-side domain choice, and the coordinator's
-role in the query path.
+expiry for sealed domains, wallet discretion over a row's canonical domain,
+and coordinator query processing.
 
-Kept: unique canonical routing, now enforced by the manifest's routing table;
-the 653-byte record and 33-record row; the p16 q48 profile and setup domain;
-the 24-shard wallet ceiling; the memory admission ledger, 512 MiB guard and
-7 GiB soft limit; the persisted operation phases for moves; and the rule that
-no capacity claim stands until qualified on the intended hardware.
+It preserves unique canonical routing through the manifest, the existing record
+format and PIR profile, the public setup domain, the 24-shard wallet ceiling,
+the memory ledger with its 512 MiB guard and 7 GiB soft limit, and persisted
+operation phases for moves. Capacity claims still require qualification on the
+intended hardware.
