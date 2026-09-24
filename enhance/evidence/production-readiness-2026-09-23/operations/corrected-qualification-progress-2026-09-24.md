@@ -1,6 +1,6 @@
 # Corrected release qualification progress
 
-Status at 2026-09-24 04:42 UTC: **in progress, not a release sign-off**.
+Status at 2026-09-24 05:50 UTC: **in progress, not a release sign-off**.
 The corrected release source is
 `216b9993cc3ae4e0f1820d60c6b8f03d104b5e46`; the deployed server SHA-256
 is `7be19ca82108c2046d571ce6b901dd348d2e43435510a74257d530a49b309fe1`.
@@ -28,7 +28,10 @@ maximum conservative lag 60.001 seconds, no findings. The 30-minute 2 QPS
 stage also passed: 3,600/3,600 exact answers, no errors or unstarted arrivals,
 successful scheduled p99 552.959 ms; its report SHA-256 is
 `6b8845df32b43eff466230845f2f02470de7ca1b08d65e9afd081ab4738cf396`.
-The 4 QPS stage is running; the six-hour soak and burst remain.
+The 30-minute 4 QPS stage passed 7,200/7,200 exact answers, no errors or
+unstarted arrivals, successful scheduled p99 662.527 ms; its report SHA-256
+is `d8c26b519799059c90bf599fb264486765a0c8642f7ec9d2e80f52b0e1410b65`.
+The six-hour 4 QPS soak is running; the burst remains.
 
 The first active isolated campaign started at 03:51:12 UTC on temporary c-4
 group `g01`, after both one-second direct samplers started. It was
@@ -56,6 +59,11 @@ still describes an older dependency and must be corrected before release
 review. The actual app restore/resume/reorg check over public HTTPS is open.
 
 The fresh rc.2 ARM64/Linux matrices and deterministic comparison are complete.
-A current published snapshot, independent numerical/cryptographic reviewer,
-fault/alert rehearsal, sealed hardware campaign, full public assessments and
-24-hour opt-in observation remain open.
+An [independent agent audit](../numerical-review-packet.md) reran all 432 cases
+per platform and conditionally approved the numerical bound and extractor under
+the stated ideal sampler assumptions. The current published snapshot check
+remains open. The [Vizor m11 exercise](vizor-m11-live-2026-09-24.md) confirmed
+mainnet import, scan and resume but left zero query-ready work; it did not
+demonstrate private record retrieval or controlled reorg. Fault/alert rehearsal,
+the sealed hardware campaign, full public assessments and 24-hour opt-in
+observation remain open.

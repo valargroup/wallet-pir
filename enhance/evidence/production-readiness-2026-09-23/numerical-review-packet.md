@@ -1,6 +1,29 @@
 # rc.2 P16Q48 numerical review packet
 
-Status: awaiting independent review and current production snapshot coverage. This packet records reproducible inputs and specific claims for a reviewer; it is not a sign-off.
+Status: independent agent audit completed; current production snapshot coverage remains open. This packet records reproducible inputs, specific claims and the agent's conditional verdict. It is not a production sign-off.
+
+## Independent agent audit, 2026-09-24
+
+A separate review agent audited the pinned rc.2 source and reran `verify.py` over
+all 432 ARM64 and 432 Linux raw cases. Every recomputed summary matched. It
+reran `compare.py` across all 432 deterministic cases; both platforms had zero
+decoding failures. It found no blocking numerical or extractor defect and
+conditionally approved the 2^-78 full-query decoding bound under the stated
+ideal independent sampler-draw model. The limiting all-maximum case has a
+per-coefficient exponent floor of 93 bits; the conservative 15-bit union gives
+78 bits.
+
+The review checked reused `K_g` error grouping before squaring and separate
+`K_h` accounting in `src/certificate.rs`, centered lifting in
+`src/fast_weights.rs`, and the finite-CDF rational MGF bound, default-zero
+tail, deterministic rounding allowance, Chernoff optimization and 12,288-
+coefficient union in `verify.py`. It checked the pinned backend collapse order
+and both NTT action checks. ChaCha20 seeded by OS entropy is a separate
+computational replacement for ideal independent draws; artifact hashes do not
+alone prove source-to-binary linkage. This is an independent **agent** audit,
+not human cryptographic sign-off. The current published snapshot record-content
+and public-setup hash check remains open, so the agent verdict does not qualify
+the production release.
 
 ## Exact candidate
 
