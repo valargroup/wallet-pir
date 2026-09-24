@@ -3,26 +3,34 @@
 //! both this ledger and physical/cgroup peaks, not just Rust allocation sizes.
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    OnceLock,
+    Arc,
 };
 const MIB: u64 = 1024 * 1024;
 const RESIDENT: u64 = 768 * MIB;
 const PREPARATION: u64 = 1024 * MIB;
 const HOST_AND_REQUEST_RESERVE: u64 = 1536 * MIB;
-static LIVE: AtomicU64 = AtomicU64::new(0);
-static LIMIT: OnceLock<u64> = OnceLock::new();
-
-/// Set before constructing any packing state in the standalone router process.
-/// Six 768-MiB resident charges plus one 1792-MiB construction charge leave
-/// 768 MiB within the 7-GiB process ceiling for admitted requests and runtime.
-pub(crate) fn configure_router() -> Result<(), String> {
-    LIMIT
-        .set(6400 * MIB)
-        .map_err(|_| "packing budget already initialized".into())
+/// Shared admission ledger for one service. Construct once at startup and clone
+/// into background tasks; constructing a ledger per request bypasses admission.
+/// Separate services in one process may share a ledger when they share a limit.
+#[derive(Clone)]
+pub struct PackingBudget(Arc<Ledger>);
+struct Ledger {
+    live: AtomicU64,
+    limit: u64,
 }
 
-fn limit() -> u64 {
-    *LIMIT.get_or_init(|| {
+impl PackingBudget {
+    fn new(limit: u64) -> Self {
+        Self(Arc::new(Ledger {
+            live: AtomicU64::new(0),
+            limit,
+        }))
+    }
+    pub(crate) fn router() -> Self {
+        Self::new(6400 * MIB)
+    }
+    /// Coordinator limit derived from environment, physical memory, and cgroup.
+    pub fn coordinator() -> Self {
         #[allow(unused_mut)] // Linux additionally caps against the host and cgroup.
         let mut limit = std::env::var("ENHANCE_COORDINATOR_MEMORY_BYTES")
             .ok()
@@ -51,30 +59,141 @@ fn limit() -> u64 {
                 }
             }
         }
-        limit.saturating_sub(HOST_AND_REQUEST_RESERVE)
-    })
+        Self::new(limit.saturating_sub(HOST_AND_REQUEST_RESERVE))
+    }
+    pub fn charged_bytes(&self) -> u64 {
+        self.0.live.load(Ordering::SeqCst)
+    }
 }
 
-pub(crate) struct Charge(u64);
+pub(crate) struct Charge {
+    bytes: u64,
+    budget: PackingBudget,
+}
 impl Charge {
-    pub(crate) fn prepare() -> Result<Self, String> {
+    pub(crate) fn prepare(budget: &PackingBudget) -> Result<Self, String> {
         let bytes = RESIDENT + PREPARATION;
-        LIVE.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |live| {
-            live.checked_add(bytes).filter(|sum| *sum <= limit())
+        budget
+            .0
+            .live
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |live| {
+                live.checked_add(bytes).filter(|sum| *sum <= budget.0.limit)
+            })
+            .map_err(|_| "coordinator packing memory admission refused".to_string())?;
+        Ok(Self {
+            bytes,
+            budget: budget.clone(),
         })
-        .map_err(|_| "coordinator packing memory admission refused".to_string())?;
-        Ok(Self(bytes))
     }
     pub(crate) fn resident(&mut self) {
-        LIVE.fetch_sub(self.0 - RESIDENT, Ordering::SeqCst);
-        self.0 = RESIDENT;
+        self.budget
+            .0
+            .live
+            .fetch_sub(self.bytes - RESIDENT, Ordering::SeqCst);
+        self.bytes = RESIDENT;
     }
 }
 impl Drop for Charge {
     fn drop(&mut self) {
-        LIVE.fetch_sub(self.0, Ordering::SeqCst);
+        self.budget.0.live.fetch_sub(self.bytes, Ordering::SeqCst);
     }
 }
-pub(crate) fn charged_bytes() -> u64 {
-    LIVE.load(Ordering::SeqCst)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn charges_follow_shared_ownership_and_release_preparation() {
+        let budget = PackingBudget::new(RESIDENT + PREPARATION);
+        let independent = PackingBudget::new(RESIDENT + PREPARATION);
+        let clone = budget.clone();
+        let mut charge = Charge::prepare(&budget).unwrap();
+        assert_eq!(clone.charged_bytes(), RESIDENT + PREPARATION);
+        assert_eq!(independent.charged_bytes(), 0);
+        assert!(Charge::prepare(&clone).is_err());
+        charge.resident();
+        charge.resident();
+        assert_eq!(budget.charged_bytes(), RESIDENT);
+        let owned = Arc::new(charge);
+        let retained = owned.clone();
+        drop(owned);
+        assert_eq!(budget.charged_bytes(), RESIDENT);
+        drop(retained);
+        assert_eq!(budget.charged_bytes(), 0);
+        drop(Charge::prepare(&budget).unwrap());
+        assert_eq!(budget.charged_bytes(), 0);
+    }
+
+    #[test]
+    fn concurrent_admission_cannot_exceed_limit() {
+        let budget = PackingBudget::new(2 * (RESIDENT + PREPARATION));
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let admitted = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let budget = budget.clone();
+                    let barrier = barrier.clone();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        let charge = Charge::prepare(&budget).ok();
+                        barrier.wait();
+                        assert!(budget.charged_bytes() <= budget.0.limit);
+                        charge
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(admitted.len(), 2);
+        assert_eq!(budget.charged_bytes(), budget.0.limit);
+        drop(admitted);
+        assert_eq!(budget.charged_bytes(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancellation_keeps_detached_construction_charged_until_it_finishes() {
+        let budget = PackingBudget::new(RESIDENT + PREPARATION);
+        let background_budget = budget.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            tokio::task::spawn_blocking(move || {
+                let charge = Charge::prepare(&background_budget).unwrap();
+                started_tx.send(()).unwrap();
+                finish_rx
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap();
+                drop(charge);
+                let _ = done_tx.send(());
+            })
+            .await
+            .unwrap();
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert_eq!(budget.charged_bytes(), RESIDENT + PREPARATION);
+        assert!(Charge::prepare(&budget).is_err());
+        finish_tx.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), done_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(budget.charged_bytes(), 0);
+    }
+
+    #[test]
+    fn failed_preparation_releases_its_charge() {
+        let budget = PackingBudget::new(RESIDENT + PREPARATION);
+        assert!(crate::runtime::Packing::new(0, &[], &budget).is_err());
+        assert_eq!(budget.charged_bytes(), 0);
+    }
 }

@@ -96,6 +96,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct PackingRouter {
+    packing_budget: crate::packing_budget::PackingBudget,
     inner: Arc<Mutex<Inner>>,
     preparation: Arc<AsyncMutex<()>>,
     admission: Arc<Semaphore>,
@@ -144,10 +145,6 @@ pub(crate) fn valid_origin(origin: &str) -> Result<(), String> {
 }
 
 impl PackingRouter {
-    pub fn configure_process_budget() -> Result<(), String> {
-        crate::packing_budget::configure_router()
-    }
-
     pub fn open(
         root: &Path,
         artifact_origin: &str,
@@ -175,6 +172,7 @@ impl PackingRouter {
             DurableFence::default()
         };
         Ok(Self {
+            packing_budget: crate::packing_budget::PackingBudget::router(),
             inner: Arc::new(Mutex::new(Inner {
                 fence,
                 active: None,
@@ -279,7 +277,7 @@ async fn health(State(r): State<PackingRouter>) -> Json<serde_json::Value> {
         "active_digest":i.active.as_ref().map(|s| &s.digest),
         "ready":i.refreshed.is_some_and(|t| t.elapsed() <= CONTROL_WATCHDOG),
         "resident_objects":i.material.values().filter(|v| v.strong_count()>0).count(),
-        "packing_charged_bytes":crate::packing_budget::charged_bytes(),
+        "packing_charged_bytes":r.packing_budget.charged_bytes(),
         "available_requests":r.admission.available_permits(),"outstanding":i.outstanding}),
     )
 }
@@ -304,7 +302,7 @@ async fn metrics(State(r): State<PackingRouter>) -> impl IntoResponse {
             "resident_objects",
             i.material.values().filter(|p| p.strong_count() > 0).count() as u64,
         ),
-        ("charged_bytes", crate::packing_budget::charged_bytes()),
+        ("charged_bytes", r.packing_budget.charged_bytes()),
         (
             "evaluations_outstanding",
             i.outstanding.values().sum::<usize>() as u64,
@@ -446,7 +444,7 @@ async fn prepare(
                         runtime::rlwe().d,
                     )
                     .map_err(|e| e.to_string())?;
-                    let pack = Arc::new(Packing::new(rows, &blocks)?);
+                    let pack = Arc::new(Packing::new(rows, &blocks, &router.packing_budget)?);
                     if pack.reference(id)? != reference {
                         return Err("artifact session mismatch".to_string());
                     }

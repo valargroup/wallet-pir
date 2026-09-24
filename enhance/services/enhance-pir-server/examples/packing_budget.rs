@@ -134,16 +134,25 @@ fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
     }
     Ok(bytes)
 }
-fn load_packing(path: &Path, fixture: &Fixture) -> Result<Packing, String> {
+fn load_packing(
+    path: &Path,
+    fixture: &Fixture,
+    budget: &enhance_pir_server::PackingBudget,
+) -> Result<Packing, String> {
     let hint = read_crs_blocks(
         BufReader::new(File::open(path.join("hint.bin")).map_err(|e| e.to_string())?),
         fixture.blocks,
         runtime::rlwe().d,
     )
     .map_err(|e| e.to_string())?;
-    Packing::new(fixture.rows, &hint)
+    Packing::new(fixture.rows, &hint, budget)
 }
-fn prepare(output: PathBuf, rows: u64, queries: usize) -> Result<(), Box<dyn std::error::Error>> {
+fn prepare(
+    output: PathBuf,
+    rows: u64,
+    queries: usize,
+    budget: &enhance_pir_server::PackingBudget,
+) -> Result<(), Box<dyn std::error::Error>> {
     if ![4096, 8192, 16384, 32768].contains(&rows) || queries == 0 {
         return Err("unsupported fixture geometry/count".into());
     }
@@ -157,7 +166,7 @@ fn prepare(output: PathBuf, rows: u64, queries: usize) -> Result<(), Box<dyn std
     let mut file = BufWriter::new(File::create(output.join("hint.bin"))?);
     write_crs_blocks(&mut file, &hint)?;
     file.flush()?;
-    let packing = Packing::new(rows, &hint)?;
+    let packing = Packing::new(rows, &hint, budget)?;
     let manifest = Manifest {
         recovery_epoch: 0,
         placement_revision: 0,
@@ -217,12 +226,13 @@ fn prepare(output: PathBuf, rows: u64, queries: usize) -> Result<(), Box<dyn std
     Ok(())
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let budget = enhance_pir_server::PackingBudget::coordinator();
     match Args::parse().command {
         Command::Prepare {
             output,
             rows,
             queries,
-        } => prepare(output, rows, queries)?,
+        } => prepare(output, rows, queries, &budget)?,
         Command::Measure {
             fixture: path,
             copies,
@@ -243,7 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut packing = Vec::new();
             for index in 0..copies {
                 let at = Instant::now();
-                packing.push(load_packing(&path, &fixture)?);
+                packing.push(load_packing(&path, &fixture, &budget)?);
                 emit(
                     "resident",
                     json!({"copies":index+1,"setup_ms":at.elapsed().as_secs_f64()*1000.0}),
@@ -286,9 +296,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let barrier = barrier.clone();
                     let path = &path;
                     let fixture = &fixture;
+                    let budget = &budget;
                     Some(scope.spawn(move || {
                         barrier.wait();
-                        let result = load_packing(path, fixture);
+                        let result = load_packing(path, fixture, budget);
                         emit("overlap_built", json!({}));
                         result
                     }))

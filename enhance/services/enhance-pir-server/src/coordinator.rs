@@ -172,6 +172,7 @@ fn restore(
     revoked: &BTreeSet<String>,
     cache: &mut BTreeMap<String, Arc<PublishedPacking>>,
     remote_packing: bool,
+    budget: &super::packing_budget::PackingBudget,
 ) -> Result<Arc<Snapshot>, String> {
     manifest.validate()?;
     let saved: SavedSnapshot = serde_json::from_slice(
@@ -214,7 +215,7 @@ fn restore(
                 runtime::rlwe().d,
             )
             .map_err(|e| e.to_string())?;
-            let serving = Packing::new(shard.logical_rows, &blocks)?;
+            let serving = Packing::new(shard.logical_rows, &blocks, budget)?;
             crate::artifact::write_atomic(&root.join("public"), name, |f| {
                 f.write_all(&serving.public)
             })
@@ -233,6 +234,7 @@ fn restore(
 
 #[derive(Clone)]
 pub struct Coordinator {
+    packing_budget: super::packing_budget::PackingBudget,
     store: Arc<Mutex<Store>>,
     snapshots: Arc<RwLock<Vec<Arc<Snapshot>>>>,
     publication: Arc<Semaphore>,
@@ -383,6 +385,7 @@ impl Coordinator {
             }
             Ok(())
         })?;
+        let packing_budget = super::packing_budget::PackingBudget::coordinator();
         let mut snapshots = Vec::new();
         let mut packing_cache = BTreeMap::new();
         for manifest in &store.state().published {
@@ -392,9 +395,11 @@ impl Coordinator {
                 &store.state().recovery.revoked,
                 &mut packing_cache,
                 serving.is_some(),
+                &packing_budget,
             )?);
         }
         Ok(Self {
+            packing_budget,
             serving,
             store: Arc::new(Mutex::new(store)),
             snapshots: Arc::new(RwLock::new(snapshots)),
@@ -1272,8 +1277,16 @@ impl Coordinator {
                     }
                 }
                 let remote_packing = self.serving.is_some();
+                let budget = self.packing_budget.clone();
                 let restored = tokio::task::spawn_blocking(move || {
-                    restore(&root, &manifest, &revoked, &mut cache, remote_packing)
+                    restore(
+                        &root,
+                        &manifest,
+                        &revoked,
+                        &mut cache,
+                        remote_packing,
+                        &budget,
+                    )
                 })
                 .await
                 .map_err(|e| e.to_string())??;
@@ -1330,6 +1343,7 @@ impl Coordinator {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<(), String>>,
     {
+        journal.ensure_healthy().map_err(|e| e.to_string())?;
         let _permit = self
             .publication
             .clone()
@@ -1816,7 +1830,7 @@ impl Coordinator {
                         runtime::rlwe().d,
                     )
                     .map_err(|e| e.to_string())?;
-                    let pack = Packing::new(plan.shard.logical_rows, &hint)?;
+                    let pack = Packing::new(plan.shard.logical_rows, &hint, &self.packing_budget)?;
                     let pack = Arc::new(PublishedPacking::new(
                         plan.shard.logical_rows,
                         pack,
@@ -2286,7 +2300,7 @@ async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
         }
     }
     Json(
-        serde_json::json!({"packing_charged_bytes":super::packing_budget::charged_bytes(),"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
+        serde_json::json!({"packing_charged_bytes":c.packing_budget.charged_bytes(),"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
         "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":manifest.as_ref().map(|m|m.placement_revision),
         "registered_groups":store.state().groups.len(),
         "registered_workers":store.state().groups.iter().map(|g|g.replicas.len()).sum::<usize>(),
@@ -2407,6 +2421,38 @@ mod admission_tests {
                 .collect(),
         };
         Coordinator::open(root.path(), vec![group]).unwrap()
+    }
+
+    #[tokio::test]
+    async fn poisoned_journal_cannot_publish_even_empty_coverage() {
+        let coordinator = test_coordinator();
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = crate::store::RecordJournal::open(
+            dir.path(),
+            crate::types::DatabaseId::Enhance,
+            crate::types::ENHANCE_LAYOUT,
+        )
+        .unwrap();
+        std::fs::remove_file(dir.path().join("records.bin")).unwrap();
+        assert!(journal
+            .append_block(10, "aa".into(), &[] as &[Vec<u8>])
+            .is_err());
+        let before = coordinator.store.lock().unwrap().state().revision;
+        let error = coordinator
+            .publish_checked(&journal, 10, "aa".into(), || async {
+                panic!("validation must not run for a poisoned journal");
+            })
+            .await
+            .unwrap_err();
+        assert!(error.contains("drop and reopen"));
+        assert_eq!(coordinator.store.lock().unwrap().state().revision, before);
+        assert!(coordinator
+            .telemetry
+            .lock()
+            .unwrap()
+            .last_attempt_seconds
+            .is_none());
+        assert!(coordinator.manifest().await.is_none());
     }
 
     fn empty_query() -> axum::extract::Request {

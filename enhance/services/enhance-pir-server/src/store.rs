@@ -49,6 +49,10 @@ struct StoreManifest {
 /// Append-only journal of fixed-size records for one table, indexed by
 /// commitment-tree position from zero. Position to offset is
 /// `position * layout.record_bytes`.
+///
+/// After a mutation I/O error the journal is poisoned until reopened. Infallible
+/// metadata getters expose only the last in-memory snapshot for diagnostics;
+/// fallible reads, writes, and publication must check journal health.
 pub struct RecordJournal {
     // Hold an exclusive writer lock for the lifetime of this journal.
     _lock: File,
@@ -58,6 +62,9 @@ pub struct RecordJournal {
     table: Option<DatabaseId>,
     layout: DatabaseLayout,
     manifest: StoreManifest,
+    poisoned: bool,
+    #[cfg(test)]
+    fail_after: Option<&'static str>,
 }
 
 impl RecordJournal {
@@ -140,7 +147,11 @@ impl RecordJournal {
                 "records file is shorter than committed manifest".to_string(),
             ));
         }
+        // A prior rename may have succeeded before directory sync failed. Make
+        // the selected manifest durable before reclaiming any excess record tail.
+        File::open(&dir)?.sync_all()?;
         records.set_len(expected_len)?;
+        records.sync_all()?;
 
         let store = Self {
             _lock: lock,
@@ -150,9 +161,12 @@ impl RecordJournal {
             table,
             layout,
             manifest,
+            poisoned: false,
+            #[cfg(test)]
+            fail_after: None,
         };
         if !store.manifest_path().exists() {
-            store.persist_manifest()?;
+            store.persist_manifest(&store.manifest)?;
         }
         Ok(store)
     }
@@ -183,8 +197,10 @@ impl RecordJournal {
     }
 
     /// Removes every block above `height`, or all blocks when `height` is `None`.
-    /// The records file is truncated before the replacement manifest is committed.
+    /// Commit the smaller manifest before reclaiming records. After an I/O error,
+    /// drop and reopen the journal before using it again.
     pub fn rewind_to_height(&mut self, height: Option<u64>) -> Result<(), StoreError> {
+        self.ensure_healthy()?;
         let keep = height.map_or(0, |height| {
             self.manifest
                 .blocks
@@ -200,13 +216,22 @@ impl RecordJournal {
             },
             |block| block.first_position,
         );
-        OpenOptions::new()
-            .write(true)
-            .open(&self.records_path)?
-            .set_len(tree_size * self.layout.record_bytes as u64)?;
-        self.manifest.blocks.truncate(keep);
-        self.manifest.tree_size = tree_size;
-        self.persist_manifest()
+        let expected_len = tree_size
+            .checked_mul(self.layout.record_bytes as u64)
+            .ok_or_else(|| StoreError::Invariant("record length overflow".into()))?;
+        let mut next = self.manifest.clone();
+        next.blocks.truncate(keep);
+        next.tree_size = tree_size;
+        let result = (|| {
+            self.persist_manifest(&next)?;
+            self.manifest = next;
+            let records = OpenOptions::new().write(true).open(&self.records_path)?;
+            records.set_len(expected_len)?;
+            self.checkpoint("truncate")?;
+            records.sync_all()?;
+            self.checkpoint("truncate_sync")
+        })();
+        self.poison_on_error(result)
     }
 
     pub fn append_block<R: AsRef<[u8]>>(
@@ -215,8 +240,9 @@ impl RecordJournal {
         hash: String,
         records: &[R],
     ) -> Result<(), StoreError> {
+        self.ensure_healthy()?;
         if let Some(previous) = self.last_block() {
-            if height != previous.height + 1 {
+            if previous.height.checked_add(1) != Some(height) {
                 return Err(StoreError::Invariant(format!(
                     "block height {height} does not follow {}",
                     previous.height
@@ -235,24 +261,37 @@ impl RecordJournal {
         }
 
         let first_position = self.manifest.tree_size;
-        let mut file = OpenOptions::new().append(true).open(&self.records_path)?;
-        for record in records {
-            file.write_all(record.as_ref())?;
-        }
-        file.sync_all()?;
-
-        self.manifest.tree_size = self
-            .manifest
-            .tree_size
+        let offset = first_position
+            .checked_mul(self.layout.record_bytes as u64)
+            .ok_or_else(|| StoreError::Invariant("record length overflow".into()))?;
+        let mut next = self.manifest.clone();
+        next.tree_size = first_position
             .checked_add(records.len() as u64)
-            .ok_or_else(|| StoreError::Invariant("tree size overflow".to_string()))?;
-        self.manifest.blocks.push(BlockEntry {
+            .ok_or_else(|| StoreError::Invariant("tree size overflow".into()))?;
+        next.tree_size
+            .checked_mul(self.layout.record_bytes as u64)
+            .ok_or_else(|| StoreError::Invariant("record length overflow".into()))?;
+        next.blocks.push(BlockEntry {
             height,
             hash,
             first_position,
             action_count: records.len() as u64,
         });
-        self.persist_manifest()
+        let result = (|| {
+            let mut file = OpenOptions::new().write(true).open(&self.records_path)?;
+            file.set_len(offset)?;
+            file.seek(SeekFrom::Start(offset))?;
+            for record in records {
+                file.write_all(record.as_ref())?;
+                self.checkpoint("record_write")?;
+            }
+            file.sync_all()?;
+            self.checkpoint("record_sync")?;
+            self.persist_manifest(&next)?;
+            self.manifest = next;
+            Ok(())
+        })();
+        self.poison_on_error(result)
     }
 
     /// Shards with at least one populated position, from shard zero.
@@ -264,6 +303,7 @@ impl RecordJournal {
     /// The full padded shard: populated records in order, then zero bytes up
     /// to `layout.shard_bytes()`. Deterministic, so its digest is stable.
     pub fn read_shard_rows(&self, shard_id: u64) -> Result<Vec<u8>, StoreError> {
+        self.ensure_healthy()?;
         let shard_positions = self.layout.shard_positions() as u64;
         let shard_start = shard_id
             .checked_mul(shard_positions)
@@ -289,6 +329,7 @@ impl RecordJournal {
     /// Raw bytes of `count` consecutive records from `start`, all of which
     /// must be populated.
     pub fn read_records(&self, start: u64, count: usize) -> Result<Vec<u8>, StoreError> {
+        self.ensure_healthy()?;
         let end = start
             .checked_add(count as u64)
             .ok_or_else(|| StoreError::Invariant("record range overflow".to_string()))?;
@@ -323,15 +364,44 @@ impl RecordJournal {
         self.dir.join("manifest.json")
     }
 
-    fn persist_manifest(&self) -> Result<(), StoreError> {
+    pub(crate) fn ensure_healthy(&self) -> Result<(), StoreError> {
+        if self.poisoned {
+            return Err(StoreError::Invariant(
+                "journal I/O failed; drop and reopen before use".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn poison_on_error(&mut self, result: Result<(), StoreError>) -> Result<(), StoreError> {
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    // Per-instance failure injection exercises persistence boundaries without global state.
+    fn checkpoint(&self, _stage: &'static str) -> Result<(), StoreError> {
+        #[cfg(test)]
+        if self.fail_after == Some(_stage) {
+            return Err(std::io::Error::other(format!("injected after {_stage}")).into());
+        }
+        Ok(())
+    }
+
+    fn persist_manifest(&self, manifest: &StoreManifest) -> Result<(), StoreError> {
         let path = self.manifest_path();
         let temporary = self.dir.join("manifest.json.tmp");
-        let bytes = serde_json::to_vec_pretty(&self.manifest)?;
+        let bytes = serde_json::to_vec_pretty(manifest)?;
         let mut file = File::create(&temporary)?;
         file.write_all(&bytes)?;
+        self.checkpoint("manifest_write")?;
         file.sync_all()?;
+        self.checkpoint("manifest_sync")?;
         fs::rename(temporary, path)?;
+        self.checkpoint("manifest_rename")?;
         File::open(&self.dir)?.sync_all()?;
+        self.checkpoint("directory_sync")?;
         Ok(())
     }
 }
@@ -351,6 +421,124 @@ mod tests {
 
     fn open(dir: &Path) -> RecordJournal {
         RecordJournal::open(dir, DatabaseId::Enhance, ENHANCE_LAYOUT).expect("open")
+    }
+
+    #[test]
+    fn append_failures_reopen_to_a_complete_committed_prefix() {
+        for stage in [
+            "record_write",
+            "record_sync",
+            "manifest_write",
+            "manifest_sync",
+            "manifest_rename",
+            "directory_sync",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut store = open(dir.path());
+            store.append_block(10, "aa".into(), &[record(1)]).unwrap();
+            store.fail_after = Some(stage);
+            assert!(store
+                .append_block(11, "bb".into(), &[record(2), record(3)])
+                .is_err());
+            assert!(store.read_records(0, 1).is_err());
+            assert!(store
+                .append_block(11, "retry".into(), &[record(4)])
+                .is_err());
+            assert!(store.rewind_to_height(None).is_err());
+            drop(store);
+            let mut recovered = open(dir.path());
+            let committed = matches!(stage, "manifest_rename" | "directory_sync");
+            assert_eq!(
+                recovered.tree_size(),
+                if committed { 3 } else { 1 },
+                "{stage}"
+            );
+            assert_eq!(recovered.read_records(0, 1).unwrap(), record(1).as_bytes());
+            if committed {
+                assert_eq!(recovered.read_records(2, 1).unwrap(), record(3).as_bytes());
+            } else {
+                recovered
+                    .append_block(11, "replacement".into(), &[record(4)])
+                    .unwrap();
+                assert_eq!(recovered.read_records(1, 1).unwrap(), record(4).as_bytes());
+            }
+            assert_eq!(
+                fs::metadata(dir.path().join("records.bin")).unwrap().len(),
+                recovered.tree_size() * RECORD_BYTES as u64
+            );
+        }
+    }
+
+    #[test]
+    fn rewind_failures_never_remove_committed_records() {
+        for stage in [
+            "manifest_write",
+            "manifest_sync",
+            "manifest_rename",
+            "directory_sync",
+            "truncate",
+            "truncate_sync",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut store = open(dir.path());
+            store.append_block(10, "aa".into(), &[record(1)]).unwrap();
+            store.append_block(11, "bb".into(), &[record(2)]).unwrap();
+            store.fail_after = Some(stage);
+            assert!(store.rewind_to_height(Some(10)).is_err());
+            assert!(store.read_records(0, 1).is_err());
+            drop(store);
+            let mut recovered = open(dir.path());
+            let committed = !matches!(stage, "manifest_write" | "manifest_sync");
+            assert_eq!(
+                recovered.tree_size(),
+                if committed { 1 } else { 2 },
+                "{stage}"
+            );
+            assert_eq!(recovered.read_records(0, 1).unwrap(), record(1).as_bytes());
+            recovered.rewind_to_height(Some(10)).unwrap();
+            recovered
+                .append_block(11, "replacement".into(), &[record(4)])
+                .unwrap();
+            assert_eq!(recovered.read_records(1, 1).unwrap(), record(4).as_bytes());
+        }
+    }
+
+    #[test]
+    fn ingest_cannot_acknowledge_a_duplicate_after_io_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = crate::ingest::EnhanceJournal {
+            records: open(dir.path()),
+        };
+        let block = crate::zakura::CanonicalBlock {
+            height: 10,
+            hash: "aa".into(),
+            tree_size: 1,
+            records: vec![record(1)],
+        };
+        journal.append_block(&block).unwrap();
+        journal.records.fail_after = Some("manifest_write");
+        assert!(journal.rewind_to_height(None).is_err());
+        assert!(journal.append_block(&block).is_err());
+    }
+
+    #[test]
+    fn empty_blocks_and_rewind_to_empty_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open(dir.path());
+        store
+            .append_block(10, "empty".into(), &[] as &[EnhanceRecord])
+            .unwrap();
+        store.append_block(11, "aa".into(), &[record(1)]).unwrap();
+        store.rewind_to_height(Some(10)).unwrap();
+        drop(store);
+        let mut store = open(dir.path());
+        assert_eq!(store.tree_size(), 0);
+        assert_eq!(store.last_block().unwrap().height, 10);
+        store.rewind_to_height(None).unwrap();
+        drop(store);
+        let store = open(dir.path());
+        assert!(store.last_block().is_none());
+        assert_eq!(store.tree_size(), 0);
     }
 
     #[test]

@@ -1251,7 +1251,12 @@ mod tests {
                 .prepare(plan.clone(), source)
         })
         .unwrap();
-        let packing = Packing::new(4096, &eval.hint().unwrap()).unwrap();
+        let packing = Packing::new(
+            4096,
+            &eval.hint().unwrap(),
+            &crate::packing_budget::PackingBudget::coordinator(),
+        )
+        .unwrap();
         let manifest = Manifest {
             recovery_epoch: 0,
             placement_revision: 0,
@@ -1413,7 +1418,12 @@ mod tests {
             .unwrap()
             .prepare(plan.clone(), source)
             .unwrap();
-        let packing = Packing::new(4096, &eval.hint().unwrap()).unwrap();
+        let packing = Packing::new(
+            4096,
+            &eval.hint().unwrap(),
+            &crate::packing_budget::PackingBudget::coordinator(),
+        )
+        .unwrap();
         let manifest = Manifest {
             recovery_epoch: 0,
             placement_revision: 0,
