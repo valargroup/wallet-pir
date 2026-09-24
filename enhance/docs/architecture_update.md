@@ -397,18 +397,17 @@ phase if the public route is preserved at the origin.
 
 **Phase 2: immutable shards and composed routing.** Fixed storage shards, the
 tail domain, manifest-owned routing, separated session, routing and placement
-identities, confirmation-depth transitions with the recovery epoch, and the 2K
-frontier cap. Exit: the reuse-rule test from open question 1, a reorg test
-across a sealed boundary, full-size lifecycle tests through two successive
-compose windows, and a versioned wallet interop run. This phase changes the
-wallet protocol.
+identities, confirmation-depth transitions with the recovery epoch, and the 8K
+frontier cap. Exit: replay the D8 model cases against the implementation, run
+full-size lifecycle tests through two successive compose windows, and complete
+a versioned wallet interop run. This phase changes the wallet protocol.
 
 **Phase 3: pool placement.** Replace groups with per-domain placements and a
 replication factor. Exit: consolidation and hotspot replication under the
 existing operation phases, with the ledger counting both copies.
 
-The remaining blocking design question is the deep-reorg contract. The tail
-removal reuse rule is resolved by the construction test above.
+The D3 reuse rule and D8 recovery contract are resolved at the design level.
+Their production routing and wallet behavior remain Phase 2 work.
 
 ## What this removes and what it keeps
 
