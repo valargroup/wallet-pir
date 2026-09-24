@@ -337,6 +337,7 @@ async fn full_shard_composition_confirmation_and_recovery() {
     let floor = 4096 * 33u64;
     let mut height = 3428143u64;
     let mut sealed_session = None;
+    let mut rollback_anchor = None;
     // Includes exact full A, first B row, threshold at first record in row m,
     // and a second composition window. Every append is a complete block.
     for target in [
@@ -379,10 +380,15 @@ async fn full_shard_composition_confirmation_and_recovery() {
         }
         let stale = client.session(0).await.unwrap().prepare_row(0).unwrap();
         // Confirm from the completing block, with no new record bytes.
-        height += 1000;
-        journal
-            .append_block::<Vec<u8>>(height, format!("{height:064x}"), &[])
-            .unwrap();
+        for _ in 0..1000 {
+            height += 1;
+            journal
+                .append_block::<Vec<u8>>(height, format!("{height:064x}"), &[])
+                .unwrap();
+        }
+        if target == 2 * span + 1 {
+            rollback_anchor = journal.last_block().cloned();
+        }
         coordinator
             .publish(&journal, height, format!("{height:064x}"))
             .await
@@ -412,7 +418,7 @@ async fn full_shard_composition_confirmation_and_recovery() {
     }
     // Ordinary rollback of only the provisional last domain preserves seals.
     let current = coordinator.manifest().await.unwrap();
-    let previous = journal.blocks()[journal.blocks().len() - 3].clone();
+    let previous = rollback_anchor.unwrap();
     coordinator
         .revoke_after(previous.first_position + previous.action_count)
         .await

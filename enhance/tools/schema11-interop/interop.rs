@@ -441,3 +441,161 @@ fn frozen_wallet_and_server_share_the_24_shard_ceiling() {
         )
         .is_err());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "full-size wallet lifecycle; requires a Linux qualification host"]
+async fn v7_wallet_composition_reuse_and_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let mut tasks = Vec::new();
+    let mut replicas = Vec::new();
+    for index in 0..2 {
+        let worker = Worker::open(&root.path().join(format!("w{index}"))).unwrap();
+        let (url, task) = serve(worker.router()).await;
+        tasks.push(task);
+        replicas.push(Replica {
+            name: format!("w{index}"),
+            url,
+            incarnation: String::new(),
+            ledger: Ledger::default(),
+        });
+    }
+    let coordinator = Coordinator::open(
+        &root.path().join("control"),
+        vec![Group {
+            placement_policy: Default::default(),
+            id: "pair".into(),
+            sequence: 0,
+            replicas,
+        }],
+    )
+    .unwrap();
+    let (origin, task) = serve(coordinator.clone().router()).await;
+    tasks.push(task);
+    let mut journal = RecordJournal::open(
+        root.path().join("journal"),
+        DatabaseId::Enhance,
+        ENHANCE_LAYOUT,
+    )
+    .unwrap();
+    let transport = LoopbackTransport::new();
+    let mut client: Option<Client> = None;
+    let span = 32768 * 33u64;
+    for (step, target) in [
+        span + 1,
+        span + 4096 * 33 - 32,
+        2 * span + 1,
+        2 * span + 4096 * 33 - 32,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let height = 3428143 + step as u64;
+        let hash = (step + 1) as u8;
+        let records: Vec<_> = (journal.tree_size()..target).map(record).collect();
+        journal
+            .append_block(height, format!("{hash:02x}").repeat(32), &records)
+            .unwrap();
+        drop(records);
+        coordinator
+            .publish(&journal, height, format!("{hash:02x}").repeat(32))
+            .await
+            .unwrap();
+        let pending = PendingClient::fetch(&transport, &origin).await.unwrap();
+        let acceptance = GenerationAcceptance::new(
+            "main",
+            3428143,
+            AcceptedAnchor::new(height, [hash; 32], target),
+            ClientResourceLimits::with_cache(32768, 3),
+        );
+        if let Some(client) = &mut client {
+            let stale = query_position(client, &transport, 0).await.unwrap_err();
+            assert_eq!(stale.http_status(), Some(409));
+            client.accept_routing(pending, &acceptance).unwrap();
+        } else {
+            client = Some(pending.accept(&acceptance).unwrap());
+        }
+        let client = client.as_mut().unwrap();
+        for position in [0, span - 4096 * 33, span - 1, target - 1] {
+            assert_eq!(
+                query_position(client, &transport, position)
+                    .await
+                    .unwrap()
+                    .as_bytes(),
+                &record(position)[..]
+            );
+        }
+        let covered = client
+            .query_positions_with_cover(&transport, &[0, target - 1, 0], 0)
+            .await
+            .unwrap();
+        for (answer, p) in covered.iter().zip([0, target - 1, 0]) {
+            assert_eq!(answer.as_bytes(), &record(p)[..]);
+        }
+    }
+    let last = journal.last_block().unwrap().clone();
+    let height = last.height + 1000;
+    for next in last.height + 1..=height {
+        journal
+            .append_block::<Vec<u8>>(next, "fa".repeat(32), &[])
+            .unwrap();
+    }
+    coordinator
+        .publish(&journal, height, "fa".repeat(32))
+        .await
+        .unwrap();
+    let pending = PendingClient::fetch(&transport, &origin).await.unwrap();
+    client
+        .as_mut()
+        .unwrap()
+        .accept_routing(
+            pending,
+            &GenerationAcceptance::new(
+                "main",
+                3428143,
+                AcceptedAnchor::new(height, [0xfa; 32], journal.tree_size()),
+                ClientResourceLimits::with_cache(32768, 3),
+            ),
+        )
+        .unwrap();
+    coordinator.revoke_after(0).await.unwrap();
+    assert_eq!(
+        query_position(client.as_mut().unwrap(), &transport, 0)
+            .await
+            .unwrap_err()
+            .http_status(),
+        Some(410)
+    );
+    journal.rewind_to_height(None).unwrap();
+    journal
+        .append_block(3428143, "fe".repeat(32), &[record(0)])
+        .unwrap();
+    coordinator
+        .publish(&journal, 3428143, "fe".repeat(32))
+        .await
+        .unwrap();
+    let pending = PendingClient::fetch(&transport, &origin).await.unwrap();
+    assert_eq!(pending.manifest().recovery_epoch, 1);
+    client
+        .as_mut()
+        .unwrap()
+        .accept_routing(
+            pending,
+            &GenerationAcceptance::new(
+                "main",
+                3428143,
+                AcceptedAnchor::new(3428143, [0xfe; 32], 1),
+                ClientResourceLimits::with_cache(32768, 3),
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        query_position(client.as_mut().unwrap(), &transport, 0)
+            .await
+            .unwrap()
+            .as_bytes(),
+        &record(0)[..]
+    );
+    for task in tasks {
+        task.abort();
+    }
+}

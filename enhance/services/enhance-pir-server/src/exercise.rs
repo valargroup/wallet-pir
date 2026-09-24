@@ -312,8 +312,10 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
     for target in config.profile.seeds(sealed_shards) {
         append(&mut journal, target, 0)?;
         if config.profile != Profile::Smoke {
-            let height = journal.last_block().unwrap().height + 1000;
-            journal.append_block::<Vec<u8>>(height, format!("{height:064x}"), &[])?;
+            for _ in 0..1000 {
+                let height = journal.last_block().unwrap().height + 1;
+                journal.append_block::<Vec<u8>>(height, format!("{height:064x}"), &[])?;
+            }
         }
         manifest = Some(publish(&coordinator, &journal).await?);
     }
