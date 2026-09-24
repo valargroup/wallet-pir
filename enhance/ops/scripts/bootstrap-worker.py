@@ -30,7 +30,7 @@ MIB = 1024 ** 2
 MIN_FREE_DISK_BYTES = 32 * GIB
 SERVICE = 'enhance-pir-worker.service'
 USER = 'enhance-pir'
-PROTOCOL = 'ironwood-enhance-pir-v6'
+PROTOCOL = 'ironwood-enhance-pir-v7'
 BUNDLE_FILES = {'enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test',
                 'test-local.py', 'bootstrap-worker.py', 'sample-worker.py', 'summarize-samples.py',
                 'assess-campaign.py', 'workers.example.json', 'candidate.json', 'revision', 'SHA256SUMS'}
