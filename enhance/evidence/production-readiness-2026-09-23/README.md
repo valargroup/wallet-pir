@@ -45,8 +45,12 @@ The remaining gates include the completed public soak and burst, independent
 chain extraction and wallet release recovery over HTTPS, full hardware active
 and six-sealed campaigns, recovery/alert exercises, independent cryptographic
 review, and the 24-hour opt-in observation. The two serving workers cannot host
-the isolated six-sealed campaign concurrently with this load; no extra workers
-have been provisioned and no production outage has been scheduled.
+either isolated campaign concurrently with canonical serving. The required
+active and six-sealed profiles need at least 12 hours of interrupted serving
+when run sequentially on these workers, plus setup and restoration. The
+[existing-worker campaign plan](operations/existing-c4-campaign-plan.md) is
+prepared but not dispatched; no extra workers have been provisioned and no
+production outage has been scheduled.
 The [provider inventory](operations/c4-provider-inventory.json) records the
 two serving hosts as the only c-4 droplets at its observation time.
 
