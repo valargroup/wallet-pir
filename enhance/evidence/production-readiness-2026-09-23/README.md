@@ -23,6 +23,8 @@ in Vizor PR #601, post-load chain-derived public answers, current published
 snapshot/noise review, fault/alert/rollback drills, the production memory-limit
 alignment, and the 24-hour opt-in observation remain open. This index must not
 be read as a qualification decision while those gates are pending.
+The [external worker-port probe](operations/worker-port-exposure-2026-09-24.md)
+timed out on ports 8091 and 8291 for both serving worker public IPv4 addresses.
 
 ## Historical pre-rollout snapshot (September 24, 03:18 UTC)
 
