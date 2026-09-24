@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Read, Write},
+    io::{self, BufWriter, Read, Write},
     path::Path,
 };
 pub const DIRECTORY: &str = "prepared-packing-v1";
@@ -130,9 +130,28 @@ pub fn load(
     if a.format != FORMAT || a.bytes != expected_len(rows)? {
         return Err("incompatible prepared artifact".into());
     }
-    verify(path, a)?;
-    let file = File::open(path).map_err(|e| e.to_string())?;
-    let pack = Packing::read_prepared(&mut BufReader::with_capacity(65536, &file), rows, budget)?;
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    if file.metadata().map_err(|e| e.to_string())?.len() != a.bytes {
+        return Err("prepared artifact length mismatch".into());
+    }
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    if hex::encode(hash.finalize()) != a.sha256 {
+        return Err("prepared artifact checksum mismatch".into());
+    }
+    // Authenticate the same inode that is mapped, even across path replacement.
+    let mut permissions = file.metadata().map_err(|e| e.to_string())?.permissions();
+    permissions.set_readonly(true);
+    file.set_permissions(permissions)
+        .map_err(|e| e.to_string())?;
+    let pack = Packing::map_prepared(&file, rows, budget)?;
     crate::artifact::release_file_cache(&file);
     Ok(pack)
 }

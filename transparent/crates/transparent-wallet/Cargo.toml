@@ -10,7 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 base64 = "0.22"
 hex = "0.4"
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

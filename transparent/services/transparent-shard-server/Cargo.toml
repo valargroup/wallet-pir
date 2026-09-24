@@ -34,8 +34,8 @@ clap = { version = "4", features = ["derive"] }
 # uses, and a drift there decodes to the wrong row rather than failing.
 enhance-pir-server = { path = "../../../enhance/services/enhance-pir-server" }
 hex = "0.4"
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -60,7 +60,7 @@ sha2 = "0.10"
 hex = "0.4"
 tempfile = "3"
 transparent-events = { path = "../../crates/transparent-events" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
 tower = { version = "0.5", features = ["util"] }
 transparent-wallet = { path = "../../crates/transparent-wallet", features = ["reqwest"] }
 transparent-wallet-store = { path = "../../crates/transparent-wallet-store" }

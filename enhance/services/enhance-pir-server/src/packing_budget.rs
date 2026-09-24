@@ -8,6 +8,7 @@ use std::sync::{
 const MIB: u64 = 1024 * 1024;
 const RESIDENT: u64 = 768 * MIB;
 const PREPARATION: u64 = 1024 * MIB;
+const MAPPED_LOAD: u64 = 128 * MIB;
 const HOST_AND_REQUEST_RESERVE: u64 = 1536 * MIB;
 /// Shared admission ledger for one service. Construct once at startup and clone
 /// into background tasks; constructing a ledger per request bypasses admission.
@@ -17,6 +18,7 @@ pub struct PackingBudget(Arc<Ledger>);
 struct Ledger {
     live: AtomicU64,
     limit: u64,
+    cgroup: Option<std::path::PathBuf>,
 }
 
 impl PackingBudget {
@@ -24,10 +26,21 @@ impl PackingBudget {
         Self(Arc::new(Ledger {
             live: AtomicU64::new(0),
             limit,
+            cgroup: None,
         }))
     }
     pub(crate) fn router() -> Self {
-        Self::new(6400 * MIB)
+        let cgroup = current_cgroup();
+        let limit = cgroup
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p.join("memory.max")).ok())
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(7 * 1024 * MIB);
+        Self(Arc::new(Ledger {
+            live: AtomicU64::new(0),
+            limit: limit.saturating_sub(HOST_AND_REQUEST_RESERVE),
+            cgroup,
+        }))
     }
     /// Coordinator limit derived from environment, physical memory, and cgroup.
     pub fn coordinator() -> Self {
@@ -66,13 +79,69 @@ impl PackingBudget {
     }
 }
 
+fn current_cgroup() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        let groups = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+        let path = groups.lines().find_map(|s| s.strip_prefix("0::"))?;
+        let root = std::path::Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/'));
+        root.join("memory.max").is_file().then_some(root)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn load_fits(current: u64, inactive_file: u64, limit_after_request_reserve: u64) -> bool {
+    current
+        .saturating_sub(inactive_file)
+        .checked_add(RESIDENT + MAPPED_LOAD)
+        .is_some_and(|n| n <= limit_after_request_reserve)
+}
+
 pub(crate) struct Charge {
     bytes: u64,
     budget: PackingBudget,
 }
 impl Charge {
     pub(crate) fn prepare(budget: &PackingBudget) -> Result<Self, String> {
-        let bytes = RESIDENT + PREPARATION;
+        Self::reserve(budget, RESIDENT + PREPARATION)
+    }
+    pub(crate) fn mapping(budget: &PackingBudget) -> Result<Self, String> {
+        Self::reserve(budget, RESIDENT + MAPPED_LOAD)
+    }
+    fn reserve(budget: &PackingBudget, bytes: u64) -> Result<Self, String> {
+        if let Some(root) = &budget.0.cgroup {
+            // Publication backpressure only: requests keep their existing slots.
+            // Clean inactive file pages are reclaimable; anonymous allocator
+            // retention must count even after logical Rust charges are released.
+            let current = std::fs::read_to_string(root.join("memory.current"))
+                .map_err(|e| e.to_string())?
+                .trim()
+                .parse::<u64>()
+                .map_err(|e| e.to_string())?;
+            let stat =
+                std::fs::read_to_string(root.join("memory.stat")).map_err(|e| e.to_string())?;
+            let counter = |name: &str| {
+                stat.lines()
+                    .filter_map(|line| line.split_once(' '))
+                    .find_map(|(key, value)| {
+                        (key == name).then(|| value.parse::<u64>().ok()).flatten()
+                    })
+                    .unwrap_or(0)
+            };
+            // Dirty/writeback pages cannot be assumed immediately reclaimable.
+            // Subtract all of them conservatively, even if some are active.
+            let inactive = counter("inactive_file")
+                .saturating_sub(counter("file_dirty"))
+                .saturating_sub(counter("file_writeback"));
+            if !load_fits(current, inactive, budget.0.limit) {
+                return Err(
+                    "packing artifact load deferred: insufficient physical memory headroom".into(),
+                );
+            }
+        }
         budget
             .0
             .live
@@ -102,6 +171,32 @@ impl Drop for Charge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapped_replacement_fits_six_live_objects_without_reducing_request_reserve() {
+        let budget = PackingBudget::new(7 * 1024 * MIB - HOST_AND_REQUEST_RESERVE);
+        let mut resident = Vec::new();
+        for _ in 0..6 {
+            let mut c = Charge::mapping(&budget).unwrap();
+            c.resident();
+            resident.push(c);
+        }
+        let mut incoming = Charge::mapping(&budget).expect("six plus replacement must progress");
+        incoming.resident();
+        assert!(Charge::mapping(&budget).is_err());
+        drop(resident.pop());
+        drop(incoming);
+        assert!(Charge::mapping(&budget).is_ok());
+    }
+
+    #[test]
+    fn physical_headroom_counts_retained_heap_and_allows_reclaimable_file_pages() {
+        let limit = 7 * 1024 * MIB - HOST_AND_REQUEST_RESERVE;
+        assert!(!load_fits(6800 * MIB, 0, limit));
+        assert!(load_fits(6800 * MIB, 3000 * MIB, limit));
+        assert!(load_fits(limit - RESIDENT - MAPPED_LOAD, 0, limit));
+        assert!(!load_fits(limit - RESIDENT - MAPPED_LOAD + 1, 0, limit));
+    }
 
     #[test]
     fn charges_follow_shared_ownership_and_release_preparation() {

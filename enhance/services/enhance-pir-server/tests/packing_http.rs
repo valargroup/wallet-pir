@@ -445,6 +445,17 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         .map(|s| s.parse().unwrap())
         .unwrap_or(0);
     let steady = std::env::var("QUALIFY_STEADY").is_ok();
+    let lanes: u64 = std::env::var("QUALIFY_QUERY_LANES")
+        .ok()
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(if steady { 2 } else { 4 });
+    let per_lane: u64 = std::env::var("QUALIFY_QUERIES_PER_LANE")
+        .ok()
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(if steady { 60 } else { 8 });
+    assert!((1..=16).contains(&lanes));
+    assert!(!steady || per_lane == 60);
+
     let mut last_window = (0.0, 0.0);
     if steady {
         assert!(
@@ -485,26 +496,37 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         } else {
             None
         };
-        for lane in 0..if steady { 2 } else { 4 } {
+        for lane in 0..lanes {
             let public = public.clone();
-            load.spawn(async move {
-                let mut client = EnhancePirClient::connect(&public).await.unwrap();
-                let mut latencies = Vec::new();
-                let began = tokio::time::Instant::now();
-                for n in 0..if steady { 60 } else { 8 } {
-                    if steady {
-                        tokio::time::sleep_until(
-                            began + std::time::Duration::from_millis(n * 1000 + lane * 500),
-                        )
-                        .await;
-                    }
-                    let position = (lane * 97 + n * 31) % records;
-                    let now = std::time::Instant::now();
-                    let result = client.query_position_with_timing(position).await.unwrap();
-                    assert_eq!(result.0.as_ref(), record(position));
-                    latencies.push(now.elapsed().as_secs_f64());
-                }
-                latencies
+            // Wallet cryptography must not block the fixture services' Tokio
+            // workers; real wallets run in separate processes from those roles.
+            load.spawn_blocking(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async move {
+                        let mut client = EnhancePirClient::connect(&public).await.unwrap();
+                        let mut latencies = Vec::new();
+                        let began = tokio::time::Instant::now();
+                        for n in 0..per_lane {
+                            if steady {
+                                tokio::time::sleep_until(
+                                    began
+                                        + std::time::Duration::from_millis(
+                                            n * 1000 + lane * (1000 / lanes),
+                                        ),
+                                )
+                                .await;
+                            }
+                            let position = (lane * 97 + n * 31) % records;
+                            let now = std::time::Instant::now();
+                            let result = client.query_position_with_timing(position).await.unwrap();
+                            assert_eq!(result.0.as_ref(), record(position));
+                            latencies.push(now.elapsed().as_secs_f64());
+                        }
+                        latencies
+                    })
             });
         }
         let height = 3428148 + revision;
@@ -548,7 +570,7 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
                     serde_json::json!({"publication":revision+1,"samples":total,"at_most_one_second":fast})
                 );
                 assert!(
-                    total >= 600.0 && fast / total >= 0.99,
+                    total >= (lanes * 60 * 5) as f64 && fast / total >= 0.99,
                     "Packing p99 exceeded one second"
                 );
                 if std::env::var("QUALIFY_ROUTER_CONTROL").is_ok() {

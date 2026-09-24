@@ -26,7 +26,7 @@ cli = ["dep:clap", "dep:tokio"]
 base64 = "0.22"
 clap = { version = "4", features = ["derive"], optional = true }
 hex = "0.4"
-ipir-sp = { version = "=0.1.0-rc.3", git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
+ipir-sp = { version = "=0.1.0-rc.3", git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

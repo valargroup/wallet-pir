@@ -1,0 +1,116 @@
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: tokio-rt-worker invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=3, oom_score_adj=0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: CPU: 0 PID: 18200 Comm: tokio-rt-worker Not tainted 6.8.0-124-generic #124-Ubuntu
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: Hardware name: DigitalOcean Droplet/Droplet, BIOS 20171212 12/12/2017
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: Call Trace:
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  <TASK>
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  dump_stack_lvl+0x76/0xa0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  dump_stack+0x10/0x20
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  dump_header+0x49/0x210
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  oom_kill_process+0x118/0x280
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  out_of_memory+0x103/0x350
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  mem_cgroup_out_of_memory+0x145/0x170
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  try_charge_memcg+0x6d6/0x7d0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  mem_cgroup_charge_skmem+0x40/0xf0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  __sk_mem_raise_allocated+0x95/0x410
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  __sk_mem_schedule+0x38/0x60
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  tcp_try_rmem_schedule+0x7f/0x470
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  tcp_data_queue+0x172/0x680
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  tcp_rcv_established+0x234/0x7a0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  tcp_v4_do_rcv+0x169/0x2a0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  __release_sock+0xf2/0x100
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  release_sock+0x30/0xb0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  tcp_recvmsg+0x8f/0x200
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  inet_recvmsg+0x54/0x140
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? security_socket_recvmsg+0x47/0x80
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  sock_recvmsg+0xc6/0xf0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  __sys_recvfrom+0xcb/0x170
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  __x64_sys_recvfrom+0x24/0x40
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  x64_sys_call+0x20be/0x25a0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  do_syscall_64+0x7f/0x180
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? update_process_times+0x8e/0xb0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? kvm_clock_get_cycles+0x18/0x40
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? ktime_get+0x48/0xc0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? __pfx_tick_nohz_highres_handler+0x10/0x10
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? lapic_next_deadline+0x2c/0x50
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? clockevents_program_event+0xbe/0x150
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? tick_program_event+0x43/0xa0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? hrtimer_interrupt+0x11f/0x250
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? arch_exit_to_user_mode_prepare.isra.0+0x1a/0xe0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? irqentry_exit_to_user_mode+0x38/0x1e0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? clear_bhb_loop+0x30/0x80
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? clear_bhb_loop+0x30/0x80
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  ? clear_bhb_loop+0x30/0x80
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  entry_SYSCALL_64_after_hwframe+0x78/0x80
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: RIP: 0033:0x7a755e12bc4a
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: Code: e0 89 7d e8 89 4d d4 e8 24 c9 f6 ff 44 8b 55 d4 48 8b 55 d8 45 31 c9 89 c3 48 8b 75 e0 8b 7d e8 45 31 c0 b8 2d 00 00 00 0f 05 <48> 3d 00 f0 ff ff 77 36 89 df 48 89 45 e8 e8 73 c9 f6 ff 48 8b 45
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: RSP: 002b:00007a755dbfa7f0 EFLAGS: 00000246 ORIG_RAX: 000000000000002d
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: RAX: ffffffffffffffda RBX: 0000000000000000 RCX: 00007a755e12bc4a
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: RDX: 0000000000040000 RSI: 00007a754c00fd60 RDI: 0000000000000022
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: RBP: 00007a755dbfa820 R08: 0000000000000000 R09: 0000000000000000
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: R10: 0000000000000000 R11: 0000000000000246 R12: 00007a755dbfbfd8
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: R13: 000055595fd53b80 R14: 0000000000000000 R15: 000055592f0ce100
+Sep 24 19:01:01 enhance-pir-packing-01 kernel:  </TASK>
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: memory: usage 7340380kB, limit 7340032kB, failcnt 550959
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: swap: usage 0kB, limit 0kB, failcnt 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: Memory cgroup stats for /system.slice/enhance-pir-packing-router.service:
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: anon 7499096064
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: file 20480
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: kernel 16637952
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: kernel_stack 262144
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pagetables 15089664
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: sec_pagetables 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: percpu 96
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: sock 794624
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: vmalloc 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: shmem 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: zswap 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: zswapped 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: file_mapped 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: file_dirty 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: file_writeback 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: swapcached 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: anon_thp 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: file_thp 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: shmem_thp 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: inactive_anon 937984
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: active_anon 7498158080
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: inactive_file 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: active_file 20480
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: unevictable 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: slab_reclaimable 902768
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: slab_unreclaimable 370536
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: slab 1273304
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: workingset_refault_anon 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: workingset_refault_file 2044
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: workingset_activate_anon 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: workingset_activate_file 1872
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: workingset_restore_anon 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: workingset_restore_file 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: workingset_nodereclaim 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgscan 645282
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgsteal 644587
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgscan_kswapd 1984
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgscan_direct 643298
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgscan_khugepaged 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgsteal_kswapd 1984
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgsteal_direct 642603
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgsteal_khugepaged 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgfault 2038627
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgmajfault 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgrefill 23043
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgactivate 499
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pgdeactivate 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pglazyfree 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: pglazyfreed 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: zswpin 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: zswpout 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: zswpwb 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: thp_fault_alloc 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: thp_collapse_alloc 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: thp_swpout 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: thp_swpout_fallback 0
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: Tasks state (memory values in pages):
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: [  18196]   997 18196  2044843  1833361  1830801     2560         0 15089664        0             0 enhance-pir-ser
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=/,mems_allowed=0,oom_memcg=/system.slice/enhance-pir-packing-router.service,task_memcg=/system.slice/enhance-pir-packing-router.service,task=enhance-pir-ser,pid=18196,uid=997
+Sep 24 19:01:01 enhance-pir-packing-01 kernel: Memory cgroup out of memory: Killed process 18196 (enhance-pir-ser) total-vm:8179372kB, anon-rss:7323204kB, file-rss:10240kB, shmem-rss:0kB, UID:997 pgtables:14736kB oom_score_adj:0

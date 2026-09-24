@@ -108,6 +108,7 @@ pub struct PackingRouter {
     packing_budget: crate::packing_budget::PackingBudget,
     inner: Arc<Mutex<Inner>>,
     preparation: Arc<AsyncMutex<()>>,
+    loader: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>,
     admission: Arc<Semaphore>,
     waiters: Arc<Semaphore>,
     root: PathBuf,
@@ -189,7 +190,17 @@ impl PackingRouter {
         } else {
             DurableFence::default()
         };
+        let (loader, jobs) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        std::thread::Builder::new()
+            .name("packing-loader".into())
+            .spawn(move || {
+                while let Ok(job) = jobs.recv() {
+                    job();
+                }
+            })
+            .map_err(|e| e.to_string())?;
         Ok(Self {
+            loader,
             packing_budget: crate::packing_budget::PackingBudget::router(),
             inner: Arc::new(Mutex::new(Inner {
                 fence,
@@ -603,14 +614,13 @@ async fn prepare(
                 // Dedicated loading thread: never enter the query Rayon/blocking pools.
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 let handle = tokio::runtime::Handle::current();
-                std::thread::Builder::new()
-                    .name("packing-loader".into())
-                    .spawn(move || {
+                r.loader
+                    .send(Box::new(move || {
                         let _guard = guard;
                         let result = (|| -> Result<Arc<Packing>, String> {
                             use std::sync::atomic::Ordering::Relaxed;
                             let reservation =
-                                crate::packing_budget::Charge::prepare(&router.packing_budget)?;
+                                crate::packing_budget::Charge::mapping(&router.packing_budget)?;
                             let path = router
                                 .root
                                 .join("artifacts")
@@ -660,7 +670,7 @@ async fn prepare(
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                         let _ = tx.send(result);
-                    })
+                    }))
                     .map_err(unavailable)?;
                 rx.await.map_err(unavailable)?.map_err(unavailable)?
             };
@@ -865,7 +875,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
     let body_read = body_started.elapsed();
     let binding = QueryBinding::decode(&bytes).map_err(bad)?;
     let session = hex::encode(binding.session_id);
-    let (loaded, pack) = {
+    let (routes, preferred, epoch, pack) = {
         let i = r.inner.lock().unwrap();
         if i.fence.revocation.sessions.contains(&session) {
             return Err((StatusCode::GONE, "noncanonical_session".into()));
@@ -884,7 +894,18 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .get(&session)
             .cloned()
             .ok_or_else(|| (StatusCode::GONE, "session_unavailable".into()))?;
-        (loaded, pack)
+        let snapshot = &loaded.view.snapshots[0];
+        let routes = snapshot
+            .routes
+            .get(&binding.shard_id)
+            .cloned()
+            .ok_or_else(|| unavailable("unassigned session"))?;
+        let preferred = snapshot
+            .preferred
+            .get(&binding.shard_id)
+            .cloned()
+            .unwrap_or_default();
+        (routes, preferred, loaded.view.controller_epoch, pack)
     };
     // Once admitted, the task owns the permit through cancellation and CPU work.
     let router = r.clone();
@@ -898,21 +919,12 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             session_id: session.clone(),
             coefficients,
         };
-        let routes = loaded.view.snapshots[0]
-            .routes
-            .get(&binding.shard_id)
-            .ok_or_else(|| unavailable("unassigned session"))?;
-        let preferred = loaded.view.snapshots[0]
-            .preferred
-            .get(&binding.shard_id)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
         let answer =
             crate::query_serving::evaluate(&router.http, &request, routes.len(), |excluded| {
                 if let Some(url) = excluded {
                     router.demote_worker(url);
                 }
-                let lease = select(&router, routes, preferred, excluded)?;
+                let lease = select(&router, &routes, &preferred, excluded)?;
                 if excluded.is_some() {
                     router
                         .stats
@@ -929,13 +941,12 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
         let worker_time = answer.worker_time;
         let answer = answer.coefficients;
         router
-            .response_allowed(&session, loaded.view.controller_epoch)
+            .response_allowed(&session, epoch)
             .map_err(unavailable)?;
-        let epoch = loaded.view.controller_epoch;
         let (response, guards, packing_time) = tokio::task::spawn_blocking(move || {
             let began = Instant::now();
             let response = pack.pack(&bytes, &answer).map_err(bad)?;
-            Ok::<_, Error>((response, (permit, loaded, pack), began.elapsed()))
+            Ok::<_, Error>((response, (permit, pack), began.elapsed()))
         })
         .await
         .map_err(unavailable)??;

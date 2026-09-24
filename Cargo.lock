@@ -468,6 +468,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
 
 [[package]]
+name = "bytemuck"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1052,6 +1058,7 @@ dependencies = [
  "inspiring",
  "ipir-sp",
  "libc",
+ "memmap2",
  "prometheus",
  "rand 0.8.5",
  "reqwest",
@@ -1936,8 +1943,10 @@ dependencies = [
 [[package]]
 name = "inspiring"
 version = "0.1.0-rc.1"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=a38f0965ef3af22ad3a9e42c239a2312e95bfb09#a38f0965ef3af22ad3a9e42c239a2312e95bfb09"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=66b05ac59139897674489a5ea6461118772ee1c0#66b05ac59139897674489a5ea6461118772ee1c0"
 dependencies = [
+ "bytemuck",
+ "memmap2",
  "rand_chacha 0.3.1",
  "rayon",
  "thiserror 1.0.69",
@@ -1947,7 +1956,7 @@ dependencies = [
 [[package]]
 name = "ipir-sp"
 version = "0.1.0-rc.3"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=a38f0965ef3af22ad3a9e42c239a2312e95bfb09#a38f0965ef3af22ad3a9e42c239a2312e95bfb09"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=66b05ac59139897674489a5ea6461118772ee1c0#66b05ac59139897674489a5ea6461118772ee1c0"
 dependencies = [
  "clap",
  "env_logger",
@@ -2252,6 +2261,15 @@ name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "memuse"
@@ -3505,7 +3523,7 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 [[package]]
 name = "simplepir-kernel"
 version = "0.1.0-rc.2"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=a38f0965ef3af22ad3a9e42c239a2312e95bfb09#a38f0965ef3af22ad3a9e42c239a2312e95bfb09"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=66b05ac59139897674489a5ea6461118772ee1c0#66b05ac59139897674489a5ea6461118772ee1c0"
 dependencies = [
  "cudarc",
  "inspiring",

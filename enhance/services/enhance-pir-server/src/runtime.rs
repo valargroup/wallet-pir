@@ -185,7 +185,8 @@ pub struct Packing {
     pub params: YpirSchemeParams,
     pub public: Vec<u8>,
     preprocessed: Vec<QueryPackPreprocessed<'static>>,
-    top: TopKeyImages<'static>,
+    top: Option<TopKeyImages<'static>>,
+    mapped: Option<inspiring::prepared::MappedPrepared<'static>>,
 }
 
 impl Packing {
@@ -193,36 +194,53 @@ impl Packing {
         out.write_all(&(self.params.db_rows as u64).to_le_bytes())
             .map_err(|e| e.to_string())?;
         out.write_all(&self.public).map_err(|e| e.to_string())?;
-        inspiring::prepared::write(out, rlwe(), &self.preprocessed, &self.top)
-            .map_err(|e| e.to_string())
+        inspiring::prepared::write(
+            out,
+            rlwe(),
+            &self.preprocessed,
+            self.top.as_ref().ok_or("cannot rewrite mapped artifact")?,
+        )
+        .map_err(|e| e.to_string())
     }
-    pub(crate) fn read_prepared(
-        input: &mut impl std::io::Read,
+    /// Read-only mappings own their file pages through all in-flight query pins.
+    /// Router artifacts are immutable: downloads replace inodes atomically and
+    /// cache GC only unlinks. No path truncates a published artifact in place.
+    pub(crate) fn map_prepared(
+        file: &std::fs::File,
         rows: u64,
         budget: &crate::PackingBudget,
     ) -> Result<Self, String> {
-        let mut charge = super::packing_budget::Charge::prepare(budget)?;
+        let mut charge = super::packing_budget::Charge::mapping(budget)?;
         let params = parameters(rows)?;
-        let mut header = [0; 8];
-        input.read_exact(&mut header).map_err(|e| e.to_string())?;
-        if u64::from_le_bytes(header) != params.db_rows as u64 {
+        let public_len =
+            (params.db_cols * ipir_sp::modulus_switch::modulus_bits(rlwe().q)).div_ceil(8);
+        // SAFETY: private router cache files are immutable once renamed into
+        // place; the read-only mmap owns the inode across replacement/unlink.
+        // Filesystem administrators must preserve that immutable-inode contract.
+        let map = unsafe { memmap2::MmapOptions::new().map(file) }.map_err(|e| e.to_string())?;
+        let mapped = inspiring::prepared::MappedPrepared::new(
+            map,
+            rlwe(),
+            params.db_cols / rlwe().d,
+            8 + public_len,
+        )
+        .map_err(|e| e.to_string())?;
+        let prefix = mapped.prefix();
+        if u64::from_le_bytes(prefix[..8].try_into().unwrap()) != params.db_rows as u64 {
             return Err("prepared row count mismatch".into());
         }
-        let mut public =
-            vec![0; (params.db_cols * ipir_sp::modulus_switch::modulus_bits(rlwe().q)).div_ceil(8)];
-        input.read_exact(&mut public).map_err(|e| e.to_string())?;
-        let (preprocessed, top) =
-            inspiring::prepared::read(input, rlwe(), params.db_cols / rlwe().d)
-                .map_err(|e| e.to_string())?;
+        let public = prefix[8..].to_vec();
         charge.resident();
         Ok(Self {
             _charge: charge,
             params,
             public,
-            preprocessed,
-            top,
+            preprocessed: Vec::new(),
+            top: None,
+            mapped: Some(mapped),
         })
     }
+
     pub fn new(
         logical_rows: u64,
         hint: &[CrsBlock],
@@ -242,7 +260,8 @@ impl Packing {
             params,
             public,
             preprocessed,
-            top,
+            top: Some(top),
+            mapped: None,
         })
     }
     pub fn reference(&self, shard_id: u64) -> Result<SessionRef, String> {
@@ -296,8 +315,17 @@ impl Packing {
         let len = serialized_packing_keys_len(rlwe());
         let keys = deserialize_packing_keys(rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
             .map_err(|e| e.to_string())?;
-        let packed = pack_intermediate_blocks(intermediate, &keys, &self.top, &self.preprocessed)
-            .map_err(|e| e.to_string())?;
+        let packed = if let Some(mapped) = &self.mapped {
+            mapped.pack(intermediate, &keys)
+        } else {
+            pack_intermediate_blocks(
+                intermediate,
+                &keys,
+                self.top.as_ref().expect("owned packing top images"),
+                &self.preprocessed,
+            )
+        }
+        .map_err(|e| e.to_string())?;
         let mut response = binding.encode();
         response.extend(ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
             &packed,

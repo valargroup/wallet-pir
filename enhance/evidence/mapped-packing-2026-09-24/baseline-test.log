@@ -1,0 +1,35 @@
+
+running 1 test
+test extracted_path_preserves_wallet_answers_and_pool_replication has been running for over 60 seconds
+QUALIFICATION {"elapsed_seconds":56.442365264,"p50_seconds":0.543276643,"p95_seconds":0.895078781,"p99_seconds":1.9498219190000001,"publication":1,"records":600033,"router":{"active_digest":"302f0a8585dcd9a866fb7df37092c232858e314078824c2465a5ca00001d5876","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"676d0b994cd75fccadd5dd1915c77d72","outstanding":{"http://127.0.0.1:33951":0,"http://127.0.0.1:40403":0,"http://127.0.0.1:46173":0},"packing_charged_bytes":1610612736,"preferred_workers":{"http://127.0.0.1:40403":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":2},"verified":512}
+QUALIFICATION {"elapsed_seconds":56.847298525,"p50_seconds":0.563168391,"p95_seconds":0.842838173,"p99_seconds":1.7950352029999999,"publication":2,"records":600066,"router":{"active_digest":"a7bf492c39db389f7ac0214bdb9b9219a949cff03e12cd64be6a1d1b0b9f0381","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"676d0b994cd75fccadd5dd1915c77d72","outstanding":{"http://127.0.0.1:33951":0,"http://127.0.0.1:40403":0,"http://127.0.0.1:46173":0},"packing_charged_bytes":2415919104,"preferred_workers":{"http://127.0.0.1:40403":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":3},"verified":512}
+QUALIFICATION {"elapsed_seconds":56.472483478,"p50_seconds":0.539366587,"p95_seconds":0.84040867,"p99_seconds":1.733189938,"publication":3,"records":600099,"router":{"active_digest":"2bc3e981e69e418cb18887894dc4931db7a3169e774edd57c610a636afa571b4","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"676d0b994cd75fccadd5dd1915c77d72","outstanding":{"http://127.0.0.1:33951":0,"http://127.0.0.1:40403":0,"http://127.0.0.1:46173":0},"packing_charged_bytes":3221225472,"preferred_workers":{"http://127.0.0.1:40403":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":4},"verified":512}
+QUALIFICATION {"elapsed_seconds":56.894726149,"p50_seconds":0.52877343,"p95_seconds":0.829538659,"p99_seconds":1.799741648,"publication":4,"records":600132,"router":{"active_digest":"354936d8a57aa4a5aba03df6e5adfe7856ac378b92f730e66e8796ff0336bbe2","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"676d0b994cd75fccadd5dd1915c77d72","outstanding":{"http://127.0.0.1:33951":0,"http://127.0.0.1:40403":0,"http://127.0.0.1:46173":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:40403":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":512}
+QUALIFICATION {"elapsed_seconds":57.14189233,"p50_seconds":0.535341689,"p95_seconds":0.803005062,"p99_seconds":1.896310095,"publication":5,"records":600165,"router":{"active_digest":"3cfe6bbba3f34402a64d25b9c707aab6bc5f5de575882ab747170074e4464a34","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"676d0b994cd75fccadd5dd1915c77d72","outstanding":{"http://127.0.0.1:33951":0,"http://127.0.0.1:40403":0,"http://127.0.0.1:46173":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:40403":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":512}
+QUALIFICATION {"elapsed_seconds":57.531781472,"p50_seconds":0.542762398,"p95_seconds":0.906627575,"p99_seconds":1.826340774,"publication":6,"records":600198,"router":{"active_digest":"ef3a5548ff69ec31eca97835fbb61999ddb52c4cc5a22040027fe27227d9b32a","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"676d0b994cd75fccadd5dd1915c77d72","outstanding":{"http://127.0.0.1:33951":0,"http://127.0.0.1:40403":0,"http://127.0.0.1:46173":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:40403":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":512}
+QUALIFICATION {"elapsed_seconds":57.605836583,"p50_seconds":0.586463428,"p95_seconds":0.82151665,"p99_seconds":1.923780152,"publication":7,"records":600231,"router":{"active_digest":"02e9212507b5d166490551970857ddbc5feb592d4a060cef851803aab94dba69","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"676d0b994cd75fccadd5dd1915c77d72","outstanding":{"http://127.0.0.1:33951":0,"http://127.0.0.1:40403":0,"http://127.0.0.1:46173":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:40403":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":512}
+
+thread 'tokio-rt-worker' (663050) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:503:84:
+called `Result::unwrap()` on an `Err` value: HttpStatus(429)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'tokio-rt-worker' (663050) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:503:84:
+called `Result::unwrap()` on an `Err` value: HttpStatus(429)
+
+thread 'tokio-rt-worker' (663051) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:503:84:
+called `Result::unwrap()` on an `Err` value: HttpStatus(429)
+
+thread 'tokio-rt-worker' (663051) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:503:84:
+called `Result::unwrap()` on an `Err` value: HttpStatus(429)
+
+thread 'extracted_path_preserves_wallet_answers_and_pool_replication' (663048) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:33:
+called `Result::unwrap()` on an `Err` value: JoinError::Panic(Id(120022), "called `Result::unwrap()` on an `Err` value: HttpStatus(429)", ...)
+test extracted_path_preserves_wallet_answers_and_pool_replication ... FAILED
+
+failures:
+
+failures:
+    extracted_path_preserves_wallet_answers_and_pool_replication
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 561.58s
+

@@ -16,17 +16,18 @@ default = []
 cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 
 [dependencies]
-simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09", optional = true, features = ["cuda"] }
+simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0", optional = true, features = ["cuda"] }
 axum = "0.7"
 base64 = "0.22"
 enhance-pir = { path = "../../crates/enhance-pir", version = "=0.0.1" }
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
 libc = "0.2"
+memmap2 = "0.9"
 hdrhistogram = "7"
 http-body = "1"
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
@@ -41,7 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
 
 [dev-dependencies]
-simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "a38f0965ef3af22ad3a9e42c239a2312e95bfb09" }
+simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 orchard = { package = "zakura-orchard", version = "=1.0.1", default-features = false }
