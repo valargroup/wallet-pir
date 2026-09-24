@@ -42,6 +42,10 @@ Its conservative assessment bounded all 156 observed tip advances within
 70.001 seconds but returned `evidence_incomplete` because publication was
 reported blocked. The height-only trace cannot identify the orphan and
 replacement block hashes when the reorg does not lower the sampled height.
+The [four-hour assessment](../soak-first4h-freshness.json) likewise bounded
+all 176 sampled tip advances within 70.001 seconds and found no ambiguous
+advance or collection gap, but retains the same incomplete status. Its copied
+trace SHA-256 is `cdaa3323a5790d733416c4eefc6712fa738b64d0dc45003401179fdc8bda8353`.
 After the measured load, verify the canonical hash from node RPC, the final
 load correctness report, and exact public
 queries from an independently extracted chain oracle. Keep this event visible

@@ -36,6 +36,12 @@ The [first three-hour assessment](soak-first3h-freshness.json) passed with
 132 conservatively bounded tip advances, 70.001-second worst lag, and no
 findings. This still does not cover the remaining soak, burst, or worker
 hardware traces.
+The [first four-hour assessment](soak-first4h-freshness.json) bounded all 176
+observed tip advances within 70.001 seconds, with no ambiguous advances or
+sample gaps. It remains `evidence_incomplete` because the observer recorded a
+brief publication block during the same-height fork documented in the
+[reorg incident](operations/soak-reorg-2026-09-24.md). The full load report,
+canonical-hash check and independent public answers are still required.
 
 Fresh rc.2 ARM64 and native Linux noise matrices each completed 432 cases and
 55,296 queries with zero decoding failures. Deterministic cross-platform
