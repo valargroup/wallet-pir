@@ -1,9 +1,8 @@
 # Protocol
 
-The supported server implements schema 11, `ironwood-enhance-pir-v6`, using the current runtime.
-The wallet counterpart must use the v6/q48 profile and the same pinned IPIR
-implementation. [Wallet-libraries PR #28](https://github.com/zakura-core/wallet-libraries/pull/28)
-uses v5/q46 and requires a q48 follow-up before connecting.
+The supported server implements schema 11, `ironwood-enhance-pir-v7`.
+The wallet must use the v7/q48 profile and the same pinned IPIR implementation.
+The v6/q48 and older clients are incompatible with this framing and routing contract.
 
 ## Record format
 
@@ -37,23 +36,59 @@ responses, expanded databases, or latency.
 
 ## Initialization and queries
 
-`GET /v1/enhance/init` returns the `Manifest`: schema/protocol,
-network/pool, generation, anchor height/hash, shard geometry and coverage,
-session references, and mutable-unit identities. The client validates the
-manifest and binds it to locally scanned chain state before requesting setup.
+`GET /v1/enhance/init` returns the manifest. `generation` is the routing revision;
+`placement_revision` tracks ready placement. The decimal-string `recovery_epoch`
+and `domain_recovery_epochs` fence invalidated content. Coverage contains canonical
+`global_start`, `global_end`, `domain_id`, and `local_start` routes. The client
+validates geometry and routes and independently accepts the anchor before setup.
 
-`GET /v1/enhance/sessions/:generation/:shard` returns the generation-bound shard
-session, including derived parameters and base64 public material. The wallet
-checks parameter identity, public-material digest and length, and resource
-limits before allocating a query session.
+`GET /v1/enhance/session/:session_id` returns content-addressed session material.
+The legacy-shaped `/v1/enhance/sessions/:generation/:shard` lookup also exists;
+new clients use the session ID. Check parameter identity, material digest, length
+and application resource limits before allocating a session.
 
-`POST /v1/enhance/query` carries an opaque PIR query. Its 28-byte header retains
-`EPQ4`, followed by little-endian u64 generation, little-endian u64 shard ID,
-and the eight-byte public-material digest prefix. Responses use the same
-binding. Both peers reject mismatched generations, domains, epochs, and lengths.
-Expired generations return HTTP 410; a refreshed manifest requires fresh wallet
-acceptance. A row result is selected locally; action identities never go to the
-server. Same-transaction batching needs no new server endpoint.
+`POST /v1/enhance/query` starts with this 116-byte header. Responses repeat the
+same binding. Integers are unsigned little-endian; hashes and IDs below are raw
+bytes, not hex text.
+
+| Offset | Length | Field |
+| ---: | ---: | --- |
+| 0 | 4 | ASCII `EPQ7` |
+| 4 | 8 | routing revision (`generation`) |
+| 12 | 8 | query domain (`shard_id`) |
+| 20 | 8 | packing material digest prefix (`epoch`) |
+| 28 | 8 | routing recovery epoch (manifest-wide) |
+| 36 | 32 | session ID |
+| 68 | 16 | fresh request ID |
+| 84 | 32 | accepted canonical anchor hash |
+
+Reject wrong versions, lengths and every mismatched response field. Use fresh PIR
+randomness and a fresh request ID for every request, including retries and cover.
+HTTP 409 has code `stale_routing`; HTTP 410 distinguishes `noncanonical_session`
+from `session_unavailable`. HTTP 429 is `overloaded`; HTTP 503 is
+`temporarily_unavailable`. Refresh routing on 409/410 and at least every 30 seconds
+before further work. Wallet anchor acceptance is required before rebinding cached
+material. Routing refresh can reuse unchanged sessions; it does not itself prove
+that the server's anchor is canonical.
+
+### Canonical session identity
+
+SHA-256 starts with literal bytes `enhance-pir/v7/session\0`. Strings are encoded
+as their byte length (u64 LE) followed by UTF-8 bytes. Append the protocol revision
+string, then u64 LE values: domain ID, domain recovery epoch, logical row count,
+owned record count, and unit count. For each ordered unit append u64 LE recovery
+epoch, local row start, allocated rows, followed by the content hash, setup hash,
+and parameter ID as length-prefixed strings. Finally append the packing parameter
+ID and public-material hash as length-prefixed strings. Hash strings are canonical
+lowercase hexadecimal text here, not decoded bytes. Zero gaps are fixed by the
+validated canonical domain layout; stored units commit to all padding bytes.
+
+Routing revision, placement revision, anchor and lifecycle label are excluded.
+Consequently sealing and placement alone preserve identity; changed content,
+composition or domain recovery epoch does not. The server and wallet share a
+[frozen vector](../crates/enhance-pir/tests/fixtures/v7-session.json) checked by
+[an independent encoder](../tools/v7-interop/check_vectors.py). The vector digest is
+`09d98421023fcb7801828a031db61a263a69aabba820d214d22e773cbeb12e0b`.
 
 The PIR profile is `simplepir-p16-q48-v1`: 48-bit query transport, p16
 plaintexts, and unchanged 20-bit responses. The wider query reduces rounding
@@ -62,8 +97,7 @@ noise without changing the decoding threshold. Query domains remain 4,096,
 The deterministic public setup seed and the literal domain
 `ironwood-enhance-pir-v4/main/ironwood/setup\0` are intentionally unchanged to
 match the wallet. Schema, protocol, parameter identities, and content hashes
-separate the new records and artifacts. Do not mechanically rename the header
-or setup domain to v6.
+separate the new records and artifacts. The setup domain remains unchanged in v7; the new wire header is `EPQ7`.
 
 The authoritative wire types and validation are in
 [the protocol module](../crates/enhance-pir/src/protocol.rs); record encoding is in
@@ -71,11 +105,11 @@ The authoritative wire types and validation are in
 
 ## Compatibility and trust
 
-Schema-9, schema-10, and schema-11/v5 q46 clients are incompatible. The
-repository serves only this protocol. Journals validate record width,
-controller state is version 6, worker state requires schema 11 and protocol v6,
-and preprocessing artifacts are version 9.
-Use fresh data directories and rebuild publications and caches. Re-ingest into fresh state; older journals cannot supply suffix records.
+Schema-9, schema-10, v5/q46 and v6/q48 clients are incompatible. The repository
+serves only v7. Controller state is version 7. Use fresh controller and worker
+directories and rebuild publications/caches. Existing schema-11 canonical journals
+may be copied while stopped and validated; older record-width journals cannot
+supply the required suffix records. Never adopt v6 serving state as v7 state.
 
 Incoming authentication and stale wallet identities remain wallet obligations.
 Outgoing decryption should authenticate recoverable outputs; send-only association

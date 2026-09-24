@@ -481,6 +481,34 @@ async fn full_shard_composition_confirmation_and_recovery() {
             .as_ref(),
         record(0)
     );
+    // One replayed canonical block crosses two fixed storage boundaries.
+    // Even byte-identical rebuilt A cannot resurrect its pre-recovery session.
+    let target = 2 * span + 7;
+    let records: Vec<_> = (1..target).map(record).collect();
+    journal
+        .append_block(3428144, "fd".repeat(32), &records)
+        .unwrap();
+    drop(records);
+    coordinator
+        .publish(&journal, 3428144, "fd".repeat(32))
+        .await
+        .unwrap();
+    let rebuilt = coordinator.manifest().await.unwrap();
+    assert_eq!(rebuilt.coverage.shards.len(), 3);
+    assert_eq!(rebuilt.recovery_epoch, 1);
+    assert_ne!(rebuilt.session_id(0).unwrap(), sealed_session.unwrap());
+    let mut client = EnhancePirClient::connect(&origin).await.unwrap();
+    for position in [span - 1, span, 2 * span - 1, 2 * span, target - 1] {
+        assert_eq!(
+            client
+                .query_position_with_timing(position)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record(position)
+        );
+    }
     for task in tasks {
         task.abort();
     }
