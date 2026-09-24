@@ -7,7 +7,7 @@ September 24, 2026. No direct worker serving path is implemented by this note.
 
 | Stage | Current owner and bound | Consequence for D6 |
 |---|---|---|
-| Public query route | Coordinator `/v1/enhance/query` | Public origin cannot yet select a worker. |
+| Public query route | Coordinator `/v1/enhance/query` | The proposed request router cannot yet select a worker. |
 | Body admission | Coordinator: 4 active requests, 16 waiting for at most 2 seconds; the active permit is acquired before body reception, with a 512 KiB body limit and 30-second deadline | The global four-query ceiling stays until the public route moves. Rejected requests are also drained, bounded by the body limit. |
 | Decode and validation | Coordinator `Packing::query_coefficients`; validates binding, framing, upload keys and switched query | Workers receive only decoded coefficients today. |
 | Evaluation admission | Worker: two permits, acquired before the internal JSON body (1 MiB limit) is buffered | This protects the internal evaluation, but its permit ends before Axum serializes the returned JSON body. It does not account for a public upload or packed response. |
@@ -17,8 +17,8 @@ September 24, 2026. No direct worker serving path is implemented by this note.
 Sources: `coordinator.rs` query and `query_body`, `worker.rs` `evaluate`
 and `Inner::budget`, `runtime.rs` `Packing`, and `control.rs` memory constants.
 The [deployment guide](deployment.md) also says the worker port is private and
-the worker API has no application-layer authentication. The origin needs a
-controlled private upstream path before it can route directly to workers.
+the worker API has no application-layer authentication. The request router needs
+a controlled private upstream path before it can route directly to workers.
 
 ## Admission contract for the direct path
 
@@ -55,9 +55,10 @@ SimplePIR baseline's pack timings used a different implementation and profile.
 
 The coordinator should publish a versioned placement table of domain/session
 to ready replicas only after each replica has activated that exact session.
-The origin may choose among those replicas, retry a different ready replica on
-connection failure or an explicit pre-execution busy response, and preserve the
-wallet's query bytes unchanged. It must not silently retry after an ambiguous
+The request router may choose among those replicas, retry a different ready
+replica only on an upstream failure known to precede acceptance or an explicit
+pre-execution busy response, and preserve the wallet's query bytes unchanged.
+It must not silently retry after an ambiguous
 mid-response failure: doing so can repeat expensive work and may change
 linkability. The worker checks the session binding before evaluation and returns
 an explicit expired-session result for a stale generation. Publication and
@@ -65,11 +66,11 @@ retention must hold packing state while an admitted query pins it. The worker's
 readiness response must distinguish service health from readiness for the
 specific domain/session; a general process health check is insufficient.
 
-The origin continues to expose the existing wallet URL and TLS boundary.
-Workers remain reachable only from that origin and the coordinator's control
-network. The origin needs a bounded body stream, upstream timeout, overload
+The public origin continues to expose the existing wallet URL and TLS boundary.
+Workers remain reachable only from the request router and the coordinator's control
+network. The router needs a bounded body stream, upstream timeout, overload
 mapping to 429, and response size bound. Placement publication must be atomic
-from the origin's perspective; on loss of one replica, only the remaining
+from the router's perspective; on loss of one replica, only the remaining
 published-ready replica is eligible. If none is ready, fail closed with 503.
 
 ## Production measurement required before the cutover
@@ -89,11 +90,11 @@ published-ready replica is eligible. If none is ready, fail closed with 503.
    successful QPS, p50/p95/p99 end-to-end latency, 429/503 counts, and peak
    cgroup memory at each offered rate.
 3. Set the worker's request count and memory charges from the worst observed
-   concurrent overlap, with a margin below the 6.5 GiB model limit. Repeat
-   with the intended batch scheduler once D5 lands. Reject before body reception
-   whenever that reservation cannot be made. Keep the public origin on the
+   concurrent overlap, with a margin below the 6.5 GiB model limit. Exercise
+   the intended singleton scheduler from D5. Reject before body reception
+   whenever that reservation cannot be made. Keep the public query route on the
    coordinator until exact-answer checks and the memory gate pass.
 
 This gate is deliberately unresolved: no full-size production worker packing
-CPU or memory observation accompanies this change, and the origin's published
+CPU or memory observation accompanies this change, and the router's published
 routing protocol is still a separate implementation task.
