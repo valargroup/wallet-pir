@@ -281,7 +281,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_objects,
             requests,
         } => {
-            enhance_pir_server::packing_router::PackingRouter::configure_process_budget()?;
             let router = enhance_pir_server::packing_router::PackingRouter::open(
                 &data_dir,
                 &artifact_origin,

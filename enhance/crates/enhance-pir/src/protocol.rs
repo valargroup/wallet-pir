@@ -540,19 +540,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_boundary_and_return_preserve_every_record() {
+    fn full_boundary_and_composition_transition_preserve_every_record() {
         let g = Geometry::default();
         let span = 32768 * RECORDS_PER_ROW as u64;
-        let loan = 4096 * RECORDS_PER_ROW as u64;
+        let successor_records = 4096 * RECORDS_PER_ROW as u64;
         let mut state = Lifecycle::default();
         for n in [
             1,
             span - 1,
             span,
             span + 1,
-            span + loan - 1,
-            span + loan,
-            span * 2 + loan + 17,
+            span + successor_records - 1,
+            span + successor_records,
+            span * 2 + successor_records + 17,
         ] {
             let c = state.coverage(n, g).unwrap();
             c.validate(g).unwrap();
@@ -563,7 +563,7 @@ mod tests {
         }
         let before = state.coverage(span - 1, g).unwrap();
         let during = state.coverage(span + 1, g).unwrap();
-        let after = state.coverage(span + loan, g).unwrap();
+        let after = state.coverage(span + successor_records, g).unwrap();
         assert_eq!(
             before.locate(span - 2).unwrap().0.id,
             after.locate(span - 2).unwrap().0.id

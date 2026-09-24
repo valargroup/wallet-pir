@@ -199,7 +199,7 @@ jobs:
       - run: >-
           cargo clippy --locked --all-targets --all-features
           -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server
-          -p pir-apm -p transparent-spend-pir
+          -p pir-apm
           -- -D warnings
 
   enhance-test:
@@ -224,11 +224,8 @@ jobs:
           # on shared runners. Hardware qualification is a separate exact-release
           # deployment gate; keep artifact CI bounded to correctness coverage.
           tools/ci/full-test.sh --locked --profile release-fast \
-            -p enhance-pir -p enhance-pir-load-test -p pir-apm -p transparent-spend-pir
-          tools/ci/full-test.sh --locked --profile release-fast \
-            -p enhance-pir-server --lib --bins \
-            --test record_layout --test schema11_cutover \
-            --test http --test canonical_record --test note_recovery --test rpc --test matvec_config
+            -p enhance-pir -p enhance-pir-load-test -p pir-apm
+          python3 tools/ci/enhance_tests.py --tier full
 
       - name: Check optional CUDA worker without a GPU
         run: |

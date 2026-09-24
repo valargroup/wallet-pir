@@ -29,6 +29,7 @@ fn ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let budget = enhance_pir_server::PackingBudget::coordinator();
     let args = Args::parse();
     std::fs::create_dir(&args.output)?;
     let mut log = std::fs::OpenOptions::new()
@@ -118,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let hint = eval.hint()?;
             let hint_ms = ms(at);
             let at = Instant::now();
-            let packing = Packing::new(rows, &hint)?;
+            let packing = Packing::new(rows, &hint, &budget)?;
             let packing_ms = ms(at);
             let manifest = Manifest {
                 recovery_epoch: 0,

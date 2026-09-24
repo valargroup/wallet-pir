@@ -314,6 +314,7 @@ pub(super) fn coordinator(
             for (label, value) in [
                 ("standby", Role::Standby),
                 ("active", Role::Active),
+                // Preserve the historical label as an alias for existing dashboards.
                 ("settling", Role::Active),
                 ("sealed_open", Role::SealedOpen),
                 ("sealed_full", Role::SealedFull),
@@ -386,7 +387,7 @@ mod tests {
         }
     }
     #[test]
-    fn geometry_roles_and_escaped_labels_survive_loan_return() {
+    fn geometry_roles_and_escaped_labels_survive_composition_transition() {
         let mut state = State::default();
         let name = "group\"\\\nname";
         state.groups.push(control::Group {
@@ -395,7 +396,7 @@ mod tests {
             sequence: 0,
             replicas: vec![],
         });
-        for (records, loan) in [
+        for (records, composition_active) in [
             (4 * 32768 * 33 + 4096 * 33 / 2, true),
             (4 * 32768 * 33 + 4096 * 33, false),
         ] {
@@ -411,7 +412,10 @@ mod tests {
                 &Publication::default(),
                 100,
             );
-            assert!(text.contains(&format!("enhance_composition_active {}\n", u8::from(loan))));
+            assert!(text.contains(&format!(
+                "enhance_composition_active {}\n",
+                u8::from(composition_active)
+            )));
             assert!(
                 text.contains("enhance_group_assigned_shards{group=\"group\\\"\\\\\\nname\"} 5\n")
             );

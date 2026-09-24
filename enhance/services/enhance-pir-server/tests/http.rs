@@ -72,9 +72,16 @@ async fn distributed_backend_round_trip(backend: enhance_pir_server::matvec::Mat
                         || (request.uri().path() == "/internal/commit"
                             && commit_failed.load(std::sync::atomic::Ordering::SeqCst))
                     {
-                        return axum::response::IntoResponse::into_response(
+                        let mut response = axum::response::IntoResponse::into_response(
                             axum::http::StatusCode::SERVICE_UNAVAILABLE,
                         );
+                        if request.uri().path() == "/internal/evaluate" {
+                            // This fixture rejected before invoking the worker.
+                            response
+                                .headers_mut()
+                                .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                        }
+                        return response;
                     }
                     next.run(request).await
                 }
@@ -858,6 +865,13 @@ async fn committed_offline_participant_does_not_block_and_recovers_after_expiry(
                             response
                         }
                     };
+                    // Offline mode rejected this request before worker admission.
+                    // Applied-operation failures above remain ambiguous and unmarked.
+                    if mode == 2 && path == "/internal/evaluate" {
+                        response
+                            .headers_mut()
+                            .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                    }
                     response
                         .headers_mut()
                         .insert(axum::http::header::CONNECTION, "close".parse().unwrap());
@@ -1110,6 +1124,13 @@ async fn abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_p
                             response
                         }
                     };
+                    // Offline mode rejected this request before worker admission.
+                    // Applied-operation failures above remain ambiguous and unmarked.
+                    if mode == 2 && path == "/internal/evaluate" {
+                        response
+                            .headers_mut()
+                            .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                    }
                     response
                         .headers_mut()
                         .insert(axum::http::header::CONNECTION, "close".parse().unwrap());

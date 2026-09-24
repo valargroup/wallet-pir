@@ -24,8 +24,8 @@ Active transparent recovery uses `transparent/crates/transparent-events`, `trans
 
 Validation tools live under `transparent/tools/`: load tests, regression fixtures, and the
 current-shard `transparent-measure` command used by the backfill workflow.
-`enhance/crates/transparent-spend-pir` remains an Enhance journal/type dependency, not a served
-recovery protocol. Enhance has its own [index](../../enhance/docs/README.md).
+`enhance/crates/transparent-spend-pir` is preserved legacy source outside the active
+workspace and CI. Enhance has its own [index](../../enhance/docs/README.md).
 The excluded nullifier/witness [demos](../../demos/legacy-spendability/README.md)
 remain an independent preserved workspace.
 

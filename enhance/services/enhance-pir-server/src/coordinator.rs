@@ -1,4 +1,7 @@
 //! Coordinator with atomic manifests and generation-specific replica routes.
+mod publication;
+mod recovery;
+mod snapshots;
 use super::{
     control::{self, Group, Operation, PendingCommit, Phase, ReadyAck, Store},
     runtime::{self, DomainPlan, Packing, PublishedPacking},
@@ -7,13 +10,14 @@ use super::{
 use axum::{
     body::to_bytes,
     extract::{Path, Request, State},
-    http::{header, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use enhance_pir::protocol::*;
 use serde::{Deserialize, Serialize};
+use snapshots::{collect_artifacts, restore, SavedSnapshot, Snapshot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::path::{Path as FsPath, PathBuf};
@@ -53,25 +57,7 @@ impl From<(StatusCode, String)> for QueryError {
 
 impl IntoResponse for QueryError {
     fn into_response(self) -> Response {
-        let code = match self.0 {
-            StatusCode::CONFLICT => "stale_routing",
-            StatusCode::GONE if self.1 == "noncanonical_session" => "noncanonical_session",
-            StatusCode::GONE => "session_unavailable",
-            StatusCode::TOO_MANY_REQUESTS => "overloaded",
-            StatusCode::SERVICE_UNAVAILABLE => "temporarily_unavailable",
-            _ => "invalid_request",
-        };
-        let mut response = (
-            self.0,
-            Json(serde_json::json!({"code":code,"message":self.1})),
-        )
-            .into_response();
-        if self.0 == StatusCode::TOO_MANY_REQUESTS {
-            response
-                .headers_mut()
-                .insert(header::RETRY_AFTER, "1".parse().unwrap());
-        }
-        response
+        super::query_serving::public_error((self.0, self.1))
     }
 }
 
@@ -85,154 +71,9 @@ fn preparation_request(http: &reqwest::Client, worker_url: &str) -> reqwest::Req
         .timeout(PREPARATION_TIMEOUT)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct SavedSnapshot {
-    manifest: Manifest,
-    routes: BTreeMap<u64, Vec<String>>,
-    hints: BTreeMap<u64, String>,
-    domain_keys: BTreeMap<u64, String>,
-}
-
-struct Snapshot {
-    saved: SavedSnapshot,
-    packing: BTreeMap<u64, Arc<PublishedPacking>>,
-}
-
-fn hint_name(name: &str) -> bool {
-    name.strip_suffix(".bin")
-        .is_some_and(|stem| stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
-}
-
-/// Remove only owned, unreferenced artifacts after validating the entire keep set.
-/// The caller must hold publication exclusion and have no unresolved candidate.
-fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result<(), String> {
-    let mut snapshots = BTreeSet::new();
-    let mut hints = BTreeSet::new();
-    for manifest in published {
-        let name = format!("{}.json", manifest.generation);
-        let saved: SavedSnapshot = serde_json::from_slice(
-            &fs::read(root.join("snapshots").join(&name)).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        if &saved.manifest != manifest
-            || saved.hints.len() != manifest.coverage.shards.len()
-            || manifest
-                .coverage
-                .shards
-                .iter()
-                .any(|s| !saved.hints.contains_key(&s.id))
-        {
-            return Err(
-                "cannot collect artifacts: retained snapshot differs from durable decision".into(),
-            );
-        }
-        for name in saved.hints.values() {
-            if !hint_name(name) || !root.join("hints").join(name).is_file() {
-                return Err("cannot collect artifacts: invalid or missing retained hint".into());
-            }
-            hints.insert(name.clone());
-        }
-        snapshots.insert(name);
-    }
-    for (directory, keep) in [
-        ("snapshots", snapshots),
-        ("hints", hints.clone()),
-        ("public", hints),
-    ] {
-        let directory_path = root.join(directory);
-        for entry in fs::read_dir(&directory_path).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
-                continue;
-            }
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            let owned = if directory == "snapshots" {
-                name.strip_suffix(".json")
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .is_some_and(|g| name == format!("{g}.json"))
-            } else {
-                hint_name(&name)
-            };
-            if owned && !keep.contains(&name) {
-                fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
-            }
-        }
-        File::open(directory_path)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-fn restore(
-    root: &FsPath,
-    manifest: &Manifest,
-    revoked: &BTreeSet<String>,
-    cache: &mut BTreeMap<String, Arc<PublishedPacking>>,
-    remote_packing: bool,
-) -> Result<Arc<Snapshot>, String> {
-    manifest.validate()?;
-    let saved: SavedSnapshot = serde_json::from_slice(
-        &fs::read(
-            root.join("snapshots")
-                .join(format!("{}.json", manifest.generation)),
-        )
-        .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    if &saved.manifest != manifest {
-        return Err("snapshot differs from durable decision".into());
-    }
-    let mut packing = BTreeMap::new();
-    for shard in &manifest.coverage.shards {
-        if revoked.contains(&hex::encode(manifest.session_id(shard.id)?)) {
-            continue;
-        }
-        let key = &saved.domain_keys[&shard.id];
-        if let Some(pack) = cache.get(key) {
-            packing.insert(shard.id, pack.clone());
-            continue;
-        }
-        let name = saved.hints.get(&shard.id).ok_or("missing persisted hint")?;
-        if !hint_name(name) {
-            return Err("invalid persisted hint identity".into());
-        }
-        let public_path = root.join("public").join(name);
-        let pack = if remote_packing && public_path.is_file() {
-            PublishedPacking::metadata(
-                shard.logical_rows,
-                fs::read(&public_path).map_err(|e| e.to_string())?,
-            )
-        } else {
-            let params = parameters(shard.logical_rows)?;
-            let file = File::open(root.join("hints").join(name)).map_err(|e| e.to_string())?;
-            let blocks = crate::wire::read_crs_blocks(
-                file,
-                params.db_cols / runtime::rlwe().d,
-                runtime::rlwe().d,
-            )
-            .map_err(|e| e.to_string())?;
-            let serving = Packing::new(shard.logical_rows, &blocks)?;
-            crate::artifact::write_atomic(&root.join("public"), name, |f| {
-                f.write_all(&serving.public)
-            })
-            .map_err(|e| e.to_string())?;
-            PublishedPacking::new(shard.logical_rows, serving, !remote_packing)
-        };
-        if !manifest.sessions.contains(&pack.reference(shard.id)?) {
-            return Err("restored session digest differs".into());
-        }
-        let pack = Arc::new(pack);
-        cache.insert(key.clone(), pack.clone());
-        packing.insert(shard.id, pack);
-    }
-    Ok(Arc::new(Snapshot { saved, packing }))
-}
-
 #[derive(Clone)]
 pub struct Coordinator {
+    packing_budget: super::packing_budget::PackingBudget,
     store: Arc<Mutex<Store>>,
     snapshots: Arc<RwLock<Vec<Arc<Snapshot>>>>,
     publication: Arc<Semaphore>,
@@ -383,6 +224,7 @@ impl Coordinator {
             }
             Ok(())
         })?;
+        let packing_budget = super::packing_budget::PackingBudget::coordinator();
         let mut snapshots = Vec::new();
         let mut packing_cache = BTreeMap::new();
         for manifest in &store.state().published {
@@ -392,9 +234,11 @@ impl Coordinator {
                 &store.state().recovery.revoked,
                 &mut packing_cache,
                 serving.is_some(),
+                &packing_budget,
             )?);
         }
         Ok(Self {
+            packing_budget,
             serving,
             store: Arc::new(Mutex::new(store)),
             snapshots: Arc::new(RwLock::new(snapshots)),
@@ -915,93 +759,6 @@ impl Coordinator {
             .with_state(self)
     }
 
-    /// Persist revocation before the caller truncates any canonical journal bytes.
-    /// Retrying an unfinished rollback uses the same epoch and revocation set.
-    pub async fn revoke_after(&self, records: u64) -> Result<(), String> {
-        {
-            let mut store = self.store.lock().unwrap();
-            store.update(|state| {
-                if state.recovery.rollback_to == Some(records) {
-                    return Ok(());
-                }
-                let first = records / (32768 * enhance_pir::RECORDS_PER_ROW as u64);
-                let deep = state.recovery.sealed.keys().any(|id| *id >= first);
-                if deep {
-                    state.recovery.epoch = state
-                        .recovery
-                        .epoch
-                        .checked_add(1)
-                        .ok_or("recovery epoch exhausted")?;
-                    for id in first..enhance_pir::protocol::MAX_QUERY_SHARDS {
-                        state
-                            .recovery
-                            .domain_epochs
-                            .insert(id, state.recovery.epoch.to_string());
-                    }
-                }
-                for manifest in &state.published {
-                    for domain in &manifest.coverage.shards {
-                        // A tail domain includes its predecessor's suffix.
-                        if deep && domain.id >= first {
-                            state
-                                .recovery
-                                .revoked
-                                .insert(hex::encode(manifest.session_id(domain.id)?));
-                        }
-                    }
-                }
-                state.recovery.sealed.retain(|id, _| *id < first);
-                state.recovery.rollback_to = Some(records);
-                Ok(())
-            })?;
-        }
-        self.deliver_revocations().await
-    }
-
-    async fn deliver_revocations(&self) -> Result<(), String> {
-        let (fence, groups) = {
-            let store = self.store.lock().unwrap();
-            (
-                worker::Revocation {
-                    recovery_epoch: store.state().recovery.epoch,
-                    sessions: store.state().recovery.revoked.clone(),
-                },
-                store.state().groups.clone(),
-            )
-        };
-        if fence.sessions.is_empty() {
-            return Ok(());
-        }
-        if let Some(serving) = &self.serving {
-            serving.revoke(&fence).await?;
-        }
-        // A missing peer stays fenced at the coordinator; publication waits for
-        // its durable acknowledgment rather than trusting an old incarnation.
-        for replica in groups.iter().flat_map(|g| &g.replicas) {
-            let result = async {
-                checked(
-                    self.http
-                        .post(format!("{}/internal/revoke", replica.url))
-                        .timeout(std::time::Duration::from_secs(3))
-                        .json(&fence)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?;
-                Ok::<_, String>(())
-            }
-            .await;
-            if let Err(error) = result {
-                if self.serving.is_some() {
-                    return Err(error);
-                }
-                tracing::warn!(replica = %replica.name, %error, "replica excluded until recovery fence acknowledged");
-            }
-        }
-        Ok(())
-    }
-
     pub async fn manifest(&self) -> Option<Manifest> {
         self.snapshots
             .read()
@@ -1049,928 +806,6 @@ impl Coordinator {
             }
         }
     }
-
-    fn pending_replicas(&self) -> BTreeSet<String> {
-        self.store.lock().unwrap().state().pending_replicas()
-    }
-
-    // Retry decisions independently; no disconnected participant authorizes
-    // dropping its reservation or putting a second candidate on that worker.
-    async fn deliver_decisions(&self) -> Result<(), String> {
-        self.deliver_commits().await?;
-        let (pending, groups, epoch) = {
-            let store = self.store.lock().unwrap();
-            (
-                store.state().pending_aborts.clone(),
-                store.state().groups.clone(),
-                store.state().epoch,
-            )
-        };
-        for notification in pending {
-            let replica = groups
-                .iter()
-                .flat_map(|g| &g.replicas)
-                .find(|r| r.name == notification.replica)
-                .ok_or("pending abort has no registered worker")?;
-            let delivered: Result<(), String> = async {
-                checked(
-                    self.http
-                        .post(format!("{}/internal/abort", replica.url))
-                        .timeout(std::time::Duration::from_secs(3))
-                        .json(&worker::Abort {
-                            epoch,
-                            operation: notification.operation.clone(),
-                            attempt: notification.attempt,
-                        })
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?;
-                Ok(())
-            }
-            .await;
-            match delivered {
-                Ok(()) => self.store.lock().unwrap().update(|s| {
-                    s.pending_aborts.retain(|p| p != &notification);
-                    Ok(())
-                })?,
-                Err(error) => {
-                    tracing::warn!(replica = %replica.name, %error, "abort notification remains pending; worker excluded from new candidates")
-                }
-            }
-        }
-        Ok(())
-    }
-
-    // Caller owns the publication permit. Errors for one participant must not
-    // prevent delivery to its peer; intent remains durable until an exact ack.
-    async fn deliver_commits(&self) -> Result<(), String> {
-        let (pending, groups, epoch) = {
-            let store = self.store.lock().unwrap();
-            (
-                store.state().pending_commits.clone(),
-                store.state().groups.clone(),
-                store.state().epoch,
-            )
-        };
-        for notification in pending {
-            let replica = groups
-                .iter()
-                .flat_map(|g| &g.replicas)
-                .find(|r| r.name == notification.replica)
-                .ok_or("pending commit has no registered worker")?;
-            let delivered: Result<(), String> = async {
-                let health: serde_json::Value = checked(
-                    self.http
-                        .get(format!("{}/internal/health", replica.url))
-                        .timeout(std::time::Duration::from_secs(3))
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?
-                .json()
-                .await
-                .map_err(|e| e.to_string())?;
-                let generation = notification.manifest.generation;
-                if health["published"]
-                    .as_array()
-                    .is_some_and(|gs| gs.iter().any(|g| g.as_u64() == Some(generation)))
-                {
-                    // Commit was durable but its response was lost. Match the
-                    // exact decision before releasing this replica's quarantine.
-                    if health["published_manifest_digests"][generation.to_string()]
-                        != digest(&notification.manifest)
-                    {
-                        return Err(
-                            "published worker manifest differs from committed decision".into()
-                        );
-                    }
-                    return Ok(());
-                }
-                let candidate: worker::Candidate =
-                    serde_json::from_value(health["candidate"].clone())
-                        .map_err(|e| e.to_string())?;
-                if candidate.operation != notification.operation
-                    || candidate.attempt != notification.attempt
-                    || candidate.generation != generation
-                {
-                    return Err("worker lost committed candidate; repair required".into());
-                }
-                checked(
-                    preparation_request(&self.http, &replica.url)
-                        .json(&candidate)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?;
-                let revision = health["revision"]
-                    .as_u64()
-                    .ok_or("missing revision")?
-                    .checked_add(1)
-                    .ok_or("worker revision exhausted")?;
-                checked(
-                    self.http
-                        .post(format!("{}/internal/commit", replica.url))
-                        .json(&worker::Commit {
-                            epoch,
-                            revision,
-                            generation,
-                            manifest_digest: digest(&notification.manifest),
-                            retained: notification.retained.clone(),
-                        })
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?;
-                Ok(())
-            }
-            .await;
-            match delivered {
-                Ok(()) => self.store.lock().unwrap().update(|s| {
-                    s.pending_commits.retain(|p| p != &notification);
-                    Ok(())
-                })?,
-                Err(error) => {
-                    tracing::warn!(replica = %replica.name, %error, "committed notification remains pending; worker excluded from new candidates")
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Recover the durable decision. A committed placement is never rolled back by cancellation.
-    pub async fn reconcile(&self) -> Result<(), String> {
-        let _permit = self
-            .publication
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "publication already in progress")?;
-        self.reconcile_inner().await
-    }
-
-    // Caller owns the publication permit, including fallback within publication.
-    async fn reconcile_inner(&self) -> Result<(), String> {
-        self.deliver_revocations().await?;
-        let (op, published) = {
-            let store = self.store.lock().unwrap();
-            let s = store.state();
-            (s.operation.clone(), s.published.clone())
-        };
-        let Some(op) = op else {
-            self.deliver_decisions().await?;
-            self.synchronize_retention().await;
-            self.collect_retired_artifacts();
-            self.synchronize_routers().await?;
-            return Ok(());
-        };
-        let committed = matches!(
-            op.phase,
-            Phase::Committed | Phase::Draining | Phase::Complete
-        );
-        if committed {
-            // Also migrate a pre-outbox committed journal before releasing its
-            // candidate slot. Notification intent is durable before release.
-            let manifest = published
-                .first()
-                .ok_or("committed operation missing manifest")?;
-            self.store.lock().unwrap().update(|s| {
-                for ack in &op.readiness {
-                    if !s.pending_commits.iter().any(|p| p.replica == ack.replica) {
-                        s.pending_commits.push(PendingCommit {
-                            replica: ack.replica.clone(),
-                            operation: op.id.clone(),
-                            attempt: op.attempt,
-                            manifest: manifest.clone(),
-                            retained: published.iter().map(|m| m.generation).collect(),
-                        });
-                    }
-                }
-                s.cancel_participants(
-                    &op,
-                    &op.readiness.iter().map(|ack| ack.replica.clone()).collect(),
-                );
-                Ok(())
-            })?;
-        } else {
-            self.store.lock().unwrap().abort_operation()?;
-        }
-
-        if committed {
-            let manifest = published.first().ok_or("missing committed manifest")?;
-            if self.manifest().await.as_ref() != Some(manifest) {
-                let root = self.root.clone();
-                let manifest = manifest.clone();
-                let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
-                let mut cache = BTreeMap::new();
-                for snapshot in self.snapshots.read().await.iter() {
-                    for (id, pack) in &snapshot.packing {
-                        cache.insert(snapshot.saved.domain_keys[id].clone(), pack.clone());
-                    }
-                }
-                let remote_packing = self.serving.is_some();
-                let restored = tokio::task::spawn_blocking(move || {
-                    restore(&root, &manifest, &revoked, &mut cache, remote_packing)
-                })
-                .await
-                .map_err(|e| e.to_string())??;
-                let mut snapshots = self.snapshots.write().await;
-                snapshots.insert(0, restored);
-                snapshots.retain(|s| {
-                    published
-                        .iter()
-                        .any(|m| m.generation == s.saved.manifest.generation)
-                });
-            }
-        }
-        self.store.lock().unwrap().update(|s| {
-            if committed {
-                if let Some(mut operation) = s.operation.take() {
-                    operation.phase = Phase::Draining;
-                    s.draining.push(operation);
-                }
-                s.draining.retain(|op| {
-                    op.source_generations
-                        .iter()
-                        .any(|g| s.published.iter().any(|m| m.generation == *g))
-                });
-            }
-            Ok(())
-        })?;
-        self.deliver_decisions().await?;
-        self.synchronize_retention().await;
-        self.collect_retired_artifacts();
-        self.synchronize_routers().await?;
-        Ok(())
-    }
-
-    /// Serialize candidate preparation. Cancellation leaves a durable operation that must
-    /// be reconciled before another candidate can be prepared.
-    pub async fn publish(
-        &self,
-        journal: &crate::store::RecordJournal,
-        height: u64,
-        hash: String,
-    ) -> Result<(), String> {
-        self.publish_checked(journal, height, hash, || async { Ok(()) })
-            .await
-    }
-
-    pub async fn publish_checked<F, Fut>(
-        &self,
-        journal: &crate::store::RecordJournal,
-        height: u64,
-        hash: String,
-        validate: F,
-    ) -> Result<(), String>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<(), String>>,
-    {
-        let _permit = self
-            .publication
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "publication already in progress")?;
-        let began = std::time::Instant::now();
-        self.telemetry
-            .lock()
-            .unwrap()
-            .observe(height, journal.tree_size(), &hash);
-        let mut validate = Some(validate);
-        let mut result = self
-            .publish_inner(journal, height, hash.clone(), &mut validate, true)
-            .await;
-        let retry = result.is_err() && validate.is_some() && {
-            let store = self.store.lock().unwrap();
-            store.state().operation.as_ref().is_some_and(|op| {
-                op.phase == Phase::Planned
-                    && op
-                        .require_both
-                        .iter()
-                        .any(|group| store.state().assignments.values().any(|g| g == group))
-            })
-        };
-        if retry {
-            // No preparation or durable publication has occurred. Persist the
-            // abort decision before retrying; unacknowledged workers stay excluded.
-            result = match self.reconcile_inner().await {
-                Ok(()) => {
-                    self.publish_inner(journal, height, hash, &mut validate, false)
-                        .await
-                }
-                Err(error) => Err(format!(
-                    "consolidation fallback awaits abort recovery: {error}"
-                )),
-            };
-        }
-        *self.blocked.lock().unwrap() = result.as_ref().err().cloned();
-        let mut telemetry = self.telemetry.lock().unwrap();
-        telemetry.last_attempt_seconds = Some(began.elapsed().as_secs_f64());
-        telemetry.last_attempt_succeeded = Some(result.is_ok());
-        result
-    }
-
-    async fn publish_inner<F, Fut>(
-        &self,
-        journal: &crate::store::RecordJournal,
-        height: u64,
-        hash: String,
-        validate: &mut Option<F>,
-        allow_consolidation: bool,
-    ) -> Result<(), String>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<(), String>>,
-    {
-        self.deliver_decisions().await?;
-        let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
-        if !revoked.is_empty() {
-            let mut snapshots = self.snapshots.write().await;
-            for snapshot in snapshots.iter_mut() {
-                let packing = snapshot
-                    .packing
-                    .iter()
-                    .filter(|(id, _)| {
-                        snapshot
-                            .saved
-                            .manifest
-                            .session_id(**id)
-                            .is_ok_and(|hash| !revoked.contains(&hex::encode(hash)))
-                    })
-                    .map(|(id, pack)| (*id, pack.clone()))
-                    .collect();
-                *snapshot = Arc::new(Snapshot {
-                    saved: snapshot.saved.clone(),
-                    packing,
-                });
-            }
-        }
-        let (mut lifecycle, generation, attempt, epoch, revision, mut groups, previous) = {
-            let store = self.store.lock().unwrap();
-            let s = store.state();
-            if s.operation.is_some() {
-                return Err(
-                    "unfinished operation requires reconciliation before publication".into(),
-                );
-            }
-            (
-                s.lifecycle.clone(),
-                s.next_generation,
-                s.next_attempt,
-                s.epoch,
-                s.revision,
-                s.groups.clone(),
-                s.assignments.clone(),
-            )
-        };
-        let mut coverage = lifecycle.coverage(journal.tree_size(), Geometry::default())?;
-        let mut recovery = self.store.lock().unwrap().state().recovery.clone();
-        for shard in &mut coverage.shards {
-            recovery
-                .domain_epochs
-                .entry(shard.id)
-                .or_insert_with(|| "0".into());
-            if shard.records == 32768 * enhance_pir::RECORDS_PER_ROW as u64 {
-                let end = (shard.id + 1) * 32768 * enhance_pir::RECORDS_PER_ROW as u64;
-                let crossing = journal
-                    .blocks()
-                    .iter()
-                    .find(|b| b.first_position + b.action_count >= end)
-                    .ok_or("missing completing block")?;
-                if let Some((sealed_height, sealed_hash)) = recovery.sealed.get(&shard.id) {
-                    if *sealed_height != crossing.height || *sealed_hash != crossing.hash {
-                        return Err("sealed history changed without recovery fencing".into());
-                    }
-                    shard.state = enhance_pir::protocol::ShardState::Sealed;
-                } else if height.saturating_sub(crossing.height) >= 1000 {
-                    recovery
-                        .sealed
-                        .insert(shard.id, (crossing.height, crossing.hash.clone()));
-                    shard.state = enhance_pir::protocol::ShardState::Sealed;
-                }
-            }
-        }
-        let pool_state = self.store.lock().unwrap().state().pool.clone();
-        let base_assignments = if pool_state.is_some() {
-            coverage
-                .shards
-                .iter()
-                .map(|s| (s.id, groups[0].id.clone()))
-                .collect()
-        } else {
-            control::assign(&coverage, &groups, &previous)?
-        };
-        let read = |start, count| {
-            journal
-                .read_records(start, count)
-                .map_err(|e| e.to_string())
-        };
-        let plans: Vec<DomainPlan> = coverage
-            .shards
-            .iter()
-            .map(|s| {
-                let mut plan = runtime::plan(s.clone(), read)?;
-                let epoch = recovery.domain_epochs[&s.id]
-                    .parse::<u64>()
-                    .map_err(|e| e.to_string())?;
-                for unit in &mut plan.units {
-                    unit.recovery_epoch = epoch;
-                }
-                Ok::<_, String>(plan)
-            })
-            .collect::<Result<_, _>>()?;
-        let pool_assignments = if let Some(pool) = &pool_state {
-            Some(
-                self.plan_pool(&coverage, &groups, &plans, pool, allow_consolidation)
-                    .await?,
-            )
-        } else {
-            None
-        };
-        let (assignments, consolidation_destinations, admission_destinations) =
-            if let Some(placements) = &pool_assignments {
-                let assignments = placements
-                    .iter()
-                    .map(|(id, workers)| {
-                        let group = groups
-                            .iter()
-                            .find(|g| g.replicas.iter().any(|r| workers.contains(&r.name)))
-                            .expect("validated pool inventory");
-                        (*id, group.id.clone())
-                    })
-                    .collect();
-                (assignments, BTreeSet::new(), BTreeSet::new())
-            } else {
-                let (base_assignments, admission_destinations) = self
-                    .place_new_if_admitted(&coverage, &groups, &plans, &previous, base_assignments)
-                    .await?;
-                let base_assignments = self
-                    .relocate_if_memory_refused(
-                        &coverage,
-                        &groups,
-                        &plans,
-                        &previous,
-                        base_assignments,
-                    )
-                    .await;
-                let (assignments, consolidation_destinations) = if allow_consolidation {
-                    self.consolidate_if_admitted(&coverage, &groups, &plans, base_assignments)
-                        .await?
-                } else {
-                    (base_assignments, BTreeSet::new())
-                };
-                (
-                    assignments,
-                    consolidation_destinations,
-                    admission_destinations,
-                )
-            };
-        let operation_id = format!("generation-{generation}");
-        let mut require_both = control::required_destination_pairs(&assignments, &previous);
-        require_both.extend(consolidation_destinations);
-        require_both.extend(admission_destinations);
-        let strict_groups = require_both.clone();
-        let operation = Operation {
-            pool_assignments: pool_assignments.clone(),
-            id: operation_id.clone(),
-            attempt,
-            epoch,
-            expected_revision: revision,
-            candidate_digest: digest(&plans),
-            phase: Phase::Planned,
-            assignments: assignments.clone(),
-            affected_groups: if pool_assignments.is_some() {
-                groups.iter().map(|g| g.id.clone()).collect()
-            } else {
-                assignments
-                    .values()
-                    .chain(previous.values())
-                    .cloned()
-                    .collect()
-            },
-            source_generations: self
-                .store
-                .lock()
-                .unwrap()
-                .state()
-                .published
-                .iter()
-                .map(|m| m.generation)
-                .collect(),
-            require_both,
-            readiness: Vec::new(),
-            infrastructure_resources: BTreeMap::new(),
-        };
-        self.store.lock().unwrap().plan(operation)?;
-        let mut candidates = BTreeMap::new();
-        // Reserve complete per-worker assignments before any preparation.
-        for group in &mut groups {
-            for replica in &mut group.replicas {
-                let own: Vec<_> = plans
-                    .iter()
-                    .filter(|p| {
-                        pool_assignments.as_ref().map_or_else(
-                            || assignments[&p.shard.id] == group.id,
-                            |placements| placements[&p.shard.id].contains(&replica.name),
-                        )
-                    })
-                    .cloned()
-                    .collect();
-                let previously_used = pool_state.as_ref().map_or_else(
-                    || previous.values().any(|id| id == &group.id),
-                    |pool| {
-                        pool.placements
-                            .values()
-                            .any(|set| set.contains(&replica.name))
-                    },
-                );
-                if own.is_empty() && !previously_used {
-                    continue;
-                }
-                if self.pending_replicas().contains(&replica.name) {
-                    if strict_groups.contains(&group.id)
-                        || (pool_assignments.is_some() && !own.is_empty())
-                    {
-                        return Err("required replica awaits decision recovery".into());
-                    }
-                    continue;
-                }
-                let reservation: Result<_, String> = async {
-                    // Every new incarnation must durably acknowledge the full
-                    // fence before it can become a ready placement again.
-                    let fence = worker::Revocation {
-                        recovery_epoch: recovery.epoch,
-                        sessions: recovery.revoked.clone(),
-                    };
-                    checked(
-                        self.http
-                            .post(format!("{}/internal/revoke", replica.url))
-                            .timeout(std::time::Duration::from_secs(3))
-                            .json(&fence)
-                            .send()
-                            .await
-                            .map_err(|e| e.to_string())?,
-                    )
-                    .await?;
-                    let health: serde_json::Value = self
-                        .http
-                        .get(format!("{}/internal/health", replica.url))
-                        .timeout(std::time::Duration::from_secs(3))
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .error_for_status()
-                        .map_err(|e| e.to_string())?
-                        .json()
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    if health["protocol"].as_str() != Some(PROTOCOL_REVISION)
-                        || health["placement_policy"]
-                            != serde_json::to_value(group.placement_policy).unwrap()
-                    {
-                        return Err("worker protocol or placement policy mismatch".into());
-                    }
-                    replica.incarnation = health["incarnation"]
-                        .as_str()
-                        .ok_or("missing worker incarnation")?
-                        .into();
-                    let worker_revision = health["revision"]
-                        .as_u64()
-                        .ok_or("missing worker revision")?;
-                    let candidate = worker::Candidate {
-                        placement_policy: group.placement_policy,
-                        operation: operation_id.clone(),
-                        attempt,
-                        epoch,
-                        expected_revision: worker_revision,
-                        generation,
-                        plans: own.clone(),
-                    };
-                    let response = self
-                        .http
-                        .post(format!("{}/internal/reserve", replica.url))
-                        .json(&candidate)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    if response.status() == StatusCode::INSUFFICIENT_STORAGE {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map_err(|e| e.to_string())?
-                            .as_secs();
-                        self.store.lock().unwrap().update(|state| {
-                            if state.pool.is_some() {
-                                state.capacity.request_worker(
-                                    now,
-                                    state.groups.iter().map(|g| g.replicas.len()).sum(),
-                                )
-                            } else {
-                                state.capacity.memory_refused(
-                                    journal.tree_size(),
-                                    now,
-                                    state.groups.len(),
-                                )
-                            }
-                        })?;
-                    }
-                    let missing: Vec<String> = checked(response)
-                        .await?
-                        .json()
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    Ok((candidate, missing, worker_revision))
-                }
-                .await;
-                match reservation {
-                    Ok(reserved) => {
-                        candidates.insert(replica.name.clone(), reserved);
-                    }
-                    Err(error)
-                        if !strict_groups.contains(&group.id)
-                            && (pool_assignments.is_none() || own.is_empty()) =>
-                    {
-                        tracing::warn!(replica = %replica.name, %error, "replica unavailable; ordinary publication may use its peer");
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-        }
-        if let Some(placements) = &pool_assignments {
-            for workers in placements.values() {
-                if workers.iter().any(|name| !candidates.contains_key(name)) {
-                    return Err("pool lacks required reservation quorum".into());
-                }
-            }
-        } else {
-            for group in &groups {
-                if !assignments.values().any(|id| id == &group.id) {
-                    continue;
-                }
-                let reserved = group
-                    .replicas
-                    .iter()
-                    .filter(|r| candidates.contains_key(&r.name))
-                    .count();
-                if reserved
-                    < if strict_groups.contains(&group.id) {
-                        2
-                    } else {
-                        1
-                    }
-                {
-                    return Err("group lacks its required reservation quorum".into());
-                }
-            }
-        }
-        self.store.lock().unwrap().update(|s| {
-            s.groups = groups.clone();
-            Ok(())
-        })?;
-        self.store
-            .lock()
-            .unwrap()
-            .advance(epoch, &operation_id, attempt, Phase::Reserved)?;
-        self.store
-            .lock()
-            .unwrap()
-            .advance(epoch, &operation_id, attempt, Phase::Preparing)?;
-        let mut packing = BTreeMap::new();
-        let mut hints = BTreeMap::new();
-        let domain_keys: BTreeMap<_, _> = plans
-            .iter()
-            .map(|p| (p.shard.id, digest(&(p.shard.logical_rows, &p.units))))
-            .collect();
-        {
-            let previous = self.snapshots.read().await;
-            for snapshot in previous.iter() {
-                for (shard, key) in &domain_keys {
-                    if !packing.contains_key(shard)
-                        && snapshot.saved.domain_keys.get(shard) == Some(key)
-                    {
-                        packing.insert(*shard, snapshot.packing[shard].clone());
-                        hints.insert(*shard, snapshot.saved.hints[shard].clone());
-                    }
-                }
-            }
-        }
-        let reusable: BTreeSet<_> = packing.keys().copied().collect();
-        let mut routes = BTreeMap::<u64, Vec<String>>::new();
-        for group in &groups {
-            for replica in &group.replicas {
-                let Some((candidate, missing, _)) = candidates.get(&replica.name) else {
-                    continue;
-                };
-                for plan in &candidate.plans {
-                    for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
-                        if !missing.contains(&unit.digest()) {
-                            continue;
-                        }
-                        let rows = runtime::unit_rows(&plan.shard, spec, &mut { read })?;
-                        checked(
-                            self.http
-                                .put(format!("{}/internal/rows/{}", replica.url, unit.digest()))
-                                .header("x-enhance-epoch", candidate.epoch)
-                                .header("x-enhance-attempt", candidate.attempt)
-                                .header("x-enhance-operation", &candidate.operation)
-                                .body(rows)
-                                .send()
-                                .await
-                                .map_err(|e| e.to_string())?,
-                        )
-                        .await?;
-                    }
-                }
-                checked(
-                    preparation_request(&self.http, &replica.url)
-                        .json(candidate)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?;
-                for plan in &candidate.plans {
-                    if reusable.contains(&plan.shard.id) {
-                        routes
-                            .entry(plan.shard.id)
-                            .or_default()
-                            .push(replica.url.clone());
-                        continue;
-                    }
-                    let response = checked(
-                        self.http
-                            .get(format!("{}/internal/hint/{}", replica.url, plan.shard.id))
-                            .send()
-                            .await
-                            .map_err(|e| e.to_string())?,
-                    )
-                    .await?;
-                    let bytes = bounded(response, 256 * 1024 * 1024).await?;
-                    let params = parameters(plan.shard.logical_rows)?;
-                    let hint = crate::wire::read_crs_blocks(
-                        bytes.as_slice(),
-                        params.db_cols / runtime::rlwe().d,
-                        runtime::rlwe().d,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let pack = Packing::new(plan.shard.logical_rows, &hint)?;
-                    let pack = Arc::new(PublishedPacking::new(
-                        plan.shard.logical_rows,
-                        pack,
-                        self.serving.is_none(),
-                    ));
-                    let reference = pack.reference(plan.shard.id)?;
-                    if let Some(existing) = packing.get(&plan.shard.id) {
-                        let existing: &Arc<PublishedPacking> = existing;
-                        if existing.reference(plan.shard.id)? != reference {
-                            return Err("replica public material differs".into());
-                        }
-                    } else {
-                        let name = format!("{}.bin", reference.public_params_sha256);
-                        crate::artifact::write_atomic(&self.root.join("hints"), &name, |f| {
-                            f.write_all(&bytes)
-                        })
-                        .map_err(|e| e.to_string())?;
-                        crate::artifact::write_atomic(&self.root.join("public"), &name, |f| {
-                            f.write_all(&pack.public)
-                        })
-                        .map_err(|e| e.to_string())?;
-                        hints.insert(plan.shard.id, name);
-                        packing.insert(plan.shard.id, pack);
-                    }
-                    routes
-                        .entry(plan.shard.id)
-                        .or_default()
-                        .push(replica.url.clone());
-                }
-            }
-        }
-        let sessions = coverage
-            .shards
-            .iter()
-            .map(|s| packing[&s.id].reference(s.id))
-            .collect::<Result<_, _>>()?;
-        let placement_revision = {
-            let snapshots = self.snapshots.read().await;
-            match snapshots.first() {
-                Some(old) if old.saved.routes == routes => old.saved.manifest.placement_revision,
-                Some(old) => old
-                    .saved
-                    .manifest
-                    .placement_revision
-                    .checked_add(1)
-                    .ok_or("placement revision exhausted")?,
-                None => 1,
-            }
-        };
-        let manifest = Manifest {
-            recovery_epoch: recovery.epoch,
-            placement_revision,
-            domain_recovery_epochs: coverage
-                .shards
-                .iter()
-                .map(|s| (s.id, recovery.domain_epochs[&s.id].clone()))
-                .collect(),
-            schema_version: SCHEMA_VERSION,
-            protocol_revision: PROTOCOL_REVISION.into(),
-            network: "main".into(),
-            pool: "ironwood".into(),
-            generation,
-            anchor_height: height,
-            anchor_block_hash: hash,
-            geometry: Geometry::default(),
-            coverage,
-            sessions,
-            unit_identities: plans
-                .iter()
-                .map(|p| (p.shard.id, p.units.clone()))
-                .collect(),
-        };
-        manifest.validate()?;
-        let manifest_digest = digest(&manifest);
-        let mut readiness = Vec::new();
-        for group in &groups {
-            for replica in &group.replicas {
-                if !candidates.contains_key(&replica.name) {
-                    continue;
-                }
-                let request = worker::Activation {
-                    operation: operation_id.clone(),
-                    attempt,
-                    epoch,
-                    manifest: manifest.clone(),
-                };
-                let ack: serde_json::Value = checked(
-                    self.http
-                        .post(format!("{}/internal/activate", replica.url))
-                        .json(&request)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?,
-                )
-                .await?
-                .json()
-                .await
-                .map_err(|e| e.to_string())?;
-                if ack["incarnation"].as_str() != Some(&replica.incarnation)
-                    || ack["candidate_digest"].as_str() != Some(&manifest_digest)
-                {
-                    return Err("stale worker readiness".into());
-                }
-                readiness.push(ReadyAck {
-                    replica: replica.name.clone(),
-                    incarnation: replica.incarnation.clone(),
-                    candidate_digest: manifest_digest.clone(),
-                });
-            }
-        }
-        let saved = SavedSnapshot {
-            manifest: manifest.clone(),
-            routes,
-            hints,
-            domain_keys,
-        };
-        let router_readiness = self.prepare_routers(Some(&saved)).await?;
-        // Wait for admitted HTTP queries before retiring worker routes. Preparations did not block them.
-        let mut snapshots = self.snapshots.write().await;
-        validate
-            .take()
-            .ok_or("canonical validation already consumed")?()
-        .await?;
-        crate::artifact::write_atomic(
-            &self.root.join("snapshots"),
-            &format!("{generation}.json"),
-            |f| serde_json::to_writer(f, &saved).map_err(std::io::Error::other),
-        )
-        .map_err(|e| e.to_string())?;
-        File::open(self.root.join("snapshots"))
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
-        self.store.lock().unwrap().update(|s| {
-            let op = s.operation.as_mut().ok_or("candidate disappeared")?;
-            op.candidate_digest = manifest_digest.clone();
-            op.readiness = readiness;
-            Ok(())
-        })?;
-        self.store
-            .lock()
-            .unwrap()
-            .advance(epoch, &operation_id, attempt, Phase::Ready)?;
-        self.store
-            .lock()
-            .unwrap()
-            .commit_with_recovery(manifest.clone(), lifecycle, recovery)?;
-        snapshots.insert(0, Arc::new(Snapshot { saved, packing }));
-        snapshots.truncate(RETAINED_GENERATIONS);
-        drop(snapshots);
-        if let Some(serving) = &self.serving {
-            serving.activate(generation, router_readiness).await?;
-        }
-        self.reconcile_inner().await
-    }
 }
 
 async fn checked(response: reqwest::Response) -> Result<reqwest::Response, String> {
@@ -2013,7 +848,7 @@ async fn query_body(request: Request) -> QueryResult<axum::body::Bytes> {
     .map_err(|e| QueryError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))
 }
 
-async fn reject_query(c: &Coordinator, request: Request) -> QueryResult<Vec<u8>> {
+async fn reject_query(c: &Coordinator, request: Request) -> QueryResult<Response> {
     // Finish reading the bounded body before responding; otherwise the public
     // reverse proxy can be left writing to a closed upstream connection.
     let _ = query_body(request).await?;
@@ -2108,7 +943,7 @@ async fn session_by_id(
     Err(QueryError(StatusCode::GONE, "session_unavailable".into()))
 }
 
-async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Vec<u8>> {
+async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Response> {
     if c.serving.is_some() {
         return Err(QueryError(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -2149,38 +984,49 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
         .cloned()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no routing view".into()))?;
     let manifest = &snapshot.saved.manifest;
-    if binding.generation != manifest.generation
-        || binding.recovery_epoch != manifest.recovery_epoch
-    {
-        return Err(QueryError(StatusCode::CONFLICT, "stale_routing".into()));
-    }
-    if manifest
-        .session_id(binding.shard_id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?
-        != binding.session_id
-        || hex::encode(binding.anchor_hash) != manifest.anchor_block_hash
-    {
-        return Err(QueryError(StatusCode::GONE, "session_unavailable".into()));
-    }
+    super::query_serving::validate_binding(manifest, binding)?;
     let pack = snapshot
         .packing
         .get(&binding.shard_id)
         .cloned()
         .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
-    let coefficients = pack
-        .query_coefficients(&body, binding)
+    // The admitted task owns capacity even if its HTTP caller disconnects.
+    super::query_serving::admitted(async move {
+        let coefficients = pack
+            .query_coefficients(&body, binding)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        let request = worker::Evaluate {
+            binding: Some(binding.encode()),
+            generation: binding.generation,
+            shard_id: binding.shard_id,
+            epoch: hex::encode(binding.epoch),
+            session_id: hex::encode(binding.session_id),
+            coefficients,
+        };
+        let routes = snapshot
+            .saved
+            .routes
+            .get(&binding.shard_id)
+            .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no replica route".into()))?;
+        let answer = evaluate_query(&c, &request, routes).await?;
+        let (response, guards) = tokio::task::spawn_blocking(move || {
+            let response = pack.pack(&body, &answer)?;
+            Ok::<_, String>((response, (permit, snapshot, generation_pin, pack)))
+        })
+        .await
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let request = worker::Evaluate {
-        binding: Some(binding.encode()),
-        generation: binding.generation,
-        shard_id: binding.shard_id,
-        epoch: hex::encode(binding.epoch),
-        session_id: hex::encode(binding.session_id),
-        coefficients,
-    };
-    let mut answer = None;
-    let mut non_busy_failure = false;
-    let routes = &snapshot.saved.routes[&binding.shard_id];
+        guarded_query_response(c, hex::encode(binding.session_id), response, guards)
+    })
+    .await
+    .map_err(QueryError::from)?
+}
+
+async fn evaluate_query(
+    c: &Coordinator,
+    request: &worker::Evaluate,
+    routes: &[String],
+) -> QueryResult<Vec<u64>> {
     if routes.is_empty() {
         return Err(QueryError(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -2188,88 +1034,74 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
         ));
     }
     let first = c.query_stats.route_cursor.fetch_add(1, Ordering::Relaxed) as usize % routes.len();
-    for offset in 0..routes.len() {
-        let url = &routes[(first + offset) % routes.len()];
-        let result = async {
-            let response = c
-                .http
-                .post(format!("{url}/internal/evaluate"))
-                .timeout(std::time::Duration::from_secs(30))
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if response.status() == StatusCode::TOO_MANY_REQUESTS {
-                return Ok::<_, String>(None);
-            }
-            let bytes = bounded(checked(response).await?, 1024 * 1024).await?;
-            let intermediate: worker::Intermediate =
-                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-            if intermediate.generation != binding.generation
-                || intermediate.shard_id != binding.shard_id
-                || intermediate.epoch != request.epoch
-            {
-                return Err("worker binding mismatch".into());
-            }
-            Ok::<_, String>(Some(intermediate.coefficients))
-        }
-        .await;
-        match result {
-            Ok(Some(partial)) => {
-                if offset == 0 {
-                    c.query_stats
-                        .primary_success
-                        .fetch_add(1, Ordering::Relaxed);
-                } else {
-                    c.query_stats
-                        .fallback_success
-                        .fetch_add(1, Ordering::Relaxed);
-                }
-                answer = Some(partial);
-                break;
-            }
-            Ok(None) => {
+    let mut last_busy = false;
+    let answer = super::query_serving::evaluate_observed(
+        &c.http,
+        request,
+        routes.len(),
+        |excluded| {
+            let url = (0..routes.len())
+                .map(|offset| &routes[(first + offset) % routes.len()])
+                .find(|url| Some(url.as_str()) != excluded)
+                .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no replica route".into()))?;
+            Ok((url.clone(), ()))
+        },
+        |failure| {
+            last_busy = matches!(failure, super::query_serving::AttemptFailure::Busy);
+            if last_busy {
                 c.query_stats.worker_busy.fetch_add(1, Ordering::Relaxed);
-            }
-            Err(_) => {
+            } else {
                 c.query_stats.worker_failure.fetch_add(1, Ordering::Relaxed);
-                non_busy_failure = true;
             }
-        }
-    }
-    let answer = answer.ok_or_else(|| {
-        if non_busy_failure {
-            QueryError(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "no ready replica answered".into(),
-            )
-        } else {
+        },
+    )
+    .await
+    .map_err(|error| {
+        // Preserve the compatibility endpoint's worker-overload response, without
+        // replaying evaluations whose acceptance is unknown.
+        if last_busy {
             c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
-            QueryError(StatusCode::TOO_MANY_REQUESTS, "all replicas busy".into())
+            QueryError(StatusCode::TOO_MANY_REQUESTS, "workers not admitted".into())
+        } else {
+            QueryError::from(error)
         }
     })?;
-    let response = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        let _snapshot = snapshot;
-        let _generation_pin = generation_pin;
-        pack.pack(&body, &answer)
-    })
-    .await
-    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?
-    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    // Final response commit is serialized against durable revocation. No await
-    // occurs between this check and handing the complete response to HTTP.
-    let store = c.store.lock().unwrap();
-    if store
-        .state()
-        .recovery
-        .revoked
-        .contains(&hex::encode(binding.session_id))
-    {
-        return Err(QueryError(StatusCode::GONE, "noncanonical_session".into()));
+    if answer.attempts == 1 {
+        c.query_stats
+            .primary_success
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        c.query_stats
+            .fallback_success
+            .fetch_add(1, Ordering::Relaxed);
     }
-    Ok(response)
+    Ok(answer.coefficients)
 }
+
+fn guarded_query_response<G: Send + Unpin + 'static>(
+    c: Coordinator,
+    session: String,
+    response: Vec<u8>,
+    guards: G,
+) -> QueryResult<Response> {
+    let fence = move || {
+        if c.store
+            .lock()
+            .unwrap()
+            .state()
+            .recovery
+            .revoked
+            .contains(&session)
+        {
+            Err("noncanonical_session".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    fence().map_err(|e| (StatusCode::GONE, e))?;
+    Ok(super::response_body::guarded(response, guards, fence).into_response())
+}
+
 async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
     let snapshots = c.snapshots.read().await;
     let manifest = snapshots.first().map(|s| &s.saved.manifest);
@@ -2286,7 +1118,7 @@ async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
         }
     }
     Json(
-        serde_json::json!({"packing_charged_bytes":super::packing_budget::charged_bytes(),"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
+        serde_json::json!({"packing_charged_bytes":c.packing_budget.charged_bytes(),"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
         "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":manifest.as_ref().map(|m|m.placement_revision),
         "registered_groups":store.state().groups.len(),
         "registered_workers":store.state().groups.iter().map(|g|g.replicas.len()).sum::<usize>(),
@@ -2409,6 +1241,38 @@ mod admission_tests {
         Coordinator::open(root.path(), vec![group]).unwrap()
     }
 
+    #[tokio::test]
+    async fn poisoned_journal_cannot_publish_even_empty_coverage() {
+        let coordinator = test_coordinator();
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = crate::store::RecordJournal::open(
+            dir.path(),
+            crate::types::DatabaseId::Enhance,
+            crate::types::ENHANCE_LAYOUT,
+        )
+        .unwrap();
+        std::fs::remove_file(dir.path().join("records.bin")).unwrap();
+        assert!(journal
+            .append_block(10, "aa".into(), &[] as &[Vec<u8>])
+            .is_err());
+        let before = coordinator.store.lock().unwrap().state().revision;
+        let error = coordinator
+            .publish_checked(&journal, 10, "aa".into(), || async {
+                panic!("validation must not run for a poisoned journal");
+            })
+            .await
+            .unwrap_err();
+        assert!(error.contains("drop and reopen"));
+        assert_eq!(coordinator.store.lock().unwrap().state().revision, before);
+        assert!(coordinator
+            .telemetry
+            .lock()
+            .unwrap()
+            .last_attempt_seconds
+            .is_none());
+        assert!(coordinator.manifest().await.is_none());
+    }
+
     fn empty_query() -> axum::extract::Request {
         axum::http::Request::builder()
             .uri("/v1/enhance/query")
@@ -2464,7 +1328,7 @@ mod admission_tests {
             .unwrap_err()
             .into_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "1");
         for waiter in waiters {
             let response = waiter.await.unwrap().unwrap_err().into_response();
             assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -2491,6 +1355,128 @@ mod admission_tests {
             coordinator.query_waiters.available_permits(),
             QUERY_WAIT_LIMIT
         );
+    }
+
+    #[tokio::test]
+    async fn compatibility_evaluation_preserves_attempt_metrics_without_ambiguous_replay() {
+        let coordinator = test_coordinator();
+        let request = worker::Evaluate {
+            binding: Some(vec![7]),
+            generation: 1,
+            shard_id: 0,
+            epoch: "epoch".into(),
+            session_id: "session".into(),
+            coefficients: vec![1],
+        };
+        for explicit in [true, false] {
+            let first = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let second = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let routes = vec![
+                format!("http://{}", first.local_addr().unwrap()),
+                format!("http://{}", second.local_addr().unwrap()),
+            ];
+            let second_calls = Arc::new(AtomicU64::new(0));
+            let calls = second_calls.clone();
+            let busy = Router::new().route(
+                "/internal/evaluate",
+                post(move || async move {
+                    let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+                    if explicit {
+                        response
+                            .headers_mut()
+                            .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                    }
+                    response
+                }),
+            );
+            let ready = Router::new().route(
+                "/internal/evaluate",
+                post(move || {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        Json(worker::Intermediate {
+                            binding: Some(vec![7]),
+                            generation: 1,
+                            shard_id: 0,
+                            epoch: "epoch".into(),
+                            coefficients: vec![9],
+                        })
+                    }
+                }),
+            );
+            let a = tokio::spawn(async move { axum::serve(first, busy).await.unwrap() });
+            let b = tokio::spawn(async move { axum::serve(second, ready).await.unwrap() });
+            coordinator
+                .query_stats
+                .route_cursor
+                .store(0, Ordering::Relaxed);
+            let before_busy = coordinator.query_stats.worker_busy.load(Ordering::Relaxed);
+            let before_fallback = coordinator
+                .query_stats
+                .fallback_success
+                .load(Ordering::Relaxed);
+            let before_rejected = coordinator.query_stats.rejected.load(Ordering::Relaxed);
+            let result = evaluate_query(&coordinator, &request, &routes).await;
+            assert_eq!(
+                coordinator.query_stats.worker_busy.load(Ordering::Relaxed),
+                before_busy + 1
+            );
+            if explicit {
+                assert_eq!(result.unwrap(), vec![9]);
+                assert_eq!(
+                    coordinator
+                        .query_stats
+                        .fallback_success
+                        .load(Ordering::Relaxed),
+                    before_fallback + 1
+                );
+                assert_eq!(second_calls.load(Ordering::Relaxed), 1);
+            } else {
+                assert_eq!(result.unwrap_err().0, StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(
+                    coordinator.query_stats.rejected.load(Ordering::Relaxed),
+                    before_rejected + 1
+                );
+                assert_eq!(second_calls.load(Ordering::Relaxed), 0);
+            }
+            a.abort();
+            b.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn compatibility_response_holds_admission_and_rechecks_durable_revocation() {
+        let inventory = test_coordinator()
+            .store
+            .lock()
+            .unwrap()
+            .state()
+            .groups
+            .clone();
+        let root = tempfile::tempdir().unwrap();
+        let coordinator = Coordinator::open(root.path(), inventory).unwrap();
+        let permit = coordinator.queries.clone().acquire_owned().await.unwrap();
+        let response =
+            guarded_query_response(coordinator.clone(), "session".into(), vec![7], permit).unwrap();
+        assert_eq!(
+            coordinator.queries.available_permits(),
+            QUERY_ACTIVE_LIMIT - 1
+        );
+        coordinator
+            .store
+            .lock()
+            .unwrap()
+            .update(|state| {
+                state.recovery.revoked.insert("session".into());
+                Ok(())
+            })
+            .unwrap();
+        assert!(to_bytes(response.into_body(), 10).await.is_err());
+        assert_eq!(coordinator.queries.available_permits(), QUERY_ACTIVE_LIMIT);
+        let rejected =
+            guarded_query_response(coordinator, "session".into(), vec![7], ()).unwrap_err();
+        assert_eq!(rejected.0, StatusCode::GONE);
     }
 
     #[test]

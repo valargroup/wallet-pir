@@ -374,6 +374,18 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
     task.await.map_err(fail)?
 }
 
+async fn metrics(
+    State(r): State<QueryIngress>,
+) -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        r.metrics.render(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,16 +514,4 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         task.abort();
     }
-}
-
-async fn metrics(
-    State(r): State<QueryIngress>,
-) -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/plain; version=0.0.4",
-        )],
-        r.metrics.render(),
-    )
 }

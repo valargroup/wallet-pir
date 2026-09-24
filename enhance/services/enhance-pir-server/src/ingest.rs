@@ -44,6 +44,7 @@ impl EnhanceJournal {
     }
 
     pub fn append_block(&mut self, block: &CanonicalBlock) -> Result<(), IngestError> {
+        self.records.ensure_healthy()?;
         if self
             .records
             .last_block()

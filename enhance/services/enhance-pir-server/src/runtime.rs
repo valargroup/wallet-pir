@@ -189,8 +189,12 @@ pub struct Packing {
 }
 
 impl Packing {
-    pub fn new(logical_rows: u64, hint: &[CrsBlock]) -> Result<Self, String> {
-        let mut charge = super::packing_budget::Charge::prepare()?;
+    pub fn new(
+        logical_rows: u64,
+        hint: &[CrsBlock],
+        budget: &crate::PackingBudget,
+    ) -> Result<Self, String> {
+        let mut charge = super::packing_budget::Charge::prepare(budget)?;
         let params = parameters(logical_rows)?;
         let preprocessed =
             build_pack_preprocessed_blocks(rlwe(), hint).map_err(|e| e.to_string())?;
@@ -499,7 +503,12 @@ mod tests {
         let plan = plan(coverage.shards[0].clone(), records).unwrap();
         let mut engine = Engine::with_backend(dir.path(), backend);
         let eval = engine.prepare(plan.clone(), records).unwrap();
-        let pack = Packing::new(4096, &eval.hint().unwrap()).unwrap();
+        let pack = Packing::new(
+            4096,
+            &eval.hint().unwrap(),
+            &crate::PackingBudget::coordinator(),
+        )
+        .unwrap();
         let manifest = Manifest {
             recovery_epoch: 0,
             placement_revision: 0,
@@ -897,7 +906,8 @@ mod tests {
         for (evaluation, hint, logical_rows) in
             [(&*plain, &plain_hint, 4096), (&tail, &tail_hint, 8192)]
         {
-            let packing = Packing::new(logical_rows, hint).unwrap();
+            let packing =
+                Packing::new(logical_rows, hint, &crate::PackingBudget::coordinator()).unwrap();
             let params = parameters(logical_rows).unwrap();
             let wallet = ipir_sp::IPIRClient::from_profile(
                 params.num_items,

@@ -3,8 +3,9 @@
 The root workspace contains Enhance PIR and transparent shard recovery as
 top-level components. Keep each product's crates, services, tools, operations,
 documentation and evidence under `enhance/` or `transparent/`; keep only shared
-infrastructure and checks at the root. `transparent-spend-pir` remains an Enhance
-journal/type dependency but is not served.
+infrastructure and checks at the root. `enhance/crates/transparent-spend-pir` is
+preserved legacy source, excluded from the active workspace and CI. Active Enhance
+crates do not depend on it.
 `transparent/tools/transparent-measure` uses the current shard stack and remains part of the
 backfill workflow; its extrapolated baseline is not a whole-wallet measurement.
 

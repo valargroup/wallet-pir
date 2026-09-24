@@ -18,6 +18,7 @@ pub mod zakura;
 pub use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
 
 mod packing_budget;
+pub use packing_budget::PackingBudget;
 
 pub mod matvec;
 mod response_body;
@@ -29,4 +30,5 @@ mod serving_control;
 
 mod http_metrics;
 
+mod query_serving;
 mod query_timing;

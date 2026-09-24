@@ -322,7 +322,7 @@ impl Capacity {
     }
 }
 
-/// Preview the same count/role planner through successive loan and return states.
+/// Preview the count/role planner through composed and independent successor domains.
 /// This is a capacity forecast, not evidence that retained runtime memory fits.
 fn placement_limit(
     records: u64,
@@ -332,7 +332,7 @@ fn placement_limit(
 ) -> Result<(u64, u64), String> {
     let geometry = Geometry::default();
     let span = geometry.max_shard_rows * RECORDS_PER_ROW as u64;
-    let loan = geometry.min_shard_rows * RECORDS_PER_ROW as u64;
+    let successor_records = geometry.min_shard_rows * RECORDS_PER_ROW as u64;
     for group in groups {
         group.placement_policy.validate()?;
     }
@@ -357,9 +357,9 @@ fn placement_limit(
             return Ok((boundary, ordinal));
         };
         placements = next;
-        let returned = lifecycle.coverage(boundary + loan, geometry)?;
-        placements = assign(&returned, groups, &placements)?;
-        consolidate(&returned, groups, &mut placements)?;
+        let independent = lifecycle.coverage(boundary + successor_records, geometry)?;
+        placements = assign(&independent, groups, &placements)?;
+        consolidate(&independent, groups, &mut placements)?;
     }
     Ok((ceiling * span, ceiling))
 }
@@ -499,7 +499,7 @@ mod tests {
         assert!(capacity.requests.is_empty());
     }
     #[test]
-    fn forecasts_lender_limit_and_uses_existing_spare_pair() {
+    fn forecasts_placement_limit_and_uses_existing_spare_pair() {
         let span = 32768 * 33;
         let mut capacity = Capacity::default();
         let lifecycle = Lifecycle::default();
