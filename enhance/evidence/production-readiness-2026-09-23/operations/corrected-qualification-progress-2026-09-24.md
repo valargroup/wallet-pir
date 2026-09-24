@@ -1,6 +1,6 @@
 # Corrected release qualification progress
 
-Status at 2026-09-24 04:22 UTC: **in progress, not a release sign-off**.
+Status at 2026-09-24 04:42 UTC: **in progress, not a release sign-off**.
 The corrected release source is
 `216b9993cc3ae4e0f1820d60c6b8f03d104b5e46`; the deployed server SHA-256
 is `7be19ca82108c2046d571ce6b901dd348d2e43435510a74257d530a49b309fe1`.
@@ -24,8 +24,11 @@ scheduled p99 390.911 ms. Immutable snapshots of both worker traces cover
 that window with zero sample errors, no findings or swap, stable process and
 release identities, and maximum gaps 1.003/1.004 seconds. The freshness
 assessment after a five-minute tail passed: 21/21 sampled tip advances bounded,
-maximum conservative lag 60.001 seconds, no findings. The 2 QPS stage is
-running; the 4 QPS stage, six-hour soak and burst remain.
+maximum conservative lag 60.001 seconds, no findings. The 30-minute 2 QPS
+stage also passed: 3,600/3,600 exact answers, no errors or unstarted arrivals,
+successful scheduled p99 552.959 ms; its report SHA-256 is
+`6b8845df32b43eff466230845f2f02470de7ca1b08d65e9afd081ab4738cf396`.
+The 4 QPS stage is running; the six-hour soak and burst remain.
 
 The first active isolated campaign started at 03:51:12 UTC on temporary c-4
 group `g01`, after both one-second direct samplers started. It was
@@ -37,7 +40,11 @@ Both physical workers have the same 7 GiB soft and 7.609 GB hard memory limits,
 but `MemorySwapMax=0`; new one-second traces began before this exercise. This
 is an experiment with stricter limits than the serving workers. A passing
 result would still require production configuration alignment and affected
-requalification before pilot admission. The sealed campaign has not started.
+requalification before pilot admission. At 04:42 UTC, the retry had 10
+publications, both samplers had passed the elapsed times at which their first
+attempt swapped (1,105 and 1,266 seconds), and neither worker had sampled
+swap, OOM, restart, or observation error. The full six-hour/300-publication
+gate is still open. The sealed campaign has not started.
 
 The likely consuming app branch is chainapsis/vizor-wallet PR #601 at
 `edbe5663f698e10a9d21f81ff52b7d2da17701dc`. Its current Cargo manifest
