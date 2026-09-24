@@ -45,7 +45,7 @@ must use the ledger with current publications and pins.
 The existing `preprocess` example now emits `pack_samples_ms`, `query_bytes` and
 `response_bytes` for four verified encrypted queries at each domain size.
 `pack_samples_ms` times the production `Packing::pack` method after evaluation,
-including its validation and key deserialization. It is an isolated CPU timing,
+including its validation and key deserialization. It is an isolated elapsed timing,
 not throughput or memory qualification. The previously recorded c-4
 preprocessing run measured **packing setup** (about 6.1–6.3 seconds for 4K–32K
 domains), not per-query packing or packing-state residency. The older
@@ -81,8 +81,8 @@ published-ready replica is eligible. If none is ready, fail closed with 503.
    publication and retained-generation expiry. Reset `memory.peak` between
    trials or use an isolated cgroup. Record the exact binary revision and
    placement, not just the host name.
-2. Run the extended `preprocess` example in release mode on the worker for a
-   CPU-only baseline; use its raw per-query timings and sizes rather than a
+2. Run the extended `preprocess` example in release mode on the worker for an
+   isolated packing baseline; use its raw per-query timings and sizes rather than a
    four-sample median as a capacity claim. Then exercise the actual worker
    HTTP path with fresh wallet queries under sustained offered rates, a slow
    upload, a slow reader, one replica unavailable, and publication. Report
