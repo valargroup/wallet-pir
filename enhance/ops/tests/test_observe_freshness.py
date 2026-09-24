@@ -1,7 +1,12 @@
 """Freshness samples retain node and publication identities without RPC credentials."""
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -51,6 +56,32 @@ class FreshnessTests(unittest.TestCase):
             ]):
                 result = module.sample(cookie)
         self.assertEqual(result['error'], 'KeyError')
+
+    def test_termination_finalizes_the_trace_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / 'observation'
+            process = subprocess.Popen([
+                sys.executable, str(SCRIPT), '--output', str(output),
+                '--seconds', '30', '--interval', '1',
+                '--cookie', str(Path(temp) / 'missing-cookie'),
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 5
+                trace = output / 'samples.jsonl'
+                while (not trace.exists() or trace.stat().st_size == 0) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(trace.exists() and trace.stat().st_size > 0)
+                process.terminate()
+                _stdout, stderr = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 0, stderr.decode())
+                manifest = json.loads((output / 'manifest.json').read_text())
+                self.assertEqual(manifest['status'], 'interrupted')
+                self.assertGreaterEqual(manifest['samples'], 1)
+                self.assertEqual(manifest['samples_sha256'], hashlib.sha256(trace.read_bytes()).hexdigest())
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
 
 
 if __name__ == '__main__':

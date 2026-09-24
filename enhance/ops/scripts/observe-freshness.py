@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import signal
 import time
 
 
@@ -67,9 +68,17 @@ def main():
     manifest.write_text(json.dumps(state, indent=2) + '\n')
     digest = hashlib.sha256()
     trace = args.output / 'samples.jsonl'
+    stopping = False
+
+    def stop(_signum, _frame):
+        nonlocal stopping
+        stopping = True
+
+    for name in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(name, stop)
     with trace.open('x') as handle:
         trace.chmod(0o600)
-        while time.monotonic() - started < args.seconds:
+        while not stopping and time.monotonic() - started < args.seconds:
             began = time.monotonic()
             entry = sample(args.cookie)
             line = json.dumps(entry, sort_keys=True, allow_nan=False) + '\n'
@@ -83,7 +92,7 @@ def main():
                             args.seconds - (time.monotonic() - started))
             if remaining > 0:
                 time.sleep(remaining)
-    state.update(status='recorded', finished_wall_ns=time.time_ns(),
+    state.update(status='interrupted' if stopping else 'recorded', finished_wall_ns=time.time_ns(),
                  elapsed_seconds=time.monotonic() - started, samples_sha256=digest.hexdigest())
     temporary = manifest.with_suffix('.tmp')
     temporary.write_text(json.dumps(state, indent=2) + '\n')
