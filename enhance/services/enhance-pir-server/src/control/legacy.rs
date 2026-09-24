@@ -29,7 +29,6 @@ pub(super) fn restore_placement(s: &mut State) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::control::{Group, PendingAbort, Replica, Store};
 
     #[test]
