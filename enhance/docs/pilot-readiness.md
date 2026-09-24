@@ -46,8 +46,13 @@ profiles for at least six measured hours and 300 publications each. Every replic
 needs uninterrupted hardware samples spanning initialization and measurement.
 Exercise retention, reclamation, growth and placement transitions. Seven sealed
 shards remain disabled. Use `assess-campaign.py` for bootstrap-managed pair
-observations or `assess-direct-campaign.py` for directly deployed workers,
-then explicitly review the assessor's unproven gates; neither emits a
+observations or `assess-direct-campaign.py` for directly deployed workers. The
+direct assessor requires two worker traces for active campaigns. For a sealed
+campaign, pass `--inventory` with the exact two-group campaign inventory and
+four `--worker OBSERVATION_DIR DIRECT_POLICY` pairs: both sealed replicas and
+both physical active-support replicas. The assessor binds each worker's name,
+private endpoint, profile, release and sampled host identity to that inventory.
+Explicitly review the assessor's unproven gates; neither assessor emits a
 qualification certificate.
 
 Start worker observation before the public load window as well. Bootstrap-managed

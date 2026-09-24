@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit an isolated exercise with two direct-deployment worker traces.
+"""Audit an isolated exercise with all direct-deployment worker traces.
 
 Exit zero means the automated checks passed, never that hardware is qualified.
 The traces are collected on the workers; host provenance, clock alignment and
@@ -24,14 +24,39 @@ campaign = load('assess-campaign.py')
 samples = load('summarize-samples.py')
 
 
-def assess(workload, workers):
+def assess(workload, workers, inventory_path=None):
     report, failures, began, finished, profile, policy, maximum, workload_host = campaign.audit_workload(workload)
 
     def check(condition, code):
         if not condition and code not in failures:
             failures.append(code)
 
-    check(len(workers) == 2, 'requires_two_physical_workers')
+    check(len(workers) == (2 if profile == 'active' else 4),
+          'requires_two_physical_workers' if profile == 'active' else 'requires_four_physical_workers')
+    inventory_workers = {}
+    inventory_groups = []
+    if profile == 'sealed':
+        check(inventory_path is not None, 'sealed_inventory_missing')
+        if inventory_path is not None:
+            inventory = campaign.read(inventory_path)
+            inventory_groups = inventory.get('groups', [])
+            check(len(inventory_groups) == 2
+                  and all(len(group.get('replicas', [])) == 2 for group in inventory_groups)
+                  and len({group.get('name') for group in inventory_groups}) == 2,
+                  'sealed_inventory_groups_invalid')
+            for index, group in enumerate(inventory_groups):
+                for replica in group.get('replicas', []):
+                    name = replica.get('name')
+                    check(isinstance(name, str) and name not in inventory_workers,
+                          'sealed_inventory_worker_duplicate')
+                    inventory_workers[name] = ('sealed' if index == 0 else 'active', replica.get('url'))
+            check(len(inventory_workers) == 4, 'sealed_inventory_workers_invalid')
+            expected_groups = [(group.get('name'), 'SEALED_FULL' if index == 0 else 'ACTIVE')
+                               for index, group in enumerate(inventory_groups)]
+            for publication in campaign.trace(workload / 'publications.jsonl', report['publications_sha256']):
+                groups = publication['placement']['groups']
+                check([(group.get('id'), group.get('role')) for group in groups] == expected_groups,
+                      'sealed_placement_inventory_differs')
     hosts, names, summaries = set(), set(), []
     for directory, policy_path in workers:
         manifest = campaign.read(directory / 'manifest.json')
@@ -39,11 +64,18 @@ def assess(workload, workers):
         trace = directory / 'samples.jsonl'
         digest = hashlib.sha256(policy_path.read_bytes()).hexdigest()
         data_dir = bound.get('data_dir')
+        name = bound.get('worker_name')
+        worker_profile = inventory_workers.get(name, (profile, None))[0]
+        if profile == 'sealed':
+            check(name in inventory_workers
+                  and inventory_workers[name][1] ==
+                  f"http://{bound.get('private_ipv4')}:{bound.get('private_port')}",
+                  'worker_inventory_binding_differs')
         check(bound.get('kind') == 'enhance-direct-worker-sampling-v1'
               and isinstance(data_dir, str)
               and data_dir.startswith('/srv/enhance-pir-v6/qualification/')
-              and bound.get('campaign_profile') == profile
-              and Path(data_dir).name.startswith(f'{profile}-worker')
+              and bound.get('campaign_profile') == worker_profile
+              and Path(data_dir).name.startswith(f'{worker_profile}-worker')
               and bound.get('sealed_shards') == policy['sealed_shards'],
               'isolated_direct_policy_missing')
         check(manifest.get('status') == 'recorded' and manifest.get('direct_policy_sha256') == digest,
@@ -70,7 +102,6 @@ def assess(workload, workers):
             check(identity['source_revision'] == bound.get('revision')
                   and identity['binary_sha256'] == bound.get('binary_sha256') == report['binary_sha256'],
                   'worker_or_workload_binary_differs')
-        name = bound.get('worker_name')
         check(isinstance(name, str) and name not in names, 'worker_names_not_distinct')
         names.add(name)
         consumed = hashlib.sha256()
@@ -104,6 +135,8 @@ def assess(workload, workers):
                 check(sample['worker']['protocol'] == 'ironwood-enhance-pir-v6',
                       'worker_protocol_differs')
         check(consumed.hexdigest() == summary['trace_sha256'], 'worker_trace_changed_during_assessment')
+    if profile == 'sealed':
+        check(names == set(inventory_workers), 'sealed_inventory_worker_coverage_differs')
     return {'kind': 'enhance-direct-campaign-assessment', 'qualification': 'unqualified',
             'status': 'evidence_checks_failed' if failures else 'evidence_checks_passed',
             'failures': failures, 'profile': profile, 'worker_summaries': summaries,
@@ -120,12 +153,15 @@ def main():
     parser.add_argument('--workload', type=Path, required=True)
     parser.add_argument('--worker', nargs=2, action='append', required=True,
                         metavar=('OBSERVATION_DIR', 'DIRECT_POLICY'))
+    parser.add_argument('--inventory', type=Path,
+                        help='required for sealed campaigns with two physical replica pairs')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     if args.out.exists():
         parser.error('assessment output must be new')
     try:
-        result = assess(args.workload, [(Path(directory), Path(policy)) for directory, policy in args.worker])
+        result = assess(args.workload, [(Path(directory), Path(policy)) for directory, policy in args.worker],
+                        args.inventory)
     except (ValueError, KeyError, TypeError, IndexError, OSError, ArithmeticError):
         result = {'kind': 'enhance-direct-campaign-assessment', 'qualification': 'unqualified',
                   'status': 'evidence_checks_failed', 'failures': ['invalid_or_incomplete_evidence']}
