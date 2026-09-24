@@ -372,6 +372,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use enhance_pir::ROW_BYTES;
     fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
         let mut bytes = vec![0; count * RECORD_BYTES];
         for (i, row) in bytes.chunks_exact_mut(RECORD_BYTES).enumerate() {
@@ -493,6 +494,178 @@ mod tests {
                 evaluation.evaluate(&query).unwrap(),
                 monolithic.runtime.evaluate(rlwe(), &query).unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
+        use ipir_sp::modulus_switch::recover_published_c1;
+        use ipir_sp::serialize::serialize_packing_keys;
+
+        const B_START: u64 = 32768;
+        const B_ROWS: u64 = 2049;
+        const SUFFIX_ROWS: u64 = 4096;
+        let directory = tempfile::tempdir().unwrap();
+        let shard = QueryShard {
+            id: 7,
+            global_row_start: B_START,
+            records: B_ROWS * RECORDS_PER_ROW as u64,
+            logical_rows: 4096,
+            state: ShardState::Growing,
+            units: Geometry::default()
+                .units(B_ROWS * RECORDS_PER_ROW as u64)
+                .unwrap(),
+        };
+        let b_plan = plan(shard, records).unwrap();
+        assert_eq!(
+            b_plan
+                .units
+                .iter()
+                .map(|unit| (unit.local_row_start, unit.allocated_rows))
+                .collect::<Vec<_>>(),
+            [(0, 4096)]
+        );
+
+        // Prepare B independently in both contexts; sharing an Arc here would
+        // make the artifact comparison circular.
+        let plain_root = directory.path().join("plain");
+        let tail_root = directory.path().join("tail");
+        let plain = Engine::new(&plain_root)
+            .prepare(b_plan.clone(), records)
+            .unwrap();
+        let b_in_tail = Engine::new(&tail_root)
+            .prepare(b_plan.clone(), records)
+            .unwrap();
+        assert_eq!(plain.plan.units, b_in_tail.plan.units);
+        for identity in &b_plan.units {
+            let relative = PathBuf::from("artifacts-9")
+                .join(identity.digest())
+                .join("enhance")
+                .join("shard-00000007");
+            for artifact in ["metadata.json", "database.u16le", "partial-crs.bin"] {
+                assert_eq!(
+                    std::fs::read(plain_root.join(&relative).join(artifact)).unwrap(),
+                    std::fs::read(tail_root.join(&relative).join(artifact)).unwrap(),
+                    "B artifact {artifact} differs"
+                );
+            }
+        }
+        for (left, right) in plain.units.iter().zip(&b_in_tail.units) {
+            let mut left_hint = Vec::new();
+            let mut right_hint = Vec::new();
+            std::io::Read::read_to_end(&mut left.publication.reader(), &mut left_hint).unwrap();
+            std::io::Read::read_to_end(&mut right.publication.reader(), &mut right_hint).unwrap();
+            assert_eq!(left_hint, right_hint, "B partial hints differ");
+        }
+
+        // A's suffix occupies a new B-seeded unit after B's entire 4K slot.
+        let layout = DatabaseLayout {
+            shard_rows: SUFFIX_ROWS as usize,
+            ..ENHANCE_LAYOUT
+        };
+        let suffix = records(9_000_000, (SUFFIX_ROWS * RECORDS_PER_ROW as u64) as usize).unwrap();
+        let params = parameters(32768).unwrap();
+        let setup_client = ipir_sp::IPIRClient::from_profile(
+            params.num_items,
+            params.item_size_bits,
+            ipir_sp::SimplePirProfile::P16Q48,
+        )
+        .unwrap();
+        let setup = setup_client.generate_public_query_setup_simplepir_from_seed(setup_seed(7));
+        let suffix_hash = hex::encode(Sha256::digest(&suffix));
+        let extra = PreparedShard::build(
+            &layout,
+            7,
+            4096,
+            suffix_hash.clone(),
+            &suffix,
+            rlwe(),
+            setup.polys(),
+        )
+        .unwrap()
+        .persist(
+            &directory.path().join("suffix"),
+            DatabaseId::Enhance,
+            &layout,
+            rlwe(),
+        )
+        .unwrap();
+        let mut tail_plan = b_plan.clone();
+        tail_plan.shard.logical_rows = 8192;
+        tail_plan.units.push(UnitIdentity {
+            table: "enhance".into(),
+            shard_id: 7,
+            local_row_start: 4096,
+            allocated_rows: SUFFIX_ROWS,
+            setup_sha256: hex::encode(Sha256::digest(setup_seed(7))),
+            parameter_id: unit_parameter_id(SUFFIX_ROWS).unwrap(),
+            content_sha256: suffix_hash,
+        });
+        let mut tail_units = b_in_tail.units.clone();
+        tail_units.push(Arc::new(extra));
+        let tail = Evaluation {
+            plan: tail_plan,
+            units: tail_units,
+        };
+        assert_eq!(&tail.plan.units[..b_plan.units.len()], b_plan.units);
+
+        let plain_hint = plain.hint().unwrap();
+        let tail_hint = tail.hint().unwrap();
+        assert_ne!(
+            plain_hint, tail_hint,
+            "the whole-domain hint includes A's suffix"
+        );
+        for (evaluation, hint, logical_rows) in
+            [(&*plain, &plain_hint, 4096), (&tail, &tail_hint, 8192)]
+        {
+            let packing = Packing::new(logical_rows, hint).unwrap();
+            let params = parameters(logical_rows).unwrap();
+            let wallet = ipir_sp::IPIRClient::from_profile(
+                params.num_items,
+                params.item_size_bits,
+                ipir_sp::SimplePirProfile::P16Q48,
+            )
+            .unwrap();
+            let setup = wallet.generate_public_query_setup_simplepir_from_seed(setup_seed(7));
+            let public = recover_published_c1(
+                &packing.public,
+                rlwe().d,
+                params.db_cols / rlwe().d,
+                rlwe().q,
+            );
+            let binding = QueryBinding {
+                generation: 1,
+                shard_id: 7,
+                epoch: Sha256::digest(&packing.public)[..8].try_into().unwrap(),
+            };
+            let targets: &[usize] = if logical_rows == 8192 {
+                &[0, 2047, 2048, 4096]
+            } else {
+                &[0, 2047, 2048]
+            };
+            for &row in targets {
+                let (query, keys, seed) = wallet.generate_fresh_query_simplepir(&setup, row);
+                let mut body = binding.encode();
+                body.extend(serialize_packing_keys(wallet.rlwe_params(), &keys).unwrap());
+                body.extend(query.to_switched_bytes(rlwe().q, params.query_bits));
+                let coefficients = packing.query_coefficients(&body, binding).unwrap();
+                let response = packing
+                    .pack(&body, &evaluation.evaluate(&coefficients).unwrap())
+                    .unwrap();
+                assert_eq!(QueryBinding::decode(&response).unwrap(), binding);
+                let decoded =
+                    wallet.decode_response_simplepir(seed, &public, &response[HEADER_BYTES..]);
+                let start = if row == 4096 {
+                    9_000_000
+                } else {
+                    (B_START + row as u64) * RECORDS_PER_ROW as u64
+                };
+                assert_eq!(
+                    &decoded[..ROW_BYTES],
+                    records(start, RECORDS_PER_ROW).unwrap(),
+                    "row {row} decoded at the wrong local coordinate in {logical_rows} rows"
+                );
+            }
         }
     }
 }

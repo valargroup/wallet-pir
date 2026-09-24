@@ -122,13 +122,17 @@ prepared once when B opens and dropped when the window ends. The coordinator's
 packing state for the domain is rebuilt when its unit set changes, which is
 already the per-publication cost for any growing domain.
 
-**Status.** The coordinate-stable reuse rule is consistent with the setup
-derivation in the code but has not been demonstrated with the PIR
-construction. Until a test shows that B's unit artifacts and hints are byte-
-identical inside and outside the tail domain, the fallback is bounded
-preparation of plain B, including its packing state, before the routing switch.
-That fallback is still far simpler than loans, but its CPU and overlap memory
-must be budgeted. Do not claim "routing only" before the test exists.
+**Status.** A construction-level test in
+`enhance/services/enhance-pir-server/src/runtime.rs` independently prepares B
+in plain and tail contexts under B's seed. B's unit identity, persisted
+database, persisted partial CRS, and partial hint are byte-identical. Fresh
+wallet-construction queries for B-local rows 0, 2047, and 2048 decode the same
+rows at the same coordinates with and without A's suffix. The whole-domain
+hint differs because the tail includes A's extra unit; its packing state must
+be rebuilt when that unit is dropped, as D6 already requires. This proves the
+unit reuse rule for the current P16Q48 construction and tested 4K/8K shapes;
+it does not implement or validate manifest routing. Run with
+`cargo test -p enhance-pir-server --lib tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates`.
 
 **Accepted deviation.** A physically still holds its suffix, so a client that
 ignores the routing table can query those rows through domain A, and a client
@@ -309,11 +313,11 @@ guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unch
 
 ## Open questions and what to quantify
 
-1. **Tail removal reuse rule.** Demonstrate with the existing construction that
-   B's unit artifacts and hints are identical inside and outside the tail
-   domain, and that a wallet's query against the tail decodes B's rows at their
-   B-local coordinates. If not, budget bounded preparation of plain B before
-   the routing switch. Blocking for D3.
+1. **Tail removal reuse rule (resolved).** The construction test demonstrates
+   byte-identical B unit artifacts and partial hints, plus B-local wallet
+   query decoding in the tail. Whole-domain packing still changes when A's
+   extra unit is removed. D3's remaining work is routing implementation and
+   lifecycle validation, not a plain-B preparation fallback.
 2. **Deep-reorg recovery epoch.** Specify the recovery epoch encoding, how
    wallets learn a session is noncanonical, and the test that exercises a
    reorg across a sealed boundary. Blocking for D8.
@@ -357,9 +361,8 @@ wallet protocol.
 replication factor. Exit: consolidation and hotspot replication under the
 existing operation phases, with the ledger counting both copies.
 
-The only blocking design questions are the preprocessing reuse rule at tail
-removal and the deep-reorg contract. Neither requires abandoning the
-architecture above.
+The remaining blocking design question is the deep-reorg contract. The tail
+removal reuse rule is resolved by the construction test above.
 
 ## What this removes and what it keeps
 
