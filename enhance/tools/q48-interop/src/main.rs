@@ -15,7 +15,6 @@ fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
 }
 
 fn main() {
-    let budget = enhance_pir_server::PackingBudget::coordinator();
     // First occupied row of every supported allocation, including partial rows.
     for occupied_rows in [
         1u64, 2049, 4097, 8193, 10241, 12289, 16385, 18433, 20481, 24577, 26625, 28673,
@@ -29,8 +28,7 @@ fn main() {
         let directory = tempfile::tempdir().unwrap();
         let mut engine = Engine::new(directory.path());
         let evaluation = engine.prepare(domain.clone(), records).unwrap();
-        let packing =
-            Packing::new(shard.logical_rows, &evaluation.hint().unwrap(), &budget).unwrap();
+        let packing = Packing::new(shard.logical_rows, &evaluation.hint().unwrap()).unwrap();
         let manifest = Manifest {
             recovery_epoch: 0,
             placement_revision: 0,
