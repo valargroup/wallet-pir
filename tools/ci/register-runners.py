@@ -44,9 +44,17 @@ def main():
             f'CPUWeight={1000 if fast else 100}\n'
             f'IOWeight={1000 if fast else 100}\n'
             f'Nice={0 if fast else 10}\n'
-            f'MemoryHigh={5 if fast else 8}G\n'
+            # A soft limit can trap the listener and tests in direct reclaim
+            # indefinitely before MemoryMax triggers an OOM kill.
+            'MemoryHigh=infinity\n'
             f'MemoryMax={6 if fast else 9}G\n'
             'MemorySwapMax=0\n'
+            # Recover the whole runner after OOM and clean up test descendants.
+            'OOMPolicy=kill\n'
+            'KillMode=control-group\n'
+            'TimeoutStopSec=30s\n'
+            'Restart=always\n'
+            'RestartSec=5s\n'
             'UMask=0077\n'
             'NoNewPrivileges=true\n'
             'PrivateTmp=true\n'
@@ -55,6 +63,10 @@ def main():
             'ProtectKernelModules=true\n'
             'ProtectControlGroups=true\n')
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
+        # Replace persistent set-property overrides, which take precedence over
+        # resources.conf on hosts tuned before this configuration was installed.
+        subprocess.run(['systemctl', 'set-property', service,
+                        'MemoryHigh=infinity'], check=True)
         subprocess.run(['systemctl', 'enable', '--now', service], check=True)
         print(f'{lane}: {service} enabled')
 
