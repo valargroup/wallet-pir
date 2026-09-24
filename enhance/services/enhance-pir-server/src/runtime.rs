@@ -189,11 +189,46 @@ pub struct Packing {
 }
 
 impl Packing {
+    pub(crate) fn write_prepared(&self, out: &mut impl std::io::Write) -> Result<(), String> {
+        out.write_all(&(self.params.db_rows as u64).to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        out.write_all(&self.public).map_err(|e| e.to_string())?;
+        inspiring::prepared::write(out, rlwe(), &self.preprocessed, &self.top)
+            .map_err(|e| e.to_string())
+    }
+    pub(crate) fn read_prepared(
+        input: &mut impl std::io::Read,
+        rows: u64,
+        budget: &crate::PackingBudget,
+    ) -> Result<Self, String> {
+        let mut charge = super::packing_budget::Charge::prepare(budget)?;
+        let params = parameters(rows)?;
+        let mut header = [0; 8];
+        input.read_exact(&mut header).map_err(|e| e.to_string())?;
+        if u64::from_le_bytes(header) != params.db_rows as u64 {
+            return Err("prepared row count mismatch".into());
+        }
+        let mut public =
+            vec![0; (params.db_cols * ipir_sp::modulus_switch::modulus_bits(rlwe().q)).div_ceil(8)];
+        input.read_exact(&mut public).map_err(|e| e.to_string())?;
+        let (preprocessed, top) =
+            inspiring::prepared::read(input, rlwe(), params.db_cols / rlwe().d)
+                .map_err(|e| e.to_string())?;
+        charge.resident();
+        Ok(Self {
+            _charge: charge,
+            params,
+            public,
+            preprocessed,
+            top,
+        })
+    }
     pub fn new(
         logical_rows: u64,
         hint: &[CrsBlock],
         budget: &crate::PackingBudget,
     ) -> Result<Self, String> {
+        let began = std::time::Instant::now();
         let mut charge = super::packing_budget::Charge::prepare(budget)?;
         let params = parameters(logical_rows)?;
         let preprocessed =
@@ -201,6 +236,7 @@ impl Packing {
         let public = published_c1_rows(&preprocessed, rlwe().q);
         let top = TopKeyImages::build(rlwe());
         charge.resident();
+        crate::prepared_packing::observe_preparation(began.elapsed());
         Ok(Self {
             _charge: charge,
             params,

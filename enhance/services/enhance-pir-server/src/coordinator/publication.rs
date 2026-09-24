@@ -1,5 +1,6 @@
 //! Candidate publication under the coordinator publication permit.
 use super::*;
+use sha2::Digest;
 
 impl Coordinator {
     /// Serialize candidate preparation. Cancellation leaves a durable operation that must
@@ -551,6 +552,19 @@ impl Coordinator {
                         )
                         .await?;
                         let bytes = bounded(response, 256 * 1024 * 1024).await?;
+                        if let Some(name) = hints.get(&plan.shard.id) {
+                            if crate::prepared_packing::hash_file(
+                                &self.root.join("hints").join(name),
+                            )? == hex::encode(sha2::Sha256::digest(&bytes))
+                            {
+                                routes
+                                    .entry(plan.shard.id)
+                                    .or_default()
+                                    .push(replica.url.clone());
+                                continue;
+                            }
+                        }
+
                         let params = parameters(plan.shard.logical_rows)?;
                         let hint = crate::wire::read_crs_blocks(
                             bytes.as_slice(),
@@ -560,6 +574,9 @@ impl Coordinator {
                         .map_err(|e| e.to_string())?;
                         let pack =
                             Packing::new(plan.shard.logical_rows, &hint, &self.packing_budget)?;
+                        if self.serving.is_some() {
+                            crate::prepared_packing::persist(&self.root, &pack)?;
+                        }
                         let pack = Arc::new(PublishedPacking::new(
                             plan.shard.logical_rows,
                             pack,
@@ -714,6 +731,29 @@ impl Coordinator {
         let saved = SavedSnapshot {
             manifest: manifest.clone(),
             routes,
+            prepared: if self.serving.is_some() {
+                hints
+                    .iter()
+                    .map(|(id, name)| {
+                        Ok((
+                            *id,
+                            crate::prepared_packing::describe_hint(
+                                &self.root,
+                                name,
+                                manifest
+                                    .coverage
+                                    .shards
+                                    .iter()
+                                    .find(|s| s.id == *id)
+                                    .ok_or("unknown domain")?
+                                    .logical_rows,
+                            )?,
+                        ))
+                    })
+                    .collect::<Result<_, String>>()?
+            } else {
+                BTreeMap::new()
+            },
             hints,
             domain_keys,
         };

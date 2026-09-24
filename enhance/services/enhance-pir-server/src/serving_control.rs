@@ -11,11 +11,9 @@ use axum::{
 };
 use enhance_pir::protocol::{canonical_hash, digest, RETAINED_GENERATIONS};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File},
-    io::Read,
+    fs::{self},
     path::{Path as FsPath, PathBuf},
     sync::Mutex,
 };
@@ -32,7 +30,6 @@ pub(crate) struct ServingControl {
     pub routers: Vec<RouterRegistration>,
     ingresses: Vec<String>,
     active: Mutex<Option<Decision>>,
-    hashes: Mutex<BTreeMap<String, String>>,
     acknowledged_fence: Mutex<Option<String>>,
     pub ready: std::sync::atomic::AtomicBool,
     http: reqwest::Client,
@@ -82,7 +79,6 @@ impl ServingControl {
             routers,
             ingresses,
             active: Mutex::new(None),
-            hashes: Mutex::new(BTreeMap::new()),
             acknowledged_fence: Mutex::new(None),
             ready: std::sync::atomic::AtomicBool::new(false),
             http: reqwest::Client::builder()
@@ -90,27 +86,6 @@ impl ServingControl {
                 .build()
                 .map_err(|e| e.to_string())?,
         })
-    }
-    pub fn artifact_hash(&self, name: &str) -> Result<String, String> {
-        if let Some(hash) = self.hashes.lock().unwrap().get(name) {
-            return Ok(hash.clone());
-        }
-        let mut file = File::open(self.root.join("hints").join(name)).map_err(|e| e.to_string())?;
-        let mut hasher = Sha256::new();
-        let mut buffer = vec![0; 65536];
-        loop {
-            let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buffer[..n]);
-        }
-        let hash = hex::encode(hasher.finalize());
-        self.hashes
-            .lock()
-            .unwrap()
-            .insert(name.into(), hash.clone());
-        Ok(hash)
     }
     pub async fn prepare(
         &self,
@@ -340,7 +315,8 @@ impl ServingControl {
     }
     pub fn artifact_router(root: PathBuf) -> Router {
         Router::new()
-            .route("/internal/packing-artifact/:name", get(artifact))
+            .route("/internal/prepared-packing-artifact/:name", get(artifact))
+            .route("/internal/packing-artifact/:name", get(legacy_artifact))
             .with_state(root)
     }
 }
@@ -351,7 +327,19 @@ async fn artifact(
     if !name.strip_suffix(".bin").is_some_and(canonical_hash) {
         return Err((StatusCode::BAD_REQUEST, "invalid artifact".into()));
     }
-    let file = tokio::fs::File::open(root.join("hints").join(name))
+    stream_artifact(root.join(crate::prepared_packing::DIRECTORY).join(name)).await
+}
+async fn legacy_artifact(
+    State(root): State<PathBuf>,
+    Path(name): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    if !name.strip_suffix(".bin").is_some_and(canonical_hash) {
+        return Err((StatusCode::BAD_REQUEST, "invalid artifact".into()));
+    }
+    stream_artifact(root.join("hints").join(name)).await
+}
+async fn stream_artifact(path: PathBuf) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let file = tokio::fs::File::open(path)
         .await
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
     // Stream bounded chunks; large immutable hints never require another coordinator copy.

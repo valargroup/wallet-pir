@@ -183,6 +183,26 @@ impl Coordinator {
         }
     }
 
+    /// Backfill retained public packing state while holding the sole controller lock.
+    pub fn backfill_prepared(root: &FsPath) -> Result<(), String> {
+        let store = Store::open(root)?;
+        if store.state().operation.is_some() {
+            return Err("pending operation must settle before backfill".into());
+        }
+        let budget = crate::PackingBudget::coordinator();
+        let mut cache = BTreeMap::new();
+        for manifest in &store.state().published {
+            restore(
+                root,
+                manifest,
+                &store.state().recovery.revoked,
+                &mut cache,
+                true,
+                &budget,
+            )?;
+        }
+        Ok(())
+    }
     pub fn open(root: &FsPath, groups: Vec<Group>) -> Result<Self, String> {
         Self::open_with_routers(root, groups, Vec::new())
     }
@@ -688,7 +708,7 @@ impl Coordinator {
         &self,
         saved: &SavedSnapshot,
     ) -> Result<super::packing_router::ServingSnapshot, String> {
-        let serving = self.serving.as_ref().ok_or("local packing")?;
+        self.serving.as_ref().ok_or("local packing")?;
         let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
         let mut artifacts = BTreeMap::new();
         let mut routes = saved.routes.clone();
@@ -721,12 +741,19 @@ impl Coordinator {
                 })
                 .collect::<BTreeMap<_, Vec<_>>>()
         };
-        for (id, name) in &saved.hints {
+        for id in saved.hints.keys() {
             if revoked.contains(&hex::encode(saved.manifest.session_id(*id)?)) {
                 routes.remove(id);
                 continue;
             }
-            artifacts.insert(*id, (name.clone(), serving.artifact_hash(name)?));
+            artifacts.insert(
+                *id,
+                saved
+                    .prepared
+                    .get(id)
+                    .cloned()
+                    .ok_or("missing prepared artifact reference")?,
+            );
         }
         Ok(super::packing_router::ServingSnapshot {
             manifest: saved.manifest.clone(),
@@ -1215,6 +1242,7 @@ async fn metrics(
     let mut body =
         super::telemetry::coordinator(store.state(), manifest, &routes, blocked, &telemetry, now);
     body.push_str(&c.http_metrics.render());
+    body.push_str(&crate::prepared_packing::metrics());
     for (name, value) in [
         (
             "enhance_query_active",

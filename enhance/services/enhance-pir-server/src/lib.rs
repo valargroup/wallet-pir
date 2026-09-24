@@ -32,3 +32,5 @@ mod http_metrics;
 
 mod query_serving;
 mod query_timing;
+
+pub mod prepared_packing;

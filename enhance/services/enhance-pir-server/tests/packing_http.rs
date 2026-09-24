@@ -224,6 +224,17 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         .await
         .unwrap();
     assert_eq!(health["resident_objects"], 1);
+    let artifacts = std::fs::read_dir(root.path().join("coordinator/prepared-packing-v1"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|e| e == "bin"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "one prepared artifact per material identity"
+    );
+
     let timing = http
         .get(format!("{packing_control}/internal/metrics"))
         .send()
@@ -433,15 +444,60 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         .ok()
         .map(|s| s.parse().unwrap())
         .unwrap_or(0);
+    let steady = std::env::var("QUALIFY_STEADY").is_ok();
+    let mut last_window = (0.0, 0.0);
+    if steady {
+        assert!(
+            publications >= 30,
+            "steady qualification requires at least 30 minutes"
+        );
+        let text = http
+            .get(format!("{packing_control}/internal/metrics"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        last_window = packing_window(&text);
+    }
     for revision in 0..publications {
         let start = std::time::Instant::now();
         let mut load = tokio::task::JoinSet::new();
-        for lane in 0..4 {
+        let init_load = if steady {
+            let origin = public.clone();
+            Some(tokio::spawn(async move {
+                let http = reqwest::Client::new();
+                let start = tokio::time::Instant::now();
+                for n in 0..60 {
+                    tokio::time::sleep_until(start + std::time::Duration::from_secs(n)).await;
+                    http.get(format!("{origin}/v1/enhance/init"))
+                        .send()
+                        .await
+                        .unwrap()
+                        .error_for_status()
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap();
+                }
+            }))
+        } else {
+            None
+        };
+        for lane in 0..if steady { 2 } else { 4 } {
             let public = public.clone();
             load.spawn(async move {
                 let mut client = EnhancePirClient::connect(&public).await.unwrap();
                 let mut latencies = Vec::new();
-                for n in 0..8 {
+                let began = tokio::time::Instant::now();
+                for n in 0..if steady { 60 } else { 8 } {
+                    if steady {
+                        tokio::time::sleep_until(
+                            began + std::time::Duration::from_millis(n * 1000 + lane * 500),
+                        )
+                        .await;
+                    }
                     let position = (lane * 97 + n * 31) % records;
                     let now = std::time::Instant::now();
                     let result = client.query_position_with_timing(position).await.unwrap();
@@ -466,6 +522,44 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         let mut times = Vec::new();
         while let Some(result) = load.join_next().await {
             times.extend(result.unwrap());
+        }
+        if let Some(task) = init_load {
+            task.await.unwrap();
+        }
+        if steady {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(
+                start + std::time::Duration::from_secs(60),
+            ))
+            .await;
+            if (revision + 1) % 5 == 0 {
+                let text = http
+                    .get(format!("{packing_control}/internal/metrics"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .text()
+                    .await
+                    .unwrap();
+                let current = packing_window(&text);
+                let total = current.0 - last_window.0;
+                let fast = current.1 - last_window.1;
+                println!(
+                    "PACKING_WINDOW {}",
+                    serde_json::json!({"publication":revision+1,"samples":total,"at_most_one_second":fast})
+                );
+                assert!(
+                    total >= 600.0 && fast / total >= 0.99,
+                    "Packing p99 exceeded one second"
+                );
+                if std::env::var("QUALIFY_ROUTER_CONTROL").is_ok() {
+                    assert!(
+                        text.lines()
+                            .any(|s| s == "enhance_packing_preparations_total 0"),
+                        "router performed preprocessing"
+                    );
+                }
+                last_window = current;
+            }
         }
         times.sort_by(f64::total_cmp);
         let health: serde_json::Value = http
@@ -616,4 +710,18 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
     for task in tasks {
         task.abort();
     }
+}
+
+fn packing_window(text: &str) -> (f64, f64) {
+    let metric = |prefix: &str| {
+        text.lines()
+            .find_map(|s| s.strip_prefix(prefix))
+            .expect("packing histogram")
+            .parse::<f64>()
+            .unwrap()
+    };
+    (
+        metric("enhance_query_stage_duration_seconds_count{stage=\"packing\"} "),
+        metric("enhance_query_stage_duration_seconds_bucket{stage=\"packing\",le=\"1\"} "),
+    )
 }

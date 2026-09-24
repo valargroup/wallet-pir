@@ -2,7 +2,7 @@
 //! Control endpoints must only be reachable by the coordinator. Artifact origins
 //! are configured locally, never supplied by a wallet or placement message.
 use crate::{
-    runtime::{self, Packing},
+    runtime::Packing,
     worker::{Evaluate, Revocation},
 };
 use axum::{
@@ -25,9 +25,8 @@ use std::{
 };
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
-pub const CONTROL_VERSION: u16 = 1;
+pub const CONTROL_VERSION: u16 = 2;
 const BODY_LIMIT: usize = 512 * 1024;
-const ARTIFACT_LIMIT: usize = 256 * 1024 * 1024;
 // A liveness watchdog, not permission to complete recovery without a fence ACK.
 const CONTROL_WATCHDOG: Duration = Duration::from_secs(5);
 
@@ -49,7 +48,7 @@ pub struct ServingSnapshot {
     #[serde(default)]
     pub preferred: BTreeMap<u64, Vec<String>>,
     /// Domain -> (owned artifact filename, SHA-256 of the complete artifact).
-    pub artifacts: BTreeMap<u64, (String, String)>,
+    pub artifacts: BTreeMap<u64, crate::prepared_packing::Artifact>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +122,12 @@ pub struct PackingRouter {
 
 #[derive(Default)]
 struct Stats {
+    download_micros: std::sync::atomic::AtomicU64,
+    download_bytes: std::sync::atomic::AtomicU64,
+    load_micros: std::sync::atomic::AtomicU64,
+    loads: std::sync::atomic::AtomicU64,
+    load_failures: std::sync::atomic::AtomicU64,
+    cache_hits: std::sync::atomic::AtomicU64,
     successful: std::sync::atomic::AtomicU64,
     rejected: std::sync::atomic::AtomicU64,
     failed: std::sync::atomic::AtomicU64,
@@ -391,6 +396,27 @@ async fn metrics(State(r): State<PackingRouter>) -> impl IntoResponse {
     use std::sync::atomic::Ordering::Relaxed;
     let i = r.inner.lock().unwrap();
     let values = [
+        (
+            "artifact_download_microseconds_total",
+            r.stats.download_micros.load(Relaxed),
+        ),
+        (
+            "artifact_download_bytes_total",
+            r.stats.download_bytes.load(Relaxed),
+        ),
+        (
+            "artifact_load_microseconds_total",
+            r.stats.load_micros.load(Relaxed),
+        ),
+        ("artifact_loads_total", r.stats.loads.load(Relaxed)),
+        (
+            "artifact_load_failures_total",
+            r.stats.load_failures.load(Relaxed),
+        ),
+        (
+            "artifact_cache_hits_total",
+            r.stats.cache_hits.load(Relaxed),
+        ),
         ("successful_queries_total", r.stats.successful.load(Relaxed)),
         ("rejected_queries_total", r.stats.rejected.load(Relaxed)),
         ("failed_queries_total", r.stats.failed.load(Relaxed)),
@@ -434,6 +460,7 @@ async fn metrics(State(r): State<PackingRouter>) -> impl IntoResponse {
         .map(|(name, value)| format!("enhance_packing_router_{name} {value}\n"))
         .collect::<String>();
     text.push_str(&r.timing.render());
+    text.push_str(&crate::prepared_packing::metrics());
     ([("content-type", "text/plain; version=0.0.4")], text)
 }
 
@@ -472,6 +499,33 @@ async fn prepare(
         // Discard an uncommitted preparation; active and request pins remain charged.
         i.candidate = None;
     }
+    // The preparation guard excludes concurrent downloads. Keep both the new
+    // assignment and the currently active view; query pins own decoded state.
+    let mut keep: BTreeSet<String> = view
+        .snapshots
+        .iter()
+        .flat_map(|s| s.artifacts.values().map(|a| format!("{}.bin", a.sha256)))
+        .collect();
+    if let Some(active) = &r.inner.lock().unwrap().active {
+        keep.extend(
+            active
+                .view
+                .snapshots
+                .iter()
+                .flat_map(|s| s.artifacts.values().map(|a| format!("{}.bin", a.sha256))),
+        );
+    }
+    for entry in fs::read_dir(r.root.join("artifacts")).map_err(unavailable)? {
+        let entry = entry.map_err(unavailable)?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let owned = name
+            .strip_suffix(".bin")
+            .or_else(|| name.strip_suffix(".part"))
+            .is_some_and(canonical_hash);
+        if owned && !keep.contains(&name) && entry.file_type().map_err(unavailable)?.is_file() {
+            fs::remove_file(entry.path()).map_err(unavailable)?;
+        }
+    }
     let mut packing = BTreeMap::new();
     let mut identities = BTreeSet::new();
     let mut last_generation = u64::MAX;
@@ -484,7 +538,8 @@ async fn prepare(
         if snapshot.artifacts.keys().ne(snapshot.routes.keys()) {
             return Err(bad("artifact/route mismatch"));
         }
-        for (&id, (name, hash)) in &snapshot.artifacts {
+        for (&id, artifact) in &snapshot.artifacts {
+            let hash = &artifact.sha256;
             let manifest = &snapshot.manifest;
             let shard = manifest
                 .coverage
@@ -501,7 +556,10 @@ async fn prepare(
                 .iter()
                 .find(|s| s.shard_id == id)
                 .ok_or_else(|| bad("missing session"))?;
-            if !canonical_hash(hash) || name != &format!("{}.bin", reference.public_params_sha256) {
+            artifact
+                .validate(shard.logical_rows, &reference.public_params_sha256)
+                .map_err(bad)?;
+            if !canonical_hash(hash) {
                 return Err(bad("invalid artifact identity"));
             }
             if snapshot.routes[&id].is_empty() {
@@ -536,51 +594,75 @@ async fn prepare(
                         return Err(unavailable("construction overlap limit"));
                     }
                 }
-                let response = r
-                    .http
-                    .get(format!("{}/internal/packing-artifact/{name}", r.origin))
-                    .send()
-                    .await
-                    .map_err(unavailable)?
-                    .error_for_status()
-                    .map_err(unavailable)?;
-                let bytes = bounded(response, ARTIFACT_LIMIT)
-                    .await
-                    .map_err(unavailable)?;
-                if hex::encode(Sha256::digest(&bytes)) != *hash {
-                    return Err(bad("artifact digest mismatch"));
-                }
                 let rows = shard.logical_rows;
                 let reference = reference.clone();
+                let artifact = artifact.clone();
                 let router = r.clone();
                 let material_key = key.clone();
-                // Own preparation exclusion through cancellation of expensive construction.
                 let guard = _preparing.clone();
-                let built = tokio::task::spawn_blocking(move || {
-                    let _guard = guard;
-                    let params = parameters(rows)?;
-                    let blocks = crate::wire::read_crs_blocks(
-                        bytes.as_slice(),
-                        params.db_cols / runtime::rlwe().d,
-                        runtime::rlwe().d,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let pack = Arc::new(Packing::new(rows, &blocks, &router.packing_budget)?);
-                    if pack.reference(id)? != reference {
-                        return Err("artifact session mismatch".to_string());
-                    }
-                    router
-                        .inner
-                        .lock()
-                        .unwrap()
-                        .material
-                        .insert(material_key, Arc::downgrade(&pack));
-                    Ok::<_, String>(pack)
-                })
-                .await
-                .map_err(unavailable)?
-                .map_err(unavailable)?;
-                built
+                // Dedicated loading thread: never enter the query Rayon/blocking pools.
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let handle = tokio::runtime::Handle::current();
+                std::thread::Builder::new()
+                    .name("packing-loader".into())
+                    .spawn(move || {
+                        let _guard = guard;
+                        let result = (|| -> Result<Arc<Packing>, String> {
+                            use std::sync::atomic::Ordering::Relaxed;
+                            let reservation =
+                                crate::packing_budget::Charge::prepare(&router.packing_budget)?;
+                            let path = router
+                                .root
+                                .join("artifacts")
+                                .join(format!("{}.bin", artifact.sha256));
+                            if crate::prepared_packing::verify(&path, &artifact).is_err() {
+                                let began = Instant::now();
+                                handle.block_on(download_prepared(&router, &artifact, &path))?;
+                                router
+                                    .stats
+                                    .download_micros
+                                    .fetch_add(began.elapsed().as_micros() as u64, Relaxed);
+                                router
+                                    .stats
+                                    .download_bytes
+                                    .fetch_add(artifact.bytes, Relaxed);
+                            } else {
+                                router.stats.cache_hits.fetch_add(1, Relaxed);
+                            }
+                            drop(reservation);
+                            let began = Instant::now();
+                            let pack = Arc::new(crate::prepared_packing::load(
+                                &path,
+                                &artifact,
+                                rows,
+                                &router.packing_budget,
+                            )?);
+                            if pack.reference(id)? != reference {
+                                return Err("prepared artifact session mismatch".into());
+                            }
+                            router
+                                .stats
+                                .load_micros
+                                .fetch_add(began.elapsed().as_micros() as u64, Relaxed);
+                            router.stats.loads.fetch_add(1, Relaxed);
+                            router
+                                .inner
+                                .lock()
+                                .unwrap()
+                                .material
+                                .insert(material_key, Arc::downgrade(&pack));
+                            Ok(pack)
+                        })();
+                        if result.is_err() {
+                            router
+                                .stats
+                                .load_failures
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        let _ = tx.send(result);
+                    })
+                    .map_err(unavailable)?;
+                rx.await.map_err(unavailable)?.map_err(unavailable)?
             };
             packing.insert(session, pack);
         }
@@ -1006,4 +1088,67 @@ mod tests {
         assert!(r.response_allowed(&"bb".repeat(32), 1).is_err());
         assert!(r.inner.lock().unwrap().fence.revocation.sessions.is_empty());
     }
+}
+
+async fn download_prepared(
+    router: &PackingRouter,
+    artifact: &crate::prepared_packing::Artifact,
+    path: &Path,
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let temporary = path.with_extension("part");
+    let result = async {
+        let mut response = router
+            .http
+            .get(format!(
+                "{}/internal/prepared-packing-artifact/{}",
+                router.origin, artifact.name
+            ))
+            .timeout(Duration::from_secs(600))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+        if response
+            .content_length()
+            .is_some_and(|n| n != artifact.bytes)
+        {
+            return Err("prepared artifact length mismatch".into());
+        }
+        let mut file = tokio::fs::File::create(&temporary)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut bytes = 0u64;
+        let mut hash = Sha256::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            bytes = bytes
+                .checked_add(chunk.len() as u64)
+                .ok_or("artifact length overflow")?;
+            if bytes > artifact.bytes {
+                return Err("prepared artifact exceeds bound".into());
+            }
+            hash.update(&chunk);
+            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        }
+        if bytes != artifact.bytes || hex::encode(hash.finalize()) != artifact.sha256 {
+            return Err("prepared artifact checksum/length mismatch".into());
+        }
+        file.sync_all().await.map_err(|e| e.to_string())?;
+        let file = file.into_std().await;
+        crate::artifact::release_file_cache(&file);
+        drop(file);
+        tokio::fs::rename(&temporary, path)
+            .await
+            .map_err(|e| e.to_string())?;
+        File::open(path.parent().unwrap())
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temporary).await;
+    }
+    result
 }

@@ -21,6 +21,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Offline migration: coordinator-owned artifacts for all retained sessions.
+    PreparePackingArtifacts {
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
     /// Offline bridge for rolling back to coordinator packing without losing recovery history.
     RestoreLegacyPlacement {
         #[arg(long)]
@@ -193,6 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     placement_policy.validate()?;
     match cli.command {
+        Command::PreparePackingArtifacts { data_dir } => Coordinator::backfill_prepared(&data_dir)?,
         Command::RestoreLegacyPlacement { control_dir } => {
             enhance_pir_server::control::Store::open(&control_dir)?.restore_legacy_placement()?;
         }

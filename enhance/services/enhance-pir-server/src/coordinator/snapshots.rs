@@ -5,6 +5,8 @@ use super::*;
 pub(super) struct SavedSnapshot {
     pub(super) manifest: Manifest,
     pub(super) routes: BTreeMap<u64, Vec<String>>,
+    #[serde(default)]
+    pub(super) prepared: BTreeMap<u64, crate::prepared_packing::Artifact>,
     pub(super) hints: BTreeMap<u64, String>,
     pub(super) domain_keys: BTreeMap<u64, String>,
 }
@@ -24,6 +26,7 @@ pub(super) fn hint_name(name: &str) -> bool {
 pub(super) fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result<(), String> {
     let mut snapshots = BTreeSet::new();
     let mut hints = BTreeSet::new();
+    let mut prepared = BTreeSet::new();
     for manifest in published {
         let name = format!("{}.json", manifest.generation);
         let saved: SavedSnapshot = serde_json::from_slice(
@@ -48,14 +51,20 @@ pub(super) fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result
             }
             hints.insert(name.clone());
         }
+        for a in saved.prepared.values() {
+            prepared.insert(a.name.clone());
+            prepared.insert(format!("{}.json", a.name));
+        }
         snapshots.insert(name);
     }
     for (directory, keep) in [
         ("snapshots", snapshots),
         ("hints", hints.clone()),
-        ("public", hints),
+        ("public", hints.clone()),
+        (crate::prepared_packing::DIRECTORY, prepared),
     ] {
         let directory_path = root.join(directory);
+        fs::create_dir_all(&directory_path).map_err(|e| e.to_string())?;
         for entry in fs::read_dir(&directory_path).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
@@ -68,6 +77,8 @@ pub(super) fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result
                 name.strip_suffix(".json")
                     .and_then(|s| s.parse::<u64>().ok())
                     .is_some_and(|g| name == format!("{g}.json"))
+            } else if directory == crate::prepared_packing::DIRECTORY {
+                hint_name(&name) || name.strip_suffix(".json").is_some_and(hint_name)
             } else {
                 hint_name(&name)
             };
@@ -91,7 +102,7 @@ pub(super) fn restore(
     budget: &crate::PackingBudget,
 ) -> Result<Arc<Snapshot>, String> {
     manifest.validate()?;
-    let saved: SavedSnapshot = serde_json::from_slice(
+    let mut saved: SavedSnapshot = serde_json::from_slice(
         &fs::read(
             root.join("snapshots")
                 .join(format!("{}.json", manifest.generation)),
@@ -109,6 +120,16 @@ pub(super) fn restore(
         }
         let key = &saved.domain_keys[&shard.id];
         if let Some(pack) = cache.get(key) {
+            if remote_packing {
+                saved.prepared.insert(
+                    shard.id,
+                    crate::prepared_packing::describe_hint(
+                        root,
+                        &saved.hints[&shard.id],
+                        shard.logical_rows,
+                    )?,
+                );
+            }
             packing.insert(shard.id, pack.clone());
             continue;
         }
@@ -117,7 +138,17 @@ pub(super) fn restore(
             return Err("invalid persisted hint identity".into());
         }
         let public_path = root.join("public").join(name);
-        let pack = if remote_packing && public_path.is_file() {
+        let pack = if remote_packing
+            && public_path.is_file()
+            && crate::prepared_packing::describe_hint(root, name, shard.logical_rows).is_ok_and(
+                |a| {
+                    crate::prepared_packing::verify(
+                        &root.join(crate::prepared_packing::DIRECTORY).join(&a.name),
+                        &a,
+                    )
+                    .is_ok()
+                },
+            ) {
             PublishedPacking::metadata(
                 shard.logical_rows,
                 fs::read(&public_path).map_err(|e| e.to_string())?,
@@ -132,6 +163,9 @@ pub(super) fn restore(
             )
             .map_err(|e| e.to_string())?;
             let serving = Packing::new(shard.logical_rows, &blocks, budget)?;
+            if remote_packing {
+                crate::prepared_packing::persist(root, &serving)?;
+            }
             crate::artifact::write_atomic(&root.join("public"), name, |f| {
                 f.write_all(&serving.public)
             })
@@ -141,9 +175,24 @@ pub(super) fn restore(
         if !manifest.sessions.contains(&pack.reference(shard.id)?) {
             return Err("restored session digest differs".into());
         }
+        if remote_packing {
+            saved.prepared.insert(
+                shard.id,
+                crate::prepared_packing::describe_hint(root, name, shard.logical_rows)?,
+            );
+        }
         let pack = Arc::new(pack);
         cache.insert(key.clone(), pack.clone());
         packing.insert(shard.id, pack);
     }
+    crate::artifact::write_atomic(
+        &root.join("snapshots"),
+        &format!("{}.json", manifest.generation),
+        |f| serde_json::to_writer(f, &saved).map_err(std::io::Error::other),
+    )
+    .map_err(|e| e.to_string())?;
+    File::open(root.join("snapshots"))
+        .and_then(|f| f.sync_all())
+        .map_err(|e| e.to_string())?;
     Ok(Arc::new(Snapshot { saved, packing }))
 }
