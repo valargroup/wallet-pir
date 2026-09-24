@@ -62,6 +62,7 @@ pub struct MetricsSnapshot {
 pub struct LatencyWindow {
     pub samples: f64,
     pub p50: Option<f64>,
+    pub p90: Option<f64>,
     pub p95: Option<f64>,
     pub p99: Option<f64>,
 }
@@ -287,6 +288,7 @@ impl RollingMetrics {
         result.processing = LatencyWindow {
             samples,
             p50: histogram_quantile(0.50, &buckets, samples),
+            p90: histogram_quantile(0.90, &buckets, samples),
             p95: histogram_quantile(0.95, &buckets, samples),
             p99: histogram_quantile(0.99, &buckets, samples),
         };
@@ -449,6 +451,7 @@ fn worker_query_latency_window(
     LatencyWindow {
         samples,
         p50: histogram_quantile(0.50, &buckets, samples),
+        p90: histogram_quantile(0.90, &buckets, samples),
         p95: histogram_quantile(0.95, &buckets, samples),
         p99: histogram_quantile(0.99, &buckets, samples),
     }
@@ -472,6 +475,7 @@ fn latency_window(
     LatencyWindow {
         samples,
         p50: histogram_quantile(0.50, &buckets, samples),
+        p90: histogram_quantile(0.90, &buckets, samples),
         p95: histogram_quantile(0.95, &buckets, samples),
         p99: histogram_quantile(0.99, &buckets, samples),
     }
@@ -784,6 +788,7 @@ pub fn parse_prometheus(
                     "enhance_capacity_",
                     "enhance_query_",
                     "enhance_publication_",
+                    "enhance_packing_preparation",
                     "enhance_last_publication_",
                     "enhance_registered_groups",
                 ]

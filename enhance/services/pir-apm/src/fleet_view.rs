@@ -156,6 +156,7 @@ pub(super) fn overview(data: &DashboardData) -> String {
         ));
     }
     body.push_str(&entrypoint_apm(data));
+    body.push_str(&per_worker_latency(data));
     body.push_str(&format!("<section class=\"topology\"><h2>Deployment topology</h2><a class=\"node-link coord-link\" href=\"/apm/coordinator/\"><strong>Coordinator</strong><span>{}</span><span class=\"{}\">{}</span></a><div class=\"trunk\" style=\"margin:auto\"></div>",escape(&data.hostname),if health_ok(data){"ok"}else{"bad"},if health_ok(data){"Healthy"}else{"Needs attention"}));
     if domain_mode {
         body.push_str(&domain_topology(data));
@@ -461,6 +462,21 @@ fn packing_router_detail(
                     "Intermediate payload bytes · cumulative",
                 ),
                 ("packing_microseconds_total", "Packing time · cumulative"),
+                ("artifact_loads_total", "Prepared artifacts loaded"),
+                ("artifact_cache_hits_total", "Artifact cache hits"),
+                ("artifact_load_failures_total", "Artifact load failures"),
+                (
+                    "artifact_download_bytes_total",
+                    "Artifact download bytes · cumulative",
+                ),
+                (
+                    "artifact_download_microseconds_total",
+                    "Artifact download time · cumulative",
+                ),
+                (
+                    "artifact_load_microseconds_total",
+                    "Artifact load time · cumulative",
+                ),
             ],
         ),
     ));
@@ -596,7 +612,22 @@ mod tests {
                 ..Default::default()
             },
         );
+        data.worker_queries.insert(
+            "worker-1".into(),
+            crate::metrics::WorkerQueryWindow {
+                successful_latency: crate::metrics::LatencyWindow {
+                    samples: 8.0,
+                    p50: Some(0.01),
+                    p90: Some(0.09),
+                    p99: Some(0.12),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
         let html = overview(&data);
+        assert!(html.contains("Per-worker evaluation latency"));
+        assert!(html.contains("90.00 ms"));
         assert!(html.contains("/apm/workers/worker-1/"));
         assert!(html.contains("Deployment topology"));
         assert!(!html.contains("10.0.0.1"));

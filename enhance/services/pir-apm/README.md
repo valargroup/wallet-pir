@@ -126,6 +126,11 @@ every 15 seconds, retaining the last valid inventory if an update is invalid.
 
 The overview groups packing routers and evaluation workers together by shard/domain,
 below the coordinator.
+It also has a separate per-worker evaluation latency card with p50, p90, and
+p99 for each registered worker. These are separate coordinator-observed RPC
+histograms, including transport and encoding; workers without successful
+attempts in the five-minute window show unavailable values. The Init and Query
+latency charts offer p50, p90, and p99 views.
 Each host links to `/apm/packing-routers/<name>/` with readiness, freshness,
 available admission slots, outstanding evaluations, cumulative query outcomes,
 packing time, intermediate payload volume, and charged packing memory. These

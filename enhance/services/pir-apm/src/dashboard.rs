@@ -128,8 +128,8 @@ const STYLE: &str = r#"
 .chart-heading{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--p62)}
 .chart-legend{font-size:11px;color:var(--p42);margin:4px 0}
 .percentile-buttons button{background:transparent;color:var(--p62);border:1px solid var(--p22);padding:3px 8px;cursor:pointer}
-[data-percentile="p50"] [data-percentile-choice="p50"],[data-percentile="p99"] [data-percentile-choice="p99"]{color:var(--ink);border-color:var(--gold)}
-.select-percentile[data-percentile="p50"] .series-p99,.select-percentile[data-percentile="p99"] .series-p50{display:none}
+[data-percentile="p50"] [data-percentile-choice="p50"],[data-percentile="p90"] [data-percentile-choice="p90"],[data-percentile="p99"] [data-percentile-choice="p99"]{color:var(--ink);border-color:var(--gold)}
+.select-percentile[data-percentile="p50"] .series-p90,.select-percentile[data-percentile="p50"] .series-p99,.select-percentile[data-percentile="p90"] .series-p50,.select-percentile[data-percentile="p90"] .series-p99,.select-percentile[data-percentile="p99"] .series-p50,.select-percentile[data-percentile="p99"] .series-p90{display:none}
 .endpoint-history>td{white-space:normal;text-align:left;padding-left:0}
 .breakdown{max-width:540px;margin:12px 0 20px}.breakdown caption{text-align:left;color:var(--p62);font-size:12px;padding:8px 0}
 
@@ -384,7 +384,7 @@ const SCRIPT: &str = r#"
 "#;
 
 fn entrypoint_apm(data: &DashboardData) -> String {
-    let mut html = String::from("<section class=\"card\"><h2 class=\"section-title\">Entrypoint APM</h2><div class=\"wrap\"><table><thead><tr><th>Entrypoint</th><th>p50</th><th>p99</th><th>Requests · last 10s</th><th>Upload</th><th>Download</th><th>Last sample</th></tr></thead><tbody>");
+    let mut html = String::from("<section class=\"card\"><h2 class=\"section-title\">Entrypoint APM</h2><div class=\"wrap\"><table><thead><tr><th>Entrypoint</th><th>p50</th><th>p90</th><th>p99</th><th>Requests · last 10s</th><th>Upload</th><th>Download</th><th>Last sample</th></tr></thead><tbody>");
     for (endpoint, label) in [("init", "Init"), ("query", "Query")] {
         let sample = data.entrypoints.get(endpoint);
         let fresh = sample.is_some_and(|s| {
@@ -426,15 +426,20 @@ fn entrypoint_apm(data: &DashboardData) -> String {
         } else {
             w.processing.p50
         };
+        let p90 = if endpoint == "query" && sample.is_some_and(|s| s.timing_error) {
+            None
+        } else {
+            w.processing.p90
+        };
         let p99 = if endpoint == "query" && sample.is_some_and(|s| s.timing_error) {
             None
         } else {
             w.processing.p99
         };
-        html.push_str(&format!("<tr><th>{label}</th><td>{}</td><td>{}</td><td title=\"Arrivals in the last complete ten-second window, sampled every five seconds\">{arrivals}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>", latency(p50), latency(p99), rate(w.upload_per_second), rate(w.download_per_second), if fresh {"muted"} else {"warn"}, escape(&status)));
-        html.push_str("<tr class=\"endpoint-history\"><td colspan=\"7\">");
+        html.push_str(&format!("<tr><th>{label}</th><td>{}</td><td>{}</td><td>{}</td><td title=\"Arrivals in the last complete ten-second window, sampled every five seconds\">{arrivals}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>", latency(p50), latency(p90), latency(p99), rate(w.upload_per_second), rate(w.download_per_second), if fresh {"muted"} else {"warn"}, escape(&status)));
+        html.push_str("<tr class=\"endpoint-history\"><td colspan=\"8\">");
         if endpoint == "query" {
-            html.push_str("<table class=\"breakdown\"><caption>Successful queries · last 5 minutes</caption><thead><tr><th>Stage</th><th>p50</th><th>p99</th></tr></thead><tbody>");
+            html.push_str("<table class=\"breakdown\"><caption>Successful queries · last 5 minutes</caption><thead><tr><th>Stage</th><th>p50</th><th>p90</th><th>p99</th></tr></thead><tbody>");
             for (stage, label) in [
                 ("packing", "Packing"),
                 ("worker", "Worker"),
@@ -444,8 +449,9 @@ fn entrypoint_apm(data: &DashboardData) -> String {
                     .filter(|s| !s.timing_error)
                     .and_then(|s| s.stages.get(stage));
                 html.push_str(&format!(
-                    "<tr><th>{label}</th><td>{}</td><td>{}</td></tr>",
+                    "<tr><th>{label}</th><td>{}</td><td>{}</td><td>{}</td></tr>",
                     latency(window.and_then(|w| w.p50)),
+                    latency(window.and_then(|w| w.p90)),
                     latency(window.and_then(|w| w.p99))
                 ));
             }
@@ -458,8 +464,34 @@ fn entrypoint_apm(data: &DashboardData) -> String {
         ));
         html.push_str("</td></tr>");
     }
-    html.push_str("</tbody></table></div><p class=\"intro\">p50/p99: last 5 minutes; Init processing and successful Query router total, excluding body reading and response download. Requests count arrivals, including in-flight and rejected requests. Upload: client → service; download: service → client, payload bytes only. History is memory-only and fills after restart. — means unavailable or no latency samples. Refreshes every 5 seconds.</p></section>");
+    html.push_str("</tbody></table></div><p class=\"intro\">p50/p90/p99: last 5 minutes; Init processing and successful Query router total, excluding body reading and response download. Requests count arrivals, including in-flight and rejected requests. Upload: client → service; download: service → client, payload bytes only. History is memory-only and fills after restart. — means unavailable or no latency samples. Refreshes every 5 seconds.</p></section>");
     html
+}
+
+pub(crate) fn per_worker_latency(data: &DashboardData) -> String {
+    let cell = |value: Option<f64>| {
+        value
+            .map(|seconds| format!("<td>{:.2} ms</td>", seconds * 1000.0))
+            .unwrap_or_else(|| "<td class=\"muted\">—</td>".into())
+    };
+    let mut out = String::from("<section class=\"card\"><h2 class=\"section-title\">Per-worker evaluation latency</h2><div class=\"wrap\"><table><thead><tr><th>Worker</th><th>State</th><th>Successful attempts · 5m</th><th>p50</th><th>p90</th><th>p99</th></tr></thead><tbody>");
+    if data.fleet.is_empty() {
+        out.push_str("<tr><td colspan=\"6\">Awaiting worker inventory</td></tr>");
+    }
+    for (name, worker) in &data.fleet {
+        let window = data.worker_queries.get(name);
+        let latency = window.map(|w| &w.successful_latency);
+        out.push_str(&format!("<tr><th><a href=\"/apm/workers/{name}\">{name}</a></th><td>{state}</td><td>{count}</td>{p50}{p90}{p99}</tr>",
+            name=escape(name),
+            state=worker.status(),
+            count=latency.map(|w| format!("{:.0}",w.samples)).unwrap_or_else(||"—".into()),
+            p50=cell(latency.and_then(|w| w.p50)),
+            p90=cell(latency.and_then(|w| w.p90)),
+            p99=cell(latency.and_then(|w| w.p99)),
+        ));
+    }
+    out.push_str("</tbody></table></div><p class=\"intro\">Each row is measured separately for that worker by the coordinator, from dispatch through a validated reply. Successful attempts only; includes network and encoding time. A worker with no recent successful attempts shows —.</p></section>");
+    out
 }
 
 fn render(data: &DashboardData) -> String {
@@ -844,15 +876,16 @@ fn worker_query_cards(data: &DashboardData) -> String {
 <header class=\"worker-head\"><div><p class=\"eyebrow\">Worker RPC subset of post-body server &middot; 5 minute window</p>\
 <h2>{worker}</h2></div><p class=\"worker-meta{tone}\">{group} &middot; {state}</p></header>\
 <div class=\"wrap\"><table><thead><tr><th>Operation</th><th>QPS</th><th>Inflight</th>\
-<th>Attempts</th><th>p50 success</th><th>p95 success</th><th>p99 success</th><th>Failures</th>\
+<th>Attempts</th><th>p50 success</th><th>p90 success</th><th>p95 success</th><th>p99 success</th><th>Failures</th>\
 </tr></thead><tbody><tr><th>evaluate</th><td>{qps:.3}</td><td>{in_flight:.0}</td>\
-<td>{attempts:.0}</td>{p50}{p95}{p99}<td>{failures}</td></tr></tbody></table></div>\
+<td>{attempts:.0}</td>{p50}{p90}{p95}{p99}<td>{failures}</td></tr></tbody></table></div>\
 <p class=\"note\">Measured by the coordinator from replica selection through a validated worker reply. Includes request/response encoding, network time, and worker evaluation; excludes coordinator query decoding and response packing. Latency percentiles include successful attempts only; failures include HTTP, network, and invalid-response errors.</p></section>",
                 worker = escape(worker),
                 qps = values.qps,
                 in_flight = values.in_flight,
                 attempts = values.attempts,
                 p50 = latency_cell(values.successful_latency.p50, None),
+                p90 = latency_cell(values.successful_latency.p90, None),
                 p95 = latency_cell(values.successful_latency.p95, None),
                 p99 = latency_cell(values.successful_latency.p99, None),
                 failures = worker_failure_cell(&values),
@@ -1545,6 +1578,7 @@ mod tests {
                 observed: LatencyWindow {
                     samples: 450.0,
                     p50: Some(0.01),
+                    p90: Some(0.04),
                     p95: Some(0.05),
                     p99: Some(0.09),
                 },
@@ -1824,6 +1858,7 @@ mod tests {
                 successful_latency: LatencyWindow {
                     samples: 10.0,
                     p50: Some(0.2),
+                    p90: Some(0.35),
                     p95: Some(0.4),
                     p99: Some(0.5),
                 },

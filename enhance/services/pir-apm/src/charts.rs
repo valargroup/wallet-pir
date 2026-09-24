@@ -13,18 +13,23 @@ fn stamp(at: SystemTime) -> String {
 fn svg(
     points: &VecDeque<Point>,
     now: SystemTime,
-    series: &[(&str, &str, &str, bool)],
+    series: &[(&str, &str, &str, &str)],
     traffic: bool,
 ) -> String {
     let start = now
         .checked_sub(Duration::from_secs(3600))
         .unwrap_or(UNIX_EPOCH);
-    let value = |p: &Point, stage: &str, p99: bool| -> Option<f64> {
+    let value = |p: &Point, stage: &str, percentile: &str| -> Option<f64> {
         if traffic {
             p.arrivals
         } else {
             let w = p.latencies.get(stage)?;
-            if p99 { w.p99 } else { w.p50 }.map(|s| s * 1000.0)
+            match percentile {
+                "p90" => w.p90,
+                "p99" => w.p99,
+                _ => w.p50,
+            }
+            .map(|s| s * 1000.0)
         }
     };
     let maximum = points
@@ -32,19 +37,20 @@ fn svg(
         .flat_map(|p| {
             series
                 .iter()
-                .filter_map(|(key, _, _, p99)| value(p, key, *p99))
+                .filter_map(|(key, _, _, percentile)| value(p, key, percentile))
         })
         .filter(|v| v.is_finite())
         .fold(0.0, f64::max)
         .max(1.0);
     let mut out = format!("<svg viewBox=\"0 0 500 130\" role=\"img\" aria-label=\"{} over the past hour\"><text x=\"0\" y=\"12\" fill=\"currentColor\" font-size=\"10\">{maximum:.1} {}</text><path d=\"M42 20V108H492\" fill=\"none\" stroke=\"currentColor\" opacity=\".25\"/><text x=\"0\" y=\"110\" fill=\"currentColor\" font-size=\"10\">0</text><text x=\"42\" y=\"127\" fill=\"currentColor\" font-size=\"10\">−60m</text><text x=\"252\" y=\"127\" fill=\"currentColor\" font-size=\"10\">−30m</text><text x=\"470\" y=\"127\" fill=\"currentColor\" font-size=\"10\">now</text>", if traffic {"Request arrivals"} else {"Latency"}, if traffic {"requests/min"} else {"ms"});
     let mut any = false;
-    for (stage, label, color, p99) in series {
+    for (stage, label, color, percentile) in series {
         let mut path = String::new();
         let mut dots = String::new();
         let mut previous = None;
         for point in points.iter().filter(|p| p.at >= start && p.at <= now) {
-            let Some(n) = value(point, stage, *p99).filter(|n| n.is_finite() && *n >= 0.0) else {
+            let Some(n) = value(point, stage, percentile).filter(|n| n.is_finite() && *n >= 0.0)
+            else {
                 previous = None;
                 continue;
             };
@@ -67,7 +73,7 @@ fn svg(
             dots.push_str(&format!("<circle cx=\"{x:.2}\" cy=\"{y:.2}\" r=\"2\"><title>{label} · {} · {n:.2} {}</title></circle>",stamp(point.at),if traffic {"requests"}else{"ms"}));
             previous = Some(point.at);
         }
-        out.push_str(&format!("<g class=\"series-{}\" stroke=\"{color}\" fill=\"{color}\"><path d=\"{path}\" fill=\"none\" stroke-width=\"1.6\"/>{dots}</g>",if *p99 {"p99"}else{"p50"}));
+        out.push_str(&format!("<g class=\"series-{percentile}\" stroke=\"{color}\" fill=\"{color}\"><path d=\"{path}\" fill=\"none\" stroke-width=\"1.6\"/>{dots}</g>"));
     }
     if !any {
         out.push_str("<text x=\"165\" y=\"68\" fill=\"currentColor\" font-size=\"12\">Awaiting one-minute samples</text>");
@@ -90,12 +96,12 @@ fn svg(
             .get(index + 1)
             .map(|p| (x_at(p) + x) / 2.0)
             .unwrap_or(492.0);
-        let readout = |percentile: bool| {
+        let readout = |percentile: &str| {
             series
                 .iter()
-                .filter(|(_, _, _, p99)| traffic || series.len() == 2 || *p99 == percentile)
-                .map(|(stage, label, _, p99)| {
-                    let number = value(point, stage, *p99)
+                .filter(|(_, _, _, choice)| traffic || series.len() <= 3 || *choice == percentile)
+                .map(|(stage, label, _, choice)| {
+                    let number = value(point, stage, choice)
                         .filter(|n| n.is_finite() && *n >= 0.0)
                         .map(|n| {
                             if traffic {
@@ -110,7 +116,7 @@ fn svg(
                 .collect::<Vec<_>>()
                 .join("&#10;")
         };
-        out.push_str(&format!("<g class=\"chart-hit\" data-time=\"{}\" data-p50=\"{}\" data-p99=\"{}\"><line x1=\"{x:.2}\" x2=\"{x:.2}\" y1=\"20\" y2=\"108\" stroke=\"currentColor\" stroke-dasharray=\"3 3\"/><rect x=\"{left:.2}\" y=\"20\" width=\"{:.2}\" height=\"88\" fill=\"transparent\" tabindex=\"0\" aria-label=\"{}; {}\"/></g>", stamp(point.at), readout(false), readout(true), right-left, stamp(point.at), readout(true)));
+        out.push_str(&format!("<g class=\"chart-hit\" data-time=\"{}\" data-p50=\"{}\" data-p90=\"{}\" data-p99=\"{}\"><line x1=\"{x:.2}\" x2=\"{x:.2}\" y1=\"20\" y2=\"108\" stroke=\"currentColor\" stroke-dasharray=\"3 3\"/><rect x=\"{left:.2}\" y=\"20\" width=\"{:.2}\" height=\"88\" fill=\"transparent\" tabindex=\"0\" aria-label=\"{}; {}\"/></g>", stamp(point.at), readout("p50"), readout("p90"), readout("p99"), right-left, stamp(point.at), readout("p99")));
     }
     out.push_str("</svg>");
     out
@@ -120,31 +126,35 @@ pub fn render(endpoint: &str, points: &VecDeque<Point>, now: SystemTime) -> Stri
     let query = endpoint == "query";
     let mut out = format!("<div class=\"mini-charts\"><div class=\"latency-chart {}\" data-chart-id=\"{endpoint}\" data-percentile=\"p99\"><div class=\"chart-heading\"><span>Latency · past hour</span>", if query {"select-percentile"} else {""});
     if query {
-        out.push_str("<span class=\"percentile-buttons\"><button type=\"button\" data-percentile-choice=\"p50\">p50</button><button type=\"button\" data-percentile-choice=\"p99\">p99</button></span>");
+        out.push_str("<span class=\"percentile-buttons\"><button type=\"button\" data-percentile-choice=\"p50\">p50</button><button type=\"button\" data-percentile-choice=\"p90\">p90</button><button type=\"button\" data-percentile-choice=\"p99\">p99</button></span>");
     }
     out.push_str("</div>");
     let series: Vec<_> = if query {
         vec![
-            ("total", "Total p50", "#c6a15b", false),
-            ("worker", "Worker p50", "#3a95dc", false),
-            ("packing", "Packing p50", "#8fb573", false),
-            ("total", "Total p99", "#c6a15b", true),
-            ("worker", "Worker p99", "#3a95dc", true),
-            ("packing", "Packing p99", "#8fb573", true),
+            ("total", "Total p50", "#c6a15b", "p50"),
+            ("worker", "Worker p50", "#3a95dc", "p50"),
+            ("packing", "Packing p50", "#8fb573", "p50"),
+            ("total", "Total p90", "#c6a15b", "p90"),
+            ("worker", "Worker p90", "#3a95dc", "p90"),
+            ("packing", "Packing p90", "#8fb573", "p90"),
+            ("total", "Total p99", "#c6a15b", "p99"),
+            ("worker", "Worker p99", "#3a95dc", "p99"),
+            ("packing", "Packing p99", "#8fb573", "p99"),
         ]
     } else {
         vec![
-            ("total", "p50", "#3a95dc", false),
-            ("total", "p99", "#c6a15b", true),
+            ("total", "p50", "#3a95dc", "p50"),
+            ("total", "p90", "#8fb573", "p90"),
+            ("total", "p99", "#c6a15b", "p99"),
         ]
     };
     out.push_str(&svg(points, now, &series, false));
-    out.push_str(if query {"<p class=\"chart-legend\"><span style=\"color:#c6a15b\">Total</span> · <span style=\"color:#3a95dc\">Worker</span> · <span style=\"color:#8fb573\">Packing</span></p>"} else {"<p class=\"chart-legend\"><span style=\"color:#3a95dc\">p50</span> · <span style=\"color:#c6a15b\">p99</span></p>"});
+    out.push_str(if query {"<p class=\"chart-legend\"><span style=\"color:#c6a15b\">Total</span> · <span style=\"color:#3a95dc\">Worker</span> · <span style=\"color:#8fb573\">Packing</span></p>"} else {"<p class=\"chart-legend\"><span style=\"color:#3a95dc\">p50</span> · <span style=\"color:#8fb573\">p90</span> · <span style=\"color:#c6a15b\">p99</span></p>"});
     out.push_str("</div><div><div class=\"chart-heading\">Arriving requests · past hour</div>");
     out.push_str(&svg(
         points,
         now,
-        &[("", "Arrivals", "#3a95dc", false)],
+        &[("", "Arrivals", "#3a95dc", "p50")],
         true,
     ));
     out.push_str(
@@ -165,6 +175,7 @@ mod tests {
                 "total".into(),
                 crate::metrics::LatencyWindow {
                     p50: Some(0.01234),
+                    p90: Some(0.03456),
                     p99: Some(0.05678),
                     ..Default::default()
                 },
@@ -173,6 +184,7 @@ mod tests {
         }]);
         let chart = render("query", &points, now);
         assert!(chart.contains("data-p50=\"Total p50: 12.34 ms&#10;Worker p50: Unavailable"));
+        assert!(chart.contains("data-p90=\"Total p90: 34.56 ms&#10;Worker p90: Unavailable"));
         assert!(chart.contains("data-p99=\"Total p99: 56.78 ms&#10;Worker p99: Unavailable"));
         assert!(chart.contains("Arrivals: 120 requests"));
         assert!(chart.contains("tabindex=\"0\""));
@@ -193,13 +205,14 @@ mod tests {
                 arrivals,
             });
         }
-        let chart = svg(&points, now, &[("", "Arrivals", "blue", false)], true);
+        let chart = svg(&points, now, &[("", "Arrivals", "blue", "p50")], true);
         assert!(chart.contains("M 469.50"));
         assert!(chart.contains("M 484.50"));
         assert!(chart.contains("L 492.00"));
         let query = render("query", &VecDeque::new(), now);
         assert!(query.contains("data-percentile=\"p99\""));
         assert!(query.contains("data-percentile-choice=\"p50\""));
+        assert!(query.contains("data-percentile-choice=\"p90\""));
         assert!(query.contains("Awaiting one-minute samples"));
     }
 }
