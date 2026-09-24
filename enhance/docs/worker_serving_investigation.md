@@ -1,17 +1,17 @@
 # Direct worker serving: implementation and measurement gate
 
-Status: serving-path investigation, September 24, 2026. The
-[main architecture](architecture.md) describes the implemented coordinator/worker
-path. No direct worker serving path is implemented by this note.
+Status: historical serving-path investigation, September 24, 2026, before the
+packing-router rollout. The [main architecture](architecture.md) describes the
+implemented ingress, packing-router and worker path. No direct worker serving
+path is implemented by this note.
 
-The [post-launch proposal](architecture_update_2.md) now selects a separate
-packing-router tier instead of worker-side packing. This note preserves the
-earlier alternative and current-code investigation; its worker-packing gate does
-not qualify the revised packing-router design.
+The deployed design uses a separate packing-router tier instead of worker-side
+packing. This note preserves the earlier alternative and the code investigation
+at that time; its worker-packing gate does not qualify the packing-router design.
 
-## What the current code actually does
+## Coordinator path at the time of investigation
 
-| Stage | Current owner and bound | Consequence for D6 |
+| Stage | Owner and bound at investigation | Consequence for D6 |
 |---|---|---|
 | Public query route | Coordinator `/v1/enhance/query` | The proposed request router cannot yet select a worker. |
 | Body admission | Coordinator: 4 active requests, 16 waiting for at most 2 seconds; the active permit is acquired before body reception, with a 512 KiB body limit and 30-second deadline | The global four-query ceiling stays until the public route moves. Rejected requests are also drained, bounded by the body limit. |
