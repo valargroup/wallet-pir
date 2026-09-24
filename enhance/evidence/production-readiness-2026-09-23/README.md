@@ -13,6 +13,11 @@ lines name that release, all three on-host binaries have SHA-256
 and all three services reported zero restarts at this check. The public HTTPS
 qualification has passed its 30-minute 1, 2 and 4 QPS stages and is in its
 six-hour 4 QPS soak; the burst and full-window assessment are pending. The
+external client's successful-query p50 was 106.879, 111.231 and 112.447 ms
+at 1, 2 and 4 QPS; p99 was 389.631, 551.935 and 661.503 ms. Those figures
+include client work, HTTPS and network time. The current v6 server exports no
+query-duration histogram, so a production server-only p50/p99 has not been
+measured; the older isolated computation benchmark cannot supply it. The
 third isolated active c-4 attempt is running with swap disabled after the
 first attempt swapped and the second was interrupted by an Ubuntu upgrade.
 The separate six-sealed c-4 campaign has not started. Production continues to
