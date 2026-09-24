@@ -1,0 +1,31 @@
+{
+  "kind": "enhance-corrected-release-build-v1",
+  "qualification": "unqualified",
+  "source_revision": "216b9993cc3ae4e0f1820d60c6b8f03d104b5e46",
+  "source_archive_sha256": "93aea7fcc8bbfcd7bbb5105a6301d88e04756267d1329ce31741e00716ff4c59",
+  "builder": "roman-pir-avx512-test",
+  "rustc": "rustc 1.91.0 (f8297e351 2025-10-28)",
+  "target_cpu": "skylake-avx512",
+  "build_commands": [
+    "RUSTFLAGS='-C target-cpu=skylake-avx512' CARGO_BUILD_JOBS=4 cargo build --locked --release -p enhance-pir-server --bin enhance-pir-server",
+    "RUSTFLAGS='-C target-cpu=skylake-avx512' CARGO_BUILD_JOBS=4 cargo build --locked --release -p enhance-pir --features cli --bin enhance-pir-cli -p enhance-pir-load-test --bin enhance-pir-load-test"
+  ],
+  "binary_sha256": {
+    "enhance-pir-server": "7be19ca82108c2046d571ce6b901dd348d2e43435510a74257d530a49b309fe1",
+    "enhance-pir-cli": "2ce72c895b4aef4f99a08659c0dc417038f06464caa1199718ec3b313d8a6620",
+    "enhance-pir-load-test": "328626ba2ed4ce1fdd787e32c79eeddcf60ac4ec2e6b11619be7143c33d87925"
+  },
+  "release_archive_sha256": "4c24c30c0adbd19779671ee731adc09bad3ea77b941ca51fb01e235bcd26a3ac",
+  "local_release_archive": "/tmp/wallet-pir-readiness/release-216b999.tar.gz",
+  "checks": [
+    "source archive checksum matched after transfer",
+    "enhance-pir-server --help exited zero on the build host",
+    "release SHA256SUMS verified all five files",
+    "release archive has a 0755 top directory and 0755 server binary for the production service user",
+    "release archive checksum matched after transfer to the operator machine"
+  ],
+  "limitations": [
+    "The corrected binary has not been executed on a production host or deployed.",
+    "The running public load exercises the earlier 5270482 server and driver binaries."
+  ]
+}

@@ -17,6 +17,10 @@ to the manifest's committed length before appending. The running public load
 still measures the earlier deployed binary. It remains useful diagnostic
 evidence, but it cannot qualify the updated server candidate; rebuild and
 repeat affected production gates after deploying that exact new binary.
+The [corrected release build](operations/release-build-216b999.json) records
+source, toolchain, archive and binary checksums from a separate existing Linux
+test host. The release archive is ready for post-load deployment, but has not
+been executed on the production CPUs or installed there.
 
 The fully observed public HTTPS run has passed its 30-minute 1, 2 and 4 QPS
 stages: 1,800, 3,600 and 7,200 exact answers respectively, with zero request
