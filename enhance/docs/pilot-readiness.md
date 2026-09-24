@@ -74,7 +74,9 @@ trace to assess the five-minute freshness gate over the same window.
 
 The direct sampling policy has this nonsecret shape; use observed values from
 the verified release and effective `systemctl show` limits, then install it
-mode 0600 on its matching worker:
+mode 0600 on its matching worker. The example shows the no-swap candidate
+limits under isolated hardware qualification; the serving workers still have
+a 2 GiB swap allowance until a later rolling configuration change is verified:
 
 ```json
 {
@@ -88,7 +90,7 @@ mode 0600 on its matching worker:
   "limits": {
     "memory_high_bytes": 7516192768,
     "memory_max_bytes": 7609516032,
-    "memory_swap_max_bytes": 2147479552
+    "memory_swap_max_bytes": 0
   }
 }
 ```

@@ -12,8 +12,8 @@ RestartSec=3
 User=enhance-pir
 LimitNOFILE=1048576
 MemoryHigh=7G
-MemoryMax=7680M
-MemorySwapMax=2G
+MemoryMax=7609516032
+MemorySwapMax=0
 ReadWritePaths=/srv/enhance-pir/worker
 Environment=RUST_LOG=info
 
