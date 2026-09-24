@@ -105,6 +105,7 @@ impl RoutingView {
             }
         }
         let mut end = 0;
+        let mut local_routes: BTreeMap<u64, Vec<(u64, u64)>> = BTreeMap::new();
         for route in &self.routes {
             if route.global_start != end || route.global_end <= end {
                 return Err("routing gap, overlap or unordered interval".into());
@@ -121,10 +122,20 @@ impl RoutingView {
             {
                 return Err("route exceeds populated domain span".into());
             }
+            local_routes
+                .entry(route.domain_id)
+                .or_default()
+                .push((route.local_start, local_end));
             end = route.global_end;
         }
         if end != self.total_rows {
             return Err("incomplete routing".into());
+        }
+        for spans in local_routes.values_mut() {
+            spans.sort_unstable();
+            if spans.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+                return Err("two global ranges alias the same local rows".into());
+            }
         }
         Ok(())
     }
@@ -226,6 +237,9 @@ fn rejects_gaps_overlaps_bounds_unknown_domains_and_unknown_fields() {
     assert!(view.validate().is_err());
     view = composed();
     view.routes[2].local_start = 2_048; // allocated padding between B and A's suffix
+    assert!(view.validate().is_err());
+    view = composed();
+    view.routes[2].local_start = 4_096; // aliases A's suffix in the same domain
     assert!(view.validate().is_err());
     view = composed();
     view.domains.push(view.domains[0].clone());

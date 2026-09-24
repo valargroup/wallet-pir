@@ -284,6 +284,31 @@ epoch marks it noncanonical. Wallets refresh the routing view on a defined
 cadence and reuse unchanged session material. A replica move never
 invalidates a session.
 
+**Draft wallet contract (validated as a standalone model, not deployed).** A
+versioned routing view carries a strictly increasing revision, recovery epoch,
+chain anchor, domain descriptors and ordered half-open row intervals. Each
+route gives a global interval, domain ID and local-row start. Wallet validation
+rejects gaps, overlaps in global or domain-local rows, unknown domains,
+intervals outside a populated local span, duplicate domains, malformed hashes
+and unknown wire fields. A domain session ID hashes a domain-separated encoding
+of domain ID, logical geometry, populated spans, content digest, setup digest
+and parameter ID. Publication revision, anchor and replica placement do not
+enter this ID. The content digest must cover the complete queryable PIR
+database, including padding and unit order; a hash of source records alone is
+insufficient.
+
+The candidate refresh policy is one routing fetch at sync start and at most
+30 seconds between fetches while querying. Each query carries both the
+session ID and routing revision/recovery epoch. The public request router
+checks the current view when admitting it: a superseded view returns HTTP 409,
+prompting a refresh and a fresh query under the new route. An invalidated
+session returns HTTP 410. A query admitted before a switch may finish against
+its pinned domain; the wallet still checks the returned binding and its locally
+accepted chain anchor. This gives bounded routine staleness and immediate
+detection at a routing switch, provided all public query entry points enforce
+the revision check. The 30-second value remains a candidate pending wallet
+traffic and transition measurements.
+
 **Rationale.** A sealed shard never changes, so binding its queries to a
 generation that expires after five publications forces wallets to refresh
 about every six minutes for no reason. But a cached sealed session cannot tell
@@ -408,6 +433,15 @@ query payload are unchanged. Legacy clients reject the new manifest. Session-
 scoped packing keys are not part of this update; they need a separate protocol
 review covering linkability and key-reuse safety, and transport-level
 linkability alone is not sufficient justification.
+
+**Investigation status.** `enhance/crates/enhance-pir/tests/routing_contract.rs`
+is an executable draft of the v7 JSON contract. It verifies strict decoding,
+canonical interval coverage, composed A/B coordinates, session identity
+changes, and stale-view fencing across tail removal and a recovery epoch.
+It does not change the v6 manifest, HTTP framing, production server, or wallet.
+Before migration, settle the recovery epoch lifecycle in D8, define the actual
+wire error payload and response binding, and run the interop harness against
+a wallet implementation of this revision.
 
 ## Memory ledger components per replica
 
