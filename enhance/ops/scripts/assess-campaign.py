@@ -111,7 +111,7 @@ def assess(workload, observations):
     check(len(generations) == report['publications'], 'publication_count_differs')
     check(last_elapsed <= report['measurement_seconds'], 'publication_outside_measurement')
     check(max_publication == report['max_fixture_publication_ms'], 'publication_timing_summary_differs')
-    required = {'loan_growth', 'return', 'owned_8k', 'owned_16k', 'owned_near_32k', 'rewind_return'} if profile == 'active' else {'sealed_with_external_append'}
+    required = {'composition_growth', 'tail_removal', 'owned_8k', 'owned_16k', 'owned_near_32k', 'rewind_composition'} if profile == 'active' else {'sealed_with_external_append'}
     check(required <= stages, 'missing_profile_transitions')
     check(len(observations) == (1 if profile == 'active' else 2), 'missing_worker_pair_observations')
     workload_host = report.get('workload_host_id_sha256')

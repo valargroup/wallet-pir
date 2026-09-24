@@ -1893,7 +1893,7 @@ async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
     }
     Json(
         serde_json::json!({"packing_charged_bytes":super::packing_budget::charged_bytes(),"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
-        "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":store.state().revision,
+        "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":manifest.as_ref().map(|m|m.placement_revision),
         "registered_groups":store.state().groups.len(),
         "capacity":store.state().capacity,
         "published_replica_counts":published_replica_counts,

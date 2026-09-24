@@ -20,7 +20,7 @@ def write(path, value):
 def fixture(root):
     workload = root / 'workload'
     workload.mkdir()
-    stages = ['loan_growth', 'return', 'owned_8k', 'owned_16k', 'owned_near_32k', 'rewind_return']
+    stages = ['composition_growth', 'tail_removal', 'owned_8k', 'owned_16k', 'owned_near_32k', 'rewind_composition']
     publications = [{'manifest': {'generation': i + 2}, 'elapsed_seconds': 72 * (i + 1), 'publication_ms': 1,
         'stage': stages[i % 6], 'placement': {'groups': [{'role': 'ACTIVE', 'shards': 5, 'placement_policy': {'sealed_shards': 6}}],
         'published_replica_counts': {'g0': 2}, 'retained_generations': list(range(i + 2, max(0, i - 3), -1))}}
