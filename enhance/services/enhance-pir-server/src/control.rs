@@ -153,9 +153,7 @@ impl Group {
         if growing > 1 || shards.len() > self.placement_policy.limit(active) {
             return Err("group shard limit exceeded".into());
         }
-        Ok(if growing > 0 {
-            Role::Active
-        } else if active {
+        Ok(if growing > 0 || active {
             Role::Active
         } else if shards.is_empty() {
             Role::Standby

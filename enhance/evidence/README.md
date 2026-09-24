@@ -8,6 +8,8 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Optional CUDA worker validation on P4000](cuda-p4000-2026-09-24/README.md) — GPU integration correctness and composed-domain matrix benchmark; not fleet qualification.
+
 - [V7 SSH deployment, wallet interop and focused validation](immutable-v7-2026-09-24/README.md) — functional checks passed; memory/swap and short-run p99 qualification gates remain open.
 
 - [Q48 precision qualification](p16-q48-2026-09-23/README.md)

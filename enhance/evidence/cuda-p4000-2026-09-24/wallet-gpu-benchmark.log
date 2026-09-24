@@ -1,0 +1,12 @@
+cpu_build_ms=27813.157
+gpu_reload_prepare_ms=8937.453, units=4, host_database_bytes=805306368
+repeat=0, cpu_ms_per_query=27.499
+repeat=0, callers=1, gpu_ms_per_query=9.794
+repeat=0, callers=2, gpu_ms_per_query=8.458
+repeat=1, cpu_ms_per_query=28.049
+repeat=1, callers=1, gpu_ms_per_query=8.987
+repeat=1, callers=2, gpu_ms_per_query=8.401
+repeat=2, cpu_ms_per_query=28.647
+repeat=2, callers=1, gpu_ms_per_query=8.988
+repeat=2, callers=2, gpu_ms_per_query=8.443
+all results matched; runtime references released

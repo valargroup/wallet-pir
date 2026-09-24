@@ -50,6 +50,8 @@ enum Command {
         source_rows: PathBuf,
     },
     Worker {
+        #[command(flatten)]
+        matvec: enhance_pir_server::matvec::MatvecConfig,
         #[arg(long, default_value = "127.0.0.1:8091")]
         listen: SocketAddr,
         #[arg(long)]
@@ -182,8 +184,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 "readiness":"requires_worker_restart", "qualification":"unqualified"})
             );
         }
-        Command::Worker { listen, data_dir } => {
-            let worker = Worker::open_with_policy(&data_dir, placement_policy)?;
+        Command::Worker {
+            listen,
+            data_dir,
+            matvec,
+        } => {
+            let worker = Worker::open_with_backend(&data_dir, placement_policy, matvec)?;
             axum::serve(
                 tokio::net::TcpListener::bind(listen).await?,
                 worker.router(),

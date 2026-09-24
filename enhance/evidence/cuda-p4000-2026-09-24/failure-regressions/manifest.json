@@ -1,0 +1,34 @@
+{
+  "source_commit": "b81d54e622800615f3cb451f58ee44f83c386e81",
+  "date_utc": "2026-09-24",
+  "host": "Same Paperspace P4000 AMS1 host as ../manifest.json",
+  "profile": "release-fast",
+  "rust": "1.91.0",
+  "environment": {
+    "RAYON_NUM_THREADS": "8",
+    "RUST_TEST_THREADS": "1 for focused tests; 2 for full library suite",
+    "CFLAGS": "-mpclmul",
+    "CXXFLAGS": "-mpclmul",
+    "LD_LIBRARY_PATH": "/usr/local/cuda-12.2/targets/x86_64-linux/lib"
+  },
+  "command_prefix": "cargo test --locked --profile release-fast -p enhance-pir-server",
+  "commands": [
+    "--lib partial_preparation_failure_preserves_published_and_retries",
+    "--lib backend_evaluation_failure_over_http_releases_permit_and_recovers",
+    "--features cuda --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored",
+    "--features cuda --lib cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers -- --ignored",
+    "--features cuda --lib"
+  ],
+  "results": {
+    "focused_cpu_passed": 2,
+    "focused_gpu_passed": 2,
+    "full_library_passed": 70,
+    "full_library_failed": 0,
+    "full_library_ignored": 3
+  },
+  "limits": [
+    "Preparation errors are injected after real kernel preparation, not forced physical device exhaustion.",
+    "Kernel-owned byte counters establish object lifetime cleanup, not a device-memory admission budget.",
+    "GPU error recovery here is for injected per-call errors; a poisoned CUDA context may require process restart."
+  ]
+}

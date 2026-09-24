@@ -2,6 +2,7 @@ use crate::artifact::{
     release_file_cache, write_atomic, write_atomic_cold, PublicationArtifact, VerifiedReader,
     IO_BUFFER_BYTES,
 };
+use crate::matvec::MatvecConfig;
 use crate::types::{DatabaseId, DatabaseLayout};
 use crate::wire::{crs_encoded_len, write_crs_blocks};
 use inspiring::{InspiringError, RlweParams};
@@ -216,6 +217,29 @@ impl ShardRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn load_cached_with_backend(
+        artifact_root: &Path,
+        table: DatabaseId,
+        layout: &DatabaseLayout,
+        shard_id: u64,
+        query_row_start: usize,
+        rows_sha256: &str,
+        rlwe: &RlweParams,
+        backend: MatvecConfig,
+    ) -> Result<CachedShard, LoadError> {
+        Self::load_with_backend(
+            &shard_artifact_dir(artifact_root, table, shard_id),
+            table,
+            layout,
+            shard_id,
+            query_row_start,
+            rows_sha256,
+            rlwe,
+            backend,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn load_or_build(
         artifact_root: &Path,
         table: DatabaseId,
@@ -268,7 +292,12 @@ impl ShardRuntime {
                 "query coefficient is not reduced modulo q".to_string(),
             ));
         }
-        Ok(self.server.multiply_query(rlwe, query))
+        self.server
+            .try_multiply_query(rlwe, query)
+            .map_err(|error| {
+                tracing::error!(%error, "matrix-vector evaluation failed");
+                InspiringError::Internal("matrix-vector evaluation failed")
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -281,19 +310,43 @@ impl ShardRuntime {
         rows_sha256: &str,
         rlwe: &RlweParams,
     ) -> Result<CachedShard, String> {
+        Self::load_with_backend(
+            directory,
+            table,
+            layout,
+            shard_id,
+            query_row_start,
+            rows_sha256,
+            rlwe,
+            MatvecConfig::default(),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn load_with_backend(
+        directory: &Path,
+        table: DatabaseId,
+        layout: &DatabaseLayout,
+        shard_id: u64,
+        query_row_start: usize,
+        rows_sha256: &str,
+        rlwe: &RlweParams,
+        backend: MatvecConfig,
+    ) -> Result<CachedShard, LoadError> {
         let metadata: ArtifactMetadata = serde_json::from_reader(BufReader::new(
             File::open(directory.join("metadata.json")).map_err(|e| e.to_string())?,
         ))
         .map_err(|e| e.to_string())?;
         if !metadata.matches_identity(table, layout, shard_id, query_row_start, rows_sha256, rlwe) {
-            return Err("artifact metadata mismatch".to_string());
+            return Err("artifact metadata mismatch".into());
         }
         let (_, local_params) = shard_parameters(layout).map_err(|e| e.to_string())?;
         if metadata.db_rows != local_params.db_rows
             || metadata.db_cols != local_params.db_cols
             || metadata.plaintext_modulus != local_params.p
         {
-            return Err("persisted artifact parameter mismatch".to_string());
+            return Err("persisted artifact parameter mismatch".into());
         }
         let coefficients = local_params
             .db_rows
@@ -311,7 +364,7 @@ impl ShardRuntime {
             IO_BUFFER_BYTES,
             VerifiedReader::new(file, expected_db_bytes, metadata.database_sha256),
         );
-        let server = read_database(reader, local_params.clone()).map_err(|e| e.to_string())?;
+        let server = read_database_with_backend(reader, local_params.clone(), backend)?;
         release_file_cache(&cache_handle);
         let blocks = local_params.db_cols / rlwe.d;
         let publication = PublicationArtifact::open(
@@ -346,6 +399,29 @@ impl PreparedShard {
         rlwe: &RlweParams,
         global_setup: &[Vec<u64>],
     ) -> Result<Self, InspiringError> {
+        Self::build_with_backend(
+            layout,
+            shard_id,
+            query_row_start,
+            rows_sha256,
+            rows,
+            rlwe,
+            global_setup,
+            MatvecConfig::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_backend(
+        layout: &DatabaseLayout,
+        shard_id: u64,
+        query_row_start: usize,
+        rows_sha256: String,
+        rows: &[u8],
+        rlwe: &RlweParams,
+        global_setup: &[Vec<u64>],
+        backend: MatvecConfig,
+    ) -> Result<Self, InspiringError> {
         if rows.len() != layout.shard_bytes() {
             return Err(InspiringError::PreprocessMismatch(format!(
                 "shard must be {} bytes, got {}",
@@ -367,7 +443,12 @@ impl PreparedShard {
             local_params.db_cols,
             local_params.p.trailing_zeros() as usize,
         );
-        let server = IPIRServer::<u16>::new_auto_kernel(local_params, coefficients, false, true);
+        let server = backend
+            .server(local_params, coefficients, false)
+            .map_err(|error| {
+                tracing::error!(%error, "matrix-vector preparation failed");
+                InspiringError::Internal("matrix-vector preparation failed")
+            })?;
         let first_poly = query_row_start / rlwe.d;
         let poly_count = layout.shard_rows / rlwe.d;
         let setup = global_setup
@@ -444,7 +525,16 @@ impl PreparedShard {
 /// The upstream constructor requires an infallible iterator of exactly the
 /// declared size. On read failure, finish with placeholders, then discard the
 /// server. No partially read database is ever returned to a caller.
-fn read_database(mut reader: impl Read, params: YpirSchemeParams) -> io::Result<IPIRServer<u16>> {
+#[cfg(test)]
+fn read_database(reader: impl Read, params: YpirSchemeParams) -> io::Result<IPIRServer<u16>> {
+    read_database_with_backend(reader, params, MatvecConfig::default()).map_err(io::Error::other)
+}
+
+fn read_database_with_backend(
+    mut reader: impl Read,
+    params: YpirSchemeParams,
+    backend: MatvecConfig,
+) -> Result<IPIRServer<u16>, LoadError> {
     let count = params
         .db_rows
         .checked_mul(params.db_cols)
@@ -463,16 +553,14 @@ fn read_database(mut reader: impl Read, params: YpirSchemeParams) -> io::Result<
             }
         }
     });
-    let server = IPIRServer::<u16>::new_auto_kernel(params, coefficients, true, true);
+    let server = backend.server(params, coefficients, true);
     if let Some(e) = failure {
-        return Err(e);
+        return Err(e.into());
     }
+    let server = server.map_err(LoadError::Backend)?;
     let mut trailing = [0];
     if reader.read(&mut trailing)? != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "trailing database bytes",
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "trailing database bytes").into());
     }
     Ok(server)
 }
@@ -798,5 +886,29 @@ mod persistence_tests {
         )
         .unwrap();
         assert!(load().is_err());
+    }
+}
+
+/// Cache corruption may be rebuilt; a device failure must propagate unchanged.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadError {
+    #[error("artifact: {0}")]
+    Artifact(String),
+    #[error("matrix-vector backend: {0}")]
+    Backend(#[from] ipir_sp::server::KernelError),
+}
+impl From<String> for LoadError {
+    fn from(e: String) -> Self {
+        Self::Artifact(e)
+    }
+}
+impl From<&str> for LoadError {
+    fn from(e: &str) -> Self {
+        Self::Artifact(e.into())
+    }
+}
+impl From<io::Error> for LoadError {
+    fn from(e: io::Error) -> Self {
+        Self::Artifact(e.to_string())
     }
 }

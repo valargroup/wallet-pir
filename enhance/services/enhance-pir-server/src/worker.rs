@@ -1,6 +1,7 @@
 //! Private worker API. A candidate never evicts a published assignment.
 use super::control::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT};
 use super::runtime::{DomainPlan, Engine, Evaluation};
+use crate::matvec::MatvecConfig;
 use axum::{
     body::{to_bytes, Body},
     extract::{Path, Request, State},
@@ -194,6 +195,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct Worker {
+    backend: MatvecConfig,
     inner: Arc<Mutex<Inner>>,
     preparation: Arc<Semaphore>,
     evaluation: Arc<Semaphore>,
@@ -431,7 +433,20 @@ impl Worker {
     }
 
     pub fn open_with_policy(root: &FsPath, policy: PlacementPolicy) -> Result<Self, String> {
+        Self::open_with_backend(root, policy, MatvecConfig::default())
+    }
+
+    pub fn open_with_backend(
+        root: &FsPath,
+        policy: PlacementPolicy,
+        mut backend: MatvecConfig,
+    ) -> Result<Self, String> {
         policy.validate()?;
+        backend.validate().map_err(|e| e.to_string())?;
+        if backend.matvec_backend == crate::matvec::Backend::Cuda {
+            backend.cuda_device = Some(backend.cuda_device.unwrap_or(0));
+        }
+        tracing::info!(?backend, "worker matrix-vector backend selected");
         fs::create_dir_all(root.join("rows")).map_err(|e| e.to_string())?;
         fs::create_dir_all(root.join("hints")).map_err(|e| e.to_string())?;
         let lock = OpenOptions::new()
@@ -464,7 +479,7 @@ impl Worker {
         File::open(root)
             .and_then(|f| f.sync_all())
             .map_err(|e| e.to_string())?;
-        let mut engine = Engine::new(root);
+        let mut engine = Engine::with_backend(root, backend);
         let mut published = BTreeMap::new();
         for (generation, (manifest, plans)) in &disk.published {
             let mut assignments = BTreeMap::new();
@@ -487,6 +502,7 @@ impl Worker {
         }
         let incarnation = format!("{:032x}", rand::random::<u128>());
         Ok(Self {
+            backend,
             inner: Arc::new(Mutex::new(Inner {
                 disk,
                 engine: Arc::new(Mutex::new(engine)),
@@ -665,7 +681,7 @@ async fn metrics(
 async fn health(State(w): State<Worker>) -> Json<serde_json::Value> {
     let inner = w.inner.lock().unwrap();
     Json(
-        serde_json::json!({"protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
+        serde_json::json!({"matvec": w.backend, "protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
         "resident_database_bytes":inner.engine.try_lock().ok().map(|e| e.live_bytes()),"published":inner.disk.published.keys().collect::<Vec<_>>(),
         "published_manifest_digests":inner.disk.published.iter().map(|(g,(m,_))| (g.to_string(), digest(m))).collect::<BTreeMap<_,_>>(),
         "candidate":inner.disk.candidate}),
@@ -1090,7 +1106,7 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let coefficients = evaluation.evaluate(&query.coefficients)?;
-        Ok::<_, String>(Intermediate {
+        Ok::<_, super::runtime::EvaluationError>(Intermediate {
             generation: query.generation,
             shard_id: query.shard_id,
             epoch: query.epoch,
@@ -1099,14 +1115,173 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
     })
     .await
     .map_err(unavailable)?
-    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    .map_err(evaluation_error)?;
     Ok(Json(result))
+}
+
+fn evaluation_error(error: super::runtime::EvaluationError) -> (StatusCode, String) {
+    match error {
+        super::runtime::EvaluationError::InvalidQuery => {
+            (StatusCode::BAD_REQUEST, error.to_string())
+        }
+        super::runtime::EvaluationError::Unavailable(error) => {
+            tracing::error!(%error, "worker evaluation failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "matrix-vector evaluation unavailable".into(),
+            )
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tower::ServiceExt;
+
+    #[test]
+    fn device_errors_are_unavailable_without_exposing_details() {
+        use super::super::runtime::EvaluationError;
+        assert_eq!(
+            evaluation_error(EvaluationError::InvalidQuery).0,
+            StatusCode::BAD_REQUEST
+        );
+        let (status, body) =
+            evaluation_error(EvaluationError::Unavailable("private device detail".into()));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains("private device detail"));
+    }
+
+    #[tokio::test]
+    async fn backend_evaluation_failure_over_http_releases_permit_and_recovers() {
+        evaluation_failure_over_http(MatvecConfig::default()).await;
+    }
+
+    #[cfg(feature = "cuda")]
+    #[tokio::test]
+    #[ignore = "requires NVIDIA GPU and NVRTC"]
+    async fn cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers() {
+        evaluation_failure_over_http(MatvecConfig {
+            matvec_backend: crate::matvec::Backend::Cuda,
+            cuda_device: None,
+        })
+        .await;
+    }
+
+    async fn evaluation_failure_over_http(backend: MatvecConfig) {
+        use crate::{
+            matvec::testing::{scoped, Faults},
+            runtime::{plan, rlwe, Packing},
+        };
+        use enhance_pir::protocol::{Geometry, Lifecycle, SCHEMA_VERSION};
+        use std::sync::atomic::Ordering::SeqCst;
+        let root = tempfile::tempdir().unwrap();
+        let mut worker =
+            Worker::open_with_backend(root.path(), Default::default(), backend).unwrap();
+        // With a single permit, the next successful request also proves error cleanup.
+        worker.evaluation = Arc::new(Semaphore::new(1));
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let source = |_: u64, count: usize| Ok(vec![7; count * enhance_pir::RECORD_BYTES]);
+        let plan = plan(coverage.shards[0].clone(), source).unwrap();
+        let faults = Arc::new(Faults::default());
+        let eval = scoped(&faults, || {
+            worker
+                .inner
+                .lock()
+                .unwrap()
+                .engine
+                .lock()
+                .unwrap()
+                .prepare(plan.clone(), source)
+        })
+        .unwrap();
+        let packing = Packing::new(4096, &eval.hint().unwrap()).unwrap();
+        let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
+            schema_version: SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation: 1,
+            anchor_height: 3428143,
+            anchor_block_hash: "01".repeat(32),
+            geometry: Geometry::default(),
+            coverage,
+            sessions: vec![packing.reference(0).unwrap()],
+            unit_identities: [(0, plan.units.clone())].into(),
+        };
+        let query = Evaluate {
+            session_id: hex::encode(manifest.session_id(0).unwrap()),
+            generation: 1,
+            shard_id: 0,
+            epoch: manifest.sessions[0].public_params_sha256[..16].into(),
+            coefficients: vec![1; 4096],
+        };
+        let expected = eval.evaluate(&query.coefficients).unwrap();
+        {
+            let mut inner = worker.inner.lock().unwrap();
+            inner
+                .save(DiskState {
+                    published: [(1, (manifest, vec![plan]))].into(),
+                    ..DiskState::default()
+                })
+                .unwrap();
+            inner.published.insert(1, [(0, eval)].into());
+        }
+        let durable = fs::read(root.path().join("worker.json")).unwrap();
+        let router = worker.clone().router();
+        async fn request(router: &Router, query: &Evaluate) -> (StatusCode, Vec<u8>) {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/internal/evaluate")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(query).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (
+                response.status(),
+                to_bytes(response.into_body(), 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+        }
+        faults.fail_evaluation.store(true, SeqCst);
+        let calls = faults.evaluation_calls.load(SeqCst);
+        let (status, body) = request(&router, &query).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, b"matrix-vector evaluation unavailable");
+        assert_eq!(faults.evaluation_calls.load(SeqCst), calls + 1);
+        assert_eq!(worker.evaluation.available_permits(), 1);
+        // Validation must reject malformed queries before calling even a failed backend.
+        for coefficients in [vec![1], vec![rlwe().q; 4096]] {
+            let bad = Evaluate {
+                coefficients,
+                ..query.clone()
+            };
+            assert_eq!(request(&router, &bad).await.0, StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(faults.evaluation_calls.load(SeqCst), calls + 1);
+        faults.fail_evaluation.store(false, SeqCst);
+        let (status, body) = request(&router, &query).await;
+        assert_eq!(status, StatusCode::OK);
+        let result: Intermediate = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.coefficients, expected);
+        assert_eq!(result.generation, query.generation);
+        assert_eq!(result.epoch, query.epoch);
+        assert_eq!(faults.evaluation_calls.load(SeqCst), calls + 2);
+        assert_eq!(worker.evaluation.available_permits(), 1);
+        assert_eq!(fs::read(root.path().join("worker.json")).unwrap(), durable);
+    }
 
     #[test]
     fn q46_worker_state_is_rejected_without_rewriting_it() {

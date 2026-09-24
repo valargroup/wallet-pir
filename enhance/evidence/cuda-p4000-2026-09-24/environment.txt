@@ -1,0 +1,81 @@
+Linux pssoby24hcv4 5.15.0-124-generic #134-Ubuntu SMP Fri Sep 27 20:20:17 UTC 2024 x86_64 x86_64 x86_64 GNU/Linux
+Architecture:                         x86_64
+CPU op-mode(s):                       32-bit, 64-bit
+Address sizes:                        46 bits physical, 48 bits virtual
+Byte Order:                           Little Endian
+CPU(s):                               8
+On-line CPU(s) list:                  0-7
+Vendor ID:                            GenuineIntel
+Model name:                           Intel(R) Xeon(R) CPU E5-2623 v4 @ 2.60GHz
+CPU family:                           6
+Model:                                79
+Thread(s) per core:                   1
+Core(s) per socket:                   8
+Socket(s):                            1
+Stepping:                             1
+BogoMIPS:                             5200.04
+Flags:                                fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush acpi mmx fxsr sse sse2 ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault invpcid_single pti intel_ppin ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt flush_l1d
+Hypervisor vendor:                    Xen
+Virtualization type:                  full
+L1d cache:                            256 KiB (8 instances)
+L1i cache:                            256 KiB (8 instances)
+L2 cache:                             2 MiB (8 instances)
+L3 cache:                             80 MiB (8 instances)
+NUMA node(s):                         1
+NUMA node0 CPU(s):                    0-7
+Vulnerability Gather data sampling:   Not affected
+Vulnerability Itlb multihit:          KVM: Mitigation: VMX unsupported
+Vulnerability L1tf:                   Mitigation; PTE Inversion
+Vulnerability Mds:                    Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown
+Vulnerability Meltdown:               Mitigation; PTI
+Vulnerability Mmio stale data:        Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown
+Vulnerability Reg file data sampling: Not affected
+Vulnerability Retbleed:               Not affected
+Vulnerability Spec rstack overflow:   Not affected
+Vulnerability Spec store bypass:      Mitigation; Speculative Store Bypass disabled via prctl and seccomp
+Vulnerability Spectre v1:             Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:             Mitigation; Retpolines; IBPB conditional; IBRS_FW; STIBP disabled; RSB filling; PBRSB-eIBRS Not affected; BHI Retpoline
+Vulnerability Srbds:                  Not affected
+Vulnerability Tsx async abort:        Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown
+               total        used        free      shared  buff/cache   available
+Mem:     31527325696  7494664192 18539028480     9625600  5493633024 23570395136
+Swap:              0           0           0
+Filesystem                   Size  Used Avail Use% Mounted on
+/dev/mapper/ubuntu--vg-root   48G   13G   34G  27% /
+Thu Sep 24 14:50:16 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Quadro P4000                   Off |   00000000:00:05.0 Off |                  N/A |
+| 47%   44C    P0             28W /  105W |     439MiB /   8192MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            1593      C   ...st/deps/http-8a79d14186350aca        434MiB |
++-----------------------------------------------------------------------------------------+
+cuda-nvrtc-12-2	12.2.140-1
+nvidia-driver-580	580.178.04-0ubuntu0.22.04.1
+rustc 1.91.0 (f8297e351 2025-10-28)
+a92f07971fb2a131dd97e9e06bef16414edcdebcc375dbb20c6cee59c17ffcf7  /home/paperspace/wallet-pir-cuda/target/release-fast/deps/enhance_pir_server-b217f60e591f4c7f
+1c76999e5bf4db9e2e06ae689fe2b164c0cb22465565ae9ff93adf7c64b56ee4  /home/paperspace/wallet-pir-cuda/target/release-fast/deps/http-8a79d14186350aca
+d41b415aefbb9b88a7959c8cd107336a2b61d0384ebae53c2c32a1de4a68da03  /home/paperspace/wallet-pir-cuda/target/release-fast/examples/cuda_domain
+/sys/fs/cgroup/user.slice
+max 100000
+max
+/sys/fs/cgroup/user.slice/user-1000.slice
+max
+cpuset cpu io memory hugetlb pids rdma misc
+    Finished `release-fast` profile [optimized] target(s) in 0.31s
+     Running tests/http.rs (target/release-fast/deps/http-8a79d14186350aca)
+
+running 1 test
+test cuda_distributed_round_trip_retention_failover_and_restart has been running for over 60 seconds

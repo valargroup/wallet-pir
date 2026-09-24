@@ -228,7 +228,13 @@ jobs:
           tools/ci/full-test.sh --locked --profile release-fast \
             -p enhance-pir-server --lib --bins \
             --test record_layout --test schema11_cutover \
-            --test http --test canonical_record --test note_recovery --test rpc
+            --test http --test canonical_record --test note_recovery --test rpc --test matvec_config
+
+      - name: Check optional CUDA worker without a GPU
+        run: |
+          cargo check --locked -p enhance-pir-server --all-targets --features cuda
+          cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
+          cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
 
   release:
     name: Prepare qualified release artifacts
