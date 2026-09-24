@@ -13,7 +13,9 @@ use crate::schema::Schema;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub worker_config: Option<PathBuf>,
+    pub packing_router_config: Option<PathBuf>,
     pub scrape_url: String,
+    pub query_scrape_urls: Vec<String>,
     pub metrics_path: String,
     pub health_path: String,
     pub ready_path: String,
@@ -93,9 +95,31 @@ impl Config {
         .map_err(anyhow::Error::msg)
         .context("invalid PIR_APM metric schema")?;
 
+        let query_scrape_urls = get("PIR_APM_QUERY_SCRAPE_URLS")
+            .map(|s| split_list(&s))
+            .unwrap_or_default();
+        if query_scrape_urls.len() > 8 {
+            anyhow::bail!("at most eight query ingress metrics targets are supported");
+        }
+        let mut seen = BTreeSet::new();
+        for url in &query_scrape_urls {
+            let parsed = reqwest::Url::parse(url).context("invalid query metrics URL")?;
+            if !matches!(parsed.scheme(), "http" | "https")
+                || parsed.host_str().is_none()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.fragment().is_some()
+                || !seen.insert(parsed.to_string())
+            {
+                anyhow::bail!("query metrics targets must be distinct HTTP(S) URLs without credentials or fragments");
+            }
+        }
+
         Ok(Self {
             worker_config: get("PIR_APM_WORKER_CONFIG").map(PathBuf::from),
+            packing_router_config: get("PIR_APM_PACKING_ROUTER_CONFIG").map(PathBuf::from),
             scrape_url,
+            query_scrape_urls,
             metrics_path: path_value(&get_or("PIR_APM_METRICS_PATH", "/metrics"))?,
             health_path: path_value(&get_or("PIR_APM_HEALTH_PATH", "/v1/health"))?,
             ready_path: path_value(&get_or("PIR_APM_READY_PATH", "/ready"))?,

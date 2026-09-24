@@ -4,10 +4,19 @@
 It scrapes the coordinator's loopback-only Prometheus endpoint, renders a
 dashboard, evaluates availability thresholds, and can emit Slack alerts.
 
-The current coordinator exposes aggregate publication, capacity, and query
-metrics. The dashboard shows those live values without presenting the legacy
-HTTP latency and endpoint tables, whose metric families are no longer emitted.
-It still shows coordinator health, readiness, host health, and alert state.
+The overview includes a compact Init / Query APM table alongside the fleet
+summary. p50/p99 use a rolling five-minute server-processing histogram: complete
+request-body receipt until the response is ready, excluding upload and response
+download time. Init starts at handler entry. Early rejections before the body
+finishes do not produce a processing sample.
+
+Upload (client → service) and download (service → client) are payload bytes per
+second over the latest successful scrape interval, not whole-machine network
+traffic or average request size. Body counters advance as data is consumed or
+emitted, including partial transfers. HTTP/TLS overhead is excluded. Fresh idle
+counters show zero; missing instrumentation, warm-up, restarts, scrape outages,
+and samples older than 45 seconds show `—` as appropriate. Each row shows the
+last successful metrics sample; failed scrapes never refresh its timestamp.
 
 Defaults match the Enhance API and `enhance_*` metric families. The sidecar
 only consumes fixed endpoint labels and aggregate fleet gauges; it never reads
@@ -36,7 +45,7 @@ production configuration is in `/etc/default/pir-apm`.
 
 The current dashboard has an overview at `/apm/`, coordinator detail at
 `/apm/coordinator/`, and worker detail at `/apm/workers/<name>/`. The overview
-shows topology and availability; detailed counters, host resources, and memory
+shows init/query APM, topology, and availability; detailed counters, host resources, and memory
 breakdowns live on the node pages. Expanded detail sections survive refresh.
 
 Set `PIR_APM_WORKER_CONFIG` to the coordinator's JSON worker inventory (the
@@ -62,3 +71,75 @@ Run `systemctl enable pir-apm` and `systemctl restart pir-apm`, then verify the
 local `/healthz`, all three public page types, and worker sample freshness.
 Caddy strips `/apm` before proxying; the sidecar supports both stripped and full
 page routes. Only the sidecar needs restarting.
+
+## Public entrypoint instrumentation
+
+The server exports `enhance_http_request_processing_duration_seconds`,
+`enhance_http_requests_total`, `enhance_http_request_body_bytes_total`, and
+`enhance_http_response_body_bytes_total` with fixed `init` / `query` endpoint
+labels. Histograms count responses, including errors after a complete upload.
+No bodies, session identifiers, or dynamic paths enter metric labels.
+
+By default, both rows consume the coordinator metrics endpoint. For separate
+query ingress processes, set `PIR_APM_QUERY_SCRAPE_URLS` to a comma-separated list
+of their private full `/internal/metrics` URLs (maximum eight). This **replaces**
+the coordinator as the source of the Query row; Init still uses the coordinator.
+List only outer public ingress instances, never internal packing routers. Keep
+these control listeners private. Sources are scraped concurrently; deltas are
+computed independently across restarts and histogram buckets are combined
+before calculating fleet percentiles. A missing source marks the aggregate row
+unavailable rather than silently reporting partial traffic.
+
+The sidecar and server must both be updated for populated rows. A sidecar-only
+rollout against an older server safely shows unavailable metrics. Preserve
+production origins during concurrent qualification runs: an isolated exercise
+listener is not a replacement for a stopped production coordinator.
+
+## Packing router hosts
+
+Set `PIR_APM_PACKING_ROUTER_CONFIG` to the coordinator's packing-router inventory
+(for example `/etc/enhance-pir/packing-routers.json`). It is the same JSON array
+of `name`, private control `url`, `query_url`, and `domains` registrations used
+by the server. APM only uses the name and control origin. It reloads the inventory
+every 15 seconds, retaining the last valid inventory if an update is invalid.
+
+The overview groups packing routers and evaluation workers together by shard/domain,
+below the coordinator.
+Each host links to `/apm/packing-routers/<name>/` with readiness, freshness,
+available admission slots, outstanding evaluations, cumulative query outcomes,
+packing time, intermediate payload volume, and charged packing memory. These
+are service measurements; charged memory is not total host RAM. The existing
+Init / Query APM table remains the public-entrypoint view.
+
+The sidecar independently scrapes private `/internal/health` and
+`/internal/metrics` endpoints, using five-second timeouts and at most eight
+concurrent hosts. A reachable but unready router is distinct from a scrape
+failure. Failed scrapes retain and label previous values; samples older than
+45 seconds are stale. Packing-router readiness and inventory errors contribute
+to the overview's fleet health. Private origins, session digests, and internal
+worker addresses are never rendered on the public pages. Unknown host pages
+return 404. Both stripped and `/apm`-prefixed routes are supported.
+
+Only the sidecar and its environment need updating for this feature; no router
+or coordinator restart is required.
+
+## Domain topology
+
+For pool placement, each shard/domain card contains its assigned packing routers
+and evaluation workers. Worker membership comes from `pool.placements` in the
+coordinator health response, rather than the legacy inventory group name.
+Packing-router membership uses each registration's `domains` list; an empty or
+omitted list means all domains, matching the server. Shared hosts can therefore
+appear in multiple cards while linking to the same host detail page.
+
+The topology shows placement revision and sample age. Invalid or failed health
+responses retain the last valid placement with a warning, without refreshing its
+timestamp. Missing placement never invents a group relationship; registered
+hosts remain accessible under “Other registered hosts.” Unknown assigned workers
+are marked as monitoring unavailable. Inventory changes update router domain
+assignments without discarding a same-host metrics sample. Worker detail pages
+show domain membership, and packing-router pages show configured domains.
+
+Legacy coordinators without pool placement retain the old inventory-group view
+when packing-router monitoring is not enabled. No serving or placement logic is
+changed by this visualization.

@@ -23,8 +23,10 @@ fn value(values: &BTreeMap<String, f64>, key: &str) -> String {
     values
         .get(key)
         .map(|v| {
-            if key.ends_with("bytes") {
+            if key.ends_with("bytes") || key.ends_with("bytes_total") {
                 bytes_human((*v).max(0.) as u64)
+            } else if key.ends_with("microseconds_total") {
+                format!("{:.3} s", v / 1_000_000.0)
             } else if key.ends_with("seconds") {
                 format!("{} s", format_number(*v))
             } else {
@@ -69,17 +71,38 @@ pub(super) fn overview(data: &DashboardData) -> String {
         .values()
         .filter(|w| w.status() == "reachable")
         .count();
-    let redundancy_ok = data.groups.iter().all(|(name, group)| {
-        let expected = data
-            .fleet
-            .values()
-            .filter(|worker| &worker.group == name)
-            .count();
-        group.shards == Some(0.0)
-            || (expected > 0 && group.published.is_some_and(|n| n >= expected as f64))
-    });
-    let healthy = redundancy_ok
-        && !data.groups.is_empty()
+    let domain_mode = data.packing_enabled || data.placement.is_some();
+    let redundancy_ok = if domain_mode {
+        data.placement.as_ref().is_some_and(|p| {
+            !p.domains.is_empty()
+                && p.domains.iter().all(|(id, workers)| {
+                    !workers.is_empty()
+                        && workers.iter().all(|w| data.fleet.contains_key(w))
+                        && (!data.packing_enabled
+                            || data.packing_routers.values().any(|r| r.serves(*id)))
+                })
+        }) && !data.placement_error
+            && data
+                .placement_success
+                .is_some_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() <= 45))
+    } else {
+        data.groups.iter().all(|(name, group)| {
+            let expected = data
+                .fleet
+                .values()
+                .filter(|worker| &worker.group == name)
+                .count();
+            group.shards == Some(0.0)
+                || (expected > 0 && group.published.is_some_and(|n| n >= expected as f64))
+        })
+    };
+    let packing_ok = !data.packing_enabled
+        || (!data.packing_routers.is_empty()
+            && data.packing_inventory_error.is_none()
+            && data.packing_routers.values().all(|r| r.status() == "ready"));
+    let healthy = packing_ok
+        && redundancy_ok
+        && (domain_mode || !data.groups.is_empty())
         && health_ok(data)
         && !data.fleet.is_empty()
         && reachable == data.fleet.len()
@@ -121,36 +144,140 @@ pub(super) fn overview(data: &DashboardData) -> String {
         ));
     }
     if !redundancy_ok {
-        body.push_str("<p class=\"notice\">Published replica coverage needs attention. Review the group counts below.</p>");
+        body.push_str("<p class=\"notice\">Domain placement or replica coverage needs attention. Review the assignments below.</p>");
     }
     if !health_ok(data) {
         body.push_str("<p class=\"notice\">Coordinator monitoring needs attention. Open its details for health and readiness checks.</p>");
     }
-    body.push_str(&format!("<section class=\"topology\"><h2>Deployment topology</h2><a class=\"node-link coord-link\" href=\"/apm/coordinator/\"><strong>Coordinator</strong><span>{}</span><span class=\"{}\">{}</span></a><div class=\"trunk\" style=\"margin:auto\"></div><div class=\"groups\">",escape(&data.hostname),if health_ok(data){"ok"}else{"bad"},if health_ok(data){"Healthy"}else{"Needs attention"}));
-    let mut groups: std::collections::BTreeSet<&str> =
-        data.fleet.values().map(|w| w.group.as_str()).collect();
-    groups.extend(data.groups.keys().map(String::as_str));
-    for name in groups {
-        let group = data.groups.get(name).cloned().unwrap_or_default();
-        let role = group.role.as_deref().unwrap_or("unknown").replace('_', " ");
-        body.push_str(&format!("<section class=\"group\"><h3>{}</h3><p class=\"summary\">{} · {} assigned shards · {} published replicas</p><div class=\"replicas\">",escape(name),escape(&role),group.shards.map(format_number).unwrap_or_else(||"unknown".into()),group.published.map(format_number).unwrap_or_else(||"unknown".into())));
-        let mut count = 0;
-        for worker in data.fleet.values().filter(|w| w.group == name) {
-            count += 1;
-            body.push_str(&format!("<a class=\"node-link\" href=\"/apm/workers/{}/\"><strong>{}</strong><span class=\"{}\">{}</span><span>Last sample: {}</span></a>",escape(&worker.name),escape(&worker.name),if worker.status()=="reachable"{"ok"}else{"bad"},worker.status(),worker.success.map(relative_time).unwrap_or_else(||"awaiting first sample".into())));
-        }
-        if count == 0 {
-            body.push_str(
-                "<p class=\"notice\">Worker inventory is unavailable for this group.</p>",
-            );
-        }
-        body.push_str("</div></section>");
+    if let Some(error) = &data.packing_inventory_error {
+        body.push_str(&format!(
+            "<p class=\"notice\">{}. Showing the last valid packing router inventory.</p>",
+            escape(error)
+        ));
     }
-    if data.fleet.is_empty() {
-        body.push_str("<p class=\"notice\">No workers discovered. Check the dashboard inventory configuration.</p>");
+    body.push_str(&entrypoint_apm(data));
+    body.push_str(&format!("<section class=\"topology\"><h2>Deployment topology</h2><a class=\"node-link coord-link\" href=\"/apm/coordinator/\"><strong>Coordinator</strong><span>{}</span><span class=\"{}\">{}</span></a><div class=\"trunk\" style=\"margin:auto\"></div>",escape(&data.hostname),if health_ok(data){"ok"}else{"bad"},if health_ok(data){"Healthy"}else{"Needs attention"}));
+    if domain_mode {
+        body.push_str(&domain_topology(data));
+    } else {
+        body.push_str("<div class=\"groups\">");
+        let mut groups: std::collections::BTreeSet<&str> =
+            data.fleet.values().map(|w| w.group.as_str()).collect();
+        groups.extend(data.groups.keys().map(String::as_str));
+        for name in groups {
+            let group = data.groups.get(name).cloned().unwrap_or_default();
+            let role = group.role.as_deref().unwrap_or("unknown").replace('_', " ");
+            body.push_str(&format!("<section class=\"group\"><h3>{}</h3><p class=\"summary\">{} · {} assigned shards · {} published replicas</p><div class=\"replicas\">",escape(name),escape(&role),group.shards.map(format_number).unwrap_or_else(||"unknown".into()),group.published.map(format_number).unwrap_or_else(||"unknown".into())));
+            let mut count = 0;
+            for worker in data.fleet.values().filter(|w| w.group == name) {
+                count += 1;
+                body.push_str(&format!("<a class=\"node-link\" href=\"/apm/workers/{}/\"><strong>{}</strong><span class=\"{}\">{}</span><span>Last sample: {}</span></a>",escape(&worker.name),escape(&worker.name),if worker.status()=="reachable"{"ok"}else{"bad"},worker.status(),worker.success.map(relative_time).unwrap_or_else(||"awaiting first sample".into())));
+            }
+            if count == 0 {
+                body.push_str(
+                    "<p class=\"notice\">Worker inventory is unavailable for this group.</p>",
+                );
+            }
+            body.push_str("</div></section>");
+        }
+        if data.fleet.is_empty() {
+            body.push_str("<p class=\"notice\">No workers discovered. Check the dashboard inventory configuration.</p>");
+        }
+        body.push_str("</div>");
     }
-    body.push_str("</div></section><p class=\"note\">Reachability comes from worker metrics. Published replica counts come from the coordinator and describe serving redundancy. Refreshes every 15 seconds.</p>");
+    body.push_str("</section><p class=\"note\">Worker assignments come from coordinator domain placement; packing-router assignments come from its router inventory. A shared host can appear in more than one domain. Refreshes every 15 seconds.</p>");
     page(data, "Fleet overview", body)
+}
+
+fn packing_link(router: &crate::packing_fleet::PackingRouter) -> String {
+    let sample = &router.sample;
+    format!("<a class=\"node-link\" href=\"/apm/packing-routers/{}/\"><strong>{}</strong><span class=\"{}\">{}</span><span>Last sample: {}</span></a>", escape(&sample.name), escape(&sample.name), if router.status() == "ready" { "ok" } else { "bad" }, router.status(), sample.success.map(relative_time).unwrap_or_else(|| "awaiting first sample".into()))
+}
+fn worker_link(data: &DashboardData, name: &str) -> String {
+    match data.fleet.get(name) {
+        Some(worker) => format!("<a class=\"node-link\" href=\"/apm/workers/{}/\"><strong>{}</strong><span class=\"{}\">{}</span><span>Last sample: {}</span></a>", escape(name), escape(name), if worker.status() == "reachable" { "ok" } else { "bad" }, worker.status(), worker.success.map(relative_time).unwrap_or_else(|| "awaiting first sample".into())),
+        None => format!("<div class=\"node-link\"><strong>{}</strong><span class=\"bad\">Worker monitoring unavailable</span></div>", escape(name)),
+    }
+}
+fn domain_topology(data: &DashboardData) -> String {
+    let mut out = String::new();
+    let fresh = !data.placement_error
+        && data
+            .placement_success
+            .is_some_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() <= 45));
+    if let Some(placement) = &data.placement {
+        if !fresh {
+            out.push_str("<p class=\"notice\">Domain placement is stale or unavailable. Showing the last successful assignment.</p>");
+        }
+        out.push_str(&format!(
+            "<p class=\"summary\">Placement revision {} · Last sample: {}</p>",
+            placement
+                .revision
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "unknown".into()),
+            data.placement_success
+                .map(relative_time)
+                .unwrap_or_else(|| "never".into())
+        ));
+        out.push_str("<div class=\"groups\">");
+        for (id, workers) in &placement.domains {
+            out.push_str(&format!("<section class=\"group domain-group\" data-domain=\"{id}\"><h3>Shard / domain {id}</h3><p class=\"summary\">Packing routers</p><div class=\"replicas\">"));
+            let routers: Vec<_> = data
+                .packing_routers
+                .values()
+                .filter(|r| r.serves(*id))
+                .collect();
+            for router in &routers {
+                out.push_str(&packing_link(router));
+            }
+            if routers.is_empty() {
+                out.push_str("<p class=\"notice\">Packing-router assignment unavailable.</p>");
+            }
+            out.push_str(&format!("</div><div class=\"trunk\" style=\"margin:auto\"></div><p class=\"summary\">Evaluation workers · {} replicas</p><div class=\"replicas\">", workers.len()));
+            for name in workers {
+                out.push_str(&worker_link(data, name));
+            }
+            if workers.is_empty() {
+                out.push_str("<p class=\"notice\">No evaluation workers assigned.</p>");
+            }
+            out.push_str("</div></section>");
+        }
+        out.push_str("</div>");
+        if placement.domains.is_empty() {
+            out.push_str("<p class=\"notice\">No domains are currently placed.</p>");
+        }
+    } else {
+        out.push_str("<p class=\"notice\">Domain placement is unavailable. Registered hosts are listed below without inferred assignments.</p>");
+    }
+    let unused_routers: Vec<_> = data
+        .packing_routers
+        .values()
+        .filter(|r| {
+            data.placement
+                .as_ref()
+                .is_none_or(|p| !p.domains.keys().any(|id| r.serves(*id)))
+        })
+        .collect();
+    let unused_workers: Vec<_> = data
+        .fleet
+        .keys()
+        .filter(|name| {
+            data.placement
+                .as_ref()
+                .is_none_or(|p| !p.domains.values().any(|w| w.contains(name)))
+        })
+        .collect();
+    if !unused_routers.is_empty() || !unused_workers.is_empty() {
+        out.push_str("<details id=\"other-registered-hosts\"><summary>Other registered hosts</summary><p class=\"summary\">Not associated with a domain in the displayed placement.</p><div class=\"groups\">");
+        for router in unused_routers {
+            out.push_str(&packing_link(router));
+        }
+        for name in unused_workers {
+            out.push_str(&worker_link(data, name));
+        }
+        out.push_str("</div></details>");
+    }
+    out
 }
 
 pub async fn coordinator_page(State(state): State<SharedDashboard>) -> Html<String> {
@@ -243,6 +370,104 @@ fn coordinator(data: &DashboardData) -> String {
     page(data, "Coordinator", body)
 }
 
+pub async fn packing_router_page(
+    State(state): State<SharedDashboard>,
+    Path(name): Path<String>,
+) -> Result<Html<String>, StatusCode> {
+    let data = state.read().await.clone();
+    let router = data
+        .packing_routers
+        .get(&name)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Html(packing_router_detail(&data, router)))
+}
+fn packing_router_detail(
+    data: &DashboardData,
+    router: &crate::packing_fleet::PackingRouter,
+) -> String {
+    let sample = &router.sample;
+    let mut body = breadcrumb(&sample.name);
+    let assignments = if router.domains.is_empty() {
+        "All domains".to_string()
+    } else {
+        router
+            .domains
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    body.push_str(&format!("<h2 class=\"section-title\">{}</h2><p class=\"intro\">Packing router · dispatches worker evaluations and packs query responses.</p><div class=\"statusbar\">{}<span>Last successful sample: {}</span></div>", escape(&sample.name), chip("router", router.status(), router.status() == "ready"), sample.success.map(relative_time).unwrap_or_else(|| "never".into())));
+    body.push_str(&format!(
+        "<p class=\"intro\">Last check: {}</p>",
+        sample
+            .attempted
+            .map(relative_time)
+            .unwrap_or_else(|| "not yet checked".into())
+    ));
+    body.push_str(&format!(
+        "<p class=\"intro\">Configured domains: {}</p>",
+        escape(&assignments)
+    ));
+    if let Some(error) = &sample.error {
+        body.push_str(&format!(
+            "<p class=\"notice\">{}. Values below are from the last successful sample.</p>",
+            escape(error)
+        ));
+    }
+    if router.status() == "stale" {
+        body.push_str(
+            "<p class=\"notice\">These measurements are stale (more than 45 seconds old).</p>",
+        );
+    }
+    if router.status() == "not ready" {
+        body.push_str(
+            "<p class=\"notice\">The router is reachable but is not ready to serve queries.</p>",
+        );
+    }
+    body.push_str("<div class=\"grid\" style=\"margin-top:24px\">");
+    body.push_str(&card(
+        "Serving state",
+        rows(
+            &sample.values,
+            &[
+                ("controller_epoch", "Controller epoch"),
+                ("available_requests", "Available request slots"),
+                ("evaluations_outstanding", "Outstanding evaluations"),
+            ],
+        ),
+    ));
+    body.push_str(&card(
+        "Queries · cumulative",
+        rows(
+            &sample.values,
+            &[
+                ("successful_queries_total", "Successful"),
+                ("rejected_queries_total", "Rejected"),
+                ("failed_queries_total", "Failed"),
+                ("evaluation_retries_total", "Evaluation retries"),
+            ],
+        ),
+    ));
+    body.push_str(&card(
+        "Packing",
+        rows(
+            &sample.values,
+            &[
+                ("resident_objects", "Resident objects"),
+                ("charged_bytes", "Charged packing memory"),
+                (
+                    "intermediate_bytes_total",
+                    "Intermediate payload bytes · cumulative",
+                ),
+                ("packing_microseconds_total", "Packing time · cumulative"),
+            ],
+        ),
+    ));
+    body.push_str("</div><p class=\"note\">Charged packing memory tracks packing allocations, not total host RAM. Query and transfer counters are cumulative since process start. Public Init / Query latency and transfer rates remain on the fleet overview. Refreshes every 15 seconds.</p>");
+    page(data, &sample.name, body)
+}
+
 pub async fn worker_page(
     State(state): State<SharedDashboard>,
     Path(name): Path<String>,
@@ -253,7 +478,32 @@ pub async fn worker_page(
 }
 fn worker_detail(data: &DashboardData, worker: &crate::fleet::Worker) -> String {
     let mut body = breadcrumb(&worker.name);
-    body.push_str(&format!("<h2 class=\"section-title\">{}</h2><p class=\"intro\">Replica in {}</p><div class=\"statusbar\">{}<span>Last successful sample: {}</span></div>",escape(&worker.name),escape(&worker.group),chip("metrics",worker.status(),worker.status()=="reachable"),worker.success.map(relative_time).unwrap_or_else(||"never".into())));
+    let membership = data
+        .placement
+        .as_ref()
+        .map(|p| {
+            let ids: Vec<_> = p
+                .domains
+                .iter()
+                .filter(|(_, workers)| workers.contains(&worker.name))
+                .map(|(id, _)| id.to_string())
+                .collect();
+            if ids.is_empty() {
+                "Evaluation worker · no current domain assignment".into()
+            } else {
+                format!(
+                    "Evaluation worker · Domains {}{}",
+                    ids.join(", "),
+                    if data.placement_error {
+                        " (last known placement)"
+                    } else {
+                        ""
+                    }
+                )
+            }
+        })
+        .unwrap_or_else(|| format!("Evaluation worker · inventory container {}", worker.group));
+    body.push_str(&format!("<h2 class=\"section-title\">{}</h2><p class=\"intro\">{}</p><div class=\"statusbar\">{}<span>Last successful sample: {}</span></div>",escape(&worker.name),escape(&membership),chip("metrics",worker.status(),worker.status()=="reachable"),worker.success.map(relative_time).unwrap_or_else(||"never".into())));
     body.push_str(&format!(
         "<p class=\"intro\">Last check: {}</p>",
         worker
@@ -358,5 +608,64 @@ mod tests {
                 .unwrap_err(),
             StatusCode::NOT_FOUND
         );
+    }
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use super::*;
+    #[test]
+    fn each_domain_contains_only_its_assigned_routers_and_workers() {
+        let mut data = super::super::tests::sample();
+        data.packing_enabled = true;
+        data.packing_routers = crate::packing_fleet::inventory(
+            r#"[
+            {"name":"shared","url":"http://10.0.0.1:8093","domains":[]},
+            {"name":"domain-two","url":"http://10.0.0.2:8093","domains":[2]},
+            {"name":"spare","url":"http://10.0.0.3:8093","domains":[9]}]"#,
+        )
+        .unwrap();
+        data.fleet = crate::fleet::inventory(r#"{"groups":[{"name":"legacy-group","replicas":[{"name":"worker-a","url":"http://10.0.1.1:8091"},{"name":"worker-b","url":"http://10.0.1.2:8091"}]}]}"#).unwrap();
+        crate::placement::update(
+            &mut data,
+            Some(
+                r#"{"placement_revision":4,"pool":{"placements":{"0":["worker-a"],"2":["worker-b","unknown-worker"]}}}"#,
+            ),
+        );
+        let html = overview(&data);
+        let domain_zero = html
+            .split("data-domain=\"0\"")
+            .nth(1)
+            .unwrap()
+            .split("</section>")
+            .next()
+            .unwrap();
+        let domain_two = html
+            .split("data-domain=\"2\"")
+            .nth(1)
+            .unwrap()
+            .split("</section>")
+            .next()
+            .unwrap();
+        assert!(domain_zero.contains("/packing-routers/shared/"));
+        assert!(domain_two.contains("/packing-routers/shared/"));
+        assert!(!domain_zero.contains("domain-two"));
+        assert!(domain_two.contains("/packing-routers/domain-two/"));
+        assert!(domain_zero.contains("/workers/worker-a/"));
+        assert!(!domain_zero.contains("worker-b"));
+        assert!(domain_two.contains("/workers/worker-b/"));
+        assert!(domain_two.contains("Worker monitoring unavailable"));
+        assert!(!domain_two.contains("/workers/unknown-worker/"));
+        assert!(!html.contains("legacy-group"));
+        assert!(!html.contains("10.0."));
+        assert!(html.contains("Other registered hosts"));
+        assert!(!domain_zero.contains("spare"));
+        data.placement_error = true;
+        assert!(overview(&data).contains("Showing the last successful assignment"));
+        data.placement = None;
+        let missing = overview(&data);
+        assert!(missing.contains("without inferred assignments"));
+        assert!(!missing.contains("data-domain="));
+        assert!(missing.contains("/packing-routers/shared/"));
     }
 }

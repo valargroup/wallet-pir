@@ -16,6 +16,8 @@ pub struct HistogramCumulative {
 
 #[derive(Clone, Debug, Default)]
 pub struct EndpointCumulative {
+    pub upload_bytes: Option<f64>,
+    pub download_bytes: Option<f64>,
     pub requests: f64,
     pub errors_5xx: f64,
     pub observed: HistogramCumulative,
@@ -64,6 +66,8 @@ pub struct LatencyWindow {
 
 #[derive(Clone, Debug, Default)]
 pub struct EndpointWindow {
+    pub upload_per_second: Option<f64>,
+    pub download_per_second: Option<f64>,
     pub qps: f64,
     pub requests: f64,
     pub errors_5xx: f64,
@@ -172,6 +176,8 @@ impl RollingMetrics {
                 (
                     endpoint.to_string(),
                     EndpointWindow {
+                        upload_per_second: self.transfer_rate(endpoint, |v| v.upload_bytes),
+                        download_per_second: self.transfer_rate(endpoint, |v| v.download_bytes),
                         qps: requests / elapsed,
                         requests,
                         errors_5xx: errors,
@@ -199,6 +205,78 @@ impl RollingMetrics {
                 )
             })
             .collect()
+    }
+
+    fn transfer_rate(
+        &self,
+        endpoint: &str,
+        value: fn(&EndpointCumulative) -> Option<f64>,
+    ) -> Option<f64> {
+        let next = self.snapshots.back()?;
+        let previous = self.snapshots.iter().rev().nth(1)?;
+        let elapsed = next.at.duration_since(previous.at).as_secs_f64();
+        // A long scrape outage is not a current transfer-rate sample.
+        if elapsed <= 0.0 || elapsed > 45.0 || process_generation_changed(previous, next) {
+            return None;
+        }
+        let current = value(next.endpoints.get(endpoint)?)?;
+        let before = value(previous.endpoints.get(endpoint)?)?;
+        if current < before {
+            return None;
+        }
+        Some((current - before) / elapsed)
+    }
+
+    /// Merge histogram deltas, never percentiles, across independently reset processes.
+    pub fn entrypoint(sources: &[&Self], endpoint: &str) -> EndpointWindow {
+        let mut result = EndpointWindow::default();
+        let mut buckets: Vec<(f64, f64)> = Vec::new();
+        let mut samples = 0.0;
+        let mut upload = Some(0.0);
+        let mut download = Some(0.0);
+        for source in sources {
+            upload = upload
+                .zip(source.transfer_rate(endpoint, |v| v.upload_bytes))
+                .map(|(a, b)| a + b);
+            download = download
+                .zip(source.transfer_rate(endpoint, |v| v.download_bytes))
+                .map(|(a, b)| a + b);
+            let Some(newest) = source.latest() else {
+                continue;
+            };
+            let oldest = source
+                .snapshots
+                .iter()
+                .position(|s| newest.at.duration_since(s.at).as_secs() <= 300)
+                .unwrap_or(source.snapshots.len() - 1);
+            let (delta, count) =
+                latency_buckets(&source.snapshots, oldest, endpoint, processing_histogram);
+            // Different bucket schemas cannot be safely combined.
+            if !buckets.is_empty()
+                && !delta.is_empty()
+                && (buckets.len() != delta.len()
+                    || buckets.iter().zip(&delta).any(|(a, b)| a.0 != b.0))
+            {
+                return EndpointWindow::default();
+            }
+            if buckets.is_empty() {
+                buckets = delta;
+            } else {
+                for (total, next) in buckets.iter_mut().zip(delta) {
+                    total.1 += next.1;
+                }
+            }
+            samples += count;
+        }
+        result.processing = LatencyWindow {
+            samples,
+            p50: histogram_quantile(0.50, &buckets, samples),
+            p95: histogram_quantile(0.95, &buckets, samples),
+            p99: histogram_quantile(0.99, &buckets, samples),
+        };
+        result.upload_per_second = if sources.is_empty() { None } else { upload };
+        result.download_per_second = if sources.is_empty() { None } else { download };
+        result
     }
 
     pub fn worker_query_windows(&self) -> BTreeMap<String, WorkerQueryWindow> {
@@ -340,6 +418,21 @@ fn latency_window(
     endpoint: &str,
     histogram: fn(&EndpointCumulative) -> &HistogramCumulative,
 ) -> LatencyWindow {
+    let (buckets, samples) = latency_buckets(snapshots, oldest_index, endpoint, histogram);
+    LatencyWindow {
+        samples,
+        p50: histogram_quantile(0.50, &buckets, samples),
+        p95: histogram_quantile(0.95, &buckets, samples),
+        p99: histogram_quantile(0.99, &buckets, samples),
+    }
+}
+
+fn latency_buckets(
+    snapshots: &VecDeque<MetricsSnapshot>,
+    oldest_index: usize,
+    endpoint: &str,
+    histogram: fn(&EndpointCumulative) -> &HistogramCumulative,
+) -> (Vec<(f64, f64)>, f64) {
     let current_endpoint = snapshots
         .back()
         .and_then(|snapshot| snapshot.endpoints.get(endpoint))
@@ -388,12 +481,7 @@ fn latency_window(
                 .unwrap_or(0.0);
         }
     }
-    LatencyWindow {
-        samples,
-        p50: histogram_quantile(0.50, &buckets, samples),
-        p95: histogram_quantile(0.95, &buckets, samples),
-        p99: histogram_quantile(0.99, &buckets, samples),
-    }
+    (buckets, samples)
 }
 
 fn process_generation_changed(previous: &MetricsSnapshot, next: &MetricsSnapshot) -> bool {
@@ -493,7 +581,15 @@ pub fn parse_prometheus(
         let sample = parse_line(line)
             .map_err(|error| format!("line {}: {error}", line_number.saturating_add(1)))?;
         let name = sample.name.as_str();
-        if name == schema.requests_total {
+        if name == format!("{}_http_request_body_bytes_total", schema.prefix) {
+            set_endpoint_value(&mut endpoints, &sample, |v| {
+                v.upload_bytes = Some(sample.value)
+            });
+        } else if name == format!("{}_http_response_body_bytes_total", schema.prefix) {
+            set_endpoint_value(&mut endpoints, &sample, |v| {
+                v.download_bytes = Some(sample.value)
+            });
+        } else if name == schema.requests_total {
             if let Some(values) = endpoint_entry(&mut endpoints, &sample) {
                 values.requests += sample.value;
                 if sample
@@ -1447,5 +1543,64 @@ enhance_snapshot_generation 1
         }
         assert_eq!(rolling.len(), 21);
         assert_eq!(rolling.windows()["metadata"].requests, 24.0);
+    }
+}
+
+#[cfg(test)]
+mod entrypoint_tests {
+    use super::*;
+    use std::time::Duration;
+    fn sample(at: Instant, process: u64, bytes: u64, fast: u64, total: u64) -> MetricsSnapshot {
+        parse_prometheus(
+            &Schema::enhance_default(),
+            &format!(
+                r#"
+process_start_time_seconds {process}
+enhance_http_request_body_bytes_total{{endpoint="query"}} {bytes}
+enhance_http_response_body_bytes_total{{endpoint="query"}} {bytes}
+enhance_http_request_processing_duration_seconds_bucket{{endpoint="query",le="1"}} {fast}
+enhance_http_request_processing_duration_seconds_bucket{{endpoint="query",le="10"}} {total}
+enhance_http_request_processing_duration_seconds_bucket{{endpoint="query",le="+Inf"}} {total}
+enhance_http_request_processing_duration_seconds_count{{endpoint="query"}} {total}
+"#
+            ),
+            at,
+        )
+        .unwrap()
+    }
+    #[test]
+    fn rates_use_latest_interval_and_missing_is_not_zero() {
+        let now = Instant::now();
+        let mut rolling = RollingMetrics::new(Schema::enhance_default());
+        rolling.push(sample(now, 1, 0, 0, 0));
+        assert!(rolling.windows()["query"].upload_per_second.is_none());
+        rolling.push(sample(now + Duration::from_secs(15), 1, 150, 1, 1));
+        assert_eq!(rolling.windows()["query"].upload_per_second, Some(10.0));
+        rolling.push(sample(now + Duration::from_secs(30), 1, 150, 1, 1));
+        assert_eq!(rolling.windows()["query"].upload_per_second, Some(0.0));
+        assert!(rolling.windows()["init"].upload_per_second.is_none());
+        rolling.push(sample(now + Duration::from_secs(45), 2, 900, 2, 2));
+        assert!(rolling.windows()["query"].upload_per_second.is_none());
+        rolling.push(sample(now + Duration::from_secs(105), 2, 1000, 3, 3));
+        assert!(rolling.windows()["query"].upload_per_second.is_none());
+    }
+    #[test]
+    fn aggregate_histograms_before_quantiles_and_reset_each_source() {
+        let now = Instant::now();
+        let mut a = RollingMetrics::new(Schema::enhance_default());
+        let mut b = RollingMetrics::new(Schema::enhance_default());
+        a.push(sample(now, 1, 0, 0, 0));
+        b.push(sample(now, 1, 0, 0, 0));
+        a.push(sample(now + Duration::from_secs(15), 1, 150, 99, 99));
+        b.push(sample(now + Duration::from_secs(15), 1, 300, 0, 1));
+        let window = RollingMetrics::entrypoint(&[&a, &b], "query");
+        assert_eq!(window.processing.samples, 100.0);
+        assert!(window.processing.p50.unwrap() < 1.0);
+        assert_eq!(window.processing.p99, Some(1.0));
+        assert_eq!(window.upload_per_second, Some(30.0));
+        b.push(sample(now + Duration::from_secs(30), 2, 10, 1, 1));
+        let window = RollingMetrics::entrypoint(&[&a, &b], "query");
+        assert_eq!(window.processing.samples, 101.0);
+        assert!(window.upload_per_second.is_none());
     }
 }

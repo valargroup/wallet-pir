@@ -1,9 +1,12 @@
 mod alerts;
 mod config;
 mod dashboard;
+mod entrypoints;
 mod fleet;
 mod host;
 mod metrics;
+mod packing_fleet;
+mod placement;
 mod schema;
 mod slack;
 mod thresholds;
@@ -68,6 +71,11 @@ async fn main() -> Result<()> {
         dashboard.write().await.fleet_enabled = true;
         tokio::spawn(fleet::monitor(path, dashboard.clone()));
     }
+    if let Some(path) = config.packing_router_config.clone() {
+        dashboard.write().await.packing_enabled = true;
+        tokio::spawn(packing_fleet::monitor(path, dashboard.clone()));
+    }
+    tokio::spawn(entrypoints::run(config.clone(), Arc::clone(&dashboard)));
     let scrape_dashboard = Arc::clone(&dashboard);
     let scrape_config = config.clone();
     tokio::spawn(async move {
@@ -117,6 +125,7 @@ async fn scrape_loop(
         let scrape_ok = metrics_result.is_ok() && health_result.is_ok() && ready_result.is_ok();
         let host = host::collect(&config.data_dir);
         let mut scrape_error = None;
+        let mut metrics_success = false;
 
         let group_metrics = metrics_result.as_ref().ok().map(|r| {
             fleet::groups(
@@ -126,7 +135,10 @@ async fn scrape_loop(
         });
         match metrics_result {
             Ok(response) => match metrics::parse_prometheus(&config.schema, &response.body, now) {
-                Ok(snapshot) => rolling.push(snapshot),
+                Ok(snapshot) => {
+                    rolling.push(snapshot);
+                    metrics_success = true;
+                }
                 Err(error) => scrape_error = Some(format!("metrics parse failed: {error}")),
             },
             Err(error) => scrape_error = Some(error),
@@ -172,8 +184,18 @@ async fn scrape_loop(
             if let Some(groups) = group_metrics {
                 view.groups = groups;
             }
-            view.last_scrape = Some(SystemTime::now());
+            if metrics_success {
+                view.last_scrape = Some(SystemTime::now());
+            }
             view.scrape_error = scrape_error;
+            placement::update(
+                &mut view,
+                health_result
+                    .as_ref()
+                    .ok()
+                    .filter(|r| (200..300).contains(&r.status))
+                    .map(|r| r.body.as_str()),
+            );
             view.health_status = health_status;
             view.health_body = health_result
                 .as_ref()
@@ -254,6 +276,14 @@ fn dashboard_router(dashboard: SharedDashboard) -> Router {
         .route("/apm/coordinator/", get(dashboard::coordinator_page))
         .route("/workers/:name/", get(dashboard::worker_page))
         .route("/apm/workers/:name/", get(dashboard::worker_page))
+        .route(
+            "/packing-routers/:name/",
+            get(dashboard::packing_router_page),
+        )
+        .route(
+            "/apm/packing-routers/:name/",
+            get(dashboard::packing_router_page),
+        )
         .route("/healthz", get(dashboard::healthz))
         .with_state(dashboard)
 }

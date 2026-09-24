@@ -21,8 +21,22 @@ pub type SharedDashboard = Arc<RwLock<DashboardData>>;
 /// the page turns over at roughly the same rate the data behind it does.
 const REFRESH_SECONDS: u64 = 15;
 
+#[derive(Clone, Debug, Default)]
+pub struct EntrypointData {
+    pub window: EndpointWindow,
+    pub last_success: Option<SystemTime>,
+    pub error: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct DashboardData {
+    pub placement: Option<crate::placement::Placement>,
+    pub placement_success: Option<SystemTime>,
+    pub placement_error: bool,
+    pub packing_enabled: bool,
+    pub packing_routers: BTreeMap<String, crate::packing_fleet::PackingRouter>,
+    pub packing_inventory_error: Option<String>,
+    pub entrypoints: BTreeMap<String, EntrypointData>,
     pub fleet_enabled: bool,
     pub fleet: BTreeMap<String, crate::fleet::Worker>,
     pub groups: BTreeMap<String, crate::fleet::Group>,
@@ -58,6 +72,13 @@ impl DashboardData {
         host: HostHealth,
     ) -> Self {
         Self {
+            placement: None,
+            placement_success: None,
+            placement_error: true,
+            packing_enabled: false,
+            packing_routers: BTreeMap::new(),
+            packing_inventory_error: None,
+            entrypoints: BTreeMap::new(),
             fleet_enabled: false,
             fleet: BTreeMap::new(),
             groups: BTreeMap::new(),
@@ -309,10 +330,50 @@ const SCRIPT: &str = r#"
 })();
 "#;
 
+fn entrypoint_apm(data: &DashboardData) -> String {
+    let mut html = String::from("<section class=\"card\"><h2 class=\"section-title\">Entrypoint APM</h2><div class=\"wrap\"><table><thead><tr><th>Entrypoint</th><th>p50</th><th>p99</th><th>Upload</th><th>Download</th><th>Last sample</th></tr></thead><tbody>");
+    for (endpoint, label) in [("init", "Init"), ("query", "Query")] {
+        let sample = data.entrypoints.get(endpoint);
+        let fresh = sample.is_some_and(|s| {
+            !s.error
+                && s.last_success
+                    .is_some_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() <= 45))
+        });
+        let latency = |value: Option<f64>| {
+            value
+                .filter(|_| fresh)
+                .map(|s| format!("{:.2} ms", s * 1000.0))
+                .unwrap_or_else(|| "—".into())
+        };
+        let rate = |value: Option<f64>| {
+            value
+                .filter(|_| fresh)
+                .map(|b| {
+                    if b >= 1024.0 * 1024.0 {
+                        format!("{:.2} MiB/s", b / (1024.0 * 1024.0))
+                    } else {
+                        format!("{:.2} KiB/s", b / 1024.0)
+                    }
+                })
+                .unwrap_or_else(|| "—".into())
+        };
+        let w = sample.map(|s| s.window.clone()).unwrap_or_default();
+        let status = match sample.and_then(|s| s.last_success) {
+            Some(t) if fresh => relative_time(t),
+            Some(t) => format!("Stale · {}", relative_time(t)),
+            None => "Unavailable".into(),
+        };
+        html.push_str(&format!("<tr><th>{label}</th><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>", latency(w.processing.p50), latency(w.processing.p99), rate(w.upload_per_second), rate(w.download_per_second), if fresh {"muted"} else {"warn"}, escape(&status)));
+    }
+    html.push_str("</tbody></table></div><p class=\"intro\">p50/p99: server processing over 5 minutes, excluding upload and response download. Transfer rates: latest scrape interval, client → service (upload) and service → client (download), payload bytes only. — means no samples or unavailable metrics. Refreshes every 15 seconds.</p></section>");
+    html
+}
+
 fn render(data: &DashboardData) -> String {
     if data
         .snapshot_gauges
         .contains_key("enhance_published_anchor_height")
+        || data.packing_enabled
         || data.fleet_enabled
         || !data.fleet.is_empty()
     {
@@ -332,6 +393,7 @@ fn render(data: &DashboardData) -> String {
     out.push_str(&masthead(data));
     out.push_str(&statusbar(data));
     out.push_str(&kpis(data));
+    out.push_str(&entrypoint_apm(data));
     out.push_str(&endpoint_table(data));
     out.push_str(&processing_latency_splits(data));
     out.push_str(&worker_query_cards(data));
@@ -351,8 +413,8 @@ fn render(data: &DashboardData) -> String {
     out
 }
 
-// The current coordinator publishes aggregate gauges and query counters. It
-// does not publish the old HTTP histogram families, so showing their empty
+// The current coordinator publishes aggregate gauges and entrypoint processing
+// histograms. It does not publish legacy observed histograms, so showing their empty
 // endpoint table would imply measurements that are no longer available.
 fn current_kpis(data: &DashboardData) -> String {
     let value = |name: &str| {
@@ -1862,4 +1924,53 @@ mod tests {
 
 #[path = "fleet_view.rs"]
 mod fleet_view;
-pub use fleet_view::{coordinator_page, worker_page};
+pub use fleet_view::{coordinator_page, packing_router_page, worker_page};
+
+#[cfg(test)]
+mod entrypoint_table_tests {
+    use super::*;
+    #[test]
+    fn table_only_shows_init_query_and_suppresses_stale_numbers() {
+        let mut data = DashboardData::new(
+            "APM".into(),
+            Schema::enhance_default(),
+            "test".into(),
+            "test".into(),
+            HostHealth::default(),
+        );
+        let unavailable = entrypoint_apm(&data);
+        assert!(unavailable.contains("<th>Init</th>"));
+        assert!(unavailable.contains("<th>Query</th>"));
+        assert!(unavailable.contains("Unavailable"));
+        assert!(!unavailable.contains("metadata"));
+        let mut sample = EntrypointData {
+            last_success: Some(SystemTime::now()),
+            ..Default::default()
+        };
+        sample.window.processing.p50 = Some(0.123);
+        sample.window.processing.p99 = Some(0.456);
+        sample.window.upload_per_second = Some(0.0);
+        sample.window.download_per_second = Some(2097152.0);
+        data.entrypoints.insert("query".into(), sample.clone());
+        let fresh = entrypoint_apm(&data);
+        assert!(fresh.contains("123.00 ms"));
+        assert!(fresh.contains("456.00 ms"));
+        assert!(fresh.contains("0.00 KiB/s"));
+        assert!(fresh.contains("2.00 MiB/s"));
+        sample.error = true;
+        data.entrypoints.insert("query".into(), sample.clone());
+        let failed = entrypoint_apm(&data);
+        assert!(failed.contains("Stale"));
+        assert!(!failed.contains("123.00 ms"));
+        sample.error = false;
+        sample.last_success = Some(SystemTime::now() - std::time::Duration::from_secs(46));
+        data.entrypoints.insert("query".into(), sample);
+        assert!(!entrypoint_apm(&data).contains("123.00 ms"));
+        data.fleet_enabled = true;
+        let overview = render(&data);
+        assert!(
+            overview.find("Entrypoint APM").unwrap()
+                < overview.find("Deployment topology").unwrap()
+        );
+    }
+}
