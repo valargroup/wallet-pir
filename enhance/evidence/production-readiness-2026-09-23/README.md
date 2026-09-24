@@ -11,8 +11,12 @@ source revision `527048217f8cb83d27c838e94dbaac21ac25837d`; the deployed
 Linux server binary SHA-256 is
 `3c10840380c306b0564b4a171d81f51c3ca35089fbc624cba7c7e9b4198e3b29`.
 The previous releases and data remain available for rollback, and cleanup
-timers remain disabled. The source changes since that revision affect tooling,
-APM, evidence and tests, not the deployed server/load binary.
+timers remain disabled. Commit `7ca1988` changes the journal append recovery
+path after that deployed revision: an uncommitted record suffix is now trimmed
+to the manifest's committed length before appending. The running public load
+still measures the earlier deployed binary. It remains useful diagnostic
+evidence, but it cannot qualify the updated server candidate; rebuild and
+repeat affected production gates after deploying that exact new binary.
 
 The fully observed public HTTPS run has passed its 30-minute 1, 2 and 4 QPS
 stages: 1,800, 3,600 and 7,200 exact answers respectively, with zero request
