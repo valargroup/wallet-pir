@@ -8,6 +8,8 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Production cleanup deployment (PR #111)](production-cleanup-2026-09-24/README.md) — verified rolling update, unchanged v7 state, and 120/120 correct public smoke answers; not sustained qualification.
+
 - [Optional CUDA worker validation on P4000](cuda-p4000-2026-09-24/README.md) — GPU integration correctness and composed-domain matrix benchmark; not fleet qualification.
 
 - [V7 SSH deployment, wallet interop and focused validation](immutable-v7-2026-09-24/README.md) — functional checks passed; memory/swap and short-run p99 qualification gates remain open.

@@ -1,0 +1,36 @@
+{
+  "purpose": "Focused validation that serial native server library tests fit fast CI 6GiB cap",
+  "source": "71be21fe49b96f032db23983b2218c5b59aab0a9",
+  "host": "roman-ipir-bench-8vcpu",
+  "unit": "wallet-pir-native-6g.service",
+  "profile": "release-fast",
+  "binary": "/root/wallet-pir-production-71be21f/target/release-fast/deps/enhance_pir_server-8a9786dccc6ba899",
+  "binary_sha256": "0266a4c83308f575737b1499a4a0d0f167290f9099321b37df7a76d7e1dcd27e",
+  "test_threads": 1,
+  "memory_max_bytes": 6442450944,
+  "memory_swap_max_bytes": 0,
+  "memory_peak_bytes": 3111366656,
+  "memory_peak_gib": 2.897686004638672,
+  "passed": 107,
+  "failed": 0,
+  "exit_code": 0,
+  "result": "success",
+  "duration_test_seconds": 116.36,
+  "started_utc": "2026-09-24T18:03:04Z",
+  "exited_utc": "2026-09-24T18:05:01Z",
+  "limitation": "Native existing test binary in isolated systemd memory cgroup; validates server-library allocation cap, not GitHub runner scheduling or full CI workflow. No production changes and no rebuild.",
+  "raw_files": {
+    "native-lib-6g.log": {
+      "sha256": "2e71ec25aeb232f450e48c8684aafa31791f64ee605e6129ffcf773bb1af943f",
+      "bytes": 9280
+    },
+    "native-lib-6g.systemd.txt": {
+      "sha256": "3f0de86c167d9dda0c5d4bb62b4f05b6380639a58200aa7b3514e989a821dffd",
+      "bytes": 281
+    },
+    "native-lib-6g.binary-sha256": {
+      "sha256": "037b307cfac92c22679d0a709cc96d63a2e96c0bc2ae91cc9dbdeee99670a83a",
+      "bytes": 163
+    }
+  }
+}

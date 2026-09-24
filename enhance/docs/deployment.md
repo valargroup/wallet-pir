@@ -1,12 +1,14 @@
 # Enhance PIR deployment
 
-The v7 SSH rollout uses `/opt/enhance-pir-v7/releases/2a83c21` and fresh state
+The current production server release is the [September 24 cleanup deployment](../evidence/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
+
+The initial v7 SSH rollout used `/opt/enhance-pir-v7/releases/2a83c21` and fresh state
 under `/srv/enhance-pir-v7`. The [dated evidence](../evidence/immutable-v7-2026-09-24/README.md)
 records the final deployment status, checksums, tests and capacity limitations.
 The previous release and `/srv/enhance-pir-v6` data remain available for rollback.
 
 The subsequent [cache-reclaim update](../evidence/worker-cache-reclaim-2026-09-24/README.md)
-deploys source `ac7cf9d` in `/opt/enhance-pir-v7/releases/ac7cf9d` on the same
+deployed source `ac7cf9d` in `/opt/enhance-pir-v7/releases/ac7cf9d` on the same
 three hosts. Its focused workload was stopped early at the operator's request;
 the memory observation is promising but not a completed qualification.
 

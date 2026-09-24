@@ -4,6 +4,7 @@ These are dated records, not claims about the current source or live fleet. Use 
 
 | Run | Recorded subject |
 |---|---|
+| [production-cleanup-2026-09-24](production-cleanup-2026-09-24/README.md) | PR #111 production rollout, exact-answer smoke, and rollback provenance |
 | [cuda-p4000-2026-09-24](cuda-p4000-2026-09-24/README.md) | Optional CUDA worker correctness and P4000 composed-domain matrix benchmark |
 | [packing-budget-2026-09-24](packing-budget-2026-09-24/README.md) | Packing component residency, construction overlap and Linux cgroup limits |
 | [architecture-v4-abort-notifications-2026-09-23](architecture-v4-abort-notifications-2026-09-23/README.md) | V4 abort-notification recovery — September 23, 2026 |

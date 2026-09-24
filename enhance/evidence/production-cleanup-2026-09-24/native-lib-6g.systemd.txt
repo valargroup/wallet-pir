@@ -1,0 +1,12 @@
+Result=success
+OOMPolicy=stop
+ExecMainStartTimestamp=Thu 2026-09-24 18:03:04 UTC
+ExecMainExitTimestamp=Thu 2026-09-24 18:05:01 UTC
+ExecMainCode=1
+ExecMainStatus=0
+MemoryCurrent=[not set]
+MemoryPeak=3111366656
+MemoryMax=6442450944
+MemorySwapMax=0
+ActiveState=active
+SubState=exited

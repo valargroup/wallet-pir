@@ -1,0 +1,212 @@
+{
+  "evidence_version": 1,
+  "recorded_at_utc": "2026-09-24T18:02:02.081987+00:00",
+  "purpose": "Production deployment correctness smoke for original cleanup PR111; PR97 excluded",
+  "source": {
+    "commit": "71be21fe49b96f032db23983b2218c5b59aab0a9",
+    "tree": "ce4fbef60b6488fd87eed2f2d741eb46fb0e69a4",
+    "subsequent_main_runtime_equivalent_through": "cb77029"
+  },
+  "build": {
+    "host": "roman-ipir-bench-8vcpu",
+    "source_directory": "/root/wallet-pir-production-71be21f",
+    "immutable_artifact_directory": "/root/wallet-pir-production-71be21f/release-staging",
+    "toolchain": "rustc 1.91.0 (f8297e351 2025-10-28)",
+    "profile": "release-fast",
+    "locked": true,
+    "jobs": 8,
+    "rustflags": "-Dwarnings -C target-cpu=skylake-avx512",
+    "cflags": "-mpclmul",
+    "cxxflags": "-mpclmul",
+    "command": "cargo +1.91.0 build --locked --profile release-fast -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test --bins --features enhance-pir/cli",
+    "target_cache": "Dedicated target seeded from idle architecture2 target; local server/core/loadtest packages cleaned; final canonical build copied outside Cargo target after tests",
+    "artifacts_sha256": {
+      "enhance-pir-server": "ba576af27d7fe56ada942d35366f99191b2a70b2fbf40562573d06f0f36586da",
+      "enhance-pir-cli": "48bdcbb923ef6fb25e586b0ff9db088d097ad1bc85397ecf5bd27569610241cf",
+      "enhance-pir-load-test": "aa1d27d8c4a496f6bc886f5af88c5e7f26f31c64ab0c7e178391a9ca8a144543"
+    }
+  },
+  "native_checks": [
+    {
+      "test": "enhance-pir-server --lib, serial",
+      "passed": 107,
+      "failed": 0,
+      "seconds": 116.82,
+      "raw_log": "roman-ipir-bench-8vcpu:/root/wallet-pir-production-71be21f/native-lib.log"
+    },
+    {
+      "test": "query_serving library subset",
+      "passed": 7,
+      "failed": 0,
+      "seconds": "not_recorded",
+      "raw_log": "roman-ipir-bench-8vcpu:/root/wallet-pir-production-71be21f/build.log"
+    },
+    {
+      "test": "packing_http",
+      "passed": 1,
+      "failed": 0,
+      "seconds": 32.91,
+      "raw_log": "roman-ipir-bench-8vcpu:/root/wallet-pir-production-71be21f/build.log"
+    }
+  ],
+  "host_hardware": {
+    "build": {
+      "cpu": "Intel Xeon Platinum 8358 @ 2.60GHz",
+      "vcpu": 8,
+      "memory_bytes": 33654890496
+    },
+    "coordinator_and_ingress": {
+      "host": "167.99.42.60",
+      "cpu": "Intel Xeon Gold 6548N",
+      "vcpu": 8,
+      "memory_bytes": 67427414016
+    },
+    "router": {
+      "host": "10.142.0.14",
+      "cpu": "Intel Xeon Platinum 8168 @ 2.70GHz",
+      "vcpu": 4,
+      "memory_bytes": 8326950912
+    },
+    "worker01": {
+      "host": "10.142.0.15",
+      "cpu": "Intel Xeon Platinum 8280 @ 2.70GHz",
+      "vcpu": 4,
+      "memory_bytes": 8326946816
+    },
+    "worker02": {
+      "host": "10.142.0.16",
+      "cpu": "Intel Xeon Platinum 8280 @ 2.70GHz",
+      "vcpu": 4,
+      "memory_bytes": 8326955008
+    },
+    "measurement": "Read-only lscpu/free after deployment; physical tenancy, storage performance, and exact kernel version not_recorded"
+  },
+  "rollout": {
+    "date_utc": "2026-09-24",
+    "maintenance_start_utc": "2026-09-24T17:53:26.301803+00:00",
+    "maintenance_end_utc": "2026-09-24T17:56:22.271696+00:00",
+    "maintenance_seconds_rounded": 176,
+    "activations_utc": {
+      "worker01": "17:53:41.776739",
+      "worker02": "17:54:06.049974",
+      "router": "17:54:32.746013",
+      "ingress": "17:55:47.006724",
+      "coordinator": "17:56:08.321615"
+    },
+    "all_five_server_hashes_verified": true,
+    "apm_preserved": true,
+    "apm_sha256": "d6fdb815cba45dbb219ae8fa2e36a0a38b707da1722a8d393445eaa3dc166ac3",
+    "caddy_configuration_restored_and_compared": true,
+    "rollback_required": false,
+    "state_restored_or_fences_reset": false
+  },
+  "smoke": {
+    "origin": "https://enhance-pir.valargroup.dev",
+    "command_file": "smoke-command.txt",
+    "oracle_path": "/root/architecture2-deploy/public-oracle.json",
+    "oracle_sha256": "86edbcf0efff179a01ae97aa745a3fe25d1204e89bd32ac428b20962f8acbd6b",
+    "oracle_type": "Independent canonical extractor exact-answer records",
+    "schema_version": 11,
+    "protocol": "ironwood-enhance-pir-v7",
+    "network": "main",
+    "pool": "ironwood",
+    "dataset_records_at_capture": 600125,
+    "parallelism": 2,
+    "offered_qps": 2,
+    "duration_requested_seconds": 60,
+    "warmup_requested_seconds": 10,
+    "seed": 240924111,
+    "cache_state": "10-second client warmup; existing server disk and OS caches preserved, not flushed; exact cache residency not_recorded",
+    "timing_start_utc": "not_recorded separately; command launched after maintenance restoration",
+    "timing_end_utc": "not_recorded separately; completed before final health capture",
+    "result": {
+      "protocol": "ironwood-enhance-pir-v7",
+      "seconds": 59.618030334,
+      "concurrency": 2,
+      "offered_qps": 2.0,
+      "completed": 120,
+      "succeeded": 120,
+      "incorrect_answers": 0,
+      "errors": {},
+      "unstarted_arrivals": 0,
+      "correct_queries_per_second": 2.0128138975360335,
+      "p50_ms": 124.735,
+      "p95_ms": 259.711,
+      "p99_ms": 4024.319,
+      "scheduled_p99_ms": 4024.319,
+      "exact_answer_oracle": true,
+      "warmup_errors": {},
+      "warmup_correct_answers": 128,
+      "warmup_incorrect_answers": 0
+    },
+    "exit_status": 0
+  },
+  "final_public_readiness": {
+    "generation": 132,
+    "anchor_height": 3494829,
+    "blocked_reason": null,
+    "pending_commit_notifications": 0,
+    "pending_abort_notifications": 0,
+    "published_replica_counts": {
+      "shard-group-01": 2
+    },
+    "packing_ready": true,
+    "resident_packing_objects": 0
+  },
+  "qualification_interruption": {
+    "original_duration_seconds": 21600,
+    "started_utc": "2026-09-24T17:26:24Z",
+    "interrupted_utc": "2026-09-24T17:53:25.297299+00:00",
+    "completed": false,
+    "restarted": false,
+    "original_evidence_directory": "167.99.42.60:/root/apm-hour-deploy/graph-review-sustained-20260924",
+    "exit_code": -15,
+    "note": "Only verified load-test child sent SIGTERM; parent wrote finished evidence and exited; qualification service remains failed from intentional interruption"
+  },
+  "raw_remote_evidence": {
+    "production_directory": "/root/enhance-cleanup-71be21f on each production host",
+    "smoke_result": "167.99.42.60:/root/enhance-cleanup-71be21f/public-exact-smoke.json",
+    "smoke_log": "167.99.42.60:/root/enhance-cleanup-71be21f/public-exact-smoke.log",
+    "health_capture_url": "https://enhance-pir.valargroup.dev/v1/health",
+    "manifest_capture_url": "https://enhance-pir.valargroup.dev/v1/enhance/init"
+  },
+  "limitations": [
+    "60-second measurement is deployment correctness smoke, not sustained qualification or latency SLO evidence.",
+    "p99 measured 4024.319ms; causal attribution not_recorded.",
+    "Per-query trace, CPU utilization, peak RSS, disk/network I/O, compiler linker details, and exact cache residency not_recorded.",
+    "No claim that interrupted six-hour workload passed.",
+    "Unit/environment configurations deliberately excluded from repository evidence.",
+    "Public health and init were fetched sequentially after smoke, not atomically."
+  ],
+  "raw_files": {
+    "artifact-SHA256SUMS": {
+      "sha256": "1dc0496f70003175bedee3574391dcc466819dbd7eccffb35112b9ec8fe09867",
+      "bytes": 255
+    },
+    "public-exact-smoke.exit": {
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "bytes": 2
+    },
+    "public-exact-smoke.json": {
+      "sha256": "284e348740d22ae7de2eedc1d2b3b4ed1e0bdc17ee47703edbd1f9a22884a215",
+      "bytes": 490
+    },
+    "public-exact-smoke.log": {
+      "sha256": "284e348740d22ae7de2eedc1d2b3b4ed1e0bdc17ee47703edbd1f9a22884a215",
+      "bytes": 490
+    },
+    "public-health.json": {
+      "sha256": "eef8aa8fc517155dad8a244cdcb2bb70470a1c0438d44e26adc3809d6db6d01e",
+      "bytes": 848
+    },
+    "public-init.json": {
+      "sha256": "63e220c14746eaecfc7a892f1df2d10c6b1fc03157c90297c0e35e13300dedbe",
+      "bytes": 2207
+    },
+    "smoke-command.txt": {
+      "sha256": "2b2d7ed38562cc9e6150e07fb4e0b5029a781a183b8a1db3e65c3d6387f7d037",
+      "bytes": 313
+    }
+  },
+  "run_id": "production-cleanup-2026-09-24"
+}

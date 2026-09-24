@@ -1,0 +1,1 @@
+/root/enhance-cleanup-71be21f/enhance-pir-load-test-71be21f --oracle /root/architecture2-deploy/public-oracle.json --server https://enhance-pir.valargroup.dev --parallelism 2 --rate 2 --duration 60s --warmup 10s --seed 240924111 --max-error-rate 0 --json-out /root/enhance-cleanup-71be21f/public-exact-smoke.json
