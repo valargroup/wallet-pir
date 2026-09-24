@@ -21,6 +21,9 @@ The [corrected release build](operations/release-build-216b999.json) records
 source, toolchain, archive and binary checksums from a separate existing Linux
 test host. The release archive is ready for post-load deployment, but has not
 been executed on the production CPUs or installed there.
+The [corrected-release rollout plan](operations/corrected-release-rollout-plan.md)
+records the post-load switch, rollback invariants and fresh observation needed
+for another full public run.
 
 The fully observed public HTTPS run has passed its 30-minute 1, 2 and 4 QPS
 stages: 1,800, 3,600 and 7,200 exact answers respectively, with zero request
