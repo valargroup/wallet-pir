@@ -93,3 +93,5 @@ The HTTP failure regression injects an error inside kernel evaluation, verifies
 HTTP 503 with no partial answer or private error text, then retries through the
 same single-permit worker. Wrong-length and unreduced queries must return HTTP
 400 without invoking the backend. Injection support exists only in test builds.
+
+[Failure-regression evidence](../evidence/cuda-p4000-2026-09-24/failure-regressions/README.md) records the CPU and P4000 runs.

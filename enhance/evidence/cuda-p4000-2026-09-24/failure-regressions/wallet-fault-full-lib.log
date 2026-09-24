@@ -1,0 +1,81 @@
+    Finished `release-fast` profile [optimized] target(s) in 0.30s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-b217f60e591f4c7f)
+
+running 73 tests
+test artifact::tests::failure_is_shared_but_partial_reads_and_interrupts_do_not_invalidate ... ok
+test artifact::tests::failed_atomic_write_keeps_previous_file_and_cleans_temporary ... ok
+test artifact::tests::pinned_files_survive_replacement_and_have_independent_readers ... ok
+test artifact::tests::stream_keeps_pin_after_eviction_and_reports_final_corruption ... ok
+test artifact::tests::verification_rejects_corruption_truncation_and_trailing_data ... ok
+test capacity::tests::ceiling_never_requests_a_fifth_pair ... ok
+test capacity::tests::clock_resolution_and_restarts_preserve_growth_and_demand ... ok
+test capacity::tests::forecasts_lender_limit_and_uses_existing_spare_pair ... ok
+test capacity::tests::memory_limit_requests_once_survives_restart_and_expires_for_larger_fleet ... ok
+test capacity::tests::missing_growth_is_nonzero_and_requests_survive_serialization ... ok
+test capacity::tests::provisional_burst_forecast_preserves_active_limit ... ok
+test capacity::tests::requests_pair_at_inclusive_readiness_threshold_before_successor ... ok
+test artifact::tests::slow_consumer_bounds_read_ahead_and_cancellation_stops_reader ... ok
+test control::tests::consolidation_converges_across_multiple_boundaries_without_active_sixth_slot ... ok
+test control::tests::durable_epoch_fences_restarts_and_failed_transactions ... ok
+test control::tests::provisional_ranges_and_new_successor_cannot_be_sixth_active_shard ... ok
+test control::tests::publication_commits_manifest_placement_and_outcome_together ... ok
+test control::tests::q46_controller_state_is_rejected_without_rewriting_it ... ok
+test control::tests::reorg_move_into_existing_group_requires_both_destination_replicas ... ok
+test control::tests::reservations_materialize_once_and_pins_block_reclamation ... ok
+test control::tests::abort_intent_survives_restart_without_overwriting_older_decisions ... ok
+test control::tests::seven_sealed_policy_preserves_active_limit_and_reorg_relocation ... ok
+test coordinator::admission_tests::cancelled_waiter_releases_capacity ... ok
+test control::tests::restart_at_every_phase_preserves_decision_and_fences_old_writer ... ok
+test coordinator::admission_tests::elective_consolidation_requires_both_admissions_and_does_not_reserve ... ok
+test coordinator::admission_tests::preparation_outlives_default_http_deadline ... ok
+test coordinator::admission_tests::queue_waits_for_a_slot_and_releases_it ... ok
+test coordinator::admission_tests::reorg_destination_memory_refusal_replans_to_complete_spare_pair ... ok
+test coordinator::admission_tests::restart_rejects_changed_placement_policy ... ok
+test exercise::tests::exact_probes_include_borrowed_owned_and_unit_boundaries ... ok
+test exercise::tests::full_profiles_preserve_assignment_limits_across_cycles ... ok
+test exercise::tests::host_identity_matches_raw_linux_sampler_digest ... ok
+test ingest::tests::appends_only_the_active_enhancement_journal ... ok
+test ipir::persistence_tests::legacy_v7_artifacts_are_rejected_and_streamed_persistence_preserves_queries_and_bytes ... ok
+test ipir::persistence_tests::streamed_database_rejects_short_corrupt_and_failed_reads_without_panicking ... ok
+test ipir::tests::enhance_rows_use_six_ipir_instances ... ok
+test ipir::tests::every_layout_has_the_expected_instance_count ... ok
+test ipir::tests::shard_combiners_reject_malformed_contributions ... ok
+test ipir::tests::shard_sum_wraps_without_u64_overflow ... ok
+test ipir::tests::sixteen_bit_row_encoding_preserves_the_odd_tail_byte_and_zero_padding ... ok
+test matvec::tests::explicit_configuration_validation ... ok
+test coordinator::admission_tests::full_queue_and_expired_wait_return_retryable_429 ... ok
+test runtime::tests::cuda_encrypted_bootstrap_round_trip_and_cached_restart ... ignored, requires NVIDIA GPU and NVRTC
+test runtime::tests::cuda_partial_preparation_failure_preserves_published_and_retries ... ignored, requires NVIDIA GPU and NVRTC
+test runtime::tests::backend_load_failure_does_not_rebuild_or_replace_published_units ... ok
+test runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart ... ok
+test runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates ... ok
+test runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation ... ok
+test store::tests::append_restart_and_padding_are_deterministic ... ok
+test store::tests::incompatible_journals_are_rejected_without_mutation ... ok
+test store::tests::journal_refuses_concurrent_writers ... ok
+test store::tests::records_must_match_the_layout ... ok
+test store::tests::rewind_truncates_records_and_allows_replacement_blocks ... ok
+test telemetry::tests::geometry_roles_and_escaped_labels_survive_loan_return ... ok
+test telemetry::tests::publication_targets_detect_reorg_and_preserve_retry_age ... ok
+test wire::streaming_tests::streaming_codec_matches_legacy_mph1_bytes ... ok
+test wire::streaming_tests::validation_reads_payload_in_bounded_chunks ... ok
+test wire::tests::crs_hint_round_trips_and_is_shape_strict ... ok
+test wire::tests::evaluate_request_rejects_bad_magic_truncation_and_shard_count ... ok
+test wire::tests::evaluate_response_round_trips_and_rejects_malformed_input ... ok
+test wire::tests::evaluate_wire_round_trips_and_rejects_trailing_bytes ... ok
+test worker::tests::abort_before_reserve_fences_delayed_attempt ... ok
+test runtime::tests::partial_preparation_failure_preserves_published_and_retries has been running for over 60 seconds
+test worker::tests::aborted_attempts_conflicting_payloads_and_stale_epochs_are_fenced_over_http ... ok
+test runtime::tests::partial_preparation_failure_preserves_published_and_retries ... ok
+test worker::tests::cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers ... ignored, requires NVIDIA GPU and NVRTC
+test worker::tests::device_errors_are_unavailable_without_exposing_details ... ok
+test worker::tests::metrics_do_not_block_preparation_or_invent_zero_memory ... ok
+test worker::tests::offline_repair_includes_durable_candidate_and_rejects_missing_journal ... ok
+test worker::tests::placement_policy_is_persisted_and_fences_reservations ... ok
+test worker::tests::q46_worker_state_is_rejected_without_rewriting_it ... ok
+test worker::tests::backend_evaluation_failure_over_http_releases_permit_and_recovers ... ok
+test zakura::tests::canonical_ironwood_transaction_has_actual_fee_and_expiry ... ok
+test worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows ... ok
+
+test result: ok. 70 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 85.08s
+

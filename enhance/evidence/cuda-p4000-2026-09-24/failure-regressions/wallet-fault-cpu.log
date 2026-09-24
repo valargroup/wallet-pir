@@ -1,0 +1,20 @@
+   Compiling simplepir-kernel v0.1.0-rc.1 (https://github.com/valargroup/ipir-sp.git?rev=1d8aea341d844df97ef6eb244c24b0a050eb3e9b#1d8aea34)
+   Compiling ipir-sp v0.1.0-rc.2 (https://github.com/valargroup/ipir-sp.git?rev=1d8aea341d844df97ef6eb244c24b0a050eb3e9b#1d8aea34)
+   Compiling enhance-pir v0.0.1 (/home/paperspace/wallet-pir-cuda/enhance/crates/enhance-pir)
+   Compiling enhance-pir-server v0.0.1 (/home/paperspace/wallet-pir-cuda/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 21.46s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-a6c1575f24857231)
+
+running 1 test
+test runtime::tests::partial_preparation_failure_preserves_published_and_retries ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 69 filtered out; finished in 55.30s
+
+    Finished `release-fast` profile [optimized] target(s) in 0.28s
+     Running unittests src/lib.rs (target/release-fast/deps/enhance_pir_server-a6c1575f24857231)
+
+running 1 test
+test worker::tests::backend_evaluation_failure_over_http_releases_permit_and_recovers ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 69 filtered out; finished in 8.13s
+
