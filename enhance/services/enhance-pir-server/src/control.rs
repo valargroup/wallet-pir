@@ -1,4 +1,5 @@
 //! Durable single-writer publication decisions and conservative per-replica admission.
+mod legacy;
 use enhance_pir::protocol::{
     digest, Coverage, Geometry, Lifecycle, Manifest, ShardState, RETAINED_GENERATIONS,
 };
@@ -348,8 +349,7 @@ impl Store {
         store.update(|s| {
             if !matches!(s.version, 7 | 8) {
                 return Err(
-                    "incompatible controller state; rebuild protocol v6 in a separate data directory"
-                        .into(),
+                    "incompatible controller state; rebuild in a separate data directory".into(),
                 );
             }
             s.epoch = s.epoch.checked_add(1).ok_or("controller epoch exhausted")?;
@@ -360,37 +360,7 @@ impl Store {
     /// Offline rollback bridge. Preserve current publication/recovery decisions;
     /// never restore an older backup after publication has resumed.
     pub fn restore_legacy_placement(&mut self) -> Result<(), String> {
-        self.update(|s| {
-            if s.operation.is_some()
-                || !s.pending_commits.is_empty()
-                || !s.pending_aborts.is_empty()
-            {
-                return Err("reconcile decisions before rollback".into());
-            }
-            if s.groups.len() > 4 || s.groups.iter().any(|g| g.replicas.len() != 2) {
-                return Err(
-                    "current inventory cannot be represented as legacy replica pairs".into(),
-                );
-            }
-            if let Some(pool) = &s.pool {
-                for (id, workers) in &pool.placements {
-                    let group = s
-                        .groups
-                        .iter()
-                        .find(|g| Some(&g.id) == s.assignments.get(id))
-                        .ok_or("missing legacy placement")?;
-                    if *workers != group.replicas.iter().map(|r| r.name.clone()).collect() {
-                        return Err(
-                            "pool placements must first be moved back onto complete legacy pairs"
-                                .into(),
-                        );
-                    }
-                }
-            }
-            s.pool = None;
-            s.version = 7;
-            Ok(())
-        })
+        self.update(legacy::restore_placement)
     }
 
     pub fn state(&self) -> &State {

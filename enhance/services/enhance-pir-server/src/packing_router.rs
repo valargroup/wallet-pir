@@ -3,7 +3,7 @@
 //! are configured locally, never supplied by a wallet or placement message.
 use crate::{
     runtime::{self, Packing},
-    worker::{Evaluate, Intermediate, Revocation},
+    worker::{Evaluate, Revocation},
 };
 use axum::{
     body::to_bytes,
@@ -411,7 +411,7 @@ async fn prepare(
                 {
                     let mut i = r.inner.lock().unwrap();
                     i.material.retain(|_, p| p.strong_count() > 0);
-                    if i.material.len() >= r.max_objects + 1 {
+                    if i.material.len() > r.max_objects {
                         return Err(unavailable("construction overlap limit"));
                     }
                 }
@@ -582,44 +582,8 @@ fn select(
     })
 }
 
-pub(crate) async fn bounded(
-    mut response: reqwest::Response,
-    limit: usize,
-) -> Result<Vec<u8>, String> {
-    if response.content_length().is_some_and(|n| n > limit as u64) {
-        return Err("oversized response".into());
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        if chunk.len() > limit - bytes.len() {
-            return Err("oversized response".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
-}
+pub(crate) use crate::query_serving::{bounded, public_error};
 
-pub(crate) fn public_error(error: Error) -> Response {
-    let code = match error.0 {
-        StatusCode::CONFLICT => "stale_routing",
-        StatusCode::GONE if error.1 == "noncanonical_session" => "noncanonical_session",
-        StatusCode::GONE => "session_unavailable",
-        StatusCode::TOO_MANY_REQUESTS => "overloaded",
-        StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY => "temporarily_unavailable",
-        _ => "invalid_request",
-    };
-    let mut response = (
-        error.0,
-        Json(serde_json::json!({"code":code,"message":error.1})),
-    )
-        .into_response();
-    if error.0 == StatusCode::TOO_MANY_REQUESTS {
-        response
-            .headers_mut()
-            .insert("retry-after", "1".parse().unwrap());
-    }
-    response
-}
 async fn query(State(r): State<PackingRouter>, request: Request) -> Response {
     use std::sync::atomic::Ordering::Relaxed;
     let started = Instant::now();
@@ -679,14 +643,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .clone()
             .ok_or_else(|| unavailable("router not activated"))?;
         let m = &loaded.view.snapshots[0].manifest;
-        if binding.generation != m.generation || binding.recovery_epoch != m.recovery_epoch {
-            return Err((StatusCode::CONFLICT, "stale_routing".into()));
-        }
-        if hex::encode(binding.anchor_hash) != m.anchor_block_hash
-            || m.session_id(binding.shard_id).map_err(bad)? != binding.session_id
-        {
-            return Err((StatusCode::GONE, "session_unavailable".into()));
-        }
+        crate::query_serving::validate_binding(m, binding)?;
         let pack = loaded
             .packing
             .get(&session)
@@ -696,7 +653,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
     };
     // Once admitted, the task owns the permit through cancellation and CPU work.
     let router = r.clone();
-    let task = tokio::spawn(async move {
+    let task = crate::query_serving::admitted(async move {
         let coefficients = pack.query_coefficients(&bytes, binding).map_err(bad)?;
         let request = Evaluate {
             binding: Some(binding.encode()),
@@ -710,81 +667,24 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .routes
             .get(&binding.shard_id)
             .ok_or_else(|| unavailable("unassigned session"))?;
-        let mut excluded = None;
-        let mut answer = None;
-        let mut worker_time = None;
-        for attempt in 0..2 {
-            let selected = select(&router, routes, excluded.as_deref())?;
-            if attempt > 0 {
-                router
-                    .stats
-                    .retries
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            let response = router
-                .http
-                .post(format!("{}/internal/evaluate", selected.worker))
-                .json(&request)
-                .send()
-                .await;
-            match response {
-                Err(e) if e.is_connect() && attempt == 0 && routes.len() > 1 => {
-                    excluded = Some(selected.worker.clone());
+        let answer =
+            crate::query_serving::evaluate(&router.http, &request, routes.len(), |excluded| {
+                let lease = select(&router, routes, excluded)?;
+                if excluded.is_some() {
+                    router
+                        .stats
+                        .retries
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
-                Err(e) => return Err(unavailable(format!("evaluation acceptance unknown: {e}"))),
-                Ok(response) => {
-                    let rejected = response
-                        .headers()
-                        .get("x-enhance-evaluation")
-                        .is_some_and(|v| v == "not-accepted")
-                        && matches!(
-                            response.status(),
-                            StatusCode::TOO_MANY_REQUESTS
-                                | StatusCode::GONE
-                                | StatusCode::SERVICE_UNAVAILABLE
-                        );
-                    if rejected && attempt == 0 && routes.len() > 1 {
-                        excluded = Some(selected.worker.clone());
-                    } else {
-                        let status = response.status();
-                        if !status.is_success() {
-                            return Err(if rejected && status == StatusCode::TOO_MANY_REQUESTS {
-                                (StatusCode::TOO_MANY_REQUESTS, "workers not admitted".into())
-                            } else {
-                                unavailable("worker evaluation failed; no replay")
-                            });
-                        }
-                        worker_time = response
-                            .headers()
-                            .get("x-enhance-matvec-microseconds")
-                            .and_then(|h| h.to_str().ok())
-                            .and_then(|s| s.parse::<u64>().ok())
-                            .map(Duration::from_micros);
-                        let intermediate =
-                            bounded(response, 1024 * 1024).await.map_err(unavailable)?;
-                        router.stats.intermediate_bytes.fetch_add(
-                            intermediate.len() as u64,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        let result: Intermediate =
-                            serde_json::from_slice(&intermediate).map_err(unavailable)?;
-                        if result.binding.as_ref() != request.binding.as_ref()
-                            || result.generation != request.generation
-                            || result.shard_id != request.shard_id
-                            || result.epoch != request.epoch
-                        {
-                            return Err(unavailable("worker binding mismatch"));
-                        }
-                        answer = Some(result.coefficients);
-                    }
-                }
-            }
-            drop(selected);
-            if answer.is_some() {
-                break;
-            }
-        }
-        let answer = answer.ok_or_else(|| unavailable("no admitted evaluation"))?;
+                Ok((lease.worker.clone(), lease))
+            })
+            .await?;
+        router.stats.intermediate_bytes.fetch_add(
+            answer.intermediate_bytes as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let worker_time = answer.worker_time;
+        let answer = answer.coefficients;
         router
             .response_allowed(&session, loaded.view.controller_epoch)
             .map_err(unavailable)?;
@@ -820,7 +720,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             });
         Ok::<_, Error>(response)
     });
-    task.await.map_err(unavailable)?
+    task.await?
 }
 
 #[cfg(test)]

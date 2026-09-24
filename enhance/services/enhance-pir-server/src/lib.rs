@@ -30,4 +30,5 @@ mod serving_control;
 
 mod http_metrics;
 
+mod query_serving;
 mod query_timing;
