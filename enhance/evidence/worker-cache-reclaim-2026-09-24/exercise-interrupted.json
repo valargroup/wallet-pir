@@ -1,0 +1,21 @@
+{
+  "binary_sha256": "5d85d894fed6c5c0b827c90dc56336804074849dab390a01e61d90b046ce0493",
+  "concurrency": 2,
+  "exact_boundary_and_retained_probes": 934,
+  "expired_refreshes": 19,
+  "kind": "enhance-workload",
+  "max_fixture_publication_ms": 90769,
+  "measurement_started_wall_ns": 1790262515743099580,
+  "min_publications": 30,
+  "origin": "http://127.0.0.1:8280",
+  "placement_policy": {
+    "sealed_shards": 6
+  },
+  "profile": "active",
+  "publications": 23,
+  "qualification": "unqualified",
+  "seconds_requested": 1800,
+  "started_wall_ns": 1790262000073405345,
+  "status": "running",
+  "workload_host_id_sha256": "dff17613609d6a64aa857c10121d3f5c006e6b6120d12e5299660f5206b8b81a"
+}

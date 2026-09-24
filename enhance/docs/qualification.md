@@ -28,5 +28,11 @@ opt-in and unqualified. The automated assessors never issue a qualification
 certificate. Historical results below apply only to their recorded binaries,
 hardware and workloads.
 
+The [worker cache-reclaim deployment](../evidence/worker-cache-reclaim-2026-09-24/README.md)
+shows zero worker pressure and swap in an operator-stopped 23-publication,
+approximately 26-minute observed window on the same 8 GiB hosts. It is partial
+evidence: the requested 30-minute/30-publication focused gate was not completed,
+so this page does not mark worker memory qualification passed.
+
 The [architecture](architecture.md) states the placement contract and the
 [evidence index](../evidence/README.md) owns historical run navigation.
