@@ -1,0 +1,105 @@
+   Compiling syn v2.0.117
+   Compiling typenum v1.19.0
+   Compiling memchr v2.8.0
+   Compiling serde_core v1.0.228
+   Compiling generic-array v0.14.7
+   Compiling synstructure v0.13.2
+   Compiling zerovec-derive v0.11.3
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerofrom v0.1.7
+   Compiling displaydoc v0.2.5
+   Compiling yoke v0.8.2
+   Compiling tokio v1.51.1
+   Compiling zerovec v0.11.6
+   Compiling tinystr v0.8.3
+   Compiling icu_locale_core v2.2.0
+   Compiling potential_utf v0.1.5
+   Compiling zerotrie v0.2.4
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling serde_json v1.0.149
+   Compiling zeroize v1.8.2
+   Compiling icu_collections v2.2.0
+   Compiling rustls-pki-types v1.14.0
+   Compiling digest v0.10.7
+   Compiling icu_provider v2.2.0
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.32
+   Compiling futures-util v0.3.32
+   Compiling aho-corasick v1.1.4
+   Compiling serde v1.0.228
+   Compiling icu_properties v2.2.0
+   Compiling regex-automata v0.4.14
+   Compiling icu_normalizer v2.2.0
+   Compiling rustls-webpki v0.103.10
+   Compiling sha2 v0.10.9
+   Compiling tracing-core v0.1.36
+   Compiling thiserror-impl v1.0.69
+   Compiling serde_derive v1.0.228
+   Compiling futures-channel v0.3.32
+   Compiling either v1.15.0
+   Compiling valar-spiral-rs v0.5.3-rc.1
+   Compiling rayon v1.12.0
+   Compiling hyper v1.9.0
+   Compiling thiserror v1.0.69
+   Compiling tracing v0.1.44
+   Compiling rustls v0.23.37
+   Compiling regex v1.12.3
+   Compiling idna_adapter v1.2.1
+   Compiling tower v0.5.3
+   Compiling hyper-util v0.1.20
+   Compiling clap_derive v4.6.0
+   Compiling tokio-rustls v0.26.4
+   Compiling idna v1.1.0
+   Compiling env_filter v1.0.1
+   Compiling inspiring v0.1.0-rc.1 (https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a2928)
+   Compiling webpki-roots v1.0.6
+   Compiling bitflags v2.11.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling env_logger v0.11.10
+   Compiling tower-http v0.6.8
+   Compiling hyper-rustls v0.27.7
+   Compiling simplepir-kernel v0.1.0-rc.1 (https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a2928)
+   Compiling url v2.5.8
+   Compiling clap v4.6.0
+   Compiling sha1 v0.10.6
+   Compiling thiserror-impl v2.0.18
+   Compiling thiserror v2.0.18
+   Compiling reqwest v0.12.28
+   Compiling ipir-sp v0.1.0-rc.2 (https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a2928)
+   Compiling hex v0.4.3
+   Compiling enhance-pir v0.0.1 (/opt/enhance-pir-v7/source/enhance/crates/enhance-pir)
+    Finished `release` profile [optimized] target(s) in 1m 09s
+     Running unittests src/lib.rs (/opt/enhance-release-build/32045d293491103049cde359045fecf4c9e4e320/target/release/deps/enhance_pir-274fc627b912d7a5)
+
+running 6 tests
+test protocol::tests::full_boundary_and_return_preserve_every_record ... ok
+test protocol::tests::adaptive_units_and_binding_reject_malformed_input ... ok
+test record::tests::every_reserved_flag_encoding_is_rejected ... ok
+test record::tests::schema_v11_suffix_offsets ... ok
+test record::tests::schema11_frozen_vector_and_metadata_validation ... ok
+test protocol::tests::repeated_cycles_and_reorgs_keep_identity ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/routing_contract.rs (/opt/enhance-release-build/32045d293491103049cde359045fecf4c9e4e320/target/release/deps/routing_contract-a56939f25421a61a)
+
+running 4 tests
+test composed_view_round_trips_and_maps_b_without_moving_its_local_rows ... ok
+test rejects_gaps_overlaps_bounds_unknown_domains_and_unknown_fields ... ok
+test routing_change_preserves_sealed_session_but_fences_stale_query ... ok
+test session_identity_changes_with_content_geometry_setup_or_parameters ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/v7_contract.rs (/opt/enhance-release-build/32045d293491103049cde359045fecf4c9e4e320/target/release/deps/v7_contract-8683ea80369a1cd0)
+
+running 4 tests
+test identity_vector_matches_frozen_bytes ... ok
+test strict_wire_rejects_aliases_epochs_and_unknown_fields ... ok
+test session_identity_separates_content_routing_and_recovery ... ok
+test multi_boundary_blocks_and_partial_threshold_use_canonical_coordinates ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+

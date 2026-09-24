@@ -1,0 +1,12 @@
+   Compiling zakura-client-backend v0.1.0-rc5 (/Users/roman/projects/wallet-libraries-enhance-v7/librustzcash/zcash_client_backend)
+   Compiling zakura-client-sqlite v0.1.0-rc5 (/Users/roman/projects/wallet-libraries-enhance-v7/librustzcash/zcash_client_sqlite)
+   Compiling zakura-pir-enhance v0.1.0 (/Users/roman/projects/wallet-libraries-enhance-v7/zakura/pir-enhance)
+    Finished `test` profile [optimized + debuginfo] target(s) in 6.69s
+     Running unittests src/lib.rs (target/schema11-interop/debug/deps/zakura_pir_enhance-c6f70438ea176260)
+
+running 2 tests
+test transport::v7_cover_tests::routing_refresh_reuses_unchanged_material ... ok
+test transport::v7_cover_tests::cover_rounds_hide_target_and_retry_every_domain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.13s
+

@@ -1,0 +1,32 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling zakura-client-backend v0.1.0-rc5 (/Users/roman/projects/wallet-libraries-enhance-v7/librustzcash/zcash_client_backend)
+   Compiling zakura-pir-enhance v0.1.0 (/Users/roman/projects/wallet-libraries-enhance-v7/zakura/pir-enhance)
+   Compiling zakura-client-sqlite v0.1.0-rc5 (/Users/roman/projects/wallet-libraries-enhance-v7/librustzcash/zcash_client_sqlite)
+    Finished `test` profile [optimized + debuginfo] target(s) in 18.16s
+     Running tests/compatibility.rs (target/schema11-interop/debug/deps/compatibility-ecbaece56dda3dcb)
+
+running 8 tests
+test legacy_server_schema_is_rejected ... ok
+test shard_setup_seed_is_pinned ... ok
+test q46_schema11_manifest_and_session_are_rejected ... ok
+test pinned_contract_rejects_old_or_unaccepted_chain_state ... ok
+test malformed_shard_setup_is_rejected_before_expansion ... ok
+test q48_rejects_other_query_precisions_even_with_v6_manifest ... ok
+test synthetic_wallet_manifest_and_session_are_accepted ... ok
+test malformed_response_bindings_and_length_are_rejected ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/v7_contract.rs (target/schema11-interop/debug/deps/v7_contract-c1692e27f85bf0b8)
+
+running 4 tests
+test identity_vector_matches_frozen_bytes ... ok
+test session_identity_separates_content_routing_and_recovery ... ok
+test strict_wire_rejects_aliases_epochs_and_unknown_fields ... ok
+test multi_boundary_blocks_and_partial_threshold_use_canonical_coordinates ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+

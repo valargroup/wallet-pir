@@ -1,0 +1,39 @@
+    Finished `release` profile [optimized] target(s) in 0.53s
+     Running tests/http.rs (/opt/enhance-release-build/32045d293491103049cde359045fecf4c9e4e320/target/release/deps/http-baec703188a68fed)
+
+running 10 tests
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer ... ok
+test committed_offline_participant_does_not_block_and_recovers_after_expiry ... ok
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ignored, seven shard domains across four workers; requires at least 32 GiB RAM and 64 GiB free disk
+test distributed_round_trip_retention_failover_and_restart ... ok
+test full_shard_composition_confirmation_and_recovery ... ignored, full 32K lifecycle fixture; run on an isolated host with at least 16 GiB RAM
+test inventory_expansion_is_atomic_idempotent_and_survives_restart ... ok
+test lost_worker_rows_repair_restores_current_and_retained_http_queries ... FAILED
+test memory_refusal_moves_published_shard_with_complete_destination_pair ... ok
+test new_shard_uses_admitted_alternative_group_over_http ... FAILED
+test seven_sealed_consolidation_preserves_retained_queries ... ignored, eight shard domains across four workers; requires 32 GiB RAM and 64 GiB free disk
+
+failures:
+
+---- lost_worker_rows_repair_restores_current_and_retained_http_queries stdout ----
+
+thread 'lost_worker_rows_repair_restores_current_and_retained_http_queries' (3303435) panicked at enhance/services/enhance-pir-server/tests/http.rs:1494:5:
+assertion `left == right` failed
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- new_shard_uses_admitted_alternative_group_over_http stdout ----
+
+thread 'new_shard_uses_admitted_alternative_group_over_http' (3303847) panicked at enhance/services/enhance-pir-server/tests/http.rs:1620:9:
+expansion observation rejected; inspect private inputs or journal lock
+
+
+
+failures:
+    lost_worker_rows_repair_restores_current_and_retained_http_queries
+    new_shard_uses_admitted_alternative_group_over_http
+
+test result: FAILED. 5 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out; finished in 541.36s
+
+error: test failed, to rerun pass `-p enhance-pir-server --test http`

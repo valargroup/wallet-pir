@@ -1,0 +1,4 @@
+   Compiling enhance-pir v0.0.1 (/opt/enhance-pir-v7/source/enhance/crates/enhance-pir)
+   Compiling enhance-pir-server v0.0.1 (/opt/enhance-pir-v7/source/enhance/services/enhance-pir-server)
+   Compiling enhance-pir-load-test v0.0.1 (/opt/enhance-pir-v7/source/enhance/tools/loadtest)
+    Finished `release` profile [optimized] target(s) in 2m 04s

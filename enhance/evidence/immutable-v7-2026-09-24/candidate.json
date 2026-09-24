@@ -1,0 +1,27 @@
+{
+  "protocol": "ironwood-enhance-pir-v7",
+  "schema": 11,
+  "ipir_revision": "611a29284264d844bf4dba00de2874c5b762f8c2",
+  "binary_source_commit": "6809403dbe65663d85456ffb0b26fb522b3a433b",
+  "wallet_commit": "b84852bc717860492e37c943aca5e718caecf8a8",
+  "wallet_tree": "013cf94c9ad4a6706a0abc1d68faa75620ec73e8",
+  "server_sha256": "c4e031d017075113dfaf9cd05fdbd1b36950e13e9697d9e0cc7d274180244c9a",
+  "cli_sha256": "3161eb647a93ff9d4034838bf851cbcffd359598d69f1d668cf1c62779d325e1",
+  "load_test_sha256": "02293466a9f6e9e54f3adc0bfc12160c567bca874bab3c020e41813da8dc771c",
+  "source_archive_sha256": "142ce372f446541816a8edf44bcf36669e6abad083d54faf8a9817e25af6f9ce",
+  "build": {
+    "rust": "1.91",
+    "cargo": "--locked --release",
+    "rustflags": "-Dwarnings -C target-cpu=x86-64-v3",
+    "cflags": "-mpclmul",
+    "cxxflags": "-mpclmul"
+  },
+  "qualification": "unqualified",
+  "ci_waited": false,
+  "rollout": "direct SSH",
+  "public_origin": "https://enhance-pir.valargroup.dev",
+  "hardware": {
+    "coordinator": "8 vCPU / 64 GiB",
+    "workers": "two 4 vCPU / 8 GiB"
+  }
+}

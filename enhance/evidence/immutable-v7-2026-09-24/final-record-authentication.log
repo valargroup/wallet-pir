@@ -1,0 +1,16 @@
+   Compiling enhance-pir-server v0.0.1 (/opt/enhance-pir-v7/source/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 1m 06s
+     Running tests/canonical_record.rs (/opt/enhance-release-build/32045d293491103049cde359045fecf4c9e4e320/target/release/deps/canonical_record-152187901663905a)
+
+running 1 test
+test canonical_transaction_records_match_frozen_oracle_across_publication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.24s
+
+     Running tests/note_recovery.rs (/opt/enhance-release-build/32045d293491103049cde359045fecf4c9e4e320/target/release/deps/note_recovery-9ead1583469849a0)
+
+running 1 test
+test incoming_and_outgoing_recovery_authenticate_pir_returned_record ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.93s
+

@@ -1,0 +1,24 @@
+   Compiling enhance-pir-server v0.0.1 (/opt/enhance-pir-v7/source/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 1m 05s
+     Running tests/canonical_record.rs (/opt/enhance-release-build/32045d293491103049cde359045fecf4c9e4e320/target/release/deps/canonical_record-152187901663905a)
+
+running 1 test
+test canonical_transaction_records_match_frozen_oracle_across_publication ... FAILED
+
+failures:
+
+---- canonical_transaction_records_match_frozen_oracle_across_publication stdout ----
+
+thread 'canonical_transaction_records_match_frozen_oracle_across_publication' (3305432) panicked at enhance/services/enhance-pir-server/tests/canonical_record.rs:182:5:
+assertion `left == right` failed
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    canonical_transaction_records_match_frozen_oracle_across_publication
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.32s
+
+error: test failed, to rerun pass `-p enhance-pir-server --test canonical_record`
