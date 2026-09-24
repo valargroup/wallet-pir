@@ -46,3 +46,42 @@ again after that fixture change (32.43 seconds).
 The final physical-headroom check also subtracts dirty and writeback pages from
 its inactive-file estimate. Independent follow-up review approved this
 conservative adjustment; publication progress remains part of qualification.
+
+## Direct production deployment and live load
+
+At the operator's explicit request to deploy directly, the router was upgraded
+before the extended isolated run completed. Wallet commit `4d14feb` is on main.
+The deployed Linux binary SHA-256 is
+`4655685bb2c96517b297d79cb5b7da5d89b5e53fc94ab246e4bc715ca09a23d9`;
+Rust 1.91.0, `release-fast`, locked dependencies, Skylake AVX-512 target.
+
+Only the packing-router process restarted, at 20:00:15 UTC September 24.
+Coordinator, ingress, workers and APM stayed running. Public query admission
+was briefly paused in Caddy and restored once the router's new incarnation was
+ready. The production deployment lock was held through cutover and smoke, then
+released. Existing limits and query settings are unchanged; no rollback occurred.
+
+[Public smoke](production-smoke.json) passed 30/30 exact answers, zero errors,
+129.599 ms successful-query end-to-end p99. This is not packing-only latency.
+
+At 20:02:38 UTC, a 30-minute load began: 8 queries/s, eight load-client lanes,
+and init at 1/s. It stops at approximately 20:32:38 UTC (00:32:38 Dubai Sep 25).
+Service: `apm-mapped-load-4d14feb` on the coordinator. Per-minute exact-answer
+reports are in `/root/mapped-rollout-4d14feb/load-*.json`; router resource/metric
+samples are in the same directory on the router. Both jobs have runtime bounds.
+
+The [first minute](production-load-01.json) verified 478/480 answers with two
+HTTP 502 errors; the [second](production-load-02.json) verified 479/480 with one
+502. There were no incorrect answers. Successful-query p99 was 180.095 ms and
+158.079 ms respectively. Caddy logged broken pipes while uploading to ingress;
+ingress recorded stale-routing 409 responses around publication changes.
+The router recorded zero rejected/failed queries and zero artifact load failures.
+This evidence points to ingress/proxy publication handling, but does not prove a
+one-to-one cause for each public 502. The live run is not an error-free pass.
+
+Early production memory observations: four artifacts used about 2.84 GiB total
+with 76 MiB anonymous memory; after publication, total peak was about 4.26 GiB.
+No max/OOM events or service restarts occurred in the first two load minutes.
+See the [early cgroup snapshot](production-early-memory.json). These are early
+measurements, not a completed long-duration memory qualification. The isolated
+run's first five-minute window had 2,400/2,400 packing samples at most one second.
