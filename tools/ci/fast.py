@@ -38,10 +38,10 @@ def select(packages, paths):
         selected = expanded
 
 
-def run(command):
+def run(command, *, env=None):
     start = time.monotonic()
     print('+ ' + ' '.join(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT)
+    result = subprocess.run(command, cwd=ROOT, env=env)
     elapsed = time.monotonic() - start
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
@@ -90,7 +90,10 @@ def main():
             run([*command, '--no-run'])
             slow = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
             print('Full-CI-only library cases: ' + ', '.join(slow), flush=True)
-            run([*command, '--', *sum((['--skip', name] for name in slow), [])])
+            # Independent service budgets do not cap concurrent test fixtures.
+            # Keep real-crypto fixtures serial within the fast runner's 6-GiB cap.
+            run([*command, '--', *sum((['--skip', name] for name in slow), [])],
+                env=dict(os.environ, RUST_TEST_THREADS='1'))
         if 'enhance-pir-server' in selected:
             run(['python3', 'tools/ci/enhance_tests.py', '--tier', 'fast'])
         if binary_only:

@@ -15,7 +15,9 @@ configuration, dependency manifests and unknown paths select the whole workspace
 Documentation-only changes run documentation checks without installing Rust.
 Operations-only changes run helper checks without compiling Rust.
 
-Rust feedback runs library unit tests in `release-fast`. Six full-geometry/cache, RPC publication
+Rust feedback runs library unit tests serially in `release-fast`, so independent
+service fixtures share the fast runner’s 6-GiB ceiling without overlapping their
+crypto allocations. Six full-geometry/cache, RPC publication
 and real HTTP retry tests embedded in library targets run only in full CI;
 `tools/ci/slow-tests.json` records the exact names and reasons. Packages with only
 binaries get `cargo check --bins`. When the Enhance server is selected, fast CI also
