@@ -858,6 +858,13 @@ async fn committed_offline_participant_does_not_block_and_recovers_after_expiry(
                             response
                         }
                     };
+                    // Offline mode rejected this request before worker admission.
+                    // Applied-operation failures above remain ambiguous and unmarked.
+                    if mode == 2 && path == "/internal/evaluate" {
+                        response
+                            .headers_mut()
+                            .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                    }
                     response
                         .headers_mut()
                         .insert(axum::http::header::CONNECTION, "close".parse().unwrap());
@@ -1110,6 +1117,13 @@ async fn abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_p
                             response
                         }
                     };
+                    // Offline mode rejected this request before worker admission.
+                    // Applied-operation failures above remain ambiguous and unmarked.
+                    if mode == 2 && path == "/internal/evaluate" {
+                        response
+                            .headers_mut()
+                            .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                    }
                     response
                         .headers_mut()
                         .insert(axum::http::header::CONNECTION, "close".parse().unwrap());
