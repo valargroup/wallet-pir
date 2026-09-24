@@ -38,3 +38,11 @@ The code template now sets the same zero-swap and hard memory limits, but
 editing the repository does not change a running unit. The production rollout
 and affected requalification remain open until the above checks and fresh
 full-window reports are recorded.
+
+On 2026-09-24, the checked-in unit was copied to idle temporary worker
+`10.142.0.4` for a systemd parse check. `systemd-analyze verify` first reported
+only that the template's intended `/opt/enhance-pir/current/enhance-pir-server`
+path does not exist on this directly deployed temporary host. A copy with only
+`ExecStart` replaced by `/bin/true` passed `systemd-analyze verify` with no
+output; both temporary files were removed. This validates the memory directive
+syntax on Linux, not the eventual production rollout.
