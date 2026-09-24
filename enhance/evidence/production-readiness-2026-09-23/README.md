@@ -25,6 +25,10 @@ alignment, and the 24-hour opt-in observation remain open. This index must not
 be read as a qualification decision while those gates are pending.
 The [external worker-port probe](operations/worker-port-exposure-2026-09-24.md)
 timed out on ports 8091 and 8291 for both serving worker public IPv4 addresses.
+The [partial corrected-run freshness assessment](corrected-first3h51m-freshness.json)
+through 07:25 UTC bounded 173 of 173 sampled tip advances within 70.003
+seconds with no findings. Its copied trace is retained locally with the digest
+in the report; this does not cover the remainder of the soak or burst.
 
 ## Historical pre-rollout snapshot (September 24, 03:18 UTC)
 
