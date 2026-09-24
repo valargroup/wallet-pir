@@ -44,6 +44,11 @@ one candidate. A source or deployment change invalidates affected results.
 Use isolated state on representative physical workers. Run active and six-sealed
 profiles for at least six measured hours and 300 publications each. Every replica
 needs uninterrupted hardware samples spanning initialization and measurement.
+Before starting a timed run, finish any host package upgrade and verify that
+scheduled upgrade or reboot jobs cannot restart the isolated workers during
+the window. Record the maintenance freeze and restore normal update scheduling
+if the hosts will be retained afterward. A restarted worker invalidates that
+campaign's uninterrupted evidence even when the service recovers quickly.
 Exercise retention, reclamation, growth and placement transitions. Seven sealed
 shards remain disabled. Use `assess-campaign.py` for bootstrap-managed pair
 observations or `assess-direct-campaign.py` for directly deployed workers. The
