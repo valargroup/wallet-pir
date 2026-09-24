@@ -1491,7 +1491,11 @@ async fn lost_worker_rows_repair_restores_current_and_retained_http_queries() {
             record(position)
         );
     }
-    assert_eq!(retained.manifest().generation, retained_generation);
+    assert!(retained.manifest().generation > retained_generation);
+    assert_eq!(
+        retained.manifest().generation,
+        current.manifest().generation
+    );
     for position in [67, 99] {
         assert_eq!(
             current

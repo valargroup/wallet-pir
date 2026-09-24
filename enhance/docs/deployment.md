@@ -1,20 +1,17 @@
 # Enhance PIR deployment
 
-The recorded production fleet serves v6/q48 from commit `afdb4b6` on the
-unversioned coordinator and worker units. Its state is under
-`/srv/enhance-pir-v6`; see the [cutover evidence](../evidence/protocol-v6-production-2026-09-23/README.md).
-The later `ipir-sp` rc.2 dependency pin on `main` has not been deployed by that
-cutover.
+The v7 SSH rollout uses `/opt/enhance-pir-v7/releases/6809403` and fresh state
+under `/srv/enhance-pir-v7`. The [dated evidence](../evidence/immutable-v7-2026-09-24/README.md)
+records the final deployment status, checksums, tests and capacity limitations.
+The previous release and `/srv/enhance-pir-v6` data remain available for rollback.
 
-The release binary is `enhance-pir-server`. It has `coordinator`, `worker`,
-`exercise`, and `repair-rows` subcommands. The CLI and exact-answer load driver
-are `enhance-pir-cli` and `enhance-pir-load-test`. Schema 11 uses fresh canonical,
-controller, worker, hint, and cache state. Protocol v6 changes query precision
-to q48 while retaining schema-11 records; v5/q46 state and clients are
-incompatible. Do not open a previous release's data
-directory or try to repack an old journal: older records lack the suffix format.
-Existing production services and their data stay in place until an operator
-coordinates a separate cutover.
+The binaries are `enhance-pir-server`, `enhance-pir-cli` and
+`enhance-pir-load-test`. Server subcommands are `coordinator`, `worker`, `exercise`
+and `repair-rows`. Protocol v7 retains schema-11 records and q48, but changes
+routing, session identity and framing. v6 clients and serving state are incompatible.
+Use fresh controller, worker, hint and cache directories. A schema-11 canonical
+journal may be copied while stopped and validated; older-width journals must be
+re-ingested. Never open v6 controller or worker state with the v7 binary.
 
 ## Build and local validation
 
@@ -24,7 +21,7 @@ python3 enhance/ops/scripts/test-local.py --help
 python3 enhance/tools/schema11-interop/run.py /absolute/path/to/pinned/wallet-libraries
 ```
 
-The wallet counterpart must implement the v6/q48 follow-up described in
+The wallet counterpart must implement the v7/q48 contract described in
 [integration](integration.md). Use the
 checksummed `enhance-pir` release artifact; its `candidate.json` records the
 source revision and declares qualification `unqualified`. A green build or
@@ -33,7 +30,7 @@ bundle verification does not grant hardware qualification.
 ## Fresh deployment layout
 
 Install the same checked binary revision on the coordinator and worker hosts.
-Use new `/srv/enhance-pir/canonical` and `/srv/enhance-pir/worker` directories,
+Use new `/srv/enhance-pir-v7/canonical` and `/srv/enhance-pir-v7/worker` directories,
 with an inventory at `/etc/enhance-pir/workers.json`. The inventory contains
 ordered groups, each with a name and two replicas carrying `name` and private
 `url`; [workers.example.json](../ops/deploy/workers.example.json) shows the shape.
@@ -74,3 +71,30 @@ tags when reconciling infrastructure.
 The physical hosts have recorded `v4` resource names in Terraform. Those names
 are live identities and are deliberately left unchanged. The direct SSH
 cutover did not run Terraform.
+
+## Direct SSH rollout and rollback
+
+The September 24 rollout builds with Rust 1.91, locked dependencies,
+`RUSTFLAGS="-Dwarnings -C target-cpu=x86-64-v3"` and `CFLAGS/CXXFLAGS=-mpclmul`.
+One checked server binary is copied to all hosts. CI waiting is intentionally
+skipped; native tests and the external wallet harness run directly on Linux.
+
+Existing systemd units are retained. `90-v7.conf` overrides `ExecStart` on
+`enhance-pir-coordinator.service` and `enhance-pir-worker.service`; the worker
+override also grants write access to the new worker directory. Old unit files,
+drop-ins and binary checksums are saved under `/srv/enhance-pir-v7/rollback` on
+each host. The coordinator listens on loopback port 8080 and Caddy keeps the
+existing public origin. Workers listen on their private addresses at port 8091.
+
+To roll back this layout, stop the coordinator, stop both workers, move only the
+`90-v7.conf` overrides out of their `.service.d` directories, reload systemd,
+start both preserved v6 workers and then the v6 coordinator. Verify the public
+v6 manifest and exact-answer oracle. Restore matching v6 clients if any are in
+use. Do not delete or reinterpret v7 state. To return to v7, stop the v6 services,
+restore the v7 overrides, reload, start both v7 workers and then the coordinator.
+
+The isolated workload uses separate `qualification-worker` directories and an
+`enhance-v7-qualification` unit on loopback port 8280. Stop it before changing
+worker state back to canonical serving. Preserve its samples, including memory
+pressure and failures. A focused 30-minute run never grants the six-hour
+hardware qualification or permission to increase placement/admission limits.
