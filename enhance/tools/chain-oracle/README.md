@@ -1,5 +1,11 @@
 # Chain-derived public query oracle
 
+This tool preserves the v6 pilot's independent chain oracle. Its coordinator
+health gate intentionally requires protocol v6 and two published replicas; it
+fails closed against the current v7 serving fleet. Historical evidence does not
+qualify the current release. See [wallet integration](../../docs/integration.md)
+for current protocol validation.
+
 `enhance-chain-oracle` constructs exact-answer records directly from canonical
 Zakura blocks. It does not read the Enhance journal, coordinator records, or
 worker state. It parses raw blocks, independently writes the 653-byte wallet

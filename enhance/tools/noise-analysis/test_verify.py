@@ -26,6 +26,13 @@ class VerifierTests(unittest.TestCase):
         self.assertTrue(r['analytical_pass'])
         self.assertEqual(r['status'], 'not certified')  # Review cannot be inferred from mathematics.
 
+    def test_unreviewed_rc3_extractor_identity_is_rejected(self):
+        x = copy.deepcopy(self.x)
+        x['implementation'] = 'a16f456dfaf5fadca77d472c0c502a93cf0977d0'
+        x['params']['query_bits'] = 48
+        with self.assertRaisesRegex(ValueError, 'wrong implementation'):
+            analyze(x)
+
     def test_corruption(self):
         for mutate in [
             lambda x: x['blocks'].pop(),

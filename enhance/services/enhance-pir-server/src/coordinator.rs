@@ -158,7 +158,6 @@ impl Coordinator {
         }
     }
 
-
     pub fn observe_capacity(
         &self,
         records: u64,

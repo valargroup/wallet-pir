@@ -279,6 +279,11 @@ impl RecordJournal {
         });
         let result = (|| {
             let mut file = OpenOptions::new().write(true).open(&self.records_path)?;
+            if file.metadata()?.len() < offset {
+                return Err(StoreError::Invariant(
+                    "records file is shorter than committed manifest".into(),
+                ));
+            }
             file.set_len(offset)?;
             file.seek(SeekFrom::Start(offset))?;
             for record in records {
@@ -567,6 +572,34 @@ mod tests {
         assert!(RecordJournal::open(dir.path(), DatabaseId::Enhance, ENHANCE_LAYOUT).is_err());
         drop(first);
         assert!(RecordJournal::open(dir.path(), DatabaseId::Enhance, ENHANCE_LAYOUT).is_ok());
+    }
+
+    #[test]
+    fn shortened_committed_records_are_never_zero_filled_by_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open(dir.path());
+        store.append_block(10, "aa".into(), &[record(1)]).unwrap();
+        let records = OpenOptions::new()
+            .write(true)
+            .open(dir.path().join("records.bin"))
+            .unwrap();
+        records.set_len(0).unwrap();
+        let error = store
+            .append_block(11, "bb".into(), &[record(2)])
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("shorter than committed manifest"));
+        assert_eq!(records.metadata().unwrap().len(), 0);
+        assert!(store.read_records(0, 1).is_err());
+        drop(store);
+        let error = RecordJournal::open(dir.path(), DatabaseId::Enhance, ENHANCE_LAYOUT)
+            .err()
+            .unwrap();
+        assert!(error
+            .to_string()
+            .contains("shorter than committed manifest"));
+        assert_eq!(records.metadata().unwrap().len(), 0);
     }
 
     #[test]

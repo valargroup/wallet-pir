@@ -34,6 +34,11 @@ counters show zero; missing instrumentation, warm-up, restarts, scrape outages,
 and samples older than 45 seconds show `—` as appropriate. Each row shows the
 last successful metrics sample; failed scrapes never refresh its timestamp.
 
+The private worker monitor reports missing inventory and unreachable/stale workers
+for both v6 and v7. Published group-redundancy checks apply to legacy pair
+placement only (v6 or non-pool v7). Pool placement does not expose legacy group
+assignments; these checks do not assert domain redundancy for that topology.
+
 Defaults match the Enhance API and `enhance_*` metric families. The sidecar
 only consumes fixed endpoint labels and aggregate fleet gauges; it never reads
 query bodies or client identifiers.

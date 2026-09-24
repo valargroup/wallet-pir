@@ -311,7 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         results.push(json!({"target":target,"max_expected_phase_error":error,"exact_answer":decoded==expected}));
     }
     let dg = spiral_rs::discrete_gaussian::DiscreteGaussian::init(r.spiral.noise_width);
-    let result = json!({"format":1,"implementation":"611a29284264d844bf4dba00de2874c5b762f8c2","schema":if record_width == 737 {10} else {protocol::SCHEMA_VERSION},"record_width":record_width,"expected_public_sha256":args.expected_public_sha256,"pattern":args.pattern,"shard":args.shard,
+    let result = json!({"format":1,"implementation":"a16f456dfaf5fadca77d472c0c502a93cf0977d0","schema":if record_width == 737 {10} else {protocol::SCHEMA_VERSION},"record_width":record_width,"expected_public_sha256":args.expected_public_sha256,"pattern":args.pattern,"shard":args.shard,
         "rows":rows,"used_rows":used,"records":records,"units":specs,"params":p,"n":r.d,"q":r.q,"p":r.p,"ell":r.gadget.ell,
         "setup_seed":hex::encode(seed),"database_sha256":hex::encode(db_hash.finalize()),"public_c1_sha256":hex::encode(Sha256::digest(&published)),
         "record_file_sha256":captured.as_ref().map(|v|hex::encode(Sha256::digest(v))),

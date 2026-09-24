@@ -26,8 +26,8 @@ pub struct AlertEngine {
     scrape_failures: u32,
     ready_failed_since: Option<Instant>,
     worker_groups: BTreeMap<String, BTreeMap<String, BTreeMap<String, f64>>>,
-    v6_groups: BTreeMap<String, Group>,
-    v6_groups_enabled: bool,
+    serving_groups: BTreeMap<String, Group>,
+    serving_groups_enabled: bool,
     fleet_observed: bool,
     fleet_enabled: bool,
     fleet_inventory_error: bool,
@@ -56,8 +56,8 @@ impl AlertEngine {
             scrape_failures: 0,
             ready_failed_since: None,
             worker_groups: BTreeMap::new(),
-            v6_groups: BTreeMap::new(),
-            v6_groups_enabled: false,
+            serving_groups: BTreeMap::new(),
+            serving_groups_enabled: false,
             fleet_observed: false,
             fleet_enabled: false,
             fleet_inventory_error: false,
@@ -77,9 +77,9 @@ impl AlertEngine {
         self.worker_groups = worker_groups;
     }
 
-    pub fn set_v6_groups(&mut self, groups: Option<BTreeMap<String, Group>>) {
-        self.v6_groups_enabled = groups.is_some();
-        self.v6_groups = groups.unwrap_or_default();
+    pub fn set_serving_groups(&mut self, groups: Option<BTreeMap<String, Group>>) {
+        self.serving_groups_enabled = groups.is_some();
+        self.serving_groups = groups.unwrap_or_default();
     }
 
     pub fn set_fleet(
@@ -142,26 +142,28 @@ impl AlertEngine {
         );
 
         if self.schema.prefix == "enhance" && input.scrape_ok {
-            if self.v6_groups_enabled {
-                if self.fleet_observed {
-                    conditions.insert(
-                        "enhance_worker_monitoring_unconfigured".to_string(),
-                        (
-                            !self.fleet_enabled,
-                            "no private worker inventory configured".into(),
-                            "worker inventory configured".into(),
-                        ),
-                    );
-                }
+            // Pool placement has no legacy group assignments, but still requires
+            // independent worker inventory and reachability observation.
+            if self.fleet_observed {
+                conditions.insert(
+                    "enhance_worker_monitoring_unconfigured".to_string(),
+                    (
+                        !self.fleet_enabled,
+                        "no private worker inventory configured".into(),
+                        "worker inventory configured".into(),
+                    ),
+                );
+            }
+            if self.serving_groups_enabled {
                 conditions.insert(
                     "enhance_group_observation_missing".to_string(),
                     (
-                        self.v6_groups.is_empty(),
-                        "no v6 group observed".into(),
+                        self.serving_groups.is_empty(),
+                        "no serving group observed".into(),
                         "at least one published group".into(),
                     ),
                 );
-                for (name, group) in &self.v6_groups {
+                for (name, group) in &self.serving_groups {
                     if group.shards.is_some_and(|shards| shards > 0.0) {
                         let published = group.published.unwrap_or(0.0);
                         conditions.insert(
@@ -899,13 +901,13 @@ mod tests {
             endpoints: &endpoints,
             host: &host,
         };
-        engine.set_v6_groups(Some(crate::fleet::groups(
+        engine.set_serving_groups(Some(crate::fleet::groups(
             metrics,
             Some(r#"{"published_replica_counts":{"shard-group-01":2}}"#),
         )));
         assert!(engine.evaluate(input()).is_empty());
 
-        engine.set_v6_groups(Some(crate::fleet::groups(
+        engine.set_serving_groups(Some(crate::fleet::groups(
             metrics,
             Some(r#"{"published_replica_counts":{"shard-group-01":1}}"#),
         )));
@@ -916,7 +918,7 @@ mod tests {
         assert_eq!(alert.check, "enhance_group_redundancy_shard-group-01");
         assert_eq!(alert.observed, "1/2 replicas published");
 
-        engine.set_v6_groups(Some(crate::fleet::groups(
+        engine.set_serving_groups(Some(crate::fleet::groups(
             metrics,
             Some(r#"{"published_replica_counts":{"shard-group-01":2}}"#),
         )));
@@ -941,7 +943,7 @@ mod tests {
             host: &host,
         };
         assert!(engine.evaluate(input()).is_empty());
-        engine.set_v6_groups(Some(BTreeMap::new()));
+        engine.set_serving_groups(Some(BTreeMap::new()));
         let fired = engine.evaluate(input());
         let [AlertTransition::Fired(alert)] = fired.as_slice() else {
             panic!("expected missing group alert");
@@ -980,12 +982,33 @@ mod tests {
     }
 
     #[test]
+    fn pool_without_legacy_groups_still_requires_private_worker_inventory() {
+        let now = Instant::now();
+        let host = healthy_host();
+        let endpoints = BTreeMap::new();
+        let mut engine = AlertEngine::new(Schema::enhance_default());
+        engine.set_serving_groups(None);
+        engine.set_fleet(false, false, BTreeMap::new());
+        let fired = engine.evaluate(AlertInput {
+            now,
+            scrape_ok: true,
+            ready_ok: true,
+            endpoints: &endpoints,
+            host: &host,
+        });
+        let [AlertTransition::Fired(alert)] = fired.as_slice() else {
+            panic!("expected only missing inventory alert for pool mode");
+        };
+        assert_eq!(alert.check, "enhance_worker_monitoring_unconfigured");
+    }
+
+    #[test]
     fn v6_without_private_worker_inventory_alerts() {
         let now = Instant::now();
         let host = healthy_host();
         let endpoints = BTreeMap::new();
         let mut engine = AlertEngine::new(Schema::enhance_default());
-        engine.set_v6_groups(Some(BTreeMap::from([(
+        engine.set_serving_groups(Some(BTreeMap::from([(
             "shard-group-01".into(),
             Group {
                 shards: Some(1.0),

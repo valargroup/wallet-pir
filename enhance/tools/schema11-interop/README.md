@@ -1,17 +1,18 @@
 # Schema-11 wallet interoperability
 
-Run from the wallet-pir checkout:
+For the current v7 server, follow [wallet integration](../../docs/integration.md)
+and identify the v7-compatible wallet revision explicitly:
 
 ```sh
-python3 enhance/tools/schema11-interop/run.py /absolute/path/to/wallet-libraries
+python3 enhance/tools/schema11-interop/run.py /absolute/path/to/wallet-libraries \
+  --wallet-revision <full-commit> --full
 ```
 
-The runner checks that wallet-libraries is at PR #28 commit
-`de3ec78f31b6fd184596fc952fe4f78d3a63cd0a` and that its tracked Rust sources and
-workspace manifests are unchanged. It creates a temporary Cargo project,
-uses the supplied wallet checkout and the current server sources, and writes
-build artifacts under `target/schema11-interop`. It does not modify the wallet.
-Cargo may download dependencies; tests use loopback servers and synthetic keys.
+The runner verifies the supplied checkout and fingerprints its source. It creates
+a temporary Cargo project using that wallet and current server sources without
+modifying the wallet. Cargo may download dependencies; tests use loopback servers
+and synthetic keys. Neither interoperability checks nor these fixtures qualify
+production capacity.
 
 The server processes use the seven-sealed placement policy; these small fixtures
 verify wallet interoperability, not full-size placement or hardware capacity.
@@ -32,7 +33,12 @@ pinned wallet's historical `http_integration.rs` fixture. The new SQLite scenari
 verifies schema-11 suffix reconstruction and batch application. Wallet metadata
 and transaction-shape trust semantics are unchanged.
 
-## Public client check
+## Historical v6 public client check
+
+The following `run_public.py` procedure and `enhance-chain-oracle` health checks
+preserve the September v6 pilot campaign. Their pinned v6 SDK is incompatible
+with the current v7 server; use them only with the matching historical revision.
+These results do not qualify the current deployment.
 
 After the latency campaign, build the pinned wallet client on a separate
 machine without querying production:

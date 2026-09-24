@@ -886,8 +886,10 @@ dependencies = [
  "enhance-pir",
  "hdrhistogram",
  "hex",
+ "http-body",
  "inspiring",
  "ipir-sp",
+ "libc",
  "prometheus",
  "rand 0.8.5",
  "reqwest",
@@ -1685,7 +1687,7 @@ dependencies = [
 [[package]]
 name = "inspiring"
 version = "0.1.0-rc.1"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a29284264d844bf4dba00de2874c5b762f8c2"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=a16f456dfaf5fadca77d472c0c502a93cf0977d0#a16f456dfaf5fadca77d472c0c502a93cf0977d0"
 dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
@@ -1695,8 +1697,8 @@ dependencies = [
 
 [[package]]
 name = "ipir-sp"
-version = "0.1.0-rc.2"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a29284264d844bf4dba00de2874c5b762f8c2"
+version = "0.1.0-rc.3"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=a16f456dfaf5fadca77d472c0c502a93cf0977d0#a16f456dfaf5fadca77d472c0c502a93cf0977d0"
 dependencies = [
  "clap",
  "env_logger",
@@ -2542,6 +2544,7 @@ dependencies = [
  "base64",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -2561,12 +2564,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "webpki-roots",
 ]
@@ -2969,8 +2974,8 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "simplepir-kernel"
-version = "0.1.0-rc.1"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a29284264d844bf4dba00de2874c5b762f8c2"
+version = "0.1.0-rc.2"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=a16f456dfaf5fadca77d472c0c502a93cf0977d0#a16f456dfaf5fadca77d472c0c502a93cf0977d0"
 dependencies = [
  "inspiring",
  "rayon",
@@ -3273,6 +3278,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
 dependencies = [
  "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
  "pin-project-lite",
  "tokio",
 ]
@@ -3649,6 +3667,19 @@ dependencies = [
  "indexmap 2.13.1",
  "wasm-encoder",
  "wasmparser",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

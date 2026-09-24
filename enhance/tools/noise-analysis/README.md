@@ -13,9 +13,16 @@ cargo test --locked --release --manifest-path enhance/tools/noise-analysis/Cargo
 python3 -m unittest discover -s enhance/tools/noise-analysis -v
 ```
 
-The standalone lockfile pins research dependencies. The current candidate uses
-P16Q48 (`611a2928`, ipir-sp rc.2) with an explicitly selected `2^-78` full-query correctness
-target and production protocol v6. Historical q46 and q49 inputs keep their
+The Rust extractor now builds against the current rc.3 server, and emits that
+exact implementation identity. The independent Python verifier still accepts
+only its reviewed historical pins; it rejects rc.3 output until its profile and
+extractor binding receive separate numerical review. A successful build or query
+round trip is not sufficient-bound acceptance.
+
+The standalone lockfile pins the current server-compatible research dependencies.
+The tool uses P16Q48 (`a16f456d`, ipir-sp rc.3) and protocol v7 with an explicitly
+selected `2^-78` full-query correctness target. This dependency update requires new
+qualification; the linked rc.2/v6 evidence remains historical. Historical q46 and q49 inputs keep their
 original `2^-128` target; the verifier binds each target to its exact dependency
 revision and query precision. See the [candidate evidence](../../evidence/p16-q48-2026-09-23/README.md).
 On Linux use `RUSTFLAGS="-C target-cpu=native"` to exercise
@@ -116,7 +123,7 @@ benchmark in addition to this arithmetic campaign:
 
 ```sh
 cargo run --locked --profile release-fast -p enhance-pir-server \
-  --example v4-preprocess -- --output /new/persistence-directory --repetitions 1
+  --example preprocess -- --output /new/persistence-directory --repetitions 1
 ```
 
 Historical `6f74a2d7` matrices retain their original implementation identity.

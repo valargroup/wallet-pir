@@ -167,10 +167,9 @@ async fn scrape_loop(
                 .map(|snapshot| snapshot.worker_groups.clone())
                 .unwrap_or_default(),
         );
-        let v6_health = health_json
-            .as_ref()
-            .is_some_and(|health| health["protocol"] == "ironwood-enhance-pir-v6");
-        alerts.set_v6_groups(v6_health.then(|| group_metrics.clone().unwrap_or_default()));
+        let serving_health = health_json.as_ref().is_some_and(supports_serving_groups);
+        alerts
+            .set_serving_groups(serving_health.then(|| group_metrics.clone().unwrap_or_default()));
         {
             let view = dashboard.read().await;
             alerts.set_fleet(
@@ -315,4 +314,32 @@ fn dashboard_router(dashboard: SharedDashboard) -> Router {
         )
         .route("/healthz", get(dashboard::healthz))
         .with_state(dashboard)
+}
+
+fn supports_serving_groups(health: &serde_json::Value) -> bool {
+    health["pool"].is_null()
+        && matches!(
+            health["protocol"].as_str(),
+            Some("ironwood-enhance-pir-v6" | "ironwood-enhance-pir-v7")
+        )
+}
+
+#[cfg(test)]
+mod serving_protocol_tests {
+    use super::*;
+    #[test]
+    fn current_v7_and_legacy_v6_enable_group_alerts() {
+        for protocol in ["ironwood-enhance-pir-v6", "ironwood-enhance-pir-v7"] {
+            assert!(supports_serving_groups(
+                &serde_json::json!({"protocol": protocol})
+            ));
+        }
+        assert!(!supports_serving_groups(&serde_json::json!({
+            "protocol": "ironwood-enhance-pir-v7", "pool": {"placements": {"0": ["a", "b"]}}
+        })));
+        assert!(!supports_serving_groups(&serde_json::json!({})));
+        assert!(!supports_serving_groups(
+            &serde_json::json!({"protocol": "unrecognized"})
+        ));
+    }
 }

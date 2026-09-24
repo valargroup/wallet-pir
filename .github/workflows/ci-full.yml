@@ -198,7 +198,7 @@ jobs:
           lane: full-lint
       - run: >-
           cargo clippy --locked --all-targets --all-features
-          -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server
+          -p enhance-pir -p enhance-pir-load-test -p enhance-chain-oracle -p enhance-pir-server
           -p pir-apm
           -- -D warnings
 
@@ -224,7 +224,7 @@ jobs:
           # on shared runners. Hardware qualification is a separate exact-release
           # deployment gate; keep artifact CI bounded to correctness coverage.
           tools/ci/full-test.sh --locked --profile release-fast \
-            -p enhance-pir -p enhance-pir-load-test -p pir-apm
+            -p enhance-pir -p enhance-pir-load-test -p enhance-chain-oracle -p pir-apm
           python3 tools/ci/enhance_tests.py --tier full
 
       - name: Check optional CUDA worker without a GPU
@@ -253,9 +253,9 @@ jobs:
       - name: Build optimized release binaries once
         run: >-
           cargo build --locked --release
-          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p pir-apm
+          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p enhance-chain-oracle -p pir-apm
           -p transparent-filter-server -p transparent-shard-server
-          --bin enhance-pir-server --bin enhance-pir-load-test
+          --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-chain-oracle
           --bin enhance-pir-cli --bin pir-apm --bin transparent-filter-server
           --bin transparent-shard-server --bin shard-assign --bin shard-prune
           --bin shard-control --bin transparent-publish-controller --features enhance-pir/cli

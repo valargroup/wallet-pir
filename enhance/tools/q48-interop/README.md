@@ -2,8 +2,8 @@
 
 This standalone harness pins wallet-libraries commit
 `9b190657d129d08e964623d0ecc1d8e4ffb31b1d`, which implements protocol v6.
-It is preserved historical tooling, outside the active workspace. Its old `v4`
-module imports and SDK pin are incompatible with the current v7 server; do not
+It is preserved historical tooling, outside the active workspace. Its historical packing API calls
+and v6 SDK pin are incompatible with the current v7 server; do not
 use this directory on current main to qualify wallet interoperability.
 
 For the matching v6 server and harness, use repository revision

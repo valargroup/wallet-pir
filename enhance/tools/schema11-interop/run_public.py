@@ -11,7 +11,11 @@ import sys
 import tempfile
 import tomllib
 
-from run import REVISION, ROOT
+from run import ROOT
+
+# Historical v6 public-client evidence is bound to PR #29; the current v7
+# loopback runner intentionally takes an explicit revision instead of this pin.
+REVISION = '9b190657d129d08e964623d0ecc1d8e4ffb31b1d'
 
 
 def main():
