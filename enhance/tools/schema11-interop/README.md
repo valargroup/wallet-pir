@@ -38,29 +38,37 @@ After the latency campaign, build the pinned wallet client on a separate
 machine without querying production:
 
 ```sh
+RUSTFLAGS='-C target-cpu=x86-64' \
 python3 enhance/tools/schema11-interop/run_public.py \
   /absolute/path/to/wallet-libraries --build-only
 ```
 
-Run `enhance-chain-oracle` on the coordinator and transfer its `oracle.json`
-and `manifest.json` to the separate machine. Then run:
+Build for the external client's Linux architecture, record the printed
+binary SHA-256, and transfer `target/schema11-interop/release/public-client`
+to that client before extraction. Run `enhance-chain-oracle` on the coordinator
+and transfer its small `oracle.json` and `manifest.json` to the external client.
+Immediately verify the copied binary hash and execute it directly:
 
 ```sh
-python3 enhance/tools/schema11-interop/run_public.py \
-  /absolute/path/to/wallet-libraries \
-  --oracle /absolute/path/to/chain-oracle-output
+sha256sum /absolute/path/to/public-client
+/absolute/path/to/public-client \
+  https://enhance-pir.valargroup.dev \
+  /absolute/path/to/chain-oracle-output
 ```
 
-The command pins PR #29, verifies the oracle digest, requires the public
-manifest's generation, anchor hash, height and record count to equal the
-chain-derived values, then queries every oracle position through the wallet's
-HTTPS transport and checks exact records. A publication between extraction
-and client fetch causes a safe failure; extract a fresh oracle and retry. This
-uses an explicit 32,768-row setup limit, matching the live production shard at
-the time of qualification; a larger future shard requires a deliberate limit
-review. The runner starts from the wallet checkout's Cargo lock, rejects any
-resolved package absent from that lock, and prints source, lock and binary
-hashes. The check uses the wallet client library but does not open a scanned
-SQLite wallet
-or exercise restore, resume or reorg behavior. Those remain separate release
-gates.
+The build runner pins PR #29, starts from its Cargo lock, rejects any resolved
+package absent from that lock, and prints source, lock and binary hashes. The
+copied binary verifies the oracle digest, requires the public manifest's
+generation, anchor hash, height and record count to equal the chain-derived
+values, then queries every oracle position through the wallet's HTTPS transport
+and checks exact records. A publication between extraction and client fetch
+causes a safe failure; extract a fresh oracle and retry only for that
+generation-moved error. Do not rebuild in that interval: the extra build time
+makes a generation race more likely. A wrong answer or any other error is a
+hard failure.
+
+The binary uses an explicit 32,768-row setup limit, matching the live
+production shard at the time of qualification; a larger future shard requires
+a deliberate limit review. This check uses the wallet client library but does
+not open a scanned SQLite wallet or exercise restore, resume or reorg behavior.
+Those remain separate release gates.
