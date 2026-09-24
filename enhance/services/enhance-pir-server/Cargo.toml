@@ -40,6 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
 
 [dev-dependencies]
+simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d8aea341d844df97ef6eb244c24b0a050eb3e9b" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 orchard = { package = "zakura-orchard", version = "=1.0.1", default-features = false }

@@ -2,6 +2,10 @@
 use ipir_sp::{server::KernelError, IPIRServer, YpirSchemeParams};
 use serde::Serialize;
 
+#[cfg(test)]
+#[path = "matvec_test.rs"]
+pub(crate) mod testing;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
@@ -58,6 +62,10 @@ impl MatvecConfig {
         coefficients: impl Iterator<Item = u16>,
         transposed: bool,
     ) -> Result<IPIRServer<u16>, KernelError> {
+        #[cfg(test)]
+        if let Some(faults) = testing::current() {
+            return testing::server(self, params, coefficients, transposed, faults);
+        }
         match self.matvec_backend {
             Backend::Cpu => {
                 if self.cuda_device.is_some() {

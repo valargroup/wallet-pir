@@ -68,6 +68,10 @@ cargo test --locked --profile release-fast -p enhance-pir-server --features cuda
   --lib cuda_encrypted_bootstrap_round_trip_and_cached_restart -- --ignored
 cargo test --locked --profile release-fast -p enhance-pir-server --features cuda \
   --test http cuda_distributed_round_trip_retention_failover_and_restart -- --ignored
+cargo test --locked --profile release-fast -p enhance-pir-server --features cuda \
+  --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored
+cargo test --locked --profile release-fast -p enhance-pir-server --features cuda \
+  --lib cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers -- --ignored
 cargo run --locked --release -p enhance-pir-server --features cuda --example cuda_domain
 ```
 
@@ -77,3 +81,15 @@ wallet-pir's actual unit composition at 32768 rows by 12288 coefficients. It che
 100 queries per repetition, three repetitions, one and two concurrent callers,
 and reports preparation separately from evaluation. Sample `nvidia-smi` during
 the run to record total device memory, and record CPU limits and thread count.
+
+Failure regressions also run with CPU kernels in ordinary library tests. The GPU
+variants wrap real CUDA kernels and inject preparation failure after the second
+candidate unit has allocated/uploaded its database. Both fresh construction and
+cached reload must release candidate kernels, preserve published answers, and
+retry successfully. This tests failure handling after allocation; it does not
+force physical device exhaustion or qualify GPU admission limits.
+
+The HTTP failure regression injects an error inside kernel evaluation, verifies
+HTTP 503 with no partial answer or private error text, then retries through the
+same single-permit worker. Wrong-length and unreduced queries must return HTTP
+400 without invoking the backend. Injection support exists only in test builds.
