@@ -72,9 +72,16 @@ async fn distributed_backend_round_trip(backend: enhance_pir_server::matvec::Mat
                         || (request.uri().path() == "/internal/commit"
                             && commit_failed.load(std::sync::atomic::Ordering::SeqCst))
                     {
-                        return axum::response::IntoResponse::into_response(
+                        let mut response = axum::response::IntoResponse::into_response(
                             axum::http::StatusCode::SERVICE_UNAVAILABLE,
                         );
+                        if request.uri().path() == "/internal/evaluate" {
+                            // This fixture rejected before invoking the worker.
+                            response
+                                .headers_mut()
+                                .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+                        }
+                        return response;
                     }
                     next.run(request).await
                 }
