@@ -63,7 +63,8 @@ published snapshot check remain open. The pinned PR #29 wallet client was built 
 checkout on Linux with no packages outside its lockfile and passed the old
 fleet's chain-derived public check. The corrected fleet passed a fresh 10/10
 chain-derived public smoke check; its full load run is underway, and the
-consuming wallet release remains untested. The portable APM update is installed,
+consuming Vizor release has a partial mainnet import/scan/resume exercise with
+no query-ready PIR work. The portable APM update is installed,
 with the old binary retained; after restart it reported both private workers
 reachable and zero active alerts. Its build and rollout checks are recorded in
 [portable tool validation](portable-tools-validation.txt).
@@ -73,9 +74,10 @@ The [corrected qualification progress](operations/corrected-qualification-progre
 records the current public run, active hardware campaign, CI and Vizor checks.
 
 The remaining gates include a full public soak and burst on the corrected
-binary, chain-derived public answers and wallet release recovery over HTTPS,
-full hardware active and six-sealed campaigns, recovery/alert exercises, independent cryptographic
-review, and the 24-hour opt-in observation. Four temporary c-4 workers are
+binary, wallet release recovery over HTTPS with query-ready work and a controlled
+reorg, full hardware active and six-sealed campaigns, recovery/alert exercises,
+current published-snapshot verification after the conditional independent agent
+audit, and the 24-hour opt-in observation. Four temporary c-4 workers are
 [provisioned and smoke checked](operations/temporary-c4-qualification-workers.md)
 as two isolated campaign pairs. The serving pair remains online; no production
 outage is scheduled. The earlier

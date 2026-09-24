@@ -30,6 +30,15 @@ and `7eb46bb46cff507c0caaf864e15537b806f14788712c8e77b2ef09f9145d3ab3`.
 The partial publication trace SHA-256 is
 `c80054862217452706b7c32f68585a416957000279ce4dfeaca0a23a8c9a4f2c`.
 
+At about 05:56 UTC, the inactive first-attempt worker data directories were
+removed from the two temporary hosts to recover disk headroom for the ongoing
+fresh retry. Before removal, the local raw trace and publication digests above
+were rechecked, the failed exercise report was present, and each running worker
+process was verified to use its separate `-noswap` data directory. The removal
+freed roughly 15 GB per host; both worker and sampler services remained active.
+The first-attempt raw traces and exercise report remain in the local evidence
+copy. No canonical serving data was affected.
+
 At first swap, replica 2 was near the 7 GiB soft memory limit with about
 2.18 GB of inactive file cache and 5.19 GB anonymous memory. This supports
 testing a no-swap cgroup policy on a fresh isolated run, but does not prove
