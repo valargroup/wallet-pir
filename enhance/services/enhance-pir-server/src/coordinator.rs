@@ -53,11 +53,25 @@ impl From<(StatusCode, String)> for QueryError {
 
 impl IntoResponse for QueryError {
     fn into_response(self) -> Response {
+        let code = match self.0 {
+            StatusCode::CONFLICT => "stale_routing",
+            StatusCode::GONE if self.1 == "noncanonical_session" => "noncanonical_session",
+            StatusCode::GONE => "session_unavailable",
+            StatusCode::TOO_MANY_REQUESTS => "overloaded",
+            StatusCode::SERVICE_UNAVAILABLE => "temporarily_unavailable",
+            _ => "invalid_request",
+        };
+        let mut response = (
+            self.0,
+            Json(serde_json::json!({"code":code,"message":self.1})),
+        )
+            .into_response();
         if self.0 == StatusCode::TOO_MANY_REQUESTS {
-            (self.0, [(header::RETRY_AFTER, "1")], self.1).into_response()
-        } else {
-            (self.0, self.1).into_response()
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, "1".parse().unwrap());
         }
+        response
     }
 }
 
@@ -148,7 +162,12 @@ fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result<(), String
     Ok(())
 }
 
-fn restore(root: &FsPath, manifest: &Manifest) -> Result<Arc<Snapshot>, String> {
+fn restore(
+    root: &FsPath,
+    manifest: &Manifest,
+    revoked: &BTreeSet<String>,
+    cache: &mut BTreeMap<String, Arc<Packing>>,
+) -> Result<Arc<Snapshot>, String> {
     manifest.validate()?;
     let saved: SavedSnapshot = serde_json::from_slice(
         &fs::read(
@@ -163,6 +182,14 @@ fn restore(root: &FsPath, manifest: &Manifest) -> Result<Arc<Snapshot>, String> 
     }
     let mut packing = BTreeMap::new();
     for shard in &manifest.coverage.shards {
+        if revoked.contains(&hex::encode(manifest.session_id(shard.id)?)) {
+            continue;
+        }
+        let key = &saved.domain_keys[&shard.id];
+        if let Some(pack) = cache.get(key) {
+            packing.insert(shard.id, pack.clone());
+            continue;
+        }
         let name = saved.hints.get(&shard.id).ok_or("missing persisted hint")?;
         if !hint_name(name) {
             return Err("invalid persisted hint identity".into());
@@ -179,7 +206,9 @@ fn restore(root: &FsPath, manifest: &Manifest) -> Result<Arc<Snapshot>, String> 
         if !manifest.sessions.contains(&pack.reference(shard.id)?) {
             return Err("restored session digest differs".into());
         }
-        packing.insert(shard.id, Arc::new(pack));
+        let pack = Arc::new(pack);
+        cache.insert(key.clone(), pack.clone());
+        packing.insert(shard.id, pack);
     }
     Ok(Arc::new(Snapshot { saved, packing }))
 }
@@ -297,8 +326,14 @@ impl Coordinator {
             Ok(())
         })?;
         let mut snapshots = Vec::new();
+        let mut packing_cache = BTreeMap::new();
         for manifest in &store.state().published {
-            snapshots.push(restore(root, manifest)?);
+            snapshots.push(restore(
+                root,
+                manifest,
+                &store.state().recovery.revoked,
+                &mut packing_cache,
+            )?);
         }
         Ok(Self {
             store: Arc::new(Mutex::new(store)),
@@ -347,7 +382,6 @@ impl Coordinator {
         let mut additions = configured[existing..].to_vec();
         let mut incarnations = BTreeSet::new();
         for group in &mut additions {
-            group.settling = false;
             for replica in &mut group.replicas {
                 let response = checked(
                     self.http
@@ -470,7 +504,7 @@ impl Coordinator {
                 continue;
             }
             for destination in &ordered {
-                if destination.id == source || destination.settling {
+                if destination.id == source {
                     continue;
                 }
                 let mut proposed = assignments.clone();
@@ -549,7 +583,7 @@ impl Coordinator {
                     continue;
                 }
                 for destination in &ordered {
-                    if destination.id == source.id || destination.settling {
+                    if destination.id == source.id {
                         continue;
                     }
                     let mut proposed = assignments.clone();
@@ -600,11 +634,93 @@ impl Coordinator {
         Router::new()
             .route("/v1/enhance/init", get(init))
             .route("/v1/enhance/sessions/:generation/:shard", get(session))
+            .route("/v1/enhance/session/:session_id", get(session_by_id))
             .route("/v1/enhance/query", post(query))
             .route("/v1/health", get(health))
             .route("/ready", get(ready))
             .route("/metrics", get(metrics))
             .with_state(self)
+    }
+
+    /// Persist revocation before the caller truncates any canonical journal bytes.
+    /// Retrying an unfinished rollback uses the same epoch and revocation set.
+    pub async fn revoke_after(&self, records: u64) -> Result<(), String> {
+        {
+            let mut store = self.store.lock().unwrap();
+            store.update(|state| {
+                if state.recovery.rollback_to == Some(records) {
+                    return Ok(());
+                }
+                let first = records / (32768 * enhance_pir::RECORDS_PER_ROW as u64);
+                let deep = state.recovery.sealed.keys().any(|id| *id >= first);
+                if deep {
+                    state.recovery.epoch = state
+                        .recovery
+                        .epoch
+                        .checked_add(1)
+                        .ok_or("recovery epoch exhausted")?;
+                    for id in first..enhance_pir::protocol::MAX_QUERY_SHARDS {
+                        state
+                            .recovery
+                            .domain_epochs
+                            .insert(id, state.recovery.epoch.to_string());
+                    }
+                }
+                for manifest in &state.published {
+                    for domain in &manifest.coverage.shards {
+                        // A tail domain includes its predecessor's suffix.
+                        if deep && domain.id >= first {
+                            state
+                                .recovery
+                                .revoked
+                                .insert(hex::encode(manifest.session_id(domain.id)?));
+                        }
+                    }
+                }
+                state.recovery.sealed.retain(|id, _| *id < first);
+                state.recovery.rollback_to = Some(records);
+                Ok(())
+            })?;
+        }
+        self.deliver_revocations().await
+    }
+
+    async fn deliver_revocations(&self) -> Result<(), String> {
+        let (fence, groups) = {
+            let store = self.store.lock().unwrap();
+            (
+                worker::Revocation {
+                    recovery_epoch: store.state().recovery.epoch,
+                    sessions: store.state().recovery.revoked.clone(),
+                },
+                store.state().groups.clone(),
+            )
+        };
+        if fence.sessions.is_empty() {
+            return Ok(());
+        }
+        // A missing peer stays fenced at the coordinator; publication waits for
+        // its durable acknowledgment rather than trusting an old incarnation.
+        for replica in groups.iter().flat_map(|g| &g.replicas) {
+            let result = async {
+                checked(
+                    self.http
+                        .post(format!("{}/internal/revoke", replica.url))
+                        .timeout(std::time::Duration::from_secs(3))
+                        .json(&fence)
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?,
+                )
+                .await?;
+                Ok::<_, String>(())
+            }
+            .await;
+            if let Err(error) = result {
+                tracing::warn!(replica = %replica.name, %error, "replica excluded until recovery fence acknowledged");
+            }
+        }
+        Ok(())
     }
 
     pub async fn manifest(&self) -> Option<Manifest> {
@@ -819,6 +935,7 @@ impl Coordinator {
 
     // Caller owns the publication permit, including fallback within publication.
     async fn reconcile_inner(&self) -> Result<(), String> {
+        self.deliver_revocations().await?;
         let (op, published) = {
             let store = self.store.lock().unwrap();
             let s = store.state();
@@ -867,9 +984,18 @@ impl Coordinator {
             if self.manifest().await.as_ref() != Some(manifest) {
                 let root = self.root.clone();
                 let manifest = manifest.clone();
-                let restored = tokio::task::spawn_blocking(move || restore(&root, &manifest))
-                    .await
-                    .map_err(|e| e.to_string())??;
+                let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
+                let mut cache = BTreeMap::new();
+                for snapshot in self.snapshots.read().await.iter() {
+                    for (id, pack) in &snapshot.packing {
+                        cache.insert(snapshot.saved.domain_keys[id].clone(), pack.clone());
+                    }
+                }
+                let restored = tokio::task::spawn_blocking(move || {
+                    restore(&root, &manifest, &revoked, &mut cache)
+                })
+                .await
+                .map_err(|e| e.to_string())??;
                 let mut snapshots = self.snapshots.write().await;
                 snapshots.insert(0, restored);
                 snapshots.retain(|s| {
@@ -979,6 +1105,28 @@ impl Coordinator {
         Fut: std::future::Future<Output = Result<(), String>>,
     {
         self.deliver_decisions().await?;
+        let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
+        if !revoked.is_empty() {
+            let mut snapshots = self.snapshots.write().await;
+            for snapshot in snapshots.iter_mut() {
+                let packing = snapshot
+                    .packing
+                    .iter()
+                    .filter(|(id, _)| {
+                        snapshot
+                            .saved
+                            .manifest
+                            .session_id(**id)
+                            .is_ok_and(|hash| !revoked.contains(&hex::encode(hash)))
+                    })
+                    .map(|(id, pack)| (*id, pack.clone()))
+                    .collect();
+                *snapshot = Arc::new(Snapshot {
+                    saved: snapshot.saved.clone(),
+                    packing,
+                });
+            }
+        }
         let (mut lifecycle, generation, attempt, epoch, revision, mut groups, previous) = {
             let store = self.store.lock().unwrap();
             let s = store.state();
@@ -997,7 +1145,33 @@ impl Coordinator {
                 s.assignments.clone(),
             )
         };
-        let coverage = lifecycle.coverage(journal.tree_size(), Geometry::default())?;
+        let mut coverage = lifecycle.coverage(journal.tree_size(), Geometry::default())?;
+        let mut recovery = self.store.lock().unwrap().state().recovery.clone();
+        for shard in &mut coverage.shards {
+            recovery
+                .domain_epochs
+                .entry(shard.id)
+                .or_insert_with(|| "0".into());
+            if shard.records == 32768 * enhance_pir::RECORDS_PER_ROW as u64 {
+                let end = (shard.id + 1) * 32768 * enhance_pir::RECORDS_PER_ROW as u64;
+                let crossing = journal
+                    .blocks()
+                    .iter()
+                    .find(|b| b.first_position + b.action_count >= end)
+                    .ok_or("missing completing block")?;
+                if let Some((sealed_height, sealed_hash)) = recovery.sealed.get(&shard.id) {
+                    if *sealed_height != crossing.height || *sealed_hash != crossing.hash {
+                        return Err("sealed history changed without recovery fencing".into());
+                    }
+                    shard.state = enhance_pir::protocol::ShardState::Sealed;
+                } else if height.saturating_sub(crossing.height) >= 1000 {
+                    recovery
+                        .sealed
+                        .insert(shard.id, (crossing.height, crossing.hash.clone()));
+                    shard.state = enhance_pir::protocol::ShardState::Sealed;
+                }
+            }
+        }
         let base_assignments = control::assign(&coverage, &groups, &previous)?;
         let read = |start, count| {
             journal
@@ -1007,7 +1181,16 @@ impl Coordinator {
         let plans: Vec<DomainPlan> = coverage
             .shards
             .iter()
-            .map(|s| runtime::plan(s.clone(), read))
+            .map(|s| {
+                let mut plan = runtime::plan(s.clone(), read)?;
+                let epoch = recovery.domain_epochs[&s.id]
+                    .parse::<u64>()
+                    .map_err(|e| e.to_string())?;
+                for unit in &mut plan.units {
+                    unit.recovery_epoch = epoch;
+                }
+                Ok::<_, String>(plan)
+            })
             .collect::<Result<_, _>>()?;
         let (base_assignments, admission_destinations) = self
             .place_new_if_admitted(&coverage, &groups, &plans, &previous, base_assignments)
@@ -1072,6 +1255,22 @@ impl Coordinator {
                     continue;
                 }
                 let reservation: Result<_, String> = async {
+                    // Every new incarnation must durably acknowledge the full
+                    // fence before it can become a ready placement again.
+                    let fence = worker::Revocation {
+                        recovery_epoch: recovery.epoch,
+                        sessions: recovery.revoked.clone(),
+                    };
+                    checked(
+                        self.http
+                            .post(format!("{}/internal/revoke", replica.url))
+                            .timeout(std::time::Duration::from_secs(3))
+                            .json(&fence)
+                            .send()
+                            .await
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .await?;
                     let health: serde_json::Value = self
                         .http
                         .get(format!("{}/internal/health", replica.url))
@@ -1282,7 +1481,27 @@ impl Coordinator {
             .iter()
             .map(|s| packing[&s.id].reference(s.id))
             .collect::<Result<_, _>>()?;
+        let placement_revision = {
+            let snapshots = self.snapshots.read().await;
+            match snapshots.first() {
+                Some(old) if old.saved.routes == routes => old.saved.manifest.placement_revision,
+                Some(old) => old
+                    .saved
+                    .manifest
+                    .placement_revision
+                    .checked_add(1)
+                    .ok_or("placement revision exhausted")?,
+                None => 1,
+            }
+        };
         let manifest = Manifest {
+            recovery_epoch: recovery.epoch,
+            placement_revision,
+            domain_recovery_epochs: coverage
+                .shards
+                .iter()
+                .map(|s| (s.id, recovery.domain_epochs[&s.id].clone()))
+                .collect(),
             schema_version: SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.into(),
             network: "main".into(),
@@ -1370,7 +1589,7 @@ impl Coordinator {
         self.store
             .lock()
             .unwrap()
-            .commit(manifest.clone(), lifecycle)?;
+            .commit_with_recovery(manifest.clone(), lifecycle, recovery)?;
         snapshots.insert(0, Arc::new(Snapshot { saved, packing }));
         snapshots.truncate(RETAINED_GENERATIONS);
         drop(snapshots);
@@ -1444,12 +1663,64 @@ async fn session(
         .iter()
         .find(|s| s.saved.manifest.generation == generation)
         .ok_or((StatusCode::GONE, "expired session".into()))?;
+    let id = s
+        .saved
+        .manifest
+        .session_id(shard)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if c.store
+        .lock()
+        .unwrap()
+        .state()
+        .recovery
+        .revoked
+        .contains(&hex::encode(id))
+    {
+        return Err((StatusCode::GONE, "noncanonical_session".into()));
+    }
     let pack = s
         .packing
         .get(&shard)
         .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
-    Ok(Json(pack.session(generation, shard)))
+    Ok(Json(pack.session(&s.saved.manifest, shard)))
 }
+async fn session_by_id(
+    State(c): State<Coordinator>,
+    Path(id): Path<String>,
+) -> QueryResult<Json<ShardSession>> {
+    if !enhance_pir::protocol::canonical_hash(&id) {
+        return Err(QueryError(
+            StatusCode::BAD_REQUEST,
+            "invalid session id".into(),
+        ));
+    }
+    let snapshots = c.snapshots.read().await;
+    if c.store
+        .lock()
+        .unwrap()
+        .state()
+        .recovery
+        .revoked
+        .contains(&id)
+    {
+        return Err(QueryError(StatusCode::GONE, "noncanonical_session".into()));
+    }
+    for snapshot in snapshots.iter() {
+        let manifest = &snapshot.saved.manifest;
+        for shard in &manifest.coverage.shards {
+            if manifest
+                .session_id(shard.id)
+                .is_ok_and(|hash| hex::encode(hash) == id)
+            {
+                return Ok(Json(
+                    snapshot.packing[&shard.id].session(manifest, shard.id),
+                ));
+            }
+        }
+    }
+    Err(QueryError(StatusCode::GONE, "session_unavailable".into()))
+}
+
 async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Vec<u8>> {
     let waiting = match c.query_waiters.clone().try_acquire_owned() {
         Ok(permit) => permit,
@@ -1470,11 +1741,34 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
     let body = query_body(request).await?;
     let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let generation_pin = c.snapshots.clone().read_owned().await;
+    if c.store
+        .lock()
+        .unwrap()
+        .state()
+        .recovery
+        .revoked
+        .contains(&hex::encode(binding.session_id))
+    {
+        return Err(QueryError(StatusCode::GONE, "noncanonical_session".into()));
+    }
     let snapshot = generation_pin
-        .iter()
-        .find(|s| s.saved.manifest.generation == binding.generation)
+        .first()
         .cloned()
-        .ok_or((StatusCode::GONE, "expired session".into()))?;
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no routing view".into()))?;
+    let manifest = &snapshot.saved.manifest;
+    if binding.generation != manifest.generation
+        || binding.recovery_epoch != manifest.recovery_epoch
+    {
+        return Err(QueryError(StatusCode::CONFLICT, "stale_routing".into()));
+    }
+    if manifest
+        .session_id(binding.shard_id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?
+        != binding.session_id
+        || hex::encode(binding.anchor_hash) != manifest.anchor_block_hash
+    {
+        return Err(QueryError(StatusCode::GONE, "session_unavailable".into()));
+    }
     let pack = snapshot
         .packing
         .get(&binding.shard_id)
@@ -1487,6 +1781,7 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
         generation: binding.generation,
         shard_id: binding.shard_id,
         epoch: hex::encode(binding.epoch),
+        session_id: hex::encode(binding.session_id),
         coefficients,
     };
     let mut answer = None;
@@ -1559,7 +1854,7 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
             QueryError(StatusCode::TOO_MANY_REQUESTS, "all replicas busy".into())
         }
     })?;
-    Ok(tokio::task::spawn_blocking(move || {
+    let response = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let _snapshot = snapshot;
         let _generation_pin = generation_pin;
@@ -1567,7 +1862,19 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
     })
     .await
     .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?
-    .map_err(|e| (StatusCode::BAD_REQUEST, e))?)
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    // Final response commit is serialized against durable revocation. No await
+    // occurs between this check and handing the complete response to HTTP.
+    let store = c.store.lock().unwrap();
+    if store
+        .state()
+        .recovery
+        .revoked
+        .contains(&hex::encode(binding.session_id))
+    {
+        return Err(QueryError(StatusCode::GONE, "noncanonical_session".into()));
+    }
+    Ok(response)
 }
 async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
     let snapshots = c.snapshots.read().await;
@@ -1585,7 +1892,7 @@ async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
         }
     }
     Json(
-        serde_json::json!({"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
+        serde_json::json!({"packing_charged_bytes":super::packing_budget::charged_bytes(),"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
         "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":store.state().revision,
         "registered_groups":store.state().groups.len(),
         "capacity":store.state().capacity,
@@ -1689,7 +1996,7 @@ mod admission_tests {
             placement_policy: Default::default(),
             id: "g0".into(),
             sequence: 0,
-            settling: false,
+
             replicas: (0..2)
                 .map(|i| control::Replica {
                     name: format!("r{i}"),
@@ -1793,7 +2100,7 @@ mod admission_tests {
             placement_policy: control::PlacementPolicy { sealed_shards: 7 },
             id: "g0".into(),
             sequence: 0,
-            settling: false,
+
             replicas: (0..2)
                 .map(|i| control::Replica {
                     name: format!("r{i}"),
@@ -1888,7 +2195,6 @@ mod admission_tests {
                 id: format!("g{sequence}"),
                 sequence,
                 replicas,
-                settling: false,
             });
         }
         let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
@@ -1920,6 +2226,7 @@ mod admission_tests {
                     .units
                     .iter()
                     .map(|u| UnitIdentity {
+                        recovery_epoch: 0,
                         table: "enhance".into(),
                         shard_id: shard.id,
                         local_row_start: u.local_row_start,
@@ -2024,11 +2331,10 @@ mod admission_tests {
                 id: format!("g{sequence}"),
                 sequence,
                 replicas,
-                settling: false,
             });
         }
         let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
-        let coverage = Lifecycle::default()
+        let mut coverage = Lifecycle::default()
             .coverage((6 * 32768 + 4096) * 33, Geometry::default())
             .unwrap();
         let original: BTreeMap<_, _> = coverage
@@ -2039,6 +2345,11 @@ mod admission_tests {
             .collect();
         // Full-sized plan metadata is enough to exercise the real admission model;
         // these hashes do not stand for materialized or qualified databases.
+        for shard in &mut coverage.shards {
+            if shard.state == enhance_pir::protocol::ShardState::Provisional {
+                shard.state = enhance_pir::protocol::ShardState::Sealed;
+            }
+        }
         let plans: Vec<_> = coverage
             .shards
             .iter()
@@ -2048,6 +2359,7 @@ mod admission_tests {
                     .units
                     .iter()
                     .map(|u| UnitIdentity {
+                        recovery_epoch: 0,
                         table: "enhance".into(),
                         shard_id: shard.id,
                         local_row_start: u.local_row_start,
@@ -2112,14 +2424,6 @@ mod admission_tests {
             unchanged, original,
             "one alternative replica cannot authorize relocation"
         );
-        assert!(strict.is_empty());
-        let mut settling = groups.clone();
-        settling[1].settling = true;
-        let (unchanged, strict) = coordinator
-            .place_new_if_admitted(&coverage, &settling, &plans, &previous, original.clone())
-            .await
-            .unwrap();
-        assert_eq!(unchanged, original);
         assert!(strict.is_empty());
         // No newly introduced shards means the fallback cannot relocate published data.
         let (unchanged, strict) = coordinator

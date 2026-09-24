@@ -30,6 +30,9 @@ fn main() {
         let evaluation = engine.prepare(domain.clone(), records).unwrap();
         let packing = Packing::new(shard.logical_rows, &evaluation.hint().unwrap()).unwrap();
         let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
             schema_version: SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.into(),
             network: "main".into(),
@@ -46,7 +49,8 @@ fn main() {
         let wallet_manifest =
             serde_json::from_value(serde_json::to_value(&manifest).unwrap()).unwrap();
         let wallet_session =
-            serde_json::from_value(serde_json::to_value(packing.session(1, 0)).unwrap()).unwrap();
+            serde_json::from_value(serde_json::to_value(packing.session(&manifest, 0)).unwrap())
+                .unwrap();
         let acceptance = GenerationAcceptance::new(
             "main",
             3428143,

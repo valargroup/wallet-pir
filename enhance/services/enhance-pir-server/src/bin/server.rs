@@ -114,7 +114,6 @@ fn load_inventory(
             placement_policy: Default::default(),
             id: g.name,
             sequence: sequence as u64,
-            settling: false,
             replicas: g
                 .replicas
                 .into_iter()
@@ -273,19 +272,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
                     let (height, hash) = if let Some(rpc) = &rpc {
                         let tip = rpc.tip_height().await?;
-                        while let Some(last) = journal.records.last_block().cloned() {
-                            if last.height <= tip && rpc.block_hash(last.height).await? == last.hash
+                        let mut ancestor = None;
+                        for block in journal.records.blocks().iter().rev() {
+                            if block.height <= tip
+                                && rpc.block_hash(block.height).await? == block.hash
                             {
+                                ancestor =
+                                    Some((block.height, block.first_position + block.action_count));
                                 break;
                             }
-                            let previous = journal
-                                .records
-                                .blocks()
-                                .iter()
-                                .rev()
-                                .nth(1)
-                                .map(|b| b.height);
-                            journal.rewind_to_height(previous)?;
+                        }
+                        if journal.committed_height() != ancestor.map(|a| a.0) {
+                            coordinator
+                                .revoke_after(ancestor.map_or(0, |a| a.1))
+                                .await?;
+                            journal.rewind_to_height(ancestor.map(|a| a.0))?;
                         }
                         let next = journal
                             .committed_height()

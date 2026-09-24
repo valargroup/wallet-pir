@@ -53,6 +53,8 @@ impl PreparedQuery {
 pub struct QuerySession {
     binding: QueryBinding,
     shard: QueryShard,
+    routes: Vec<crate::protocol::Route>,
+    records: u64,
     params: YpirSchemeParams,
     client: IPIRClient,
     setup: ipir_sp::PublicQuerySetup,
@@ -60,6 +62,37 @@ pub struct QuerySession {
 }
 
 impl QuerySession {
+    pub fn session_id(&self) -> [u8; 32] {
+        self.binding.session_id
+    }
+
+    /// Only the routing binding changes; the content-bound PIR material is reused.
+    pub fn rebind(&mut self, manifest: &Manifest) -> Result<(), ClientError> {
+        manifest.validate().map_err(ClientError::Generation)?;
+        if manifest
+            .session_id(self.shard.id)
+            .map_err(ClientError::Generation)?
+            != self.binding.session_id
+        {
+            return Err(ClientError::Generation("session content changed".into()));
+        }
+        self.binding.generation = manifest.generation;
+        self.binding.recovery_epoch = manifest.recovery_epoch;
+        self.binding.anchor_hash = hex::decode(&manifest.anchor_block_hash)
+            .map_err(|e| ClientError::Generation(e.to_string()))?
+            .try_into()
+            .map_err(|_| ClientError::Generation("anchor length".into()))?;
+        self.routes = manifest
+            .coverage
+            .routes
+            .iter()
+            .filter(|r| r.domain_id == self.shard.id)
+            .cloned()
+            .collect();
+        self.records = manifest.coverage.records;
+        Ok(())
+    }
+
     pub fn new(manifest: &Manifest, session: ShardSession) -> Result<Self, ClientError> {
         manifest.validate().map_err(ClientError::Generation)?;
         let shard = manifest
@@ -74,7 +107,12 @@ impl QuerySession {
             .iter()
             .find(|s| s.shard_id == shard.id)
             .unwrap();
-        if session.generation != manifest.generation
+        if session.session_id
+            != hex::encode(
+                manifest
+                    .session_id(shard.id)
+                    .map_err(ClientError::Generation)?,
+            )
             || session.params != parameters(shard.logical_rows).map_err(ClientError::Generation)?
         {
             return Err(ClientError::Generation(
@@ -110,7 +148,24 @@ impl QuerySession {
                 generation: manifest.generation,
                 shard_id: shard.id,
                 epoch: hash[..8].try_into().unwrap(),
+                recovery_epoch: manifest.recovery_epoch,
+                session_id: manifest
+                    .session_id(shard.id)
+                    .map_err(ClientError::Generation)?,
+                request_id: [0; 16],
+                anchor_hash: hex::decode(&manifest.anchor_block_hash)
+                    .map_err(|e| ClientError::Generation(e.to_string()))?
+                    .try_into()
+                    .map_err(|_| ClientError::Generation("anchor length".into()))?,
             },
+            routes: manifest
+                .coverage
+                .routes
+                .iter()
+                .filter(|r| r.domain_id == shard.id)
+                .cloned()
+                .collect(),
+            records: manifest.coverage.records,
             shard,
             params,
             client,
@@ -120,10 +175,17 @@ impl QuerySession {
     }
 
     pub fn prepare_position(&self, position: u64) -> Result<(PreparedQuery, usize), ClientError> {
-        let (row, slot) = self
-            .shard
-            .locate(position)
+        if position >= self.records {
+            return Err(ClientError::OutsideCoverage(position));
+        }
+        let global = position / 33;
+        let route = self
+            .routes
+            .iter()
+            .find(|r| r.global_start <= global && global < r.global_end)
             .ok_or(ClientError::OutsideCoverage(position))?;
+        let row = (route.local_start + global - route.global_start) as usize;
+        let slot = (position % 33) as usize;
         Ok((self.prepare_row(row)?, slot))
     }
 
@@ -136,14 +198,16 @@ impl QuerySession {
             return Err(ClientError::OutsideCoverage(row as u64));
         }
         let (query, keys, seed) = self.client.generate_fresh_query_simplepir(&self.setup, row);
-        let mut body = self.binding.encode();
+        let mut binding = self.binding;
+        binding.request_id = OsRng.gen();
+        let mut body = binding.encode();
         body.extend(
             serialize_packing_keys(self.client.rlwe_params(), &keys)
                 .map_err(|e| ClientError::Pir(e.to_string()))?,
         );
         body.extend(query.to_switched_bytes(self.client.rlwe_params().q, self.params.query_bits));
         Ok(PreparedQuery {
-            binding: self.binding,
+            binding,
             seed,
             body,
         })
@@ -153,8 +217,9 @@ impl QuerySession {
         let binding = QueryBinding::decode(response).map_err(ClientError::Response)?;
         let size = self.params.db_cols / self.client.rlwe_params().d
             * response_body_len(self.client.rlwe_params().d, self.params.q_prime_1);
-        if binding != self.binding
-            || query.binding != self.binding
+        if binding != query.binding
+            || binding.session_id != self.binding.session_id
+            || binding.anchor_hash != self.binding.anchor_hash
             || response.len() != HEADER_BYTES + size
         {
             return Err(ClientError::Response(
@@ -179,6 +244,7 @@ pub struct EnhancePirClient {
     http: reqwest::Client,
     manifest: Manifest,
     sessions: BTreeMap<u64, Arc<QuerySession>>,
+    refreshed: Instant,
 }
 
 impl EnhancePirClient {
@@ -196,7 +262,23 @@ impl EnhancePirClient {
             http,
             manifest,
             sessions: BTreeMap::new(),
+            refreshed: Instant::now(),
         })
+    }
+
+    pub async fn refresh(&mut self) -> Result<(), ClientError> {
+        let latest = Self::connect(&self.origin).await?;
+        if latest.manifest.generation < self.manifest.generation
+            || latest.manifest.recovery_epoch < self.manifest.recovery_epoch
+        {
+            return Err(ClientError::Generation("routing revision regressed".into()));
+        }
+        self.sessions.retain(|_, session| {
+            Arc::get_mut(session).is_some_and(|s| s.rebind(&latest.manifest).is_ok())
+        });
+        self.manifest = latest.manifest;
+        self.refreshed = Instant::now();
+        Ok(())
     }
 
     pub fn manifest(&self) -> &Manifest {
@@ -231,10 +313,13 @@ impl EnhancePirClient {
         &mut self,
         positions: &[u64],
     ) -> Result<Vec<EnhanceRecord>, ClientError> {
+        if self.refreshed.elapsed() >= Duration::from_secs(30) {
+            self.refresh().await?;
+        }
         for attempt in 0..2 {
             let result = self.query_positions_once(positions).await;
-            if matches!(result, Err(ClientError::HttpStatus(410))) && attempt == 0 {
-                *self = Self::connect(&self.origin).await?;
+            if matches!(result, Err(ClientError::HttpStatus(409 | 410))) && attempt == 0 {
+                self.refresh().await?;
                 continue;
             }
             return result;
@@ -287,8 +372,13 @@ impl EnhancePirClient {
         let response = self
             .http
             .get(format!(
-                "{}/v1/enhance/sessions/{}/{}",
-                self.origin, self.manifest.generation, shard_id
+                "{}/v1/enhance/session/{}",
+                self.origin,
+                hex::encode(
+                    self.manifest
+                        .session_id(shard_id)
+                        .map_err(ClientError::Generation)?
+                )
             ))
             .send()
             .await?;
@@ -308,10 +398,13 @@ impl EnhancePirClient {
         position: u64,
     ) -> Result<(EnhanceRecord, QueryTiming), ClientError> {
         let total_start = Instant::now();
+        if self.refreshed.elapsed() >= Duration::from_secs(30) {
+            self.refresh().await?;
+        }
         for attempt in 0..2 {
             let result = self.query_once(position).await;
-            if matches!(&result, Err(ClientError::HttpStatus(410))) && attempt == 0 {
-                *self = Self::connect(&self.origin).await?;
+            if matches!(&result, Err(ClientError::HttpStatus(409 | 410))) && attempt == 0 {
+                self.refresh().await?;
                 continue;
             }
             return result.map(|(record, mut timing)| {

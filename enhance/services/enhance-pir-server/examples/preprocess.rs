@@ -121,6 +121,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let packing = Packing::new(rows, &hint)?;
             let packing_ms = ms(at);
             let manifest = Manifest {
+                recovery_epoch: 0,
+                placement_revision: 0,
+                domain_recovery_epochs: [(0, "0".into())].into(),
                 schema_version: SCHEMA_VERSION,
                 protocol_revision: PROTOCOL_REVISION.into(),
                 network: "main".into(),
@@ -133,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sessions: vec![packing.reference(0)?],
                 unit_identities: [(0, plan.units.clone())].into(),
             };
-            let client = QuerySession::new(&manifest, packing.session(1, 0))?;
+            let client = QuerySession::new(&manifest, packing.session(&manifest, 0))?;
             let mut pack_samples_ms = Vec::new();
             let mut query_bytes = 0;
             let mut response_bytes = 0;

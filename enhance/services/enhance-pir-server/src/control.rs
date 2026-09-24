@@ -112,7 +112,6 @@ impl Ledger {
 pub enum Role {
     Standby,
     Active,
-    Settling,
     SealedOpen,
     SealedFull,
 }
@@ -132,7 +131,6 @@ pub struct Group {
     pub id: String,
     pub sequence: u64,
     pub replicas: Vec<Replica>,
-    pub settling: bool,
 }
 
 impl Group {
@@ -157,8 +155,8 @@ impl Group {
         }
         Ok(if growing > 0 {
             Role::Active
-        } else if active || self.settling {
-            Role::Settling
+        } else if active {
+            Role::Active
         } else if shards.is_empty() {
             Role::Standby
         } else if shards.len() == self.placement_policy.sealed_shards {
@@ -225,8 +223,21 @@ pub struct PendingAbort {
     pub attempt: u64,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Recovery {
+    #[serde(with = "enhance_pir::protocol::decimal_u64")]
+    pub epoch: u64,
+    pub domain_epochs: BTreeMap<u64, String>,
+    pub revoked: BTreeSet<String>,
+    pub sealed: BTreeMap<u64, (u64, String)>,
+    /// A rollback intent survives process failure before journal truncation.
+    pub rollback_to: Option<u64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
+    pub recovery: Recovery,
+
     #[serde(default)]
     pub capacity: super::capacity::Capacity,
     pub version: u16,
@@ -251,7 +262,8 @@ impl Default for State {
     fn default() -> Self {
         Self {
             capacity: super::capacity::Capacity::default(),
-            version: 6,
+            version: 7,
+            recovery: Recovery::default(),
             epoch: 0,
             revision: 0,
             next_generation: 1,
@@ -331,7 +343,7 @@ impl Store {
             state,
         };
         store.update(|s| {
-            if s.version != 6 {
+            if s.version != 7 {
                 return Err(
                     "incompatible controller state; rebuild protocol v6 in a separate data directory"
                         .into(),
@@ -447,6 +459,15 @@ impl Store {
     }
 
     pub fn commit(&mut self, manifest: Manifest, lifecycle: Lifecycle) -> Result<(), String> {
+        self.commit_with_recovery(manifest, lifecycle, self.state().recovery.clone())
+    }
+
+    pub fn commit_with_recovery(
+        &mut self,
+        manifest: Manifest,
+        lifecycle: Lifecycle,
+        mut recovery: Recovery,
+    ) -> Result<(), String> {
         manifest.validate()?;
         self.update(|s| {
             let op = s.operation.as_mut().ok_or("no candidate")?;
@@ -507,6 +528,11 @@ impl Store {
                 .revision
                 .checked_add(1)
                 .ok_or("placement revision exhausted")?;
+            if recovery.epoch != s.recovery.epoch || recovery.revoked != s.recovery.revoked {
+                return Err("publication crossed a recovery fence".into());
+            }
+            recovery.rollback_to = None;
+            s.recovery = recovery;
             s.lifecycle = lifecycle;
             s.assignments = op.assignments.clone();
             s.published.insert(0, manifest.clone());
@@ -658,6 +684,21 @@ impl GrowthForecast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    trait ConfirmedFixture {
+        fn confirmed(&mut self, records: u64, geometry: Geometry) -> Result<Coverage, String>;
+    }
+    impl ConfirmedFixture for Lifecycle {
+        fn confirmed(&mut self, records: u64, geometry: Geometry) -> Result<Coverage, String> {
+            let mut coverage = self.coverage(records, geometry)?;
+            for shard in &mut coverage.shards {
+                if shard.state == ShardState::Provisional {
+                    shard.state = ShardState::Sealed;
+                }
+            }
+            Ok(coverage)
+        }
+    }
+
     #[test]
     fn seven_sealed_policy_preserves_active_limit_and_reorg_relocation() {
         let span = 32768 * 33;
@@ -668,11 +709,10 @@ mod tests {
                 id: format!("g{i}"),
                 sequence: i,
                 replicas: vec![],
-                settling: false,
             })
             .collect();
         let coverage = lifecycle
-            .coverage(8 * span + 4096 * 33, Geometry::default())
+            .confirmed(8 * span + 4096 * 33, Geometry::default())
             .unwrap();
         let mut placement = assign(&coverage, &groups, &BTreeMap::new()).unwrap();
         consolidate(&coverage, &groups, &mut placement).unwrap();
@@ -690,7 +730,7 @@ mod tests {
         groups[0].placement_policy.sealed_shards = 7;
         // Reopening historical coverage must not leave an active seventh shard in place.
         let reorg = lifecycle
-            .coverage(6 * span + 1, Geometry::default())
+            .confirmed(6 * span + 1, Geometry::default())
             .unwrap();
         let relocated = assign(&reorg, &groups, &placement).unwrap();
         for group in &groups {
@@ -724,12 +764,11 @@ mod tests {
                 id: id.into(),
                 sequence: sequence as u64,
                 replicas: Vec::new(),
-                settling: false,
             })
             .collect();
         let mut lifecycle = Lifecycle::default();
         let old = lifecycle
-            .coverage((6 * 32768 + 4096) * 33, Geometry::default())
+            .confirmed((6 * 32768 + 4096) * 33, Geometry::default())
             .unwrap();
         let previous: BTreeMap<_, _> = old
             .shards
@@ -740,7 +779,7 @@ mod tests {
         assert_eq!(groups[0].role(&old, &previous).unwrap(), Role::SealedFull);
         assert_eq!(groups[1].role(&old, &previous).unwrap(), Role::Active);
         let reorg = lifecycle
-            .coverage((5 * 32768 + 4096) * 33, Geometry::default())
+            .confirmed((5 * 32768 + 4096) * 33, Geometry::default())
             .unwrap();
         let assignments = assign(&reorg, &groups, &previous).unwrap();
         let frontier = reorg.shards.last().unwrap().id;
@@ -793,30 +832,28 @@ mod tests {
     }
 
     #[test]
-    fn lender_counts_and_new_successor_cannot_be_sixth_active_shard() {
+    fn provisional_ranges_and_new_successor_cannot_be_sixth_active_shard() {
         let g = Geometry::default();
         let mut l = Lifecycle::default();
-        let c = l.coverage(5 * 32768 * 33, g).unwrap();
+        let c = l.coverage(5 * 32768 * 33 + 1, g).unwrap();
         let groups = vec![
             Group {
                 placement_policy: Default::default(),
                 id: "a".into(),
                 sequence: 0,
                 replicas: vec![],
-                settling: false,
             },
             Group {
                 placement_policy: Default::default(),
                 id: "b".into(),
                 sequence: 1,
                 replicas: vec![],
-                settling: false,
             },
         ];
         let a = assign(&c, &groups, &BTreeMap::new()).unwrap();
         assert_eq!(a[&c.shards[4].id], "a");
         assert_eq!(a[&c.shards[5].id], "b");
-        assert_eq!(groups[0].role(&c, &a).unwrap(), Role::Settling);
+        assert_eq!(groups[0].role(&c, &a).unwrap(), Role::Active);
         assert_eq!(groups[1].role(&c, &a).unwrap(), Role::Active);
     }
 
@@ -887,7 +924,7 @@ mod tests {
                         placement_policy: Default::default(),
                         id: "g".into(),
                         sequence: 0,
-                        settling: false,
+
                         replicas: ["a", "b"]
                             .into_iter()
                             .map(|name| Replica {
@@ -959,7 +996,6 @@ mod tests {
                 id: format!("g{i}"),
                 sequence: i,
                 replicas: vec![],
-                settling: false,
             })
             .collect();
         let mut lifecycle = Lifecycle::default();
@@ -967,7 +1003,7 @@ mod tests {
         for full in 1..=13 {
             for offset in [0, 4096] {
                 let coverage = lifecycle
-                    .coverage((full * 32768 + offset) * 33, Geometry::default())
+                    .confirmed((full * 32768 + offset) * 33, Geometry::default())
                     .unwrap();
                 assignments = assign(&coverage, &groups, &assignments).unwrap();
                 consolidate(&coverage, &groups, &mut assignments).unwrap();
@@ -1007,8 +1043,11 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut store = Store::open(directory.path()).unwrap();
         let mut lifecycle = Lifecycle::default();
-        let coverage = lifecycle.coverage(1, Geometry::default()).unwrap();
+        let coverage = lifecycle.confirmed(1, Geometry::default()).unwrap();
         let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
             schema_version: SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.into(),
             network: "main".into(),
@@ -1026,6 +1065,7 @@ mod tests {
             unit_identities: [(
                 0,
                 vec![UnitIdentity {
+                    recovery_epoch: 0,
                     table: "enhance".into(),
                     shard_id: 0,
                     local_row_start: 0,
@@ -1043,7 +1083,7 @@ mod tests {
                     placement_policy: Default::default(),
                     id: "group".into(),
                     sequence: 0,
-                    settling: false,
+
                     replicas: ["a", "b"]
                         .into_iter()
                         .map(|name| Replica {

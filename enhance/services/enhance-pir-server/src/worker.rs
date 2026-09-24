@@ -64,6 +64,7 @@ pub struct Retain {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Evaluate {
+    pub session_id: String,
     pub generation: u64,
     pub shard_id: u64,
     pub epoch: String,
@@ -78,8 +79,51 @@ pub struct Intermediate {
     pub coefficients: Vec<u64>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Revocation {
+    #[serde(with = "enhance_pir::protocol::decimal_u64")]
+    pub recovery_epoch: u64,
+    pub sessions: BTreeSet<String>,
+}
+
+async fn revoke(State(w): State<Worker>, Json(request): Json<Revocation>) -> ApiResult<StatusCode> {
+    let mut inner = w.inner.lock().unwrap();
+    if request.recovery_epoch < inner.disk.revocation.recovery_epoch
+        || !inner.disk.revocation.sessions.is_subset(&request.sessions)
+        || request
+            .sessions
+            .iter()
+            .any(|s| !enhance_pir::protocol::canonical_hash(s))
+    {
+        return Err(unavailable("nonmonotonic revocation"));
+    }
+    let mut disk = inner.disk.clone();
+    for (manifest, plans) in disk.published.values_mut() {
+        plans.retain(|p| {
+            manifest
+                .session_id(p.shard.id)
+                .is_ok_and(|id| !request.sessions.contains(&hex::encode(id)))
+        });
+    }
+    disk.revocation = request;
+    inner.save(disk).map_err(unavailable)?;
+    let keep: BTreeMap<_, BTreeSet<_>> = inner
+        .disk
+        .published
+        .iter()
+        .map(|(g, (_, plans))| (*g, plans.iter().map(|p| p.shard.id).collect()))
+        .collect();
+    for (generation, assignments) in &mut inner.published {
+        assignments.retain(|id, _| keep.get(generation).is_some_and(|ids| ids.contains(id)));
+    }
+    // Evaluation Arcs remain visible to the engine ledger until CPU work ends.
+    inner.collect_unused().map_err(unavailable)?;
+    Ok(StatusCode::OK)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct DiskState {
+    revocation: Revocation,
     #[serde(default)]
     placement_policy: PlacementPolicy,
     schema_version: u16,
@@ -96,6 +140,7 @@ struct DiskState {
 impl Default for DiskState {
     fn default() -> Self {
         Self {
+            revocation: Revocation::default(),
             placement_policy: PlacementPolicy::default(),
             schema_version: enhance_pir::protocol::SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.into(),
@@ -116,7 +161,7 @@ impl DiskState {
             || self.protocol_revision != PROTOCOL_REVISION
         {
             return Err(
-                "incompatible worker state; rebuild protocol v6 in a separate data directory"
+                "incompatible worker state; rebuild protocol v7 in a separate data directory"
                     .into(),
             );
         }
@@ -261,7 +306,7 @@ impl Inner {
         let distinct = retained;
         let growth = plans.len() as u64 * 768 * MIB - current;
         let extra = if active {
-            (5 * 192 * MIB).saturating_sub(retained - current) + 768 * MIB
+            (5 * 192 * MIB).saturating_sub(retained - current) + 96 * MIB
         } else {
             0
         };
@@ -285,9 +330,14 @@ fn staged_records(
     if !start.is_multiple_of(enhance_pir::RECORDS_PER_ROW as u64) {
         return Err("unaligned staged source".into());
     }
-    let row = (start / enhance_pir::RECORDS_PER_ROW as u64)
-        .checked_sub(plan.shard.global_row_start)
-        .ok_or("staged source before shard")?;
+    let global = start / enhance_pir::RECORDS_PER_ROW as u64;
+    let row = if plan.shard.composed() && global + 4096 == plan.shard.global_row_start {
+        4096
+    } else {
+        global
+            .checked_sub(plan.shard.global_row_start)
+            .ok_or("staged source before shard")?
+    };
     let unit = plan
         .units
         .iter()
@@ -415,9 +465,16 @@ impl Worker {
             .map_err(|e| e.to_string())?;
         let mut engine = Engine::new(root);
         let mut published = BTreeMap::new();
-        for (generation, (_, plans)) in &disk.published {
+        for (generation, (manifest, plans)) in &disk.published {
             let mut assignments = BTreeMap::new();
             for plan in plans {
+                if disk
+                    .revocation
+                    .sessions
+                    .contains(&hex::encode(manifest.session_id(plan.shard.id)?))
+                {
+                    continue;
+                }
                 assignments.insert(
                     plan.shard.id,
                     engine.prepare(plan.clone(), |start, count| {
@@ -445,6 +502,7 @@ impl Worker {
 
     pub fn router(self) -> Router {
         Router::new()
+            .route("/internal/revoke", post(revoke))
             .route("/internal/health", get(health))
             .route("/internal/metrics", get(metrics))
             .route("/internal/admit", post(admit))
@@ -960,7 +1018,14 @@ async fn commit(State(w): State<Worker>, Json(request): Json<Commit>) -> ApiResu
     disk.candidate = None;
     disk.activated = None;
     i.save(disk).map_err(unavailable)?;
-    let prepared = std::mem::take(&mut i.candidate);
+    let mut prepared = std::mem::take(&mut i.candidate);
+    let revoked = i.disk.revocation.sessions.clone();
+    let committed = &i.disk.published[&request.generation].0;
+    prepared.retain(|id, _| {
+        committed
+            .session_id(*id)
+            .is_ok_and(|s| !revoked.contains(&hex::encode(s)))
+    });
     i.published.insert(request.generation, prepared);
     i.published.retain(|g, _| request.retained.contains(g));
     i.collect_unused().map_err(unavailable)?;
@@ -985,6 +1050,9 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
         serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let evaluation = {
         let i = w.inner.lock().unwrap();
+        if i.disk.revocation.sessions.contains(&query.session_id) {
+            return Err((StatusCode::GONE, "noncanonical_session".into()));
+        }
         let (manifest, assignment) =
             if let Some((manifest, _)) = i.disk.published.get(&query.generation) {
                 (manifest, &i.published[&query.generation])
@@ -1005,6 +1073,11 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
             .iter()
             .find(|s| s.shard_id == query.shard_id)
             .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+        if hex::encode(manifest.session_id(query.shard_id).map_err(unavailable)?)
+            != query.session_id
+        {
+            return Err((StatusCode::GONE, "session_unavailable".into()));
+        }
         if session.public_params_sha256[..16] != query.epoch {
             return Err((StatusCode::BAD_REQUEST, "epoch mismatch".into()));
         }
@@ -1111,6 +1184,9 @@ mod tests {
             .unwrap();
         let packing = Packing::new(4096, &eval.hint().unwrap()).unwrap();
         let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
             schema_version: SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.into(),
             network: "main".into(),

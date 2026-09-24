@@ -42,10 +42,13 @@ pub struct DomainPlan {
 impl DomainPlan {
     pub fn validate(&self) -> Result<(), String> {
         let geometry = Geometry::default();
-        if self.shard.logical_rows != geometry.logical_rows(self.shard.records)?
-            || self.shard.units != geometry.units(self.shard.records)?
-            || self.units.len() != self.shard.units.len()
-        {
+        // The engine supports independently prepared plain units as well as
+        // composed domains. Public manifests enforce canonical composition.
+        let plain = self.shard.logical_rows == geometry.logical_rows(self.shard.records)?
+            && self.shard.units == geometry.units(self.shard.records)?;
+        let composed = self.shard.logical_rows == self.shard.expected_logical_rows(geometry)?
+            && self.shard.units == self.shard.expected_units(geometry)?;
+        if (!plain && !composed) || self.units.len() != self.shard.units.len() {
             return Err("invalid domain plan".into());
         }
         for (spec, unit) in self.shard.units.iter().zip(&self.units) {
@@ -73,6 +76,7 @@ pub fn plan(
     for spec in &shard.units {
         let rows = unit_rows(&shard, spec, &mut read)?;
         identities.push(UnitIdentity {
+            recovery_epoch: 0,
             table: "enhance".into(),
             shard_id: shard.id,
             local_row_start: spec.local_row_start,
@@ -95,20 +99,30 @@ pub fn unit_rows(
     spec: &MutableUnit,
     read: &mut impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
 ) -> Result<Vec<u8>, String> {
+    let tail = shard.composed() && spec.local_row_start == 4096;
     let local = spec
         .local_row_start
         .checked_mul(RECORDS_PER_ROW as u64)
         .ok_or("unit range overflow")?;
-    let start = shard
-        .global_row_start
-        .checked_mul(RECORDS_PER_ROW as u64)
-        .and_then(|s| s.checked_add(local))
-        .ok_or("unit range overflow")?;
-    let count = shard
-        .records
-        .checked_sub(local)
-        .ok_or("unit outside shard")?
-        .min(spec.used_rows * RECORDS_PER_ROW as u64);
+    let (start, count) = if tail {
+        (
+            (shard.global_row_start - 4096) * RECORDS_PER_ROW as u64,
+            4096 * RECORDS_PER_ROW as u64,
+        )
+    } else {
+        (
+            shard
+                .global_row_start
+                .checked_mul(RECORDS_PER_ROW as u64)
+                .and_then(|s| s.checked_add(local))
+                .ok_or("unit range overflow")?,
+            shard
+                .records
+                .checked_sub(local)
+                .ok_or("unit outside shard")?
+                .min(spec.used_rows * RECORDS_PER_ROW as u64),
+        )
+    };
     let mut rows = read(start, count as usize)?;
     if rows.len() != count as usize * RECORD_BYTES {
         return Err("source returned wrong record count".into());
@@ -165,6 +179,7 @@ impl Evaluation {
 }
 
 pub struct Packing {
+    _charge: super::packing_budget::Charge,
     pub params: YpirSchemeParams,
     pub public: Vec<u8>,
     preprocessed: Vec<QueryPackPreprocessed<'static>>,
@@ -173,15 +188,19 @@ pub struct Packing {
 
 impl Packing {
     pub fn new(logical_rows: u64, hint: &[CrsBlock]) -> Result<Self, String> {
+        let mut charge = super::packing_budget::Charge::prepare()?;
         let params = parameters(logical_rows)?;
         let preprocessed =
             build_pack_preprocessed_blocks(rlwe(), hint).map_err(|e| e.to_string())?;
         let public = published_c1_rows(&preprocessed, rlwe().q);
+        let top = TopKeyImages::build(rlwe());
+        charge.resident();
         Ok(Self {
+            _charge: charge,
             params,
             public,
             preprocessed,
-            top: TopKeyImages::build(rlwe()),
+            top,
         })
     }
     pub fn reference(&self, shard_id: u64) -> Result<SessionRef, String> {
@@ -191,9 +210,14 @@ impl Packing {
             parameter_id: parameter_id(self.params.db_rows as u64)?,
         })
     }
-    pub fn session(&self, generation: u64, shard_id: u64) -> ShardSession {
+    pub fn session(&self, manifest: &Manifest, shard_id: u64) -> ShardSession {
         ShardSession {
-            generation,
+            session_id: hex::encode(
+                manifest
+                    .session_id(shard_id)
+                    .expect("validated published domain"),
+            ),
+            generation: manifest.generation,
             shard_id,
             params: self.params.clone(),
             public_params_base64: STANDARD.encode(&self.public),
@@ -392,6 +416,9 @@ mod tests {
         let eval = engine.prepare(plan.clone(), records).unwrap();
         let pack = Packing::new(4096, &eval.hint().unwrap()).unwrap();
         let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
             schema_version: SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.into(),
             network: "main".into(),
@@ -406,14 +433,18 @@ mod tests {
         };
         let mut old_manifest = manifest.clone();
         old_manifest.protocol_revision = "ironwood-enhance-pir-v5".into();
-        assert!(enhance_pir::client::QuerySession::new(&old_manifest, pack.session(1, 0)).is_err());
-        let mut old_session = pack.session(1, 0);
+        assert!(
+            enhance_pir::client::QuerySession::new(&old_manifest, pack.session(&manifest, 0))
+                .is_err()
+        );
+        let mut old_session = pack.session(&manifest, 0);
         old_session.params.query_bits = 46;
         assert!(enhance_pir::client::QuerySession::new(&manifest, old_session).is_err());
         let mut old_plan = plan.clone();
-        old_plan.units[0].parameter_id = old_plan.units[0].parameter_id.replace("-v6/", "-v5/");
+        old_plan.units[0].parameter_id = old_plan.units[0].parameter_id.replace("-v7/", "-v6/");
         assert!(old_plan.validate().is_err());
-        let client = enhance_pir::client::QuerySession::new(&manifest, pack.session(1, 0)).unwrap();
+        let client =
+            enhance_pir::client::QuerySession::new(&manifest, pack.session(&manifest, 0)).unwrap();
         for position in [0, 32, 33, 66] {
             let (query, slot) = client.prepare_position(position).unwrap();
             let binding = QueryBinding::decode(query.body()).unwrap();
@@ -593,6 +624,7 @@ mod tests {
         let mut tail_plan = b_plan.clone();
         tail_plan.shard.logical_rows = 8192;
         tail_plan.units.push(UnitIdentity {
+            recovery_epoch: 0,
             table: "enhance".into(),
             shard_id: 7,
             local_row_start: 4096,
@@ -634,6 +666,10 @@ mod tests {
                 rlwe().q,
             );
             let binding = QueryBinding {
+                recovery_epoch: 0,
+                session_id: [7; 32],
+                request_id: [8; 16],
+                anchor_hash: [9; 32],
                 generation: 1,
                 shard_id: 7,
                 epoch: Sha256::digest(&packing.public)[..8].try_into().unwrap(),

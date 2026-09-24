@@ -231,22 +231,14 @@ pub(super) fn coordinator(
         m.number("enhance_published_generation", manifest.generation);
         m.number("enhance_published_anchor_height", manifest.anchor_height);
         m.number(
-            "enhance_loan_active",
-            u64::from(manifest.coverage.loan.is_some()),
+            "enhance_composition_active",
+            u64::from(manifest.coverage.shards.iter().any(|s| s.composed())),
         );
         let span = manifest.geometry.max_shard_rows * enhance_pir::RECORDS_PER_ROW as u64;
         m.number(
             "enhance_rows_before_next_carveout",
             (span - manifest.coverage.records % span).div_ceil(enhance_pir::RECORDS_PER_ROW as u64),
         );
-        if let Some(loan) = &manifest.coverage.loan {
-            m.number(
-                "enhance_rows_before_loan_return",
-                loan.return_at_records
-                    .saturating_sub(manifest.coverage.records)
-                    .div_ceil(enhance_pir::RECORDS_PER_ROW as u64),
-            );
-        }
         for shard in &manifest.coverage.shards {
             let id = shard.id.to_string();
             for (name, value) in [
@@ -264,7 +256,7 @@ pub(super) fn coordinator(
             }
             for (label, status) in [
                 ("growing", ShardState::Growing),
-                ("lending", ShardState::Lending),
+                ("provisional", ShardState::Provisional),
                 ("sealed", ShardState::Sealed),
             ] {
                 m.set(
@@ -273,13 +265,9 @@ pub(super) fn coordinator(
                     f64::from(shard.state == status),
                 );
             }
-            let borrower = manifest
-                .coverage
-                .loan
-                .as_ref()
-                .is_some_and(|l| l.borrower == shard.id);
+            let borrower = shard.composed();
             m.set(
-                "enhance_shard_borrowing",
+                "enhance_domain_composed",
                 &[("shard", &id)],
                 f64::from(borrower),
             );
@@ -326,7 +314,7 @@ pub(super) fn coordinator(
             for (label, value) in [
                 ("standby", Role::Standby),
                 ("active", Role::Active),
-                ("settling", Role::Settling),
+                ("settling", Role::Active),
                 ("sealed_open", Role::SealedOpen),
                 ("sealed_full", Role::SealedFull),
             ] {
@@ -379,6 +367,9 @@ mod tests {
     use enhance_pir::protocol::{Geometry, Lifecycle, PROTOCOL_REVISION, SCHEMA_VERSION};
     fn manifest(records: u64) -> Manifest {
         Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
             schema_version: SCHEMA_VERSION,
             protocol_revision: PROTOCOL_REVISION.into(),
             network: "main".into(),
@@ -403,7 +394,6 @@ mod tests {
             id: name.into(),
             sequence: 0,
             replicas: vec![],
-            settling: false,
         });
         for (records, loan) in [
             (4 * 32768 * 33 + 4096 * 33 / 2, true),
@@ -421,7 +411,7 @@ mod tests {
                 &Publication::default(),
                 100,
             );
-            assert!(text.contains(&format!("enhance_loan_active {}\n", u8::from(loan))));
+            assert!(text.contains(&format!("enhance_composition_active {}\n", u8::from(loan))));
             assert!(
                 text.contains("enhance_group_assigned_shards{group=\"group\\\"\\\\\\nname\"} 5\n")
             );
@@ -430,9 +420,9 @@ mod tests {
             ));
             assert!(
                 text.contains(
-                    "enhance_unit_allocated_rows{local_row_start=\"0\",shard=\"4\"} 4096\n"
+                    "enhance_unit_allocated_rows{local_row_start=\"0\",shard=\"4\"} 2048\n"
                 ) || text.contains(
-                    "enhance_unit_allocated_rows{local_row_start=\"0\",shard=\"4\"} 8192\n"
+                    "enhance_unit_allocated_rows{local_row_start=\"0\",shard=\"4\"} 4096\n"
                 )
             );
             assert!(text

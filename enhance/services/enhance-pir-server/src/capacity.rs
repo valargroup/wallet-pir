@@ -231,15 +231,9 @@ fn placement_limit(
         return Ok((records, records / span));
     };
     consolidate(&coverage, groups, &mut placements)?;
-    // If observing an incoming loan, include its return before the next split.
-    if let Some(active) = coverage.loan {
-        let returned = lifecycle.coverage(active.return_at_records, geometry)?;
-        placements = assign(&returned, groups, &placements)?;
-        consolidate(&returned, groups, &mut placements)?;
-    }
     for ordinal in records / span + 1..ceiling {
         let boundary = ordinal * span;
-        let coverage = lifecycle.coverage(boundary, geometry)?;
+        let coverage = lifecycle.coverage(boundary + 1, geometry)?;
         let Ok(next) = assign(&coverage, groups, &placements) else {
             return Ok((boundary, ordinal));
         };
@@ -261,12 +255,11 @@ mod tests {
                 id: format!("g{i}"),
                 sequence: i as u64,
                 replicas: vec![],
-                settling: false,
             })
             .collect()
     }
     #[test]
-    fn seven_sealed_extends_historical_capacity_not_first_active_pair() {
+    fn provisional_burst_forecast_preserves_active_limit() {
         let span = 32768 * 33;
         for count in 1..=4 {
             let six = groups(count);
@@ -280,11 +273,8 @@ mod tests {
             let after = placement_limit(1, &seven, &Lifecycle::default(), &BTreeMap::new())
                 .unwrap()
                 .0;
-            assert_eq!(before, (5 + 6 * (count as u64 - 1)) * span);
-            assert_eq!(
-                after,
-                (5 + 7 * (count as u64 - 1)).min(MAX_QUERY_SHARDS) * span
-            );
+            assert_eq!(before, 5 * count as u64 * span);
+            assert_eq!(after, 5 * count as u64 * span);
         }
     }
 

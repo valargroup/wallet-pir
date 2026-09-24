@@ -159,6 +159,9 @@ fn prepare(output: PathBuf, rows: u64, queries: usize) -> Result<(), Box<dyn std
     file.flush()?;
     let packing = Packing::new(rows, &hint)?;
     let manifest = Manifest {
+        recovery_epoch: 0,
+        placement_revision: 1,
+        domain_recovery_epochs: [(0, "0".into())].into(),
         schema_version: SCHEMA_VERSION,
         protocol_revision: PROTOCOL_REVISION.into(),
         // Protocol requires main/ironwood even for this offline synthetic database.
@@ -172,7 +175,7 @@ fn prepare(output: PathBuf, rows: u64, queries: usize) -> Result<(), Box<dyn std
         sessions: vec![packing.reference(0)?],
         unit_identities: [(0, plan.units)].into(),
     };
-    let client = QuerySession::new(&manifest, packing.session(1, 0))?;
+    let client = QuerySession::new(&manifest, packing.session(&manifest, 0))?;
     let mut samples = Vec::new();
     for index in 0..queries {
         let position = match index % 4 {

@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 /// Frozen schema-11 wallet limit, independent of worker placement density.
 pub const MAX_QUERY_SHARDS: u64 = 24;
 pub const SCHEMA_VERSION: u16 = 11;
-pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v6";
+pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v7";
 pub const RETAINED_GENERATIONS: usize = 5;
-pub const HEADER_BYTES: usize = 28;
+pub const HEADER_BYTES: usize = 116;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -85,7 +85,7 @@ pub struct MutableUnit {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ShardState {
     Growing,
-    Lending,
+    Provisional,
     Sealed,
 }
 
@@ -111,17 +111,7 @@ impl QueryShard {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Loan {
-    pub lender: u64,
-    pub borrower: u64,
-    pub row_start: u64,
-    pub row_end: u64,
-    pub return_at_records: u64,
-}
-
-/// Persist this identity registry with the publication decision. Entries survive reorgs.
+/// Persisted fixed-range identities; confirmation is decided from canonical blocks.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Lifecycle {
@@ -131,121 +121,155 @@ pub struct Lifecycle {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct Route {
+    pub global_start: u64,
+    pub global_end: u64,
+    pub domain_id: u64,
+    pub local_start: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Coverage {
     pub records: u64,
     pub shards: Vec<QueryShard>,
-    pub loan: Option<Loan>,
+    pub routes: Vec<Route>,
+}
+
+impl QueryShard {
+    pub fn composed(&self) -> bool {
+        self.id > 0
+            && self.records.div_ceil(RECORDS_PER_ROW as u64) < Geometry::default().min_shard_rows
+    }
+
+    pub fn expected_units(&self, geometry: Geometry) -> Result<Vec<MutableUnit>, String> {
+        let mut units = geometry.units(self.records)?;
+        if self.composed() {
+            units.push(MutableUnit {
+                local_row_start: geometry.min_shard_rows,
+                used_rows: geometry.min_shard_rows,
+                allocated_rows: geometry.min_shard_rows,
+            });
+        }
+        Ok(units)
+    }
+
+    pub fn expected_logical_rows(&self, geometry: Geometry) -> Result<u64, String> {
+        if self.composed() {
+            Ok(2 * geometry.min_shard_rows)
+        } else {
+            geometry.logical_rows(self.records)
+        }
+    }
 }
 
 impl Lifecycle {
-    /// Derive the final state for complete canonical coverage, including crossing-block excess.
-    /// This deliberately does not publish intermediate threshold states.
+    /// Build one complete fixed-range view. Full ranges are provisional until
+    /// their completing block is confirmed by the canonical controller.
     pub fn coverage(&mut self, records: u64, geometry: Geometry) -> Result<Coverage, String> {
         geometry.validate()?;
-        if records == 0 {
-            return Err("cannot publish empty coverage".into());
+        let span = geometry.max_shard_rows * RECORDS_PER_ROW as u64;
+        let count = records.div_ceil(span);
+        if count == 0 || count > MAX_QUERY_SHARDS {
+            return Err("unsupported coverage".into());
         }
-        let per_row = RECORDS_PER_ROW as u64;
-        let span = geometry.max_shard_rows * per_row;
-        let loan_records = geometry.min_shard_rows * per_row;
-        let complete = records / span;
-        let remainder = records % span;
-        let count = complete.checked_add(1).ok_or("shard count overflow")?;
-        // Preserve the pinned wallet protocol ceiling, even with denser worker placement.
-        if count > MAX_QUERY_SHARDS {
-            return Err("coverage exceeds the four-group fleet ceiling".into());
+        if self.next_id > MAX_QUERY_SHARDS {
+            return Err("invalid persisted identity ceiling".into());
         }
-        while self.identities.len() < count as usize {
-            let id = self.next_id;
-            self.next_id = id.checked_add(1).ok_or("shard identity exhausted")?;
-            self.identities.push(id);
-        }
-        let borrowing = complete > 0 && remainder < loan_records;
+        self.next_id = self.next_id.max(count);
+        self.identities = (0..self.next_id).collect();
         let mut shards = Vec::new();
-        for index in 0..count {
-            let (start, n, state) = if index < complete {
-                let lending = borrowing && index + 1 == complete;
-                (
-                    index * geometry.max_shard_rows,
-                    span - if lending { loan_records } else { 0 },
-                    if lending {
-                        ShardState::Lending
-                    } else {
-                        ShardState::Sealed
-                    },
-                )
-            } else {
-                (
-                    index * geometry.max_shard_rows
-                        - if borrowing {
-                            geometry.min_shard_rows
-                        } else {
-                            0
-                        },
-                    remainder + if borrowing { loan_records } else { 0 },
-                    ShardState::Growing,
-                )
-            };
-            shards.push(QueryShard {
-                id: self.identities[index as usize],
-                global_row_start: start,
+        let mut routes = Vec::new();
+        for id in 0..count {
+            let n = (records - id * span).min(span);
+            let mut shard = QueryShard {
+                id,
+                global_row_start: id * geometry.max_shard_rows,
                 records: n,
-                logical_rows: geometry.logical_rows(n)?,
-                state,
-                units: geometry.units(n)?,
+                logical_rows: 0,
+                state: if n == span {
+                    ShardState::Provisional
+                } else {
+                    ShardState::Growing
+                },
+                units: Vec::new(),
+            };
+            shard.logical_rows = shard.expected_logical_rows(geometry)?;
+            shard.units = shard.expected_units(geometry)?;
+            if shard.composed() {
+                let previous: &mut Route = routes.last_mut().ok_or("missing predecessor")?;
+                previous.global_end -= geometry.min_shard_rows;
+                routes.push(Route {
+                    global_start: shard.global_row_start - geometry.min_shard_rows,
+                    global_end: shard.global_row_start,
+                    domain_id: id,
+                    local_start: geometry.min_shard_rows,
+                });
+            }
+            routes.push(Route {
+                global_start: shard.global_row_start,
+                global_end: shard.global_row_start + n.div_ceil(RECORDS_PER_ROW as u64),
+                domain_id: id,
+                local_start: 0,
             });
+            shards.push(shard);
         }
-        let loan = borrowing.then(|| Loan {
-            lender: self.identities[complete as usize - 1],
-            borrower: self.identities[complete as usize],
-            row_start: complete * geometry.max_shard_rows - geometry.min_shard_rows,
-            row_end: complete * geometry.max_shard_rows,
-            return_at_records: complete * span + loan_records,
-        });
         Ok(Coverage {
             records,
             shards,
-            loan,
+            routes,
         })
     }
 }
 
 impl Coverage {
     pub fn validate(&self, geometry: Geometry) -> Result<(), String> {
-        geometry.validate()?;
-        let mut ids = std::collections::BTreeSet::new();
-        let mut end = 0u64;
-        for shard in &self.shards {
-            if !ids.insert(shard.id)
-                || shard.global_row_start.checked_mul(RECORDS_PER_ROW as u64) != Some(end)
-                || shard.logical_rows != geometry.logical_rows(shard.records)?
-                || shard.units != geometry.units(shard.records)?
-            {
-                return Err("invalid shard coverage or geometry".into());
+        let expected = Lifecycle::default().coverage(self.records, geometry)?;
+        if self.routes != expected.routes || self.shards.len() != expected.shards.len() {
+            return Err("noncanonical routing coverage".into());
+        }
+        for (actual, mut expected) in self.shards.iter().zip(expected.shards) {
+            if actual.state == ShardState::Sealed && expected.state == ShardState::Provisional {
+                expected.state = ShardState::Sealed;
             }
-            end = end
-                .checked_add(shard.records)
-                .ok_or("record coverage overflow")?;
-        }
-        if end == 0 || end != self.records {
-            return Err("incomplete record coverage".into());
-        }
-        // Compare lifecycle semantics as well as ranges, independent of assigned stable IDs.
-        let mut lifecycle = Lifecycle {
-            identities: self.shards.iter().map(|s| s.id).collect(),
-            next_id: 0,
-        };
-        let expected = lifecycle.coverage(self.records, geometry)?;
-        if &expected != self {
-            return Err("invalid loan or lifecycle state".into());
+            if actual != &expected {
+                return Err("invalid fixed domain geometry".into());
+            }
         }
         Ok(())
     }
 
     pub fn locate(&self, position: u64) -> Option<(&QueryShard, usize, usize)> {
-        self.shards
+        if position >= self.records {
+            return None;
+        }
+        let row = position / RECORDS_PER_ROW as u64;
+        let route = self
+            .routes
             .iter()
-            .find_map(|s| s.locate(position).map(|(r, p)| (s, r, p)))
+            .find(|r| r.global_start <= row && row < r.global_end)?;
+        let shard = self.shards.iter().find(|s| s.id == route.domain_id)?;
+        Some((
+            shard,
+            (route.local_start + row - route.global_start) as usize,
+            (position % RECORDS_PER_ROW as u64) as usize,
+        ))
+    }
+}
+
+/// Canonical JSON u64 encoding avoids loss through JavaScript numbers.
+pub mod decimal_u64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(n: &u64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&n.to_string())
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+        let text = String::deserialize(d)?;
+        let n: u64 = text.parse().map_err(serde::de::Error::custom)?;
+        if n.to_string() != text {
+            return Err(serde::de::Error::custom("noncanonical u64"));
+        }
+        Ok(n)
     }
 }
 
@@ -253,6 +277,8 @@ impl Coverage {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct UnitIdentity {
+    #[serde(with = "decimal_u64")]
+    pub recovery_epoch: u64,
     pub table: String,
     pub shard_id: u64,
     pub local_row_start: u64,
@@ -285,27 +311,40 @@ pub fn setup_seed(shard_id: u64) -> [u8; 32] {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QueryBinding {
+    /// The routing revision, not the lifetime of the session material.
     pub generation: u64,
     pub shard_id: u64,
     pub epoch: [u8; 8],
+    pub recovery_epoch: u64,
+    pub session_id: [u8; 32],
+    pub request_id: [u8; 16],
+    pub anchor_hash: [u8; 32],
 }
 
 impl QueryBinding {
     pub fn encode(self) -> Vec<u8> {
-        let mut bytes = b"EPQ4".to_vec();
+        let mut bytes = b"EPQ7".to_vec();
         bytes.extend(self.generation.to_le_bytes());
         bytes.extend(self.shard_id.to_le_bytes());
         bytes.extend(self.epoch);
+        bytes.extend(self.recovery_epoch.to_le_bytes());
+        bytes.extend(self.session_id);
+        bytes.extend(self.request_id);
+        bytes.extend(self.anchor_hash);
         bytes
     }
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() < HEADER_BYTES || &bytes[..4] != b"EPQ4" {
-            return Err("invalid query framing".into());
+        if bytes.len() < HEADER_BYTES || &bytes[..4] != b"EPQ7" {
+            return Err("invalid v7 query framing".into());
         }
         Ok(Self {
             generation: u64::from_le_bytes(bytes[4..12].try_into().unwrap()),
             shard_id: u64::from_le_bytes(bytes[12..20].try_into().unwrap()),
             epoch: bytes[20..28].try_into().unwrap(),
+            recovery_epoch: u64::from_le_bytes(bytes[28..36].try_into().unwrap()),
+            session_id: bytes[36..68].try_into().unwrap(),
+            request_id: bytes[68..84].try_into().unwrap(),
+            anchor_hash: bytes[84..116].try_into().unwrap(),
         })
     }
 }
@@ -321,6 +360,10 @@ pub struct SessionRef {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(with = "decimal_u64")]
+    pub recovery_epoch: u64,
+    pub placement_revision: u64,
+    pub domain_recovery_epochs: std::collections::BTreeMap<u64, String>,
     pub schema_version: u16,
     pub protocol_revision: String,
     pub network: String,
@@ -335,6 +378,58 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// Hash ordered padded unit commitments, geometry and packing material.
+    /// Unit hashes commit to every stored byte; gaps are prescribed zero padding.
+    pub fn session_id(&self, id: u64) -> Result<[u8; 32], String> {
+        let shard = self
+            .coverage
+            .shards
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or("unknown domain")?;
+        let reference = self
+            .sessions
+            .iter()
+            .find(|s| s.shard_id == id)
+            .ok_or("missing session")?;
+        let epoch = self
+            .domain_recovery_epochs
+            .get(&id)
+            .ok_or("missing domain epoch")?;
+        let number: u64 = epoch.parse().map_err(|_| "invalid domain epoch")?;
+        if number.to_string() != *epoch || number > self.recovery_epoch {
+            return Err("invalid domain epoch".into());
+        }
+        let units = self.unit_identities.get(&id).ok_or("missing units")?;
+        let mut hash = Sha256::new();
+        hash.update(b"enhance-pir/v7/session\0");
+        hash.update((PROTOCOL_REVISION.len() as u64).to_le_bytes());
+        hash.update(PROTOCOL_REVISION.as_bytes());
+        for n in [
+            id,
+            number,
+            shard.logical_rows,
+            shard.records,
+            units.len() as u64,
+        ] {
+            hash.update(n.to_le_bytes());
+        }
+        for unit in units {
+            hash.update(unit.recovery_epoch.to_le_bytes());
+            hash.update(unit.local_row_start.to_le_bytes());
+            hash.update(unit.allocated_rows.to_le_bytes());
+            for value in [&unit.content_sha256, &unit.setup_sha256, &unit.parameter_id] {
+                hash.update((value.len() as u64).to_le_bytes());
+                hash.update(value.as_bytes());
+            }
+        }
+        for value in [&reference.parameter_id, &reference.public_params_sha256] {
+            hash.update((value.len() as u64).to_le_bytes());
+            hash.update(value.as_bytes());
+        }
+        Ok(hash.finalize().into())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.schema_version != SCHEMA_VERSION
             || self.protocol_revision != PROTOCOL_REVISION
@@ -342,17 +437,19 @@ impl Manifest {
             || self.pool != "ironwood"
             || self.generation == 0
             || self.anchor_block_hash.len() != 64
-            || hex::decode(&self.anchor_block_hash).is_err()
+            || !canonical_hash(&self.anchor_block_hash)
         {
             return Err("incompatible manifest".into());
         }
         self.coverage.validate(self.geometry)?;
-        if self.sessions.len() != self.coverage.shards.len()
+        if self.domain_recovery_epochs.len() != self.coverage.shards.len()
+            || self.sessions.len() != self.coverage.shards.len()
             || self.unit_identities.len() != self.coverage.shards.len()
         {
             return Err("incomplete sessions".into());
         }
         for (shard, session) in self.coverage.shards.iter().zip(&self.sessions) {
+            self.session_id(shard.id)?;
             let units = self
                 .unit_identities
                 .get(&shard.id)
@@ -361,13 +458,14 @@ impl Manifest {
                 return Err("incomplete unit identities".into());
             }
             for (identity, unit) in units.iter().zip(&shard.units) {
-                if identity.shard_id != shard.id
+                if identity.recovery_epoch.to_string() != self.domain_recovery_epochs[&shard.id]
+                    || identity.shard_id != shard.id
                     || identity.table != "enhance"
                     || identity.local_row_start != unit.local_row_start
                     || identity.allocated_rows != unit.allocated_rows
                     || identity.parameter_id != unit_parameter_id(unit.allocated_rows)?
                     || identity.content_sha256.len() != 64
-                    || hex::decode(&identity.content_sha256).is_err()
+                    || !canonical_hash(&identity.content_sha256)
                     || identity.setup_sha256 != hex::encode(Sha256::digest(setup_seed(shard.id)))
                 {
                     return Err("invalid unit identity".into());
@@ -376,13 +474,20 @@ impl Manifest {
             if session.shard_id != shard.id
                 || session.parameter_id != parameter_id(shard.logical_rows)?
                 || session.public_params_sha256.len() != 64
-                || hex::decode(&session.public_params_sha256).is_err()
+                || !canonical_hash(&session.public_params_sha256)
             {
                 return Err("invalid shard session reference".into());
             }
         }
         Ok(())
     }
+}
+
+pub fn canonical_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 pub fn parameters(logical_rows: u64) -> Result<ipir_sp::YpirSchemeParams, String> {
@@ -421,6 +526,7 @@ pub fn unit_parameter_id(rows: u64) -> Result<String, String> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShardSession {
+    pub session_id: String,
     pub generation: u64,
     pub shard_id: u64,
     pub params: ipir_sp::YpirSchemeParams,
@@ -456,7 +562,7 @@ mod tests {
             assert!(c.locate(n).is_none());
         }
         let before = state.coverage(span - 1, g).unwrap();
-        let during = state.coverage(span, g).unwrap();
+        let during = state.coverage(span + 1, g).unwrap();
         let after = state.coverage(span + loan, g).unwrap();
         assert_eq!(
             before.locate(span - 2).unwrap().0.id,
@@ -466,9 +572,9 @@ mod tests {
             before.locate(span - 2).unwrap().0.id,
             during.locate(span - 2).unwrap().0.id
         );
-        assert_eq!(during.shards[0].units.last().unwrap().allocated_rows, 4096);
+        assert_eq!(during.shards[0].units.last().unwrap().allocated_rows, 8192);
         assert_eq!(after.shards[1].global_row_start, 32768);
-        assert!(after.loan.is_none());
+        assert!(!after.shards.iter().any(|s| s.composed()));
     }
 
     #[test]
@@ -496,6 +602,10 @@ mod tests {
         }
         assert_eq!(g.units(8192 * 33 + 1).unwrap()[1].allocated_rows, 2048);
         let b = QueryBinding {
+            recovery_epoch: 0,
+            session_id: [7; 32],
+            request_id: [8; 16],
+            anchor_hash: [9; 32],
             generation: 1,
             shard_id: 7,
             epoch: [3; 8],

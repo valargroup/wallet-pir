@@ -74,7 +74,6 @@ async fn distributed_round_trip_retention_failover_and_restart() {
         id: "group-1".into(),
         sequence: 0,
         replicas,
-        settling: false,
     }];
     let coordinator_root = root.path().join("coordinator");
     let coordinator = Coordinator::open(&coordinator_root, groups.clone()).unwrap();
@@ -280,13 +279,36 @@ async fn distributed_round_trip_retention_failover_and_restart() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "full 32K lifecycle fixture; run on an isolated host with at least 16 GiB RAM"]
-async fn full_shard_loan_return_over_http_preserves_old_queries() {
+async fn full_shard_composition_confirmation_and_recovery() {
+    use enhance_pir::protocol::ShardState;
     let root = tempfile::tempdir().unwrap();
     let mut tasks = Vec::new();
     let mut replicas = Vec::new();
+    let hold = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let evaluated = std::sync::Arc::new(tokio::sync::Notify::new());
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
     for index in 0..2 {
         let worker = Worker::open(&root.path().join(format!("worker-{index}"))).unwrap();
-        let (url, task) = serve(worker.router()).await;
+        let hold = hold.clone();
+        let evaluated = evaluated.clone();
+        let release = release.clone();
+        let router = worker.router().layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let hold = hold.clone();
+                let evaluated = evaluated.clone();
+                let release = release.clone();
+                async move {
+                    let evaluation = request.uri().path() == "/internal/evaluate";
+                    let response = next.run(request).await;
+                    if evaluation && hold.load(std::sync::atomic::Ordering::SeqCst) {
+                        evaluated.notify_one();
+                        release.notified().await;
+                    }
+                    response
+                }
+            },
+        ));
+        let (url, task) = serve(router).await;
         tasks.push(task);
         replicas.push(Replica {
             name: format!("replica-{index}"),
@@ -295,17 +317,14 @@ async fn full_shard_loan_return_over_http_preserves_old_queries() {
             ledger: Ledger::default(),
         });
     }
-    let coordinator = Coordinator::open(
-        &root.path().join("control"),
-        vec![Group {
-            placement_policy: Default::default(),
-            id: "group-1".into(),
-            sequence: 0,
-            replicas,
-            settling: false,
-        }],
-    )
-    .unwrap();
+    let groups = vec![Group {
+        placement_policy: Default::default(),
+        id: "group-1".into(),
+        sequence: 0,
+        replicas,
+    }];
+    let control = root.path().join("control");
+    let coordinator = Coordinator::open(&control, groups.clone()).unwrap();
     let (origin, task) = serve(coordinator.clone().router()).await;
     tasks.push(task);
     let mut journal = RecordJournal::open(
@@ -314,218 +333,147 @@ async fn full_shard_loan_return_over_http_preserves_old_queries() {
         ENHANCE_LAYOUT,
     )
     .unwrap();
-    let boundary = 32768 * 33u64;
-    let borrowed = (32768 - 4096) * 33u64;
-    let initial: Vec<_> = (0..boundary - 1).map(record).collect();
-    journal
-        .append_block(3428143, "01".repeat(32), &initial)
-        .unwrap();
-    drop(initial);
-    coordinator
-        .publish(&journal, 3428143, "01".repeat(32))
-        .await
-        .unwrap();
-    let mut before = EnhancePirClient::connect(&origin).await.unwrap();
-    let session = before.session(0).await.unwrap();
-    let (prepared, slot) = session.prepare_position(borrowed).unwrap();
-    journal
-        .append_block(3428144, "02".repeat(32), &[record(boundary - 1)])
-        .unwrap();
-    coordinator
-        .publish(&journal, 3428144, "02".repeat(32))
-        .await
-        .unwrap();
-    let mut during = EnhancePirClient::connect(&origin).await.unwrap();
-    assert_eq!(during.manifest().coverage.locate(borrowed).unwrap().0.id, 1);
-    assert_eq!(
-        during
-            .query_position_with_timing(borrowed)
+    let span = 32768 * 33u64;
+    let floor = 4096 * 33u64;
+    let mut height = 3428143u64;
+    let mut sealed_session = None;
+    // Includes exact full A, first B row, threshold at first record in row m,
+    // and a second composition window. Every append is a complete block.
+    for target in [
+        span,
+        span + 1,
+        span + floor - 33 + 1,
+        2 * span + 1,
+        2 * span + floor - 33 + 1,
+    ] {
+        let records: Vec<_> = (journal.tree_size()..target).map(record).collect();
+        journal
+            .append_block(height, format!("{height:064x}"), &records)
+            .unwrap();
+        drop(records);
+        coordinator
+            .publish(&journal, height, format!("{height:064x}"))
             .await
-            .unwrap()
-            .0
-            .as_ref(),
-        record(borrowed)
-    );
-    let response = reqwest::Client::new()
-        .post(format!("{origin}/v1/enhance/query"))
-        .body(prepared.body().to_vec())
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap();
-    let row = session.decode(prepared, &response).unwrap();
-    assert_eq!(
-        &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
-        record(borrowed)
-    );
-    let (old_borrower_query, old_slot) = during
-        .session(1)
-        .await
-        .unwrap()
-        .prepare_position(borrowed)
-        .unwrap();
-    let own: Vec<_> = (boundary..boundary + 4096 * 33).map(record).collect();
-    journal
-        .append_block(3428145, "03".repeat(32), &own)
-        .unwrap();
-    drop(own);
-    coordinator
-        .publish(&journal, 3428145, "03".repeat(32))
-        .await
-        .unwrap();
-    let mut after = EnhancePirClient::connect(&origin).await.unwrap();
-    assert!(after.manifest().coverage.loan.is_none());
-    assert_eq!(after.manifest().coverage.locate(borrowed).unwrap().0.id, 0);
-    assert_eq!(after.manifest().coverage.locate(boundary).unwrap().0.id, 1);
-    let positions = [
-        borrowed,
-        boundary - 1,
-        boundary,
-        boundary + 4096 * 33 - 1,
-        boundary,
-    ];
-    for (got, position) in after
-        .query_positions(&positions)
-        .await
-        .unwrap()
-        .iter()
-        .zip(positions)
-    {
-        assert_eq!(got.as_ref(), record(position));
+            .unwrap();
+        let mut client = EnhancePirClient::connect(&origin).await.unwrap();
+        let manifest = client.manifest().clone();
+        manifest.validate().unwrap();
+        let composed = target % span == 1;
+        assert_eq!(
+            manifest.coverage.shards.last().unwrap().composed(),
+            composed
+        );
+        if target == span {
+            assert_eq!(manifest.coverage.shards.len(), 1);
+        }
+        for position in [0, span - floor, span - 1, target - 1] {
+            let (got, _) = client.query_position_with_timing(position).await.unwrap();
+            assert_eq!(got.as_ref(), record(position));
+        }
+        if composed {
+            let successor = target / span;
+            let (_, local, _) = manifest.coverage.locate(successor * span).unwrap();
+            assert_eq!(local, 0);
+            let (_, local, _) = manifest.coverage.locate(successor * span - floor).unwrap();
+            assert_eq!(local, 4096);
+        }
+        let stale = client.session(0).await.unwrap().prepare_row(0).unwrap();
+        // Confirm from the completing block, with no new record bytes.
+        height += 1000;
+        journal
+            .append_block::<Vec<u8>>(height, format!("{height:064x}"), &[])
+            .unwrap();
+        coordinator
+            .publish(&journal, height, format!("{height:064x}"))
+            .await
+            .unwrap();
+        let confirmed = coordinator.manifest().await.unwrap();
+        assert_eq!(confirmed.coverage.shards[0].state, ShardState::Sealed);
+        assert_eq!(
+            manifest.session_id(0).unwrap(),
+            confirmed.session_id(0).unwrap()
+        );
+        if let Some(id) = sealed_session {
+            assert_eq!(id, confirmed.session_id(0).unwrap());
+        }
+        sealed_session = Some(confirmed.session_id(0).unwrap());
+        let response = reqwest::Client::new()
+            .post(format!("{origin}/v1/enhance/query"))
+            .body(stale.body().to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["code"],
+            "stale_routing"
+        );
+        height += 1;
     }
-    let response = reqwest::Client::new()
-        .post(format!("{origin}/v1/enhance/query"))
-        .body(old_borrower_query.body().to_vec())
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap();
-    let row = during
-        .session(1)
-        .await
-        .unwrap()
-        .decode(old_borrower_query, &response)
-        .unwrap();
-    assert_eq!(
-        &row[old_slot * RECORD_BYTES..(old_slot + 1) * RECORD_BYTES],
-        record(borrowed)
-    );
-
-    // A canonical-anchor change after preparation must leave the complete old
-    // generation queryable. Recovery aborts that candidate before republishing.
-    let returned_manifest = after.manifest().clone();
-    journal.rewind_to_height(Some(3428144)).unwrap();
-    let rejected = coordinator
-        .publish_checked(&journal, 3428144, "02".repeat(32), || async {
-            Err("injected canonical anchor change".into())
-        })
-        .await;
-    assert!(rejected.unwrap_err().contains("canonical anchor change"));
-    assert_eq!(coordinator.manifest().await.unwrap(), returned_manifest);
-    coordinator.reconcile().await.unwrap();
+    // Ordinary rollback of only the provisional last domain preserves seals.
+    let current = coordinator.manifest().await.unwrap();
+    let previous = journal.blocks()[journal.blocks().len() - 3].clone();
     coordinator
-        .publish(&journal, 3428144, "02".repeat(32))
+        .revoke_after(previous.first_position + previous.action_count)
         .await
         .unwrap();
-    let mut undone_return = EnhancePirClient::connect(&origin).await.unwrap();
-    assert!(undone_return.manifest().coverage.loan.is_some());
-    assert!(undone_return.manifest().generation > returned_manifest.generation);
-    assert_eq!(
-        undone_return
-            .manifest()
-            .coverage
-            .locate(borrowed)
-            .unwrap()
-            .0
-            .id,
-        1
-    );
-    assert_eq!(
-        undone_return
-            .query_position_with_timing(borrowed)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        record(borrowed)
-    );
-    // A retained session still answers records removed by the reorg. Its anchor
-    // is explicit, and the wallet decides whether to accept that anchor.
-    assert_eq!(
-        after
-            .query_position_with_timing(boundary)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        record(boundary)
-    );
-
-    journal.rewind_to_height(Some(3428143)).unwrap();
+    journal.rewind_to_height(Some(previous.height)).unwrap();
     coordinator
-        .publish(&journal, 3428143, "01".repeat(32))
+        .publish(&journal, previous.height, previous.hash.clone())
         .await
         .unwrap();
-    let mut undone_split = EnhancePirClient::connect(&origin).await.unwrap();
-    assert!(undone_split.manifest().coverage.loan.is_none());
-    assert_eq!(undone_split.manifest().coverage.shards.len(), 1);
+    assert_eq!(coordinator.manifest().await.unwrap().recovery_epoch, 0);
     assert_eq!(
-        undone_split
-            .query_position_with_timing(borrowed)
+        coordinator.manifest().await.unwrap().session_id(0).unwrap(),
+        current.session_id(0).unwrap()
+    );
+    // Fence an admitted request after worker evaluation but before packing/return.
+    let mut client = EnhancePirClient::connect(&origin).await.unwrap();
+    let query = client.session(0).await.unwrap().prepare_row(0).unwrap();
+    hold.store(true, std::sync::atomic::Ordering::SeqCst);
+    let url = format!("{origin}/v1/enhance/query");
+    let pending = tokio::spawn(async move {
+        reqwest::Client::new()
+            .post(url)
+            .body(query.body().to_vec())
+            .send()
             .await
             .unwrap()
-            .0
-            .as_ref(),
-        record(borrowed)
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(30), evaluated.notified())
+        .await
+        .unwrap();
+    coordinator.revoke_after(0).await.unwrap();
+    coordinator.revoke_after(0).await.unwrap(); // retry must not increment twice
+    hold.store(false, std::sync::atomic::Ordering::SeqCst);
+    release.notify_one();
+    let response = pending.await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::GONE);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["code"],
+        "noncanonical_session"
     );
-
-    // Reapply the split on a different branch: stable shard identity must not
-    // allow a cached runtime for the old branch to supply the changed record.
-    let mut replacement = record(boundary - 1);
-    replacement[enhance_pir::types::RECORD_ENC_CIPHERTEXT_SUFFIX_OFFSET] = 0x99;
+    journal.rewind_to_height(None).unwrap();
     journal
-        .append_block(3428144, "04".repeat(32), &[replacement.clone()])
+        .append_block(3428143, "fe".repeat(32), &[record(0)])
         .unwrap();
     coordinator
-        .publish(&journal, 3428144, "04".repeat(32))
+        .publish(&journal, 3428143, "fe".repeat(32))
         .await
         .unwrap();
-    let mut alternative = EnhancePirClient::connect(&origin).await.unwrap();
+    let recovered = coordinator.manifest().await.unwrap();
+    assert_eq!(recovered.recovery_epoch, 1);
+    assert_eq!(recovered.domain_recovery_epochs[&0], "1");
+    assert_ne!(recovered.session_id(0).unwrap(), sealed_session.unwrap());
+    let mut client = EnhancePirClient::connect(&origin).await.unwrap();
     assert_eq!(
-        alternative
-            .manifest()
-            .coverage
-            .locate(boundary - 1)
-            .unwrap()
-            .0
-            .id,
-        1
-    );
-    assert_eq!(
-        alternative
-            .query_position_with_timing(boundary - 1)
+        client
+            .query_position_with_timing(0)
             .await
             .unwrap()
             .0
             .as_ref(),
-        replacement
-    );
-    assert_eq!(
-        during
-            .query_position_with_timing(boundary - 1)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        record(boundary - 1)
+        record(0)
     );
     for task in tasks {
         task.abort();
@@ -573,7 +521,6 @@ async fn inventory_expansion_is_atomic_idempotent_and_survives_restart() {
             id: format!("group-{sequence}"),
             sequence,
             replicas,
-            settling: false,
         });
     }
     use axum::response::IntoResponse;
@@ -710,7 +657,6 @@ async fn consolidation_campaign(sealed_shards: usize) {
             id: format!("g{sequence}"),
             sequence,
             replicas,
-            settling: false,
         });
     }
     let path = root.path().join("control");
@@ -898,7 +844,6 @@ async fn committed_offline_participant_does_not_block_and_recovers_after_expiry(
         id: "g0".into(),
         sequence: 0,
         replicas,
-        settling: false,
     }];
     let coordinator_root = root.path().join("coordinator");
     let read_state = || -> ControlState {
@@ -1151,7 +1096,6 @@ async fn abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_p
         id: "g0".into(),
         sequence: 0,
         replicas,
-        settling: false,
     }];
     let worker_url = &groups[0].replicas[0].url;
     let coordinator_root = root.path().join("coordinator");
@@ -1403,7 +1347,7 @@ async fn lost_worker_rows_repair_restores_current_and_retained_http_queries() {
         placement_policy: Default::default(),
         id: "group-1".into(),
         sequence: 0,
-        settling: false,
+
         replicas: [first_url.clone(), peer_url]
             .into_iter()
             .enumerate()
@@ -1583,7 +1527,6 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
             id: format!("g{sequence}"),
             sequence,
             replicas,
-            settling: false,
         });
     }
     let inventory = serde_json::json!({"groups": groups.iter().map(|g| serde_json::json!({
@@ -1761,7 +1704,6 @@ async fn memory_refusal_moves_published_shard_with_complete_destination_pair() {
             id: format!("g{sequence}"),
             sequence,
             replicas,
-            settling: false,
         });
     }
     let coordinator = Coordinator::open(&root.path().join("control"), groups).unwrap();

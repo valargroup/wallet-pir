@@ -1,10 +1,10 @@
 //! Build as a separate test crate against the pinned wallet-pir checkout.
 //! Queries traverse the real coordinator and two worker HTTP listeners.
 use enhance_pir_server::{
-    store::RecordJournal,
-    types::{DatabaseId, ENHANCE_LAYOUT},
     control::{Group, Ledger, PlacementPolicy, Replica},
     coordinator::Coordinator,
+    store::RecordJournal,
+    types::{DatabaseId, ENHANCE_LAYOUT},
     worker::Worker,
 };
 use futures_util::StreamExt;
@@ -119,7 +119,6 @@ async fn wallet_client_round_trips_real_http_and_requires_fresh_acceptance() {
             id: "group-1".into(),
             sequence: 0,
             replicas,
-            settling: false,
         }],
     )
     .unwrap();
@@ -164,7 +163,7 @@ async fn wallet_client_round_trips_real_http_and_requires_fresh_acceptance() {
     }
     assert!(query_position(&mut client, &transport, 67).await.is_err());
 
-    // The sixth publication expires the first generation. A newly fetched
+    // A superseded routing view is rejected even while content is retained. A newly fetched
     // manifest still needs a new locally scanned anchor before its setup is used.
     for offset in 1..=5u64 {
         let position = journal.tree_size();
@@ -178,7 +177,7 @@ async fn wallet_client_round_trips_real_http_and_requires_fresh_acceptance() {
     let stale = query_position(&mut client, &transport, 0)
         .await
         .unwrap_err();
-    assert_eq!(stale.http_status(), Some(410));
+    assert_eq!(stale.http_status(), Some(409));
     let pending = PendingClient::fetch(&transport, &origin).await.unwrap();
     assert!(pending.accept(&acceptance(3_428_143, 1, 67)).is_err());
     let mut refreshed = PendingClient::fetch(&transport, &origin)
@@ -193,6 +192,13 @@ async fn wallet_client_round_trips_real_http_and_requires_fresh_acceptance() {
             .as_bytes(),
         record(71).as_slice()
     );
+    let covered = refreshed
+        .query_positions_with_cover(&transport, &[0, 33, 71, 33], 0)
+        .await
+        .unwrap();
+    for (record, position) in covered.iter().zip([0, 33, 71, 33]) {
+        assert_eq!(record.as_bytes(), &self::record(position)[..]);
+    }
     for task in tasks {
         task.abort();
     }
@@ -323,7 +329,6 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
             id: "g0".into(),
             sequence: 0,
             replicas,
-            settling: false,
         }],
     )
     .unwrap();
@@ -427,9 +432,12 @@ fn frozen_wallet_and_server_share_the_24_shard_ceiling() {
         .validate(zakura_pir_enhance::types::Geometry::default())
         .unwrap();
     assert!(enhance_pir::protocol::Lifecycle::default()
-        .coverage(24 * span, enhance_pir::protocol::Geometry::default())
+        .coverage(24 * span + 1, enhance_pir::protocol::Geometry::default())
         .is_err());
     assert!(zakura_pir_enhance::types::Lifecycle::default()
-        .coverage(24 * span, zakura_pir_enhance::types::Geometry::default())
+        .coverage(
+            24 * span + 1,
+            zakura_pir_enhance::types::Geometry::default()
+        )
         .is_err());
 }

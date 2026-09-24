@@ -115,7 +115,6 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
             id: "g0".into(),
             sequence: 0,
             replicas,
-            settling: false,
         }],
     )
     .unwrap();

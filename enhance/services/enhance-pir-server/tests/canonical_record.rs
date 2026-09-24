@@ -127,7 +127,6 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
             id: "g0".into(),
             sequence: 0,
             replicas,
-            settling: false,
         }],
     )
     .unwrap();

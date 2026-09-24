@@ -43,7 +43,7 @@ impl Profile {
     fn seeds(self, sealed_shards: usize) -> Vec<u64> {
         match self {
             Self::Smoke => vec![67],
-            Self::Active => vec![4 * SPAN - RECORDS_PER_ROW as u64, 4 * SPAN],
+            Self::Active => vec![4 * SPAN - RECORDS_PER_ROW as u64, 4 * SPAN + 1],
             Self::Sealed => (5..=sealed_shards as u64)
                 .map(|n| n * SPAN + LOAN)
                 .collect(),
@@ -58,12 +58,12 @@ impl Profile {
             ),
             Self::Active => {
                 let (offset, stage) = [
-                    (LOAN / 2, "loan_growth"),
-                    (LOAN, "return"),
+                    (LOAN / 2, "composition_growth"),
+                    (LOAN, "tail_removal"),
                     (2 * LOAN, "owned_8k"),
                     (4 * LOAN, "owned_16k"),
                     (SPAN - RECORDS_PER_ROW as u64, "owned_near_32k"),
-                    (0, "rewind_return"),
+                    (1, "rewind_composition"),
                 ][index as usize % 6];
                 (4 * SPAN + offset, stage)
             }
@@ -157,12 +157,9 @@ fn probe_positions(coverage: &enhance_pir::protocol::Coverage) -> BTreeSet<u64> 
             }
         }
     }
-    if let Some(loan) = &coverage.loan {
-        let owned_start = loan.row_end * RECORDS_PER_ROW as u64;
-        positions.insert(owned_start - 1);
-        if owned_start < coverage.records {
-            positions.insert(owned_start);
-        }
+    for route in &coverage.routes {
+        positions.insert(route.global_start * RECORDS_PER_ROW as u64);
+        positions.insert((route.global_end * RECORDS_PER_ROW as u64).min(coverage.records) - 1);
     }
     positions
 }
@@ -314,6 +311,10 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
     let mut manifest = None;
     for target in config.profile.seeds(sealed_shards) {
         append(&mut journal, target, 0)?;
+        if config.profile != Profile::Smoke {
+            let height = journal.last_block().unwrap().height + 1000;
+            journal.append_block::<Vec<u8>>(height, format!("{height:064x}"), &[])?;
+        }
         manifest = Some(publish(&coordinator, &journal).await?);
     }
     let initial = manifest.unwrap();
@@ -400,6 +401,14 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
         let began = Instant::now();
         let (target, stage) = config.profile.target(publications, journal.tree_size());
         if target < journal.tree_size() {
+            let block = journal
+                .blocks()
+                .iter()
+                .find(|b| b.height == rewind_height)
+                .ok_or("missing rewind anchor")?;
+            coordinator
+                .revoke_after(block.first_position + block.action_count)
+                .await?;
             journal.rewind_to_height(Some(rewind_height))?;
             branch += 1;
         }
@@ -437,12 +446,10 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
             expired_refreshes += 1;
         }
         for client in &mut retained {
-            let generation = client.manifest().generation;
-            let last = client.manifest().coverage.records - 1;
+            // Routing refresh is mandatory even when sealed material remains reusable.
+            let last = (client.manifest().coverage.records - 1).min(manifest.coverage.records - 1);
+            client.refresh().await?;
             exact(client, last, &queries).await?;
-            if client.manifest().generation != generation {
-                return Err("retained session refreshed prematurely".into());
-            }
             probes += 1;
         }
         publications += 1;
@@ -558,7 +565,6 @@ mod tests {
                     id: format!("g{i}"),
                     sequence: i,
                     replicas: vec![],
-                    settling: false,
                 })
                 .collect();
             let mut lifecycle = Lifecycle::default();
@@ -566,13 +572,23 @@ mod tests {
             let mut records = 0;
             for target in profile.seeds(sealed_shards) {
                 records = target;
-                let coverage = lifecycle.coverage(records, Geometry::default()).unwrap();
+                let mut coverage = lifecycle.coverage(records, Geometry::default()).unwrap();
+                for shard in &mut coverage.shards {
+                    if shard.state == enhance_pir::protocol::ShardState::Provisional {
+                        shard.state = enhance_pir::protocol::ShardState::Sealed;
+                    }
+                }
                 placement = assign(&coverage, &groups, &placement).unwrap();
                 consolidate(&coverage, &groups, &mut placement).unwrap();
             }
             for index in 0..24 {
                 records = profile.target(index, records).0;
-                let coverage = lifecycle.coverage(records, Geometry::default()).unwrap();
+                let mut coverage = lifecycle.coverage(records, Geometry::default()).unwrap();
+                for shard in &mut coverage.shards {
+                    if shard.state == enhance_pir::protocol::ShardState::Provisional {
+                        shard.state = enhance_pir::protocol::ShardState::Sealed;
+                    }
+                }
                 placement = assign(&coverage, &groups, &placement).unwrap();
                 consolidate(&coverage, &groups, &mut placement).unwrap();
                 assert_eq!(
@@ -602,8 +618,7 @@ mod tests {
             .unwrap();
         let positions = probe_positions(&coverage);
         assert!(positions.contains(&(4 * SPAN)));
-        assert!(positions
-            .contains(&(coverage.loan.as_ref().unwrap().row_start * RECORDS_PER_ROW as u64)));
+        assert!(positions.contains(&((4 * 32768 - 4096) * RECORDS_PER_ROW as u64)));
         assert!(positions.contains(&(coverage.records - 1)));
         for position in positions {
             assert!(coverage.locate(position).is_some());

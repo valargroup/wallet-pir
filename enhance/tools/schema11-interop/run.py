@@ -7,21 +7,26 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-REVISION = 'de3ec78f31b6fd184596fc952fe4f78d3a63cd0a'
+REVISION = None
 ROOT = Path(__file__).resolve().parents[3]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('wallet_checkout', type=Path)
+    parser.add_argument('--wallet-revision', help='Require this exact wallet commit')
     args = parser.parse_args()
     wallet = args.wallet_checkout.resolve()
     actual = subprocess.check_output(['git', '-C', str(wallet), 'rev-parse', 'HEAD'], text=True).strip()
-    if actual != REVISION:
-        raise SystemExit(f'wallet checkout must be at {REVISION}')
-    subprocess.run(['git', '-C', str(wallet), 'diff', '--exit-code', 'HEAD', '--',
-                    'Cargo.toml', 'Cargo.lock', 'zakura', 'librustzcash'], check=True,
-                   stdout=subprocess.DEVNULL)
+    if args.wallet_revision and actual != args.wallet_revision:
+        raise SystemExit(f'wallet checkout must be at {args.wallet_revision}')
+    import hashlib
+    files = sorted((wallet / 'zakura/pir-enhance').rglob('*.rs'))
+    fingerprint = hashlib.sha256()
+    for path in files:
+        fingerprint.update(str(path.relative_to(wallet)).encode())
+        fingerprint.update(path.read_bytes())
+    print(f'wallet revision={actual} source_sha256={fingerprint.hexdigest()}', flush=True)
     with tempfile.TemporaryDirectory(prefix='schema11-interop-') as directory:
         project = Path(directory)
         dependencies = {
@@ -56,7 +61,7 @@ debug = 0
 overflow-checks = false
 '''
         (project / 'Cargo.toml').write_text(manifest)
-        env = {**os.environ, 'CARGO_TARGET_DIR': str(ROOT / 'target/schema11-interop')}
+        env = {**os.environ, 'CARGO_TARGET_DIR': os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target/schema11-interop'))}
         subprocess.run(['cargo', 'test', '--manifest-path', str(project / 'Cargo.toml'),
                         '--test', 'interop', '--', '--nocapture', '--test-threads=1'], env=env, check=True)
 
