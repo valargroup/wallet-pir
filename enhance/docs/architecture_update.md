@@ -32,7 +32,7 @@ The update separates five things the current document folds together.
 | Storage shard | Fixed global row range of `max_shard_rows`; immutable once sealed | Shard ID = global row start / `max_shard_rows` |
 | Query domain | Ordered mapping of stored rows into PIR coordinates under one setup seed, with logical rows and units | Domain ID, setup seed, unit identities, logical rows |
 | Routing view | The manifest's assignment of every populated global row to exactly one query domain and local row | Routing revision plus chain anchor |
-| Session | A query domain's content, geometry, setup and packing parameters as the wallet must use them | Content digest over the domain's unit identities and parameters |
+| Session | A query domain's content, geometry, setup and packing parameters as the wallet must use them | Content digest over the domain's unit identities and parameters, with the domain's recovery epoch |
 | Placement | Which replicas hold which query domains and are ready | Placement revision |
 
 The invariant is unique canonical routing, not unique physical presence or
@@ -68,7 +68,8 @@ identical under every design.
 **Decision.** A storage shard is the fixed range `[k * M, (k + 1) * M)` rows.
 Once its last row is populated at confirmation depth it is sealed and its
 runtime is never modified. Records never move between shards. The only
-lifecycle event is the frontier reaching `M` rows and a successor opening.
+durable lifecycle event is the frontier reaching `M` rows and a successor
+opening after confirmation; D8 defines provisional tip routing until then.
 
 **Rationale.** The loan exists solely to give a successor a population floor.
 It costs two atomic two-shard publications, two rebuilds of the lender's last
@@ -81,9 +82,11 @@ and keeps today's bootstrap exception.
 
 ### D3. Population floor from a composed tail domain with manifest-owned routing
 
-**Decision.** When successor B opens after A seals, the manifest publishes a
-tail domain and a routing table. Using `n` for B's fully populated rows and the
-defaults `M = 32,768`, `m = 4,096`:
+**Decision.** When successor B first has rows, the manifest publishes B's
+query domain and a routing table. B uses the tail layout while `n < m` and may
+be provisional until A's seal confirms (D8). Using `n` for B's occupied rows,
+including a partially populated last row, and the defaults `M = 32,768`,
+`m = 4,096`:
 
 | State | A's first `M - m` rows | A's last `m` rows | B's rows |
 |---|---|---|---|
@@ -104,8 +107,8 @@ logical rows      2m during the compose window
 ```
 
 Because `n < m` throughout the window, B's rows never reach local row `m`.
-When `n >= m` the extra unit is dropped, the routing table sends A's suffix back
-to domain A, and B's units keep the offsets they already had.
+When B first occupies its `m`th row, the extra unit is dropped, the routing
+table sends A's suffix back to domain A, and B's units keep their offsets.
 
 **Rationale.** The anonymity sets are identical to the loan design at every
 stage: a tail query is any of `m + n` rows, an A query is any of `M - m` rows.
@@ -220,29 +223,70 @@ so routing freshness must be a separate, cheaper refresh.
 against sealed domains during eviction or a move. Only mutable domains need
 repeated content revisions; sealed domains still need safe resource lifetimes.
 
-### D8. Appends follow the tip; sealing and routing transitions wait for confirmation depth
+### D8. Tip routing is provisional until boundary confirmation
 
-**Decision.** The frontier domain appends rows as blocks arrive. Sealing a
-storage shard, opening a successor, and ending a compose window happen only
-for ranges fully covered by the confirmation policy. Every publication is
-bound to its chain anchor.
+**Decision.** Ingest complete canonical blocks and publish every new record at
+the tip anchor. Partition records by fixed global row range even when one block
+crosses several `M` boundaries; retain its excess records and partial final row.
+The block that fills a predecessor's last row starts that boundary's confirmation
+clock. Depth is measured from that block, not from a later publication.
 
-**Deep-reorg contract.** Depth reduces the likelihood of a reorg crossing a
-sealed boundary; it does not make one impossible, and a single block can add
-enough rows to cross several units. If a reorg invalidates a sealed range:
+| State | Tip publication | After the boundary confirms |
+|---|---|---|
+| A first reaches `M` full rows | Keep A mutable; no successor domain is needed until B has a row | Seal A if those rows remain canonical |
+| B has `0 < n < m` occupied rows | Open provisional B with D3's tail unit; route A's last `m` rows and B's rows through B | Mark B's opening durable; keep the tail while `n < m` |
+| B reaches `m` occupied rows before A's seal confirms | Provisionally drop the tail unit, route A's suffix back to A and serve plain B | Finalize the already current routing state |
 
-1. Stop advancing publication.
-2. Mark the affected domains and sessions noncanonical in a new recovery epoch.
-3. Publish replacement content under new identities.
-4. Never overwrite an existing sealed artifact or reinterpret its session.
+Each tip publication has one anchor and one complete routing view. Prepare and
+admit all affected domains before publishing it; if preparation fails, retain
+the previous anchored view rather than advertise uncovered tip rows. Process
+multiple crossings in order within a block. Only the final occupied range is
+the growing frontier; intermediate full ranges remain provisional until their
+own boundary clocks confirm. Promotion changes lifecycle status and routing
+revision, but an unchanged domain session need not change identity. A finalized
+sealed runtime is never modified by ordinary appends. Thus confirmation delays
+durable lifecycle transitions, while provisional routing provides tip latency.
 
-**Rationale.** Shallow reorgs then only touch unconfirmed frontier revisions,
-which are already rebuilt per publication. Boundary events are never urgent,
-so delaying them costs wallets nothing. New records are still available at tip
-latency; the cost of depth is paid only by boundary events.
+**Rollback.** Find the common canonical ancestor and discard all later blocks
+before replay. Withdraw provisional successors and tail routes invalidated by
+the rollback, recompute fixed-range coverage and confirmation clocks from the
+surviving chain, and atomically publish a complete replacement view. Mutable
+domains receive new content revisions as needed. A removed provisional domain
+cannot remain in the canonical routing view. Retained snapshots follow D3's
+stale-view rule; wallets must reject their orphaned anchors. A replayed crossing
+uses B-local row coordinates again; neither rows nor an entire crossing block
+are deferred to fit a boundary.
 
-**Cost.** Unconfirmed frontier revisions need explicit handling and retention.
-Immutable artifacts are guaranteed; their canonical status is not.
+**Deep-reorg recovery.** A seal can become noncanonical despite its confirmation
+depth. If rollback removes or replaces a record in a sealed range, pause further
+publication and fence every current and retained session of affected domains on
+all serving replicas. The affected set starts at the first changed global row's
+domain and includes downstream domains whose content or coordinates can change;
+earlier sealed domains remain
+valid. The durable manifest recovery epoch starts at zero and increments once
+per such rollback, independently of the controller and PIR parameter epochs.
+Encode this unsigned 64-bit value as a decimal string in JSON and a fixed-width
+unsigned integer in the versioned binary protocol; fail closed on exhaustion.
+
+The manifest carries the current recovery epoch and each domain descriptor
+carries the epoch of its last recovery. A session identity hashes the protocol
+revision, domain ID, that domain recovery epoch, and its content, geometry,
+setup and packing identities. Affected replacement domains take the new epoch,
+even if replay produces identical bytes. Publish revocation before replacement
+content; old affected queries receive a noncanonical-session error, not an
+answer from an orphaned snapshot. Already admitted work retains its resource
+pin but its response must be rejected if the session was fenced. Wallets
+refresh the routing view on that error or an increased manifest recovery epoch,
+discard revoked sessions, and reuse unchanged sessions for unaffected domains.
+Build replacement artifacts under new identities and never overwrite a sealed
+artifact. Resume publication only after the replacement view and its ready
+placements can be committed atomically.
+
+**Cost.** Provisional successors, their tail units, mutable revisions and
+recovery replacements require retention and memory admission, including a block
+that crosses multiple boundaries. Immutable artifacts remain immutable; their
+canonical status can change. Tip latency remains subject to the same successful
+preparation and admission requirement as any publication.
 
 ### D9. Keep progressive frontier units with an 8K cap
 
@@ -303,7 +347,8 @@ budget, and both replicas of a domain must fit independently.
 sealed domains           768 MiB each at 32K logical rows
 frontier domain          allocated units + retained revisions of the growing unit
                          (up to 6 x 192 MiB at the retained 8K cap)
-tail unit                96 MiB while a compose window is open
+tail unit                96 MiB while a compose window is open, including a provisional one
+provisional domains      prepared successors and retained revisions pending confirmation
 packing state            per domain, rebuilt when its unit set changes (D6 moves it here)
 per-request lifetime     body, decoded keys, batch slot, intermediate, packed response
 query pins               admitted queries on retained or moving domains
@@ -318,9 +363,10 @@ guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unch
    query decoding in the tail. Whole-domain packing still changes when A's
    extra unit is removed. D3's remaining work is routing implementation and
    lifecycle validation, not a plain-B preparation fallback.
-2. **Deep-reorg recovery epoch.** Specify the recovery epoch encoding, how
-   wallets learn a session is noncanonical, and the test that exercises a
-   reorg across a sealed boundary. Blocking for D8.
+2. **Deep-reorg recovery epoch (design resolved).** D8 specifies the epoch,
+   revocation and replacement contract. The transition-model test covers a
+   reorg across a sealed boundary; production routing and wallet interop remain
+   Phase 2 work.
 3. **Batching on production hosts.** Sweep offered rate and batch size on the
    8 GiB Linux workers with full-size shards, report successful QPS alongside
    latency, 429 rate and peak cgroup memory, and find the saturation point.
@@ -351,18 +397,17 @@ phase if the public route is preserved at the origin.
 
 **Phase 2: immutable shards and composed routing.** Fixed storage shards, the
 tail domain, manifest-owned routing, separated session, routing and placement
-identities, confirmation-depth transitions with the recovery epoch, and the 2K
-frontier cap. Exit: the reuse-rule test from open question 1, a reorg test
-across a sealed boundary, full-size lifecycle tests through two successive
-compose windows, and a versioned wallet interop run. This phase changes the
-wallet protocol.
+identities, confirmation-depth transitions with the recovery epoch, and the 8K
+frontier cap. Exit: replay the D8 model cases against the implementation, run
+full-size lifecycle tests through two successive compose windows, and complete
+a versioned wallet interop run. This phase changes the wallet protocol.
 
 **Phase 3: pool placement.** Replace groups with per-domain placements and a
 replication factor. Exit: consolidation and hotspot replication under the
 existing operation phases, with the ledger counting both copies.
 
-The remaining blocking design question is the deep-reorg contract. The tail
-removal reuse rule is resolved by the construction test above.
+The D3 reuse rule and D8 recovery contract are resolved at the design level.
+Their production routing and wallet behavior remain Phase 2 work.
 
 ## What this removes and what it keeps
 
