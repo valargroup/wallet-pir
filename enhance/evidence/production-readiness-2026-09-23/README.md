@@ -80,7 +80,9 @@ current published-snapshot verification after the conditional independent agent
 audit, and the 24-hour opt-in observation. Four temporary c-4 workers are
 [provisioned and smoke checked](operations/temporary-c4-qualification-workers.md)
 as two isolated campaign pairs. The serving pair remains online; no production
-outage is scheduled. The earlier
+outage is scheduled. The first active attempt encountered worker swap; the
+[second was interrupted by automatic host upgrades](operations/active-c4-upgrade-stop-2026-09-24.md).
+Neither is qualifying evidence. The earlier
 [existing-worker campaign plan](operations/existing-c4-campaign-plan.md) and
 [provider inventory](operations/c4-provider-inventory.json) describe the
 pre-provisioning state and are retained as historical evidence.

@@ -1,7 +1,9 @@
 # Temporary c-4 qualification workers
 
-Status at 2026-09-24 06:20 UTC: four isolated workers provisioned; the active
-six-hour campaign is running on group `g01` and the sealed group `g02` is idle.
+Status at 2026-09-24 07:02 UTC: four isolated workers provisioned; the second
+active attempt on group `g01` was interrupted by Ubuntu unattended upgrades
+after 129 publications. A third active attempt began at 07:01:29 UTC after the
+upgrades finished. The sealed group `g02` is idle.
 Neither hardware campaign has passed. The existing production coordinator and
 serving pair continue to serve the public origin.
 
@@ -58,6 +60,23 @@ before the exercise. This stricter swap limit differs from the production
 serving units and cannot alone qualify them. The first attempt's inactive data
 directories were removed after the raw evidence digests were verified, leaving
 about 31 GB free on each active worker.
+
+The [no-swap active retry](active-c4-upgrade-stop-2026-09-24.md) failed after
+unattended upgrades restarted a worker. Its raw traces and failure journal are
+preserved. Automatic apt timers are masked on all four temporary hosts for the
+qualification window. The upgrades on `g01` finished before the next attempt
+started with new directories and samplers.
+
+After both upgrades completed with exit status zero, the failed active worker
+data directories were removed; the raw failed traces, manifests and journals
+had already been copied and SHA-256 verified. Fresh
+`active-worker-g01-r{1,2}-noswap-retry2` directories and root-only matching
+sampling policies were installed. Both workers passed direct-policy samples
+with the pinned binary and effective zero-swap limit before their new samplers
+started. The coordinator launched
+`enhance-pir-v6-active-campaign-216b999-noswap-retry2-root.service` at
+07:01:29 UTC with 21,600 requested seconds and 300 minimum publications.
+This third attempt is in progress and has no qualification result yet.
 
 The idle `g02` pair was moved to fresh sealed-profile data directories and
 `MemorySwapMax=0`; both workers passed pinned-release idle health and effective
