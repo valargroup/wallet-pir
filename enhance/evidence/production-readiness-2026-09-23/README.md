@@ -4,6 +4,48 @@
 [2 QPS pilot gates](../../docs/pilot-readiness.md). It records completed checks
 and preserves failures; it is not an approval to admit wallets.
 
+## Current candidate and live qualification (September 23, 23:59 UTC)
+
+The coordinator and both physical workers now run the uniform server/load
+source revision `527048217f8cb83d27c838e94dbaac21ac25837d`; the deployed
+Linux server binary SHA-256 is
+`3c10840380c306b0564b4a171d81f51c3ca35089fbc624cba7c7e9b4198e3b29`.
+The previous releases and data remain available for rollback, and cleanup
+timers remain disabled. The source changes since that revision affect tooling,
+APM, evidence and tests, not the deployed server/load binary.
+
+The fully observed public HTTPS run has passed its 30-minute 1, 2 and 4 QPS
+stages: 1,800, 3,600 and 7,200 exact answers respectively, with zero request
+errors or missed arrivals and scheduled p99 of 252.671, 393.983 and
+233.983 ms. Its six-hour 4 QPS soak is running, followed by a five-minute
+eight-client burst. Both worker samplers and the coordinator freshness
+observer started before the relevant full stages; the first full soak hour
+passed the conservative freshness assessment with 42 bounded tip advances,
+70.001-second worst lag and no findings. These public answers still use a
+journal-derived oracle. Full worker traces and the complete six-hour freshness
+window must be assessed after the run.
+
+Fresh rc.2 ARM64 and native Linux noise matrices each completed 432 cases and
+55,296 queries with zero decoding failures. Deterministic cross-platform
+comparison, independent numerical review and a current published snapshot
+check remain open. The pinned PR #29 wallet client was built from a clean
+checkout on Linux with no packages outside its lockfile; it has not yet queried
+production with a chain-derived anchor. The portable APM update is installed,
+with the old binary retained; after restart it reported both private workers
+reachable and zero active alerts. Its build and rollout checks are recorded in
+[portable tool validation](portable-tools-validation.txt).
+
+The remaining gates include the completed public soak and burst, independent
+chain extraction and wallet release recovery over HTTPS, full hardware active
+and six-sealed campaigns, recovery/alert exercises, independent cryptographic
+review, and the 24-hour opt-in observation. The two serving workers cannot host
+the isolated six-sealed campaign concurrently with this load; no extra workers
+have been provisioned and no production outage has been scheduled.
+
+The sections below preserve earlier checks and failures in their original
+context. Their earlier fleet revisions and incomplete-run statements do not
+describe the current deployment.
+
 Implementation started from `8b9bacf33c49522be1b1d437566f34cd33535d7d` in an
 isolated worktree. Commit `69840f3df91ebde3f893a77d867e40e8088a8ced` repaired the
 wallet/noise tools and added the public qualifier and successful latency fields.
@@ -28,7 +70,8 @@ window. The [manifest](manifest.json) records identities and outstanding gates.
 
 The additional [full-size loan/return test](full-shard.log) passed in 139.32 seconds,
 including retained queries and reorg/alternate-branch recovery. The six-sealed
-consolidation test is a separate running check. Final helper checks have
+consolidation test was still running at this initial capture and later passed
+locally. Final helper checks have
 [101 operations tests](ops-final-tests.log), three skipped, and
 [10 noise-verifier/comparison tests](noise-verifier-final-tests.log), all passing.
 The [release build](release-build.log) completed; [binary hashes](release-binaries.json)
@@ -71,7 +114,8 @@ transfer; neither run is an uncontended sustained capacity result.
 | [Interval corrected](public-smoke-interval-fixed/rate-1.json) | 30 / 30 | 0 | 1,517.567 ms | Failed latency; full 30.027-second window recorded |
 
 The qualifier correctly stopped after the 1 QPS stage. No 2/4 QPS or soak result
-is claimed. Neither run recorded 429, 502, wrong answers or warmup failures.
+is claimed by these two historical smoke runs. Neither recorded 429, 502,
+wrong answers or warmup failures.
 The initial driver's last arrival completed before 30 seconds; the corrected
 driver includes the complete requested interval in throughput and duration.
 The one-second p99 threshold remains unchanged.
@@ -88,32 +132,39 @@ record file remains outside Git at the path and hash in the capture identity.
 This result covers the captured generation, not future publication or an
 independent review of the extractor.
 
-The [current campaign progress snapshot](current-campaign-progress.json) records
-partial rc.2 ARM64/Linux coverage. Both campaigns were still running when sampled;
-no full current-matrix clearance is claimed.
+The [campaign progress snapshot](current-campaign-progress.json) records
+partial rc.2 ARM64/Linux coverage at its capture time. Both matrices later
+completed as described in the current-candidate section above; this frozen
+partial snapshot is retained as historical evidence.
 
 ## Read-only fleet checks and rollback retention
 
-The live coordinator runs `682ee124621fb155033200c6a1565a8cae75c863`; both workers
-run `afdb4b6d70d6947fa60688a3cf4df21fe5eeae69`. These are not the uniform candidate
-required for final acceptance. Both workers reported zero restarts, zero current
-swap and more than 32 GiB free disk at the sampled points. This is a spot check.
+Before the uniform deployment, the coordinator ran
+`682ee124621fb155033200c6a1565a8cae75c863`; both workers ran
+`afdb4b6d70d6947fa60688a3cf4df21fe5eeae69`. Those were not the uniform
+candidate required for final acceptance. Both workers reported zero restarts,
+zero current swap and more than 32 GiB free disk at those sampled points.
+This is a historical spot check.
 
 [External probes](public-worker-ports.json) timed out on both workers' public
 port 8091. Provider rules restrict 8091 to the coordinator tag. Coordinator
 listeners for PIR, RPC and APM were loopback-only; public node P2P remains separate.
+The later [public edge probe](operations/public-edge-2026-09-23.txt) verified
+TLS hostname validation and that `/metrics` and `/ready` return 404 externally
+while the intended health and APM health routes remain reachable.
 
 The old-release retention timers would delete rollback state on September 24 at
 17:05 UTC, before a new qualification plus 24-hour pilot window could finish.
 They were disabled and verified inactive on the
 [coordinator](operations/coordinator-retention-timer.txt),
 [first worker](operations/worker-1-retention-timer.txt) and
-[second worker](operations/worker-2-retention-timer.txt). No serving process,
-binary, canonical state or worker data was changed. Re-enable cleanup only after
+[second worker](operations/worker-2-retention-timer.txt). At that check, no
+serving process, binary, canonical state or worker data was changed. Re-enable
+cleanup only after
 rollback retention is no longer required by the final acceptance decision.
 
 Full hardware campaigns require isolated workers or an explicitly planned
 maintenance window. The current provider inventory contains only the two serving
-c-4 workers. CI, current matrix/snapshot qualification, wallet release acceptance,
-sustained physical-worker traces, fault/alert exercises and pilot observation
-remain separate gates.
+c-4 workers. Current-snapshot qualification, deterministic matrix comparison,
+wallet release acceptance, sustained physical-worker traces, fault/alert
+exercises and pilot observation remain separate gates.
