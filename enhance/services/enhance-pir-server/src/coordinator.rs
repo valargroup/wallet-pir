@@ -1,7 +1,7 @@
 //! Coordinator with atomic manifests and generation-specific replica routes.
 use super::{
     control::{self, Group, Operation, PendingCommit, Phase, ReadyAck, Store},
-    runtime::{self, DomainPlan, Packing},
+    runtime::{self, DomainPlan, Packing, PublishedPacking},
     worker,
 };
 use axum::{
@@ -95,7 +95,7 @@ struct SavedSnapshot {
 
 struct Snapshot {
     saved: SavedSnapshot,
-    packing: BTreeMap<u64, Arc<Packing>>,
+    packing: BTreeMap<u64, Arc<PublishedPacking>>,
 }
 
 fn hint_name(name: &str) -> bool {
@@ -134,7 +134,11 @@ fn collect_artifacts(root: &FsPath, published: &[Manifest]) -> Result<(), String
         }
         snapshots.insert(name);
     }
-    for (directory, keep) in [("snapshots", snapshots), ("hints", hints)] {
+    for (directory, keep) in [
+        ("snapshots", snapshots),
+        ("hints", hints.clone()),
+        ("public", hints),
+    ] {
         let directory_path = root.join(directory);
         for entry in fs::read_dir(&directory_path).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
@@ -166,7 +170,8 @@ fn restore(
     root: &FsPath,
     manifest: &Manifest,
     revoked: &BTreeSet<String>,
-    cache: &mut BTreeMap<String, Arc<Packing>>,
+    cache: &mut BTreeMap<String, Arc<PublishedPacking>>,
+    remote_packing: bool,
 ) -> Result<Arc<Snapshot>, String> {
     manifest.validate()?;
     let saved: SavedSnapshot = serde_json::from_slice(
@@ -194,15 +199,28 @@ fn restore(
         if !hint_name(name) {
             return Err("invalid persisted hint identity".into());
         }
-        let params = parameters(shard.logical_rows)?;
-        let file = File::open(root.join("hints").join(name)).map_err(|e| e.to_string())?;
-        let blocks = crate::wire::read_crs_blocks(
-            file,
-            params.db_cols / runtime::rlwe().d,
-            runtime::rlwe().d,
-        )
-        .map_err(|e| e.to_string())?;
-        let pack = Packing::new(shard.logical_rows, &blocks)?;
+        let public_path = root.join("public").join(name);
+        let pack = if remote_packing && public_path.is_file() {
+            PublishedPacking::metadata(
+                shard.logical_rows,
+                fs::read(&public_path).map_err(|e| e.to_string())?,
+            )
+        } else {
+            let params = parameters(shard.logical_rows)?;
+            let file = File::open(root.join("hints").join(name)).map_err(|e| e.to_string())?;
+            let blocks = crate::wire::read_crs_blocks(
+                file,
+                params.db_cols / runtime::rlwe().d,
+                runtime::rlwe().d,
+            )
+            .map_err(|e| e.to_string())?;
+            let serving = Packing::new(shard.logical_rows, &blocks)?;
+            crate::artifact::write_atomic(&root.join("public"), name, |f| {
+                f.write_all(&serving.public)
+            })
+            .map_err(|e| e.to_string())?;
+            PublishedPacking::new(shard.logical_rows, serving, !remote_packing)
+        };
         if !manifest.sessions.contains(&pack.reference(shard.id)?) {
             return Err("restored session digest differs".into());
         }
@@ -221,10 +239,12 @@ pub struct Coordinator {
     queries: Arc<Semaphore>,
     query_waiters: Arc<Semaphore>,
     query_stats: Arc<QueryStats>,
+    http_metrics: super::http_metrics::HttpMetrics,
     http: reqwest::Client,
     root: PathBuf,
     blocked: Arc<Mutex<Option<String>>>,
     telemetry: Arc<Mutex<super::telemetry::Publication>>,
+    serving: Option<Arc<super::serving_control::ServingControl>>,
 }
 
 fn validate_inventory(groups: &[Group]) -> Result<(), String> {
@@ -236,14 +256,15 @@ fn validate_inventory(groups: &[Group]) -> Result<(), String> {
     }
     let mut names = BTreeSet::new();
     let mut urls = BTreeSet::new();
-    if groups.is_empty() || groups.len() > 4 {
-        return Err("requires one to four replica pairs".into());
+    if groups.is_empty() || groups.len() > 16 {
+        return Err("requires one to sixteen inventory containers".into());
     }
     for (sequence, group) in groups.iter().enumerate() {
         if group.id.is_empty()
             || group.sequence != sequence as u64
             || !names.insert(group.id.clone())
-            || group.replicas.len() != 2
+            || group.replicas.is_empty()
+            || group.replicas.len() > 2
         {
             return Err("invalid group inventory".into());
         }
@@ -289,6 +310,16 @@ impl Coordinator {
         policy: super::capacity::Policy,
     ) -> Result<(), String> {
         self.store.lock().unwrap().update(|state| {
+            if let Some(pool) = &state.pool {
+                return state.capacity.observe_pool(
+                    records,
+                    now,
+                    policy,
+                    &state.groups,
+                    &state.lifecycle,
+                    pool,
+                );
+            }
             state.capacity.observe(
                 records,
                 now,
@@ -312,10 +343,37 @@ impl Coordinator {
     }
 
     pub fn open(root: &FsPath, groups: Vec<Group>) -> Result<Self, String> {
+        Self::open_with_routers(root, groups, Vec::new())
+    }
+
+    pub fn open_with_routers(
+        root: &FsPath,
+        groups: Vec<Group>,
+        routers: Vec<super::packing_router::RouterRegistration>,
+    ) -> Result<Self, String> {
+        Self::open_with_serving(root, groups, routers, Vec::new())
+    }
+    pub fn open_with_serving(
+        root: &FsPath,
+        groups: Vec<Group>,
+        routers: Vec<super::packing_router::RouterRegistration>,
+        ingresses: Vec<String>,
+    ) -> Result<Self, String> {
+        let serving = if routers.is_empty() {
+            None
+        } else {
+            Some(Arc::new(super::serving_control::ServingControl::open(
+                root, routers, ingresses,
+            )?))
+        };
+        fs::create_dir_all(root.join("public")).map_err(|e| e.to_string())?;
         validate_inventory(&groups)?;
         fs::create_dir_all(root.join("hints")).map_err(|e| e.to_string())?;
         fs::create_dir_all(root.join("snapshots")).map_err(|e| e.to_string())?;
         let mut store = Store::open(root)?;
+        if store.state().pool.is_some() && serving.is_none() {
+            return Err("pool state requires the remote serving configuration".into());
+        }
         store.update(|s| {
             if !inventory_extends(&s.groups, &groups) {
                 return Err("inventory must preserve all registered groups and endpoints".into());
@@ -333,15 +391,18 @@ impl Coordinator {
                 manifest,
                 &store.state().recovery.revoked,
                 &mut packing_cache,
+                serving.is_some(),
             )?);
         }
         Ok(Self {
+            serving,
             store: Arc::new(Mutex::new(store)),
             snapshots: Arc::new(RwLock::new(snapshots)),
             publication: Arc::new(Semaphore::new(1)),
             queries: Arc::new(Semaphore::new(QUERY_ACTIVE_LIMIT)),
             query_waiters: Arc::new(Semaphore::new(QUERY_WAIT_LIMIT)),
             query_stats: Arc::new(QueryStats::default()),
+            http_metrics: super::http_metrics::HttpMetrics::default(),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(180))
                 .build()
@@ -440,6 +501,126 @@ impl Coordinator {
                 .map(|r| r.id.clone());
             Ok(())
         })
+    }
+
+    /// One-way schema migration preserves current data and exact session identities.
+    pub fn enable_pool(&self, frontier_replication: usize) -> Result<(), String> {
+        if self.serving.is_none() {
+            return Err("pool placement requires remote packing".into());
+        }
+        self.store.lock().unwrap().update(|state| {
+            if state.operation.is_some()
+                || !state.pending_commits.is_empty()
+                || !state.pending_aborts.is_empty()
+            {
+                return Err("reconcile durable operations before enabling pool placement".into());
+            }
+            let placements = if let Some(pool) = &state.pool {
+                pool.placements.clone()
+            } else {
+                state
+                    .assignments
+                    .iter()
+                    .map(|(id, group)| {
+                        let replicas = state
+                            .groups
+                            .iter()
+                            .find(|g| &g.id == group)
+                            .ok_or("unknown legacy group")?;
+                        Ok((
+                            *id,
+                            replicas.replicas.iter().map(|r| r.name.clone()).collect(),
+                        ))
+                    })
+                    .collect::<Result<_, String>>()?
+            };
+            let pool = crate::pool::Pool {
+                replication: 2,
+                frontier_replication,
+                placements,
+            };
+            pool.validate(&state.groups)?;
+            state.pool = Some(pool);
+            state.version = 8;
+            Ok(())
+        })
+    }
+
+    async fn plan_pool(
+        &self,
+        coverage: &Coverage,
+        groups: &[Group],
+        plans: &[DomainPlan],
+        pool: &crate::pool::Pool,
+        consolidate: bool,
+    ) -> Result<crate::pool::Placements, String> {
+        let mut forbidden = BTreeSet::new();
+        for name in self.pending_replicas() {
+            for shard in &coverage.shards {
+                forbidden.insert((shard.id, name.clone()));
+            }
+        }
+        let workers: Vec<_> = groups.iter().flat_map(|g| &g.replicas).collect();
+        for _ in 0..=workers.len() {
+            let proposed = crate::pool::place(coverage, groups, pool, &forbidden)?;
+            let mut rejected = false;
+            for worker in &workers {
+                let own: Vec<_> = plans
+                    .iter()
+                    .filter(|p| proposed[&p.shard.id].contains(&worker.name))
+                    .collect();
+                if own.is_empty() {
+                    continue;
+                }
+                let response = self
+                    .http
+                    .post(format!("{}/internal/admit", worker.url))
+                    .timeout(std::time::Duration::from_secs(3))
+                    .json(&own)
+                    .send()
+                    .await;
+                if !response.is_ok_and(|r| r.status() == StatusCode::NO_CONTENT) {
+                    for shard in &coverage.shards {
+                        forbidden.insert((shard.id, worker.name.clone()));
+                    }
+                    rejected = true;
+                }
+            }
+            if rejected {
+                continue;
+            }
+            if consolidate {
+                let compact = crate::pool::consolidate(coverage, groups, pool, &proposed);
+                if compact != proposed {
+                    let mut admitted = true;
+                    for worker in &workers {
+                        let own: Vec<_> = plans
+                            .iter()
+                            .filter(|p| compact[&p.shard.id].contains(&worker.name))
+                            .collect();
+                        if own.is_empty() {
+                            continue;
+                        }
+                        let response = self
+                            .http
+                            .post(format!("{}/internal/admit", worker.url))
+                            .timeout(std::time::Duration::from_secs(3))
+                            .json(&own)
+                            .send()
+                            .await;
+                        if !response.is_ok_and(|r| r.status() == StatusCode::NO_CONTENT) {
+                            admitted = false;
+                            break;
+                        }
+                    }
+                    if admitted {
+                        return Ok(compact);
+                    }
+                }
+            }
+            return Ok(proposed);
+        }
+        Err("no admitted pool placement".into())
     }
 
     async fn assignment_admitted(
@@ -630,7 +811,95 @@ impl Coordinator {
         Ok((proposed, destinations))
     }
 
+    pub fn artifact_router(&self) -> Router {
+        super::serving_control::ServingControl::artifact_router(self.root.clone())
+    }
+
+    pub async fn refresh_routers(&self) {
+        if let Some(serving) = &self.serving {
+            if let Err(error) = serving.refresh().await {
+                tracing::debug!(%error, "packing control refresh unavailable");
+            }
+        }
+    }
+
+    fn serving_view(
+        &self,
+        saved: &SavedSnapshot,
+    ) -> Result<super::packing_router::ServingSnapshot, String> {
+        let serving = self.serving.as_ref().ok_or("local packing")?;
+        let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
+        let mut artifacts = BTreeMap::new();
+        let mut routes = saved.routes.clone();
+        for (id, name) in &saved.hints {
+            if revoked.contains(&hex::encode(saved.manifest.session_id(*id)?)) {
+                routes.remove(id);
+                continue;
+            }
+            artifacts.insert(*id, (name.clone(), serving.artifact_hash(name)?));
+        }
+        Ok(super::packing_router::ServingSnapshot {
+            manifest: saved.manifest.clone(),
+            routes,
+            artifacts,
+        })
+    }
+
+    async fn prepare_routers(
+        &self,
+        candidate: Option<&SavedSnapshot>,
+    ) -> Result<
+        Vec<(
+            super::packing_router::RouterRegistration,
+            super::packing_router::Ack,
+        )>,
+        String,
+    > {
+        let Some(serving) = &self.serving else {
+            return Ok(Vec::new());
+        };
+        let mut views = Vec::new();
+        if let Some(saved) = candidate {
+            views.push(self.serving_view(saved)?);
+        }
+        for snapshot in self.snapshots.read().await.iter() {
+            if candidate.is_none_or(|c| c.manifest.generation != snapshot.saved.manifest.generation)
+            {
+                views.push(self.serving_view(&snapshot.saved)?);
+            }
+        }
+        views.truncate(RETAINED_GENERATIONS);
+        if views.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (epoch, fence) = {
+            let store = self.store.lock().unwrap();
+            (
+                store.state().epoch,
+                worker::Revocation {
+                    recovery_epoch: store.state().recovery.epoch,
+                    sessions: store.state().recovery.revoked.clone(),
+                },
+            )
+        };
+        serving.prepare(epoch, views, fence).await
+    }
+
+    async fn synchronize_routers(&self) -> Result<(), String> {
+        if let Some(serving) = &self.serving {
+            if let Some(manifest) = self.manifest().await {
+                if !serving.public_ready(manifest.generation) {
+                    let prepared = self.prepare_routers(None).await?;
+                    serving.activate(manifest.generation, prepared).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn router(self) -> Router {
+        self.http_metrics.endpoint("init");
+        self.http_metrics.endpoint("query");
         Router::new()
             .route("/v1/enhance/init", get(init))
             .route("/v1/enhance/sessions/:generation/:shard", get(session))
@@ -639,6 +908,10 @@ impl Coordinator {
             .route("/v1/health", get(health))
             .route("/ready", get(ready))
             .route("/metrics", get(metrics))
+            .layer(axum::middleware::from_fn_with_state(
+                self.http_metrics.clone(),
+                super::http_metrics::measure,
+            ))
             .with_state(self)
     }
 
@@ -699,6 +972,9 @@ impl Coordinator {
         if fence.sessions.is_empty() {
             return Ok(());
         }
+        if let Some(serving) = &self.serving {
+            serving.revoke(&fence).await?;
+        }
         // A missing peer stays fenced at the coordinator; publication waits for
         // its durable acknowledgment rather than trusting an old incarnation.
         for replica in groups.iter().flat_map(|g| &g.replicas) {
@@ -717,6 +993,9 @@ impl Coordinator {
             }
             .await;
             if let Err(error) = result {
+                if self.serving.is_some() {
+                    return Err(error);
+                }
                 tracing::warn!(replica = %replica.name, %error, "replica excluded until recovery fence acknowledged");
             }
         }
@@ -945,6 +1224,7 @@ impl Coordinator {
             self.deliver_decisions().await?;
             self.synchronize_retention().await;
             self.collect_retired_artifacts();
+            self.synchronize_routers().await?;
             return Ok(());
         };
         let committed = matches!(
@@ -991,8 +1271,9 @@ impl Coordinator {
                         cache.insert(snapshot.saved.domain_keys[id].clone(), pack.clone());
                     }
                 }
+                let remote_packing = self.serving.is_some();
                 let restored = tokio::task::spawn_blocking(move || {
-                    restore(&root, &manifest, &revoked, &mut cache)
+                    restore(&root, &manifest, &revoked, &mut cache, remote_packing)
                 })
                 .await
                 .map_err(|e| e.to_string())??;
@@ -1022,6 +1303,7 @@ impl Coordinator {
         self.deliver_decisions().await?;
         self.synchronize_retention().await;
         self.collect_retired_artifacts();
+        self.synchronize_routers().await?;
         Ok(())
     }
 
@@ -1172,7 +1454,16 @@ impl Coordinator {
                 }
             }
         }
-        let base_assignments = control::assign(&coverage, &groups, &previous)?;
+        let pool_state = self.store.lock().unwrap().state().pool.clone();
+        let base_assignments = if pool_state.is_some() {
+            coverage
+                .shards
+                .iter()
+                .map(|s| (s.id, groups[0].id.clone()))
+                .collect()
+        } else {
+            control::assign(&coverage, &groups, &previous)?
+        };
         let read = |start, count| {
             journal
                 .read_records(start, count)
@@ -1192,24 +1483,59 @@ impl Coordinator {
                 Ok::<_, String>(plan)
             })
             .collect::<Result<_, _>>()?;
-        let (base_assignments, admission_destinations) = self
-            .place_new_if_admitted(&coverage, &groups, &plans, &previous, base_assignments)
-            .await?;
-        let base_assignments = self
-            .relocate_if_memory_refused(&coverage, &groups, &plans, &previous, base_assignments)
-            .await;
-        let (assignments, consolidation_destinations) = if allow_consolidation {
-            self.consolidate_if_admitted(&coverage, &groups, &plans, base_assignments)
-                .await?
+        let pool_assignments = if let Some(pool) = &pool_state {
+            Some(
+                self.plan_pool(&coverage, &groups, &plans, pool, allow_consolidation)
+                    .await?,
+            )
         } else {
-            (base_assignments, BTreeSet::new())
+            None
         };
+        let (assignments, consolidation_destinations, admission_destinations) =
+            if let Some(placements) = &pool_assignments {
+                let assignments = placements
+                    .iter()
+                    .map(|(id, workers)| {
+                        let group = groups
+                            .iter()
+                            .find(|g| g.replicas.iter().any(|r| workers.contains(&r.name)))
+                            .expect("validated pool inventory");
+                        (*id, group.id.clone())
+                    })
+                    .collect();
+                (assignments, BTreeSet::new(), BTreeSet::new())
+            } else {
+                let (base_assignments, admission_destinations) = self
+                    .place_new_if_admitted(&coverage, &groups, &plans, &previous, base_assignments)
+                    .await?;
+                let base_assignments = self
+                    .relocate_if_memory_refused(
+                        &coverage,
+                        &groups,
+                        &plans,
+                        &previous,
+                        base_assignments,
+                    )
+                    .await;
+                let (assignments, consolidation_destinations) = if allow_consolidation {
+                    self.consolidate_if_admitted(&coverage, &groups, &plans, base_assignments)
+                        .await?
+                } else {
+                    (base_assignments, BTreeSet::new())
+                };
+                (
+                    assignments,
+                    consolidation_destinations,
+                    admission_destinations,
+                )
+            };
         let operation_id = format!("generation-{generation}");
         let mut require_both = control::required_destination_pairs(&assignments, &previous);
         require_both.extend(consolidation_destinations);
         require_both.extend(admission_destinations);
         let strict_groups = require_both.clone();
         let operation = Operation {
+            pool_assignments: pool_assignments.clone(),
             id: operation_id.clone(),
             attempt,
             epoch,
@@ -1217,11 +1543,15 @@ impl Coordinator {
             candidate_digest: digest(&plans),
             phase: Phase::Planned,
             assignments: assignments.clone(),
-            affected_groups: assignments
-                .values()
-                .chain(previous.values())
-                .cloned()
-                .collect(),
+            affected_groups: if pool_assignments.is_some() {
+                groups.iter().map(|g| g.id.clone()).collect()
+            } else {
+                assignments
+                    .values()
+                    .chain(previous.values())
+                    .cloned()
+                    .collect()
+            },
             source_generations: self
                 .store
                 .lock()
@@ -1237,19 +1567,34 @@ impl Coordinator {
         };
         self.store.lock().unwrap().plan(operation)?;
         let mut candidates = BTreeMap::new();
-        // Reserve all destinations before any expensive preparation. A failure leaves the operation visible.
+        // Reserve complete per-worker assignments before any preparation.
         for group in &mut groups {
-            let own: Vec<_> = plans
-                .iter()
-                .filter(|p| assignments[&p.shard.id] == group.id)
-                .cloned()
-                .collect();
-            if own.is_empty() && !previous.values().any(|id| id == &group.id) {
-                continue;
-            }
             for replica in &mut group.replicas {
+                let own: Vec<_> = plans
+                    .iter()
+                    .filter(|p| {
+                        pool_assignments.as_ref().map_or_else(
+                            || assignments[&p.shard.id] == group.id,
+                            |placements| placements[&p.shard.id].contains(&replica.name),
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                let previously_used = pool_state.as_ref().map_or_else(
+                    || previous.values().any(|id| id == &group.id),
+                    |pool| {
+                        pool.placements
+                            .values()
+                            .any(|set| set.contains(&replica.name))
+                    },
+                );
+                if own.is_empty() && !previously_used {
+                    continue;
+                }
                 if self.pending_replicas().contains(&replica.name) {
-                    if strict_groups.contains(&group.id) {
+                    if strict_groups.contains(&group.id)
+                        || (pool_assignments.is_some() && !own.is_empty())
+                    {
                         return Err("required replica awaits decision recovery".into());
                     }
                     continue;
@@ -1318,11 +1663,18 @@ impl Coordinator {
                             .map_err(|e| e.to_string())?
                             .as_secs();
                         self.store.lock().unwrap().update(|state| {
-                            state.capacity.memory_refused(
-                                journal.tree_size(),
-                                now,
-                                state.groups.len(),
-                            )
+                            if state.pool.is_some() {
+                                state.capacity.request_worker(
+                                    now,
+                                    state.groups.iter().map(|g| g.replicas.len()).sum(),
+                                )
+                            } else {
+                                state.capacity.memory_refused(
+                                    journal.tree_size(),
+                                    now,
+                                    state.groups.len(),
+                                )
+                            }
                         })?;
                     }
                     let missing: Vec<String> = checked(response)
@@ -1337,30 +1689,41 @@ impl Coordinator {
                     Ok(reserved) => {
                         candidates.insert(replica.name.clone(), reserved);
                     }
-                    Err(error) if !strict_groups.contains(&group.id) => {
+                    Err(error)
+                        if !strict_groups.contains(&group.id)
+                            && (pool_assignments.is_none() || own.is_empty()) =>
+                    {
                         tracing::warn!(replica = %replica.name, %error, "replica unavailable; ordinary publication may use its peer");
                     }
                     Err(error) => return Err(error),
                 }
             }
         }
-        for group in &groups {
-            if !assignments.values().any(|id| id == &group.id) {
-                continue;
-            }
-            let reserved = group
-                .replicas
-                .iter()
-                .filter(|r| candidates.contains_key(&r.name))
-                .count();
-            if reserved
-                < if strict_groups.contains(&group.id) {
-                    2
-                } else {
-                    1
+        if let Some(placements) = &pool_assignments {
+            for workers in placements.values() {
+                if workers.iter().any(|name| !candidates.contains_key(name)) {
+                    return Err("pool lacks required reservation quorum".into());
                 }
-            {
-                return Err("group lacks its required reservation quorum".into());
+            }
+        } else {
+            for group in &groups {
+                if !assignments.values().any(|id| id == &group.id) {
+                    continue;
+                }
+                let reserved = group
+                    .replicas
+                    .iter()
+                    .filter(|r| candidates.contains_key(&r.name))
+                    .count();
+                if reserved
+                    < if strict_groups.contains(&group.id) {
+                        2
+                    } else {
+                        1
+                    }
+                {
+                    return Err("group lacks its required reservation quorum".into());
+                }
             }
         }
         self.store.lock().unwrap().update(|s| {
@@ -1453,10 +1816,15 @@ impl Coordinator {
                         runtime::rlwe().d,
                     )
                     .map_err(|e| e.to_string())?;
-                    let pack = Arc::new(Packing::new(plan.shard.logical_rows, &hint)?);
+                    let pack = Packing::new(plan.shard.logical_rows, &hint)?;
+                    let pack = Arc::new(PublishedPacking::new(
+                        plan.shard.logical_rows,
+                        pack,
+                        self.serving.is_none(),
+                    ));
                     let reference = pack.reference(plan.shard.id)?;
                     if let Some(existing) = packing.get(&plan.shard.id) {
-                        let existing: &Arc<Packing> = existing;
+                        let existing: &Arc<PublishedPacking> = existing;
                         if existing.reference(plan.shard.id)? != reference {
                             return Err("replica public material differs".into());
                         }
@@ -1464,6 +1832,10 @@ impl Coordinator {
                         let name = format!("{}.bin", reference.public_params_sha256);
                         crate::artifact::write_atomic(&self.root.join("hints"), &name, |f| {
                             f.write_all(&bytes)
+                        })
+                        .map_err(|e| e.to_string())?;
+                        crate::artifact::write_atomic(&self.root.join("public"), &name, |f| {
+                            f.write_all(&pack.public)
                         })
                         .map_err(|e| e.to_string())?;
                         hints.insert(plan.shard.id, name);
@@ -1561,6 +1933,7 @@ impl Coordinator {
             hints,
             domain_keys,
         };
+        let router_readiness = self.prepare_routers(Some(&saved)).await?;
         // Wait for admitted HTTP queries before retiring worker routes. Preparations did not block them.
         let mut snapshots = self.snapshots.write().await;
         validate
@@ -1593,6 +1966,9 @@ impl Coordinator {
         snapshots.insert(0, Arc::new(Snapshot { saved, packing }));
         snapshots.truncate(RETAINED_GENERATIONS);
         drop(snapshots);
+        if let Some(serving) = &self.serving {
+            serving.activate(generation, router_readiness).await?;
+        }
         self.reconcile_inner().await
     }
 }
@@ -1649,7 +2025,18 @@ async fn reject_query(c: &Coordinator, request: Request) -> QueryResult<Vec<u8>>
 }
 
 async fn init(State(c): State<Coordinator>) -> ApiResult<Json<Manifest>> {
-    c.manifest().await.map(Json).ok_or((
+    let manifest = c.manifest().await;
+    if c.serving.as_ref().is_some_and(|s| {
+        manifest
+            .as_ref()
+            .is_none_or(|m| !s.public_ready(m.generation))
+    }) {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "packing routers not activated".into(),
+        ));
+    }
+    manifest.map(Json).ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
         "no published generation".into(),
     ))
@@ -1722,6 +2109,12 @@ async fn session_by_id(
 }
 
 async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Vec<u8>> {
+    if c.serving.is_some() {
+        return Err(QueryError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "query serving moved to packing router".into(),
+        ));
+    }
     let waiting = match c.query_waiters.clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => return reject_query(&c, request).await,
@@ -1778,6 +2171,7 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
         .query_coefficients(&body, binding)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let request = worker::Evaluate {
+        binding: Some(binding.encode()),
         generation: binding.generation,
         shard_id: binding.shard_id,
         epoch: hex::encode(binding.epoch),
@@ -1895,6 +2289,11 @@ async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
         serde_json::json!({"packing_charged_bytes":super::packing_budget::charged_bytes(),"protocol":PROTOCOL_REVISION,"generation":manifest.as_ref().map(|m|m.generation),
         "anchor_height":manifest.as_ref().map(|m|m.anchor_height),"placement_revision":manifest.as_ref().map(|m|m.placement_revision),
         "registered_groups":store.state().groups.len(),
+        "registered_workers":store.state().groups.iter().map(|g|g.replicas.len()).sum::<usize>(),
+        "pool":store.state().pool,
+        "remote_packing":c.serving.is_some(),
+        "resident_packing_objects":snapshots.iter().flat_map(|s|s.packing.values()).filter(|p|p.is_serving()).map(|p|Arc::as_ptr(p) as usize).collect::<BTreeSet<_>>().len(),
+        "packing_ready":c.serving.as_ref().is_none_or(|s|manifest.as_ref().is_some_and(|m|s.public_ready(m.generation))),
         "capacity":store.state().capacity,
         "published_replica_counts":published_replica_counts,
         "pending_commit_notifications":store.state().pending_commits.len(),
@@ -1933,6 +2332,7 @@ async fn metrics(
         .as_secs();
     let mut body =
         super::telemetry::coordinator(store.state(), manifest, &routes, blocked, &telemetry, now);
+    body.push_str(&c.http_metrics.render());
     for (name, value) in [
         (
             "enhance_query_active",

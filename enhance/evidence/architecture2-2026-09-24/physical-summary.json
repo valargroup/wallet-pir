@@ -1,0 +1,39 @@
+{
+  "result": "passed",
+  "fixture_records": 600000,
+  "publications": 8,
+  "concurrent_clients": 4,
+  "verified_publication_queries": 256,
+  "retained_objects": 5,
+  "process_cap_bytes": 7516192768,
+  "peak_bytes": 6626832384,
+  "swap_bytes": 0,
+  "events": {
+    "high": 0,
+    "low": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_group_kill": 0,
+    "oom_kill": 0
+  },
+  "samples_before_intentional_restart": 224,
+  "sampler_identity_errors_after_intentional_restart": 35,
+  "restart_peak_bytes": 5049503744,
+  "cases": [
+    "both replicas selected",
+    "explicit rejection retries once",
+    "ambiguous failure not retried",
+    "three-worker pool routing-only publication reuses packing",
+    "retained expiry",
+    "20 slow-upload disconnects",
+    "control watchdog",
+    "physical restart fails closed and rebuilds",
+    "explicit session revocation"
+  ],
+  "limits": [
+    "Router is the physical 8-GiB host; fixture workers and ingress run on coordinator in the test process.",
+    "Initial full-path run is seven minutes; sustained production qualification is separate.",
+    "Five retained serving objects measured; six-object multi-domain serving is not qualified by this run.",
+    "No physical multi-router assignment move was exercised."
+  ]
+}

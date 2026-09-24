@@ -1,0 +1,18 @@
+   Compiling enhance-pir-server v0.0.1 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 26.83s
+     Running tests/http.rs (target/debug/deps/http-209dbe644755bdc1)
+
+running 11 tests
+test abort_recovery_fences_ambiguous_reservations_without_blocking_healthy_peer ... ok
+test committed_offline_participant_does_not_block_and_recovers_after_expiry ... ok
+test consolidation_reservation_failure_retries_canonical_update_then_moves_sealed_shard ... ignored, seven shard domains across four workers; requires at least 32 GiB RAM and 64 GiB free disk
+test distributed_round_trip_retention_failover_and_restart ... ok
+test full_shard_composition_confirmation_and_recovery ... ignored, full 32K lifecycle fixture; run on an isolated host with at least 16 GiB RAM
+test inventory_expansion_is_atomic_idempotent_and_survives_restart ... ok
+test lost_worker_rows_repair_restores_current_and_retained_http_queries ... ok
+test memory_refusal_moves_published_shard_with_complete_destination_pair ... ok
+test new_shard_uses_admitted_alternative_group_over_http ... ok
+test seven_sealed_consolidation_preserves_retained_queries ... ignored, eight shard domains across four workers; requires 32 GiB RAM and 64 GiB free disk
+test worker_revocation_survives_restart_and_rejects_regression ... ok
+
+test result: ok. 8 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 573.29s

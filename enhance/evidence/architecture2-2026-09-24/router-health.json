@@ -1,0 +1,1 @@
+{"active_digest":"9d5e6c8235eb64b47ba5d607d00c232584322279cad3eb2d3e43d2cd1ddc5f76","available_requests":0,"control_version":1,"controller_epoch":4,"incarnation":"5d02a397c803cfbc6190f42c8baa641b","outstanding":{"http://10.142.0.15:8091":0,"http://10.142.0.16:8091":0},"packing_charged_bytes":3221225472,"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":4}

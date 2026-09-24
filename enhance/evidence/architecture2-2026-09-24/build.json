@@ -1,0 +1,10 @@
+{
+  "base": "cb618d6c20ee8596081b5ccfc1eaf803ea660fb8",
+  "profile": "release-fast",
+  "rustflags": "-C target-cpu=skylake-avx512",
+  "server_sha256": "c74e23194074f4e55ba72db804dacdcd8e31d8386e65d17eff1ee9fe836a2d5f",
+  "qualification_sha256": "d65d25fd40ae492f62230a53f30e3a59375a9b16aed3584e71a2ca092e63520c",
+  "load_sha256": "ec45ef7c2ef18df4f8eee098d3c4a8b49caab641f0b4823e91fd324e58ba5e9c",
+  "build_host": "roman-ipir-bench-8vcpu",
+  "deployment": "direct SSH; no CI or PR"
+}

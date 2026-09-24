@@ -187,6 +187,8 @@ pub struct ReadyAck {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Operation {
+    #[serde(default)]
+    pub pool_assignments: Option<crate::pool::Placements>,
     pub id: String,
     pub attempt: u64,
     pub epoch: u64,
@@ -234,6 +236,8 @@ pub struct Recovery {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
+    #[serde(default)]
+    pub pool: Option<crate::pool::Pool>,
     pub recovery: Recovery,
 
     #[serde(default)]
@@ -267,6 +271,7 @@ impl Default for State {
             next_generation: 1,
             next_attempt: 0,
             lifecycle: Lifecycle::default(),
+            pool: None,
             groups: Vec::new(),
             assignments: BTreeMap::new(),
             published: Vec::new(),
@@ -341,7 +346,7 @@ impl Store {
             state,
         };
         store.update(|s| {
-            if s.version != 7 {
+            if !matches!(s.version, 7 | 8) {
                 return Err(
                     "incompatible controller state; rebuild protocol v6 in a separate data directory"
                         .into(),
@@ -352,6 +357,42 @@ impl Store {
         })?;
         Ok(store)
     }
+    /// Offline rollback bridge. Preserve current publication/recovery decisions;
+    /// never restore an older backup after publication has resumed.
+    pub fn restore_legacy_placement(&mut self) -> Result<(), String> {
+        self.update(|s| {
+            if s.operation.is_some()
+                || !s.pending_commits.is_empty()
+                || !s.pending_aborts.is_empty()
+            {
+                return Err("reconcile decisions before rollback".into());
+            }
+            if s.groups.len() > 4 || s.groups.iter().any(|g| g.replicas.len() != 2) {
+                return Err(
+                    "current inventory cannot be represented as legacy replica pairs".into(),
+                );
+            }
+            if let Some(pool) = &s.pool {
+                for (id, workers) in &pool.placements {
+                    let group = s
+                        .groups
+                        .iter()
+                        .find(|g| Some(&g.id) == s.assignments.get(id))
+                        .ok_or("missing legacy placement")?;
+                    if *workers != group.replicas.iter().map(|r| r.name.clone()).collect() {
+                        return Err(
+                            "pool placements must first be moved back onto complete legacy pairs"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            s.pool = None;
+            s.version = 7;
+            Ok(())
+        })
+    }
+
     pub fn state(&self) -> &State {
         &self.state
     }
@@ -486,36 +527,59 @@ impl Store {
             {
                 return Err("incomplete assignment".into());
             }
-            for group_id in op.assignments.values().collect::<BTreeSet<_>>() {
-                let group = s
-                    .groups
-                    .iter()
-                    .find(|g| &g.id == group_id)
-                    .ok_or("unknown group")?;
-                if group.replicas.len() != 2 {
-                    return Err("group must have two replicas".into());
-                }
-                group.role(&manifest.coverage, &op.assignments)?;
-                let ready = group
-                    .replicas
-                    .iter()
-                    .filter(|r| {
-                        op.readiness.iter().any(|ack| {
-                            ack.replica == r.name
-                                && ack.incarnation == r.incarnation
-                                && ack.candidate_digest == op.candidate_digest
-                        })
-                    })
-                    .count();
-                let new_group = !s.assignments.values().any(|id| id == group_id);
-                if ready
-                    < if new_group || op.require_both.contains(group_id) {
-                        2
-                    } else {
-                        1
+            if let Some(placements) = &op.pool_assignments {
+                let pool = s.pool.as_ref().ok_or("pool operation without pool state")?;
+                crate::pool::validate(&manifest.coverage, &s.groups, pool, placements)?;
+                for worker in placements.values().flatten().collect::<BTreeSet<_>>() {
+                    let replica = s
+                        .groups
+                        .iter()
+                        .flat_map(|g| &g.replicas)
+                        .find(|r| &r.name == worker)
+                        .ok_or("unknown worker")?;
+                    if !op.readiness.iter().any(|ack| {
+                        ack.replica == *worker
+                            && ack.incarnation == replica.incarnation
+                            && ack.candidate_digest == op.candidate_digest
+                    }) {
+                        return Err("pool placement lacks exact-session readiness".into());
                     }
-                {
-                    return Err("insufficient complete-assignment readiness".into());
+                }
+            } else {
+                if s.pool.is_some() {
+                    return Err("legacy operation cannot commit pool state".into());
+                }
+                for group_id in op.assignments.values().collect::<BTreeSet<_>>() {
+                    let group = s
+                        .groups
+                        .iter()
+                        .find(|g| &g.id == group_id)
+                        .ok_or("unknown group")?;
+                    if group.replicas.len() != 2 {
+                        return Err("group must have two replicas".into());
+                    }
+                    group.role(&manifest.coverage, &op.assignments)?;
+                    let ready = group
+                        .replicas
+                        .iter()
+                        .filter(|r| {
+                            op.readiness.iter().any(|ack| {
+                                ack.replica == r.name
+                                    && ack.incarnation == r.incarnation
+                                    && ack.candidate_digest == op.candidate_digest
+                            })
+                        })
+                        .count();
+                    let new_group = !s.assignments.values().any(|id| id == group_id);
+                    if ready
+                        < if new_group || op.require_both.contains(group_id) {
+                            2
+                        } else {
+                            1
+                        }
+                    {
+                        return Err("insufficient complete-assignment readiness".into());
+                    }
                 }
             }
             s.next_generation = s
@@ -533,6 +597,9 @@ impl Store {
             s.recovery = recovery;
             s.lifecycle = lifecycle;
             s.assignments = op.assignments.clone();
+            if let (Some(pool), Some(placements)) = (&mut s.pool, &op.pool_assignments) {
+                pool.placements = placements.clone();
+            }
             s.published.insert(0, manifest.clone());
             s.published.truncate(RETAINED_GENERATIONS);
             for ack in &op.readiness {
@@ -869,6 +936,7 @@ mod tests {
             let mut store = Store::open(directory.path()).unwrap();
             let epoch = store.state().epoch;
             let operation = Operation {
+                pool_assignments: None,
                 id: "test-operation".into(),
                 attempt: 0,
                 epoch,
@@ -940,6 +1008,7 @@ mod tests {
                 })
                 .unwrap();
             let operation = Operation {
+                pool_assignments: None,
                 id: "current".into(),
                 attempt: 0,
                 epoch: store.state().epoch,
@@ -1096,6 +1165,7 @@ mod tests {
             })
             .unwrap();
         let operation = Operation {
+            pool_assignments: None,
             id: "publish".into(),
             attempt: 0,
             epoch: store.state().epoch,

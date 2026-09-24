@@ -267,6 +267,64 @@ impl Packing {
     }
 }
 
+/// Public session material survives independently of the serving representation.
+pub struct PublishedPacking {
+    pub logical_rows: u64,
+    pub public: Vec<u8>,
+    serving: Option<Packing>,
+}
+impl PublishedPacking {
+    pub fn is_serving(&self) -> bool {
+        self.serving.is_some()
+    }
+    pub fn new(logical_rows: u64, pack: Packing, retain_serving: bool) -> Self {
+        Self {
+            logical_rows,
+            public: pack.public.clone(),
+            serving: retain_serving.then_some(pack),
+        }
+    }
+    pub fn metadata(logical_rows: u64, public: Vec<u8>) -> Self {
+        Self {
+            logical_rows,
+            public,
+            serving: None,
+        }
+    }
+    pub fn reference(&self, shard_id: u64) -> Result<SessionRef, String> {
+        Ok(SessionRef {
+            shard_id,
+            public_params_sha256: hex::encode(Sha256::digest(&self.public)),
+            parameter_id: parameter_id(parameters(self.logical_rows)?.db_rows as u64)?,
+        })
+    }
+    pub fn session(&self, manifest: &Manifest, shard_id: u64) -> ShardSession {
+        ShardSession {
+            session_id: hex::encode(manifest.session_id(shard_id).expect("validated session")),
+            generation: manifest.generation,
+            shard_id,
+            params: parameters(self.logical_rows).expect("validated geometry"),
+            public_params_base64: STANDARD.encode(&self.public),
+        }
+    }
+    pub fn query_coefficients(
+        &self,
+        body: &[u8],
+        binding: QueryBinding,
+    ) -> Result<Vec<u64>, String> {
+        self.serving
+            .as_ref()
+            .ok_or("packing moved to router")?
+            .query_coefficients(body, binding)
+    }
+    pub fn pack(&self, body: &[u8], intermediate: &[u64]) -> Result<Vec<u8>, String> {
+        self.serving
+            .as_ref()
+            .ok_or("packing moved to router")?
+            .pack(body, intermediate)
+    }
+}
+
 pub struct Engine {
     backend: MatvecConfig,
     root: PathBuf,

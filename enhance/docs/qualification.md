@@ -1,5 +1,11 @@
 # Qualification and current status
 
+Latest rollout: [architecture update 2](../evidence/architecture2-2026-09-24/README.md)
+is deployed directly over SSH with dedicated packing, query ingress and two-worker
+pool placement. Its physical 8-GiB router and initial public-wallet checks passed;
+see that evidence for measured limits and sustained-run status. The historical
+v7 qualification below remains a separate record.
+
 This page records dated evidence, not a live fleet report. Protocol v7 was
 implemented and deployed directly over SSH on September 24, 2026 from `2a83c21`.
 The [v7 report](../evidence/immutable-v7-2026-09-24/README.md) binds source, binary,

@@ -21,6 +21,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Offline bridge for rolling back to coordinator packing without losing recovery history.
+    RestoreLegacyPlacement {
+        #[arg(long)]
+        control_dir: PathBuf,
+    },
     /// Synthetic workloads for isolated, unregistered workers only. Never grants qualification.
     Exercise {
         #[arg(long, required = true)]
@@ -57,7 +62,44 @@ enum Command {
         #[arg(long)]
         data_dir: PathBuf,
     },
+    QueryIngress {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long, default_value = "127.0.0.1:8082")]
+        listen: SocketAddr,
+        #[arg(long, default_value = "127.0.0.1:8083")]
+        control_listen: SocketAddr,
+        #[arg(long, default_value_t = 16)]
+        requests: usize,
+    },
+    /// Decode and pack wallet queries on a dedicated private host.
+    PackingRouter {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        artifact_origin: String,
+        #[arg(long, default_value = "127.0.0.1:8092")]
+        listen: SocketAddr,
+        #[arg(long, default_value = "127.0.0.1:8093")]
+        control_listen: SocketAddr,
+        #[arg(long, default_value_t = 6)]
+        max_objects: usize,
+        #[arg(long, default_value_t = 4)]
+        requests: usize,
+    },
     Coordinator {
+        /// Private packing-router inventory; omitted retains legacy query serving.
+        #[arg(long)]
+        packing_router_config: Option<PathBuf>,
+        #[arg(long, requires = "packing_router_config")]
+        query_ingress: Vec<String>,
+        #[arg(long, requires = "packing_router_config")]
+        pool_placement: bool,
+        #[arg(long, default_value_t = 2, requires = "pool_placement")]
+        frontier_replicas: usize,
+        /// Immutable packing artifacts; never expose this listener publicly.
+        #[arg(long, requires = "packing_router_config")]
+        artifact_listen: Option<SocketAddr>,
         #[arg(long, default_value = "127.0.0.1:8080")]
         listen: SocketAddr,
         #[arg(long)]
@@ -89,7 +131,10 @@ enum Command {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Inventory {
+    #[serde(default)]
     groups: Vec<InventoryGroup>,
+    #[serde(default)]
+    workers: Vec<InventoryReplica>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -111,6 +156,10 @@ fn load_inventory(
     Ok(config
         .groups
         .into_iter()
+        .chain(config.workers.into_iter().map(|r| InventoryGroup {
+            name: format!("pool:{}", r.name),
+            replicas: vec![r],
+        }))
         .enumerate()
         .map(|(sequence, g)| Group {
             placement_policy: Default::default(),
@@ -141,6 +190,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     placement_policy.validate()?;
     match cli.command {
+        Command::RestoreLegacyPlacement { control_dir } => {
+            enhance_pir_server::control::Store::open(&control_dir)?.restore_legacy_placement()?;
+        }
         Command::Exercise {
             isolated_workers,
             profile,
@@ -196,7 +248,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )
             .await?;
         }
+        Command::QueryIngress {
+            data_dir,
+            listen,
+            control_listen,
+            requests,
+        } => {
+            let ingress =
+                enhance_pir_server::query_ingress::QueryIngress::open(&data_dir, requests)?;
+            tokio::try_join!(
+                async {
+                    axum::serve(
+                        tokio::net::TcpListener::bind(listen).await?,
+                        ingress.public_router(),
+                    )
+                    .await
+                },
+                async {
+                    axum::serve(
+                        tokio::net::TcpListener::bind(control_listen).await?,
+                        ingress.control_router(),
+                    )
+                    .await
+                },
+            )?;
+        }
+        Command::PackingRouter {
+            data_dir,
+            artifact_origin,
+            listen,
+            control_listen,
+            max_objects,
+            requests,
+        } => {
+            enhance_pir_server::packing_router::PackingRouter::configure_process_budget()?;
+            let router = enhance_pir_server::packing_router::PackingRouter::open(
+                &data_dir,
+                &artifact_origin,
+                max_objects,
+                requests,
+            )?;
+            tokio::try_join!(
+                async {
+                    axum::serve(
+                        tokio::net::TcpListener::bind(listen).await?,
+                        router.public_router(),
+                    )
+                    .await
+                },
+                async {
+                    axum::serve(
+                        tokio::net::TcpListener::bind(control_listen).await?,
+                        router.control_router(),
+                    )
+                    .await
+                },
+            )?;
+        }
         Command::Coordinator {
+            packing_router_config,
+            query_ingress,
+            pool_placement,
+            frontier_replicas,
+            artifact_listen,
             listen,
             data_dir,
             worker_config,
@@ -240,7 +354,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             } else {
                 std::fs::write(mode_path, mode)?;
             }
-            let coordinator = Coordinator::open(&data_dir.join("control"), groups)?;
+            let routers = packing_router_config
+                .map(
+                    |path| -> Result<
+                        Vec<enhance_pir_server::packing_router::RouterRegistration>,
+                        Box<dyn std::error::Error + Send + Sync>,
+                    > { Ok(serde_json::from_slice(&std::fs::read(path)?)?) },
+                )
+                .transpose()?
+                .unwrap_or_default();
+            if !routers.is_empty() && artifact_listen.is_none() {
+                return Err("remote packing requires a private --artifact-listen".into());
+            }
+            let coordinator = Coordinator::open_with_serving(
+                &data_dir.join("control"),
+                groups,
+                routers,
+                query_ingress,
+            )?;
+            if let Some(listen) = artifact_listen {
+                let artifacts = coordinator.artifact_router();
+                let listener = tokio::net::TcpListener::bind(listen).await?;
+                tokio::spawn(async move {
+                    if let Err(error) = axum::serve(listener, artifacts).await {
+                        tracing::error!(%error,"artifact listener stopped");
+                    }
+                });
+                let heartbeat = coordinator.clone();
+                tokio::spawn(async move {
+                    loop {
+                        heartbeat.refresh_routers().await;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                });
+            }
             let serving = coordinator.clone();
             let task = tokio::spawn(async move {
                 axum::serve(
@@ -258,6 +405,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     tracing::error!(%error, "publication recovery blocked");
                     tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
                     continue;
+                }
+                if pool_placement {
+                    if let Err(error) = coordinator.enable_pool(frontier_replicas) {
+                        tracing::error!(%error,"pool migration waiting for durable decisions");
+                        tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
+                        continue;
+                    }
                 }
                 // Capacity registration is independent of journal advancement. A bad
                 // or unavailable addition must not stop serving/publishing on the

@@ -1927,6 +1927,7 @@ async fn worker_revocation_survives_restart_and_rejects_regression() {
         let response = http
             .post(format!("{origin}/internal/evaluate"))
             .json(&Evaluate {
+                binding: None,
                 generation: 1,
                 shard_id: 0,
                 epoch: "00".repeat(8),

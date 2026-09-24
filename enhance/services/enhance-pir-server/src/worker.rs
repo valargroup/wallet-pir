@@ -65,6 +65,9 @@ pub struct Retain {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Evaluate {
+    /// Full launched wallet binding; absent only for the legacy coordinator path.
+    #[serde(default)]
+    pub binding: Option<Vec<u8>>,
     pub session_id: String,
     pub generation: u64,
     pub shard_id: u64,
@@ -74,6 +77,8 @@ pub struct Evaluate {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Intermediate {
+    #[serde(default)]
+    pub binding: Option<Vec<u8>>,
     pub generation: u64,
     pub shard_id: u64,
     pub epoch: String,
@@ -1049,74 +1054,118 @@ async fn commit(State(w): State<Worker>, Json(request): Json<Commit>) -> ApiResu
     Ok(StatusCode::OK)
 }
 
-async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<Intermediate>> {
-    // Admission precedes body buffering. The permit moves into the blocking evaluation.
-    let permit = w
-        .evaluation
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
-    let bytes = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        to_bytes(request.into_body(), 1024 * 1024),
-    )
-    .await
-    .map_err(unavailable)?
-    .map_err(unavailable)?;
-    let query: Evaluate =
-        serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let evaluation = {
-        let i = w.inner.lock().unwrap();
-        if i.disk.revocation.sessions.contains(&query.session_id) {
-            return Err((StatusCode::GONE, "noncanonical_session".into()));
-        }
-        let (manifest, assignment) =
-            if let Some((manifest, _)) = i.disk.published.get(&query.generation) {
-                (manifest, &i.published[&query.generation])
-            } else if let Some(manifest) = i
-                .disk
-                .activated
-                .as_ref()
-                .filter(|m| m.generation == query.generation)
+async fn evaluate(State(w): State<Worker>, request: Request) -> Response {
+    let admitted: ApiResult<_> = async {
+        // Admission precedes body buffering. The permit moves into the blocking evaluation.
+        let permit = w
+            .evaluation
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
+        let bytes = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            to_bytes(request.into_body(), 1024 * 1024),
+        )
+        .await
+        .map_err(unavailable)?
+        .map_err(unavailable)?;
+        let query: Evaluate =
+            serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        let evaluation = {
+            let i = w.inner.lock().unwrap();
+            if i.disk.revocation.sessions.contains(&query.session_id) {
+                return Err((StatusCode::GONE, "noncanonical_session".into()));
+            }
+            let (manifest, assignment) =
+                if let Some((manifest, _)) = i.disk.published.get(&query.generation) {
+                    (manifest, &i.published[&query.generation])
+                } else if let Some(manifest) = i
+                    .disk
+                    .activated
+                    .as_ref()
+                    .filter(|m| m.generation == query.generation)
+                {
+                    // Activation promises answerability before the coordinator's durable commit.
+                    // The public router cannot expose this session before its commit decision.
+                    (manifest, &i.candidate)
+                } else {
+                    return Err((StatusCode::GONE, "expired session".into()));
+                };
+            let session = manifest
+                .sessions
+                .iter()
+                .find(|s| s.shard_id == query.shard_id)
+                .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
+            if hex::encode(manifest.session_id(query.shard_id).map_err(unavailable)?)
+                != query.session_id
             {
-                // Activation promises answerability before the coordinator's durable commit.
-                // The public router cannot expose this session before its commit decision.
-                (manifest, &i.candidate)
-            } else {
-                return Err((StatusCode::GONE, "expired session".into()));
-            };
-        let session = manifest
-            .sessions
-            .iter()
-            .find(|s| s.shard_id == query.shard_id)
-            .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
-        if hex::encode(manifest.session_id(query.shard_id).map_err(unavailable)?)
-            != query.session_id
-        {
-            return Err((StatusCode::GONE, "session_unavailable".into()));
+                return Err((StatusCode::GONE, "session_unavailable".into()));
+            }
+            if let Some(bytes) = &query.binding {
+                use enhance_pir::protocol::{QueryBinding, HEADER_BYTES};
+                let binding =
+                    QueryBinding::decode(bytes).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+                if bytes.len() != HEADER_BYTES
+                    || binding.generation != query.generation
+                    || binding.shard_id != query.shard_id
+                    || hex::encode(binding.epoch) != query.epoch
+                    || hex::encode(binding.session_id) != query.session_id
+                    || binding.recovery_epoch != manifest.recovery_epoch
+                    || hex::encode(binding.anchor_hash) != manifest.anchor_block_hash
+                {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "evaluation binding mismatch".into(),
+                    ));
+                }
+            }
+            if session.public_params_sha256[..16] != query.epoch {
+                return Err((StatusCode::BAD_REQUEST, "epoch mismatch".into()));
+            }
+            assignment
+                .get(&query.shard_id)
+                .cloned()
+                .ok_or((StatusCode::BAD_REQUEST, "wrong group".into()))?
+        };
+        Ok((permit, query, evaluation))
+    }
+    .await;
+    let (permit, query, evaluation) = match admitted {
+        Ok(value) => value,
+        Err(error) => {
+            let mut response = error.into_response();
+            response
+                .headers_mut()
+                .insert("x-enhance-evaluation", "not-accepted".parse().unwrap());
+            return response;
         }
-        if session.public_params_sha256[..16] != query.epoch {
-            return Err((StatusCode::BAD_REQUEST, "epoch mismatch".into()));
-        }
-        assignment
-            .get(&query.shard_id)
-            .cloned()
-            .ok_or((StatusCode::BAD_REQUEST, "wrong group".into()))?
     };
+    // Cancellation detaches CPU work. Its permit stays in the task, then moves
+    // into the output body instead of being released at kernel completion.
     let result = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        let coefficients = evaluation.evaluate(&query.coefficients)?;
-        Ok::<_, super::runtime::EvaluationError>(Intermediate {
+        let coefficients = evaluation
+            .evaluate(&query.coefficients)
+            .map_err(evaluation_error)?;
+        let bytes = serde_json::to_vec(&Intermediate {
+            binding: query.binding,
             generation: query.generation,
             shard_id: query.shard_id,
             epoch: query.epoch,
             coefficients,
         })
+        .map_err(unavailable)?;
+        Ok::<_, (StatusCode, String)>((bytes, permit, evaluation))
     })
-    .await
-    .map_err(unavailable)?
-    .map_err(evaluation_error)?;
-    Ok(Json(result))
+    .await;
+    match result {
+        Ok(Ok((bytes, permit, evaluation))) => (
+            [("content-type", "application/json")],
+            crate::response_body::guarded(bytes, (permit, evaluation), || Ok(())),
+        )
+            .into_response(),
+        Ok(Err(error)) => error.into_response(),
+        Err(error) => unavailable(error).into_response(),
+    }
 }
 
 fn evaluation_error(error: super::runtime::EvaluationError) -> (StatusCode, String) {
@@ -1215,6 +1264,7 @@ mod tests {
             unit_identities: [(0, plan.units.clone())].into(),
         };
         let query = Evaluate {
+            binding: None,
             session_id: hex::encode(manifest.session_id(0).unwrap()),
             generation: 1,
             shard_id: 0,

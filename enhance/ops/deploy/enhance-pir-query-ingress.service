@@ -1,0 +1,23 @@
+[Unit]
+Description=Enhance PIR query ingress
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=enhance-pir
+ExecStart=/opt/enhance-pir/current/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16
+Restart=on-failure
+RestartSec=3
+MemoryMax=256M
+MemorySwapMax=0
+LimitNOFILE=4096
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/enhance-pir-ingress
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

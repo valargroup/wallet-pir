@@ -1,0 +1,231 @@
+# HELP enhance_capacity_clock_regression enhance_capacity_clock_regression
+# TYPE enhance_capacity_clock_regression gauge
+enhance_capacity_clock_regression 0
+# HELP enhance_capacity_forecast_seconds enhance_capacity_forecast_seconds
+# TYPE enhance_capacity_forecast_seconds gauge
+enhance_capacity_forecast_seconds 145685
+# HELP enhance_capacity_observation_age_seconds enhance_capacity_observation_age_seconds
+# TYPE enhance_capacity_observation_age_seconds gauge
+enhance_capacity_observation_age_seconds 10
+# HELP enhance_capacity_observation_available enhance_capacity_observation_available
+# TYPE enhance_capacity_observation_available gauge
+enhance_capacity_observation_available 1
+# HELP enhance_capacity_remaining_rows enhance_capacity_remaining_rows
+# TYPE enhance_capacity_remaining_rows gauge
+enhance_capacity_remaining_rows 145685
+# HELP enhance_composition_active enhance_composition_active
+# TYPE enhance_composition_active gauge
+enhance_composition_active 0
+# HELP enhance_consolidation_planner_moves enhance_consolidation_planner_moves
+# TYPE enhance_consolidation_planner_moves gauge
+enhance_consolidation_planner_moves 0
+# HELP enhance_consolidation_preview_available enhance_consolidation_preview_available
+# TYPE enhance_consolidation_preview_available gauge
+enhance_consolidation_preview_available 1
+# HELP enhance_controller_epoch enhance_controller_epoch
+# TYPE enhance_controller_epoch gauge
+enhance_controller_epoch 4
+# HELP enhance_domain_composed enhance_domain_composed
+# TYPE enhance_domain_composed gauge
+enhance_domain_composed{shard="0"} 0
+# HELP enhance_draining_operations enhance_draining_operations
+# TYPE enhance_draining_operations gauge
+enhance_draining_operations 4
+# HELP enhance_expansion_burst_budget_rows enhance_expansion_burst_budget_rows
+# TYPE enhance_expansion_burst_budget_rows gauge
+enhance_expansion_burst_budget_rows 4096
+# HELP enhance_expansion_readiness_budget_seconds enhance_expansion_readiness_budget_seconds
+# TYPE enhance_expansion_readiness_budget_seconds gauge
+enhance_expansion_readiness_budget_seconds 21600
+# HELP enhance_expansion_requests_pending enhance_expansion_requests_pending
+# TYPE enhance_expansion_requests_pending gauge
+enhance_expansion_requests_pending 0
+# HELP enhance_fleet_ceiling_reached enhance_fleet_ceiling_reached
+# TYPE enhance_fleet_ceiling_reached gauge
+enhance_fleet_ceiling_reached 0
+# HELP enhance_group_assigned_shards enhance_group_assigned_shards
+# TYPE enhance_group_assigned_shards gauge
+enhance_group_assigned_shards{group="shard-group-01"} 1
+# HELP enhance_group_pending_replicas enhance_group_pending_replicas
+# TYPE enhance_group_pending_replicas gauge
+enhance_group_pending_replicas{group="shard-group-01"} 0
+# HELP enhance_group_role enhance_group_role
+# TYPE enhance_group_role gauge
+enhance_group_role{group="shard-group-01",role="sealed_full"} 0
+enhance_group_role{group="shard-group-01",role="standby"} 0
+enhance_group_role{group="shard-group-01",role="sealed_open"} 0
+enhance_group_role{group="shard-group-01",role="active"} 1
+enhance_group_role{group="shard-group-01",role="settling"} 1
+# HELP enhance_group_role_available enhance_group_role_available
+# TYPE enhance_group_role_available gauge
+enhance_group_role_available{group="shard-group-01"} 1
+# HELP enhance_group_sealed_shards enhance_group_sealed_shards
+# TYPE enhance_group_sealed_shards gauge
+enhance_group_sealed_shards{group="shard-group-01"} 0
+# HELP enhance_growth_rows_per_second enhance_growth_rows_per_second
+# TYPE enhance_growth_rows_per_second gauge
+enhance_growth_rows_per_second 1
+# HELP enhance_last_publication_attempt_seconds enhance_last_publication_attempt_seconds
+# TYPE enhance_last_publication_attempt_seconds gauge
+enhance_last_publication_attempt_seconds 38.108297274
+# HELP enhance_last_publication_attempt_succeeded enhance_last_publication_attempt_succeeded
+# TYPE enhance_last_publication_attempt_succeeded gauge
+enhance_last_publication_attempt_succeeded 1
+# HELP enhance_operation_phase enhance_operation_phase
+# TYPE enhance_operation_phase gauge
+enhance_operation_phase{phase="RESERVED"} 0
+enhance_operation_phase{phase="COMMITTED"} 0
+enhance_operation_phase{phase="PREPARING"} 0
+enhance_operation_phase{phase="PLANNED"} 0
+enhance_operation_phase{phase="READY"} 0
+enhance_operation_phase{phase="COMPLETE"} 0
+enhance_operation_phase{phase="ABORTED"} 0
+enhance_operation_phase{phase="NONE"} 1
+enhance_operation_phase{phase="DRAINING"} 0
+# HELP enhance_peak_growth_rows_per_second enhance_peak_growth_rows_per_second
+# TYPE enhance_peak_growth_rows_per_second gauge
+enhance_peak_growth_rows_per_second 0.18484848484848485
+# HELP enhance_pending_abort_notifications enhance_pending_abort_notifications
+# TYPE enhance_pending_abort_notifications gauge
+enhance_pending_abort_notifications 0
+# HELP enhance_pending_commit_notifications enhance_pending_commit_notifications
+# TYPE enhance_pending_commit_notifications gauge
+enhance_pending_commit_notifications 0
+# HELP enhance_placement_revision enhance_placement_revision
+# TYPE enhance_placement_revision gauge
+enhance_placement_revision 69
+# HELP enhance_publication_blocked enhance_publication_blocked
+# TYPE enhance_publication_blocked gauge
+enhance_publication_blocked 0
+# HELP enhance_publication_pending_seconds enhance_publication_pending_seconds
+# TYPE enhance_publication_pending_seconds gauge
+enhance_publication_pending_seconds 0
+# HELP enhance_publication_target_available enhance_publication_target_available
+# TYPE enhance_publication_target_available gauge
+enhance_publication_target_available 1
+# HELP enhance_publication_target_current enhance_publication_target_current
+# TYPE enhance_publication_target_current gauge
+enhance_publication_target_current 1
+# HELP enhance_publication_target_height enhance_publication_target_height
+# TYPE enhance_publication_target_height gauge
+enhance_publication_target_height 3494754
+# HELP enhance_publication_target_height_delta enhance_publication_target_height_delta
+# TYPE enhance_publication_target_height_delta gauge
+enhance_publication_target_height_delta 0
+# HELP enhance_publication_target_records_delta enhance_publication_target_records_delta
+# TYPE enhance_publication_target_records_delta gauge
+enhance_publication_target_records_delta 0
+# HELP enhance_published_anchor_height enhance_published_anchor_height
+# TYPE enhance_published_anchor_height gauge
+enhance_published_anchor_height 3494754
+# HELP enhance_published_generation enhance_published_generation
+# TYPE enhance_published_generation gauge
+enhance_published_generation 69
+# HELP enhance_registered_groups enhance_registered_groups
+# TYPE enhance_registered_groups gauge
+enhance_registered_groups 1
+# HELP enhance_retained_generations enhance_retained_generations
+# TYPE enhance_retained_generations gauge
+enhance_retained_generations 5
+# HELP enhance_rows_before_next_carveout enhance_rows_before_next_carveout
+# TYPE enhance_rows_before_next_carveout gauge
+enhance_rows_before_next_carveout 14613
+# HELP enhance_shard_logical_rows enhance_shard_logical_rows
+# TYPE enhance_shard_logical_rows gauge
+enhance_shard_logical_rows{shard="0"} 32768
+# HELP enhance_shard_published_ready_replicas enhance_shard_published_ready_replicas
+# TYPE enhance_shard_published_ready_replicas gauge
+enhance_shard_published_ready_replicas{shard="0"} 2
+# HELP enhance_shard_state enhance_shard_state
+# TYPE enhance_shard_state gauge
+enhance_shard_state{shard="0",state="sealed"} 0
+enhance_shard_state{shard="0",state="growing"} 1
+enhance_shard_state{shard="0",state="provisional"} 0
+# HELP enhance_shard_used_rows enhance_shard_used_rows
+# TYPE enhance_shard_used_rows gauge
+enhance_shard_used_rows{shard="0"} 18156
+# HELP enhance_unit_allocated_rows enhance_unit_allocated_rows
+# TYPE enhance_unit_allocated_rows gauge
+enhance_unit_allocated_rows{local_row_start="16384",shard="0"} 2048
+enhance_unit_allocated_rows{local_row_start="8192",shard="0"} 8192
+enhance_unit_allocated_rows{local_row_start="0",shard="0"} 8192
+# HELP enhance_unit_used_rows enhance_unit_used_rows
+# TYPE enhance_unit_used_rows gauge
+enhance_unit_used_rows{local_row_start="0",shard="0"} 8192
+enhance_unit_used_rows{local_row_start="8192",shard="0"} 8192
+enhance_unit_used_rows{local_row_start="16384",shard="0"} 1772
+# HELP enhance_http_request_body_bytes_total Consumed public request payload bytes
+# TYPE enhance_http_request_body_bytes_total counter
+enhance_http_request_body_bytes_total{endpoint="init"} 0
+enhance_http_request_body_bytes_total{endpoint="query"} 0
+# HELP enhance_http_request_processing_duration_seconds Time from complete request body to response ready
+# TYPE enhance_http_request_processing_duration_seconds histogram
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.0001"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.0005"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.001"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.0025"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.005"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.01"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.025"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.05"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.1"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.25"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="0.5"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="1"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="2.5"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="5"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="10"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="30"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="60"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="120"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="init",le="+Inf"} 37
+enhance_http_request_processing_duration_seconds_sum{endpoint="init"} 0.001257115
+enhance_http_request_processing_duration_seconds_count{endpoint="init"} 37
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0001"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0005"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.001"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0025"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.005"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.01"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.025"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.05"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.1"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.25"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.5"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="1"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="2.5"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="5"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="10"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="30"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="60"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="120"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="+Inf"} 0
+enhance_http_request_processing_duration_seconds_sum{endpoint="query"} 0
+enhance_http_request_processing_duration_seconds_count{endpoint="query"} 0
+# HELP enhance_http_requests_total Responses by public entrypoint and status
+# TYPE enhance_http_requests_total counter
+enhance_http_requests_total{endpoint="init",status="200"} 37
+# HELP enhance_http_response_body_bytes_total Emitted public response payload bytes
+# TYPE enhance_http_response_body_bytes_total counter
+enhance_http_response_body_bytes_total{endpoint="init"} 81622
+enhance_http_response_body_bytes_total{endpoint="query"} 0
+
+process_start_time_seconds 1790266642.117878
+# TYPE enhance_query_active gauge
+enhance_query_active 0
+# TYPE enhance_query_waiting gauge
+enhance_query_waiting 0
+# TYPE enhance_query_wait_count_total counter
+enhance_query_wait_count_total 0
+# TYPE enhance_query_wait_microseconds_total counter
+enhance_query_wait_microseconds_total 0
+# TYPE enhance_query_rejected_total counter
+enhance_query_rejected_total 0
+# TYPE enhance_query_primary_success_total counter
+enhance_query_primary_success_total 0
+# TYPE enhance_query_fallback_success_total counter
+enhance_query_fallback_success_total 0
+# TYPE enhance_query_worker_busy_total counter
+enhance_query_worker_busy_total 0
+# TYPE enhance_query_worker_failure_total counter
+enhance_query_worker_failure_total 0

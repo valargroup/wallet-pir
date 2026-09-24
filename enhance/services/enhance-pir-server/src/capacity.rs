@@ -55,8 +55,20 @@ pub struct MemoryLimit {
     pub groups: usize,
     pub observed_at: u64,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkerExpansion {
+    pub id: String,
+    pub target_workers: usize,
+    pub requested_at: u64,
+    pub registered: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Capacity {
+    #[serde(default)]
+    pub worker_requests: BTreeMap<String, WorkerExpansion>,
+    #[serde(default)]
+    pub requested_worker: Option<String>,
     #[serde(default)]
     pub memory_limit: Option<MemoryLimit>,
     #[serde(default)]
@@ -73,6 +85,113 @@ pub struct Capacity {
 }
 
 impl Capacity {
+    pub fn request_worker(&mut self, now: u64, workers: usize) -> Result<(), String> {
+        if !(2..=16).contains(&workers) {
+            return Err("invalid pool inventory".into());
+        }
+        for request in self.worker_requests.values_mut() {
+            request.registered |= workers >= request.target_workers;
+        }
+        self.requested_worker = self
+            .worker_requests
+            .values()
+            .find(|r| !r.registered)
+            .map(|r| r.id.clone());
+        self.fleet_ceiling_reached = workers == 16;
+        if workers < 16 && self.requested_worker.is_none() {
+            let id = format!("pool-worker-{}", workers + 1);
+            self.worker_requests.insert(
+                id.clone(),
+                WorkerExpansion {
+                    id: id.clone(),
+                    target_workers: workers + 1,
+                    requested_at: now,
+                    registered: false,
+                },
+            );
+            self.requested_worker = Some(id);
+        }
+        Ok(())
+    }
+    pub fn observe_pool(
+        &mut self,
+        records: u64,
+        now: u64,
+        policy: Policy,
+        groups: &[Group],
+        lifecycle: &Lifecycle,
+        pool: &crate::pool::Pool,
+    ) -> Result<(), String> {
+        policy.validate()?;
+        pool.validate(groups)?;
+        let workers = groups.iter().map(|g| g.replicas.len()).sum::<usize>();
+        if let Some(last) = &self.observation {
+            if now > last.at && records >= last.records {
+                self.peak_rows_per_second = self.peak_rows_per_second.max(
+                    (records - last.records) as f64
+                        / RECORDS_PER_ROW as f64
+                        / (now - last.at) as f64,
+                );
+            }
+        }
+        if self.observation.as_ref().is_none_or(|last| now > last.at) {
+            self.observation = Some(Observation { records, at: now });
+        }
+        self.effective_rows_per_second = self
+            .peak_rows_per_second
+            .max(policy.fallback_rows_per_second);
+        self.readiness_seconds = Some(policy.readiness_seconds);
+        self.burst_rows = Some(policy.burst_rows);
+        let geometry = Geometry::default();
+        let span = geometry.max_shard_rows * RECORDS_PER_ROW as u64;
+        let mut lifecycle = lifecycle.clone();
+        let mut preview = pool.clone();
+        let mut boundary = records;
+        for ordinal in records / span..MAX_QUERY_SHARDS {
+            let at = if ordinal == records / span {
+                records.max(1)
+            } else {
+                ordinal * span + 1
+            };
+            let coverage = lifecycle.coverage(at, geometry)?;
+            match crate::pool::place(&coverage, groups, &preview, &Default::default()) {
+                Ok(placements) => {
+                    preview.placements = placements;
+                    boundary = (ordinal + 1) * span;
+                }
+                Err(_) => {
+                    boundary = at.saturating_sub(1).max(records);
+                    break;
+                }
+            }
+        }
+        let remaining = boundary
+            .saturating_sub(records)
+            .div_ceil(RECORDS_PER_ROW as u64);
+        self.remaining_rows = Some(remaining);
+        // Pair-based automation must not consume pooled demand.
+        self.requested = None;
+        for request in self.worker_requests.values_mut() {
+            request.registered |= workers >= request.target_workers;
+        }
+        self.requested_worker = self
+            .worker_requests
+            .values()
+            .find(|r| !r.registered)
+            .map(|r| r.id.clone());
+        if (GrowthForecast {
+            rows_per_second: self.effective_rows_per_second,
+            readiness_seconds: policy.readiness_seconds,
+            burst_rows: policy.burst_rows,
+            observed_at: now,
+        })
+        .expansion_due(remaining, now)?
+        {
+            self.request_worker(now, workers)?;
+        }
+        Ok(())
+    }
+
     /// A reservation's explicit memory refusal is an earlier limit, not a
     /// transport/availability failure. Keep one demand per next pair across retries.
     pub fn memory_refused(&mut self, records: u64, now: u64, groups: usize) -> Result<(), String> {
@@ -494,5 +613,24 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+    #[test]
+    fn worker_demand_is_single_and_survives_observation_retries() {
+        let mut capacity = Capacity::default();
+        capacity.request_worker(10, 2).unwrap();
+        capacity.request_worker(20, 2).unwrap();
+        assert_eq!(capacity.worker_requests.len(), 1);
+        let id = capacity.requested_worker.clone().unwrap();
+        assert_eq!(capacity.worker_requests[&id].target_workers, 3);
+        assert_eq!(capacity.worker_requests[&id].requested_at, 10);
+        let restored: Capacity =
+            serde_json::from_slice(&serde_json::to_vec(&capacity).unwrap()).unwrap();
+        assert_eq!(restored.requested_worker, Some(id));
+        assert!(restored.requested.is_none());
     }
 }

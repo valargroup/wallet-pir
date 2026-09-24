@@ -1,0 +1,1 @@
+Offline rollback bridge preserves all publication/recovery state and rejects incomplete pairs: PASS

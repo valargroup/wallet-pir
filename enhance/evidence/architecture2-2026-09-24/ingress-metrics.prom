@@ -1,0 +1,35 @@
+# HELP enhance_http_request_body_bytes_total Consumed public request payload bytes
+# TYPE enhance_http_request_body_bytes_total counter
+enhance_http_request_body_bytes_total{endpoint="query"} 689057503
+# HELP enhance_http_request_processing_duration_seconds Time from complete request body to response ready
+# TYPE enhance_http_request_processing_duration_seconds histogram
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0001"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0005"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.001"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0025"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.005"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.01"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.025"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.05"} 0
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.1"} 615
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.25"} 2429
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.5"} 2429
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="1"} 2429
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="2.5"} 2431
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="5"} 2431
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="10"} 2433
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="30"} 2433
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="60"} 2433
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="120"} 2433
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="+Inf"} 2433
+enhance_http_request_processing_duration_seconds_sum{endpoint="query"} 398.90461096899867
+enhance_http_request_processing_duration_seconds_count{endpoint="query"} 2433
+# HELP enhance_http_requests_total Responses by public entrypoint and status
+# TYPE enhance_http_requests_total counter
+enhance_http_requests_total{endpoint="query",status="200"} 2433
+enhance_http_requests_total{endpoint="query",status="409"} 2
+# HELP enhance_http_response_body_bytes_total Emitted public response payload bytes
+# TYPE enhance_http_response_body_bytes_total counter
+enhance_http_response_body_bytes_total{endpoint="query"} 75024088
+
+process_start_time_seconds 1790266557.6993854

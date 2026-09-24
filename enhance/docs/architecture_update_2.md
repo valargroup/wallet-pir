@@ -1,6 +1,15 @@
 # Enhance PIR architecture update 2: post-launch serving and placement
 
-Design proposal, September 24, 2026. This follows the launch changes in
+Implementation update, September 24, 2026: the single-router production rollout
+is now deployed directly over SSH. Public EPQ7 queries pass through the new ingress
+and dedicated 8-GiB router; the coordinator holds public session metadata and the
+worker pool uses two replicas. The physical-host test passed with five retained
+sessions, four concurrent clients, publication, restart and revocation checks.
+See [deployment evidence](../evidence/architecture2-2026-09-24/README.md) and the
+[SSH runbook](../ops/deploy/architecture2-ssh.md) for measured limits and outstanding
+qualification. The design discussion below preserves its original proposal context.
+
+Original design proposal, September 24, 2026. This follows the launch changes in
 [the main architecture](architecture.md); it describes no
 deployed behavior and is not a launch prerequisite. A dedicated 8 GiB packing
 router and 8 GiB evaluation workers are the sizing targets. The packing component

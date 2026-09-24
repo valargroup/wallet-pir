@@ -81,6 +81,18 @@ resource "digitalocean_firewall" "enhance_worker" {
     source_tags = [digitalocean_tag.coordinator.name]
   }
 
+  # Only evaluation traffic is allowed from the independently scaled packing tier.
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "8091"
+    source_tags = [digitalocean_tag.enhance_packing_router.name]
+  }
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "8291"
+    source_tags = [digitalocean_tag.enhance_packing_router.name]
+  }
+
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"

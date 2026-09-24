@@ -12,6 +12,15 @@ const HOST_AND_REQUEST_RESERVE: u64 = 1536 * MIB;
 static LIVE: AtomicU64 = AtomicU64::new(0);
 static LIMIT: OnceLock<u64> = OnceLock::new();
 
+/// Set before constructing any packing state in the standalone router process.
+/// Six 768-MiB resident charges plus one 1792-MiB construction charge leave
+/// 768 MiB within the 7-GiB process ceiling for admitted requests and runtime.
+pub(crate) fn configure_router() -> Result<(), String> {
+    LIMIT
+        .set(6400 * MIB)
+        .map_err(|_| "packing budget already initialized".into())
+}
+
 fn limit() -> u64 {
     *LIMIT.get_or_init(|| {
         #[allow(unused_mut)] // Linux additionally caps against the host and cgroup.

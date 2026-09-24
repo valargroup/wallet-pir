@@ -20,3 +20,11 @@ pub use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
 mod packing_budget;
 
 pub mod matvec;
+mod response_body;
+
+pub mod packing_router;
+pub mod pool;
+pub mod query_ingress;
+mod serving_control;
+
+mod http_metrics;

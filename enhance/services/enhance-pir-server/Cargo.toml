@@ -24,11 +24,12 @@ clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
 libc = "0.2"
 hdrhistogram = "7"
+http-body = "1"
 inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d8aea341d844df97ef6eb244c24b0a050eb3e9b" }
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d8aea341d844df97ef6eb244c24b0a050eb3e9b" }
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
