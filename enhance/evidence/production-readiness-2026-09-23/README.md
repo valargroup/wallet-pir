@@ -4,9 +4,29 @@
 [2 QPS pilot gates](../../docs/pilot-readiness.md). It records completed checks
 and preserves failures; it is not an approval to admit wallets.
 
-## Current deployment and superseded diagnostic (September 24, 03:18 UTC)
+## Current deployment and qualification in progress (September 24, 07:23 UTC)
 
-The coordinator and both physical workers now run the uniform server/load
+The serving coordinator and both physical workers run source revision
+`216b9993cc3ae4e0f1820d60c6b8f03d104b5e46`. Their running systemd command
+lines name that release, all three on-host binaries have SHA-256
+`7be19ca82108c2046d571ce6b901dd348d2e43435510a74257d530a49b309fe1`,
+and all three services reported zero restarts at this check. The public HTTPS
+qualification has passed its 30-minute 1, 2 and 4 QPS stages and is in its
+six-hour 4 QPS soak; the burst and full-window assessment are pending. The
+third isolated active c-4 attempt is running with swap disabled after the
+first attempt swapped and the second was interrupted by an Ubuntu upgrade.
+The separate six-sealed c-4 campaign has not started. Production continues to
+serve on its original worker pair while these isolated campaigns run.
+
+CI on the PR head is still running. Live private retrieval and controlled reorg
+in Vizor PR #601, post-load chain-derived public answers, current published
+snapshot/noise review, fault/alert/rollback drills, the production memory-limit
+alignment, and the 24-hour opt-in observation remain open. This index must not
+be read as a qualification decision while those gates are pending.
+
+## Historical pre-rollout snapshot (September 24, 03:18 UTC)
+
+At that time, the coordinator and both physical workers ran the uniform server/load
 source revision `527048217f8cb83d27c838e94dbaac21ac25837d`; the deployed
 Linux server binary SHA-256 is
 `3c10840380c306b0564b4a171d81f51c3ca35089fbc624cba7c7e9b4198e3b29`.
@@ -21,8 +41,8 @@ The [corrected release build](operations/release-build-216b999.json) records
 source, toolchain, archive and binary checksums from a separate existing Linux
 test host. Its archive and five files were verified in new release directories
 on all three hosts, and `enhance-pir-server --help` exited zero on each host.
-The serving systemd units still run the old binary; no corrected service has
-been started.
+The serving systemd units still ran the old binary; no corrected service had
+been started at this historical snapshot.
 The [corrected-release rollout plan](operations/corrected-release-rollout-plan.md)
 records the post-load switch, rollback invariants and fresh observation needed
 for another full public run.
