@@ -56,12 +56,14 @@ zero errors, swap or OOM; their digests and limitations are in the old-run
 record.
 
 Fresh rc.2 ARM64 and native Linux noise matrices each completed 432 cases and
-55,296 queries with zero decoding failures. Deterministic cross-platform
-comparison, independent numerical review and a current published snapshot
-check remain open. The pinned PR #29 wallet client was built from a clean
+55,296 queries with zero decoding failures. The deterministic
+[cross-platform comparison](noise-rc2-cross-platform.json) matched all 432
+cases with no missing case. Independent numerical review and a current
+published snapshot check remain open. The pinned PR #29 wallet client was built from a clean
 checkout on Linux with no packages outside its lockfile and passed the old
-fleet's chain-derived public check. The corrected fleet and consuming wallet
-release remain untested. The portable APM update is installed,
+fleet's chain-derived public check. The corrected fleet passed a fresh 10/10
+chain-derived public smoke check; its full load run is underway, and the
+consuming wallet release remains untested. The portable APM update is installed,
 with the old binary retained; after restart it reported both private workers
 reachable and zero active alerts. Its build and rollout checks are recorded in
 [portable tool validation](portable-tools-validation.txt).
@@ -71,15 +73,13 @@ matrix inputs, source hashes, assumptions and required independent checks.
 The remaining gates include a full public soak and burst on the corrected
 binary, chain-derived public answers and wallet release recovery over HTTPS,
 full hardware active and six-sealed campaigns, recovery/alert exercises, independent cryptographic
-review, and the 24-hour opt-in observation. The two serving workers cannot host
-either isolated campaign concurrently with canonical serving. The required
-active and six-sealed profiles need at least 12 hours of interrupted serving
-when run sequentially on these workers, plus setup and restoration. The
-[existing-worker campaign plan](operations/existing-c4-campaign-plan.md) is
-prepared but not dispatched; no extra workers have been provisioned and no
-production outage has been scheduled.
-The [provider inventory](operations/c4-provider-inventory.json) records the
-two serving hosts as the only c-4 droplets at its observation time.
+review, and the 24-hour opt-in observation. Four temporary c-4 workers are
+[provisioned and smoke checked](operations/temporary-c4-qualification-workers.md)
+as two isolated campaign pairs. The serving pair remains online; no production
+outage is scheduled. The earlier
+[existing-worker campaign plan](operations/existing-c4-campaign-plan.md) and
+[provider inventory](operations/c4-provider-inventory.json) describe the
+pre-provisioning state and are retained as historical evidence.
 
 The sections below preserve earlier checks and failures in their original
 context. Their earlier fleet revisions and incomplete-run statements do not
