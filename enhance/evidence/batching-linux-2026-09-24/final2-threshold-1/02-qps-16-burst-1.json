@@ -1,0 +1,20 @@
+{
+  "protocol": "ironwood-enhance-pir-v6",
+  "seconds": 60.722661421,
+  "concurrency": 32,
+  "offered_qps": 16.0,
+  "completed": 955,
+  "succeeded": 955,
+  "incorrect_answers": 0,
+  "errors": {},
+  "unstarted_arrivals": 5,
+  "correct_queries_per_second": 15.72724214735634,
+  "p50_ms": 1772.543,
+  "p95_ms": 2230.271,
+  "p99_ms": 2383.871,
+  "scheduled_p99_ms": 3049.471,
+  "exact_answer_oracle": true,
+  "warmup_errors": {},
+  "warmup_correct_answers": 0,
+  "warmup_incorrect_answers": 0
+}

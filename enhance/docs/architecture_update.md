@@ -12,11 +12,9 @@ The current architecture spends most of its complexity on shard lifecycle
 while the measured limit is the data plane. The production admission
 measurement on September 23, 2026 reached about 33 correct queries per second on
 two replicas holding one shard, with a fleet-global cap of four active queries
-and every query body proxied, decoded and packed on the coordinator. The
-uncommitted batching path measured a 2.0x scan-efficiency gain at a batch of
-eight on a local M4 Max (local evidence is not yet published on `main`),
-but its 20 ms coalescing window sits on the coordinator and its gain on the
-production hosts is unmeasured.
+and every query body proxied, decoded and packed on the coordinator. An
+isolated full-shard test on 8 GiB x86 workers found that multi-query batching
+reduced throughput at load. D5 records the decision to use singleton scans.
 
 This proposal keeps the record format, the p16 q48 profile, the public setup
 domain, the 24-shard wallet ceiling, the memory admission ledger and the
@@ -50,9 +48,9 @@ the design, not even as an optional mode.
 
 **Rationale.** Single-server PIR is a linear scan, so whole-history privacy
 costs one full scan of the chain per query, forever. At the 24-shard wallet
-ceiling that is 24 times the per-query work of one shard. Batching helps both
-designs equally and does not change that ratio. Twenty-four independent q48
-requests upload 6.78 MB at the measured 282,652 bytes per 32K query; only about
+ceiling that is 24 times the per-query work of one shard. Twenty-four
+independent q48 requests upload 6.78 MB at the measured 282,652 bytes per
+32K query; only about
 4.7 MB of that is query vectors, and a shared-key framing would need a protocol
 that does not exist. Non-uniform shards are not the obstacle, since unit
 summation already handles unequal unit sizes. Packing in the coordinator was a
@@ -165,29 +163,33 @@ already reveals, at higher cost.
 **Cost.** Cover queries multiply server work by the set size. This is the
 fan-out trade chosen per wallet instead of imposed on the fleet.
 
-### D5. Batching is measured and moved to the worker
+### D5. Use singleton query scans; do not move batching to workers
 
-**Decision.** Keep the batched evaluation path. Move its queue and coalescing
-window from the coordinator to each worker, so a worker batches whatever
-compatible queries the request router has sent it rather than waiting on a
-global window. Batching happens after replica selection and never spans
-replicas.
+**Decision.** Do not include multi-query evaluation or a coalescing window in
+this architecture update. Each admitted query gets its own worker evaluation.
+When packing moves to workers, use a bounded per-worker admission queue and
+independent evaluation slots, without waiting to form batches. The measured
+batching prototype is retained as evidence, not included in this design.
 
-**Rationale.** Batching already exists in the working tree: the coordinator
-coalesces up to eight queries with the same generation, shard and epoch for up
-to 20 ms, and the worker streams each unit once for all of them. The local
-measurement shows about 2.0x less scan time per query at a batch of eight, and
-that the 20 ms window adds latency without gain when arrivals are sparse. The
-gain is empirical: multiplication work grows with batch size while database
-traffic is shared, so the saturation point on the production hosts is unknown.
-Least-in-flight routing in D6 may split a domain's traffic across its replicas.
-Sparse traffic has no demonstrated batching gain to lose; at intermediate and
-high rates, qualification must report whether the split prevents useful
-worker-local batches.
+**Evidence.** Two isolated 8 GiB `c-4` workers each held a 768 MiB shard; the
+coordinator shared one worker host. In
+matched 30-second runs at 16 offered QPS, singleton evaluation completed
+458/480 queries, versus 416/480 with experimental SSE2 batching up to eight;
+p99 latency was 2.4 versus 10.5 seconds. The earlier scalar batch path
+completed only 143/480, although that run preceded a scheduler fix and is a
+less direct comparison. On the worker-only host, the SSE2 batch run used
+131 ms of scan time per query versus 86 ms for singleton scans. Three repeated
+singleton runs completed every query at 12 and 14 QPS; 16 QPS was marginal.
+At 0.1, 1, 2, 4 and 8 QPS, singleton scans added no collection wait and
+returned every answer correctly. The
+[Linux measurement and raw reports](../evidence/batching-linux-2026-09-24/README.md)
+record the topology and limits. A local M4 Max had shown a twofold scan gain
+for eight-query bursts, but that did not transfer to the target x86 hardware.
 
-**Cost.** Worker-local scheduling must respect the same per-request lifetime
-accounting as D6. Change the selection rule only through a later documented
-decision backed by the production batching measurements.
+**Revisit rule.** Consider batching only after a different worker CPU or
+evaluation kernel demonstrates higher sustained correct QPS at an acceptable
+latency and memory cost on the intended hardware. Moving the queue to workers
+alone does not establish that gain.
 
 ### D6. Workers pack; a request router replaces the coordinator in the query path
 
@@ -228,7 +230,7 @@ Within a domain, responsibilities are:
 | Eligibility | Coordinator placement | Publish replicas that hold the exact domain session and are ready at the placement revision |
 | Selection | Request router | Choose the eligible replica with the fewest requests currently outstanding through that router; rotate equal-load ties |
 | Admission | Worker | Independently admit or reject the complete request lifetime under local resource limits |
-| Batching | Worker | Coalesce compatible admitted requests already queued on that replica |
+| Scheduling | Worker | Admit each request under local limits and run one evaluation per query |
 
 Router-local outstanding-request counts are a routing hint, not an admission
 claim, and require no live worker queue-depth feed. The worker remains
@@ -260,7 +262,7 @@ network, so Phase 1 needs no wallet or host migration.
 
 **Cost.** Packing moves its CPU and memory onto the 8 GiB workers and must be
 measured against the same worker budget. Worker admission must cover the complete
-request lifetime: bounded body reception, decoding, queued batches,
+request lifetime: bounded body reception, decoding, queued requests,
 evaluation, packing, and response buffering. An execution slot alone does not
 bound queued bodies. While co-located, router CPU, bounded body buffers,
 connections and TLS/network overhead are charged to the coordinator host and
@@ -281,30 +283,6 @@ A sealed domain's session is valid until its content changes or a recovery
 epoch marks it noncanonical. Wallets refresh the routing view on a defined
 cadence and reuse unchanged session material. A replica move never
 invalidates a session.
-
-**Draft wallet contract (validated as a standalone model, not deployed).** A
-versioned routing view carries a strictly increasing revision, recovery epoch,
-chain anchor, domain descriptors and ordered half-open row intervals. Each
-route gives a global interval, domain ID and local-row start. Wallet validation
-rejects gaps, overlaps, unknown domains, intervals outside a populated local
-span, duplicate domains, malformed hashes and unknown wire fields. A domain
-session ID hashes a domain-separated encoding of domain ID, logical geometry,
-populated spans, content digest, setup digest and parameter ID. Publication
-revision, anchor and replica placement do not enter this ID. The content
-digest must cover the complete queryable PIR database, including padding and
-unit order; a hash of source records alone is insufficient.
-
-The candidate refresh policy is one routing fetch at sync start and at most
-30 seconds between fetches while querying. Each query carries both the
-session ID and routing revision/recovery epoch. The public origin checks the
-current view when admitting it: a superseded view returns HTTP 409, prompting
-a refresh and a fresh query under the new route. An invalidated session
-returns HTTP 410. A query admitted before a switch may finish against its
-pinned domain; the wallet still checks the returned binding and its locally
-accepted chain anchor. This gives bounded routine staleness and immediate
-detection at a routing switch, provided all public query entry points enforce
-the revision check. The 30-second value remains a candidate pending wallet
-traffic and transition measurements.
 
 **Rationale.** A sealed shard never changes, so binding its queries to a
 generation that expires after five publications forces wallets to refresh
@@ -431,15 +409,6 @@ scoped packing keys are not part of this update; they need a separate protocol
 review covering linkability and key-reuse safety, and transport-level
 linkability alone is not sufficient justification.
 
-**Investigation status.** `enhance/crates/enhance-pir/tests/routing_contract.rs`
-is an executable draft of the v7 JSON contract. It verifies strict decoding,
-canonical interval coverage, composed A/B coordinates, session identity
-changes, and stale-view fencing across tail removal and a recovery epoch.
-It does not change the v6 manifest, HTTP framing, production server, or wallet.
-Before migration, settle the recovery epoch lifecycle in D8, define the actual
-wire error payload and response binding, and run the interop harness against
-a wallet implementation of this revision.
-
 ## Memory ledger components per replica
 
 These are the components the admission ledger must count. None is a complete
@@ -452,7 +421,7 @@ frontier domain          allocated units + retained revisions of the growing uni
 tail unit                96 MiB while a compose window is open, including a provisional one
 provisional domains      prepared successors and retained revisions pending confirmation
 packing state            per domain, rebuilt when its unit set changes (D6 moves it here)
-per-request lifetime     body, decoded keys, batch slot, intermediate, packed response
+per-request lifetime     body, decoded keys, evaluation slot, intermediate, packed response
 query pins               admitted queries on retained or moving domains
 preparation transient    CRS construction and artifact cache charged to the cgroup
 guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unchanged
@@ -474,41 +443,37 @@ measurement.
    revocation and replacement contract. The transition-model test covers a
    reorg across a sealed boundary; production routing and wallet interop remain
    Phase 2 work.
-3. **Batching on production hosts.** Sweep offered rate and batch size on the
-   8 GiB Linux workers with full-size shards, report successful QPS alongside
-   latency, 429 rate and peak cgroup memory, and find the saturation point.
-   Confirm the portable packed-query path, not the aarch64 NEON path, on AVX-512.
-4. **Worker-side packing cost.** Measure packing CPU and memory per query on
+3. **Worker-side packing cost.** Measure packing CPU and memory per query on
    the workers and add it to the ledger before removing the coordinator from
    the query path.
-5. **Routing refresh cadence.** Decide how often wallets refetch the routing
+4. **Routing refresh cadence.** Decide how often wallets refetch the routing
    view and how a stale view is detected, and test a query sent under a
    superseded routing view during a compose window.
-6. **Cover policy adversary model.** State whether the baseline protects
+5. **Cover policy adversary model.** State whether the baseline protects
    against one worker or an observer of the whole service, and test the
    intersection attack against the persistent-set policy.
-7. **Wire encoding.** Version the routing table, domain descriptors and
+6. **Wire encoding.** Version the routing table, domain descriptors and
    session identities, and extend the interop harness to the new manifest.
-9. **Confirmation depth value.** Choose the depth from Ironwood reorg data, and
+7. **Confirmation depth value.** Choose the depth from Ironwood reorg data, and
    record the row-growth burst that a single block can produce.
 
 ## Implementation phases
 
 **Phase 1: direct worker serving.** Deploy the request router behind Caddy on
-the coordinator host. Workers receive query bodies, batch locally, pack and
-answer; the router applies D6's placement, selection and bounded-retry rules;
+the coordinator host. Workers receive query bodies, evaluate them individually,
+pack and answer; the router applies D6's placement, selection and bounded-retry rules;
 the coordinator publishes routing and placement and leaves the query path.
 Per-replica admission covers the full request lifetime, and router buffering is
 bounded independently.
 
 Exit: sweep the target offered rates with concurrent publication and
-cover-like traffic. Show that both replicas receive traffic and form
-worker-local batches; that one replica's admission saturation spills boundedly
-to its peer; and that replica loss or a placement-revision change stops new
+cover-like traffic. Show that both replicas receive traffic, that one
+replica's admission saturation spills boundedly to its peer, and that replica
+loss or a placement-revision change stops new
 requests from reaching the removed replica. Restart the router and exercise a
 stale placement so it fails closed rather than guessing. Report successful
-QPS, latency, public 429/502 responses, worker rejection rate, batch-size
-distribution, coordinator publication responsiveness, coordinator-host/router
+QPS, latency, public 429/502 responses, worker rejection rate,
+coordinator publication responsiveness, coordinator-host/router
 peak memory and network throughput, and worker peak memory. No wallet change
 is needed because Caddy preserves the public route.
 

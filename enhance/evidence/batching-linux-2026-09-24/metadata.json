@@ -1,0 +1,32 @@
+{
+  "captured_utc": "2026-09-24T11:08:11.727440+00:00",
+  "target_size": "DigitalOcean c-4: 4 vCPU, 8192 MB, 50 GB",
+  "client_size": "DigitalOcean s-8vcpu-16gb-amd",
+  "records": 1081343,
+  "logical_rows": 32768,
+  "expected_database_bytes_per_replica": 805306368,
+  "topology": "two isolated c-4 replicas in ams3; coordinator shares worker_a; load generator on separate 16 GB host in same private VPC",
+  "hosts": {
+    "worker_a": {
+      "uname": "Linux enhance-batching-bench-20260924 6.8.0-124-generic #124-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 13:00:45 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+      "cpu": "Model name:                              Intel(R) Xeon(R) Platinum 8280 CPU @ 2.70GHz",
+      "memory": "total        used        free      shared  buff/cache   available\nMem:      8326950912  3275788288   963915776     4255744  4408905728  5051162624",
+      "disk": "/dev/vda1        48G   15G   33G  32% /",
+      "server_sha256": "e9cc757ba787b6a9ccb0acd27ffdb98ccba5131eb212015dd144eb4f72244f1a"
+    },
+    "worker_b": {
+      "uname": "Linux enhance-batching-worker2-20260924 6.8.0-124-generic #124-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 13:00:45 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+      "cpu": "Model name:                              Intel(R) Xeon(R) Platinum 8280 CPU @ 2.70GHz",
+      "memory": "total        used        free      shared  buff/cache   available\nMem:      8326959104  1326444544  3921321984     4235264  3376541696  7000514560",
+      "disk": "/dev/vda1        48G  4.3G   44G   9% /",
+      "server_sha256": "e9cc757ba787b6a9ccb0acd27ffdb98ccba5131eb212015dd144eb4f72244f1a"
+    },
+    "client": {
+      "uname": "Linux enhance-batching-client-20260924 6.8.0-124-generic #124-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 13:00:45 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+      "cpu": "Model name:                              DO-Premium-AMD",
+      "memory": "total        used        free      shared  buff/cache   available\nMem:     16768647168   627036160 12703002624     4272128  3797667840 16141611008",
+      "disk": "/dev/vda1       309G  4.5G  305G   2% /",
+      "loadtest_sha256": "6cbfc9be18b6d7a55674edee6918c61b981c5c7a308d0596bd7db711af60a1b4"
+    }
+  }
+}

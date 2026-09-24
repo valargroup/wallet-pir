@@ -1,0 +1,20 @@
+[
+  "/Users/roman/projects/wallet-pir/target/release-fast/enhance-pir-load-test",
+  "--fixture-oracle",
+  "--server",
+  "http://127.0.0.1:59148",
+  "--parallelism",
+  "8",
+  "--rate",
+  "1",
+  "--warmup",
+  "0s",
+  "--duration",
+  "90s",
+  "--seed",
+  "20260924",
+  "--max-error-rate",
+  "1",
+  "--json-out",
+  "/Users/roman/projects/wallet-pir/enhance/evidence/batching-local-2026-09-24/qps-1.json"
+]

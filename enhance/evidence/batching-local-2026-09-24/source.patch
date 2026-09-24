@@ -1,0 +1,1103 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 8bacf62..ff0c42b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1043,6 +1043,7 @@ dependencies = [
+  "ipir-sp",
+  "prometheus",
+  "rand 0.8.5",
++ "rayon",
+  "reqwest",
+  "serde",
+  "serde_json",
+diff --git a/enhance/services/enhance-pir-server/Cargo.toml b/enhance/services/enhance-pir-server/Cargo.toml
+index 28aef19..2d923d0 100644
+--- a/enhance/services/enhance-pir-server/Cargo.toml
++++ b/enhance/services/enhance-pir-server/Cargo.toml
+@@ -22,6 +22,7 @@ inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "611a2928
+ ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "611a29284264d844bf4dba00de2874c5b762f8c2" }
+ prometheus = { version = "0.13", default-features = false, features = ["process"] }
+ rand = "0.8"
++rayon = "1"
+ reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+diff --git a/enhance/services/enhance-pir-server/src/coordinator.rs b/enhance/services/enhance-pir-server/src/coordinator.rs
+index 04fcba1..8ea9988 100644
+--- a/enhance/services/enhance-pir-server/src/coordinator.rs
++++ b/enhance/services/enhance-pir-server/src/coordinator.rs
+@@ -14,25 +14,29 @@ use axum::{
+ };
+ use enhance_pir::protocol::*;
+ use serde::{Deserialize, Serialize};
+-use std::collections::{BTreeMap, BTreeSet};
++use std::collections::{BTreeMap, BTreeSet, VecDeque};
+ use std::fs::{self, File};
+ use std::path::{Path as FsPath, PathBuf};
+ use std::sync::{
+     atomic::{AtomicU64, Ordering},
+     Arc, Mutex,
+ };
+-use tokio::sync::{RwLock, Semaphore};
++use tokio::sync::{oneshot, Notify, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock, Semaphore};
+ 
+-// Two replicas each admit two evaluations. Keep the coordinator aligned with
+-// that aggregate worker capacity so it does not queue behind idle replicas.
++// Two replicas each admit two batch evaluations. Keep the coordinator aligned
++// with that aggregate worker capacity so it does not queue behind idle replicas.
+ const QUERY_ACTIVE_LIMIT: usize = 4;
+ const QUERY_WAIT_LIMIT: usize = 16;
+ const QUERY_WAIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+ const QUERY_BODY_LIMIT: usize = 512 * 1024;
++const QUERY_BATCH_LIMIT: usize = 8;
++const QUERY_BATCH_DELAY: std::time::Duration = std::time::Duration::from_millis(20);
++const WORKER_BATCH_BODY_LIMIT: usize = 8 * 1024 * 1024;
+ 
+ #[derive(Default)]
+ struct QueryStats {
+     route_cursor: AtomicU64,
++    active_queries: AtomicU64,
+     wait_count: AtomicU64,
+     wait_micros: AtomicU64,
+     rejected: AtomicU64,
+@@ -40,6 +44,8 @@ struct QueryStats {
+     fallback_success: AtomicU64,
+     worker_busy: AtomicU64,
+     worker_failure: AtomicU64,
++    batch_count: AtomicU64,
++    batch_queries: AtomicU64,
+ }
+ 
+ #[derive(Debug)]
+@@ -84,6 +90,32 @@ struct Snapshot {
+     packing: BTreeMap<u64, Arc<Packing>>,
+ }
+ 
++type BatchKey = (u64, u64, String);
++
++struct PendingQuery {
++    body: axum::body::Bytes,
++    request: worker::Evaluate,
++    pack: Arc<Packing>,
++    snapshot: Arc<Snapshot>,
++    generation_pin: OwnedRwLockReadGuard<Vec<Arc<Snapshot>>>,
++    waiting: Option<OwnedSemaphorePermit>,
++    queued_at: std::time::Instant,
++    reply: oneshot::Sender<QueryResult<Vec<u8>>>,
++}
++
++struct BatchQueue {
++    pending: VecDeque<PendingQuery>,
++    notify: Arc<Notify>,
++}
++
++struct CancelNotify(Arc<Notify>);
++
++impl Drop for CancelNotify {
++    fn drop(&mut self) {
++        self.0.notify_one();
++    }
++}
++
+ fn hint_name(name: &str) -> bool {
+     name.strip_suffix(".bin")
+         .is_some_and(|stem| stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
+@@ -191,6 +223,7 @@ pub struct Coordinator {
+     publication: Arc<Semaphore>,
+     queries: Arc<Semaphore>,
+     query_waiters: Arc<Semaphore>,
++    batches: Arc<Mutex<BTreeMap<BatchKey, BatchQueue>>>,
+     query_stats: Arc<QueryStats>,
+     http: reqwest::Client,
+     root: PathBuf,
+@@ -306,6 +339,7 @@ impl Coordinator {
+             publication: Arc::new(Semaphore::new(1)),
+             queries: Arc::new(Semaphore::new(QUERY_ACTIVE_LIMIT)),
+             query_waiters: Arc::new(Semaphore::new(QUERY_WAIT_LIMIT)),
++            batches: Arc::new(Mutex::new(BTreeMap::new())),
+             query_stats: Arc::new(QueryStats::default()),
+             http: reqwest::Client::builder()
+                 .timeout(std::time::Duration::from_secs(180))
+@@ -1455,18 +1489,6 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
+         Ok(permit) => permit,
+         Err(_) => return reject_query(&c, request).await,
+     };
+-    let started_wait = std::time::Instant::now();
+-    let acquired =
+-        tokio::time::timeout(QUERY_WAIT_DEADLINE, c.queries.clone().acquire_owned()).await;
+-    c.query_stats.wait_count.fetch_add(1, Ordering::Relaxed);
+-    c.query_stats
+-        .wait_micros
+-        .fetch_add(started_wait.elapsed().as_micros() as u64, Ordering::Relaxed);
+-    drop(waiting);
+-    let permit = match acquired {
+-        Ok(Ok(permit)) => permit,
+-        _ => return reject_query(&c, request).await,
+-    };
+     let body = query_body(request).await?;
+     let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+     let generation_pin = c.snapshots.clone().read_owned().await;
+@@ -1489,54 +1511,215 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
+         epoch: hex::encode(binding.epoch),
+         coefficients,
+     };
+-    let mut answer = None;
+-    let mut non_busy_failure = false;
+-    let routes = &snapshot.saved.routes[&binding.shard_id];
+-    if routes.is_empty() {
++    if snapshot.saved.routes[&binding.shard_id].is_empty() {
+         return Err(QueryError(
+             StatusCode::SERVICE_UNAVAILABLE,
+             "no replica route".into(),
+         ));
+     }
+-    let first = c.query_stats.route_cursor.fetch_add(1, Ordering::Relaxed) as usize % routes.len();
++    let key = (binding.generation, binding.shard_id, request.epoch.clone());
++    let (reply, received) = oneshot::channel();
++    let pending = PendingQuery {
++        body,
++        request,
++        pack,
++        snapshot,
++        generation_pin,
++        waiting: Some(waiting),
++        queued_at: std::time::Instant::now(),
++        reply,
++    };
++    let (notify, start) = {
++        let mut queues = c.batches.lock().unwrap();
++        if let Some(queue) = queues.get_mut(&key) {
++            queue.pending.push_back(pending);
++            (queue.notify.clone(), false)
++        } else {
++            let notify = Arc::new(Notify::new());
++            queues.insert(
++                key.clone(),
++                BatchQueue {
++                    pending: VecDeque::from([pending]),
++                    notify: notify.clone(),
++                },
++            );
++            (notify, true)
++        }
++    };
++    notify.notify_one();
++    if start {
++        tokio::spawn(run_batch_queue(c.clone(), key));
++    }
++    let _cancel_notify = CancelNotify(notify);
++    received.await.map_err(|_| {
++        QueryError(
++            StatusCode::SERVICE_UNAVAILABLE,
++            "batch dispatcher stopped".into(),
++        )
++    })?
++}
++
++async fn run_batch_queue(c: Coordinator, key: BatchKey) {
++    loop {
++        let (oldest, count, notify) = {
++            let mut queues = c.batches.lock().unwrap();
++            let Some(queue) = queues.get_mut(&key) else {
++                return;
++            };
++            queue.pending.retain(|p| !p.reply.is_closed());
++            if queue.pending.is_empty() {
++                queues.remove(&key);
++                return;
++            }
++            (
++                queue.pending[0].queued_at,
++                queue.pending.len(),
++                queue.notify.clone(),
++            )
++        };
++        if count < QUERY_BATCH_LIMIT {
++            let flush_at = oldest + QUERY_BATCH_DELAY;
++            tokio::select! {
++                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(flush_at)) => {},
++                _ = notify.notified() => { continue; },
++            }
++        }
++        let deadline = oldest + QUERY_WAIT_DEADLINE;
++        let permit = tokio::select! {
++            permit = tokio::time::timeout_at(
++                tokio::time::Instant::from_std(deadline),
++                c.queries.clone().acquire_owned(),
++            ) => permit,
++            _ = notify.notified() => continue,
++        };
++        if permit.is_err() {
++            let expired = {
++                let mut queues = c.batches.lock().unwrap();
++                let queue = queues.get_mut(&key).expect("batch queue exists");
++                let mut expired = Vec::new();
++                while queue
++                    .pending
++                    .front()
++                    .is_some_and(|p| p.queued_at.elapsed() >= QUERY_WAIT_DEADLINE)
++                {
++                    expired.push(queue.pending.pop_front().unwrap());
++                }
++                expired
++            };
++            for pending in expired {
++                c.query_stats.wait_count.fetch_add(1, Ordering::Relaxed);
++                c.query_stats.wait_micros.fetch_add(
++                    pending.queued_at.elapsed().as_micros() as u64,
++                    Ordering::Relaxed,
++                );
++                c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
++                let _ = pending.reply.send(Err(QueryError(
++                    StatusCode::TOO_MANY_REQUESTS,
++                    "query wait deadline".into(),
++                )));
++            }
++            continue;
++        }
++        let mut batch = {
++            let mut queues = c.batches.lock().unwrap();
++            let queue = queues.get_mut(&key).expect("batch queue exists");
++            (0..QUERY_BATCH_LIMIT)
++                .filter_map(|_| queue.pending.pop_front())
++                .filter(|p| !p.reply.is_closed())
++                .collect::<Vec<_>>()
++        };
++        if batch.is_empty() {
++            continue;
++        }
++        let now = std::time::Instant::now();
++        let mut ready = Vec::new();
++        for mut pending in batch.drain(..) {
++            let wait = now.duration_since(pending.queued_at);
++            c.query_stats.wait_count.fetch_add(1, Ordering::Relaxed);
++            c.query_stats
++                .wait_micros
++                .fetch_add(wait.as_micros() as u64, Ordering::Relaxed);
++            if wait >= QUERY_WAIT_DEADLINE {
++                c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
++                let _ = pending.reply.send(Err(QueryError(
++                    StatusCode::TOO_MANY_REQUESTS,
++                    "query wait deadline".into(),
++                )));
++            } else {
++                drop(pending.waiting.take());
++                ready.push(pending);
++            }
++        }
++        if let Ok(Ok(permit)) = permit {
++            if !ready.is_empty() {
++                dispatch_batch(&c, ready, permit).await;
++            }
++        }
++    }
++}
++
++async fn dispatch_batch(c: &Coordinator, batch: Vec<PendingQuery>, permit: OwnedSemaphorePermit) {
++    let _permit = permit;
++    c.query_stats
++        .active_queries
++        .fetch_add(batch.len() as u64, Ordering::Relaxed);
++    c.query_stats.batch_count.fetch_add(1, Ordering::Relaxed);
++    c.query_stats
++        .batch_queries
++        .fetch_add(batch.len() as u64, Ordering::Relaxed);
++    let first = &batch[0];
++    let routes = &first.snapshot.saved.routes[&first.request.shard_id];
++    let requests = worker::EvaluateBatch {
++        queries: batch.iter().map(|p| p.request.clone()).collect(),
++    };
++    let start = c.query_stats.route_cursor.fetch_add(1, Ordering::Relaxed) as usize % routes.len();
++    let mut answer = None;
++    let mut failed = false;
+     for offset in 0..routes.len() {
+-        let url = &routes[(first + offset) % routes.len()];
++        let url = &routes[(start + offset) % routes.len()];
+         let result = async {
+             let response = c
+                 .http
+-                .post(format!("{url}/internal/evaluate"))
++                .post(format!("{url}/internal/evaluate-batch"))
+                 .timeout(std::time::Duration::from_secs(30))
+-                .json(&request)
++                .json(&requests)
+                 .send()
+                 .await
+                 .map_err(|e| e.to_string())?;
+             if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                 return Ok::<_, String>(None);
+             }
+-            let bytes = bounded(checked(response).await?, 1024 * 1024).await?;
+-            let intermediate: worker::Intermediate =
++            let bytes = bounded(checked(response).await?, WORKER_BATCH_BODY_LIMIT).await?;
++            let intermediate: worker::IntermediateBatch =
+                 serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+-            if intermediate.generation != binding.generation
+-                || intermediate.shard_id != binding.shard_id
+-                || intermediate.epoch != request.epoch
++            if intermediate.answers.len() != requests.queries.len()
++                || intermediate
++                    .answers
++                    .iter()
++                    .zip(&requests.queries)
++                    .any(|(a, q)| {
++                        a.generation != q.generation
++                            || a.shard_id != q.shard_id
++                            || a.epoch != q.epoch
++                    })
+             {
+-                return Err("worker binding mismatch".into());
++                return Err("worker batch binding mismatch".into());
+             }
+-            Ok::<_, String>(Some(intermediate.coefficients))
++            Ok(Some(intermediate.answers))
+         }
+         .await;
+         match result {
+-            Ok(Some(partial)) => {
++            Ok(Some(values)) => {
+                 if offset == 0 {
+                     c.query_stats
+                         .primary_success
+-                        .fetch_add(1, Ordering::Relaxed);
++                        .fetch_add(batch.len() as u64, Ordering::Relaxed);
+                 } else {
+                     c.query_stats
+                         .fallback_success
+-                        .fetch_add(1, Ordering::Relaxed);
++                        .fetch_add(batch.len() as u64, Ordering::Relaxed);
+                 }
+-                answer = Some(partial);
++                answer = Some(values);
+                 break;
+             }
+             Ok(None) => {
+@@ -1544,30 +1727,45 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Ve
+             }
+             Err(_) => {
+                 c.query_stats.worker_failure.fetch_add(1, Ordering::Relaxed);
+-                non_busy_failure = true;
++                failed = true;
+             }
+         }
+     }
+-    let answer = answer.ok_or_else(|| {
+-        if non_busy_failure {
+-            QueryError(
+-                StatusCode::SERVICE_UNAVAILABLE,
+-                "no ready replica answered".into(),
+-            )
+-        } else {
+-            c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
+-            QueryError(StatusCode::TOO_MANY_REQUESTS, "all replicas busy".into())
++    if let Some(answers) = answer {
++        for (pending, intermediate) in batch.into_iter().zip(answers) {
++            let PendingQuery {
++                body,
++                pack,
++                snapshot,
++                generation_pin,
++                reply,
++                ..
++            } = pending;
++            let result = tokio::task::spawn_blocking(move || {
++                let _snapshot = snapshot;
++                let _generation_pin = generation_pin;
++                pack.pack(&body, &intermediate.coefficients)
++            })
++            .await
++            .map_err(|e| QueryError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))
++            .and_then(|r| r.map_err(|e| QueryError(StatusCode::BAD_REQUEST, e)));
++            let _ = reply.send(result);
+         }
+-    })?;
+-    Ok(tokio::task::spawn_blocking(move || {
+-        let _permit = permit;
+-        let _snapshot = snapshot;
+-        let _generation_pin = generation_pin;
+-        pack.pack(&body, &answer)
+-    })
+-    .await
+-    .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?
+-    .map_err(|e| (StatusCode::BAD_REQUEST, e))?)
++    } else {
++        for pending in batch {
++            let status = if failed {
++                StatusCode::SERVICE_UNAVAILABLE
++            } else {
++                StatusCode::TOO_MANY_REQUESTS
++            };
++            let _ = pending
++                .reply
++                .send(Err(QueryError(status, "no ready replica answered".into())));
++        }
++    }
++    c.query_stats
++        .active_queries
++        .fetch_sub(requests.queries.len() as u64, Ordering::Relaxed);
+ }
+ async fn health(State(c): State<Coordinator>) -> Json<serde_json::Value> {
+     let snapshots = c.snapshots.read().await;
+@@ -1629,6 +1827,10 @@ async fn metrics(
+     for (name, value) in [
+         (
+             "enhance_query_active",
++            c.query_stats.active_queries.load(Ordering::Relaxed),
++        ),
++        (
++            "enhance_query_batch_active",
+             (QUERY_ACTIVE_LIMIT - c.queries.available_permits()) as u64,
+         ),
+         (
+@@ -1663,6 +1865,14 @@ async fn metrics(
+             "enhance_query_worker_failure_total",
+             c.query_stats.worker_failure.load(Ordering::Relaxed),
+         ),
++        (
++            "enhance_query_batch_total",
++            c.query_stats.batch_count.load(Ordering::Relaxed),
++        ),
++        (
++            "enhance_query_batch_queries_total",
++            c.query_stats.batch_queries.load(Ordering::Relaxed),
++        ),
+     ] {
+         let kind = if name.ends_with("_total") {
+             "counter"
+@@ -1709,48 +1919,33 @@ mod admission_tests {
+             .unwrap()
+     }
+ 
+-    async fn occupy_query_slots(
+-        coordinator: &Coordinator,
+-    ) -> Vec<tokio::sync::OwnedSemaphorePermit> {
+-        let mut permits = Vec::new();
+-        for _ in 0..QUERY_ACTIVE_LIMIT {
+-            permits.push(coordinator.queries.clone().acquire_owned().await.unwrap());
+-        }
+-        permits
+-    }
+-
+     #[tokio::test]
+-    async fn queue_waits_for_a_slot_and_releases_it() {
++    async fn malformed_body_releases_waiting_capacity_before_dispatch() {
+         let coordinator = test_coordinator();
+-        let mut active = occupy_query_slots(&coordinator).await;
+-        let waiting = tokio::spawn(query(State(coordinator.clone()), empty_query()));
+-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+-        assert_eq!(
+-            coordinator.query_waiters.available_permits(),
+-            QUERY_WAIT_LIMIT - 1
+-        );
+-        drop(active.pop());
+-        let error = waiting.await.unwrap().unwrap_err();
++        let error = query(State(coordinator.clone()), empty_query())
++            .await
++            .unwrap_err();
+         assert_eq!(error.0, StatusCode::BAD_REQUEST);
+         assert_eq!(
+             coordinator.query_waiters.available_permits(),
+             QUERY_WAIT_LIMIT
+         );
+-        drop(active);
+     }
+ 
+     #[tokio::test]
+-    async fn full_queue_and_expired_wait_return_retryable_429() {
++    async fn full_queue_returns_retryable_429() {
+         let coordinator = test_coordinator();
+-        let _active = occupy_query_slots(&coordinator).await;
+         let mut waiters = Vec::new();
+         for _ in 0..QUERY_WAIT_LIMIT {
+-            waiters.push(tokio::spawn(query(
+-                State(coordinator.clone()),
+-                empty_query(),
+-            )));
++            waiters.push(
++                coordinator
++                    .query_waiters
++                    .clone()
++                    .acquire_owned()
++                    .await
++                    .unwrap(),
++            );
+         }
+-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+         assert_eq!(coordinator.query_waiters.available_permits(), 0);
+         let response = query(State(coordinator.clone()), empty_query())
+             .await
+@@ -1758,10 +1953,7 @@ mod admission_tests {
+             .into_response();
+         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+         assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+-        for waiter in waiters {
+-            let response = waiter.await.unwrap().unwrap_err().into_response();
+-            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+-        }
++        drop(waiters);
+         assert_eq!(
+             coordinator.query_waiters.available_permits(),
+             QUERY_WAIT_LIMIT
+@@ -1771,8 +1963,13 @@ mod admission_tests {
+     #[tokio::test]
+     async fn cancelled_waiter_releases_capacity() {
+         let coordinator = test_coordinator();
+-        let _active = occupy_query_slots(&coordinator).await;
+-        let waiting = tokio::spawn(query(State(coordinator.clone()), empty_query()));
++        let waiting = tokio::spawn({
++            let c = coordinator.clone();
++            async move {
++                let _permit = c.query_waiters.clone().acquire_owned().await.unwrap();
++                std::future::pending::<()>().await;
++            }
++        });
+         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+         assert_eq!(
+             coordinator.query_waiters.available_permits(),
+diff --git a/enhance/services/enhance-pir-server/src/ipir.rs b/enhance/services/enhance-pir-server/src/ipir.rs
+index 589a0e7..ad65261 100644
+--- a/enhance/services/enhance-pir-server/src/ipir.rs
++++ b/enhance/services/enhance-pir-server/src/ipir.rs
+@@ -4,6 +4,7 @@ use crate::wire::{crs_encoded_len, write_crs_blocks};
+ use inspiring::{InspiringError, RlweParams};
+ use ipir_sp::server::{CrsBlock, IPIRServer};
+ use ipir_sp::{IPIRSimpleQuery, YpirSchemeParams};
++use rayon::prelude::*;
+ use serde::{Deserialize, Serialize};
+ use std::fs::{self, File};
+ use std::io::{self, BufReader, Read};
+@@ -268,6 +269,47 @@ impl ShardRuntime {
+         Ok(self.server.multiply_query(rlwe, query))
+     }
+ 
++    /// Evaluate several first-dimension queries while streaming each database column once.
++    pub fn evaluate_batch(
++        &self,
++        rlwe: &RlweParams,
++        queries: &[&[u64]],
++    ) -> Result<Vec<Vec<u64>>, InspiringError> {
++        let rows = self.server.db_rows_padded();
++        if queries.is_empty() || queries.len() > 8 || queries.iter().any(|q| q.len() != rows) {
++            return Err(InspiringError::LweShape(
++                "invalid batched query shape".into(),
++            ));
++        }
++        if queries.iter().any(|q| q.iter().any(|v| *v >= rlwe.q)) {
++            return Err(InspiringError::PreprocessMismatch(
++                "query coefficient is not reduced modulo q".into(),
++            ));
++        }
++        let count = queries.len();
++        if rows > 8192 {
++            return Err(InspiringError::LweShape(
++                "batched unit exceeds 8192 rows".into(),
++            ));
++        }
++        if count == 1 {
++            return Ok(vec![self.evaluate(rlwe, queries[0])?]);
++        }
++        let db = self.server.db();
++        let cols = self.server.db_cols();
++        let answers = match count {
++            2 => multiply_batch::<2>(db, rows, cols, rlwe.q, queries),
++            3 => multiply_batch::<3>(db, rows, cols, rlwe.q, queries),
++            4 => multiply_batch::<4>(db, rows, cols, rlwe.q, queries),
++            5 => multiply_batch::<5>(db, rows, cols, rlwe.q, queries),
++            6 => multiply_batch::<6>(db, rows, cols, rlwe.q, queries),
++            7 => multiply_batch::<7>(db, rows, cols, rlwe.q, queries),
++            8 => multiply_batch::<8>(db, rows, cols, rlwe.q, queries),
++            _ => unreachable!("batch shape checked above"),
++        };
++        Ok(answers)
++    }
++
+     #[allow(clippy::too_many_arguments)]
+     fn load(
+         directory: &Path,
+@@ -331,6 +373,110 @@ impl ShardRuntime {
+     }
+ }
+ 
++/// Pack the small query panel by row so each column scan reads contiguous
++/// coefficients for all lanes. The fixed lane count lets LLVM unroll the hot
++/// multiply-accumulate loop instead of indexing eight separate query slices.
++fn multiply_batch<const K: usize>(
++    db: &[u16],
++    rows: usize,
++    cols: usize,
++    modulus: u64,
++    queries: &[&[u64]],
++) -> Vec<Vec<u64>> {
++    let panel: Vec<([u32; K], [u32; K])> = (0..rows)
++        .map(|row| {
++            (
++                std::array::from_fn(|lane| queries[lane][row] as u32),
++                std::array::from_fn(|lane| (queries[lane][row] >> 32) as u32),
++            )
++        })
++        .collect();
++    let mut column_major = vec![0u64; cols * K];
++    column_major
++        .par_chunks_mut(K)
++        .enumerate()
++        .for_each(|(col, out)| {
++            let database_column = &db[col * rows..(col + 1) * rows];
++            #[cfg(target_arch = "aarch64")]
++            if K == 8 {
++                multiply_column_neon(database_column, &panel, out, modulus);
++                return;
++            }
++            let mut lo = [0u64; K];
++            let mut hi = [0u64; K];
++            for (&value, (query_lo, query_hi)) in database_column.iter().zip(&panel) {
++                let value = u64::from(value);
++                for lane in 0..K {
++                    lo[lane] += u64::from(query_lo[lane]) * value;
++                    hi[lane] += u64::from(query_hi[lane]) * value;
++                }
++            }
++            for lane in 0..K {
++                out[lane] =
++                    ((lo[lane] as u128 + ((hi[lane] as u128) << 32)) % modulus as u128) as u64;
++            }
++        });
++    let mut answers = vec![vec![0u64; cols]; K];
++    for (col, values) in column_major.chunks_exact(K).enumerate() {
++        for lane in 0..K {
++            answers[lane][col] = values[lane];
++        }
++    }
++    answers
++}
++
++/// NEON multiplies four query lanes at a time while each database value is hot.
++/// The caller uses this only for K=8 and units of at most 8192 rows, so every
++/// split-limb accumulator fits in u64 before the final reduction.
++#[cfg(target_arch = "aarch64")]
++fn multiply_column_neon<const K: usize>(
++    database_column: &[u16],
++    panel: &[([u32; K], [u32; K])],
++    out: &mut [u64],
++    modulus: u64,
++) {
++    use std::arch::aarch64::{
++        vdup_n_u32, vdupq_n_u64, vget_high_u32, vget_low_u32, vld1q_u32, vmlal_u32, vst1q_u64,
++    };
++    debug_assert_eq!(K, 8);
++    // SAFETY: K=8 provides eight initialized u32 values in each panel row and
++    // eight u64 output slots. NEON is available on every aarch64 target.
++    unsafe {
++        let zero = vdupq_n_u64(0);
++        let (mut lo0, mut lo1, mut lo2, mut lo3) = (zero, zero, zero, zero);
++        let (mut hi0, mut hi1, mut hi2, mut hi3) = (zero, zero, zero, zero);
++        for (&value, (query_lo, query_hi)) in database_column.iter().zip(panel) {
++            let scalar = vdup_n_u32(u32::from(value));
++            let qlo0 = vld1q_u32(query_lo.as_ptr());
++            let qlo1 = vld1q_u32(query_lo.as_ptr().add(4));
++            let qhi0 = vld1q_u32(query_hi.as_ptr());
++            let qhi1 = vld1q_u32(query_hi.as_ptr().add(4));
++            lo0 = vmlal_u32(lo0, vget_low_u32(qlo0), scalar);
++            lo1 = vmlal_u32(lo1, vget_high_u32(qlo0), scalar);
++            lo2 = vmlal_u32(lo2, vget_low_u32(qlo1), scalar);
++            lo3 = vmlal_u32(lo3, vget_high_u32(qlo1), scalar);
++            hi0 = vmlal_u32(hi0, vget_low_u32(qhi0), scalar);
++            hi1 = vmlal_u32(hi1, vget_high_u32(qhi0), scalar);
++            hi2 = vmlal_u32(hi2, vget_low_u32(qhi1), scalar);
++            hi3 = vmlal_u32(hi3, vget_high_u32(qhi1), scalar);
++        }
++        let mut lows = [0u64; 8];
++        let mut highs = [0u64; 8];
++        vst1q_u64(lows.as_mut_ptr(), lo0);
++        vst1q_u64(lows.as_mut_ptr().add(2), lo1);
++        vst1q_u64(lows.as_mut_ptr().add(4), lo2);
++        vst1q_u64(lows.as_mut_ptr().add(6), lo3);
++        vst1q_u64(highs.as_mut_ptr(), hi0);
++        vst1q_u64(highs.as_mut_ptr().add(2), hi1);
++        vst1q_u64(highs.as_mut_ptr().add(4), hi2);
++        vst1q_u64(highs.as_mut_ptr().add(6), hi3);
++        for lane in 0..8 {
++            out[lane] =
++                ((lows[lane] as u128 + ((highs[lane] as u128) << 32)) % modulus as u128) as u64;
++        }
++    }
++}
++
+ impl PreparedShard {
+     pub fn build(
+         layout: &DatabaseLayout,
+diff --git a/enhance/services/enhance-pir-server/src/runtime.rs b/enhance/services/enhance-pir-server/src/runtime.rs
+index 5f5d94f..7834c46 100644
+--- a/enhance/services/enhance-pir-server/src/runtime.rs
++++ b/enhance/services/enhance-pir-server/src/runtime.rs
+@@ -125,6 +125,33 @@ pub struct Evaluation {
+ }
+ 
+ impl Evaluation {
++    pub fn evaluate_batch(&self, queries: &[Vec<u64>]) -> Result<Vec<Vec<u64>>, String> {
++        let params = parameters(self.plan.shard.logical_rows)?;
++        if queries.is_empty()
++            || queries.len() > 8
++            || queries
++                .iter()
++                .any(|q| q.len() != params.db_rows || q.iter().any(|v| *v >= rlwe().q))
++        {
++            return Err("invalid batched query coefficients".into());
++        }
++        let mut answers = vec![vec![0; params.db_cols]; queries.len()];
++        for (unit, spec) in self.units.iter().zip(&self.plan.units) {
++            let start = spec.local_row_start as usize;
++            let end = start + spec.allocated_rows as usize;
++            let slices: Vec<&[u64]> = queries.iter().map(|q| &q[start..end]).collect();
++            let partials = unit
++                .runtime
++                .evaluate_batch(rlwe(), &slices)
++                .map_err(|e| e.to_string())?;
++            for (answer, partial) in answers.iter_mut().zip(partials.iter()) {
++                add_intermediate_assign_mod(answer, partial, rlwe().q)
++                    .map_err(|e| e.to_string())?;
++            }
++        }
++        Ok(answers)
++    }
++
+     pub fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, String> {
+         let params = parameters(self.plan.shard.logical_rows)?;
+         if coefficients.len() != params.db_rows || coefficients.iter().any(|v| *v >= rlwe().q) {
+@@ -462,6 +489,19 @@ mod tests {
+         );
+         let mut engine = Engine::new(directory.path());
+         let evaluation = engine.prepare(domain, records).unwrap();
++        let mut batched_queries = Vec::new();
++        for target in [0, 8191, 8192, 10239, 16383, 0, 8192, 16383] {
++            let mut query = vec![0; 16384];
++            query[target] = rlwe().q - 1;
++            batched_queries.push(query);
++        }
++        assert_eq!(
++            evaluation.evaluate_batch(&batched_queries).unwrap(),
++            batched_queries
++                .iter()
++                .map(|q| evaluation.evaluate(q).unwrap())
++                .collect::<Vec<_>>()
++        );
+         let mut rows = records(0, shard.records as usize).unwrap();
+         rows.resize(16384 * ENHANCE_LAYOUT.row_bytes(), 0);
+         let params = parameters(16384).unwrap();
+diff --git a/enhance/services/enhance-pir-server/src/worker.rs b/enhance/services/enhance-pir-server/src/worker.rs
+index 5a0c8f7..a201308 100644
+--- a/enhance/services/enhance-pir-server/src/worker.rs
++++ b/enhance/services/enhance-pir-server/src/worker.rs
+@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
+ use std::fs::{self, File, OpenOptions};
+ use std::io::Read;
+ use std::path::{Path as FsPath, PathBuf};
++use std::sync::atomic::{AtomicU64, Ordering};
+ use std::sync::{Arc, Mutex};
+ use tokio::sync::Semaphore;
+ 
+@@ -78,6 +79,16 @@ pub struct Intermediate {
+     pub coefficients: Vec<u64>,
+ }
+ 
++#[derive(Clone, Debug, Serialize, Deserialize)]
++pub struct EvaluateBatch {
++    pub queries: Vec<Evaluate>,
++}
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++pub struct IntermediateBatch {
++    pub answers: Vec<Intermediate>,
++}
++
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ struct DiskState {
+     #[serde(default)]
+@@ -152,9 +163,31 @@ pub struct Worker {
+     inner: Arc<Mutex<Inner>>,
+     preparation: Arc<Semaphore>,
+     evaluation: Arc<Semaphore>,
++    active_queries: Arc<AtomicU64>,
++    batch_count: Arc<AtomicU64>,
++    batch_queries: Arc<AtomicU64>,
++    batch_scan_micros: Arc<AtomicU64>,
+     pub incarnation: String,
+ }
+ 
++struct ActiveQueries {
++    count: Arc<AtomicU64>,
++    size: u64,
++}
++
++impl ActiveQueries {
++    fn new(count: Arc<AtomicU64>, size: u64) -> Self {
++        count.fetch_add(size, Ordering::Relaxed);
++        Self { count, size }
++    }
++}
++
++impl Drop for ActiveQueries {
++    fn drop(&mut self) {
++        self.count.fetch_sub(self.size, Ordering::Relaxed);
++    }
++}
++
+ type ApiResult<T> = Result<T, (StatusCode, String)>;
+ fn unavailable(e: impl ToString) -> (StatusCode, String) {
+     (StatusCode::SERVICE_UNAVAILABLE, e.to_string())
+@@ -439,6 +472,10 @@ impl Worker {
+             })),
+             preparation: Arc::new(Semaphore::new(1)),
+             evaluation: Arc::new(Semaphore::new(2)),
++            active_queries: Arc::new(AtomicU64::new(0)),
++            batch_count: Arc::new(AtomicU64::new(0)),
++            batch_queries: Arc::new(AtomicU64::new(0)),
++            batch_scan_micros: Arc::new(AtomicU64::new(0)),
+             incarnation,
+         })
+     }
+@@ -457,6 +494,7 @@ impl Worker {
+             .route("/internal/abort", post(abort))
+             .route("/internal/retain", post(retain))
+             .route("/internal/evaluate", post(evaluate))
++            .route("/internal/evaluate-batch", post(evaluate_batch))
+             .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+             .with_state(self)
+     }
+@@ -498,8 +536,24 @@ async fn metrics(
+     );
+     metrics.number(
+         "enhance_worker_queries_in_flight",
++        w.active_queries.load(Ordering::Relaxed),
++    );
++    metrics.number(
++        "enhance_worker_batches_in_flight",
+         (2 - w.evaluation.available_permits()) as u64,
+     );
++    metrics.number(
++        "enhance_worker_batch_total",
++        w.batch_count.load(Ordering::Relaxed),
++    );
++    metrics.number(
++        "enhance_worker_batch_queries_total",
++        w.batch_queries.load(Ordering::Relaxed),
++    );
++    metrics.number(
++        "enhance_worker_batch_scan_microseconds_total",
++        w.batch_scan_micros.load(Ordering::Relaxed),
++    );
+     // Preparation holds the engine lock. Never stall that work just to scrape,
+     // and never substitute zero database usage when the sample is unavailable.
+     if let Ok(engine) = inner.engine.try_lock() {
+@@ -974,6 +1028,7 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
+         .clone()
+         .try_acquire_owned()
+         .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
++    let active = ActiveQueries::new(w.active_queries.clone(), 1);
+     let bytes = tokio::time::timeout(
+         std::time::Duration::from_secs(30),
+         to_bytes(request.into_body(), 1024 * 1024),
+@@ -1015,6 +1070,7 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
+     };
+     let result = tokio::task::spawn_blocking(move || {
+         let _permit = permit;
++        let _active = active;
+         let coefficients = evaluation.evaluate(&query.coefficients)?;
+         Ok::<_, String>(Intermediate {
+             generation: query.generation,
+@@ -1029,11 +1085,137 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
+     Ok(Json(result))
+ }
+ 
++async fn evaluate_batch(
++    State(w): State<Worker>,
++    request: Request,
++) -> ApiResult<Json<IntermediateBatch>> {
++    let permit = w
++        .evaluation
++        .clone()
++        .try_acquire_owned()
++        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
++    let bytes = tokio::time::timeout(
++        std::time::Duration::from_secs(30),
++        to_bytes(request.into_body(), 8 * 1024 * 1024),
++    )
++    .await
++    .map_err(unavailable)?
++    .map_err(unavailable)?;
++    let batch: EvaluateBatch =
++        serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
++    if batch.queries.is_empty() || batch.queries.len() > 8 {
++        return Err((StatusCode::BAD_REQUEST, "invalid batch size".into()));
++    }
++    let first = &batch.queries[0];
++    if batch.queries.iter().any(|q| {
++        q.generation != first.generation || q.shard_id != first.shard_id || q.epoch != first.epoch
++    }) {
++        return Err((StatusCode::BAD_REQUEST, "mixed batch bindings".into()));
++    }
++    let active = ActiveQueries::new(w.active_queries.clone(), batch.queries.len() as u64);
++    let evaluation = {
++        let i = w.inner.lock().unwrap();
++        let (manifest, assignment) =
++            if let Some((manifest, _)) = i.disk.published.get(&first.generation) {
++                (manifest, &i.published[&first.generation])
++            } else if let Some(manifest) = i
++                .disk
++                .activated
++                .as_ref()
++                .filter(|m| m.generation == first.generation)
++            {
++                (manifest, &i.candidate)
++            } else {
++                return Err((StatusCode::GONE, "expired session".into()));
++            };
++        let session = manifest
++            .sessions
++            .iter()
++            .find(|s| s.shard_id == first.shard_id)
++            .ok_or((StatusCode::BAD_REQUEST, "wrong shard".into()))?;
++        if session.public_params_sha256[..16] != first.epoch {
++            return Err((StatusCode::BAD_REQUEST, "epoch mismatch".into()));
++        }
++        assignment
++            .get(&first.shard_id)
++            .cloned()
++            .ok_or((StatusCode::BAD_REQUEST, "wrong group".into()))?
++    };
++    let batch_count = w.batch_count.clone();
++    let batch_queries = w.batch_queries.clone();
++    let batch_scan_micros = w.batch_scan_micros.clone();
++    let result = tokio::task::spawn_blocking(move || {
++        let _permit = permit;
++        let _active = active;
++        let count = batch.queries.len() as u64;
++        let started = std::time::Instant::now();
++        let coefficients: Vec<Vec<u64>> = batch
++            .queries
++            .iter()
++            .map(|q| q.coefficients.clone())
++            .collect();
++        let answers = evaluation.evaluate_batch(&coefficients)?;
++        batch_count.fetch_add(1, Ordering::Relaxed);
++        batch_queries.fetch_add(count, Ordering::Relaxed);
++        batch_scan_micros.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
++        Ok::<_, String>(IntermediateBatch {
++            answers: batch
++                .queries
++                .into_iter()
++                .zip(answers)
++                .map(|(query, coefficients)| Intermediate {
++                    generation: query.generation,
++                    shard_id: query.shard_id,
++                    epoch: query.epoch,
++                    coefficients,
++                })
++                .collect(),
++        })
++    })
++    .await
++    .map_err(unavailable)?
++    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
++    Ok(Json(result))
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+     use tower::ServiceExt;
+ 
++    #[tokio::test]
++    async fn batch_rejects_mixed_bindings_and_oversize_before_lookup() {
++        let root = tempfile::tempdir().unwrap();
++        let worker = Worker::open(root.path()).unwrap();
++        let query = Evaluate {
++            generation: 1,
++            shard_id: 0,
++            epoch: "0000000000000000".into(),
++            coefficients: vec![0],
++        };
++        for queries in [
++            vec![query.clone(); 9],
++            vec![
++                query.clone(),
++                Evaluate {
++                    generation: 2,
++                    ..query.clone()
++                },
++            ],
++        ] {
++            let request = axum::http::Request::builder()
++                .method("POST")
++                .uri("/internal/evaluate-batch")
++                .header("content-type", "application/json")
++                .body(Body::from(
++                    serde_json::to_vec(&EvaluateBatch { queries }).unwrap(),
++                ))
++                .unwrap();
++            let response = worker.clone().router().oneshot(request).await.unwrap();
++            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
++        }
++    }
++
+     #[test]
+     fn q46_worker_state_is_rejected_without_rewriting_it() {
+         let root = tempfile::tempdir().unwrap();
+diff --git a/enhance/tools/loadtest/src/load.rs b/enhance/tools/loadtest/src/load.rs
+index 7c97f89..0c67bc3 100644
+--- a/enhance/tools/loadtest/src/load.rs
++++ b/enhance/tools/loadtest/src/load.rs
+@@ -104,6 +104,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
+         args.rate.is_none_or(|r| r.is_finite() && r > 0.0),
+         "offered rate must be positive and finite"
+     );
++    ensure!(args.burst_size > 0, "burst size must be positive");
+     ensure!(
+         args.max_error_rate.is_finite() && (0.0..=1.0).contains(&args.max_error_rate),
+         "invalid error rate"
+@@ -148,6 +149,14 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
+         };
+         warmup.spawn(async move {
+             let mut samples = WarmupSamples::default();
++            if duration.is_zero() {
++                return Ok::<_, ClientError>((
++                    client,
++                    samples.errors,
++                    samples.correct,
++                    samples.wrong,
++                ));
++            }
+             let until = Instant::now() + duration;
+             loop {
+                 let result = client.query_position_with_timing(position).await;
+@@ -191,6 +200,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
+         let next = next.clone();
+         let started = started.clone();
+         let rate = args.rate;
++        let burst_size = args.burst_size;
+         let fixture = args.fixture_oracle;
+         let seed = args.seed.unwrap_or(0) + index as u64;
+         tasks.spawn(async move {
+@@ -209,7 +219,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
+                     if index >= offered.unwrap() {
+                         break;
+                     }
+-                    let at = start + Duration::from_secs_f64(index as f64 / rate);
++                    let at = start
++                        + Duration::from_secs_f64((index / burst_size * burst_size) as f64 / rate);
+                     tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
+                     at
+                 } else {
+diff --git a/enhance/tools/loadtest/src/main.rs b/enhance/tools/loadtest/src/main.rs
+index 171efbf..8e17def 100644
+--- a/enhance/tools/loadtest/src/main.rs
++++ b/enhance/tools/loadtest/src/main.rs
+@@ -22,6 +22,9 @@ struct Args {
+     /// Open-loop aggregate offered QPS; report scheduled-to-completion latency.
+     #[arg(long)]
+     rate: Option<f64>,
++    /// Number of requests released together at each open-loop arrival time.
++    #[arg(long, default_value_t = 1)]
++    burst_size: u64,
+     /// Enhance PIR server base URL.
+     #[arg(long)]
+     server: String,

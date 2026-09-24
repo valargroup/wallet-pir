@@ -1,0 +1,97 @@
+{
+  "run_id": "batching-local-2026-09-24",
+  "recorded_utc": "2026-09-24T09:20:09.614299+00:00",
+  "source_commit": "79f79655d4906651ff30a44be10c3cbde2b45d5b",
+  "source_dirty": true,
+  "source_patch": "source.patch",
+  "source_patch_sha256": "1fb36e3f30579629affafad652ffb067cf6479d3ad05f2c32cbe2cc06868d4a2",
+  "build_profile": "release-fast (optimized, lto=false, codegen-units=16)",
+  "host": {
+    "os": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+    "macos": "26.2",
+    "cpu": "Apple M4 Max",
+    "logical_cpus": 16,
+    "ram_bytes": 137438953472,
+    "network": "localhost loopback",
+    "workers": "two local processes on the same host",
+    "storage_total_bytes": 3996329328640,
+    "storage_free_bytes_after_runs": 41962885120
+  },
+  "fixture": {
+    "kind": "synthetic isolated positional oracle",
+    "records": 1081343,
+    "shard_rows": 32768,
+    "mutable_units": 4,
+    "database_bytes_per_worker": 805306368,
+    "public_protocol": "ironwood-enhance-pir-v6",
+    "schema_version": 11,
+    "profile": "P16Q48",
+    "publication_churn": false
+  },
+  "runs": {
+    "rates": {
+      "run_file": "run.json",
+      "run_file_sha256": "adb2fb8c1b3927ef82d24899d01468abe9e3249d6f39fc3f289b60640c80c5a3",
+      "last_report_utc": "2026-09-24T09:02:11.679790+00:00",
+      "server_sha256": "b85a913d2a12d271f6ea712f17aa13f50c6d8c28b54498dd648663a2768cc024",
+      "loadtest_sha256": "70bd6cace3b8693343ebc6ca5ef8db738d9247439e5ac8a9a3ace2ac416d4608",
+      "steps": 5,
+      "first_command_written_utc": "2026-09-24T08:53:57.153914+00:00",
+      "raw_reports": [
+        "qps-0p1.json",
+        "qps-1.json",
+        "qps-2.json",
+        "qps-4.json",
+        "qps-8.json"
+      ]
+    },
+    "burst_v1": {
+      "run_file": "burst8/run.json",
+      "run_file_sha256": "ced04ec5ef4beecc473b9fea97caf89252cf2510705bca9cc06348905ae5eae7",
+      "last_report_utc": "2026-09-24T09:06:24.251012+00:00",
+      "server_sha256": "b85a913d2a12d271f6ea712f17aa13f50c6d8c28b54498dd648663a2768cc024",
+      "loadtest_sha256": "2b3d7566137700e8980b8c8b1fdc088f5f3d2e93292f14fabd4a1eaae3dd6c57",
+      "steps": 1,
+      "first_command_written_utc": "2026-09-24T09:04:49.354098+00:00",
+      "raw_reports": [
+        "burst8/qps-8.json"
+      ]
+    },
+    "burst_v2": {
+      "run_file": "burst8-v2/run.json",
+      "run_file_sha256": "700d5dd77199cf3c387867cdef2c26d39c703c57b09e45b0221d44c07ecc2bf9",
+      "last_report_utc": "2026-09-24T09:11:22.832721+00:00",
+      "server_sha256": "bc39aba0aa3a44788a36456913008f0fb5b469224b9c192bda778d14fc536335",
+      "loadtest_sha256": "2b3d7566137700e8980b8c8b1fdc088f5f3d2e93292f14fabd4a1eaae3dd6c57",
+      "steps": 1,
+      "first_command_written_utc": "2026-09-24T09:09:48.592488+00:00",
+      "raw_reports": [
+        "burst8-v2/qps-8.json"
+      ]
+    },
+    "burst_v3": {
+      "run_file": "burst8-v3/run.json",
+      "run_file_sha256": "cb1b4b2a8d40e6dce94ed2c4130b17838ab0e519eaa1432d7d577882a60a4c15",
+      "last_report_utc": "2026-09-24T09:15:24.930756+00:00",
+      "server_sha256": "74e66fd68cd35bfc1393a9ae5b602be11dd1ed7dde7f0f1d8ebbd9033d125eac",
+      "loadtest_sha256": "2b3d7566137700e8980b8c8b1fdc088f5f3d2e93292f14fabd4a1eaae3dd6c57",
+      "steps": 1,
+      "first_command_written_utc": "2026-09-24T09:13:50.719951+00:00",
+      "raw_reports": [
+        "burst8-v3/qps-8.json"
+      ]
+    },
+    "smooth_v3": {
+      "run_file": "smooth8-v3/run.json",
+      "run_file_sha256": "f3e60966b4de15cc0d733b404b4c78c2d5932d49557958161c84e794fe631d99",
+      "last_report_utc": "2026-09-24T09:18:43.905043+00:00",
+      "server_sha256": "74e66fd68cd35bfc1393a9ae5b602be11dd1ed7dde7f0f1d8ebbd9033d125eac",
+      "loadtest_sha256": "2b3d7566137700e8980b8c8b1fdc088f5f3d2e93292f14fabd4a1eaae3dd6c57",
+      "steps": 1,
+      "first_command_written_utc": "2026-09-24T09:17:08.854944+00:00",
+      "raw_reports": [
+        "smooth8-v3/qps-8.json"
+      ]
+    }
+  }
+}

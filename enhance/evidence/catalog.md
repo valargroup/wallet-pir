@@ -46,6 +46,8 @@ These are dated records, not claims about the current source or live fleet. Use 
 | [architecture-v4-sealed-deadline-2026-09-23](architecture-v4-sealed-deadline-2026-09-23/README.md) | Sealed campaign cold-preparation deadline failure |
 | [architecture-v4-warmup-regression-2026-09-23](architecture-v4-warmup-regression-2026-09-23/README.md) | Load warmup regression checks — September 23, 2026 |
 | [architecture-v4-worker-disk-2026-09-23](architecture-v4-worker-disk-2026-09-23/README.md) | Per-worker disk sizing evidence |
+| [batching-linux-2026-09-24](batching-linux-2026-09-24/README.md) | Adaptive batching on isolated 8 GiB Linux workers — September 24, 2026 |
+| [batching-local-2026-09-24](batching-local-2026-09-24/README.md) | Local aarch64 full-shard batching comparison — September 24, 2026 |
 | [architecture-v4-workload-host-2026-09-23](architecture-v4-workload-host-2026-09-23/README.md) | Workload host identity — September 23, 2026 |
 | [layout-benchmark-2026-09-20](layout-benchmark-2026-09-20/REPORT.md) | Enhance PIR communication/layout benchmark — 2026-09-20 |
 | [p16-noise-2026-09-23](p16-noise-2026-09-23/README.md) | Plaintext-16 noise qualification and current-decomposition results — September 23, 2026 |
