@@ -1,0 +1,61 @@
+{
+  "kind": "enhance-public-qualification",
+  "qualification": "unqualified",
+  "source_revision": "527048217f8cb83d27c838e94dbaac21ac25837d",
+  "server_revision": "527048217f8cb83d27c838e94dbaac21ac25837d",
+  "binary_sha256": "1ae34a81808470c1b4033973d66e87a2b7f68164a40712ac40956ee0477b6b95",
+  "oracle_sha256": "161d34f6de465ee48ccc1530f3b94108a13eb32d5785ee8f58d01f72c810173b",
+  "server": "https://enhance-pir.valargroup.dev",
+  "client_platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+  "started_ns": 1790197335475547683,
+  "required_step_seconds": 1800,
+  "required_soak_seconds": 21600,
+  "limitations": [
+    "Oracle provenance and live binary identity require independent verification",
+    "Worker sampling, wallet lifecycle, noise qualification and recovery are separate gates"
+  ],
+  "runs": [
+    {
+      "name": "rate-1",
+      "started_ns": 1790197335506667523,
+      "status": "passed",
+      "exit_code": 0,
+      "finished_ns": 1790199145865071368,
+      "failures": [],
+      "report_sha256": "985274e873443980d73cca0f968b10abb51596611d59afe790b5b224881a9a46"
+    },
+    {
+      "name": "rate-2",
+      "started_ns": 1790199145909285166,
+      "status": "passed",
+      "exit_code": 0,
+      "finished_ns": 1790200956131881121,
+      "failures": [],
+      "report_sha256": "96b4c59086c189632fadbd87e0686187e5a0a65987d3f23d56c23cbd06ac89ec"
+    },
+    {
+      "name": "rate-4",
+      "started_ns": 1790200956176348861,
+      "status": "passed",
+      "exit_code": 0,
+      "finished_ns": 1790202766479486561,
+      "failures": [],
+      "report_sha256": "89d65a8902ace25b9da08bb188312891fba076660b6c0d17b70a82eb98e493ab"
+    },
+    {
+      "name": "soak-4",
+      "started_ns": 1790202766506972057,
+      "status": "failed",
+      "exit_code": -15,
+      "finished_ns": 1790219002001216409,
+      "failures": [
+        "missing_report",
+        "load_process_failed"
+      ],
+      "report_sha256": null
+    }
+  ],
+  "status": "failed",
+  "failure": "RuntimeError: soak-4: missing_report, load_process_failed",
+  "finished_ns": 1790219002015485740
+}

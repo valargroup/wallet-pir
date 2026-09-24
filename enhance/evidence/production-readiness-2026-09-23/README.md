@@ -4,23 +4,25 @@
 [2 QPS pilot gates](../../docs/pilot-readiness.md). It records completed checks
 and preserves failures; it is not an approval to admit wallets.
 
-## Current candidate and live qualification (September 23, 23:59 UTC)
+## Current deployment and superseded diagnostic (September 24, 03:18 UTC)
 
 The coordinator and both physical workers now run the uniform server/load
 source revision `527048217f8cb83d27c838e94dbaac21ac25837d`; the deployed
 Linux server binary SHA-256 is
 `3c10840380c306b0564b4a171d81f51c3ca35089fbc624cba7c7e9b4198e3b29`.
 The previous releases and data remain available for rollback, and cleanup
-timers remain disabled. Commit `7ca1988` changes the journal append recovery
-path after that deployed revision: an uncommitted record suffix is now trimmed
-to the manifest's committed length before appending. The running public load
-still measures the earlier deployed binary. It remains useful diagnostic
-evidence, but it cannot qualify the updated server candidate; rebuild and
-repeat affected production gates after deploying that exact new binary.
+timers remain disabled. Commits `7ca1988` and `216b999` correct journal
+crash-recovery paths after that deployed revision. The
+[old public run](operations/old-run-superseded-2026-09-24.md) was deliberately
+stopped after about 4½ hours of its six-hour soak because it cannot qualify
+the corrected server. Its manifest explicitly retains the incomplete soak
+and missing burst; the corrected binary requires a new full run.
 The [corrected release build](operations/release-build-216b999.json) records
 source, toolchain, archive and binary checksums from a separate existing Linux
-test host. The release archive is ready for post-load deployment, but has not
-been executed on the production CPUs or installed there.
+test host. Its archive and five files were verified in new release directories
+on all three hosts, and `enhance-pir-server --help` exited zero on each host.
+The serving systemd units still run the old binary; no corrected service has
+been started.
 The [corrected-release rollout plan](operations/corrected-release-rollout-plan.md)
 records the post-load switch, rollback invariants and fresh observation needed
 for another full public run.
@@ -28,43 +30,47 @@ for another full public run.
 The fully observed public HTTPS run has passed its 30-minute 1, 2 and 4 QPS
 stages: 1,800, 3,600 and 7,200 exact answers respectively, with zero request
 errors or missed arrivals and scheduled p99 of 252.671, 393.983 and
-233.983 ms. Its six-hour 4 QPS soak is running, followed by a five-minute
-eight-client burst. Both worker samplers and the coordinator freshness
-observer started before the relevant full stages; the first full soak hour
-passed the conservative freshness assessment with 42 bounded tip advances,
-70.001-second worst lag and no findings. These public answers still use a
-journal-derived oracle. Full worker traces and the complete six-hour freshness
-window must be assessed after the run.
+233.983 ms. Its planned six-hour soak and burst did not complete. Both worker
+samplers and the coordinator freshness observer started before the relevant
+full stages. The old load used a journal-derived oracle; after stopping it,
+the pinned external wallet client recovered 16 exact answers from an
+independently reconstructed chain oracle. That result applies only to the old
+fleet and does not exercise a consuming wallet release.
 The [first 90-minute assessment](soak-first90min-freshness.json) also passed:
 57 bounded tip advances, 70.001-second worst lag and no findings. Its copied
-trace digest is recorded in the report; the continuous worker-local and
-coordinator traces remain on their hosts until the run completes.
+trace digest is recorded in the report.
 The [first three-hour assessment](soak-first3h-freshness.json) passed with
 132 conservatively bounded tip advances, 70.001-second worst lag, and no
-findings. This still does not cover the remaining soak, burst, or worker
-hardware traces.
+findings. This does not cover the planned six-hour soak or burst.
 The [first four-hour assessment](soak-first4h-freshness.json) bounded all 176
 observed tip advances within 70.001 seconds, with no ambiguous advances or
 sample gaps. It remains `evidence_incomplete` because the observer recorded a
 brief publication block during the same-height fork documented in the
-[reorg incident](operations/soak-reorg-2026-09-24.md). The full load report,
-canonical-hash check and independent public answers are still required.
+[reorg incident](operations/soak-reorg-2026-09-24.md). The
+[assessment through the operator stop](soak-to-operator-stop-freshness.json)
+bounded all 198 sampled advances within 70.001 seconds but retained the same
+incomplete status. Node RPC later confirmed the replacement block is
+canonical. The old fleet's external chain-derived client check answered 16/16
+positions exactly. Both frozen worker traces cover the measured window with
+zero errors, swap or OOM; their digests and limitations are in the old-run
+record.
 
 Fresh rc.2 ARM64 and native Linux noise matrices each completed 432 cases and
 55,296 queries with zero decoding failures. Deterministic cross-platform
 comparison, independent numerical review and a current published snapshot
 check remain open. The pinned PR #29 wallet client was built from a clean
-checkout on Linux with no packages outside its lockfile; it has not yet queried
-production with a chain-derived anchor. The portable APM update is installed,
+checkout on Linux with no packages outside its lockfile and passed the old
+fleet's chain-derived public check. The corrected fleet and consuming wallet
+release remain untested. The portable APM update is installed,
 with the old binary retained; after restart it reported both private workers
 reachable and zero active alerts. Its build and rollout checks are recorded in
 [portable tool validation](portable-tools-validation.txt).
 The [rc.2 review packet](numerical-review-packet.md) identifies the exact
 matrix inputs, source hashes, assumptions and required independent checks.
 
-The remaining gates include the completed public soak and burst, independent
-chain extraction and wallet release recovery over HTTPS, full hardware active
-and six-sealed campaigns, recovery/alert exercises, independent cryptographic
+The remaining gates include a full public soak and burst on the corrected
+binary, chain-derived public answers and wallet release recovery over HTTPS,
+full hardware active and six-sealed campaigns, recovery/alert exercises, independent cryptographic
 review, and the 24-hour opt-in observation. The two serving workers cannot host
 either isolated campaign concurrently with canonical serving. The required
 active and six-sealed profiles need at least 12 hours of interrupted serving

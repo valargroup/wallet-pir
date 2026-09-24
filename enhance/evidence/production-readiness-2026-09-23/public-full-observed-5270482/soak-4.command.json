@@ -1,0 +1,23 @@
+[
+  "/root/wallet-pir-candidate-5270482/target/release/enhance-pir-load-test",
+  "--server",
+  "https://enhance-pir.valargroup.dev",
+  "--oracle",
+  "/root/wallet-pir-journal-oracle.json",
+  "--parallelism",
+  "8",
+  "--duration",
+  "21600s",
+  "--warmup",
+  "10s",
+  "--seed",
+  "20260923",
+  "--max-error-rate",
+  "0.001",
+  "--json-out",
+  "/root/wallet-pir-public-fully-observed-5270482/soak-4.json",
+  "--rate",
+  "4",
+  "--slo-p99-ms",
+  "1000"
+]

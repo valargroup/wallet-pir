@@ -1,0 +1,8 @@
+{
+  "kind": "enhance-public-wallet-client-check-v1",
+  "server": "https://enhance-pir.valargroup.dev",
+  "generation": 429,
+  "anchor_height": 3494115,
+  "oracle_sha256": "c1b254842ed00b432bf59e9b53eb85aa44d840a97e50b2aa3cd986e15be943c9",
+  "exact_answers": 16
+}
