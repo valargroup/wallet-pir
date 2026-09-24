@@ -83,3 +83,10 @@ every two seconds. `assess-serving.py` evaluates duration, all offered arrivals,
 answer correctness, the 0.1% error-rate and one-second p99 bounds, sampling
 continuity, process identity, memory/swap events and publication progress.
 No six-hour pass is claimed before that assessment completes.
+
+The progress push merges upstream `ipir-sp` rc.3 and passes
+`cargo check --locked -p enhance-pir-server --all-targets` on the merged tree.
+The deployed/qualified binary remains the frozen artifact in `build.json`; the
+dependency merge does not silently replace it. `collect-serving.py --wait` is
+running locally to collect all five sample streams and assess the campaign once
+its service finishes. It records a failure if completion evidence is absent.
