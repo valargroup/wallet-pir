@@ -8,6 +8,8 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [D9 frontier unit cap comparison](d9-frontier-cap-2026-09-24/README.md)
+  (isolated 2K versus 8K measurements; admission decision remains open)
 - [Q48 precision qualification](p16-q48-2026-09-23/README.md)
 - [Schema-11/v5 wallet interoperability (q46 predecessor)](schema11-suffix-2026-09-23/README.md)
 - [Canonical record oracle](architecture-v4-canonical-record-2026-09-23/README.md)

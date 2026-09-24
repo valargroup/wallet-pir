@@ -1,0 +1,14 @@
+{"arch":"aarch64","binary_sha256":"6d537f6865c1a0676688ddc3461bfc7ef4cec065ae25f8274b7bfe389d904c44","cap":8192,"kind":"environment","os":"macos","queries":2,"scope":"synthetic full-size single domain; experimental unit partition; no service, replica, or publication"}
+{"build_ms":510.732792,"cap":8192,"kind":"unit","offset":0,"persist_ms":1229.904584}
+{"build_ms":476.03033300000004,"cap":8192,"kind":"unit","offset":8192,"persist_ms":1236.640875}
+{"build_ms":488.59587500000004,"cap":8192,"kind":"unit","offset":16384,"persist_ms":1236.691334}
+{"build_ms":487.30825,"cap":8192,"kind":"unit","offset":24576,"persist_ms":1627.870625}
+{"cap":8192,"hint_ms":1966.52275,"kind":"publication","packing_ms":678.271125,"units":4}
+{"cap":8192,"correct":true,"evaluate_ms":6.822084,"index":0,"kind":"query","pack_ms":6.697417}
+{"cap":8192,"correct":true,"evaluate_ms":6.859,"index":1,"kind":"query","pack_ms":5.0595}
+{"build_ms":507.92625000000004,"cap":8192,"hint_ms":1953.336708,"kind":"revision","packing_ms":665.270792,"persist_ms":1221.118334,"retained_units":2,"revision":1,"rss_kib":5695984}
+{"build_ms":532.60125,"cap":8192,"hint_ms":1959.330375,"kind":"revision","packing_ms":662.974333,"persist_ms":1223.869708,"retained_units":3,"revision":2,"rss_kib":5883200}
+{"build_ms":508.194291,"cap":8192,"hint_ms":1921.472125,"kind":"revision","packing_ms":627.938541,"persist_ms":1242.879875,"retained_units":4,"revision":3,"rss_kib":6275536}
+{"build_ms":495.519208,"cap":8192,"hint_ms":1936.758542,"kind":"revision","packing_ms":629.221209,"persist_ms":1772.52975,"retained_units":5,"revision":4,"rss_kib":6635584}
+{"build_ms":480.938125,"cap":8192,"hint_ms":1911.992125,"kind":"revision","packing_ms":664.604375,"persist_ms":1233.523042,"retained_units":6,"revision":5,"rss_kib":6851872}
+{"cap":8192,"kind":"complete"}

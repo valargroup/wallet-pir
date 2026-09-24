@@ -1,0 +1,26 @@
+{"arch":"aarch64","binary_sha256":"6d537f6865c1a0676688ddc3461bfc7ef4cec065ae25f8274b7bfe389d904c44","cap":2048,"kind":"environment","os":"macos","queries":2,"scope":"synthetic full-size single domain; experimental unit partition; no service, replica, or publication"}
+{"build_ms":172.173334,"cap":2048,"kind":"unit","offset":0,"persist_ms":880.290667}
+{"build_ms":139.285458,"cap":2048,"kind":"unit","offset":2048,"persist_ms":755.64375}
+{"build_ms":139.567166,"cap":2048,"kind":"unit","offset":4096,"persist_ms":748.163208}
+{"build_ms":135.0035,"cap":2048,"kind":"unit","offset":6144,"persist_ms":770.028}
+{"build_ms":137.729542,"cap":2048,"kind":"unit","offset":8192,"persist_ms":1117.022833}
+{"build_ms":137.68433399999998,"cap":2048,"kind":"unit","offset":10240,"persist_ms":735.1585}
+{"build_ms":139.386708,"cap":2048,"kind":"unit","offset":12288,"persist_ms":759.794541}
+{"build_ms":150.362083,"cap":2048,"kind":"unit","offset":14336,"persist_ms":802.19425}
+{"build_ms":136.605041,"cap":2048,"kind":"unit","offset":16384,"persist_ms":752.5208329999999}
+{"build_ms":137.472917,"cap":2048,"kind":"unit","offset":18432,"persist_ms":743.9176669999999}
+{"build_ms":135.63125000000002,"cap":2048,"kind":"unit","offset":20480,"persist_ms":747.455208}
+{"build_ms":147.79775,"cap":2048,"kind":"unit","offset":22528,"persist_ms":787.100625}
+{"build_ms":139.373834,"cap":2048,"kind":"unit","offset":24576,"persist_ms":758.006417}
+{"build_ms":135.022375,"cap":2048,"kind":"unit","offset":26624,"persist_ms":774.318042}
+{"build_ms":165.491666,"cap":2048,"kind":"unit","offset":28672,"persist_ms":752.54525}
+{"build_ms":138.334084,"cap":2048,"kind":"unit","offset":30720,"persist_ms":804.884}
+{"cap":2048,"hint_ms":7845.513292,"kind":"publication","packing_ms":693.177459,"units":16}
+{"cap":2048,"correct":true,"evaluate_ms":9.139459,"index":0,"kind":"query","pack_ms":4.900834}
+{"cap":2048,"correct":true,"evaluate_ms":8.617709,"index":1,"kind":"query","pack_ms":4.824375}
+{"build_ms":138.346875,"cap":2048,"hint_ms":7803.993125,"kind":"revision","packing_ms":673.695417,"persist_ms":759.842584,"retained_units":2,"revision":1,"rss_kib":5314416}
+{"build_ms":157.648708,"cap":2048,"hint_ms":7811.049458,"kind":"revision","packing_ms":649.434417,"persist_ms":799.6564999999999,"retained_units":3,"revision":2,"rss_kib":5636272}
+{"build_ms":155.197833,"cap":2048,"hint_ms":7855.663500000001,"kind":"revision","packing_ms":647.622959,"persist_ms":722.440834,"retained_units":4,"revision":3,"rss_kib":5731552}
+{"build_ms":137.786292,"cap":2048,"hint_ms":7772.027290999999,"kind":"revision","packing_ms":618.685708,"persist_ms":774.684541,"retained_units":5,"revision":4,"rss_kib":5811632}
+{"build_ms":139.89120799999998,"cap":2048,"hint_ms":7844.8312080000005,"kind":"revision","packing_ms":648.0079159999999,"persist_ms":783.115958,"retained_units":6,"revision":5,"rss_kib":5936992}
+{"cap":2048,"kind":"complete"}

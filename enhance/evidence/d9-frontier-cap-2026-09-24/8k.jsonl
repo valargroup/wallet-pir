@@ -1,0 +1,19 @@
+{"arch":"aarch64","binary_sha256":"6d537f6865c1a0676688ddc3461bfc7ef4cec065ae25f8274b7bfe389d904c44","cap":8192,"kind":"environment","os":"macos","queries":12,"scope":"synthetic full-size single domain; experimental unit partition; no service, replica, or publication"}
+{"build_ms":536.3905,"cap":8192,"kind":"unit","offset":0,"persist_ms":1311.19425}
+{"build_ms":480.25925,"cap":8192,"kind":"unit","offset":8192,"persist_ms":1263.9921250000002}
+{"build_ms":476.571208,"cap":8192,"kind":"unit","offset":16384,"persist_ms":1285.383958}
+{"build_ms":506.45324999999997,"cap":8192,"kind":"unit","offset":24576,"persist_ms":1325.169084}
+{"cap":8192,"hint_ms":1941.124875,"kind":"publication","packing_ms":713.5147499999999,"units":4}
+{"cap":8192,"correct":true,"evaluate_ms":7.38925,"index":0,"kind":"query","pack_ms":4.88875}
+{"cap":8192,"correct":true,"evaluate_ms":7.390292,"index":1,"kind":"query","pack_ms":5.038125}
+{"cap":8192,"correct":true,"evaluate_ms":7.239709,"index":2,"kind":"query","pack_ms":5.232584}
+{"cap":8192,"correct":true,"evaluate_ms":7.2005419999999996,"index":3,"kind":"query","pack_ms":4.752084}
+{"cap":8192,"correct":true,"evaluate_ms":6.903833,"index":4,"kind":"query","pack_ms":4.93725}
+{"cap":8192,"correct":true,"evaluate_ms":6.866,"index":5,"kind":"query","pack_ms":4.8524579999999995}
+{"cap":8192,"correct":true,"evaluate_ms":7.287333,"index":6,"kind":"query","pack_ms":4.962125}
+{"cap":8192,"correct":true,"evaluate_ms":6.979125,"index":7,"kind":"query","pack_ms":4.688083}
+{"cap":8192,"correct":true,"evaluate_ms":7.257874999999999,"index":8,"kind":"query","pack_ms":4.868084}
+{"cap":8192,"correct":true,"evaluate_ms":7.2645,"index":9,"kind":"query","pack_ms":5.514958}
+{"cap":8192,"correct":true,"evaluate_ms":6.855042,"index":10,"kind":"query","pack_ms":4.809500000000001}
+{"cap":8192,"correct":true,"evaluate_ms":17.367209000000003,"index":11,"kind":"query","pack_ms":8.985833}
+{"cap":8192,"kind":"complete"}

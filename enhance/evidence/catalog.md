@@ -4,6 +4,7 @@ These are dated records, not claims about the current source or live fleet. Use 
 
 | Run | Recorded subject |
 |---|---|
+| [d9-frontier-cap-2026-09-24](d9-frontier-cap-2026-09-24/README.md) | D9 2K versus 8K frontier unit isolated comparison — September 24, 2026 |
 | [architecture-v4-abort-notifications-2026-09-23](architecture-v4-abort-notifications-2026-09-23/README.md) | V4 abort-notification recovery — September 23, 2026 |
 | [architecture-v4-bootstrap-2026-09-23](architecture-v4-bootstrap-2026-09-23/README.md) | V4 worker bootstrap validation — September 23, 2026 |
 | [architecture-v4-bootstrap-pair-2026-09-23](architecture-v4-bootstrap-pair-2026-09-23/README.md) | V4 pair bootstrap and Linux validation — September 23, 2026 |

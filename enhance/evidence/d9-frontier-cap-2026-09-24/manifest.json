@@ -1,0 +1,27 @@
+{
+  "host_model": "MacBook Pro M4 Max",
+  "host_memory_bytes": 137438953472,
+  "os": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "compiler": "rustc 1.91.0 (f8297e351 2025-10-28)",
+  "source_base": "8b9bacf33c49522be1b1d437566f34cd33535d7d",
+  "benchmark_binary_sha256": "6d537f6865c1a0676688ddc3461bfc7ef4cec065ae25f8274b7bfe389d904c44",
+  "profile": "simplepir-p16-q48-v1",
+  "service": "none; isolated synthetic benchmark",
+  "memory_measurement": "macOS ps RSS after each retained revision and /usr/bin/time -l maximum resident set size; no Linux cgroup",
+  "run_id": "d9-frontier-cap-2026-09-24",
+  "captured_utc": "2026-09-24T10:15:49.450539+00:00",
+  "benchmark_source_sha256": "130da043442bf494e657d914205459d2c1a4b0c45be6e37495f7af89d6b28429",
+  "commands_file": "commands.sh",
+  "schema": 11,
+  "query_domain_rows": 32768,
+  "record_count": 1081343,
+  "caps": [
+    2048,
+    8192
+  ],
+  "retained_frontier_versions": 6,
+  "data_source": "synthetic deterministic records; no chain or network",
+  "workload": "isolated full-size single domain; 12 sequential queries per cap; separate 2-query + six-version retention per cap",
+  "measurements": "JSONL elapsed phase times, ps RSS after each retained revision, /usr/bin/time -l maximum RSS",
+  "limits": "not an 8 GiB Linux cgroup; no concurrency, service, replicas, placement, or QPS measurement"
+}
