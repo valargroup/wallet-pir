@@ -217,6 +217,25 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         .await
         .unwrap();
     assert_eq!(health["resident_objects"], 1);
+    let timing = http
+        .get(format!("{packing_control}/internal/metrics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for stage in ["worker", "packing", "total"] {
+        let prefix = format!("enhance_query_stage_duration_seconds_count{{stage=\"{stage}\"}} ");
+        let count: u64 = timing
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .expect("stage histogram")
+            .parse()
+            .unwrap();
+        assert!(count > 0, "missing successful {stage} samples");
+    }
+
     // Explicit rejection spills once; ambiguous failure never touches another worker.
     let session = client.session(0).await.unwrap();
     for mode in [1, 2] {

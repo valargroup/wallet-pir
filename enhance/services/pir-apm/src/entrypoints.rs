@@ -18,75 +18,195 @@ struct Source {
 }
 
 pub async fn run(config: Config, dashboard: SharedDashboard) {
+    run_with_period(config, dashboard, std::time::Duration::from_secs(5)).await;
+}
+
+async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std::time::Duration) {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(4))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("entrypoint HTTP client");
-    let mut urls = vec![format!("{}{}", config.scrape_url, config.metrics_path)];
-    urls.extend(config.query_scrape_urls.clone());
-    let mut sources: Vec<_> = urls
-        .into_iter()
-        .map(|url| Source {
-            url,
-            rolling: RollingMetrics::new(config.schema.clone()),
-            success: BTreeMap::new(),
-            ok: false,
-        })
-        .collect();
-    let mut interval = tokio::time::interval(config.interval);
+    let coordinator = format!("{}{}", config.scrape_url, config.metrics_path);
+    let query_urls = if config.query_scrape_urls.is_empty() {
+        vec![coordinator.clone()]
+    } else {
+        config.query_scrape_urls.clone()
+    };
+    let mut sources: BTreeMap<String, Source> = BTreeMap::new();
+    let mut interval = tokio::time::interval(period);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut minute = Instant::now();
+    let (mut init_ok, mut query_ok, mut timing_ok) = (true, true, true);
+    let mut previous_routers = Vec::new();
     loop {
         interval.tick().await;
+        let (router_urls, inventory_ok) = {
+            let view = dashboard.read().await;
+            (
+                view.packing_routers
+                    .values()
+                    .map(|r| format!("{}/internal/metrics", r.sample.url))
+                    .collect::<Vec<_>>(),
+                view.packing_inventory_error.is_none(),
+            )
+        };
+        if router_urls != previous_routers {
+            timing_ok = false;
+            previous_routers = router_urls.clone();
+        }
+        let desired: std::collections::BTreeSet<_> = std::iter::once(coordinator.clone())
+            .chain(query_urls.iter().cloned())
+            .chain(router_urls.iter().cloned())
+            .collect();
+        sources.retain(|url, _| desired.contains(url));
+        for url in desired {
+            sources.entry(url.clone()).or_insert_with(|| Source {
+                url,
+                rolling: RollingMetrics::new(config.schema.clone()),
+                success: BTreeMap::new(),
+                ok: false,
+            });
+        }
         let mut tasks = tokio::task::JoinSet::new();
-        for (index, source) in sources.iter().enumerate() {
-            let client = client.clone();
-            let url = source.url.clone();
-            let schema = config.schema.clone();
+        for source in sources.values_mut() {
+            source.ok = false;
+            let (url, client, schema) = (source.url.clone(), client.clone(), config.schema.clone());
             tasks.spawn(async move {
                 let result = async {
                     let response = client
-                        .get(url)
+                        .get(&url)
                         .send()
                         .await
                         .map_err(|_| ())?
                         .error_for_status()
                         .map_err(|_| ())?;
-                    let text = response.text().await.map_err(|_| ())?;
-                    metrics::parse_prometheus(&schema, &text, Instant::now()).map_err(|_| ())
+                    let body = response.text().await.map_err(|_| ())?;
+                    metrics::parse_prometheus(&schema, &body, Instant::now()).map_err(|_| ())
                 }
                 .await;
-                (index, result)
+                (url, result)
             });
         }
-        for source in &mut sources {
-            source.ok = false;
-        }
-        while let Some(Ok((index, result))) = tasks.join_next().await {
-            if let Ok(snapshot) = result {
+        while let Some(task) = tasks.join_next().await {
+            if let Ok((url, Ok(snapshot))) = task {
+                let source = sources.get_mut(&url).expect("configured source");
                 for endpoint in ["init", "query"] {
                     if snapshot.endpoints.get(endpoint).is_some_and(|e| {
                         e.upload_bytes.is_some()
                             && e.download_bytes.is_some()
                             && !e.processing.buckets.is_empty()
                     }) {
-                        sources[index]
-                            .success
-                            .insert(endpoint.into(), SystemTime::now());
+                        source.success.insert(endpoint.into(), SystemTime::now());
                     }
                 }
-                sources[index].rolling.push(snapshot);
-                sources[index].ok = true;
+                if source.rolling.latest().is_some_and(|previous| {
+                    previous.process_start_time_seconds != snapshot.process_start_time_seconds
+                        || snapshot.at.duration_since(previous.at).as_secs() > 12
+                }) {
+                    if url == coordinator {
+                        init_ok = false;
+                    }
+                    if query_urls.contains(&url) {
+                        query_ok = false;
+                    }
+                    if router_urls.contains(&url) {
+                        timing_ok = false;
+                    }
+                }
+                source.rolling.push(snapshot);
+                source.ok = true;
             }
         }
-        let init = summarize(&[&sources[0]], "init");
-        let query_sources: Vec<_> = if sources.len() == 1 {
-            vec![&sources[0]]
-        } else {
-            sources[1..].iter().collect()
-        };
-        let query = summarize(&query_sources, "query");
-        dashboard.write().await.entrypoints =
-            BTreeMap::from([("init".into(), init), ("query".into(), query)]);
+        let init_sources = vec![&sources[&coordinator]];
+        let query_sources: Vec<_> = query_urls.iter().map(|url| &sources[url]).collect();
+        let routers: Vec<_> = router_urls.iter().map(|url| &sources[url]).collect();
+        let mut init = summarize(&init_sources, "init");
+        let mut query = summarize(&query_sources, "query");
+        let timings_available = inventory_ok
+            && !routers.is_empty()
+            && routers.iter().all(|s| {
+                s.ok && ["worker", "packing", "total"].iter().all(|stage| {
+                    s.rolling
+                        .latest()
+                        .and_then(|m| m.endpoints.get(&format!("query_stage_{stage}")))
+                        .is_some_and(|e| !e.processing.buckets.is_empty())
+                })
+            });
+        let router_metrics: Vec<_> = routers.iter().map(|s| &s.rolling).collect();
+        if timings_available {
+            for stage in ["worker", "packing", "total"] {
+                query.stages.insert(
+                    stage.into(),
+                    RollingMetrics::entrypoint(&router_metrics, &format!("query_stage_{stage}"))
+                        .processing,
+                );
+            }
+        }
+        query.timing_error = !timings_available;
+        query.window.processing = query.stages.get("total").cloned().unwrap_or_default();
+        init_ok &= !init.error;
+        query_ok &= !query.error;
+        timing_ok &= timings_available;
+        let emit = minute.elapsed().as_secs() >= 60;
+        let now = SystemTime::now();
+        let mut view = dashboard.write().await;
+        for (name, data) in [("init", &mut init), ("query", &mut query)] {
+            if let Some(previous) = view.entrypoints.get(name) {
+                data.history = previous.history.clone();
+            }
+            if emit {
+                let (entry_sources, traffic_ok) = if name == "init" {
+                    (&init_sources, init_ok)
+                } else {
+                    (&query_sources, query_ok)
+                };
+                let arrivals = if traffic_ok {
+                    entry_sources.iter().try_fold(0.0, |sum, s| {
+                        s.rolling.arrivals_period(name, 60).map(|n| sum + n)
+                    })
+                } else {
+                    None
+                };
+                let mut latencies = BTreeMap::new();
+                if name == "init" && init_ok {
+                    latencies.insert(
+                        "total".into(),
+                        RollingMetrics::entrypoint_period(
+                            &[&sources[&coordinator].rolling],
+                            "init",
+                            60,
+                        )
+                        .processing,
+                    );
+                } else if name == "query" && timing_ok {
+                    for stage in ["worker", "packing", "total"] {
+                        latencies.insert(
+                            stage.into(),
+                            RollingMetrics::entrypoint_period(
+                                &router_metrics,
+                                &format!("query_stage_{stage}"),
+                                60,
+                            )
+                            .processing,
+                        );
+                    }
+                }
+                crate::history::push(
+                    &mut data.history,
+                    crate::history::Point {
+                        at: now,
+                        latencies,
+                        arrivals,
+                    },
+                );
+            }
+        }
+        view.entrypoints = BTreeMap::from([("init".into(), init), ("query".into(), query)]);
+        if emit {
+            minute = Instant::now();
+            (init_ok, query_ok, timing_ok) = (true, true, true);
+        }
     }
 }
 
@@ -103,6 +223,18 @@ fn summarize(sources: &[&Source], endpoint: &str) -> EntrypointData {
             })
     });
     EntrypointData {
+        arrivals_10s: if available {
+            sources.iter().try_fold(0.0, |sum, s| {
+                s.rolling
+                    .latest()?
+                    .endpoints
+                    .get(endpoint)?
+                    .arrivals_last_10s
+                    .map(|n| sum + n)
+            })
+        } else {
+            None
+        },
         window: RollingMetrics::entrypoint(
             &sources.iter().map(|s| &s.rolling).collect::<Vec<_>>(),
             endpoint,
@@ -113,6 +245,7 @@ fn summarize(sources: &[&Source], endpoint: &str) -> EntrypointData {
             .collect::<Option<Vec<_>>>()
             .and_then(|v| v.into_iter().min()),
         error: !available,
+        ..Default::default()
     }
 }
 
@@ -210,7 +343,11 @@ enhance_http_request_processing_duration_seconds_count{{endpoint="{endpoint}"}} 
                 crate::host::HostHealth::default(),
             ),
         ));
-        let monitor = tokio::spawn(run(config, dashboard.clone()));
+        let monitor = tokio::spawn(run_with_period(
+            config,
+            dashboard.clone(),
+            std::time::Duration::from_secs(1),
+        ));
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 if dashboard
@@ -232,7 +369,10 @@ enhance_http_request_processing_duration_seconds_count{{endpoint="{endpoint}"}} 
             let query = &data.entrypoints["query"];
             assert!(!query.error);
             assert!((2500.0..3600.0).contains(&query.window.upload_per_second.unwrap()));
-            assert_eq!(query.window.processing.p50, Some(0.5));
+            assert!(
+                query.window.processing.p50.is_none(),
+                "ingress latency must not masquerade as router total"
+            );
             assert!(data.entrypoints["init"].error);
         }
         failed_b.store(true, Ordering::Relaxed);

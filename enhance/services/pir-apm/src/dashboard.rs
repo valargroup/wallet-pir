@@ -19,10 +19,14 @@ pub type SharedDashboard = Arc<RwLock<DashboardData>>;
 
 /// Seconds between browser refreshes. Matched to the default scrape interval so
 /// the page turns over at roughly the same rate the data behind it does.
-const REFRESH_SECONDS: u64 = 15;
+const REFRESH_SECONDS: u64 = 5;
 
 #[derive(Clone, Debug, Default)]
 pub struct EntrypointData {
+    pub arrivals_10s: Option<f64>,
+    pub stages: BTreeMap<String, LatencyWindow>,
+    pub timing_error: bool,
+    pub history: std::collections::VecDeque<crate::history::Point>,
     pub window: EndpointWindow,
     pub last_success: Option<SystemTime>,
     pub error: bool,
@@ -117,6 +121,16 @@ pub async fn healthz() -> &'static str {
 }
 
 const STYLE: &str = r#"
+.mini-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px;text-align:left;font-family:var(--sans);white-space:normal;margin:10px 0 20px}
+.mini-charts svg{display:block;width:100%;max-height:180px;color:var(--p62)}
+.chart-heading{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--p62)}
+.chart-legend{font-size:11px;color:var(--p42);margin:4px 0}
+.percentile-buttons button{background:transparent;color:var(--p62);border:1px solid var(--p22);padding:3px 8px;cursor:pointer}
+[data-percentile="p50"] [data-percentile-choice="p50"],[data-percentile="p99"] [data-percentile-choice="p99"]{color:var(--ink);border-color:var(--gold)}
+.select-percentile[data-percentile="p50"] .series-p99,.select-percentile[data-percentile="p99"] .series-p50{display:none}
+.endpoint-history>td{white-space:normal;text-align:left;padding-left:0}
+.breakdown{max-width:540px;margin:12px 0 20px}.breakdown caption{text-align:left;color:var(--p62);font-size:12px;padding:8px 0}
+
 *,*::before,*::after{box-sizing:border-box}
 :root{
 color-scheme:dark;
@@ -304,7 +318,7 @@ text-transform:uppercase}
 
 const SCRIPT: &str = r#"
 (function () {
-  var PERIOD = 15000;
+  var PERIOD = 5000;
   var timer;
   function schedule() { clearTimeout(timer); timer = setTimeout(run, PERIOD); }
   function run() {
@@ -317,6 +331,10 @@ const SCRIPT: &str = r#"
         var current = document.getElementById('app');
         if (next && current) {
           current.querySelectorAll("details[id][open]").forEach(function (el) { var d = next.querySelector('#' + el.id); if (d) d.open = true; });
+          current.querySelectorAll('[data-chart-id]').forEach(function(el) {
+            var match = next.querySelector('[data-chart-id="' + el.dataset.chartId + '"]');
+            if (match) match.dataset.percentile = el.dataset.percentile;
+          });
           current.replaceWith(next);
         }
       })
@@ -326,12 +344,16 @@ const SCRIPT: &str = r#"
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) { clearTimeout(timer); run(); }
   });
+  document.addEventListener('click', function(event) {
+    var button = event.target.closest('[data-percentile-choice]');
+    if (button) button.closest('[data-chart-id]').dataset.percentile = button.dataset.percentileChoice;
+  });
   schedule();
 })();
 "#;
 
 fn entrypoint_apm(data: &DashboardData) -> String {
-    let mut html = String::from("<section class=\"card\"><h2 class=\"section-title\">Entrypoint APM</h2><div class=\"wrap\"><table><thead><tr><th>Entrypoint</th><th>p50</th><th>p99</th><th>Upload</th><th>Download</th><th>Last sample</th></tr></thead><tbody>");
+    let mut html = String::from("<section class=\"card\"><h2 class=\"section-title\">Entrypoint APM</h2><div class=\"wrap\"><table><thead><tr><th>Entrypoint</th><th>p50</th><th>p99</th><th>Requests · last 10s</th><th>Upload</th><th>Download</th><th>Last sample</th></tr></thead><tbody>");
     for (endpoint, label) in [("init", "Init"), ("query", "Query")] {
         let sample = data.entrypoints.get(endpoint);
         let fresh = sample.is_some_and(|s| {
@@ -363,9 +385,49 @@ fn entrypoint_apm(data: &DashboardData) -> String {
             Some(t) => format!("Stale · {}", relative_time(t)),
             None => "Unavailable".into(),
         };
-        html.push_str(&format!("<tr><th>{label}</th><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>", latency(w.processing.p50), latency(w.processing.p99), rate(w.upload_per_second), rate(w.download_per_second), if fresh {"muted"} else {"warn"}, escape(&status)));
+        let arrivals = sample
+            .and_then(|s| s.arrivals_10s)
+            .filter(|_| fresh)
+            .map(|n| format!("{n:.0}"))
+            .unwrap_or_else(|| "—".into());
+        let p50 = if endpoint == "query" && sample.is_some_and(|s| s.timing_error) {
+            None
+        } else {
+            w.processing.p50
+        };
+        let p99 = if endpoint == "query" && sample.is_some_and(|s| s.timing_error) {
+            None
+        } else {
+            w.processing.p99
+        };
+        html.push_str(&format!("<tr><th>{label}</th><td>{}</td><td>{}</td><td title=\"Arrivals in the last complete ten-second window, sampled every five seconds\">{arrivals}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>", latency(p50), latency(p99), rate(w.upload_per_second), rate(w.download_per_second), if fresh {"muted"} else {"warn"}, escape(&status)));
+        html.push_str("<tr class=\"endpoint-history\"><td colspan=\"7\">");
+        if endpoint == "query" {
+            html.push_str("<table class=\"breakdown\"><caption>Successful queries · last 5 minutes</caption><thead><tr><th>Stage</th><th>p50</th><th>p99</th></tr></thead><tbody>");
+            for (stage, label) in [
+                ("packing", "Packing"),
+                ("worker", "Worker"),
+                ("total", "Total"),
+            ] {
+                let window = sample
+                    .filter(|s| !s.timing_error)
+                    .and_then(|s| s.stages.get(stage));
+                html.push_str(&format!(
+                    "<tr><th>{label}</th><td>{}</td><td>{}</td></tr>",
+                    latency(window.and_then(|w| w.p50)),
+                    latency(window.and_then(|w| w.p99))
+                ));
+            }
+            html.push_str("</tbody></table><p class=\"chart-legend\">Worker: matrix-vector evaluation. Packing: final response packing. Total: router entry → response-ready minus body reading; includes admission and transport. Percentiles are not additive.</p>");
+        }
+        html.push_str(&crate::charts::render(
+            endpoint,
+            &sample.map(|s| s.history.clone()).unwrap_or_default(),
+            SystemTime::now(),
+        ));
+        html.push_str("</td></tr>");
     }
-    html.push_str("</tbody></table></div><p class=\"intro\">p50/p99: server processing over 5 minutes, excluding upload and response download. Transfer rates: latest scrape interval, client → service (upload) and service → client (download), payload bytes only. — means no samples or unavailable metrics. Refreshes every 15 seconds.</p></section>");
+    html.push_str("</tbody></table></div><p class=\"intro\">p50/p99: last 5 minutes; Init processing and successful Query router total, excluding body reading and response download. Requests count arrivals, including in-flight and rejected requests. Upload: client → service; download: service → client, payload bytes only. History is memory-only and fills after restart. — means unavailable or no latency samples. Refreshes every 5 seconds.</p></section>");
     html
 }
 

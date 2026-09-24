@@ -5,10 +5,26 @@ It scrapes the coordinator's loopback-only Prometheus endpoint, renders a
 dashboard, evaluates availability thresholds, and can emit Slack alerts.
 
 The overview includes a compact Init / Query APM table alongside the fleet
-summary. p50/p99 use a rolling five-minute server-processing histogram: complete
-request-body receipt until the response is ready, excluding upload and response
-download time. Init starts at handler entry. Early rejections before the body
-finishes do not produce a processing sample.
+summary. Headline p50/p99 use rolling five-minute histograms. Init runs from
+handler entry until response readiness. Query uses matched successful samples
+from the packing routers: **Worker** measures only matrix-vector evaluation,
+**Packing** measures final packing after evaluation, and **Total** runs from
+router handler entry to response readiness minus body-read duration. Total
+includes admission and internal transport, but not public ingress time or
+response transmission. Stage percentiles are independent and are not additive.
+Missing worker timing suppresses all three samples; it is never recorded as zero.
+
+Each endpoint has one-hour latency and arriving-request charts with one-minute
+points. Query has a p50/p99 toggle (default p99), preserved during refresh.
+History is bounded and held only in memory; restarting APM clears it. Missing
+samples, scrape failures and process restarts create gaps. Headlines refresh
+and telemetry samples every five seconds; fleet inventory remains 15 seconds.
+
+Requests · last 10s counts arrivals in the ten complete monotonic seconds before
+the current second. It includes uploading, in-flight and rejected requests and
+appears after ten seconds of process uptime. Init is counted at the coordinator;
+Query is counted once at the outer ingress. The request graph uses cumulative
+arrival-counter deltas over approximately one-minute scrape windows.
 
 Upload (client → service) and download (service → client) are payload bytes per
 second over the latest successful scrape interval, not whole-machine network
@@ -28,7 +44,7 @@ evaluation RPC and response decode. Request rate, inflight attempts, terminal
 failures, and successful-attempt latency are therefore comparable across the
 replicas without running another sidecar or exposing a worker metrics port.
 
-Query latency is rendered as three nested scopes. **Observed total** runs from
+Legacy coordinator detail pages also render nested timing scopes. **Observed total** runs from
 request headers reaching the coordinator until the response is ready and
 includes body receive time. **Post-body server** starts as soon as the complete
 body is available and includes admission queueing, coordinator work, the worker
@@ -74,7 +90,8 @@ page routes. Only the sidecar needs restarting.
 
 ## Public entrypoint instrumentation
 
-The server exports `enhance_http_request_processing_duration_seconds`,
+The server exports `enhance_http_arrivals_total`,
+`enhance_http_arrivals_last_10_seconds`, `enhance_http_request_processing_duration_seconds`,
 `enhance_http_requests_total`, `enhance_http_request_body_bytes_total`, and
 `enhance_http_response_body_bytes_total` with fixed `init` / `query` endpoint
 labels. Histograms count responses, including errors after a complete upload.
@@ -83,7 +100,9 @@ No bodies, session identifiers, or dynamic paths enter metric labels.
 By default, both rows consume the coordinator metrics endpoint. For separate
 query ingress processes, set `PIR_APM_QUERY_SCRAPE_URLS` to a comma-separated list
 of their private full `/internal/metrics` URLs (maximum eight). This **replaces**
-the coordinator as the source of the Query row; Init still uses the coordinator.
+the coordinator as the Query traffic source; Init still uses the coordinator.
+Query latency comes from packing-router `enhance_query_stage_duration_seconds`
+histograms discovered through `PIR_APM_PACKING_ROUTER_CONFIG`.
 List only outer public ingress instances, never internal packing routers. Keep
 these control listeners private. Sources are scraped concurrently; deltas are
 computed independently across restarts and histogram buckets are combined

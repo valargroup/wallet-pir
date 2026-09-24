@@ -1,0 +1,40 @@
+{
+  "base": "b57ce6180eb8aae22e245e1c6fcfe83ba2d9e4e0",
+  "files": {
+    "enhance/services/enhance-pir-server/src/http_metrics.rs": "09a1b0db28ee028772594412c97ebe8af6b70ac789043510b75173b0cd3a31b1",
+    "enhance/services/enhance-pir-server/src/lib.rs": "b2f6cf3c29297d11a08b5cc09a71069a2985f53f3627894644eda39117279fad",
+    "enhance/services/enhance-pir-server/src/packing_router.rs": "f3e285c5e233e8cad802f1bcec46fa1bfc16bb0812d29ebf3f2b6f1a5d87d9c7",
+    "enhance/services/enhance-pir-server/src/worker.rs": "f25a511b3a6eddd782643e780d9fd9684ceb2fba86c1a71b05f2514b92b117cb",
+    "enhance/services/enhance-pir-server/tests/packing_http.rs": "c82bb37992765fa63206bbd2d19c857d4958882687fa226e1ea02685d6ac8909",
+    "enhance/services/pir-apm/README.md": "356f69a25943d614d0ef97c7645b2216ccb91fceebaa05f1b6b5fd10030aaadc",
+    "enhance/services/pir-apm/src/dashboard.rs": "d2f85bd0c7eb5c73798b8447859927b8cab6f457f2058c4cd2fdbcd39d30a68c",
+    "enhance/services/pir-apm/src/entrypoints.rs": "7d739c409f6b9e75c1b4cd8c746a2111ed2599b4dbfd00eecb0567112b790133",
+    "enhance/services/pir-apm/src/fleet_view.rs": "b27e2f418b60e4e01a8e32206b2770602c51613f982de8bd499b4798ca69914f",
+    "enhance/services/pir-apm/src/main.rs": "133d7b30b621f00e5a5e9d70436e0aee4ddf8fb12d39f3cd3683d913fea50234",
+    "enhance/services/pir-apm/src/metrics.rs": "9789596ab875ffbfdcad4a6027f3d2d48e6168fd068d8a037608bfc37db909a0",
+    "enhance/services/enhance-pir-server/src/query_timing.rs": "a733d90a7cf3b1d76509dfac7b879612d703f743d9cc2d2bdd25f82fbb0c172d",
+    "enhance/services/pir-apm/src/history.rs": "10519d5aec1c86188add10251eb37f813641a703d1ec9f027cbb51fac4450fd4",
+    "enhance/services/pir-apm/src/charts.rs": "b33775d1f3e59867e5c3373f8aec04946d47e3a5731e6f0d92097ce767fda411"
+  },
+  "profile": "release-fast",
+  "rust": "1.91.0",
+  "rustflags": "-C target-cpu=skylake-avx512",
+  "server_sha256": "cdc8e7f7f6d075e1aecf4eb42930774ad79f580fac628e3c6cf09d30f9e73ae1",
+  "apm_sha256": "3f9944a07f82e89b9873a301e24c04e871c9a009afe2768f0c040158b5ecf73f",
+  "built_source_files": {
+    "enhance/services/enhance-pir-server/src/http_metrics.rs": "796b8030c7ffd08a27ca2a2f8668fe5e83a2ac4e195328b6937b75181a9bc1cb",
+    "enhance/services/enhance-pir-server/src/lib.rs": "b2f6cf3c29297d11a08b5cc09a71069a2985f53f3627894644eda39117279fad",
+    "enhance/services/enhance-pir-server/src/packing_router.rs": "ff329859412b4f3f93d2556cec057070c66778ad7488f5afe5d00a5bd133aad2",
+    "enhance/services/enhance-pir-server/src/worker.rs": "c280806123c068d509914369b6acf7ae756ce5ab685a1d509347a36496aa9e8b",
+    "enhance/services/enhance-pir-server/tests/packing_http.rs": "c82bb37992765fa63206bbd2d19c857d4958882687fa226e1ea02685d6ac8909",
+    "enhance/services/pir-apm/src/dashboard.rs": "d2f85bd0c7eb5c73798b8447859927b8cab6f457f2058c4cd2fdbcd39d30a68c",
+    "enhance/services/pir-apm/src/entrypoints.rs": "7d739c409f6b9e75c1b4cd8c746a2111ed2599b4dbfd00eecb0567112b790133",
+    "enhance/services/pir-apm/src/fleet_view.rs": "b27e2f418b60e4e01a8e32206b2770602c51613f982de8bd499b4798ca69914f",
+    "enhance/services/pir-apm/src/main.rs": "133d7b30b621f00e5a5e9d70436e0aee4ddf8fb12d39f3cd3683d913fea50234",
+    "enhance/services/pir-apm/src/metrics.rs": "287130ff58cb489069d2d269446dd806ded007a5eee6fc9b1b3df9912404f36d",
+    "enhance/services/enhance-pir-server/src/query_timing.rs": "b050def5bc4114c54226c61d8423e5fd9468bd9cefe782018d10ce954d885544",
+    "enhance/services/pir-apm/src/history.rs": "ee8b9713fb03c5614a8f92046ec5f23c042e220482e6f27adad7b75a2efb8afd",
+    "enhance/services/pir-apm/src/charts.rs": "c15251ef776e19398920ac5e78b1167a74bb9152984ff0917371f0f60456a7a1"
+  },
+  "note": "files hashes describe reviewed workspace; built_source_files describe Linux build snapshot. Later differences are formatting and tests only."
+}

@@ -1,8 +1,10 @@
 mod alerts;
+mod charts;
 mod config;
 mod dashboard;
 mod entrypoints;
 mod fleet;
+mod history;
 mod host;
 mod metrics;
 mod packing_fleet;

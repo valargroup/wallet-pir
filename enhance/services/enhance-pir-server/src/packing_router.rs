@@ -106,6 +106,7 @@ pub struct PackingRouter {
     http: reqwest::Client,
     max_objects: usize,
     stats: Arc<Stats>,
+    timing: crate::query_timing::QueryTiming,
     _lock: Arc<File>,
 }
 
@@ -195,6 +196,7 @@ impl PackingRouter {
                 .map_err(|e| e.to_string())?,
             max_objects,
             stats: Arc::new(Stats::default()),
+            timing: Default::default(),
             _lock: Arc::new(lock),
         })
     }
@@ -308,10 +310,11 @@ async fn metrics(State(r): State<PackingRouter>) -> impl IntoResponse {
             i.outstanding.values().sum::<usize>() as u64,
         ),
     ];
-    let text = values
+    let mut text = values
         .into_iter()
         .map(|(name, value)| format!("enhance_packing_router_{name} {value}\n"))
         .collect::<String>();
+    text.push_str(&r.timing.render());
     ([("content-type", "text/plain; version=0.0.4")], text)
 }
 
@@ -621,8 +624,15 @@ pub(crate) fn public_error(error: Error) -> Response {
 }
 async fn query(State(r): State<PackingRouter>, request: Request) -> Response {
     use std::sync::atomic::Ordering::Relaxed;
+    let started = Instant::now();
     match serve(r.clone(), request).await {
-        Ok(response) => {
+        Ok(mut response) => {
+            if let Some(stages) = response
+                .extensions_mut()
+                .remove::<crate::query_timing::CompletedStages>()
+            {
+                r.timing.observe(stages, started.elapsed());
+            }
             r.stats.successful.fetch_add(1, Relaxed);
             response
         }
@@ -647,6 +657,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
         .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "admission deadline".into()))?
         .map_err(unavailable)?;
     drop(waiting);
+    let body_started = Instant::now();
     let bytes = tokio::time::timeout(
         Duration::from_secs(30),
         to_bytes(request.into_body(), BODY_LIMIT),
@@ -654,6 +665,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
     .await
     .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
     .map_err(|e| (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
+    let body_read = body_started.elapsed();
     let binding = QueryBinding::decode(&bytes).map_err(bad)?;
     let session = hex::encode(binding.session_id);
     let (loaded, pack) = {
@@ -702,6 +714,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .ok_or_else(|| unavailable("unassigned session"))?;
         let mut excluded = None;
         let mut answer = None;
+        let mut worker_time = None;
         for attempt in 0..2 {
             let selected = select(&router, routes, excluded.as_deref())?;
             if attempt > 0 {
@@ -743,6 +756,12 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
                                 unavailable("worker evaluation failed; no replay")
                             });
                         }
+                        worker_time = response
+                            .headers()
+                            .get("x-enhance-matvec-microseconds")
+                            .and_then(|h| h.to_str().ok())
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .map(Duration::from_micros);
                         let intermediate =
                             bounded(response, 1024 * 1024).await.map_err(unavailable)?;
                         router.stats.intermediate_bytes.fetch_add(
@@ -772,15 +791,15 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .response_allowed(&session, loaded.view.controller_epoch)
             .map_err(unavailable)?;
         let epoch = loaded.view.controller_epoch;
-        let began = Instant::now();
-        let (response, guards) = tokio::task::spawn_blocking(move || {
+        let (response, guards, packing_time) = tokio::task::spawn_blocking(move || {
+            let began = Instant::now();
             let response = pack.pack(&bytes, &answer).map_err(bad)?;
-            Ok::<_, Error>((response, (permit, loaded, pack)))
+            Ok::<_, Error>((response, (permit, loaded, pack), began.elapsed()))
         })
         .await
         .map_err(unavailable)??;
         router.stats.packing_micros.fetch_add(
-            began.elapsed().as_micros() as u64,
+            packing_time.as_micros() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
         router.response_allowed(&session, epoch).map_err(|e| {
@@ -790,12 +809,18 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
                 unavailable(e)
             }
         })?;
-        Ok::<_, Error>(
-            crate::response_body::guarded(response, guards, move || {
-                router.response_allowed(&session, epoch)
-            })
-            .into_response(),
-        )
+        let mut response = crate::response_body::guarded(response, guards, move || {
+            router.response_allowed(&session, epoch)
+        })
+        .into_response();
+        response
+            .extensions_mut()
+            .insert(crate::query_timing::CompletedStages {
+                body_read,
+                worker: worker_time,
+                packing: packing_time,
+            });
+        Ok::<_, Error>(response)
     });
     task.await.map_err(unavailable)?
 }

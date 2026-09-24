@@ -28,3 +28,5 @@ pub mod query_ingress;
 mod serving_control;
 
 mod http_metrics;
+
+mod query_timing;

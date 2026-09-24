@@ -5,7 +5,7 @@ use std::{
 
 use crate::schema::Schema;
 
-const MAX_SNAPSHOTS: usize = 21;
+const MAX_SNAPSHOTS: usize = 900;
 
 #[derive(Clone, Debug, Default)]
 pub struct HistogramCumulative {
@@ -16,6 +16,8 @@ pub struct HistogramCumulative {
 
 #[derive(Clone, Debug, Default)]
 pub struct EndpointCumulative {
+    pub arrivals: Option<f64>,
+    pub arrivals_last_10s: Option<f64>,
     pub upload_bytes: Option<f64>,
     pub download_bytes: Option<f64>,
     pub requests: f64,
@@ -118,7 +120,17 @@ impl RollingMetrics {
 
     pub fn push(&mut self, snapshot: MetricsSnapshot) {
         self.snapshots.push_back(snapshot);
-        while self.snapshots.len() > MAX_SNAPSHOTS {
+        while self.snapshots.len() > 2
+            && (self.snapshots.len() > MAX_SNAPSHOTS
+                || self
+                    .snapshots
+                    .back()
+                    .unwrap()
+                    .at
+                    .duration_since(self.snapshots[1].at)
+                    .as_secs()
+                    > 3660)
+        {
             self.snapshots.pop_front();
         }
     }
@@ -229,6 +241,10 @@ impl RollingMetrics {
 
     /// Merge histogram deltas, never percentiles, across independently reset processes.
     pub fn entrypoint(sources: &[&Self], endpoint: &str) -> EndpointWindow {
+        Self::entrypoint_period(sources, endpoint, 300)
+    }
+
+    pub fn entrypoint_period(sources: &[&Self], endpoint: &str, seconds: u64) -> EndpointWindow {
         let mut result = EndpointWindow::default();
         let mut buckets: Vec<(f64, f64)> = Vec::new();
         let mut samples = 0.0;
@@ -247,8 +263,8 @@ impl RollingMetrics {
             let oldest = source
                 .snapshots
                 .iter()
-                .position(|s| newest.at.duration_since(s.at).as_secs() <= 300)
-                .unwrap_or(source.snapshots.len() - 1);
+                .rposition(|s| newest.at.duration_since(s.at).as_secs() >= seconds)
+                .unwrap_or(0);
             let (delta, count) =
                 latency_buckets(&source.snapshots, oldest, endpoint, processing_histogram);
             // Different bucket schemas cannot be safely combined.
@@ -277,6 +293,40 @@ impl RollingMetrics {
         result.upload_per_second = if sources.is_empty() { None } else { upload };
         result.download_per_second = if sources.is_empty() { None } else { download };
         result
+    }
+
+    /// Arrivals over a complete sample window; never extrapolate through a reset or outage.
+    pub fn arrivals_period(&self, endpoint: &str, seconds: u64) -> Option<f64> {
+        let latest = self.latest()?;
+        let start = self
+            .snapshots
+            .iter()
+            .rposition(|s| latest.at.duration_since(s.at).as_secs() >= seconds)
+            .unwrap_or(0);
+        if latest
+            .at
+            .duration_since(self.snapshots[start].at)
+            .as_secs_f64()
+            < seconds as f64 - 2.0
+        {
+            return None;
+        }
+        let mut total = 0.0;
+        for index in start + 1..self.snapshots.len() {
+            let (before, after) = (&self.snapshots[index - 1], &self.snapshots[index]);
+            if process_generation_changed(before, after)
+                || after.at.duration_since(before.at).as_secs() > 12
+            {
+                return None;
+            }
+            let a = before.endpoints.get(endpoint)?.arrivals?;
+            let b = after.endpoints.get(endpoint)?.arrivals?;
+            if b < a {
+                return None;
+            }
+            total += b - a;
+        }
+        Some(total)
     }
 
     pub fn worker_query_windows(&self) -> BTreeMap<String, WorkerQueryWindow> {
@@ -578,10 +628,47 @@ pub fn parse_prometheus(
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let sample = parse_line(line)
+        let mut sample = parse_line(line)
             .map_err(|error| format!("line {}: {error}", line_number.saturating_add(1)))?;
+        // Keep router stage distributions separate from public entrypoint metrics.
+        if let Some(suffix) = sample
+            .name
+            .strip_prefix("enhance_query_stage_duration_seconds_")
+            .map(str::to_string)
+        {
+            let stage = sample.labels.get("stage").map(String::as_str).unwrap_or("");
+            if !matches!(stage, "worker" | "packing" | "total") {
+                continue;
+            }
+            sample
+                .labels
+                .insert("endpoint".into(), format!("query_stage_{stage}"));
+            match suffix.as_str() {
+                "bucket" => set_histogram_bucket(&mut endpoints, &sample, |v| &mut v.processing)?,
+                "count" => set_histogram_value(
+                    &mut endpoints,
+                    &sample,
+                    |v| &mut v.processing,
+                    |h| h.count = sample.value,
+                ),
+                "sum" => set_histogram_value(
+                    &mut endpoints,
+                    &sample,
+                    |v| &mut v.processing,
+                    |h| h.sum = sample.value,
+                ),
+                _ => {}
+            }
+            continue;
+        }
         let name = sample.name.as_str();
-        if name == format!("{}_http_request_body_bytes_total", schema.prefix) {
+        if name == format!("{}_http_arrivals_total", schema.prefix) {
+            set_endpoint_value(&mut endpoints, &sample, |v| v.arrivals = Some(sample.value));
+        } else if name == format!("{}_http_arrivals_last_10_seconds", schema.prefix) {
+            set_endpoint_value(&mut endpoints, &sample, |v| {
+                v.arrivals_last_10s = Some(sample.value)
+            });
+        } else if name == format!("{}_http_request_body_bytes_total", schema.prefix) {
             set_endpoint_value(&mut endpoints, &sample, |v| {
                 v.upload_bytes = Some(sample.value)
             });
@@ -1541,7 +1628,7 @@ enhance_snapshot_generation 1
                 process_start_time_seconds: None,
             });
         }
-        assert_eq!(rolling.len(), 21);
+        assert_eq!(rolling.len(), 25);
         assert_eq!(rolling.windows()["metadata"].requests, 24.0);
     }
 }
@@ -1567,6 +1654,49 @@ enhance_http_request_processing_duration_seconds_count{{endpoint="query"}} {tota
             at,
         )
         .unwrap()
+    }
+    #[test]
+    fn hour_retention_arrivals_and_stage_histograms() {
+        let now = Instant::now();
+        let mut rolling = RollingMetrics::new(Schema::enhance_default());
+        for index in 0..800 {
+            let text = format!("process_start_time_seconds 1\nenhance_http_arrivals_total{{endpoint=\"query\"}} {index}\nenhance_http_arrivals_last_10_seconds{{endpoint=\"query\"}} 2\nenhance_query_stage_duration_seconds_bucket{{stage=\"worker\",le=\"1\"}} {index}\nenhance_query_stage_duration_seconds_bucket{{stage=\"worker\",le=\"+Inf\"}} {index}\nenhance_query_stage_duration_seconds_count{{stage=\"worker\"}} {index}\n");
+            rolling.push(
+                parse_prometheus(
+                    &Schema::enhance_default(),
+                    &text,
+                    now + Duration::from_secs(index * 5),
+                )
+                .unwrap(),
+            );
+        }
+        assert!(rolling.len() >= 721 && rolling.len() < 740);
+        assert_eq!(rolling.arrivals_period("query", 60), Some(12.0));
+        assert_eq!(
+            rolling.latest().unwrap().endpoints["query"].arrivals_last_10s,
+            Some(2.0)
+        );
+        assert_eq!(
+            RollingMetrics::entrypoint(&[&rolling], "query_stage_worker")
+                .processing
+                .samples,
+            60.0
+        );
+        assert_eq!(
+            RollingMetrics::entrypoint_period(&[&rolling], "query_stage_worker", 60)
+                .processing
+                .samples,
+            12.0
+        );
+        rolling.push(
+            parse_prometheus(
+                &Schema::enhance_default(),
+                "process_start_time_seconds 2\nenhance_http_arrivals_total{endpoint=\"query\"} 1\n",
+                now + Duration::from_secs(4000),
+            )
+            .unwrap(),
+        );
+        assert_eq!(rolling.arrivals_period("query", 60), None);
     }
     #[test]
     fn rates_use_latest_interval_and_missing_is_not_zero() {

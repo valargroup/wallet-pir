@@ -25,6 +25,9 @@ pub(crate) struct HttpMetrics {
     upload: IntCounterVec,
     download: IntCounterVec,
     started: f64,
+    clock: Instant,
+    arrivals: IntCounterVec,
+    arrival_windows: Arc<Mutex<std::collections::BTreeMap<String, ArrivalWindow>>>,
 }
 impl Default for HttpMetrics {
     fn default() -> Self {
@@ -65,11 +68,23 @@ impl Default for HttpMetrics {
             &["endpoint"],
         )
         .unwrap();
+        let arrivals = IntCounterVec::new(
+            Opts::new(
+                "enhance_http_arrivals_total",
+                "Public requests arriving, including incomplete and rejected requests",
+            ),
+            &["endpoint"],
+        )
+        .unwrap();
+        registry.register(Box::new(arrivals.clone())).unwrap();
         registry.register(Box::new(processing.clone())).unwrap();
         registry.register(Box::new(requests.clone())).unwrap();
         registry.register(Box::new(upload.clone())).unwrap();
         registry.register(Box::new(download.clone())).unwrap();
         Self {
+            arrivals,
+            clock: Instant::now(),
+            arrival_windows: Default::default(),
             registry,
             processing,
             requests,
@@ -85,6 +100,12 @@ impl Default for HttpMetrics {
 impl HttpMetrics {
     /// Initialize only routes served by this process, including idle counters.
     pub(crate) fn endpoint(&self, endpoint: &str) {
+        self.arrivals.with_label_values(&[endpoint]);
+        self.arrival_windows
+            .lock()
+            .unwrap()
+            .entry(endpoint.into())
+            .or_default();
         self.processing.with_label_values(&[endpoint]);
         self.upload.with_label_values(&[endpoint]);
         self.download.with_label_values(&[endpoint]);
@@ -94,10 +115,45 @@ impl HttpMetrics {
         TextEncoder::new()
             .encode(&self.registry.gather(), &mut bytes)
             .unwrap();
-        format!(
+        let mut text = format!(
             "{}\nprocess_start_time_seconds {}\n",
             String::from_utf8(bytes).unwrap(),
             self.started
+        );
+        let now = self.clock.elapsed().as_secs();
+        for (endpoint, window) in self.arrival_windows.lock().unwrap().iter() {
+            if let Some(count) = window.last_ten(now) {
+                text.push_str(&format!(
+                    "enhance_http_arrivals_last_10_seconds{{endpoint=\"{endpoint}\"}} {count}\n"
+                ));
+            }
+        }
+        text
+    }
+}
+
+/// Eleven slots retain the current second plus ten complete seconds. No
+/// per-request history or wall-clock adjustment can grow or skew this window.
+#[derive(Default)]
+struct ArrivalWindow {
+    seconds: [(u64, u64); 11],
+}
+impl ArrivalWindow {
+    fn record(&mut self, second: u64) {
+        let slot = &mut self.seconds[(second % 11) as usize];
+        if slot.0 != second {
+            *slot = (second, 0);
+        }
+        slot.1 = slot.1.saturating_add(1);
+    }
+    fn last_ten(&self, now: u64) -> Option<u64> {
+        let beginning = now.checked_sub(10)?;
+        Some(
+            self.seconds
+                .iter()
+                .filter(|(at, _)| *at >= beginning && *at < now)
+                .map(|(_, n)| *n)
+                .sum(),
         )
     }
 }
@@ -148,6 +204,14 @@ pub(crate) async fn measure(
         ("POST", "/v1/enhance/query") => "query",
         _ => return next.run(request).await,
     };
+    metrics.arrivals.with_label_values(&[endpoint]).inc();
+    metrics
+        .arrival_windows
+        .lock()
+        .unwrap()
+        .entry(endpoint.into())
+        .or_default()
+        .record(metrics.clock.elapsed().as_secs());
     let (parts, body) = request.into_parts();
     let completed = Arc::new(Mutex::new(if endpoint == "init" || body.is_end_stream() {
         Some(Instant::now())
@@ -222,6 +286,14 @@ mod tests {
             .unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(metrics.upload.with_label_values(&["query"]).get(), 3);
+        assert_eq!(metrics.arrivals.with_label_values(&["query"]).get(), 1);
+        assert_eq!(
+            metrics
+                .processing
+                .with_label_values(&["query"])
+                .get_sample_count(),
+            0
+        );
         tx.send(Ok(Bytes::from_static(b"de"))).await.unwrap();
         drop(tx);
         let response = pending.await.unwrap().unwrap();
@@ -299,6 +371,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), 429);
+        assert_eq!(metrics.arrivals.with_label_values(&["query"]).get(), 1);
         assert_eq!(
             metrics
                 .processing
@@ -358,5 +431,25 @@ mod tests {
         assert!(axum::body::to_bytes(body, 1024).await.is_err());
         assert!(completed.lock().unwrap().is_none());
         assert_eq!(metrics.upload.with_label_values(&["query"]).get(), 3);
+    }
+}
+
+#[cfg(test)]
+mod arrival_tests {
+    use super::*;
+    #[test]
+    fn complete_seconds_cold_start_wrap_and_idle() {
+        let mut window = ArrivalWindow::default();
+        window.record(0);
+        assert_eq!(window.last_ten(9), None);
+        window.record(9);
+        window.record(9);
+        window.record(10);
+        assert_eq!(window.last_ten(10), Some(3));
+        assert_eq!(window.last_ten(11), Some(3));
+        window.record(20);
+        assert_eq!(window.last_ten(20), Some(1));
+        assert_eq!(window.last_ten(21), Some(1));
+        assert_eq!(window.last_ten(31), Some(0));
     }
 }

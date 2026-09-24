@@ -1,0 +1,37 @@
+{
+  "Init": [
+    " 0.05 ms",
+    "0.10 ms",
+    "0",
+    "0.00 KiB/s",
+    "0.00 KiB/s",
+    "just now "
+  ],
+  "Query": [
+    " 82.28 ms",
+    "2562.50 ms",
+    "20",
+    "552.14 KiB/s",
+    "60.22 KiB/s",
+    "just now "
+  ],
+  "Packing": [
+    " 41.25 ms",
+    "2562.50 ms "
+  ],
+  "Worker": [
+    " 37.56 ms",
+    "49.88 ms "
+  ],
+  "Total": [
+    " 82.28 ms",
+    "2562.50 ms "
+  ],
+  "svg_count": 4,
+  "plotted_points": 14,
+  "query_stage_tooltips": {
+    "Total": 2,
+    "Worker": 2,
+    "Packing": 2
+  }
+}

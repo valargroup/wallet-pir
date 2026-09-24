@@ -17,7 +17,7 @@ details{border:1px solid var(--p16);padding:18px;margin:20px 0}summary{cursor:po
 "#;
 
 fn page(data: &DashboardData, title: &str, body: String) -> String {
-    format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} · {brand}</title><noscript><meta http-equiv=\"refresh\" content=\"15\"></noscript><style>{STYLE}{EXTRA_STYLE}</style></head><body><main id=\"app\">{masthead}{body}</main><script>{SCRIPT}</script></body></html>", title=escape(title), brand=escape(&data.title), masthead=masthead(data))
+    format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} · {brand}</title><noscript><meta http-equiv=\"refresh\" content=\"5\"></noscript><style>{STYLE}{EXTRA_STYLE}</style></head><body><main id=\"app\">{masthead}{body}</main><script>{SCRIPT}</script></body></html>", title=escape(title), brand=escape(&data.title), masthead=masthead(data))
 }
 fn value(values: &BTreeMap<String, f64>, key: &str) -> String {
     values

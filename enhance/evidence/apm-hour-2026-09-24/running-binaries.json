@@ -1,0 +1,27 @@
+[
+  {
+    "host": "167.99.42.60",
+    "service": "enhance-pir-coordinator",
+    "running_sha256": "cdc8e7f7f6d075e1aecf4eb42930774ad79f580fac628e3c6cf09d30f9e73ae1"
+  },
+  {
+    "host": "167.99.42.60",
+    "service": "enhance-pir-query-ingress",
+    "running_sha256": "cdc8e7f7f6d075e1aecf4eb42930774ad79f580fac628e3c6cf09d30f9e73ae1"
+  },
+  {
+    "host": "10.142.0.14",
+    "service": "enhance-pir-packing-router",
+    "running_sha256": "cdc8e7f7f6d075e1aecf4eb42930774ad79f580fac628e3c6cf09d30f9e73ae1"
+  },
+  {
+    "host": "10.142.0.15",
+    "service": "enhance-pir-worker",
+    "running_sha256": "cdc8e7f7f6d075e1aecf4eb42930774ad79f580fac628e3c6cf09d30f9e73ae1"
+  },
+  {
+    "host": "10.142.0.16",
+    "service": "enhance-pir-worker",
+    "running_sha256": "cdc8e7f7f6d075e1aecf4eb42930774ad79f580fac628e3c6cf09d30f9e73ae1"
+  }
+]

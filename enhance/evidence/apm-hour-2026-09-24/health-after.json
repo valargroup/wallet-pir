@@ -1,0 +1,66 @@
+{
+  "coordinator": {
+    "anchor_height": 3494783,
+    "blocked_reason": null,
+    "capacity": {
+      "burst_rows": 4096,
+      "effective_rows_per_second": 1.0,
+      "fleet_ceiling_reached": false,
+      "memory_limit": null,
+      "observation": {
+        "at": 1790269908,
+        "records": 599601
+      },
+      "peak_rows_per_second": 0.2909090909090909,
+      "readiness_seconds": 21600.0,
+      "remaining_rows": 145671,
+      "requested": null,
+      "requested_worker": null,
+      "requests": {},
+      "worker_requests": {}
+    },
+    "generation": 96,
+    "operation": null,
+    "packing_charged_bytes": 0,
+    "packing_ready": true,
+    "pending_abort_notifications": 0,
+    "pending_commit_notifications": 0,
+    "placement_revision": 1,
+    "pool": {
+      "frontier_replication": 2,
+      "placements": {
+        "0": [
+          "enhance-pir-worker-01",
+          "enhance-pir-worker-02"
+        ]
+      },
+      "replication": 2
+    },
+    "protocol": "ironwood-enhance-pir-v7",
+    "published_replica_counts": {
+      "shard-group-01": 2
+    },
+    "registered_groups": 1,
+    "registered_workers": 2,
+    "remote_packing": true,
+    "resident_packing_objects": 0
+  },
+  "ingress": {
+    "active_digest": "1ba7c4958236f5873e75aa49a643ad54a9788bf2f27dea4d6754f569c4955f9c",
+    "control_version": 1,
+    "incarnation": "b8f2ad694d9dbd4af8df2415c0e940db",
+    "ready": true
+  },
+  "router": {
+    "active_digest": "a0aa410f76d5ebf556413d9ff3f4b1e90c715eb6ad7a94b7dfd4996e962dbae2",
+    "available_requests": 4,
+    "control_version": 1,
+    "controller_epoch": 5,
+    "incarnation": "0624dcda8120a8ea78ba6a41ce70787a",
+    "outstanding": {},
+    "packing_charged_bytes": 2415919104,
+    "protocol": "ironwood-enhance-pir-v7",
+    "ready": true,
+    "resident_objects": 3
+  }
+}

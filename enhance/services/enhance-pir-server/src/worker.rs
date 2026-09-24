@@ -1143,9 +1143,11 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> Response {
     // Cancellation detaches CPU work. Its permit stays in the task, then moves
     // into the output body instead of being released at kernel completion.
     let result = tokio::task::spawn_blocking(move || {
+        let began = std::time::Instant::now();
         let coefficients = evaluation
             .evaluate(&query.coefficients)
             .map_err(evaluation_error)?;
+        let matvec_micros = began.elapsed().as_micros().min(u64::MAX as u128) as u64;
         let bytes = serde_json::to_vec(&Intermediate {
             binding: query.binding,
             generation: query.generation,
@@ -1154,12 +1156,15 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> Response {
             coefficients,
         })
         .map_err(unavailable)?;
-        Ok::<_, (StatusCode, String)>((bytes, permit, evaluation))
+        Ok::<_, (StatusCode, String)>((bytes, permit, evaluation, matvec_micros))
     })
     .await;
     match result {
-        Ok(Ok((bytes, permit, evaluation))) => (
-            [("content-type", "application/json")],
+        Ok(Ok((bytes, permit, evaluation, matvec_micros))) => (
+            [
+                ("content-type", "application/json".to_string()),
+                ("x-enhance-matvec-microseconds", matvec_micros.to_string()),
+            ],
             crate::response_body::guarded(bytes, (permit, evaluation), || Ok(())),
         )
             .into_response(),
