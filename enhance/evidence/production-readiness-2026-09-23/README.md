@@ -69,6 +69,8 @@ reachable and zero active alerts. Its build and rollout checks are recorded in
 [portable tool validation](portable-tools-validation.txt).
 The [rc.2 review packet](numerical-review-packet.md) identifies the exact
 matrix inputs, source hashes, assumptions and required independent checks.
+The [corrected qualification progress](operations/corrected-qualification-progress-2026-09-24.md)
+records the current public run, active hardware campaign, CI and Vizor checks.
 
 The remaining gates include a full public soak and burst on the corrected
 binary, chain-derived public answers and wallet release recovery over HTTPS,
