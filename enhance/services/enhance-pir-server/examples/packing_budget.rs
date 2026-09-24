@@ -160,7 +160,7 @@ fn prepare(output: PathBuf, rows: u64, queries: usize) -> Result<(), Box<dyn std
     let packing = Packing::new(rows, &hint)?;
     let manifest = Manifest {
         recovery_epoch: 0,
-        placement_revision: 1,
+        placement_revision: 0,
         domain_recovery_epochs: [(0, "0".into())].into(),
         schema_version: SCHEMA_VERSION,
         protocol_revision: PROTOCOL_REVISION.into(),

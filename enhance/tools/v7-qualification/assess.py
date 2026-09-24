@@ -34,6 +34,8 @@ for role, path in [('worker', x) for x in a.worker] + [('coordinator', a.coordin
         failures.append(f'{path.name}: incomplete observation')
     if good:
         report.update(max_rss_bytes=max(s['process']['VmRSS'] for s in good),
+                      max_rss_plus_kernel_bytes=max(s['process']['VmRSS'] + s.get('memory_stat', {}).get('kernel', 0) for s in good),
+                      process_lifetime_hwm_bytes=max(s['process'].get('VmHWM', s['process']['VmRSS']) for s in good),
                       max_cgroup_bytes=max(int(s['cgroup']['memory.current']) for s in good),
                       max_process_swap_bytes=max(s['process'].get('VmSwap', 0) for s in good),
                       max_cgroup_swap_bytes=max(int(s['cgroup']['memory.swap.current']) for s in good))
@@ -46,8 +48,8 @@ for role, path in [('worker', x) for x in a.worker] + [('coordinator', a.coordin
             failures.append(f'{path.name}: memory pressure or host swap activity')
         if max(int(s['cgroup']['memory.swap.current']) for s in good) > int(good[0]['cgroup']['memory.swap.current']):
             failures.append(f'{path.name}: cgroup swap growth')
-        if role == 'worker' and report['max_rss_bytes'] > 6.5 * 1024**3:
-            failures.append(f'{path.name}: worker RSS exceeds 6.5 GiB guard')
+        if role == 'worker' and max(report['max_rss_plus_kernel_bytes'], report['process_lifetime_hwm_bytes']) > 6.5 * 1024**3:
+            failures.append(f'{path.name}: worker resident usage exceeds 6.5 GiB guard')
     results.append(report)
 result = {'kind': 'focused-v7-assessment', 'passed': not failures, 'failures': failures,
           'qualification': 'unqualified', 'six_hour_hardware_qualification': False,

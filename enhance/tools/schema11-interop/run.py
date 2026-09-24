@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('wallet_checkout', type=Path)
+    parser.add_argument('--no-run', action='store_true', help='Compile the selected harness without running it')
     parser.add_argument('--full', action='store_true', help='Include full-size lifecycle qualification')
     parser.add_argument('--wallet-revision', help='Require this exact wallet commit')
     parser.add_argument('--public-origin', help='Run only the deployed endpoint check')
@@ -70,7 +71,7 @@ overflow-checks = false
         if args.public_origin:
             env.update(ENHANCE_PUBLIC_ORIGIN=args.public_origin, ENHANCE_PUBLIC_ANCHOR=str(args.public_anchor.resolve()), ENHANCE_PUBLIC_ORACLE=str(args.public_oracle.resolve()))
         subprocess.run(['cargo', 'test', '--manifest-path', str(project / 'Cargo.toml'),
-                        '--test', 'interop', '--', '--nocapture', '--test-threads=1', *(['--include-ignored'] if args.full else [])], env=env, check=True)
+                        '--test', 'interop', *(['--no-run'] if args.no_run else []), '--', '--nocapture', '--test-threads=1', *(['--include-ignored'] if args.full else [])], env=env, check=True)
 
 
 if __name__ == '__main__':
