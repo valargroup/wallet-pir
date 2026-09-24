@@ -1041,6 +1041,7 @@ dependencies = [
  "hex",
  "inspiring",
  "ipir-sp",
+ "libc",
  "prometheus",
  "rand 0.8.5",
  "reqwest",

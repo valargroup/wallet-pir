@@ -3,6 +3,8 @@ use axum::body::Bytes;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,6 +14,19 @@ use tokio_stream::wrappers::ReceiverStream;
 
 pub const IO_BUFFER_BYTES: usize = 64 * 1024;
 const STREAM_QUEUE_CHUNKS: usize = 2;
+
+/// Best-effort release of clean artifact pages. The file remains durable and
+/// readable; this only avoids charging cold disk copies to the worker cgroup.
+pub(crate) fn release_file_cache(_file: &File) {
+    #[cfg(target_os = "linux")]
+    {
+        let result =
+            unsafe { libc::posix_fadvise(_file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
+        if result != 0 {
+            tracing::warn!(error = %io::Error::from_raw_os_error(result), "artifact cache advice failed");
+        }
+    }
+}
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
@@ -64,6 +79,7 @@ impl PublicationArtifact {
                 PositionalReader {
                     file: self.file.clone(),
                     offset: 0,
+                    length: self.length,
                 },
                 self.length,
                 self.digest.clone(),
@@ -108,6 +124,7 @@ pub(crate) fn stream_reader(
 struct PositionalReader {
     file: Arc<File>,
     offset: u64,
+    length: u64,
 }
 
 impl Read for PositionalReader {
@@ -115,6 +132,14 @@ impl Read for PositionalReader {
         let n = self.file.read_at(bytes, self.offset)?;
         self.offset += n as u64;
         Ok(n)
+    }
+}
+
+impl Drop for PositionalReader {
+    fn drop(&mut self) {
+        if self.offset >= self.length {
+            release_file_cache(&self.file);
+        }
     }
 }
 
@@ -225,6 +250,25 @@ pub(crate) fn write_atomic(
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> io::Result<String> {
+    write_atomic_with_cache_policy(directory, name, false, write)
+}
+
+/// Sync first, then request eviction for large artifacts that are already
+/// represented in the live PIR database or will be streamed from disk later.
+pub(crate) fn write_atomic_cold(
+    directory: &Path,
+    name: &str,
+    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+) -> io::Result<String> {
+    write_atomic_with_cache_policy(directory, name, true, write)
+}
+
+fn write_atomic_with_cache_policy(
+    directory: &Path,
+    name: &str,
+    cold: bool,
+    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+) -> io::Result<String> {
     let temporary = directory.join(format!("{name}.tmp"));
     let result = (|| {
         let file = File::create(&temporary)?;
@@ -238,6 +282,9 @@ pub(crate) fn write_atomic(
         write(&mut writer)?;
         writer.flush()?;
         writer.get_ref().inner.sync_all()?;
+        if cold {
+            release_file_cache(&writer.get_ref().inner);
+        }
         let digest = hex::encode(writer.get_ref().hash.clone().finalize());
         fs::rename(&temporary, directory.join(name))?;
         Ok(digest)
@@ -358,6 +405,22 @@ mod tests {
         assert!(!dir.path().join("hint.tmp").exists());
         let digest = write_atomic(dir.path(), "hint", |w| w.write_all(b"replacement")).unwrap();
         assert_eq!(digest, hex::encode(Sha256::digest(b"replacement")));
+    }
+
+    #[test]
+    fn cold_artifact_remains_durable_and_verified() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = vec![0x5a; IO_BUFFER_BYTES * 4];
+        let digest =
+            write_atomic_cold(dir.path(), "large", |writer| writer.write_all(&bytes)).unwrap();
+        assert_eq!(digest, hex::encode(Sha256::digest(&bytes)));
+        let pinned =
+            PublicationArtifact::open(&dir.path().join("large"), bytes.len() as u64, digest)
+                .unwrap();
+        let mut reread = Vec::new();
+        pinned.reader().read_to_end(&mut reread).unwrap();
+        assert_eq!(reread, bytes);
+        assert!(!dir.path().join("large.tmp").exists());
     }
 
     struct CountingReader {

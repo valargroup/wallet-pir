@@ -1,4 +1,7 @@
-use crate::artifact::{write_atomic, PublicationArtifact, VerifiedReader, IO_BUFFER_BYTES};
+use crate::artifact::{
+    release_file_cache, write_atomic, write_atomic_cold, PublicationArtifact, VerifiedReader,
+    IO_BUFFER_BYTES,
+};
 use crate::types::{DatabaseId, DatabaseLayout};
 use crate::wire::{crs_encoded_len, write_crs_blocks};
 use inspiring::{InspiringError, RlweParams};
@@ -303,11 +306,13 @@ impl ShardRuntime {
         if file.metadata().map_err(|e| e.to_string())?.len() != expected_db_bytes {
             return Err("persisted database has the wrong size".into());
         }
+        let cache_handle = file.try_clone().map_err(|e| e.to_string())?;
         let reader = BufReader::with_capacity(
             IO_BUFFER_BYTES,
             VerifiedReader::new(file, expected_db_bytes, metadata.database_sha256),
         );
         let server = read_database(reader, local_params.clone()).map_err(|e| e.to_string())?;
+        release_file_cache(&cache_handle);
         let blocks = local_params.db_cols / rlwe.d;
         let publication = PublicationArtifact::open(
             &directory.join("partial-crs.bin"),
@@ -394,13 +399,13 @@ impl PreparedShard {
     ) -> io::Result<CachedShard> {
         fs::create_dir_all(directory)?;
         let runtime = self.runtime;
-        let database_sha256 = write_atomic(directory, "database.u16le", |writer| {
+        let database_sha256 = write_atomic_cold(directory, "database.u16le", |writer| {
             for coefficient in runtime.server.db() {
                 writer.write_all(&coefficient.to_le_bytes())?;
             }
             Ok(())
         })?;
-        let crs_sha256 = write_atomic(directory, "partial-crs.bin", |writer| {
+        let crs_sha256 = write_atomic_cold(directory, "partial-crs.bin", |writer| {
             write_crs_blocks(writer, &self.crs_blocks)
         })?;
         let publication = PublicationArtifact::open(

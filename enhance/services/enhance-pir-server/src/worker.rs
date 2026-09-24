@@ -359,8 +359,8 @@ fn verified_rows(directory: &FsPath, unit: &UnitIdentity) -> Result<Vec<u8>, Str
         .checked_mul(crate::types::ENHANCE_LAYOUT.row_bytes() as u64)
         .ok_or("staged size overflow")?;
     let mut bytes = Vec::new();
-    File::open(directory.join(unit.digest()))
-        .map_err(|e| e.to_string())?
+    let file = File::open(directory.join(unit.digest())).map_err(|e| e.to_string())?;
+    (&file)
         .take(expected.checked_add(1).ok_or("staged size overflow")?)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
@@ -368,6 +368,7 @@ fn verified_rows(directory: &FsPath, unit: &UnitIdentity) -> Result<Vec<u8>, Str
     {
         return Err("staged unit length or digest mismatch".into());
     }
+    crate::artifact::release_file_cache(&file);
     Ok(bytes)
 }
 
@@ -410,7 +411,7 @@ impl Worker {
             }
             let bytes = verified_rows(source_rows, &unit)
                 .map_err(|e| format!("cannot repair unit {id}: {e}"))?;
-            crate::artifact::write_atomic(&destination, &id, |file| {
+            crate::artifact::write_atomic_cold(&destination, &id, |file| {
                 std::io::Write::write_all(file, &bytes)
             })
             .map_err(|e| e.to_string())?;
@@ -838,7 +839,7 @@ async fn upload(
         if hex::encode(Sha256::digest(&bytes)) != hash {
             return Err("unit content digest mismatch".into());
         }
-        crate::artifact::write_atomic(&root.join("rows"), &id, |f| {
+        crate::artifact::write_atomic_cold(&root.join("rows"), &id, |f| {
             std::io::Write::write_all(f, &bytes)
         })
         .map_err(|e| e.to_string())?;
@@ -906,7 +907,7 @@ async fn hint(State(w): State<Worker>, Path(shard): Path<u64>) -> ApiResult<Resp
         let _permit = permit;
         let blocks = eval.hint()?;
         let name = digest(&eval.plan);
-        let hash = crate::artifact::write_atomic(&root, &name, |f| {
+        let hash = crate::artifact::write_atomic_cold(&root, &name, |f| {
             crate::wire::write_crs_blocks(f, &blocks)
         })
         .map_err(|e| e.to_string())?;
