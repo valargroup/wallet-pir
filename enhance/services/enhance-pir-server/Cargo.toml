@@ -11,16 +11,21 @@ path = "src/lib.rs"
 name = "enhance-pir-server"
 path = "src/bin/server.rs"
 
+[features]
+default = []
+cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
+
 [dependencies]
+simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d8aea341d844df97ef6eb244c24b0a050eb3e9b", optional = true, features = ["cuda"] }
 axum = "0.7"
 base64 = "0.22"
 enhance-pir = { path = "../../crates/enhance-pir", version = "=0.0.1" }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
 libc = "0.2"
 hdrhistogram = "7"
-inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "611a29284264d844bf4dba00de2874c5b762f8c2" }
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "611a29284264d844bf4dba00de2874c5b762f8c2" }
+inspiring = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d8aea341d844df97ef6eb244c24b0a050eb3e9b" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "1d8aea341d844df97ef6eb244c24b0a050eb3e9b" }
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -39,3 +44,7 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 orchard = { package = "zakura-orchard", version = "=1.0.1", default-features = false }
 zcash_note_encryption = "=0.4.2"
+
+[[example]]
+name = "cuda_domain"
+required-features = ["cuda"]

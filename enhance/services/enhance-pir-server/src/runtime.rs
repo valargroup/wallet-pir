@@ -5,6 +5,7 @@ use crate::ipir::{
 };
 use crate::types::{DatabaseId, DatabaseLayout, ENHANCE_LAYOUT};
 use crate::wire::read_crs_blocks;
+use crate::{ipir::LoadError, matvec::MatvecConfig};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use enhance_pir::protocol::*;
 use enhance_pir::types::{ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES};
@@ -139,10 +140,11 @@ pub struct Evaluation {
 }
 
 impl Evaluation {
-    pub fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, String> {
-        let params = parameters(self.plan.shard.logical_rows)?;
+    pub fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, EvaluationError> {
+        let params =
+            parameters(self.plan.shard.logical_rows).map_err(EvaluationError::Unavailable)?;
         if coefficients.len() != params.db_rows || coefficients.iter().any(|v| *v >= rlwe().q) {
-            return Err("invalid query coefficients".into());
+            return Err(EvaluationError::InvalidQuery);
         }
         let mut answer = vec![0; params.db_cols];
         for (unit, spec) in self.units.iter().zip(&self.plan.units) {
@@ -151,9 +153,9 @@ impl Evaluation {
             let partial = unit
                 .runtime
                 .evaluate(rlwe(), &coefficients[start..end])
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| EvaluationError::Unavailable(e.to_string()))?;
             add_intermediate_assign_mod(&mut answer, &partial, rlwe().q)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| EvaluationError::Unavailable(e.to_string()))?;
         }
         Ok(answer)
     }
@@ -266,13 +268,19 @@ impl Packing {
 }
 
 pub struct Engine {
+    backend: MatvecConfig,
     root: PathBuf,
     units: BTreeMap<String, Weak<CachedShard>>,
 }
 
 impl Engine {
     pub fn new(root: &Path) -> Self {
+        Self::with_backend(root, MatvecConfig::default())
+    }
+
+    pub fn with_backend(root: &Path, backend: MatvecConfig) -> Self {
         Self {
+            backend,
             root: root.join("artifacts-9"),
             units: BTreeMap::new(),
         }
@@ -349,7 +357,7 @@ impl Engine {
                 ..ENHANCE_LAYOUT
             };
             let root = self.root.join(&id);
-            let unit = match ShardRuntime::load_cached(
+            let unit = match ShardRuntime::load_cached_with_backend(
                 &root,
                 DatabaseId::Enhance,
                 &layout,
@@ -357,14 +365,16 @@ impl Engine {
                 identity.local_row_start as usize,
                 &identity.content_sha256,
                 rlwe(),
+                self.backend,
             ) {
                 Ok(unit) => unit,
-                Err(_) => {
+                Err(LoadError::Backend(error)) => return Err(error.to_string()),
+                Err(LoadError::Artifact(_)) => {
                     let rows = unit_rows(&plan.shard, spec, &mut read)?;
                     if hex::encode(Sha256::digest(&rows)) != identity.content_sha256 {
                         return Err("canonical rows changed during preparation".into());
                     }
-                    let unit = PreparedShard::build(
+                    let unit = PreparedShard::build_with_backend(
                         &layout,
                         plan.shard.id,
                         identity.local_row_start as usize,
@@ -372,6 +382,7 @@ impl Engine {
                         &rows,
                         rlwe(),
                         setup.polys(),
+                        self.backend,
                     )
                     .map_err(|e| e.to_string())?;
                     drop(rows);
@@ -407,12 +418,28 @@ mod tests {
 
     #[test]
     fn encrypted_bootstrap_round_trip_and_cached_restart() {
+        round_trip_and_restart(MatvecConfig::default());
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    #[ignore = "requires NVIDIA GPU and NVRTC"]
+    fn cuda_encrypted_bootstrap_round_trip_and_cached_restart() {
+        let backend = MatvecConfig {
+            matvec_backend: crate::matvec::Backend::Cuda,
+            cuda_device: None,
+        };
+        backend.validate().unwrap();
+        round_trip_and_restart(backend);
+    }
+
+    fn round_trip_and_restart(backend: MatvecConfig) {
         let dir = tempfile::tempdir().unwrap();
         let coverage = Lifecycle::default()
             .coverage(67, Geometry::default())
             .unwrap();
         let plan = plan(coverage.shards[0].clone(), records).unwrap();
-        let mut engine = Engine::new(dir.path());
+        let mut engine = Engine::with_backend(dir.path(), backend);
         let eval = engine.prepare(plan.clone(), records).unwrap();
         let pack = Packing::new(4096, &eval.hint().unwrap()).unwrap();
         let manifest = Manifest {
@@ -470,10 +497,64 @@ mod tests {
         assert!(Arc::ptr_eq(&eval.units[0], &again.units[0]));
         drop(again);
         drop(eval);
-        let mut restarted = Engine::new(dir.path());
+        let mut restarted = Engine::with_backend(dir.path(), backend);
         restarted
-            .prepare(plan, |_, _| Err("canonical history unavailable".into()))
+            .prepare(plan.clone(), |_, _| {
+                Err("canonical history unavailable".into())
+            })
             .unwrap();
+        // CPU can reopen a GPU-created artifact, and CUDA can open the same CPU-readable bytes.
+        let mut cpu = Engine::new(dir.path());
+        let cpu_eval = cpu
+            .prepare(plan.clone(), |_, _| panic!("artifact must be reusable"))
+            .unwrap();
+        let mut selected = Engine::with_backend(dir.path(), backend);
+        let selected_eval = selected
+            .prepare(plan, |_, _| panic!("artifact must be reusable"))
+            .unwrap();
+        let query = vec![rlwe().q - 1; 4096];
+        assert_eq!(
+            cpu_eval.evaluate(&query).unwrap(),
+            selected_eval.evaluate(&query).unwrap()
+        );
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let eval = &selected_eval;
+                let query = &query;
+                let expected = cpu_eval.evaluate(query).unwrap();
+                scope.spawn(move || assert_eq!(eval.evaluate(query).unwrap(), expected));
+            }
+        });
+        drop(cpu_eval);
+        drop(selected_eval);
+        selected.collect_unused().unwrap();
+        assert_eq!(selected.live_bytes(), 0);
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn backend_load_failure_does_not_rebuild_or_replace_published_units() {
+        let root = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(67, Geometry::default())
+            .unwrap();
+        let plan = plan(coverage.shards[0].clone(), records).unwrap();
+        let mut cpu = Engine::new(root.path());
+        let published = cpu.prepare(plan.clone(), records).unwrap();
+        let query = vec![1; 4096];
+        let before = published.evaluate(&query).unwrap();
+        let mut failed = Engine::with_backend(
+            root.path(),
+            MatvecConfig {
+                matvec_backend: crate::matvec::Backend::Cuda,
+                cuda_device: Some(usize::MAX),
+            },
+        );
+        assert!(failed
+            .prepare(plan, |_, _| panic!("device failure must not rebuild"))
+            .is_err());
+        assert_eq!(failed.live_bytes(), 0);
+        assert_eq!(published.evaluate(&query).unwrap(), before);
     }
 
     #[test]
@@ -704,4 +785,12 @@ mod tests {
             }
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EvaluationError {
+    #[error("invalid query coefficients")]
+    InvalidQuery,
+    #[error("{0}")]
+    Unavailable(String),
 }

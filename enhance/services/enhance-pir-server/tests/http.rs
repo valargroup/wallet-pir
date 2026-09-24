@@ -25,6 +25,21 @@ fn record(position: u64) -> Vec<u8> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn distributed_round_trip_retention_failover_and_restart() {
+    distributed_backend_round_trip(Default::default()).await;
+}
+
+#[cfg(feature = "cuda")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires NVIDIA GPU and NVRTC"]
+async fn cuda_distributed_round_trip_retention_failover_and_restart() {
+    distributed_backend_round_trip(enhance_pir_server::matvec::MatvecConfig {
+        matvec_backend: enhance_pir_server::matvec::Backend::Cuda,
+        cuda_device: None,
+    })
+    .await;
+}
+
+async fn distributed_backend_round_trip(backend: enhance_pir_server::matvec::MatvecConfig) {
     let root = tempfile::tempdir().unwrap();
     let mut workers = Vec::new();
     let mut replicas = Vec::new();
@@ -32,7 +47,12 @@ async fn distributed_round_trip_retention_failover_and_restart() {
     let mut commit_failures = Vec::new();
     let mut evaluations = Vec::new();
     for index in 0..2 {
-        let worker = Worker::open(&root.path().join(format!("worker-{index}"))).unwrap();
+        let worker = Worker::open_with_backend(
+            &root.path().join(format!("worker-{index}")),
+            Default::default(),
+            backend,
+        )
+        .unwrap();
         let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         failures.push(failed.clone());
         let commit_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

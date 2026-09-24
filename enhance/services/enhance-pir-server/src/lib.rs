@@ -18,3 +18,5 @@ pub mod zakura;
 pub use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
 
 mod packing_budget;
+
+pub mod matvec;

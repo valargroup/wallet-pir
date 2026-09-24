@@ -780,6 +780,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cudarc"
+version = "0.17.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72ba848ae5c6f3cb36e71eab5f268763e3fabcabe3f7bc683e16f7fa3d46281e"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1048,6 +1057,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "simplepir-kernel",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -1925,7 +1935,7 @@ dependencies = [
 [[package]]
 name = "inspiring"
 version = "0.1.0-rc.1"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a29284264d844bf4dba00de2874c5b762f8c2"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=1d8aea341d844df97ef6eb244c24b0a050eb3e9b#1d8aea341d844df97ef6eb244c24b0a050eb3e9b"
 dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
@@ -1936,7 +1946,7 @@ dependencies = [
 [[package]]
 name = "ipir-sp"
 version = "0.1.0-rc.2"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a29284264d844bf4dba00de2874c5b762f8c2"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=1d8aea341d844df97ef6eb244c24b0a050eb3e9b#1d8aea341d844df97ef6eb244c24b0a050eb3e9b"
 dependencies = [
  "clap",
  "env_logger",
@@ -2094,6 +2104,16 @@ name = "libc"
 version = "0.2.184"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link 0.2.1",
+]
 
 [[package]]
 name = "libm"
@@ -3482,8 +3502,9 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 [[package]]
 name = "simplepir-kernel"
 version = "0.1.0-rc.1"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=611a29284264d844bf4dba00de2874c5b762f8c2#611a29284264d844bf4dba00de2874c5b762f8c2"
+source = "git+https://github.com/valargroup/ipir-sp.git?rev=1d8aea341d844df97ef6eb244c24b0a050eb3e9b#1d8aea341d844df97ef6eb244c24b0a050eb3e9b"
 dependencies = [
+ "cudarc",
  "inspiring",
  "rayon",
  "valar-spiral-rs",

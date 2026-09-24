@@ -1,6 +1,7 @@
 //! Private worker API. A candidate never evicts a published assignment.
 use super::control::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT};
 use super::runtime::{DomainPlan, Engine, Evaluation};
+use crate::matvec::MatvecConfig;
 use axum::{
     body::{to_bytes, Body},
     extract::{Path, Request, State},
@@ -194,6 +195,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct Worker {
+    backend: MatvecConfig,
     inner: Arc<Mutex<Inner>>,
     preparation: Arc<Semaphore>,
     evaluation: Arc<Semaphore>,
@@ -431,7 +433,20 @@ impl Worker {
     }
 
     pub fn open_with_policy(root: &FsPath, policy: PlacementPolicy) -> Result<Self, String> {
+        Self::open_with_backend(root, policy, MatvecConfig::default())
+    }
+
+    pub fn open_with_backend(
+        root: &FsPath,
+        policy: PlacementPolicy,
+        mut backend: MatvecConfig,
+    ) -> Result<Self, String> {
         policy.validate()?;
+        backend.validate().map_err(|e| e.to_string())?;
+        if backend.matvec_backend == crate::matvec::Backend::Cuda {
+            backend.cuda_device = Some(backend.cuda_device.unwrap_or(0));
+        }
+        tracing::info!(?backend, "worker matrix-vector backend selected");
         fs::create_dir_all(root.join("rows")).map_err(|e| e.to_string())?;
         fs::create_dir_all(root.join("hints")).map_err(|e| e.to_string())?;
         let lock = OpenOptions::new()
@@ -464,7 +479,7 @@ impl Worker {
         File::open(root)
             .and_then(|f| f.sync_all())
             .map_err(|e| e.to_string())?;
-        let mut engine = Engine::new(root);
+        let mut engine = Engine::with_backend(root, backend);
         let mut published = BTreeMap::new();
         for (generation, (manifest, plans)) in &disk.published {
             let mut assignments = BTreeMap::new();
@@ -487,6 +502,7 @@ impl Worker {
         }
         let incarnation = format!("{:032x}", rand::random::<u128>());
         Ok(Self {
+            backend,
             inner: Arc::new(Mutex::new(Inner {
                 disk,
                 engine: Arc::new(Mutex::new(engine)),
@@ -665,7 +681,7 @@ async fn metrics(
 async fn health(State(w): State<Worker>) -> Json<serde_json::Value> {
     let inner = w.inner.lock().unwrap();
     Json(
-        serde_json::json!({"protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
+        serde_json::json!({"matvec": w.backend, "protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
         "resident_database_bytes":inner.engine.try_lock().ok().map(|e| e.live_bytes()),"published":inner.disk.published.keys().collect::<Vec<_>>(),
         "published_manifest_digests":inner.disk.published.iter().map(|(g,(m,_))| (g.to_string(), digest(m))).collect::<BTreeMap<_,_>>(),
         "candidate":inner.disk.candidate}),
@@ -1090,7 +1106,7 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let coefficients = evaluation.evaluate(&query.coefficients)?;
-        Ok::<_, String>(Intermediate {
+        Ok::<_, super::runtime::EvaluationError>(Intermediate {
             generation: query.generation,
             shard_id: query.shard_id,
             epoch: query.epoch,
@@ -1099,14 +1115,42 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> ApiResult<Json<I
     })
     .await
     .map_err(unavailable)?
-    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    .map_err(evaluation_error)?;
     Ok(Json(result))
+}
+
+fn evaluation_error(error: super::runtime::EvaluationError) -> (StatusCode, String) {
+    match error {
+        super::runtime::EvaluationError::InvalidQuery => {
+            (StatusCode::BAD_REQUEST, error.to_string())
+        }
+        super::runtime::EvaluationError::Unavailable(error) => {
+            tracing::error!(%error, "worker evaluation failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "matrix-vector evaluation unavailable".into(),
+            )
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tower::ServiceExt;
+
+    #[test]
+    fn device_errors_are_unavailable_without_exposing_details() {
+        use super::super::runtime::EvaluationError;
+        assert_eq!(
+            evaluation_error(EvaluationError::InvalidQuery).0,
+            StatusCode::BAD_REQUEST
+        );
+        let (status, body) =
+            evaluation_error(EvaluationError::Unavailable("private device detail".into()));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains("private device detail"));
+    }
 
     #[test]
     fn q46_worker_state_is_rejected_without_rewriting_it() {
