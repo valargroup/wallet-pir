@@ -179,7 +179,11 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
             &bytes[84..]
         );
     }
-    assert_eq!(retained.manifest().generation, old);
+    assert!(retained.manifest().generation > old);
+    assert_eq!(
+        retained.manifest().generation,
+        current.manifest().generation
+    );
     assert!(current.manifest().generation > old);
     server.abort();
     for task in tasks {

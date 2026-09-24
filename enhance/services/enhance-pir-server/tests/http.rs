@@ -1870,3 +1870,64 @@ async fn memory_refusal_moves_published_shard_with_complete_destination_pair() {
         task.abort();
     }
 }
+
+#[tokio::test]
+async fn worker_revocation_survives_restart_and_rejects_regression() {
+    use enhance_pir_server::worker::{Evaluate, Revocation};
+    let root = tempfile::tempdir().unwrap();
+    let session_id = "ab".repeat(32);
+    let fence = Revocation {
+        recovery_epoch: 1,
+        sessions: [session_id.clone()].into(),
+    };
+    for restart in 0..2 {
+        let worker = Worker::open(root.path()).unwrap();
+        let router = worker.router().layer(axum::middleware::from_fn(
+            |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                let mut response = next.run(request).await;
+                response.headers_mut().insert(
+                    axum::http::header::CONNECTION,
+                    axum::http::HeaderValue::from_static("close"),
+                );
+                response
+            },
+        ));
+        let (origin, server) = serve(router).await;
+        let http = reqwest::Client::new();
+        if restart == 0 {
+            http.post(format!("{origin}/internal/revoke"))
+                .json(&fence)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        }
+        // The durable fence takes precedence even over generation lookup.
+        let response = http
+            .post(format!("{origin}/internal/evaluate"))
+            .json(&Evaluate {
+                generation: 1,
+                shard_id: 0,
+                epoch: "00".repeat(8),
+                session_id: session_id.clone(),
+                coefficients: vec![],
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::GONE);
+        assert_eq!(response.text().await.unwrap(), "noncanonical_session");
+        let response = http
+            .post(format!("{origin}/internal/revoke"))
+            .json(&Revocation::default())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        drop(response);
+        drop(http);
+        server.abort();
+        let _ = server.await;
+    }
+}
