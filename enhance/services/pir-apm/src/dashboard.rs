@@ -474,7 +474,7 @@ pub(crate) fn per_worker_latency(data: &DashboardData) -> String {
             .map(|seconds| format!("<td>{:.2} ms</td>", seconds * 1000.0))
             .unwrap_or_else(|| "<td class=\"muted\">—</td>".into())
     };
-    let mut out = String::from("<section class=\"card\"><h2 class=\"section-title\">Per-worker evaluation latency</h2><div class=\"wrap\"><table><thead><tr><th>Worker</th><th>State</th><th>Successful attempts · 5m</th><th>p50</th><th>p90</th><th>p99</th></tr></thead><tbody>");
+    let mut out = String::from("<section class=\"card\"><h2 class=\"section-title\">Per-worker evaluation latency</h2><div class=\"wrap\"><table><thead><tr><th>Worker</th><th>State</th><th>Successful attempts · since restart</th><th>p50</th><th>p90</th><th>p99</th></tr></thead><tbody>");
     if data.fleet.is_empty() {
         out.push_str("<tr><td colspan=\"6\">Awaiting worker inventory</td></tr>");
     }
