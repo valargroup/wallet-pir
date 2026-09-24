@@ -240,6 +240,29 @@ latency; the cost of depth is paid only by boundary events.
 **Cost.** Unconfirmed frontier revisions need explicit handling and retention.
 Immutable artifacts are guaranteed; their canonical status is not.
 
+**Depth and capacity evidence (2026-09-24).** No confirmation depth is justified
+yet. The current capacity controller's one-row-per-second fallback, 21,600-second
+readiness window, and 4,096-row burst allowance are [configured defaults](../services/enhance-pir-server/src/capacity.rs),
+not Ironwood measurements. The [isolated expansion trace](../evidence/architecture-v4-live-threshold-2026-09-23/README.md)
+requested a pair at 25,696 remaining rows, registered it 7 minutes 15 seconds
+later, and first published the next shard 16 minutes 58 seconds after the
+request. Its row growth was synthetic, its receipts remained unqualified, and it
+did not preload the successor before that publication. A separate [sealed
+preparation attempt](../evidence/architecture-v4-sealed-deadline-2026-09-23/README.md)
+observed about 186 seconds of worker preparation and missed the former
+180-second request deadline; it is a failure sample, not a worst-case bound.
+Neither run establishes the lead time for the proposed confirmation-gated
+successor path.
+
+The current [RPC ingestion loop](../services/enhance-pir-server/src/bin/server.rs)
+compares the journal's last block hash with the node's canonical hash and rewinds
+until they match. It does not persist a reorg-depth observation. The current
+canonical [journal manifest](../services/enhance-pir-server/src/store.rs) records
+per-block `action_count`, but a rewind removes orphaned block entries. Historical
+canonical action counts can measure observed block bursts; that manifest alone
+cannot establish reorg history. Do not interpret an absence of recorded reorgs
+as evidence for a depth.
+
 ### D9. Keep progressive frontier units with an 8K cap
 
 **Decision.** Keep the current allocation progression: the growing unit starts
@@ -332,8 +355,20 @@ guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unch
    intersection attack against the persistent-set policy.
 7. **Wire encoding.** Version the routing table, domain descriptors and
    session identities, and extend the interop harness to the new manifest.
-9. **Confirmation depth value.** Choose the depth from Ironwood reorg data, and
-   record the row-growth burst that a single block can produce.
+9. **Confirmation depth and transition lead time.** Capture each observed
+   Ironwood reorg's old tip, common ancestor, replacement tip, affected block
+   hashes, and depth before rewinding the journal. Preserve a bounded event log
+   across restarts; compare it with node-side fork history over a stated date and
+   height window. Report the maximum and distribution of canonical actions per
+   block from a copied journal manifest, plus the row increment for each block
+   as `ceil((first_position + action_count) / records_per_row) -
+   ceil(first_position / records_per_row)`; include any observed orphaned-block
+   bursts separately. Record request-to-qualified-pair, preparation, and
+   publication times across retries on the intended hosts. Then choose the
+   confirmation depth and burst allowance with an explicit observation window,
+   reorg risk policy, and margin for blocks that cross multiple units or shards.
+   The existing defaults and synthetic trace above are starting inputs, not a
+   depth or worst-case lead-time claim.
 
 ## Implementation phases
 
