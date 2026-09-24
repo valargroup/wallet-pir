@@ -148,12 +148,14 @@ struct Inner {
     _lock: File,
 }
 
+type PackingCache = BTreeMap<(u64, u64), Arc<Packing>>;
+
 #[derive(Clone)]
 pub struct Worker {
     inner: Arc<Mutex<Inner>>,
     preparation: Arc<Semaphore>,
     evaluation: Arc<Semaphore>,
-    packing: Arc<Mutex<BTreeMap<(u64, u64), Arc<Packing>>>>,
+    packing: Arc<Mutex<PackingCache>>,
     pub incarnation: String,
 }
 
