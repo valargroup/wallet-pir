@@ -13,6 +13,7 @@ use axum::{
 use enhance_pir::protocol::{
     digest, Manifest, ShardState, UnitIdentity, PROTOCOL_REVISION, RETAINED_GENERATIONS,
 };
+use prometheus::{core::Collector, Encoder, Histogram, HistogramOpts, TextEncoder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -201,6 +202,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct Worker {
     backend: MatvecConfig,
+    matvec_latency: Arc<Histogram>,
     inner: Arc<Mutex<Inner>>,
     preparation: Arc<Semaphore>,
     evaluation: Arc<Semaphore>,
@@ -508,6 +510,13 @@ impl Worker {
         let incarnation = format!("{:032x}", rand::random::<u128>());
         Ok(Self {
             backend,
+            matvec_latency: Arc::new(
+                Histogram::with_opts(HistogramOpts::new(
+                    "enhance_worker_matvec_duration_seconds",
+                    "Successful matrix-vector evaluation time measured inside this worker",
+                ))
+                .map_err(|e| e.to_string())?,
+            ),
             inner: Arc::new(Mutex::new(Inner {
                 disk,
                 engine: Arc::new(Mutex::new(engine)),
@@ -674,12 +683,18 @@ async fn metrics(
         metrics.number("enhance_worker_memory_sample_available", 0);
         metrics.number("enhance_worker_memory_model_available", 0);
     }
+    let mut output = metrics.finish();
+    let mut encoded = Vec::new();
+    TextEncoder::new()
+        .encode(&w.matvec_latency.collect(), &mut encoded)
+        .expect("encode worker latency histogram");
+    output.push_str(std::str::from_utf8(&encoded).expect("metrics are UTF-8"));
     (
         [(
             axum::http::header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
-        metrics.finish(),
+        output,
     )
 }
 
@@ -1142,12 +1157,14 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> Response {
     };
     // Cancellation detaches CPU work. Its permit stays in the task, then moves
     // into the output body instead of being released at kernel completion.
+    let matvec_latency = w.matvec_latency.clone();
     let result = tokio::task::spawn_blocking(move || {
         let began = std::time::Instant::now();
         let coefficients = evaluation
             .evaluate(&query.coefficients)
             .map_err(evaluation_error)?;
         let matvec_micros = began.elapsed().as_micros().min(u64::MAX as u128) as u64;
+        matvec_latency.observe(began.elapsed().as_secs_f64());
         let bytes = serde_json::to_vec(&Intermediate {
             binding: query.binding,
             generation: query.generation,
@@ -1334,6 +1351,8 @@ mod tests {
         faults.fail_evaluation.store(false, SeqCst);
         let (status, body) = request(&router, &query).await;
         assert_eq!(status, StatusCode::OK);
+        let (_, worker_metrics) = metrics(State(worker.clone())).await;
+        assert!(worker_metrics.contains("enhance_worker_matvec_duration_seconds_count 1"));
         let result: Intermediate = serde_json::from_slice(&body).unwrap();
         assert_eq!(result.coefficients, expected);
         assert_eq!(result.generation, query.generation);

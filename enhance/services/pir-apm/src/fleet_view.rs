@@ -609,19 +609,14 @@ mod tests {
                 name: "worker-1".into(),
                 group: "group-1".into(),
                 url: "http://10.0.0.1:8091".into(),
-                ..Default::default()
-            },
-        );
-        data.worker_queries.insert(
-            "worker-1".into(),
-            crate::metrics::WorkerQueryWindow {
-                successful_latency: crate::metrics::LatencyWindow {
+                latency: crate::metrics::LatencyWindow {
                     samples: 8.0,
                     p50: Some(0.01),
                     p90: Some(0.09),
                     p99: Some(0.12),
                     ..Default::default()
                 },
+                success: Some(SystemTime::now()),
                 ..Default::default()
             },
         );

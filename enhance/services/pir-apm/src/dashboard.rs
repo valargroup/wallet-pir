@@ -479,8 +479,8 @@ pub(crate) fn per_worker_latency(data: &DashboardData) -> String {
         out.push_str("<tr><td colspan=\"6\">Awaiting worker inventory</td></tr>");
     }
     for (name, worker) in &data.fleet {
-        let window = data.worker_queries.get(name);
-        let latency = window.map(|w| &w.successful_latency);
+        let latency = (worker.status() == "reachable" && worker.latency.samples > 0.0)
+            .then_some(&worker.latency);
         out.push_str(&format!("<tr><th><a href=\"/apm/workers/{name}\">{name}</a></th><td>{state}</td><td>{count}</td>{p50}{p90}{p99}</tr>",
             name=escape(name),
             state=worker.status(),
@@ -490,7 +490,7 @@ pub(crate) fn per_worker_latency(data: &DashboardData) -> String {
             p99=cell(latency.and_then(|w| w.p99)),
         ));
     }
-    out.push_str("</tbody></table></div><p class=\"intro\">Each row is measured separately for that worker by the coordinator, from dispatch through a validated reply. Successful attempts only; includes network and encoding time. A worker with no recent successful attempts shows —.</p></section>");
+    out.push_str("</tbody></table></div><p class=\"intro\">Each worker measures its own successful matrix-vector evaluations. These values exclude network, admission, decoding, and response packing. Percentiles cover samples since that worker restarted; unavailable or unreachable workers show —.</p></section>");
     out
 }
 

@@ -1,5 +1,8 @@
 //! Private inventory discovery and independent worker monitoring.
-use crate::{dashboard::SharedDashboard, metrics::parse_line};
+use crate::{
+    dashboard::SharedDashboard,
+    metrics::{histogram_quantile, parse_line, LatencyWindow},
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
@@ -13,6 +16,7 @@ pub struct Worker {
     pub group: String,
     pub url: String,
     pub values: BTreeMap<String, f64>,
+    pub latency: LatencyWindow,
     pub attempted: Option<SystemTime>,
     pub success: Option<SystemTime>,
     pub error: Option<String>,
@@ -121,6 +125,40 @@ pub fn worker_metrics(text: &str) -> Result<BTreeMap<String, f64>, String> {
     Ok(out)
 }
 
+fn worker_latency(text: &str) -> Result<LatencyWindow, String> {
+    let mut buckets = Vec::new();
+    let mut count = 0.0;
+    for line in text
+        .lines()
+        .filter(|s| !s.trim().is_empty() && !s.starts_with('#'))
+    {
+        let sample = parse_line(line)?;
+        if sample.name == "enhance_worker_matvec_duration_seconds_bucket" {
+            let Some(limit) = sample.labels.get("le") else {
+                continue;
+            };
+            let upper = if limit == "+Inf" {
+                f64::INFINITY
+            } else {
+                limit
+                    .parse::<f64>()
+                    .map_err(|_| "Invalid worker latency bucket")?
+            };
+            buckets.push((upper, sample.value));
+        } else if sample.name == "enhance_worker_matvec_duration_seconds_count" {
+            count = sample.value;
+        }
+    }
+    buckets.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(LatencyWindow {
+        samples: count,
+        p50: histogram_quantile(0.50, &buckets, count),
+        p90: histogram_quantile(0.90, &buckets, count),
+        p95: histogram_quantile(0.95, &buckets, count),
+        p99: histogram_quantile(0.99, &buckets, count),
+    })
+}
+
 pub fn groups(text: &str, health: Option<&str>) -> BTreeMap<String, Group> {
     let mut out: BTreeMap<String, Group> = BTreeMap::new();
     for line in text
@@ -208,15 +246,20 @@ pub async fn monitor(path: PathBuf, dashboard: SharedDashboard) {
                         .text()
                         .await
                         .map_err(|_| "Worker response failed".to_string())?;
-                    worker_metrics(&body).map_err(|_| "Worker metrics unavailable".to_string())
+                    let values = worker_metrics(&body)
+                        .map_err(|_| "Worker metrics unavailable".to_string())?;
+                    let latency = worker_latency(&body)
+                        .map_err(|_| "Worker latency metrics invalid".to_string())?;
+                    Ok((values, latency))
                 }
                 .await;
                 let mut view = dashboard.write().await;
                 if let Some(sample) = view.fleet.get_mut(&name) {
                     sample.attempted = Some(attempted);
                     match result {
-                        Ok(values) => {
+                        Ok((values, latency)) => {
                             sample.values = values;
+                            sample.latency = latency;
                             sample.success = Some(SystemTime::now());
                             sample.error = None;
                         }
@@ -242,6 +285,12 @@ mod tests {
         let values = worker_metrics("enhance_worker_up 1\nenhance_worker_memory_sample_available 0\nenhance_worker_live_database_bytes 99\n").unwrap();
         assert!(!values.contains_key("live_database_bytes"));
         assert!(worker_metrics("unrelated_metric 1").is_err());
+    }
+    #[test]
+    fn worker_evaluation_histogram_keeps_individual_percentiles() {
+        let latency = worker_latency("enhance_worker_matvec_duration_seconds_bucket{le=\"0.05\"} 5\nenhance_worker_matvec_duration_seconds_bucket{le=\"0.1\"} 10\nenhance_worker_matvec_duration_seconds_bucket{le=\"+Inf\"} 10\nenhance_worker_matvec_duration_seconds_count 10\n").unwrap();
+        assert_eq!(latency.samples, 10.0);
+        assert!((latency.p90.unwrap() - 0.09).abs() < 1e-9);
     }
     #[test]
     fn groups_preserve_labels_and_published_counts() {
