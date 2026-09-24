@@ -271,6 +271,11 @@ host failure still removes the public query endpoint. Process separation
 permits later relocation or replication; co-location alone does not provide
 origin high availability or horizontal network scaling.
 
+The [direct worker serving investigation](worker_serving_investigation.md)
+audits the current route and memory model, defines the request-lifetime and
+origin-routing contracts, and gives the production measurement gate for this
+decision. The gate is open; this proposal has not qualified worker-side packing.
+
 ### D7. Session validity is separate from routing freshness and placement
 
 **Decision.** Three independent identities, each versioned in the manifest:

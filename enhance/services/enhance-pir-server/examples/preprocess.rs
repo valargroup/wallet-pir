@@ -134,11 +134,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 unit_identities: [(0, plan.units.clone())].into(),
             };
             let client = QuerySession::new(&manifest, packing.session(1, 0))?;
+            let mut pack_samples_ms = Vec::new();
+            let mut query_bytes = 0;
+            let mut response_bytes = 0;
             for position in [0, 32, 33, record_count - 1] {
                 let (query, slot) = client.prepare_position(position)?;
                 let coefficients = packing
                     .query_coefficients(query.body(), QueryBinding::decode(query.body())?)?;
-                let response = packing.pack(query.body(), &eval.evaluate(&coefficients)?)?;
+                let intermediate = eval.evaluate(&coefficients)?;
+                let at = Instant::now();
+                let response = packing.pack(query.body(), &intermediate)?;
+                pack_samples_ms.push(ms(at));
+                query_bytes = query.body().len();
+                response_bytes = response.len();
                 let row = client.decode(query, &response)?;
                 if row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES] != records(position, 1)? {
                     return Err("incorrect benchmark answer".into());
@@ -161,6 +169,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 json!({"kind":"shard","repeat":repeat,"rows":rows,"populated_records":record_count,"database_bytes":database_bytes,
                 "plan_ms":plan_ms,"cold_prepare_ms":cold_prepare_ms,"hint_ms":hint_ms,
                 "packing_ms":packing_ms,"reuse_ms":reuse_ms,"reload_ms":reload_ms,
+                "pack_samples_ms":pack_samples_ms,"query_bytes":query_bytes,"response_bytes":response_bytes,
+                "pack_scope":"Packing::pack only, after evaluation; includes revalidation and key deserialization, excludes request reception and response transfer",
                 "exact_answers":4,"prepare_scope":"production Engine including setup, row generation, unit build and artifact persistence"}),
             )?;
             drop(reloaded);

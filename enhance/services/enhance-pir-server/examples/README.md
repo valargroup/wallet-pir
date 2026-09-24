@@ -21,8 +21,12 @@ Measurements use production code, P16Q48 and the schema-11 row layout:
 - 4K/8K/16K/32K query domains: plan generation, Engine preparation, hint assembly,
   packing setup, in-memory reuse and artifact reload. Engine preparation includes
   setup, synthetic row generation, unit construction and persistence.
-- Four encrypted exact-answer queries at each query-domain size, outside timers.
-  Reuse/reload cases must succeed without invoking the canonical record reader.
+- Four encrypted exact-answer queries at each query-domain size. Their
+  `Packing::pack` calls are timed individually after evaluation and reported as
+  `pack_samples_ms`, with query and response sizes. This includes repeated
+  query validation and packing-key deserialization, but excludes evaluation,
+  body reception, network transfer and decoding. Reuse/reload cases must
+  succeed without invoking the canonical record reader.
 
 The 32K case uses 32K allocated rows with one record of padding. At exactly 32K
 populated rows the lifecycle creates two query shards through lending, so that
