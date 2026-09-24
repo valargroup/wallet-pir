@@ -1,0 +1,56 @@
+{
+  "background_correct_answers": 24506,
+  "background_errors": 0,
+  "background_p99_ms": 367.359,
+  "binary_sha256": "c4e031d017075113dfaf9cd05fdbd1b36950e13e9697d9e0cc7d274180244c9a",
+  "concurrency": 2,
+  "exact_boundary_and_retained_probes": 1424,
+  "expired_refreshes": 31,
+  "expired_reorg_target_reselections": 3,
+  "final_metrics": [
+    {
+      "file": "coordinator.prom",
+      "sha256": "7053e12e93b0bdab982e175a48851c038c31ab17bfad152c63fc0eb709d279e1",
+      "target": {
+        "role": "coordinator"
+      }
+    },
+    {
+      "file": "worker-0.prom",
+      "sha256": "5d39477cbe738a98f001929e93ce60d9da21db56f66305fae2514bf9facdd83c",
+      "target": {
+        "group": "shard-group-01",
+        "replica": "enhance-pir-worker-01",
+        "role": "worker"
+      }
+    },
+    {
+      "file": "worker-1.prom",
+      "sha256": "5d39477cbe738a98f001929e93ce60d9da21db56f66305fae2514bf9facdd83c",
+      "target": {
+        "group": "shard-group-01",
+        "replica": "enhance-pir-worker-02",
+        "role": "worker"
+      }
+    }
+  ],
+  "finished_wall_ns": 1790258632053048751,
+  "kind": "enhance-workload",
+  "max_fixture_publication_ms": 94687,
+  "measurement_seconds": 1871.80165156,
+  "measurement_started_wall_ns": 1790256760225554883,
+  "min_publications": 30,
+  "origin": "http://127.0.0.1:8280",
+  "placement_policy": {
+    "sealed_shards": 6
+  },
+  "profile": "active",
+  "publications": 35,
+  "publications_sha256": "b226ab6dedeec58b314a01359c81dadd82b4df0e259ea835c75b1617dbedaa8b",
+  "qualification": "unqualified",
+  "seconds_requested": 1800,
+  "six_hour_publication_gate": false,
+  "started_wall_ns": 1790256248251368892,
+  "status": "recorded",
+  "workload_host_id_sha256": "dff17613609d6a64aa857c10121d3f5c006e6b6120d12e5299660f5206b8b81a"
+}

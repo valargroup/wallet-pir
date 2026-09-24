@@ -1,0 +1,49 @@
+wallet revision=566b502854154ae9eabf32b92b9dd05bacd8cdb8 source_sha256=5e2b2e37d8f8467b88f8654c0ce7422ab2956e68a8553626b91affda20201837
+    Updating crates.io index
+    Updating git repository `https://github.com/valargroup/ipir-sp.git`
+    Updating git repository `https://github.com/zakura-core/zakura.git`
+     Locking 490 packages to latest compatible versions
+      Adding axum v0.7.9 (available: v0.8.9)
+      Adding bip32 v0.6.0-pre.1 (available: v0.6.0)
+      Adding block-buffer v0.11.0-rc.3 (available: v0.11.0)
+      Adding crypto-common v0.2.0-rc.1 (available: v0.2.2)
+      Adding digest v0.11.0-pre.9 (available: v0.11.3)
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding hmac v0.13.0-pre.4 (available: v0.13.0)
+      Adding proptest v1.6.0 (available: v1.11.0)
+      Adding reqwest v0.12.28 (available: v0.13.5)
+      Adding ripemd v0.2.0-pre.4 (available: v0.2.0)
+      Adding sha2 v0.11.0-pre.4 (available: v0.11.0)
+      Adding zakura-orchard v1.2.0 (available: v2.0.0)
+      Adding zakura-primitives v1.2.0 (available: v2.0.0)
+      Adding zcash_note_encryption v0.4.2 (available: v0.5.0)
+   Compiling zakura-client-backend v0.1.0-rc5 (/opt/enhance-pir-v7/wallet-libraries/librustzcash/zcash_client_backend)
+   Compiling zakura-pir-enhance v0.1.0 (/opt/enhance-pir-v7/wallet-libraries/zakura/pir-enhance)
+   Compiling zakura-client-sqlite v0.1.0-rc5 (/opt/enhance-pir-v7/wallet-libraries/librustzcash/zcash_client_sqlite)
+   Compiling schema11-interop v0.0.0 (/tmp/schema11-interop-cvcurfhh)
+    Finished `test` profile [optimized] target(s) in 11.27s
+     Running /opt/enhance-pir-v7/source/enhance/tools/schema11-interop/public.rs (target/schema11-interop/debug/deps/interop-6543630cc511af13)
+
+running 1 test
+test public_wallet_matches_independent_canonical_records ... 
+thread 'public_wallet_matches_independent_canonical_records' (3311405) panicked at /opt/enhance-pir-v7/source/enhance/tools/schema11-interop/public.rs:67:50:
+called `Result::unwrap()` on an `Err` value: Generation("manifest anchor is not accepted by the wallet")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    public_wallet_matches_independent_canonical_records
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--test interop`
+Traceback (most recent call last):
+  File "/opt/enhance-pir-v7/source/enhance/tools/schema11-interop/run.py", line 78, in <module>
+    main()
+  File "/opt/enhance-pir-v7/source/enhance/tools/schema11-interop/run.py", line 73, in main
+    subprocess.run(['cargo', 'test', '--manifest-path', str(project / 'Cargo.toml'),
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['cargo', 'test', '--manifest-path', '/tmp/schema11-interop-cvcurfhh/Cargo.toml', '--test', 'interop', '--', '--nocapture', '--test-threads=1']' returned non-zero exit status 101.

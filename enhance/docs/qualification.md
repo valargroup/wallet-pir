@@ -1,13 +1,18 @@
 # Qualification and current status
 
-This page records what the repository's dated evidence supports. It is not a
-live fleet report. Protocol v6/q48 was deployed directly over SSH from commit
-`afdb4b6` on September 23, 2026. That binary predates the later `ipir-sp` rc.2
-pin on `main`. Each result applies only to its recorded source, binary,
-hardware, and workload.
+This page records dated evidence, not a live fleet report. Protocol v7 was
+implemented and deployed directly over SSH on September 24, 2026 from `2a83c21`.
+The [v7 report](../evidence/immutable-v7-2026-09-24/README.md) binds source, binary,
+wallet PR, raw tests and samples. Public exact answers, wallet interoperability,
+rollback and restart passed. **Hardware qualification remains incomplete:** the
+31-minute larger-dataset run had zero query errors but failed its strict memory
+gate because of reclaim pressure and swap growth. Short public load runs also
+exceeded the proposed p99 regression gate. No capacity increase is authorized by
+these results. The full six-hour qualification remains outstanding.
 
 | Evidence | Recorded result | Limit |
 |---|---|---|
+| [V7 SSH deployment and focused validation](../evidence/immutable-v7-2026-09-24/README.md) | Correct public wallet/native answers; 35 publications and 24,506 correct background answers; rollback and restart | Memory/swap and short-run p99 gates failed; six-hour qualification outstanding |
 | [Protocol-v6 production cutover](../evidence/protocol-v6-production-2026-09-23/README.md) | Two ready replicas and exact-answer public checks after cutover | No full CI or sustained qualification; eight-way load hit the two-query admission limit |
 | [Schema-11 interoperability](../evidence/schema11-suffix-2026-09-23/README.md) | Suffix record and wallet checks | Local; no fleet qualification |
 | [Production deployment](../evidence/architecture-v4-production-2026-09-23/README.md) | Exact answers, replicated publication, failover, restart, repair, and rollback rehearsal | Previous candidate; short load and a worker sampling gap |
@@ -16,13 +21,12 @@ hardware, and workload.
 | [Full-size HTTP tests](../evidence/architecture-v4-worker-disk-2026-09-23/README.md) | Consolidation, loan/return, retained queries, reorgs, and disk sampling | Local host, not production memory qualification |
 | [Capacity baseline](../evidence/schema9-worker-capacity-2026-09-22/REPORT.md) | Historical sealed-shard measurements | Different schema and host; does not qualify seven sealed shards |
 
-Open production gates are uninterrupted active and sealed hardware traces on
-physical workers; full-size delayed reclamation, replica recovery, and overload
-characterization; admission and memory-model calibration; and v6 wallet
-interoperability confirmation. Seven sealed shards remain opt-in and unqualified until measured
-on the intended hardware. The automated campaign assessor never issues a
-qualification certificate. Inspect raw failures and unstarted work as well as
-successful query counts.
+Open gates are worker memory/swap and admission calibration, latency during
+publication and routing refresh, the supported canonical burst envelope, and
+uninterrupted active and sealed hardware traces. Seven sealed shards remain
+opt-in and unqualified. The automated assessors never issue a qualification
+certificate. Historical results below apply only to their recorded binaries,
+hardware and workloads.
 
 The [architecture](architecture.md) states the placement contract and the
 [evidence index](../evidence/README.md) owns historical run navigation.

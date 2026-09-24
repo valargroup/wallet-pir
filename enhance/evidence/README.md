@@ -8,6 +8,8 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [V7 SSH deployment, wallet interop and focused validation](immutable-v7-2026-09-24/README.md) — functional checks passed; memory/swap and short-run p99 qualification gates remain open.
+
 - [Q48 precision qualification](p16-q48-2026-09-23/README.md)
 - [Schema-11/v5 wallet interoperability (q46 predecessor)](schema11-suffix-2026-09-23/README.md)
 - [Canonical record oracle](architecture-v4-canonical-record-2026-09-23/README.md)

@@ -12,6 +12,10 @@ and outstanding acceptance gates. Implementation is not proof of live rollout.
 
 ## Enhance performance
 
+The current v7 deployment and its qualification limits are recorded in the
+[September 24 report](enhance/evidence/immutable-v7-2026-09-24/README.md). The
+measurement below is the historical v6 baseline.
+
 On September 23, 2026, a five-minute production test through the public HTTPS
 origin completed **9,809 correct encrypted queries with no errors**, sustaining
 **32.68 requests/second** with eight closed-loop clients. The load driver ran on

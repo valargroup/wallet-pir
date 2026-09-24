@@ -1,6 +1,6 @@
 # Enhance PIR deployment
 
-The v7 SSH rollout uses `/opt/enhance-pir-v7/releases/6809403` and fresh state
+The v7 SSH rollout uses `/opt/enhance-pir-v7/releases/2a83c21` and fresh state
 under `/srv/enhance-pir-v7`. The [dated evidence](../evidence/immutable-v7-2026-09-24/README.md)
 records the final deployment status, checksums, tests and capacity limitations.
 The previous release and `/srv/enhance-pir-v6` data remain available for rollback.

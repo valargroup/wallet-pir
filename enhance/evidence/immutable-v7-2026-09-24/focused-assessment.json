@@ -1,0 +1,85 @@
+{
+  "kind": "focused-v7-assessment",
+  "passed": false,
+  "failures": [
+    "worker-1-samples.jsonl: memory pressure or host swap activity",
+    "worker-1-samples.jsonl: cgroup swap growth",
+    "worker-2-samples.jsonl: memory pressure or host swap activity",
+    "worker-2-samples.jsonl: cgroup swap growth"
+  ],
+  "qualification": "unqualified",
+  "six_hour_hardware_qualification": false,
+  "binary_sha256": "c4e031d017075113dfaf9cd05fdbd1b36950e13e9697d9e0cc7d274180244c9a",
+  "measurement_seconds": 1871.80165156,
+  "hosts": [
+    {
+      "role": "worker",
+      "file": "worker-1-samples.jsonl",
+      "samples": 936,
+      "errors": 0,
+      "max_gap_seconds": 2.005084664,
+      "max_rss_bytes": 5931479040,
+      "max_rss_plus_kernel_bytes": 6013521920,
+      "process_lifetime_hwm_bytes": 5984862208,
+      "max_cgroup_bytes": 7516262400,
+      "max_process_swap_bytes": 128344064,
+      "max_cgroup_swap_bytes": 129814528,
+      "event_deltas": {
+        "high": 10718,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "host_swap_deltas": {
+        "pswpin": 24745,
+        "pswpout": 32683
+      }
+    },
+    {
+      "role": "worker",
+      "file": "worker-2-samples.jsonl",
+      "samples": 935,
+      "errors": 0,
+      "max_gap_seconds": 2.003191281,
+      "max_rss_bytes": 5873606656,
+      "max_rss_plus_kernel_bytes": 5947158528,
+      "process_lifetime_hwm_bytes": 5992034304,
+      "max_cgroup_bytes": 7516176384,
+      "max_process_swap_bytes": 99807232,
+      "max_cgroup_swap_bytes": 108621824,
+      "event_deltas": {
+        "high": 13055,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "host_swap_deltas": {
+        "pswpin": 31952,
+        "pswpout": 33209
+      }
+    },
+    {
+      "role": "coordinator",
+      "file": "coordinator-samples.jsonl",
+      "samples": 936,
+      "errors": 0,
+      "max_gap_seconds": 2.008866231,
+      "max_rss_bytes": 11157278720,
+      "max_rss_plus_kernel_bytes": 11304730624,
+      "process_lifetime_hwm_bytes": 11294285824,
+      "max_cgroup_bytes": 16023568384,
+      "max_process_swap_bytes": 0,
+      "max_cgroup_swap_bytes": 0,
+      "event_deltas": {
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "host_swap_deltas": {
+        "pswpin": 0,
+        "pswpout": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "status": "deployed",
+  "protocol": "ironwood-enhance-pir-v7",
+  "source_commit": "2a83c2174b83c9c55808f4cd5ee54ba68ac22a18",
+  "server_sha256": "3f79969da5900d249afacadafa13883989d9954b6a131f4007574a7ab0e41075",
+  "release_directory": "/opt/enhance-pir-v7/releases/2a83c21",
+  "source_archive_sha256": "7ef84d220f0ded64ab800bb8ea91a483bda5c0f3d85491dc05a02ae487f84d8a",
+  "wallet_pr": "https://github.com/zakura-core/wallet-libraries/pull/31",
+  "wallet_commit": "b84852bc717860492e37c943aca5e718caecf8a8",
+  "qualification": "unqualified",
+  "ci_waited": false,
+  "recorded_utc": "2026-09-24T14:25:23.787301+00:00",
+  "changes_after_workload_candidate": "Health placement revision reporting only; operations assessor transition labels also corrected."
+}

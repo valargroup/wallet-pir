@@ -1,0 +1,95 @@
+[
+  {
+    "file": "canonical-coordinator-samples.jsonl.gz",
+    "samples": 206,
+    "errors": 0,
+    "max_rss_bytes": 5463576576,
+    "max_cgroup_swap_bytes": 0,
+    "events_start": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "events_end": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "host_swap_start": {
+      "pswpin": 0,
+      "pswpout": 0
+    },
+    "host_swap_end": {
+      "pswpin": 0,
+      "pswpout": 0
+    }
+  },
+  {
+    "file": "canonical-worker-1-samples.jsonl.gz",
+    "samples": 206,
+    "errors": 0,
+    "max_rss_bytes": 1079713792,
+    "max_cgroup_swap_bytes": 0,
+    "events_start": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "events_end": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "host_swap_start": {
+      "pswpin": 25255,
+      "pswpout": 136129
+    },
+    "host_swap_end": {
+      "pswpin": 25255,
+      "pswpout": 136152
+    }
+  },
+  {
+    "file": "canonical-worker-2-samples.jsonl.gz",
+    "samples": 206,
+    "errors": 0,
+    "max_rss_bytes": 1082011648,
+    "max_cgroup_swap_bytes": 0,
+    "events_start": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "events_end": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "host_swap_start": {
+      "pswpin": 32177,
+      "pswpout": 137686
+    },
+    "host_swap_end": {
+      "pswpin": 32177,
+      "pswpout": 137686
+    }
+  }
+]

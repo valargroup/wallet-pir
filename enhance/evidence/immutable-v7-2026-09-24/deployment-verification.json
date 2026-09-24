@@ -1,0 +1,288 @@
+[
+  {
+    "role": "coordinator",
+    "service": {
+      "MainPID": "3314080",
+      "NRestarts": "0",
+      "MemoryCurrent": "6837899264",
+      "MemoryPeak": "7043190784",
+      "MemorySwapCurrent": "0",
+      "ActiveState": "active"
+    },
+    "enabled": "enabled",
+    "binary_sha256": "3f79969da5900d249afacadafa13883989d9954b6a131f4007574a7ab0e41075",
+    "executable": "/opt/enhance-pir-v7/releases/2a83c21/enhance-pir-server",
+    "data_dir": "/srv/enhance-pir-v7/canonical",
+    "health": {
+      "anchor_height": 3494652,
+      "blocked_reason": null,
+      "capacity": {
+        "burst_rows": 4096,
+        "effective_rows_per_second": 1.0,
+        "fleet_ceiling_reached": false,
+        "memory_limit": null,
+        "observation": {
+          "at": 1790259706,
+          "records": 598118
+        },
+        "peak_rows_per_second": 0.09696969696969696,
+        "readiness_seconds": 21600.0,
+        "remaining_rows": 145716,
+        "requested": null,
+        "requests": {}
+      },
+      "generation": 5,
+      "operation": {
+        "affected_groups": [
+          "shard-group-01"
+        ],
+        "assignments": {
+          "0": "shard-group-01"
+        },
+        "attempt": 5,
+        "candidate_digest": "e5af860df588830ef1fbe3f17f7a53f218f33a6c6596167b424165dcd22547da",
+        "epoch": 2,
+        "expected_revision": 5,
+        "id": "generation-6",
+        "infrastructure_resources": {},
+        "phase": "PREPARING",
+        "readiness": [],
+        "require_both": [],
+        "source_generations": [
+          5,
+          4,
+          3,
+          2,
+          1
+        ]
+      },
+      "packing_charged_bytes": 4831838208,
+      "pending_abort_notifications": 0,
+      "pending_commit_notifications": 0,
+      "placement_revision": 1,
+      "protocol": "ironwood-enhance-pir-v7",
+      "published_replica_counts": {
+        "shard-group-01": 2
+      },
+      "registered_groups": 1
+    }
+  },
+  {
+    "role": "worker-1",
+    "service": {
+      "MainPID": "219742",
+      "NRestarts": "0",
+      "MemoryCurrent": "1914556416",
+      "MemoryPeak": "1931808768",
+      "MemorySwapCurrent": "0",
+      "ActiveState": "active"
+    },
+    "enabled": "enabled",
+    "binary_sha256": "3f79969da5900d249afacadafa13883989d9954b6a131f4007574a7ab0e41075",
+    "executable": "/opt/enhance-pir-v7/releases/2a83c21/enhance-pir-server",
+    "data_dir": "/srv/enhance-pir-v7/worker",
+    "health": {
+      "candidate": {
+        "attempt": 5,
+        "epoch": 2,
+        "expected_revision": 5,
+        "generation": 6,
+        "operation": "generation-6",
+        "placement_policy": {
+          "sealed_shards": 6
+        },
+        "plans": [
+          {
+            "shard": {
+              "global_row_start": 0,
+              "id": 0,
+              "logical_rows": 32768,
+              "records": 598118,
+              "state": "GROWING",
+              "units": [
+                {
+                  "allocated_rows": 8192,
+                  "local_row_start": 0,
+                  "used_rows": 8192
+                },
+                {
+                  "allocated_rows": 8192,
+                  "local_row_start": 8192,
+                  "used_rows": 8192
+                },
+                {
+                  "allocated_rows": 2048,
+                  "local_row_start": 16384,
+                  "used_rows": 1741
+                }
+              ]
+            },
+            "units": [
+              {
+                "allocated_rows": 8192,
+                "content_sha256": "1274f66e8d20a4bded0e383750f18022d9373073612446a26197907f453beb5c",
+                "local_row_start": 0,
+                "parameter_id": "ironwood-enhance-pir-v7/unit/943a13f970b8cd1fe917c1442bdb487aebafdedd0c79fa14554d346b85746d57",
+                "recovery_epoch": "0",
+                "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+                "shard_id": 0,
+                "table": "enhance"
+              },
+              {
+                "allocated_rows": 8192,
+                "content_sha256": "c535dffe2dce0e7a80fc541836b31ba5663889757e7c792f65e55beac891b0d0",
+                "local_row_start": 8192,
+                "parameter_id": "ironwood-enhance-pir-v7/unit/943a13f970b8cd1fe917c1442bdb487aebafdedd0c79fa14554d346b85746d57",
+                "recovery_epoch": "0",
+                "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+                "shard_id": 0,
+                "table": "enhance"
+              },
+              {
+                "allocated_rows": 2048,
+                "content_sha256": "9cc9eecad88a99b85a385f8da6e190c511932842c71c3092487b6533d75fe03d",
+                "local_row_start": 16384,
+                "parameter_id": "ironwood-enhance-pir-v7/unit/4060688777d40ec7703e657242a5684692ecfd2f1e325a5306c19a5ab2caba1a",
+                "recovery_epoch": "0",
+                "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+                "shard_id": 0,
+                "table": "enhance"
+              }
+            ]
+          }
+        ]
+      },
+      "epoch": 2,
+      "incarnation": "4a107ea26ebc0deba986a9fc1b942a8d",
+      "placement_policy": {
+        "sealed_shards": 6
+      },
+      "protocol": "ironwood-enhance-pir-v7",
+      "published": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "published_manifest_digests": {
+        "1": "a433778cc8017f008d196bc27d6a44631b5a495b46c6cbdd6ed23843d2422e58",
+        "2": "6e1bde1c99c37680cb52734b263a9208eeea6ca14556e97a9d98c13a2eed1ca9",
+        "3": "3515b8ee50246903222e26bc640827f4346f318cef6633da0449c271275c41dc",
+        "4": "0078188bdb2bdd054330ec10f3786a93667d57a0a2188ae4a3283441efda0509",
+        "5": "62986175ec3d4380e4276812eb2861cf245b25225198b69f3c0f0cf313485e4f"
+      },
+      "resident_database_bytes": 704643072,
+      "revision": 5
+    }
+  },
+  {
+    "role": "worker-2",
+    "service": {
+      "MainPID": "220699",
+      "NRestarts": "0",
+      "MemoryCurrent": "1431306240",
+      "MemoryPeak": "1432506368",
+      "MemorySwapCurrent": "0",
+      "ActiveState": "active"
+    },
+    "enabled": "enabled",
+    "binary_sha256": "3f79969da5900d249afacadafa13883989d9954b6a131f4007574a7ab0e41075",
+    "executable": "/opt/enhance-pir-v7/releases/2a83c21/enhance-pir-server",
+    "data_dir": "/srv/enhance-pir-v7/worker",
+    "health": {
+      "candidate": {
+        "attempt": 5,
+        "epoch": 2,
+        "expected_revision": 5,
+        "generation": 6,
+        "operation": "generation-6",
+        "placement_policy": {
+          "sealed_shards": 6
+        },
+        "plans": [
+          {
+            "shard": {
+              "global_row_start": 0,
+              "id": 0,
+              "logical_rows": 32768,
+              "records": 598118,
+              "state": "GROWING",
+              "units": [
+                {
+                  "allocated_rows": 8192,
+                  "local_row_start": 0,
+                  "used_rows": 8192
+                },
+                {
+                  "allocated_rows": 8192,
+                  "local_row_start": 8192,
+                  "used_rows": 8192
+                },
+                {
+                  "allocated_rows": 2048,
+                  "local_row_start": 16384,
+                  "used_rows": 1741
+                }
+              ]
+            },
+            "units": [
+              {
+                "allocated_rows": 8192,
+                "content_sha256": "1274f66e8d20a4bded0e383750f18022d9373073612446a26197907f453beb5c",
+                "local_row_start": 0,
+                "parameter_id": "ironwood-enhance-pir-v7/unit/943a13f970b8cd1fe917c1442bdb487aebafdedd0c79fa14554d346b85746d57",
+                "recovery_epoch": "0",
+                "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+                "shard_id": 0,
+                "table": "enhance"
+              },
+              {
+                "allocated_rows": 8192,
+                "content_sha256": "c535dffe2dce0e7a80fc541836b31ba5663889757e7c792f65e55beac891b0d0",
+                "local_row_start": 8192,
+                "parameter_id": "ironwood-enhance-pir-v7/unit/943a13f970b8cd1fe917c1442bdb487aebafdedd0c79fa14554d346b85746d57",
+                "recovery_epoch": "0",
+                "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+                "shard_id": 0,
+                "table": "enhance"
+              },
+              {
+                "allocated_rows": 2048,
+                "content_sha256": "9cc9eecad88a99b85a385f8da6e190c511932842c71c3092487b6533d75fe03d",
+                "local_row_start": 16384,
+                "parameter_id": "ironwood-enhance-pir-v7/unit/4060688777d40ec7703e657242a5684692ecfd2f1e325a5306c19a5ab2caba1a",
+                "recovery_epoch": "0",
+                "setup_sha256": "0f5e0e337094ec6c892a90000cd430b4718d53323eb6431455408d28aef040f7",
+                "shard_id": 0,
+                "table": "enhance"
+              }
+            ]
+          }
+        ]
+      },
+      "epoch": 2,
+      "incarnation": "fec3b9ce257c1f1d99b5f360c95bb4df",
+      "placement_policy": {
+        "sealed_shards": 6
+      },
+      "protocol": "ironwood-enhance-pir-v7",
+      "published": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "published_manifest_digests": {
+        "1": "a433778cc8017f008d196bc27d6a44631b5a495b46c6cbdd6ed23843d2422e58",
+        "2": "6e1bde1c99c37680cb52734b263a9208eeea6ca14556e97a9d98c13a2eed1ca9",
+        "3": "3515b8ee50246903222e26bc640827f4346f318cef6633da0449c271275c41dc",
+        "4": "0078188bdb2bdd054330ec10f3786a93667d57a0a2188ae4a3283441efda0509",
+        "5": "62986175ec3d4380e4276812eb2861cf245b25225198b69f3c0f0cf313485e4f"
+      },
+      "resident_database_bytes": 704643072,
+      "revision": 5
+    }
+  }
+]

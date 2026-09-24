@@ -1,0 +1,18 @@
+[
+  {
+    "case": "legacy_frame",
+    "status": 400,
+    "body": {
+      "code": "invalid_request",
+      "message": "invalid v7 query framing"
+    }
+  },
+  {
+    "case": "stale_routing",
+    "status": 409,
+    "body": {
+      "code": "stale_routing",
+      "message": "stale_routing"
+    }
+  }
+]

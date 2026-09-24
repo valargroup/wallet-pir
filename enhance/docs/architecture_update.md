@@ -1,9 +1,13 @@
 # Enhance PIR architecture update: immutable shards and the wallet protocol
 
-Design proposal, September 24, 2026. This describes proposed behavior and does
-not amend [architecture](architecture.md) until accepted. Capacity figures are
-planning inputs; they must be qualified on the intended 8 GiB Linux hosts
-before they can be treated as limits.
+Accepted design, September 24, 2026. The v7 implementation and SSH deployment
+are recorded in [architecture](architecture.md) and the
+[dated validation report](../evidence/immutable-v7-2026-09-24/README.md).
+The original design rationale and preimplementation validation list are retained
+below. Wire contracts, composed routing, recovery fencing, wallet reuse and
+optional cover are implemented. Physical memory/swap, publication-tail latency
+and full six-hour qualification remain open; planning figures are not qualified
+limits.
 
 ## Motivation and measured baseline
 
