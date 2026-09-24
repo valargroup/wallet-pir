@@ -2,7 +2,7 @@
 
 Enhance PIR retrieves the encrypted Ironwood output data a wallet needs after
 compact scanning. The current implementation serves schema 11 of
-`ironwood-enhance-pir-v6`: 653-byte suffix records, 33 records per row, and
+`ironwood-enhance-pir-v7`: 653-byte suffix records, 33 records per row, and
 private position queries. A wallet retains the compact encryption prefix and
 validates the answer against its own chain context.
 
