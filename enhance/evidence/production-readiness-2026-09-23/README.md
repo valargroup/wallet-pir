@@ -28,6 +28,10 @@ The [first 90-minute assessment](soak-first90min-freshness.json) also passed:
 57 bounded tip advances, 70.001-second worst lag and no findings. Its copied
 trace digest is recorded in the report; the continuous worker-local and
 coordinator traces remain on their hosts until the run completes.
+The [first three-hour assessment](soak-first3h-freshness.json) passed with
+132 conservatively bounded tip advances, 70.001-second worst lag, and no
+findings. This still does not cover the remaining soak, burst, or worker
+hardware traces.
 
 Fresh rc.2 ARM64 and native Linux noise matrices each completed 432 cases and
 55,296 queries with zero decoding failures. Deterministic cross-platform

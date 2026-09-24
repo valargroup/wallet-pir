@@ -716,6 +716,16 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     )
     .unwrap();
     for revision in 2..8 {
+        // A snapshot writer temporarily pins its source runtime. Wait for
+        // those optional writes before asserting the steady-state residency
+        // after Prepare; a pending save is allowed to hold an old pair.
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while metrics.disk_save_pending.load(Ordering::Relaxed) != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("snapshot writers did not finish before preparing next revision");
         let directory = root.path().join(format!("generation-{revision}"));
         std::fs::create_dir(&directory).unwrap();
         let height = FIRST + 80 + revision as u64;
