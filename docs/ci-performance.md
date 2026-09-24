@@ -63,8 +63,13 @@ Fast runners execute same-repository PR code and have no production access or
 access to the build user's release caches or runner credentials. Fork PRs always use disposable
 hosted runners. Full CI on PRs also uses hosted runners; only main builds use the
 trusted persistent build pool. The fast service has CPU/I/O weight 1000 and a 6-GiB memory ceiling; the build
-service has weight 100, nice level 10 and a 9-GiB ceiling. Its 8-GiB
-`MemoryHigh` threshold leaves room for the retained-snapshot integration tests. Both limit Cargo to four
+service has weight 100, nice level 10 and a 9-GiB ceiling. Both use
+`MemoryHigh=infinity`: a soft threshold previously trapped tests and the runner
+listener in memory reclaim for hours without reaching the hard limit. The hard
+caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
+`Restart=always` clean up the entire service group and reconnect the runner after
+an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
+Both limit Cargo to four
 build processes. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes full-CI jobs. Enhance and Transparent share
