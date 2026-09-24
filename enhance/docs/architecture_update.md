@@ -25,7 +25,7 @@ is produced, where queries are served, and how sessions expire.
 
 ## Objects
 
-The update separates five things the current document folds together.
+The update separates six things the current document folds together.
 
 | Object | Meaning | Identity |
 |---|---|---|
@@ -34,6 +34,7 @@ The update separates five things the current document folds together.
 | Routing view | The manifest's assignment of every populated global row to exactly one query domain and local row | Routing revision plus chain anchor |
 | Session | A query domain's content, geometry, setup and packing parameters as the wallet must use them | Content digest over the domain's unit identities and parameters, with the domain's recovery epoch |
 | Placement | Which replicas hold which query domains and are ready | Placement revision |
+| Request router | Stateless data-plane service that reads the fixed query-binding prefix, selects an eligible replica from the current placement, forwards the opaque query and returns the worker's packed response | Deployed instance plus loaded placement revision |
 
 The invariant is unique canonical routing, not unique physical presence or
 unique queryability. A storage shard may physically hold rows the routing view
@@ -168,7 +169,9 @@ fan-out trade chosen per wallet instead of imposed on the fleet.
 
 **Decision.** Keep the batched evaluation path. Move its queue and coalescing
 window from the coordinator to each worker, so a worker batches whatever
-compatible queries it holds rather than waiting on a global window.
+compatible queries the request router has sent it rather than waiting on a
+global window. Batching happens after replica selection and never spans
+replicas.
 
 **Rationale.** Batching already exists in the working tree: the coordinator
 coalesces up to eight queries with the same generation, shard and epoch for up
@@ -177,28 +180,94 @@ measurement shows about 2.0x less scan time per query at a batch of eight, and
 that the 20 ms window adds latency without gain when arrivals are sparse. The
 gain is empirical: multiplication work grows with batch size while database
 traffic is shared, so the saturation point on the production hosts is unknown.
+Least-in-flight routing in D6 may split a domain's traffic across its replicas.
+Sparse traffic has no demonstrated batching gain to lose; at intermediate and
+high rates, qualification must report whether the split prevents useful
+worker-local batches.
 
 **Cost.** Worker-local scheduling must respect the same per-request lifetime
-accounting as D6.
+accounting as D6. Change the selection rule only through a later documented
+decision backed by the production batching measurements.
 
-### D6. Workers pack; the coordinator leaves the query path; admission is per replica
+### D6. Workers pack; a request router replaces the coordinator in the query path
 
-**Decision.** The public origin routes each query to a ready replica for its
-domain using a routing table the coordinator publishes. The replica receives
-the body, evaluates, packs with the query's own upload keys, and answers. The
-coordinator ingests, publishes manifests, routing and placement, and never
-buffers a query body.
+**Decision.** Split the public origin, request routing and control plane into
+explicit components. Caddy terminates TLS and preserves the public wallet
+endpoint. It sends manifest and control routes to the coordinator and the
+query route to a request-router process. The router reads the fixed `EPQ4`
+query-binding prefix, selects an eligible replica from an atomically loaded
+placement revision, forwards the otherwise opaque query and returns the
+worker's packed response. It does not decode PIR keys, evaluate, pack, own
+placement or make a replica ready.
+
+Phase 1 deploys the router as a separate process on the coordinator host,
+behind the existing Caddy origin:
+
+```text
+wallet -> Caddy on coordinator host -> request router -> selected worker
+                                      ^
+                                      |
+                         atomic placement snapshot
+                                      |
+                                 coordinator
+```
+
+The coordinator publishes an internal, revisioned placement snapshot. The
+router loads and swaps that snapshot atomically; it does not synchronously ask
+the coordinator where to send each request. Co-location is a deployment choice,
+not an identity or protocol dependency: the router can later move to another
+host or run as multiple instances without changing the wallet endpoint. Thus
+"the coordinator leaves the query path" means that the coordinator process
+never receives a query body, not that query bytes bypass its host in Phase 1.
+Wallets neither select nor learn a physical replica.
+
+Within a domain, responsibilities are:
+
+| Step | Owner | Rule |
+|---|---|---|
+| Eligibility | Coordinator placement | Publish replicas that hold the exact domain session and are ready at the placement revision |
+| Selection | Request router | Choose the eligible replica with the fewest requests currently outstanding through that router; rotate equal-load ties |
+| Admission | Worker | Independently admit or reject the complete request lifetime under local resource limits |
+| Batching | Worker | Coalesce compatible admitted requests already queued on that replica |
+
+Router-local outstanding-request counts are a routing hint, not an admission
+claim, and require no live worker queue-depth feed. The worker remains
+authoritative for capacity. A fixed preferred replica is not used because it
+would leave replicated query capacity idle, including capacity added for a hot
+frontier.
+
+The worker protocol must distinguish rejection before evaluation is accepted
+from evaluation, packing and ambiguous post-acceptance failures. The router may
+replay once to one different eligible replica only after that explicit
+not-admitted/not-ready response or an upstream failure known to precede
+acceptance. It never automatically replays any other failure. Although queries
+are read-only, this bound prevents duplicate cryptographic work and retry
+storms. Replay requires the router to retain the body, so it enforces the fixed
+body-size limit, a bounded number of concurrent buffered bodies and its own
+overload rejection.
+
+The selected replica receives the body, evaluates, packs with the query's own
+upload keys, and answers. The coordinator continues to ingest and publish
+manifests, routing and placement, but does not process query bodies.
 
 **Rationale.** Today the coordinator buffers every 282 KB body, decodes it,
 forwards to one replica at a time, packs, and gates the fleet with a global
 slot count. Its sampled cgroup peak was about 8 GB. It is a single point of
-failure and a fixed throughput ceiling that does not grow with the fleet.
+failure and a fixed compute and memory ceiling that does not grow with the
+fleet. A logically separate router removes decoding and packing from that
+process while preserving the current public endpoint and private worker
+network, so Phase 1 needs no wallet or host migration.
 
 **Cost.** Packing moves its CPU and memory onto the 8 GiB workers and must be
 measured against the same worker budget. Worker admission must cover the complete
 request lifetime: bounded body reception, decoding, queued batches,
 evaluation, packing, and response buffering. An execution slot alone does not
-bound queued bodies.
+bound queued bodies. While co-located, router CPU, bounded body buffers,
+connections and TLS/network overhead are charged to the coordinator host and
+can contend with publication. All query bytes still cross that host's NIC, and
+host failure still removes the public query endpoint. Process separation
+permits later relocation or replication; co-location alone does not provide
+origin high availability or horizontal network scaling.
 
 ### D7. Session validity is separate from routing freshness and placement
 
@@ -356,6 +425,11 @@ preparation transient    CRS construction and artifact cache charged to the cgro
 guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unchanged
 ```
 
+The request router is not a replica ledger component. While it is co-located
+with the coordinator, separately bound its retained request bodies, connection
+state and other resident memory and charge them to that host's admission and
+measurement.
+
 ## Open questions and what to quantify
 
 1. **Tail removal reuse rule (resolved).** The construction test demonstrates
@@ -387,13 +461,23 @@ guard and host reserve   512 MiB resident guard below the 7 GiB soft limit, unch
 
 ## Implementation phases
 
-**Phase 1: direct worker serving.** Workers receive query bodies, batch
-locally, pack and answer; the public origin routes by domain; the coordinator
-publishes a routing table and leaves the query path. Per-replica admission
-covers the full request lifetime. Exit: production measurement with
-concurrent publication, replica loss and cover-like traffic, reporting QPS,
-latency, rejections and peak memory. No wallet change is needed for this
-phase if the public route is preserved at the origin.
+**Phase 1: direct worker serving.** Deploy the request router behind Caddy on
+the coordinator host. Workers receive query bodies, batch locally, pack and
+answer; the router applies D6's placement, selection and bounded-retry rules;
+the coordinator publishes routing and placement and leaves the query path.
+Per-replica admission covers the full request lifetime, and router buffering is
+bounded independently.
+
+Exit: sweep the target offered rates with concurrent publication and
+cover-like traffic. Show that both replicas receive traffic and form
+worker-local batches; that one replica's admission saturation spills boundedly
+to its peer; and that replica loss or a placement-revision change stops new
+requests from reaching the removed replica. Restart the router and exercise a
+stale placement so it fails closed rather than guessing. Report successful
+QPS, latency, public 429/502 responses, worker rejection rate, batch-size
+distribution, coordinator publication responsiveness, coordinator-host/router
+peak memory and network throughput, and worker peak memory. No wallet change
+is needed because Caddy preserves the public route.
 
 **Phase 2: immutable shards and composed routing.** Fixed storage shards, the
 tail domain, manifest-owned routing, separated session, routing and placement
