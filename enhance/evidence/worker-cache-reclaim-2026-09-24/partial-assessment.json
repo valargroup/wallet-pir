@@ -1,0 +1,81 @@
+{
+  "kind": "interrupted-focused-v7-memory-observation",
+  "qualification": "unqualified",
+  "passed": false,
+  "reason": "operator stopped before 1800 seconds and 30 publications",
+  "exercise_status": "running",
+  "reported_publications": 23,
+  "requested_seconds": 1800,
+  "binary_sha256": "5d85d894fed6c5c0b827c90dc56336804074849dab390a01e61d90b046ce0493",
+  "hosts": [
+    {
+      "host": "worker-1",
+      "measurement_samples": 786,
+      "sample_errors": 0,
+      "observed_seconds": 1571.627,
+      "maximum_gap_seconds": 2.003,
+      "max_cgroup_mib": 5580.1,
+      "max_file_mib": 193.4,
+      "max_anon_mib": 5499.1,
+      "max_rss_plus_kernel_mib": 5519.6,
+      "max_cgroup_swap_mib": 0.0,
+      "event_deltas": {
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "host_swap_page_deltas": {
+        "pswpin": 0,
+        "pswpout": 0
+      },
+      "process_identities": 1
+    },
+    {
+      "host": "worker-2",
+      "measurement_samples": 786,
+      "sample_errors": 0,
+      "observed_seconds": 1571.61,
+      "maximum_gap_seconds": 2.003,
+      "max_cgroup_mib": 5561.3,
+      "max_file_mib": 194.0,
+      "max_anon_mib": 5505.0,
+      "max_rss_plus_kernel_mib": 5525.3,
+      "max_cgroup_swap_mib": 0.0,
+      "event_deltas": {
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "host_swap_page_deltas": {
+        "pswpin": 0,
+        "pswpout": 0
+      },
+      "process_identities": 1
+    },
+    {
+      "host": "coordinator",
+      "measurement_samples": 785,
+      "sample_errors": 9,
+      "observed_seconds": 1551.561,
+      "maximum_gap_seconds": 2.006,
+      "max_cgroup_mib": 16079.2,
+      "max_file_mib": 5288.6,
+      "max_anon_mib": 10610.9,
+      "max_rss_plus_kernel_mib": 10798.0,
+      "max_cgroup_swap_mib": 0.0,
+      "event_deltas": {
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "host_swap_page_deltas": {
+        "pswpin": 0,
+        "pswpout": 0
+      },
+      "process_identities": 1
+    }
+  ]
+}

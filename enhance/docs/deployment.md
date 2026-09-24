@@ -5,6 +5,11 @@ under `/srv/enhance-pir-v7`. The [dated evidence](../evidence/immutable-v7-2026-
 records the final deployment status, checksums, tests and capacity limitations.
 The previous release and `/srv/enhance-pir-v6` data remain available for rollback.
 
+The subsequent [cache-reclaim update](../evidence/worker-cache-reclaim-2026-09-24/README.md)
+deploys source `ac7cf9d` in `/opt/enhance-pir-v7/releases/ac7cf9d` on the same
+three hosts. Its focused workload was stopped early at the operator's request;
+the memory observation is promising but not a completed qualification.
+
 The binaries are `enhance-pir-server`, `enhance-pir-cli` and
 `enhance-pir-load-test`. Server subcommands are `coordinator`, `worker`, `exercise`
 and `repair-rows`. Protocol v7 retains schema-11 records and q48, but changes
