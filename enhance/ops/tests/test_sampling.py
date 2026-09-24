@@ -99,6 +99,22 @@ class SamplingTests(unittest.TestCase):
             self.assertEqual(result['identity_source'], 'direct-release-policy')
             self.assertEqual(result['source_revision'], revision)
             self.assertEqual(result['worker_private_port'], 8091)
+            campaign = '/srv/enhance-pir-v6/qualification/active-worker'
+            (root / campaign.lstrip('/')).mkdir(parents=True)
+            receipt['data_dir'] = campaign
+            receipt['sealed_shards'] = 6
+            receipt['campaign_profile'] = 'active'
+            policy.write_text(json.dumps(receipt))
+            command = b'\0'.join((b'enhance-pir-server', b'--sealed-shards', b'6', b'worker',
+                                   b'--listen', b'10.0.0.3:8091',
+                                   b'--data-dir', campaign.encode(), b''))
+            (root / 'proc/123/cmdline').write_bytes(command)
+            result = self.sample(root, properties, Path('/etc/enhance-pir-v6/sampling.json'))
+            self.assertEqual(result['worker_data_dir'], campaign)
+            (root / 'proc/123/cmdline').write_bytes(command.replace(campaign.encode(), b'/srv/enhance-pir-v6/worker'))
+            with self.assertRaisesRegex(ValueError, 'campaign arguments differ'):
+                self.sample(root, properties, Path('/etc/enhance-pir-v6/sampling.json'))
+            (root / 'proc/123/cmdline').write_bytes(command)
             manifest.write_text('changed\n')
             with self.assertRaisesRegex(ValueError, 'manifest differs'):
                 self.sample(root, properties, Path('/etc/enhance-pir-v6/sampling.json'))

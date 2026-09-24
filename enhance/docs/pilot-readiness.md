@@ -45,8 +45,10 @@ Use isolated state on representative physical workers. Run active and six-sealed
 profiles for at least six measured hours and 300 publications each. Every replica
 needs uninterrupted hardware samples spanning initialization and measurement.
 Exercise retention, reclamation, growth and placement transitions. Seven sealed
-shards remain disabled. Use `assess-campaign.py`, then explicitly review its
-unproven gates; it intentionally never emits a qualification certificate.
+shards remain disabled. Use `assess-campaign.py` for bootstrap-managed pair
+observations or `assess-direct-campaign.py` for directly deployed workers,
+then explicitly review the assessor's unproven gates; neither emits a
+qualification certificate.
 
 Start worker observation before the public load window as well. Bootstrap-managed
 workers use `sample-loop.py` with their bootstrap receipt. Directly deployed v6
@@ -80,6 +82,14 @@ mode 0600 on its matching worker:
   }
 }
 ```
+
+For an isolated campaign on a directly deployed worker, use a separate
+root-only policy that also pins `data_dir` under
+`/srv/enhance-pir-v6/qualification/`, `campaign_profile` (`active` or
+`sealed`), and `sealed_shards: 6`. The sampler then
+binds the running worker command line to the isolated state. Keep the canonical
+serving policy unchanged, and assess the campaign's completed worker-local
+traces with `assess-direct-campaign.py`.
 
 Run the public workload from a client outside the coordinator/worker hosts:
 

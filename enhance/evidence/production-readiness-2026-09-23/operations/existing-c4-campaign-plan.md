@@ -44,6 +44,10 @@ restoration. Obtain an explicit outage decision before stopping a service.
 3. Reserve new, nonexistent profile directories on both workers and the
    coordinator. Check available space before each profile. Do not reuse the
    prior v4 campaign directories, results, or samplers.
+4. Install and checksum-verify this PR's `sample-loop.py` and
+   `sample-worker.py` together on both workers. The earlier sampler does not
+   bind the isolated worker data directory or campaign profile, so it cannot
+   supply complete direct-campaign evidence.
 
 ## Per-profile sequence
 
@@ -55,8 +59,13 @@ restoration. Obtain an explicit outage decision before stopping a service.
    `MemorySwapMax=2147479552` limits. Reload systemd and start the two worker
    services; verify their actual command lines, binary digests, cgroups,
    private health, and empty isolated state.
-2. Start a new `sample-loop.py --direct-policy` process on each worker before
-   starting the exercise. Use a fresh output directory and a nine-hour window
+2. Write a new root-only direct sampling policy on each worker with the verified
+   release identity, existing memory limits, `sealed_shards: 6`, and the exact
+   isolated `data_dir` and `campaign_profile` (`active` or `sealed`). The
+   sampler checks these against the running service's binary and command line.
+   Start a new `sample-loop.py --direct-policy` process
+   with that policy on each worker before starting the exercise. Use a fresh
+   output directory and a nine-hour window
    of one-second sampling to allow for initialization before the six measured
    hours. The sampler deliberately inspects
    `enhance-pir-worker.service`; using a separately named transient worker
@@ -75,11 +84,26 @@ restoration. Obtain an explicit outage decision before stopping a service.
    growth. Preserve the raw failure evidence. A report's `unqualified` field
    is intentional: `assess-campaign.py` and operator review still decide the
    physical gates.
-5. At the measured end, stop the exercise and samplers, copy immutable reports
-   and complete worker traces, then run `assess-campaign.py` for that profile.
-   Review its unproven gates and check both workers have at least 300
-   publications and uninterrupted samples spanning initialization and all
-   six measured hours. Do not start the next profile if the first failed.
+5. At the measured end, stop the exercise and samplers, copy immutable reports,
+   complete worker traces, and the exact sampling policies, then run
+   `assess-direct-campaign.py` for that profile. The older
+   `assess-campaign.py` accepts bootstrap-managed pair observations and cannot
+   audit these directly deployed worker traces.
+   Run the direct assessor on immutable local copies with one `--worker`
+   argument per physical worker:
+
+   ```sh
+   python3 enhance/ops/scripts/assess-direct-campaign.py \
+     --workload /absolute/path/to/exercise \
+     --worker /absolute/path/to/worker-01-samples /absolute/path/to/worker-01-policy.json \
+     --worker /absolute/path/to/worker-02-samples /absolute/path/to/worker-02-policy.json \
+     --out /absolute/path/to/new-assessment.json
+   ```
+
+   Review its unproven gates, require at least 300 publications with two
+   replicas, and check each worker has uninterrupted samples spanning
+   initialization and all six measured hours. Do not start the next profile
+   if the first failed.
 
 ## Restoration
 

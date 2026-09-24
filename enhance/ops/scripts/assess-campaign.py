@@ -65,10 +65,9 @@ def finite(value):
     return value
 
 
-def assess(workload, observations):
-    """Each observation supplies (manifest, trace path, validated targets, config)."""
+def audit_workload(workload):
+    """Audit the shared exercise and publication evidence before worker review."""
     failures = []
-    statistics = {}
 
     def check(condition, code):
         if not condition and code not in failures:
@@ -113,9 +112,21 @@ def assess(workload, observations):
     check(max_publication == report['max_fixture_publication_ms'], 'publication_timing_summary_differs')
     required = {'composition_growth', 'tail_removal', 'owned_8k', 'owned_16k', 'owned_near_32k', 'rewind_composition'} if profile == 'active' else {'sealed_with_external_append'}
     check(required <= stages, 'missing_profile_transitions')
-    check(len(observations) == (1 if profile == 'active' else 2), 'missing_worker_pair_observations')
     workload_host = report.get('workload_host_id_sha256')
     check(isinstance(workload_host, str) and len(workload_host) == 64 and all(c in '0123456789abcdef' for c in workload_host), 'missing_workload_host_identity')
+    return report, failures, began, finished, profile, policy, max_publication, workload_host
+
+
+def assess(workload, observations):
+    """Each observation supplies (manifest, trace path, validated targets, config)."""
+    report, failures, began, finished, profile, policy, max_publication, workload_host = audit_workload(workload)
+    statistics = {}
+
+    def check(condition, code):
+        if not condition and code not in failures:
+            failures.append(code)
+
+    check(len(observations) == (1 if profile == 'active' else 2), 'missing_worker_pair_observations')
     resource_ids, host_ids = set(), set()
     for manifest, path, targets, config in observations:
         check(policy == observer.pair_module.installer.placement_policy(config.get('sealed_shards', 6)), 'bootstrap_placement_policy_differs')

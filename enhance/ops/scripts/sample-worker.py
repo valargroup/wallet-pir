@@ -211,6 +211,32 @@ def collect(root=Path('/'), properties=None, direct_policy=None):
     expected_directory = receipt['revision'] if match and len(match[1]) == 40 else binary_sha256
     if not match or match[1] != expected_directory or binary_sha256 != receipt['binary_sha256']:
         raise ValueError('running binary differs from bootstrap identity')
+    if direct_policy is not None and 'data_dir' in receipt:
+        campaign_dir = receipt['data_dir']
+        profile = receipt.get('campaign_profile')
+        if (not isinstance(campaign_dir, str)
+                or not campaign_dir.startswith('/srv/enhance-pir-v6/qualification/')
+                or '..' in Path(campaign_dir).parts
+                or profile not in ('active', 'sealed')
+                or not Path(campaign_dir).name.startswith(f'{profile}-worker')
+                or receipt.get('sealed_shards') != 6):
+            raise ValueError('invalid isolated worker data directory')
+        data_dir = root / campaign_dir.lstrip('/')
+        if not data_dir.is_dir() or data_dir.is_symlink():
+            raise ValueError('isolated worker data directory missing or linked')
+        arguments = (process / 'cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+        directories = [arguments[i + 1] for i, value in enumerate(arguments[:-1]) if value == b'--data-dir']
+        shard_options = [arguments[i + 1] for i, value in enumerate(arguments[:-1]) if value == b'--sealed-shards']
+        port = receipt.get('private_port')
+        listens = [arguments[i + 1] for i, value in enumerate(arguments[:-1]) if value == b'--listen']
+        if (arguments.count(b'--data-dir') != 1
+                or arguments.count(b'--sealed-shards') != 1
+                or arguments.count(b'--listen') != 1
+                or directories != [campaign_dir.encode()] or shard_options != [b'6']
+                or type(port) is not int
+                or listens != [f"{receipt['private_ipv4']}:{port}".encode()]):
+            raise ValueError('running worker campaign arguments differ from direct policy')
+        sample['worker_data_dir'] = campaign_dir
     port = receipt.get('private_port', 8291)
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError('invalid worker port in bootstrap receipt')
