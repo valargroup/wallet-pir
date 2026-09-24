@@ -28,6 +28,10 @@ in Vizor PR #601, post-load chain-derived public answers, current published
 snapshot/noise review, fault/alert/rollback drills, the production memory-limit
 alignment, and the 24-hour opt-in observation remain open. This index must not
 be read as a qualification decision while those gates are pending.
+The [no-swap serving rollout plan](operations/no-swap-serving-rollout-plan.md)
+records the current 2 GB swap mismatch, the later one-worker-at-a-time
+alignment, rollback and affected public requalification. No production worker
+limit has been changed yet.
 The [external worker-port probe](operations/worker-port-exposure-2026-09-24.md)
 timed out on ports 8091 and 8291 for both serving worker public IPv4 addresses.
 The [public edge check](operations/public-edge-controls-2026-09-24.md) records
