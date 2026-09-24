@@ -154,6 +154,17 @@ class DirectCampaignTests(unittest.TestCase):
             changed['groups'][1]['replicas'][0]['url'] = 'http://10.0.0.9:8091'
             inventory.write_text(json.dumps(changed))
             self.assertIn('worker_inventory_binding_differs', direct.assess(workload, workers, inventory)['failures'])
+            changed['groups'][1]['replicas'][0]['url'] = 'http://10.0.0.3:8091'
+            inventory.write_text(json.dumps(changed))
+            publications_path = workload / 'publications.jsonl'
+            publications = [json.loads(line) for line in publications_path.read_text().splitlines()]
+            publications[0]['placement']['published_replica_counts'] = {'sealed-group': 2, 'other': 2}
+            publications_path.write_text(''.join(json.dumps(v) + '\n' for v in publications))
+            report_path = workload / 'exercise.json'
+            report = json.loads(report_path.read_text())
+            report['publications_sha256'] = hashlib.sha256(publications_path.read_bytes()).hexdigest()
+            report_path.write_text(json.dumps(report))
+            self.assertIn('sealed_replication_inventory_differs', direct.assess(workload, workers, inventory)['failures'])
 
 
 if __name__ == '__main__':

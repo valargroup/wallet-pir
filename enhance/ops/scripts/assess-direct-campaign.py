@@ -57,6 +57,9 @@ def assess(workload, workers, inventory_path=None):
                 groups = publication['placement']['groups']
                 check([(group.get('id'), group.get('role')) for group in groups] == expected_groups,
                       'sealed_placement_inventory_differs')
+                check(set(publication['placement']['published_replica_counts']) ==
+                      {group.get('name') for group in inventory_groups},
+                      'sealed_replication_inventory_differs')
     hosts, names, summaries = set(), set(), []
     for directory, policy_path in workers:
         manifest = campaign.read(directory / 'manifest.json')
