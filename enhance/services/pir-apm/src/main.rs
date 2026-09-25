@@ -11,6 +11,7 @@ mod packing_fleet;
 mod placement;
 mod schema;
 mod slack;
+mod status_apm;
 mod thresholds;
 
 use std::{
@@ -78,6 +79,13 @@ async fn main() -> Result<()> {
         tokio::spawn(packing_fleet::monitor(path, dashboard.clone()));
     }
     tokio::spawn(entrypoints::run(config.clone(), Arc::clone(&dashboard)));
+    if let Some(url) = config.status_apm_url.clone() {
+        tokio::spawn(status_apm::monitor(
+            url,
+            config.status_host.clone(),
+            dashboard.clone(),
+        ));
+    }
     let scrape_dashboard = Arc::clone(&dashboard);
     let scrape_config = config.clone();
     tokio::spawn(async move {
@@ -274,6 +282,8 @@ fn dashboard_router(dashboard: SharedDashboard) -> Router {
         .route("/", get(dashboard::index))
         .route("/apm", get(dashboard::index))
         .route("/apm/", get(dashboard::index))
+        .route("/status/", get(dashboard::status_page))
+        .route("/apm/status/", get(dashboard::status_page))
         .route("/coordinator/", get(dashboard::coordinator_page))
         .route("/apm/coordinator/", get(dashboard::coordinator_page))
         .route("/workers/:name/", get(dashboard::worker_page))

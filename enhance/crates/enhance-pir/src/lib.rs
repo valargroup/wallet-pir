@@ -2,6 +2,8 @@
 pub mod client;
 pub mod protocol;
 mod record;
+/// Experimental status protocol; not enabled in wallet production flows.
+pub mod status;
 pub mod types;
 
 pub use record::{EnhanceTransactionMetadata, InvalidEnhanceRecord};

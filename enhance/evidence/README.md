@@ -8,6 +8,10 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Synthetic Status PIR backend and APM validation](status-backend-2026-09-25/README.md) —
+  encrypted correctness and fixed-source load passed; the five-second publication
+  target and live-chain integration remain open.
+
 - [Production cleanup deployment (PR #111)](production-cleanup-2026-09-24/README.md) — verified rolling update, unchanged v7 state, and 120/120 correct public smoke answers; not sustained qualification.
 
 - [Optional CUDA worker validation on P4000](cuda-p4000-2026-09-24/README.md) — GPU integration correctness and composed-domain matrix benchmark; not fleet qualification.

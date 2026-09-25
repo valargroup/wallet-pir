@@ -8,6 +8,8 @@ pub mod exercise;
 pub mod ingest;
 pub mod ipir;
 pub mod runtime;
+/// Isolated synthetic status-PIR backend; no production route is enabled implicitly.
+pub mod status;
 pub mod store;
 mod telemetry;
 pub mod types;

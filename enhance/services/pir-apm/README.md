@@ -66,6 +66,23 @@ The current dashboard has an overview at `/apm/`, coordinator detail at
 shows init/query APM, topology, and availability; detailed counters, host resources, and memory
 breakdowns live on the node pages. Expanded detail sections survive refresh.
 
+The overview also has Enhance and Status APM tabs (`?pane=enhance` and
+`?pane=status`) above one deployment diagram. Status is an isolated synthetic service on one GPU host with colocated coordinator, router, and worker listeners.
+The diagram labels its connection to the production coordinator as planned.
+The Status service exports aggregate JSON at `/internal/status-apm` and
+Prometheus metrics at `/internal/metrics` on a separate loopback listener.
+Set `PIR_APM_STATUS_URL` to the APM host's private forwarding endpoint, for
+example `http://127.0.0.1:8384/internal/status-apm`, and optionally set
+`PIR_APM_STATUS_HOST`. APM scrapes it every five seconds with a four-second
+timeout. A Status scrape failure leaves Enhance monitoring independent and
+marks retained Status values stale. No txid or request ID is exported.
+Status Query counts at its coordinator ingress. Router processing spans request
+decode, worker RPC, and final packing; Worker evaluation measures matrix-vector
+work; Router packing measures the final packing operation. Stage percentiles
+are independent. The Status server cannot report decrypted transaction states.
+The deployed service layout, tunnel key location, checks, and rollback are in
+[the Status APM runbook](../../docs/status_apm_rollout.md).
+
 Set `PIR_APM_WORKER_CONFIG` to the coordinator's JSON worker inventory (the
 `groups` / `replicas` format). Production currently uses
 `/etc/enhance-pir-v6/workers.json`. The sidecar reloads this file every 15 seconds,

@@ -4,7 +4,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use axum::{extract::State, response::Html};
+use axum::{
+    extract::{RawQuery, State},
+    response::Html,
+};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -34,6 +37,7 @@ pub struct EntrypointData {
 
 #[derive(Clone, Debug)]
 pub struct DashboardData {
+    pub status: crate::status_apm::View,
     pub placement: Option<crate::placement::Placement>,
     pub placement_success: Option<SystemTime>,
     pub placement_error: bool,
@@ -76,6 +80,7 @@ impl DashboardData {
         host: HostHealth,
     ) -> Self {
         Self {
+            status: crate::status_apm::View::default(),
             placement: None,
             placement_success: None,
             placement_error: true,
@@ -111,9 +116,20 @@ impl DashboardData {
     }
 }
 
-pub async fn index(State(state): State<SharedDashboard>) -> Html<String> {
+pub async fn index(
+    State(state): State<SharedDashboard>,
+    RawQuery(query): RawQuery,
+) -> Html<String> {
     let data = state.read().await.clone();
-    Html(render(&data))
+    let status = query
+        .as_deref()
+        .is_some_and(|q| q.split('&').any(|p| p == "pane=status"));
+    Html(render_pane(&data, status))
+}
+
+pub async fn status_page(State(state): State<SharedDashboard>) -> Html<String> {
+    let data = state.read().await.clone();
+    Html(format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Status host · PIR APM</title><style>{STYLE}</style></head><body><main id=\"app\"><nav><a href=\"/apm/?pane=status\">← PIR APM</a></nav>{}</main><script>{SCRIPT}</script></body></html>",crate::status_apm::pane(&data.status)))
 }
 
 pub async fn healthz() -> &'static str {
@@ -494,7 +510,11 @@ pub(crate) fn per_worker_latency(data: &DashboardData) -> String {
     out
 }
 
+#[cfg(test)]
 fn render(data: &DashboardData) -> String {
+    render_pane(data, false)
+}
+fn render_pane(data: &DashboardData, status: bool) -> String {
     if data
         .snapshot_gauges
         .contains_key("enhance_published_anchor_height")
@@ -502,7 +522,7 @@ fn render(data: &DashboardData) -> String {
         || data.fleet_enabled
         || !data.fleet.is_empty()
     {
-        return fleet_view::overview(data);
+        return fleet_view::overview_pane(data, status);
     }
     let mut out = String::with_capacity(16 * 1024);
     out.push_str("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">");
@@ -1543,6 +1563,23 @@ fn escape(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_tab_keeps_one_shared_topology() {
+        let mut data = fleet_sample();
+        data.fleet_enabled = true;
+        data.status.configured = true;
+        data.status.host = "status-host".into();
+        data.status.sample =
+            Some(serde_json::json!({"operations":{},"generation":1,"observed_ms":0}));
+        let enhance = render_pane(&data, false);
+        let status = render_pane(&data, true);
+        assert_eq!(enhance.matches("Deployment topology").count(), 1);
+        assert_eq!(status.matches("Deployment topology").count(), 1);
+        assert!(enhance.contains("Entrypoint APM"));
+        assert!(status.contains("Synthetic Status service"));
+        assert!(status.contains("Planned shared coordinator connection"));
+        assert!(!status.contains("Entrypoint APM"));
+    }
     use super::*;
     use std::time::Duration;
 

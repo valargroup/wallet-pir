@@ -1,0 +1,29 @@
+[Unit]
+Description=Isolated status PIR synthetic backend (synthetic fixture)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=paperspace
+Group=paperspace
+WorkingDirectory=/home/paperspace/status-pir
+Environment=RAYON_NUM_THREADS=4
+Environment=LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64
+ExecStart=/opt/status-pir/status-pir serve --cuda --entries 1572864 --state-dir /home/paperspace/status-pir-state
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+MemoryAccounting=true
+MemoryMax=16G
+MemorySwapMax=0
+TasksMax=256
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/paperspace/status-pir-state
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

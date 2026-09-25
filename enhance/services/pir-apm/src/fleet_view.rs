@@ -12,6 +12,10 @@ a{color:var(--gold);text-decoration:none}a:hover{text-decoration:underline}
 .groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:20px}
 .group{border:1px solid var(--p16);padding:18px;min-width:0}.group h3{font-size:14px;overflow-wrap:anywhere}.group .summary{font-size:12px;color:var(--p62);margin:8px 0 16px}.replicas{display:grid;gap:12px}
 .section-title{font-size:24px;margin:8px 0 12px}.intro{color:var(--p62);font-size:13px;margin-bottom:24px}
+.apm-tabs{display:flex;gap:8px;margin:30px 0 20px;border-bottom:1px solid var(--p22)}
+.apm-tabs a{display:inline-block;padding:10px 18px;color:var(--p62);border:1px solid transparent;border-bottom:0}
+.apm-tabs a[aria-current="page"]{color:var(--ink);border-color:var(--p22);background:var(--p05)}
+.apm-tabs a:focus-visible{outline:2px solid var(--gold)}
 .notice{border-left:3px solid var(--warn);padding:12px 16px;background:var(--p05);margin:18px 0;font-size:13px}
 details{border:1px solid var(--p16);padding:18px;margin:20px 0}summary{cursor:pointer;color:var(--ink)}details .card{margin-top:18px}.rows .k{overflow-wrap:anywhere}.rows .v{white-space:nowrap}
 "#;
@@ -65,7 +69,12 @@ fn health_ok(data: &DashboardData) -> bool {
             .is_some_and(|t| t.elapsed().unwrap_or_default().as_secs() <= 45)
 }
 
+#[cfg(test)]
 pub(super) fn overview(data: &DashboardData) -> String {
+    overview_pane(data, false)
+}
+
+pub(super) fn overview_pane(data: &DashboardData, status: bool) -> String {
     let reachable = data
         .fleet
         .values()
@@ -136,6 +145,18 @@ pub(super) fn overview(data: &DashboardData) -> String {
             "warn"
         },
     ));
+    if data.status.configured {
+        body.push_str(&kpi(
+            "Status service",
+            if data.status.fresh() {
+                "Reachable"
+            } else {
+                "Attention"
+            },
+            "synthetic fixture monitoring",
+            if data.status.fresh() { "" } else { "warn" },
+        ));
+    }
     body.push_str("</section>");
     if let Some(error) = &data.inventory_error {
         body.push_str(&format!(
@@ -155,8 +176,13 @@ pub(super) fn overview(data: &DashboardData) -> String {
             escape(error)
         ));
     }
-    body.push_str(&entrypoint_apm(data));
-    body.push_str(&per_worker_latency(data));
+    body.push_str(&format!("<nav class=\"apm-tabs\" aria-label=\"PIR APM panes\"><a href=\"/apm/?pane=enhance\" {}>Enhance APM</a><a href=\"/apm/?pane=status\" {}>Status APM</a></nav>",if status {""} else {"aria-current=\"page\""},if status {"aria-current=\"page\""}else{""}));
+    if status {
+        body.push_str(&crate::status_apm::pane(&data.status));
+    } else {
+        body.push_str(&entrypoint_apm(data));
+        body.push_str(&per_worker_latency(data));
+    }
     body.push_str(&format!("<section class=\"topology\"><h2>Deployment topology</h2><a class=\"node-link coord-link\" href=\"/apm/coordinator/\"><strong>Coordinator</strong><span>{}</span><span class=\"{}\">{}</span></a><div class=\"trunk\" style=\"margin:auto\"></div>",escape(&data.hostname),if health_ok(data){"ok"}else{"bad"},if health_ok(data){"Healthy"}else{"Needs attention"}));
     if domain_mode {
         body.push_str(&domain_topology(data));
@@ -186,6 +212,7 @@ pub(super) fn overview(data: &DashboardData) -> String {
         }
         body.push_str("</div>");
     }
+    body.push_str(&crate::status_apm::topology(&data.status));
     body.push_str("</section><p class=\"note\">Worker assignments come from coordinator domain placement; packing-router assignments come from its router inventory. A shared host can appear in more than one domain. Refreshes every 15 seconds.</p>");
     page(data, "Fleet overview", body)
 }

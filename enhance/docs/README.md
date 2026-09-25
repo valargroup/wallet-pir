@@ -14,4 +14,8 @@ validates the answer against its own chain context.
 - [Changelog](../CHANGELOG.md): Enhance PIR release history.
 - [Evidence](../evidence/README.md): retained raw runs and provenance.
 
+The experimental Status PIR service has a separate [architecture](architecture_status.md),
+[synthetic backend runbook](status_backend.md), and [APM rollout](status_apm_rollout.md).
+It is not integrated with wallets or live chain ingestion.
+
 The transparent script-history product has its own [documentation](../../transparent/docs/README.md).

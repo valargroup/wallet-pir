@@ -11,6 +11,10 @@ path = "src/lib.rs"
 name = "enhance-pir-server"
 path = "src/bin/server.rs"
 
+[[bin]]
+name = "status-pir"
+path = "src/bin/status.rs"
+
 [features]
 default = []
 native-reinspiring = ["enhance-pir/native-reinspiring", "dep:reinspiring", "ipir-sp/native-reinspiring"]

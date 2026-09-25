@@ -16,6 +16,8 @@ pub struct Config {
     pub packing_router_config: Option<PathBuf>,
     pub scrape_url: String,
     pub query_scrape_urls: Vec<String>,
+    pub status_apm_url: Option<String>,
+    pub status_host: String,
     pub metrics_path: String,
     pub health_path: String,
     pub ready_path: String,
@@ -114,18 +116,34 @@ impl Config {
                 anyhow::bail!("query metrics targets must be distinct HTTP(S) URLs without credentials or fragments");
             }
         }
+        let status_apm_url = get("PIR_APM_STATUS_URL");
+        if let Some(url) = &status_apm_url {
+            let parsed = reqwest::Url::parse(url).context("invalid Status APM URL")?;
+            if parsed.scheme() != "http"
+                || parsed.host_str() != Some("127.0.0.1")
+                || parsed.username() != ""
+                || parsed.password().is_some()
+                || parsed.fragment().is_some()
+                || parsed.query().is_some()
+                || parsed.path() != "/internal/status-apm"
+            {
+                anyhow::bail!("Status APM URL must be a credential-free loopback /internal/status-apm endpoint");
+            }
+        }
 
         Ok(Self {
             worker_config: get("PIR_APM_WORKER_CONFIG").map(PathBuf::from),
             packing_router_config: get("PIR_APM_PACKING_ROUTER_CONFIG").map(PathBuf::from),
             scrape_url,
             query_scrape_urls,
+            status_apm_url,
+            status_host: get_or("PIR_APM_STATUS_HOST", "status-pir-p4000-ams1"),
             metrics_path: path_value(&get_or("PIR_APM_METRICS_PATH", "/metrics"))?,
             health_path: path_value(&get_or("PIR_APM_HEALTH_PATH", "/v1/health"))?,
             ready_path: path_value(&get_or("PIR_APM_READY_PATH", "/ready"))?,
             listen,
             slack_webhook_url: get("PIR_APM_SLACK_WEBHOOK_URL"),
-            title: get_or("PIR_APM_TITLE", "Enhance PIR APM"),
+            title: get_or("PIR_APM_TITLE", "PIR APM"),
             environment: get_or("PIR_APM_ENVIRONMENT", "unknown"),
             hostname: get("PIR_APM_HOSTNAME")
                 .or_else(sysinfo::System::host_name)
@@ -186,7 +204,7 @@ mod tests {
         assert_eq!(config.ready_path, "/ready");
         assert_eq!(config.metrics_path, "/metrics");
         assert_eq!(config.schema, Schema::enhance_default());
-        assert_eq!(config.title, "Enhance PIR APM");
+        assert_eq!(config.title, "PIR APM");
         assert!(config.slack_webhook_url.is_none());
         assert_eq!(config.interval, Duration::from_secs(15));
     }

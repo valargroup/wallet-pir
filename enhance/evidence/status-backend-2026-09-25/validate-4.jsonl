@@ -1,0 +1,12 @@
+{"coverage_start":1000,"entries":1572864,"evicted_blocks":0,"ms":5354.327474,"phase":"index"}
+{"advanced":false,"five_second_preparation_gate":false,"phase":"preparation","stats":{"database_hint_ms":6661.201376,"packing_ms":5682.1035010000005,"rebuilt_units":4,"reused_units":0,"total_ms":12343.308135000001,"unit_rows":2048}}
+{"passed":true,"phase":"initial_full_hint_differential"}
+{"coordinator":"127.0.0.1:44401","phase":"listening","router":"127.0.0.1:45033","source":"synthetic immutable fixture","worker":"127.0.0.1:37307"}
+{"advanced":false,"cases":["mined","mempool_or_mined_transition","forked","not_found","coverage_incomplete","fresh_randomness","short_txid","wrong_binding","wrong_response","no_payload_route"],"passed":true,"phase":"http_cases"}
+{"coverage_start":1000,"entries":1572864,"evicted_blocks":0,"ms":5341.065413,"phase":"index"}
+{"advanced":true,"five_second_preparation_gate":false,"phase":"preparation","stats":{"database_hint_ms":2871.256172,"packing_ms":5576.762777,"rebuilt_units":1,"reused_units":3,"total_ms":8448.022108,"unit_rows":2048}}
+{"changed_rows":1,"phase":"update"}
+{"advanced":true,"cases":["mined","mempool_or_mined_transition","forked","not_found","coverage_incomplete","fresh_randomness","short_txid","wrong_binding","wrong_response","no_payload_route"],"passed":true,"phase":"http_cases"}
+{"http_status":502,"passed":true,"phase":"worker_loss"}
+{"passed":true,"phase":"recovery_epoch_fence"}
+{"cuda":true,"incremental_granularity":"2048-row units; full packing rebuild","passed":true,"phase":"validation_complete","production_qualified":false,"wallet_changes":false}
