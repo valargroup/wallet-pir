@@ -1,0 +1,50 @@
+
+running 1 test
+test extracted_path_preserves_wallet_answers_and_pool_replication has been running for over 60 seconds
+QUALIFICATION {"elapsed_seconds":60.001480199,"p50_seconds":0.12474887,"p95_seconds":0.530739599,"p99_seconds":1.646481814,"publication":1,"records":600033,"router":{"active_digest":"fcc1fda11527ef478ee03d8bc09e161172d0d6433b177b045aeeca548c4e1e20","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":1610612736,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":2},"verified":480}
+QUALIFICATION {"elapsed_seconds":60.00199869,"p50_seconds":0.12367686,"p95_seconds":0.49592379,"p99_seconds":1.375470352,"publication":2,"records":600066,"router":{"active_digest":"750cefb2ec176758d7d37d16123c8e0d01217b78eb193c703ddada2498a79321","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":2415919104,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":3},"verified":480}
+QUALIFICATION {"elapsed_seconds":60.001905728,"p50_seconds":0.1250237,"p95_seconds":0.555925734,"p99_seconds":1.25371543,"publication":3,"records":600099,"router":{"active_digest":"3d89f7988748e63984f8bba1f5bb27e928a8b7024f8ebe4e98acb7c76640bf1e","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":3221225472,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":4},"verified":480}
+QUALIFICATION {"elapsed_seconds":60.018887905,"p50_seconds":0.123858482,"p95_seconds":0.614034904,"p99_seconds":1.216123543,"publication":4,"records":600132,"router":{"active_digest":"81c717fa841fc7f455832ba31df6dd3a608903d0026ffcc2a072ee276702f1b1","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":480}
+PACKING_WINDOW {"at_most_one_second":2400.0,"publication":5,"samples":2400.0}
+QUALIFICATION {"elapsed_seconds":60.002616373,"p50_seconds":0.130615997,"p95_seconds":0.609621825,"p99_seconds":1.777006294,"publication":5,"records":600165,"router":{"active_digest":"a9b219a3d8b17899886d926c41be78cdeda16793149d44dc9526ab80382a4293","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":480}
+QUALIFICATION {"elapsed_seconds":60.001640817,"p50_seconds":0.122649494,"p95_seconds":0.543252164,"p99_seconds":1.36662028,"publication":6,"records":600198,"router":{"active_digest":"b5902d2c24d243dc76f0833472684f8cea7da1a0f207d905c8b6c4ebacacec48","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":480}
+QUALIFICATION {"elapsed_seconds":60.002355283,"p50_seconds":0.126888523,"p95_seconds":0.612661002,"p99_seconds":1.386457066,"publication":7,"records":600231,"router":{"active_digest":"25313255e59f5238167362e8c8d547bf0e836374a7c9415306189d5b9f9c55b0","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":480}
+QUALIFICATION {"elapsed_seconds":60.00147329,"p50_seconds":0.125615066,"p95_seconds":0.518566277,"p99_seconds":1.328058574,"publication":8,"records":600264,"router":{"active_digest":"51b02328e54a94cd671c28859e73b524f33f023a9d8cf9a6432634ea006b8196","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":480}
+QUALIFICATION {"elapsed_seconds":60.001097456,"p50_seconds":0.127003278,"p95_seconds":0.484443316,"p99_seconds":1.492886305,"publication":9,"records":600297,"router":{"active_digest":"f719498cf2999cd17aefc65e27ca7cf4b2f011cf5ee329ef1a217ac90ca28c14","available_requests":4,"control_version":2,"controller_epoch":1,"incarnation":"35d8e2695d1c1ea643d9365383ba58f6","outstanding":{"http://127.0.0.1:35055":0,"http://127.0.0.1:36671":0,"http://127.0.0.1:46859":0},"packing_charged_bytes":4026531840,"preferred_workers":{"http://127.0.0.1:46859":true},"protocol":"ironwood-enhance-pir-v7","ready":true,"resident_objects":5},"verified":480}
+
+thread 'tokio-rt-worker' (670127) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: HttpStatus(503)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'extracted_path_preserves_wallet_answers_and_pool_replication' (669868) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:546:33:
+called `Result::unwrap()` on an `Err` value: JoinError::Panic(Id(151871), "called `Result::unwrap()` on an `Err` value: HttpStatus(503)", ...)
+
+thread 'tokio-rt-worker' (670124) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: Http(reqwest::Error { kind: Request, url: "http://127.0.0.1:34925/v1/enhance/query", source: hyper_util::client::legacy::Error(SendRequest, hyper::Error(IncompleteMessage)) })
+
+thread 'tokio-rt-worker' (670133) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: Http(reqwest::Error { kind: Request, url: "http://127.0.0.1:34925/v1/enhance/query", source: hyper_util::client::legacy::Error(SendRequest, hyper::Error(IncompleteMessage)) })
+
+thread 'tokio-rt-worker' (670643) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: Http(reqwest::Error { kind: Request, url: "http://127.0.0.1:34925/v1/enhance/query", source: hyper_util::client::legacy::Error(Connect, ConnectError("tcp connect error", 127.0.0.1:34925, Os { code: 111, kind: ConnectionRefused, message: "Connection refused" })) })
+
+thread 'tokio-rt-worker' (670120) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: Http(reqwest::Error { kind: Request, url: "http://127.0.0.1:34925/v1/enhance/query", source: hyper_util::client::legacy::Error(Connect, ConnectError("tcp connect error", 127.0.0.1:34925, Os { code: 111, kind: ConnectionRefused, message: "Connection refused" })) })
+
+thread 'tokio-rt-worker' (670125) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: Http(reqwest::Error { kind: Request, url: "http://127.0.0.1:34925/v1/enhance/query", source: hyper_util::client::legacy::Error(Connect, ConnectError("tcp connect error", 127.0.0.1:34925, Os { code: 111, kind: ConnectionRefused, message: "Connection refused" })) })
+
+thread 'tokio-rt-worker' (670122) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: Http(reqwest::Error { kind: Request, url: "http://127.0.0.1:34925/v1/enhance/query", source: hyper_util::client::legacy::Error(Connect, ConnectError("tcp connect error", 127.0.0.1:34925, Os { code: 111, kind: ConnectionRefused, message: "Connection refused" })) })
+
+thread 'tokio-rt-worker' (670121) panicked at enhance/services/enhance-pir-server/tests/packing_http.rs:524:92:
+called `Result::unwrap()` on an `Err` value: Http(reqwest::Error { kind: Request, url: "http://127.0.0.1:34925/v1/enhance/query", source: hyper_util::client::legacy::Error(Connect, ConnectError("tcp connect error", 127.0.0.1:34925, Os { code: 111, kind: ConnectionRefused, message: "Connection refused" })) })
+test extracted_path_preserves_wallet_answers_and_pool_replication ... FAILED
+
+failures:
+
+failures:
+    extracted_path_preserves_wallet_answers_and_pool_replication
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 703.15s
+

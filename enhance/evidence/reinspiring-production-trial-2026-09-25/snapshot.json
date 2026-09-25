@@ -1,0 +1,12 @@
+{
+  "records": 604328,
+  "record_bytes": 653,
+  "bytes": 394626184,
+  "sha256": "bcfd2c1b424133b22a538376ff1c404fd482e78b1be62c0de188338e6f28ef28",
+  "last_block": {
+    "height": 3495424,
+    "hash": "0000000000241ac697cf6e5864567b775c57bc7daaaf9dc0d1463fea73eba5bc",
+    "first_position": 604322,
+    "action_count": 6
+  }
+}

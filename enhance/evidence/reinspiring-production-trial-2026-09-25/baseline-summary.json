@@ -1,0 +1,75 @@
+{
+  "apm-load-15qps-20260925-0456": {
+    "completed_reports": 35,
+    "correct": 31487,
+    "errors": {
+      "http_502": 13
+    },
+    "incorrect": 0,
+    "per_report_p99_ms_range": [
+      102.527,
+      449.791
+    ],
+    "per_report_scheduled_p99_ms_range": [
+      103.423,
+      461.055
+    ],
+    "queries": 31500,
+    "unstarted_arrivals": 0
+  },
+  "apm-load-20qps-20260925-0523": {
+    "completed_reports": 48,
+    "correct": 55439,
+    "errors": {
+      "http_502": 8,
+      "http_503": 494
+    },
+    "incorrect": 0,
+    "per_report_p99_ms_range": [
+      135.935,
+      730.111
+    ],
+    "per_report_scheduled_p99_ms_range": [
+      137.215,
+      12058.623
+    ],
+    "queries": 55941,
+    "unstarted_arrivals": 1659
+  },
+  "mapped-review-20260925-0345": {
+    "completed_reports": 30,
+    "correct": 14270,
+    "errors": {
+      "http_502": 18
+    },
+    "incorrect": 0,
+    "per_report_p99_ms_range": [
+      100.927,
+      196.223
+    ],
+    "per_report_scheduled_p99_ms_range": [
+      101.759,
+      232.703
+    ],
+    "queries": 14288,
+    "unstarted_arrivals": 0
+  },
+  "mapped-rollout-4d14feb": {
+    "completed_reports": 30,
+    "correct": 14291,
+    "errors": {
+      "http_502": 5
+    },
+    "incorrect": 0,
+    "per_report_p99_ms_range": [
+      101.567,
+      180.095
+    ],
+    "per_report_scheduled_p99_ms_range": [
+      102.783,
+      182.655
+    ],
+    "queries": 14296,
+    "unstarted_arrivals": 0
+  }
+}
