@@ -8,18 +8,19 @@ It adds no external wallet integration and enables no status routes in the
 production server. The `status-pir` binary is a dedicated entry point.
 
 The [September 25 GPU run](../evidence/status-backend-2026-09-25/README.md)
-passed encrypted correctness and a one-minute fixed-source 20-QPS test. Its
-13.8-second one-row preparation fits the revised twenty-second budget in
-isolation; no live source-to-query publication measurement exists yet.
+is historical v1 evidence. Its timings cannot qualify compact v2. Current
+[compact v2 measurements](../evidence/status-compact-v2-2026-09-25/README.md)
+cover CPU/CUDA interoperability and private live publication, with public
+release blockers recorded explicitly.
 
 ## Implemented experiment
 
-- 8,192 rows, 256 fixed 80-byte slots per row, and the 75% entry ceiling.
+- 8,192 rows, 256 fixed 40-byte slots per row, and the 75% entry ceiling.
 - Full-txid bucket lookup, canonical record validation, state precedence, and
   complete-block eviction on global or bucket overflow.
 - Explicit coverage-incomplete errors on misses without a sufficient local bound.
 - Domain-separated q48 queries with fresh randomness and request IDs. The backend
-  protocol name is now `status-pir-v1-q48`, matching the separately pinned wallet contract.
+  protocol name is now `status-pir-v2-q48`, matching the separately pinned wallet contract.
   Historical fixture captures used `status-pir-v1-synthetic-q48`.
 - Independent coordinator/ingress, router, and worker HTTP listeners. They run
   in one process for this experiment and share an in-memory publication controller.
@@ -27,8 +28,9 @@ isolation; no live source-to-query publication measurement exists yet.
   state and an unready fixture inventory; no Enhance publication loop runs.
 - CUDA or CPU evaluation, CPU packing, bound intermediates, freshness checks,
   bounded HTTP bodies, fixed admission, and retained observation views.
-- Candidate preparation reuses identical 2,048-row units. Changed units and
-  packing material are rebuilt. This measures a baseline, not row-level deltas.
+- Candidate preparation reuses identical 2,048-row units and unchanged packing
+  blocks. Sparse changed coefficients use differential hints; dense changes use
+  full reconstruction. See [distributed publication](status_distributed.md).
 - Rapid synthetic activations retain only the immediately previous material
   generation. Older session IDs receive a conflict and require a fresh init and
   query; already admitted work remains pinned to its original generation.
@@ -39,7 +41,7 @@ generated independently by the oracle. A fixture refresher re-observes the
 unchanged source; it is not evidence of live node polling or publication latency
 under chain traffic. Every sample response is checked against the oracle.
 
-The 52-byte envelope is `SPQ1`, a 32-byte manifest digest, and a fresh 16-byte
+The 52-byte envelope is `SPQ2`, a 32-byte manifest digest, and a fresh 16-byte
 request ID. The digest binds protocol, network, salt, generation, recovery epoch,
 coverage, anchor, observation time, entry count, row digest, and public material.
 Queries append uploaded packing keys and the q48 selection. Responses echo the
@@ -177,3 +179,14 @@ preparation qualification, a release protocol with reviewed client compatibility
 and the six-hour concurrent-publication gate. Its material controller is still
 in memory and rebuilds only after a fresh observation on restart. It makes no
 claim of malicious-server data authentication or full-history absence.
+
+## Compact v2 qualification boundary
+
+The `status-pir-v2-q48` contract uses 40-byte slots, 12,288-byte padded rows,
+6,144 u16 columns and a 96 MiB database. Setup, bucket and manifest domains
+use `status-pir/v2/`; request envelopes use `SPQ2`. The HTTP route prefix
+remains `/v1/status/`, but v1 manifests and material are incompatible.
+The 1,572,864-entry admission ceiling and 20-second freshness limit are unchanged.
+Block hashes remain internal source/publication metadata, not wallet-visible
+inclusion evidence. All retained v1 timing/resource captures are historical and
+protocol-incompatible; they cannot qualify v2.

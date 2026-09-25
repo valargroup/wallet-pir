@@ -1,10 +1,13 @@
 # Status PIR architecture
 
-Status: proposed architecture; production implementation and hardware qualification pending.
+Status: private compact v2 deployment; public production qualification pending.
 
 An isolated [synthetic backend](status_backend.md) implements the index and encrypted HTTP
 path for synthetic fixtures. Its preparation baseline, deployment commands, and
-remaining production boundaries are documented separately.
+remaining production boundaries are documented separately. The
+[distributed live topology](status_distributed.md) and
+[v2 production measurements](../evidence/status-compact-v2-2026-09-25/README.md)
+track the current implementation and release blockers.
 
 Status PIR privately observes transactions through the Enhance infrastructure.
 It shares the Enhance coordinator and public ingress, with a separate status
@@ -127,8 +130,9 @@ the status protocol: independent vectors and protocol review are release gates.
 
 An authenticated response is a server assertion. PIR does not prove that a
 mempool is complete, that absence is globally true, or that returned chain
-metadata is honest. Wallet anchor acceptance supplies chain context; the block
-hash in a slot is not a transaction-inclusion proof. `NotFound` means no
+metadata is honest. Wallet anchor acceptance supplies chain context. Compact v2 records carry no
+block hash or transaction-inclusion proof; hashes remain in source checkpoints
+and publication anchor validation. `NotFound` means no
 observation in the declared, sufficiently fresh coverage, never proof that a
 transaction was not broadcast.
 
@@ -136,9 +140,9 @@ transaction was not broadcast.
 
 ### Geometry and record encoding
 
-The index uses an 8,192-row PIR geometry with 12,288 u16 plaintext
-coefficients per row. Each row contains 256 slots of 80 bytes, or 20,480 logical
-bytes. All remaining bytes through the 24,576-byte coefficient row are zero.
+The index uses an 8,192-row PIR geometry with 6,144 u16 plaintext
+coefficients per row. Each row contains 256 slots of 40 bytes, or 10,240 logical
+bytes. All remaining bytes through the 12,288-byte coefficient row are zero.
 The fixed width is independent of actual occupancy and returned state.
 
 | Slot offset | Bytes | Field |
@@ -147,17 +151,15 @@ The fixed width is independent of actual occupancy and returned state.
 | 32 | 1 | Tag: 0 empty, 1 mempool, 2 mined, 3 forked |
 | 33 | 3 | Reserved, zero |
 | 36 | 4 | Height, unsigned little-endian |
-| 40 | 32 | Block hash in protocol byte order |
-| 72 | 8 | Reserved, zero |
 
-An empty slot is entirely zero. Mempool slots have zero height and block hash.
-Mined and forked slots have a positive u32 height and the corresponding canonical
-or disconnected block hash. Unknown tags, nonzero reserved bytes, invalid
+An empty slot is entirely zero. Mempool slots have zero height. Mined and forked slots have a positive u32
+height. Canonical and disconnected block hashes remain server-only source
+metadata. Unknown tags, nonzero reserved bytes, invalid
 state/height combinations, and nonzero row padding are malformed responses.
 No raw transaction bytes are stored in these records.
 
 Map the txid to a row with SHA-256 over the literal domain tag
-`status-pir/v1/bucket\0`, the 32-byte network genesis hash, a 32-byte published
+`status-pir/v2/bucket\0`, the 32-byte network genesis hash, a 32-byte published
 index salt, and the 32-byte protocol-order txid. Interpret the first two digest
 bytes as a little-endian u16 and mask to the low 13 bits (`& 8191`). Sort occupied slots
 lexicographically by protocol-order txid bytes, followed by empty slots. Compare
@@ -176,7 +178,7 @@ not separately for mined, mempool, and forked entries. This is a capacity
 ceiling, not a promised retained duration. Actual retention depends on chain
 volume, mempool size, fork observations, and collisions.
 
-Allocated slot storage is 160 MiB; the padded u16 PIR database is 192 MiB.
+Allocated slot storage is 80 MiB; the padded u16 PIR database is 96 MiB.
 Active and candidate database arrays therefore total 384 MiB before hints,
 packing material, device-specific allocations, request buffers, and pinned
 resources. These are layout sizes, not measured process or GPU memory limits.
@@ -536,3 +538,14 @@ according to the [evidence policy](../evidence/README.md).
 Until these gates pass, the service remains a qualification deployment. A green
 build, successful matrix benchmark, or short encrypted smoke test does not
 establish either the twenty-second freshness target or 20-lookups/sec capacity.
+
+## Compact v2 qualification boundary
+
+The `status-pir-v2-q48` contract uses 40-byte slots, 12,288-byte padded rows,
+6,144 u16 columns and a 96 MiB database. Setup, bucket and manifest domains
+use `status-pir/v2/`; request envelopes use `SPQ2`. The HTTP route prefix
+remains `/v1/status/`, but v1 manifests and material are incompatible.
+The 1,572,864-entry admission ceiling and 20-second freshness limit are unchanged.
+Block hashes remain internal source/publication metadata, not wallet-visible
+inclusion evidence. All retained v1 timing/resource captures are historical and
+protocol-incompatible; they cannot qualify v2.

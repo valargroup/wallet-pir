@@ -1,5 +1,8 @@
 # Private live Status checkpoint — 2026-09-25
 
+> Historical v1 evidence: protocol-incompatible with compact `status-pir-v2-q48`.
+> Raw captures are retained unchanged and cannot satisfy the v2 release gates.
+
 Public Status remains disabled. Neither short campaign passed the availability
 gate, and the required six-hour joint live-publication/20-QPS run has not run.
 

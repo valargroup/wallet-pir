@@ -1,26 +1,18 @@
 # Status PIR production qualification
 
-The public Status API is blocked until a live-source release candidate passes
-this gate. The `status-pir serve-live` entry point connects observation to
-isolated loopback serving with a durable source cache and publication counter.
-Its roles still share one process and it uses the synthetic protocol identifier.
-The one-minute 20-QPS fixture result and isolated fault checks do not qualify production.
-The recorded one-row update took about 13.8 seconds. That isolated preparation
-fits the revised twenty-second budget, but excludes live source collection,
-activation, request overlap, and publication under load.
+Public Status remains blocked until the compact `status-pir-v2-q48` candidate
+passes the complete live-source gate. The private production topology has an
+authenticated SSH publication tunnel and separate controller, worker and router
+processes. Integration into the deployed shared Enhance process and restricted
+HTTPS ingress rehearsal remain separate gates.
 
-Before collecting release evidence, integrate Status with the deployed shared
-coordinator and HTTPS origin, implement authenticated publication and revocation
-acknowledgments across separate role processes, qualify preparation during live
-traffic, and review a compatible release protocol. The Vizor client currently
-targets `status-pir-v1-q48` while this backend advertises
-`status-pir-v1-synthetic-q48`; their pinned PIR library revisions also differ.
-The pinned wallet protocol also uses a ten-second freshness limit, below the
-agreed twenty-second service gate. Align and test these interfaces together.
-The wallet release gate remains disabled until those interfaces are reconciled.
-The [September 25 SSH trial](../evidence/status-live-trial-2026-09-25/README.md)
-validates the isolated P4000 synthetic service and a separate live-source CPU
-trial; it does not meet this production gate.
+V2 uses 8,192 rows, 256 slots per row, 40 bytes per slot, 12,288 padded row bytes,
+6,144 u16 columns and a 96 MiB database. Its 75% admission ceiling remains
+1,572,864 entries. The wallet and server must use the same v2 contract and
+20-second freshness limit. Block hashes remain internal source/publication
+metadata; compact wallet replies are status observations, not inclusion proofs.
+Prior v1 timing and resource captures are protocol-incompatible historical
+evidence. Preserve their raw files; remeasure every gate for v2.
 
 ## Capture contract
 
@@ -32,7 +24,9 @@ oracle. The client retains local coverage evidence for negative answers.
 
 Retain four JSONL files:
 
-- `summary.jsonl`: one `phase: "load"` object with `source: "live"`,
+- `summary.jsonl`: one `phase: "load"` object with `protocol: "status-pir-v2-q48"`,
+  `rows: 8192`, `slots: 256`, `slot_bytes: 40`, `columns: 6144`,
+  `row_bytes: 12288`, `database_bytes: 100663296`, `source: "live"`,
   `oracle_source: "independent"`, `seconds`, `offered`, `run_started_ms`, and
   `run_ended_ms`, and independently captured `source_observations` total.
 - `requests.jsonl`: one object per scheduled arrival, numbered from zero, with

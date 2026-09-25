@@ -1,10 +1,10 @@
 //! Read-only canonical Status observation. It does not publish or persist state.
 use super::{
-    index::{Block, Snapshot},
+    index::{Block, ForkRecord, Snapshot},
     now_ms,
 };
 use crate::zakura::{ZakuraClient, ZakuraError};
-use enhance_pir::status::{Error as StatusError, Hash, Record};
+use enhance_pir::status::{Error as StatusError, Hash};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
@@ -54,7 +54,7 @@ pub struct RollingWindow {
     salt: Hash,
     window_blocks: u32,
     blocks: Vec<Block>,
-    forks: Vec<Record>,
+    forks: Vec<ForkRecord>,
     dir: Option<PathBuf>,
     _lock: Option<File>,
 }
@@ -157,9 +157,8 @@ impl RollingWindow {
         }
         let mut forks = Vec::with_capacity(fork_count);
         for _ in 0..fork_count {
-            let fork = Record {
+            let fork = ForkRecord {
                 txid: read_hash(&mut input)?,
-                tag: 3,
                 height: read_u32(&mut input)?,
                 block: read_hash(&mut input)?,
             };
@@ -182,7 +181,7 @@ impl RollingWindow {
         &self,
         network: Hash,
         blocks: &[Block],
-        forks: &[Record],
+        forks: &[ForkRecord],
     ) -> Result<(), SourceError> {
         let Some(dir) = &self.dir else {
             return Ok(());
@@ -261,15 +260,14 @@ impl RollingWindow {
         let mut forks = self.forks.clone();
         for disconnected in &self.blocks[keep..] {
             for txid in &disconnected.txids {
-                forks.push(Record {
+                forks.push(ForkRecord {
                     txid: *txid,
-                    tag: 3,
                     height: disconnected.height,
                     block: disconnected.hash,
                 });
             }
         }
-        let mut unique_forks = BTreeMap::<Hash, Record>::new();
+        let mut unique_forks = BTreeMap::<Hash, ForkRecord>::new();
         for fork in forks {
             let replace = unique_forks
                 .get(&fork.txid)
@@ -278,7 +276,7 @@ impl RollingWindow {
                 unique_forks.insert(fork.txid, fork);
             }
         }
-        let mut forks: Vec<Record> = unique_forks.into_values().collect();
+        let mut forks: Vec<ForkRecord> = unique_forks.into_values().collect();
         if blocks.last().is_none_or(|block| block.height < tip_height) {
             let next = blocks.last().map_or(
                 tip_height.saturating_sub(self.window_blocks - 1).max(1),
@@ -425,6 +423,47 @@ mod tests {
         (client, job)
     }
 
+    #[test]
+    fn compact_wire_preserves_stsobs01_checkpoint_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocks = vec![Block {
+            height: 10,
+            hash: [3; 32],
+            parent: [2; 32],
+            txids: vec![[4; 32]],
+        }];
+        let forks = vec![ForkRecord {
+            txid: [5; 32],
+            height: 10,
+            block: [6; 32],
+        }];
+        {
+            let source = RollingWindow::open(dir.path(), [1; 32], 1).unwrap();
+            source.persist([9; 32], &blocks, &forks).unwrap();
+        }
+        let bytes = std::fs::read(dir.path().join("source.bin")).unwrap();
+        assert_eq!(&bytes[..8], b"STSOBS01");
+        let mut legacy = b"STSOBS01".to_vec();
+        legacy.extend_from_slice(&1u32.to_le_bytes());
+        legacy.extend_from_slice(&[1; 32]);
+        legacy.extend_from_slice(&[9; 32]);
+        legacy.extend_from_slice(&1u32.to_le_bytes());
+        legacy.extend_from_slice(&10u32.to_le_bytes());
+        legacy.extend_from_slice(&[3; 32]);
+        legacy.extend_from_slice(&[2; 32]);
+        legacy.extend_from_slice(&1u32.to_le_bytes());
+        legacy.extend_from_slice(&[4; 32]);
+        legacy.extend_from_slice(&1u32.to_le_bytes());
+        legacy.extend_from_slice(&[5; 32]);
+        legacy.extend_from_slice(&10u32.to_le_bytes());
+        legacy.extend_from_slice(&[6; 32]);
+        assert_eq!(bytes, legacy);
+        let recovered = RollingWindow::open(dir.path(), [1; 32], 1).unwrap();
+        assert!(recovered.blocks == blocks);
+        assert_eq!(recovered.forks, forks);
+        recovered.persist([9; 32], &blocks, &forks).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("source.bin")).unwrap(), bytes);
+    }
     #[tokio::test]
     async fn canonical_observation_indexes_every_transaction_type() {
         let (client, job) = fixture(false, false).await;
@@ -545,9 +584,8 @@ mod tests {
             parent: [0; 32],
             txids: vec![[8; 32]],
         });
-        window.forks.push(Record {
+        window.forks.push(ForkRecord {
             txid: [8; 32],
-            tag: 3,
             height: 1,
             block: [7; 32],
         });

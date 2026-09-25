@@ -611,7 +611,7 @@ async fn probe(config: ProbeConfig) -> Result<(), AnyError> {
     println!(
         "{}",
         json!({"phase":"load","offered":queries,"unstarted":unstarted,"correct":latencies.len(),"errors":errors,
-        "seconds":seconds,"correct_qps":latencies.len() as f64/seconds,"p50_ms":pct(0.5),"p95_ms":pct(0.95),"p99_ms":p99,"includes_material_refresh":true,"source":"synthetic_fixture","production_qualified":false})
+        "seconds":seconds,"correct_qps":latencies.len() as f64/seconds,"p50_ms":pct(0.5),"p95_ms":pct(0.95),"p99_ms":p99,"includes_material_refresh":true,"source":"synthetic_fixture","protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false})
     );
     require(
         latencies.len() == queries,
@@ -1277,7 +1277,7 @@ async fn main() -> Result<(), AnyError> {
             }
             println!(
                 "{}",
-                json!({"phase":"validation_complete","passed":true,"cuda":cuda,"wallet_changes":false,"incremental_granularity":"bounded coefficient deltas, dense-unit fallback; unchanged packing block reuse","production_qualified":false})
+                json!({"phase":"validation_complete","passed":true,"cuda":cuda,"wallet_changes":false,"incremental_granularity":"bounded coefficient deltas, dense-unit fallback; unchanged packing block reuse","protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false})
             );
         }
     }
@@ -1508,7 +1508,7 @@ async fn validate_distributed(
     println!(
         "{}",
         json!({"phase":"distributed_validation","passed":true,"processes":3,"cuda":cuda,
-        "entries":entries,"cases":["mined","mempool","forked","not_found","remote_fence"],"production_qualified":false})
+        "entries":entries,"cases":["mined","mempool","forked","not_found","remote_fence"],"protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false})
     );
     Ok(())
 }
@@ -1647,7 +1647,7 @@ async fn live_load(
         .copied();
     let result = json!({"phase":"load","source":"live","oracle_source":"independent","oracle_coverage":"canonical_mined",
         "seconds":seconds,"qps":20,"offered":offered,"correct":latencies.len(),"failed":failed,"unstarted":unstarted,
-        "p99_ms":p99,"run_started_ms":started_ms,"run_ended_ms":status::now_ms(),"production_qualified":false});
+        "p99_ms":p99,"run_started_ms":started_ms,"run_ended_ms":status::now_ms(),"protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false});
     writeln!(summary, "{result}")?;
     summary.sync_all()?;
     println!("{result}");

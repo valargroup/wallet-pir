@@ -1,0 +1,9 @@
+{
+  "as_of_completed_ms": 1790349722128,
+  "recorded_arrivals": 6578,
+  "correct": 6564,
+  "failed": 14,
+  "run_complete": false,
+  "availability_gate_already_failed": true,
+  "production_qualified": false
+}

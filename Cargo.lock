@@ -5277,7 +5277,7 @@ dependencies = [
 [[package]]
 name = "zakura-pir-status"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=b13b59aa204b6ac063af189169a56ac2e3cdcfee#b13b59aa204b6ac063af189169a56ac2e3cdcfee"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=e153ad393ac4bfb12ac1e06a57a31f631fb9ce3e#e153ad393ac4bfb12ac1e06a57a31f631fb9ce3e"
 dependencies = [
  "hex",
  "ipir-sp",

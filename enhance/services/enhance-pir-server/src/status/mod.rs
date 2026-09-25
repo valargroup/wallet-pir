@@ -38,8 +38,12 @@ pub fn now_ms() -> u64 {
 pub fn profile() -> &'static ProductionSimplePirParams {
     static P: OnceLock<ProductionSimplePirParams> = OnceLock::new();
     P.get_or_init(|| {
-        ProductionSimplePirParams::new(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
-            .expect("fixed status profile")
+        let p = ProductionSimplePirParams::new(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .expect("fixed status profile");
+        assert_eq!(p.ypir().db_cols, 6144);
+        assert_eq!(p.ypir().db_cols * 2, ROW_BYTES);
+        assert_eq!(ROWS * ROW_BYTES, 96 * 1024 * 1024);
+        p
     })
 }
 
@@ -387,7 +391,7 @@ impl Generation {
         let p = profile();
         let keys_len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
         if bytes.len() != HEADER_BYTES + keys_len + ROWS * 48 / 8
-            || &bytes[..4] != b"SPQ1"
+            || &bytes[..4] != b"SPQ2"
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
@@ -532,7 +536,7 @@ impl Controller {
             .ok_or(StatusCode::CONFLICT)
     }
     fn for_body(&self, body: &[u8]) -> Result<Arc<Generation>, StatusCode> {
-        if body.len() < HEADER_BYTES || &body[..4] != b"SPQ1" {
+        if body.len() < HEADER_BYTES || &body[..4] != b"SPQ2" {
             return Err(StatusCode::BAD_REQUEST);
         }
         self.resolve(body[4..36].try_into().unwrap())

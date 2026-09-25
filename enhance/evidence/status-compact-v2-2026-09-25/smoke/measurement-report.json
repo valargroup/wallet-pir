@@ -1,0 +1,22 @@
+{
+  "protocol_and_geometry_passed": true,
+  "six_hour_schedule_passed": false,
+  "arrival_coverage_passed": true,
+  "availability_passed": false,
+  "successful_request_p99_ms": 927.523997,
+  "successful_request_p99_passed": true,
+  "counts": {
+    "correct": 1185,
+    "error": 5,
+    "unstarted": 10
+  },
+  "production_qualified": false,
+  "remaining_evidence": [
+    "complete independent publication and supersession oracle",
+    "joint resource evidence from both hosts",
+    "shared coordinator cutover and restricted HTTPS rehearsal",
+    "live APM integration and independent protocol review"
+  ],
+  "run_started_ms": 1790349106734,
+  "run_ended_ms": 1790349166829
+}

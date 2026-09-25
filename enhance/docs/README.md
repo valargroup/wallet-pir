@@ -20,3 +20,8 @@ and [APM rollout](status_apm_rollout.md).
 It is not integrated with wallets or live chain ingestion.
 
 The transparent script-history product has its own [documentation](../../transparent/docs/README.md).
+
+Status now uses the incompatible compact `status-pir-v2-q48` contract: 40-byte
+slots, 6,144 u16 columns and a 96 MiB database, with unchanged 20-second freshness
+and 1,572,864-entry ceiling. Source block hashes stay internal; replies are status
+observations, not inclusion proofs. V1 evidence is historical and cannot qualify v2.

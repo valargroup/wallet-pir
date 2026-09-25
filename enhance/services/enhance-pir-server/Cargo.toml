@@ -49,7 +49,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
 
 [dev-dependencies]
-zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "b13b59aa204b6ac063af189169a56ac2e3cdcfee" }
+zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "e153ad393ac4bfb12ac1e06a57a31f631fb9ce3e" }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.5" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

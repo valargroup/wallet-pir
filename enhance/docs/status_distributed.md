@@ -87,9 +87,9 @@ does not qualify dense block bursts or the 75% occupancy ceiling.
 
 ## Compatibility and qualification
 
-The server and wallet use `status-pir-v1-q48`, a 20,000-ms maximum age, and
+The server and wallet use `status-pir-v2-q48`, a 20,000-ms maximum age, and
 ipir-sp rc.5 at `c5075a4059dadedf63d14e9009711338d202a022`. Wallet-library commit
-`b13b59aa204b6ac063af189169a56ac2e3cdcfee` carries the matching contract. Vizor's
+`e153ad393ac4bfb12ac1e06a57a31f631fb9ce3e` carries the matching contract. Vizor's
 wallet-library pins must move together to avoid distinct Rust types from two
 copies of the Status crate. Its release-ready feature gate remains disabled.
 
@@ -112,3 +112,14 @@ or `VIZOR_STATUS_PIR_RELEASE_READY` are enabled.
 
 Rollback stops private Status admission and preserves its latest durable
 journals. Never restore an older authority directory to match an older binary.
+
+## Compact v2 qualification boundary
+
+The `status-pir-v2-q48` contract uses 40-byte slots, 12,288-byte padded rows,
+6,144 u16 columns and a 96 MiB database. Setup, bucket and manifest domains
+use `status-pir/v2/`; request envelopes use `SPQ2`. The HTTP route prefix
+remains `/v1/status/`, but v1 manifests and material are incompatible.
+The 1,572,864-entry admission ceiling and 20-second freshness limit are unchanged.
+Block hashes remain internal source/publication metadata, not wallet-visible
+inclusion evidence. All retained v1 timing/resource captures are historical and
+protocol-incompatible; they cannot qualify v2.

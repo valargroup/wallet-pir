@@ -1,5 +1,8 @@
 # Status PIR SSH deployment and live-source trial — 2026-09-25
 
+> Historical v1 evidence: protocol-incompatible with compact `status-pir-v2-q48`.
+> Raw captures are retained unchanged and cannot satisfy the v2 release gates.
+
 The isolated Status service on `status-pir-p4000-ams1` was updated directly over
 SSH. The prior binary (`91de3c9a2e7ef178163e7ca593ab7a5187c6820681a9b0523c8414bef302e871`)
 was preserved as `/opt/status-pir/status-pir.pre-580e4c88`. The first candidate

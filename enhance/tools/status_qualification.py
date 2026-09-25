@@ -29,6 +29,11 @@ def records(path: Path):
 
 def assess(summary, requests, publications, resources):
     failures = []
+    expected_geometry = {"protocol": "status-pir-v2-q48", "rows": 8192,
+                         "slots": 256, "slot_bytes": 40, "columns": 6144,
+                         "row_bytes": 12288, "database_bytes": 100663296}
+    if any(summary.get(key) != value for key, value in expected_geometry.items()):
+        failures.append("capture does not identify the compact v2 protocol and geometry")
     if summary.get("source") != "live" or summary.get("oracle_source") != "independent":
         failures.append("live source and independent answer oracle are required")
     start = summary.get("run_started_ms")

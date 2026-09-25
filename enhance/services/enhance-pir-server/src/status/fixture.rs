@@ -1,5 +1,5 @@
 //! Deterministic synthetic source for isolated backend qualification. Not chain ingestion.
-use super::index::{Block, Snapshot};
+use super::index::{Block, ForkRecord, Snapshot};
 use enhance_pir::status::*;
 use sha2::{Digest, Sha256};
 pub const NETWORK: Hash = [0x31; 32];
@@ -15,7 +15,7 @@ pub fn txid(i: u64) -> Hash {
 pub fn block_hash(height: u32) -> Hash {
     Sha256::digest(height.to_le_bytes()).into()
 }
-pub fn source(entries: usize, advanced: bool) -> (Vec<Block>, Vec<Hash>, Vec<Record>) {
+pub fn source(entries: usize, advanced: bool) -> (Vec<Block>, Vec<Hash>, Vec<ForkRecord>) {
     let mined = entries.saturating_sub(2);
     let mut blocks = (0..BLOCKS)
         .map(|i| Block {
@@ -31,9 +31,8 @@ pub fn source(entries: usize, advanced: bool) -> (Vec<Block>, Vec<Hash>, Vec<Rec
             .push(txid(i as u64));
     }
     let pending = txid(u64::MAX - 1);
-    let forks = vec![Record {
+    let forks = vec![ForkRecord {
         txid: txid(u64::MAX - 2),
-        tag: 3,
         height: START + BLOCKS as u32 - 1,
         block: [0x54; 32],
     }];

@@ -10,6 +10,9 @@ class QualificationTests(unittest.TestCase):
         qualification.QPS = 2
         self.summary = {
             "phase": "load",
+            "protocol": "status-pir-v2-q48", "rows": 8192, "slots": 256,
+            "slot_bytes": 40, "columns": 6144, "row_bytes": 12288,
+            "database_bytes": 100663296,
             "source": "live",
             "oracle_source": "independent",
             "seconds": 2,
@@ -42,6 +45,14 @@ class QualificationTests(unittest.TestCase):
         return qualification.assess(
             self.summary, self.requests, self.publications, self.resources
         )
+
+    def test_old_or_missing_geometry_blocks(self):
+        for key in ("protocol", "rows", "slots", "slot_bytes", "columns", "row_bytes", "database_bytes"):
+            original = self.summary.pop(key)
+            self.assertFalse(self.assess()["passed"])
+            self.summary[key] = "status-pir-v1-q48" if key == "protocol" else original * 2
+            self.assertFalse(self.assess()["passed"])
+            self.summary[key] = original
 
     def test_complete_live_capture_passes(self):
         self.assertTrue(self.assess()["passed"])
