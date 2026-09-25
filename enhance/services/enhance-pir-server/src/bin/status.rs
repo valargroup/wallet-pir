@@ -223,6 +223,35 @@ fn generation(
     Ok((generation, snapshot))
 }
 
+// Fixture shutdown must close accepted keepalive connections, not only its listener.
+struct FixtureServer {
+    shutdown: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl FixtureServer {
+    fn spawn(listener: TcpListener, routes: axum::Router) -> Self {
+        let (shutdown, receive) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, routes)
+                .with_graceful_shutdown(async {
+                    let _ = receive.await;
+                })
+                .await
+                .unwrap();
+        });
+        Self { shutdown, task }
+    }
+    async fn stop(self) -> Result<(), AnyError> {
+        let _ = self.shutdown.send(());
+        tokio::time::timeout(Duration::from_secs(5), self.task).await??;
+        Ok(())
+    }
+    fn abort(self) {
+        let _ = self.shutdown.send(());
+        self.task.abort();
+    }
+}
+
 async fn listeners(
     controller: &Controller,
     state_dir: PathBuf,
@@ -231,7 +260,7 @@ async fn listeners(
     router: SocketAddr,
     monitoring: SocketAddr,
     live: bool,
-) -> Result<(String, Vec<tokio::task::JoinHandle<()>>), AnyError> {
+) -> Result<(String, Vec<FixtureServer>), AnyError> {
     require(
         listen.ip().is_loopback()
             && worker.ip().is_loopback()
@@ -271,18 +300,10 @@ async fn listeners(
     let worker_routes = controller.worker_routes();
     let router_routes = controller.router_routes(format!("http://{waddr}"));
     let jobs = vec![
-        tokio::spawn(async move {
-            axum::serve(w, worker_routes).await.unwrap();
-        }),
-        tokio::spawn(async move {
-            axum::serve(r, router_routes).await.unwrap();
-        }),
-        tokio::spawn(async move {
-            axum::serve(c, routes).await.unwrap();
-        }),
-        tokio::spawn(async move {
-            axum::serve(m, status::telemetry::routes()).await.unwrap();
-        }),
+        FixtureServer::spawn(w, worker_routes),
+        FixtureServer::spawn(r, router_routes),
+        FixtureServer::spawn(c, routes),
+        FixtureServer::spawn(m, status::telemetry::routes()),
     ];
     println!(
         "{}",
@@ -1132,7 +1153,7 @@ async fn main() -> Result<(), AnyError> {
             let controller = Controller::new(g);
             controller.reaffirm_fixture(snapshot.digest)?;
             let zero = "127.0.0.1:0".parse()?;
-            let (origin, jobs) =
+            let (origin, mut jobs) =
                 listeners(&controller, state_dir, zero, zero, zero, zero, false).await?;
             check_cases(&http, &origin, &controller, entries, false).await?;
             let previous = controller.current();
@@ -1219,8 +1240,7 @@ async fn main() -> Result<(), AnyError> {
             let failure_client = connect(&http, &origin, true).await?;
             let failure_query =
                 failure_client.prepare(&fixture::txid(u64::MAX - 1), None, status::now_ms())?;
-            jobs[0].abort();
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            jobs.remove(0).stop().await?;
             let failed = http
                 .post(format!("{origin}/v1/status/query"))
                 .body(failure_query.body)
@@ -1557,6 +1577,8 @@ async fn live_load(
         ))
         .await;
         let scheduled_ms = started_ms + arrival * 50;
+        let deadline =
+            tokio::time::Instant::from_std(began + Duration::from_millis(arrival * 50 + 5_000));
         match permits.clone().try_acquire_owned() {
             Err(_) => {
                 unstarted += 1;
@@ -1570,12 +1592,17 @@ async fn live_load(
                 let (http, rpc, origin, cache) =
                     (http.clone(), rpc.clone(), origin.clone(), cache.clone());
                 jobs.spawn(async move {
-                    let _permit = permit;
+                    // Blocking wallet work keeps the admission permit even if the
+                    // async deadline expires, bounding outstanding CPU jobs too.
+                    let permit = Arc::new(permit);
                     let start = Instant::now();
-                    let result = tokio::time::timeout(Duration::from_secs(5), async {
+                    let started_ms = status::now_ms();
+                    let mut stage_completions = Vec::new();
+                    let result = tokio::time::timeout_at(deadline, async {
                         for retry in 0..2 {
                             let manifest: Manifest = http.get(format!("{origin}/v1/status/init")).send().await?.error_for_status()?.json().await?;
                             manifest.fresh(status::now_ms())?;
+                            stage_completions.push(json!({"stage":"init","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
                             let hash: zakura_chain::block::Hash = rpc.block_hash(u64::from(manifest.anchor_height)).await?.parse()?;
                             require(manifest.network == network.0 && manifest.anchor_hash == hash.0, "oracle anchor mismatch")?;
                             let txid = {
@@ -1589,15 +1616,30 @@ async fn live_load(
                                     txid
                                 }
                             };
+                            stage_completions.push(json!({"stage":"oracle","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
                             let public = http.get(format!("{origin}/v1/status/session/{}", hex::encode(manifest.id()))).send().await?;
                             if retry == 0 && matches!(public.status().as_u16(), 409 | 410) { continue; }
                             let public = public.error_for_status()?.bytes().await?;
-                            let client = Client::new(manifest.clone(), &public, &AcceptedAnchor { network: network.0, height: manifest.anchor_height, hash: hash.0 })?;
-                            let query = client.prepare(&txid, Some(manifest.anchor_height), status::now_ms())?;
+                            stage_completions.push(json!({"stage":"session","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
+                            let job_manifest = manifest.clone();
+                            let cpu_permit = permit.clone();
+                            let (client, query) = tokio::task::spawn_blocking(move || {
+                                let _permit = cpu_permit;
+                                let client = Client::new(job_manifest.clone(), &public, &AcceptedAnchor { network: network.0, height: job_manifest.anchor_height, hash: hash.0 })?;
+                                let query = client.prepare(&txid, Some(job_manifest.anchor_height), status::now_ms())?;
+                                Ok::<_, AnyError>((client, query))
+                            }).await??;
+                            stage_completions.push(json!({"stage":"prepare","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
                             let response = http.post(format!("{origin}/v1/status/query")).body(query.body.clone()).send().await?;
                             if retry == 0 && matches!(response.status().as_u16(), 409 | 410) { continue; }
                             let bytes = response.error_for_status()?.bytes().await?;
-                            let observed = client.decode(query, &bytes, status::now_ms())?;
+                            stage_completions.push(json!({"stage":"query","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
+                            let cpu_permit = permit.clone();
+                            let observed = tokio::task::spawn_blocking(move || {
+                                let _permit = cpu_permit;
+                                client.decode(query, &bytes, status::now_ms())
+                            }).await??;
+                            stage_completions.push(json!({"stage":"decode","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
                             require(observed == Observation::Mined(manifest.anchor_height), "independent mined oracle mismatch")?;
                             return Ok::<_, AnyError>((manifest.generation, status::now_ms().saturating_sub(manifest.observed_ms)));
                         }
@@ -1608,9 +1650,11 @@ async fn live_load(
                         Ok(Err(e)) => (None, None, Some(e.to_string())),
                         Err(_) => (None, None, Some("overall lookup timeout".into())),
                     };
-                    let ms = start.elapsed().as_secs_f64() * 1000.;
-                    (ms, error.is_none(), json!({"arrival":arrival,"scheduled_ms":scheduled_ms,"completed_ms":status::now_ms(),
-                        "duration_ms":ms,"generation":generation,"observation_age_ms":age,"result":if error.is_none() {"correct"} else {"error"},"error":error}))
+                    let service_ms = start.elapsed().as_secs_f64() * 1000.;
+                    let completed_ms = status::now_ms();
+                    let ms = completed_ms.saturating_sub(scheduled_ms) as f64;
+                    (ms, error.is_none(), json!({"arrival":arrival,"scheduled_ms":scheduled_ms,"started_ms":started_ms,"completed_ms":completed_ms,
+                        "latency_basis":"scheduled_to_completed","start_lag_ms":started_ms.saturating_sub(scheduled_ms),"service_ms":service_ms,"stage_completions":stage_completions,"duration_ms":ms,"generation":generation,"observation_age_ms":age,"result":if error.is_none() {"correct"} else {"error"},"error":error}))
                 });
             }
         }
@@ -1645,7 +1689,7 @@ async fn live_load(
     let p99 = latencies
         .get((latencies.len() as f64 * 0.99).ceil().max(1.) as usize - 1)
         .copied();
-    let result = json!({"phase":"load","source":"live","oracle_source":"independent","oracle_coverage":"canonical_mined",
+    let result = json!({"phase":"load","source":"live","oracle_source":"independent","oracle_coverage":"canonical_mined","latency_basis":"scheduled_to_completed",
         "seconds":seconds,"qps":20,"offered":offered,"correct":latencies.len(),"failed":failed,"unstarted":unstarted,
         "p99_ms":p99,"run_started_ms":started_ms,"run_ended_ms":status::now_ms(),"protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false});
     writeln!(summary, "{result}")?;

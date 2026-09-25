@@ -1,0 +1,12 @@
+{
+  "completed": false,
+  "reason": "superseded_by_contention_and_admission_rollout",
+  "stopped_ms": 1790351407294,
+  "recorded_arrivals": 40275,
+  "results": {
+    "correct": 37393,
+    "error": 810,
+    "unstarted": 2072
+  },
+  "production_qualified": false
+}

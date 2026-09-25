@@ -1,0 +1,28 @@
+# TYPE status_pir_requests_total counter
+# TYPE status_pir_request_duration_seconds_bucket counter
+status_pir_admission_active{role="worker"} 0
+status_pir_admission_waiting{role="worker"} 0
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.005"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.01"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.025"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.05"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.075"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.1"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.2"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="0.5"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="1"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="2"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="5"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="wait",le="+Inf"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.005"} 982
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.01"} 1009
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.025"} 1016
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.05"} 1021
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.075"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.1"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.2"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="0.5"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="1"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="2"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="5"} 1024
+status_pir_admission_duration_seconds_bucket{role="worker",phase="permit_hold",le="+Inf"} 1024

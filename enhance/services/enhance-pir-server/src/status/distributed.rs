@@ -82,11 +82,34 @@ pub struct Service {
     _lock: Arc<File>,
     state: Arc<Mutex<StateData>>,
     preparation: Arc<Mutex<()>>,
+    // Query packing stays on the global pool; preparation cannot enqueue there.
+    preparation_pool: Option<Arc<rayon::ThreadPool>>,
     http: reqwest::Client,
+    serving_http: reqwest::Client,
     artifact_origin: String,
     worker_origin: String,
     cuda: bool,
-    permits: Arc<Semaphore>,
+    permits: Arc<super::admission::Admission>,
+}
+
+fn router_preparation_pool() -> Result<rayon::ThreadPool, Failure> {
+    let threads = std::env::var("STATUS_PREPARATION_THREADS")
+        .ok()
+        .map(|v| v.parse::<usize>())
+        .transpose()?
+        .unwrap_or(1);
+    build_router_preparation_pool(threads)
+}
+fn build_router_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Failure> {
+    // Independent of RAYON_NUM_THREADS, the online query CPU budget. Explicitly
+    // bounded to prevent accidental CPU oversubscription from deployment config.
+    if !(1..=4).contains(&threads) {
+        return Err("STATUS_PREPARATION_THREADS must be between 1 and 4".into());
+    }
+    Ok(rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("status-prepare-{i}"))
+        .build()?)
 }
 
 pub fn loopback_origin(origin: &str) -> Result<(), Failure> {
@@ -172,6 +195,12 @@ impl Service {
                 poisoned: false,
             })),
             preparation: Arc::new(Mutex::new(())),
+            preparation_pool: if role == Role::Router {
+                Some(Arc::new(router_preparation_pool()?))
+            } else {
+                None
+            },
+            serving_http: serving_http_client()?,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .redirect(reqwest::redirect::Policy::none())
@@ -179,7 +208,7 @@ impl Service {
             artifact_origin,
             worker_origin,
             cuda,
-            permits: Arc::new(Semaphore::new(4)),
+            permits: Arc::new(super::admission::Admission::production()),
         })
     }
     fn binding(&self, state: &StateData) -> Binding {
@@ -197,13 +226,22 @@ impl Service {
     }
     async fn serving(&self) -> Result<Controller, StatusCode> {
         let state = self.state.lock().await;
-        if state.poisoned || state.contact.is_none_or(|t| t.elapsed() > WATCHDOG) {
+        let role = match self.role {
+            Role::Worker => "worker",
+            Role::Router => "router",
+        };
+        if state.poisoned {
+            telemetry::admission_rejected(role, "poisoned");
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-        state
-            .controller
-            .clone()
-            .ok_or(StatusCode::SERVICE_UNAVAILABLE)
+        if state.contact.is_none_or(|t| t.elapsed() > WATCHDOG) {
+            telemetry::admission_rejected(role, "watchdog_expired");
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        state.controller.clone().ok_or_else(|| {
+            telemetry::admission_rejected(role, "no_controller");
+            StatusCode::SERVICE_UNAVAILABLE
+        })
     }
     pub fn routes(&self) -> Router {
         Router::new()
@@ -219,6 +257,7 @@ impl Service {
             .route("/v1/status/query", post(router_query))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
+            .merge(telemetry::routes())
     }
     pub async fn serve(self, listen: SocketAddr) -> Result<(), Failure> {
         if !listen.ip().is_loopback() {
@@ -337,10 +376,14 @@ async fn prepare(
     let manifest = p.manifest.clone();
     let role = s.role;
     let cuda = s.cuda;
+    let preparation_pool = s.preparation_pool.clone();
     let g = tokio::task::spawn_blocking(move || match role {
-        Role::Router => {
-            Generation::prepare_router_with_previous(manifest, &bytes, previous.as_deref())
-        }
+        Role::Router => preparation_pool
+            .as_ref()
+            .ok_or(Error::Unavailable)?
+            .install(|| {
+                Generation::prepare_router_with_previous(manifest, &bytes, previous.as_deref())
+            }),
         Role::Worker => {
             let base = if bytes.len() < ROWS * ROW_BYTES {
                 previous.as_ref().map(|g| {
@@ -571,8 +614,12 @@ async fn worker_query(State(s): State<Service>, body: Bytes) -> Result<Vec<u8>, 
         return Err(StatusCode::NOT_FOUND);
     }
     let c = s.serving().await?;
-    let mut http_state = HttpState::new(c, String::new());
-    http_state.permits = s.permits.clone();
+    let http_state = HttpState {
+        controller: c,
+        origin: String::new(),
+        http: s.serving_http.clone(),
+        permits: s.permits.clone(),
+    };
     let result = evaluate(State(http_state), body).await?;
     s.serving().await?;
     Ok(result)
@@ -582,8 +629,12 @@ async fn router_query(State(s): State<Service>, body: Bytes) -> Result<Vec<u8>, 
         return Err(StatusCode::NOT_FOUND);
     }
     let c = s.serving().await?;
-    let mut http_state = HttpState::new(c, s.worker_origin.clone());
-    http_state.permits = s.permits.clone();
+    let http_state = HttpState {
+        controller: c,
+        origin: s.worker_origin.clone(),
+        http: s.serving_http.clone(),
+        permits: s.permits.clone(),
+    };
     let result = query(State(http_state), body).await?;
     s.serving().await?;
     Ok(result)
@@ -792,5 +843,28 @@ mod tests {
             s.serving().await.unwrap().current().manifest.observed_ms,
             a.manifest.observed_ms
         );
+    }
+    #[test]
+    fn router_preparation_rejects_unbounded_threads() {
+        assert!(build_router_preparation_pool(0).is_err());
+        assert!(build_router_preparation_pool(5).is_err());
+    }
+
+    #[test]
+    fn router_preparation_uses_its_own_bounded_pool() {
+        let pool = build_router_preparation_pool(2).unwrap();
+        pool.install(|| {
+            assert_eq!(rayon::current_num_threads(), 2);
+            (0..16).into_par_iter().for_each(|_| {
+                assert!(std::thread::current()
+                    .name()
+                    .unwrap()
+                    .starts_with("status-prepare-"));
+            });
+        });
+        assert!(!std::thread::current()
+            .name()
+            .unwrap_or("")
+            .starts_with("status-prepare-"));
     }
 }

@@ -1,0 +1,11 @@
+{
+  "requests": 12738,
+  "errors": 28,
+  "router_preparation_error_overlap": 17,
+  "worker_preparation_error_overlap": 0,
+  "preparation_overlap_tolerance_ms": 100,
+  "window_ms": 636959,
+  "router_preparation_ms": 147688.0,
+  "router_preparation_fraction": 0.2318642173201101,
+  "source_request_log": "/var/lib/status-pir-controller/compact-v2-soak/requests.jsonl"
+}

@@ -36,6 +36,8 @@ def assess(summary, requests, publications, resources):
         failures.append("capture does not identify the compact v2 protocol and geometry")
     if summary.get("source") != "live" or summary.get("oracle_source") != "independent":
         failures.append("live source and independent answer oracle are required")
+    if summary.get("latency_basis") != "scheduled_to_completed":
+        failures.append("latency must include scheduled-to-start delay")
     start = summary.get("run_started_ms")
     end = summary.get("run_ended_ms")
     if (
@@ -78,7 +80,11 @@ def assess(summary, requests, publications, resources):
         if not isinstance(age, (int, float)) or not math.isfinite(age) or not 0 <= age <= FRESHNESS_MS:
             failures.append("a response used a missing, future, or stale observation")
             break
-        latencies.append(duration)
+        elapsed = completed - scheduled
+        if abs(duration - elapsed) > 2:
+            failures.append("reported duration disagrees with scheduled-to-completed latency")
+            break
+        latencies.append(elapsed)
     if len(seen) != summary.get("offered") or seen != set(range(len(seen))):
         failures.append("per-arrival evidence does not cover the offered workload")
     p99 = None

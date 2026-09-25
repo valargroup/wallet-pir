@@ -1,0 +1,28 @@
+# TYPE status_pir_requests_total counter
+# TYPE status_pir_request_duration_seconds_bucket counter
+status_pir_admission_active{role="coordinator"} 0
+status_pir_admission_waiting{role="coordinator"} 0
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.005"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.01"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.025"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.05"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.075"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.1"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.2"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="0.5"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="1"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="2"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="5"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="wait",le="+Inf"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.005"} 0
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.01"} 0
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.025"} 0
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.05"} 0
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.075"} 1
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.1"} 21
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.2"} 598
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="0.5"} 753
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="1"} 839
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="2"} 1034
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="5"} 1038
+status_pir_admission_duration_seconds_bucket{role="coordinator",phase="permit_hold",le="+Inf"} 1038

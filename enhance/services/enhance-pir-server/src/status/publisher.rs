@@ -18,6 +18,9 @@ pub struct Config {
     pub window_blocks: u32,
     pub worker_origin: String,
     pub router_origin: String,
+    /// Optional independently tunneled query path; control remains on router_origin.
+    #[serde(default)]
+    pub query_router_origin: Option<String>,
     pub private_listen: SocketAddr,
     #[serde(default)]
     pub public_enabled: bool,
@@ -30,14 +33,18 @@ pub struct Publisher {
     controller: Arc<RwLock<Option<Controller>>>,
     artifact: SharedArtifact,
     last_rows: SharedArtifact,
-    permits: Arc<Semaphore>,
+    permits: Arc<admission::Admission>,
     healthy: Arc<AtomicBool>,
     http: reqwest::Client,
+    serving_http: reqwest::Client,
 }
 impl Publisher {
     pub fn new(config: Config) -> Result<Self, Failure> {
         loopback_origin(&config.worker_origin)?;
         loopback_origin(&config.router_origin)?;
+        if let Some(origin) = &config.query_router_origin {
+            loopback_origin(origin)?;
+        }
         if !config.private_listen.ip().is_loopback() || config.window_blocks == 0 {
             return Err("invalid private Status configuration".into());
         }
@@ -52,8 +59,9 @@ impl Publisher {
             controller: Arc::new(RwLock::new(None)),
             artifact: Arc::new(RwLock::new(None)),
             last_rows: Arc::new(RwLock::new(None)),
-            permits: Arc::new(Semaphore::new(16)),
+            permits: Arc::new(admission::Admission::coordinator()),
             healthy: Arc::new(AtomicBool::new(false)),
+            serving_http: serving_http_client()?,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .redirect(reqwest::redirect::Policy::none())
@@ -70,17 +78,24 @@ impl Publisher {
     }
     fn http_state(&self) -> Result<HttpState, StatusCode> {
         if !self.healthy.load(Ordering::SeqCst) {
+            telemetry::admission_rejected("coordinator", "publisher_unhealthy");
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-        let c = self
-            .controller
-            .read()
-            .unwrap()
-            .clone()
-            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-        let mut state = HttpState::new(c, self.config.router_origin.clone());
-        state.permits = self.permits.clone();
-        Ok(state)
+        let c = self.controller.read().unwrap().clone().ok_or_else(|| {
+            telemetry::admission_rejected("coordinator", "no_controller");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+        Ok(HttpState {
+            controller: c,
+            origin: self
+                .config
+                .query_router_origin
+                .as_ref()
+                .unwrap_or(&self.config.router_origin)
+                .clone(),
+            http: self.serving_http.clone(),
+            permits: self.permits.clone(),
+        })
     }
     fn stop(&self) {
         self.healthy.store(false, Ordering::SeqCst);
@@ -355,7 +370,7 @@ impl Publisher {
         Ok(expected)
     }
     async fn run(&self, rpc: ZakuraClient) -> Result<(), Failure> {
-        let private = self.routes().merge(
+        let private = self.routes().merge(telemetry::routes()).merge(
             Router::new()
                 .route("/artifact/:id", get(artifact))
                 .with_state(self.clone()),
@@ -582,4 +597,33 @@ async fn artifact(
 async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, Failure> {
     let hash: zakura_chain::block::Hash = rpc.block_hash(u64::from(height)).await?.parse()?;
     Ok(hash.0)
+}
+
+#[cfg(test)]
+mod query_transport_tests {
+    use super::*;
+    fn config() -> Config {
+        serde_json::from_value(serde_json::json!({
+            "state_dir":"/unused", "salt_hex":hex::encode([1u8;32]), "window_blocks":1,
+            "worker_origin":"http://127.0.0.1:8481", "router_origin":"http://127.0.0.1:8482",
+            "private_listen":"127.0.0.1:8480"
+        }))
+        .unwrap()
+    }
+    #[test]
+    fn optional_query_transport_is_loopback_only() {
+        let mut c = config();
+        assert!(c.query_router_origin.is_none());
+        assert!(Publisher::new(c.clone()).is_ok());
+        c.query_router_origin = Some("http://127.0.0.1:8483".into());
+        assert!(Publisher::new(c.clone()).is_ok());
+        for bad in [
+            "http://example.com",
+            "http://user:pass@127.0.0.1:8483",
+            "http://127.0.0.1:8483/path",
+        ] {
+            c.query_router_origin = Some(bad.into());
+            assert!(Publisher::new(c.clone()).is_err());
+        }
+    }
 }

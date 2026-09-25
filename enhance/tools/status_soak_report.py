@@ -26,7 +26,7 @@ def report(directory):
         identities.add(row['arrival'])
         counts[row['result']] += 1
         if row['result'] == 'correct':
-            latencies.append(row['duration_ms'])
+            latencies.append(row['completed_ms'] - row['scheduled_ms'])
     latencies.sort()
     p99 = latencies[math.ceil(len(latencies) * .99) - 1] if latencies else None
     covered = identities == set(range(summary['offered']))
@@ -37,6 +37,7 @@ def report(directory):
         'arrival_coverage_passed': covered,
         'availability_passed': covered and counts['correct'] == summary['offered']
             and counts['error'] == 0 and counts['unstarted'] == 0,
+        'latency_basis': 'scheduled_to_completed',
         'successful_request_p99_ms': p99,
         'successful_request_p99_passed': p99 is not None and p99 <= 1000,
         'counts': counts,

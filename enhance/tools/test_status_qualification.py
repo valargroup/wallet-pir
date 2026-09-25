@@ -10,6 +10,7 @@ class QualificationTests(unittest.TestCase):
         qualification.QPS = 2
         self.summary = {
             "phase": "load",
+            "latency_basis": "scheduled_to_completed",
             "protocol": "status-pir-v2-q48", "rows": 8192, "slots": 256,
             "slot_bytes": 40, "columns": 6144, "row_bytes": 12288,
             "database_bytes": 100663296,
@@ -54,6 +55,14 @@ class QualificationTests(unittest.TestCase):
             self.assertFalse(self.assess()["passed"])
             self.summary[key] = original
 
+    def test_scheduling_delay_cannot_be_hidden(self):
+        self.requests[0]["completed_ms"] += 300
+        self.assertFalse(self.assess()["passed"])
+        self.requests[0]["duration_ms"] += 300
+        self.assertTrue(self.assess()["passed"])
+        del self.summary["latency_basis"]
+        self.assertFalse(self.assess()["passed"])
+
     def test_complete_live_capture_passes(self):
         self.assertTrue(self.assess()["passed"])
 
@@ -97,6 +106,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_p99_and_resource_pressure_block(self):
         self.requests[0]["duration_ms"] = 1_001
+        self.requests[0]["completed_ms"] = self.requests[0]["scheduled_ms"] + 1_001
         self.resources[0]["oom_events"] = 1
         result = self.assess()
         self.assertFalse(result["passed"])
