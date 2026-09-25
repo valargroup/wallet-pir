@@ -4,6 +4,9 @@ version = "0.0.1"
 edition = "2021"
 publish = false
 
+[features]
+native-reinspiring = ["enhance-pir/native-reinspiring"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
