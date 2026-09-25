@@ -1946,8 +1946,8 @@ dependencies = [
 
 [[package]]
 name = "inspiring"
-version = "0.1.0-rc.1"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=8168d158442ad6defac9ba0f5ff2d294b99e2ecd#8168d158442ad6defac9ba0f5ff2d294b99e2ecd"
+version = "0.1.0-rc.2"
+source = "git+https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.5#674116d0ba303fb1a382f34fd6232f68f04a4b8e"
 dependencies = [
  "bytemuck",
  "memmap2",
@@ -1959,8 +1959,8 @@ dependencies = [
 
 [[package]]
 name = "ipir-sp"
-version = "0.1.0-rc.3"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=8168d158442ad6defac9ba0f5ff2d294b99e2ecd#8168d158442ad6defac9ba0f5ff2d294b99e2ecd"
+version = "0.1.0-rc.5"
+source = "git+https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.5#674116d0ba303fb1a382f34fd6232f68f04a4b8e"
 dependencies = [
  "clap",
  "env_logger",
@@ -3056,8 +3056,8 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reinspiring"
-version = "0.1.0"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=8168d158442ad6defac9ba0f5ff2d294b99e2ecd#8168d158442ad6defac9ba0f5ff2d294b99e2ecd"
+version = "0.1.1"
+source = "git+https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.5#674116d0ba303fb1a382f34fd6232f68f04a4b8e"
 dependencies = [
  "bytemuck",
  "inspiring",
@@ -3544,8 +3544,8 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "simplepir-kernel"
-version = "0.1.0-rc.2"
-source = "git+https://github.com/valargroup/ipir-sp.git?rev=8168d158442ad6defac9ba0f5ff2d294b99e2ecd#8168d158442ad6defac9ba0f5ff2d294b99e2ecd"
+version = "0.1.0-rc.3"
+source = "git+https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.5#674116d0ba303fb1a382f34fd6232f68f04a4b8e"
 dependencies = [
  "cudarc",
  "inspiring",

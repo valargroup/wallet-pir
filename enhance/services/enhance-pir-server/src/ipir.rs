@@ -284,6 +284,8 @@ impl ShardRuntime {
     }
 
     pub fn evaluate(&self, rlwe: &RlweParams, query: &[u64]) -> Result<Vec<u64>, InspiringError> {
+        #[cfg(feature = "native-reinspiring")]
+        let _ = rlwe;
         let shard_rows = self.server.params().db_rows;
         if query.len() != shard_rows {
             return Err(InspiringError::LweShape(format!(

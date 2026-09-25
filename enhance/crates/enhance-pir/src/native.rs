@@ -30,7 +30,7 @@ pub fn query_masks(shard: u64) -> Vec<Vec<u64>> {
     .to_vec()
 }
 pub fn prepare(shard: u64, rows: usize, target: usize) -> Result<(NativeSecret, Vec<u8>), String> {
-    if target >= rows || rows > 32768 || rows % D != 0 {
+    if target >= rows || rows > 32768 || !rows.is_multiple_of(D) {
         return Err("native query shape".into());
     }
     let mut entropy = [0; 32];
@@ -54,7 +54,8 @@ pub fn prepare(shard: u64, rows: usize, target: usize) -> Result<(NativeSecret, 
     Ok((secret, bytes))
 }
 pub fn parse(bytes: &[u8], rows: usize) -> Result<(NativeKeys, Vec<u64>), String> {
-    if rows > 32768 || rows % D != 0 || bytes.len() != KEY_BYTES + (rows * 49).div_ceil(8) {
+    if rows > 32768 || !rows.is_multiple_of(D) || bytes.len() != KEY_BYTES + (rows * 49).div_ceil(8)
+    {
         return Err("native query framing".into());
     }
     let keys = NativeKeys::from_words(

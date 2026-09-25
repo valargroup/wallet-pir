@@ -1,10 +1,16 @@
 //! Enhance PIR client. Shard selection is public; row and record-slot selection stay local.
 use crate::protocol::*;
-use crate::{EnhanceRecord, ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES};
+#[cfg(not(feature = "native-reinspiring"))]
+use crate::ITEM_SIZE_BITS;
+use crate::{EnhanceRecord, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES};
 use base64::{engine::general_purpose::STANDARD, Engine};
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::serialize::serialize_packing_keys;
-use ipir_sp::{IPIRClient, IPIRSeed, YpirSchemeParams};
+use ipir_sp::YpirSchemeParams;
+#[cfg(not(feature = "native-reinspiring"))]
+use ipir_sp::{IPIRClient, IPIRSeed};
 use rand::{rngs::OsRng, Rng};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -233,11 +239,11 @@ impl QuerySession {
             binding.request_id = OsRng.gen();
             let mut body = binding.encode();
             body.extend(payload);
-            return Ok(PreparedQuery {
+            Ok(PreparedQuery {
                 binding,
                 secret,
                 body,
-            });
+            })
         }
         #[cfg(not(feature = "native-reinspiring"))]
         {

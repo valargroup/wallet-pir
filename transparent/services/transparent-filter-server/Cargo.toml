@@ -46,7 +46,7 @@ path = "src/bin/script-sample.rs"
 [dependencies]
 transparent-blocks = { path = "../../crates/transparent-blocks" }
 tempfile = "3"
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", rev = "8168d158442ad6defac9ba0f5ff2d294b99e2ecd" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.5" }
 axum = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive"] }

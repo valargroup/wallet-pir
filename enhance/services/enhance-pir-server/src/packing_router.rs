@@ -980,6 +980,69 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
     task.await?
 }
 
+async fn download_prepared(
+    router: &PackingRouter,
+    artifact: &crate::prepared_packing::Artifact,
+    path: &Path,
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let temporary = path.with_extension("part");
+    let result = async {
+        let mut response = router
+            .http
+            .get(format!(
+                "{}/internal/prepared-packing-artifact/{}",
+                router.origin, artifact.name
+            ))
+            .timeout(Duration::from_secs(600))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+        if response
+            .content_length()
+            .is_some_and(|n| n != artifact.bytes)
+        {
+            return Err("prepared artifact length mismatch".into());
+        }
+        let mut file = tokio::fs::File::create(&temporary)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut bytes = 0u64;
+        let mut hash = Sha256::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            bytes = bytes
+                .checked_add(chunk.len() as u64)
+                .ok_or("artifact length overflow")?;
+            if bytes > artifact.bytes {
+                return Err("prepared artifact exceeds bound".into());
+            }
+            hash.update(&chunk);
+            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        }
+        if bytes != artifact.bytes || hex::encode(hash.finalize()) != artifact.sha256 {
+            return Err("prepared artifact checksum/length mismatch".into());
+        }
+        file.sync_all().await.map_err(|e| e.to_string())?;
+        let file = file.into_std().await;
+        crate::artifact::release_file_cache(&file);
+        drop(file);
+        tokio::fs::rename(&temporary, path)
+            .await
+            .map_err(|e| e.to_string())?;
+        File::open(path.parent().unwrap())
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temporary).await;
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1102,67 +1165,4 @@ mod tests {
         assert!(r.response_allowed(&"bb".repeat(32), 1).is_err());
         assert!(r.inner.lock().unwrap().fence.revocation.sessions.is_empty());
     }
-}
-
-async fn download_prepared(
-    router: &PackingRouter,
-    artifact: &crate::prepared_packing::Artifact,
-    path: &Path,
-) -> Result<(), String> {
-    use tokio::io::AsyncWriteExt;
-    let temporary = path.with_extension("part");
-    let result = async {
-        let mut response = router
-            .http
-            .get(format!(
-                "{}/internal/prepared-packing-artifact/{}",
-                router.origin, artifact.name
-            ))
-            .timeout(Duration::from_secs(600))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?;
-        if response
-            .content_length()
-            .is_some_and(|n| n != artifact.bytes)
-        {
-            return Err("prepared artifact length mismatch".into());
-        }
-        let mut file = tokio::fs::File::create(&temporary)
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut bytes = 0u64;
-        let mut hash = Sha256::new();
-        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-            bytes = bytes
-                .checked_add(chunk.len() as u64)
-                .ok_or("artifact length overflow")?;
-            if bytes > artifact.bytes {
-                return Err("prepared artifact exceeds bound".into());
-            }
-            hash.update(&chunk);
-            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-        }
-        if bytes != artifact.bytes || hex::encode(hash.finalize()) != artifact.sha256 {
-            return Err("prepared artifact checksum/length mismatch".into());
-        }
-        file.sync_all().await.map_err(|e| e.to_string())?;
-        let file = file.into_std().await;
-        crate::artifact::release_file_cache(&file);
-        drop(file);
-        tokio::fs::rename(&temporary, path)
-            .await
-            .map_err(|e| e.to_string())?;
-        File::open(path.parent().unwrap())
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-    .await;
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&temporary).await;
-    }
-    result
 }

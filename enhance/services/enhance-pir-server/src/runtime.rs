@@ -1,7 +1,9 @@
 //! Unequal-unit PIR execution. Immutable, content-addressed units survive generation changes.
+#[cfg(not(feature = "native-reinspiring"))]
+use crate::ipir::deserialize_first_dim_query;
 use crate::ipir::{
-    add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
-    CachedShard, PreparedShard, ShardRuntime,
+    add_crs_blocks_assign_mod, add_intermediate_assign_mod, CachedShard, PreparedShard,
+    ShardRuntime,
 };
 use crate::types::{DatabaseId, DatabaseLayout, ENHANCE_LAYOUT};
 use crate::wire::read_crs_blocks;
@@ -9,11 +11,17 @@ use crate::{ipir::LoadError, matvec::MatvecConfig};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use enhance_pir::protocol::*;
 use enhance_pir::types::{ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES};
-use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
+use inspiring::RlweParams;
+#[cfg(not(feature = "native-reinspiring"))]
+use inspiring::{QueryPackPreprocessed, TopKeyImages};
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::serialize::{deserialize_packing_keys, serialized_packing_keys_len};
+use ipir_sp::server::CrsBlock;
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::server::{
-    build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows, CrsBlock,
+    build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows,
 };
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::YpirSchemeParams;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
