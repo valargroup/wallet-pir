@@ -30,6 +30,9 @@ enum Command {
     ProbeLiveLoad {
         #[arg(long)]
         origin: String,
+        /// Send encrypted queries directly here; initialization still uses origin.
+        #[arg(long)]
+        query_origin: Option<String>,
         #[arg(long, default_value = "http://127.0.0.1:8232")]
         rpc_url: String,
         #[arg(long)]
@@ -947,12 +950,14 @@ async fn main() -> Result<(), AnyError> {
     match Args::parse().command {
         Command::ProbeLiveLoad {
             origin,
+            query_origin,
             rpc_url,
             cookie,
             seconds,
             report_dir,
         } => {
             live_load(
+                query_origin.unwrap_or_else(|| origin.clone()),
                 origin,
                 ZakuraClient::from_cookie_file(rpc_url, cookie)?,
                 seconds,
@@ -1534,6 +1539,7 @@ async fn validate_distributed(
 }
 
 async fn live_load(
+    query_origin: String,
     origin: String,
     rpc: ZakuraClient,
     seconds: u64,
@@ -1589,8 +1595,13 @@ async fn live_load(
                 )?;
             }
             Ok(permit) => {
-                let (http, rpc, origin, cache) =
-                    (http.clone(), rpc.clone(), origin.clone(), cache.clone());
+                let (http, rpc, origin, query_origin, cache) = (
+                    http.clone(),
+                    rpc.clone(),
+                    origin.clone(),
+                    query_origin.clone(),
+                    cache.clone(),
+                );
                 jobs.spawn(async move {
                     // Blocking wallet work keeps the admission permit even if the
                     // async deadline expires, bounding outstanding CPU jobs too.
@@ -1630,7 +1641,7 @@ async fn live_load(
                                 Ok::<_, AnyError>((client, query))
                             }).await??;
                             stage_completions.push(json!({"stage":"prepare","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
-                            let response = http.post(format!("{origin}/v1/status/query")).body(query.body.clone()).send().await?;
+                            let response = http.post(format!("{query_origin}/v1/status/query")).body(query.body.clone()).send().await?;
                             if retry == 0 && matches!(response.status().as_u16(), 409 | 410) { continue; }
                             let bytes = response.error_for_status()?.bytes().await?;
                             stage_completions.push(json!({"stage":"query","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
@@ -1691,7 +1702,7 @@ async fn live_load(
         .copied();
     let result = json!({"phase":"load","source":"live","oracle_source":"independent","oracle_coverage":"canonical_mined","latency_basis":"scheduled_to_completed",
         "seconds":seconds,"qps":20,"offered":offered,"correct":latencies.len(),"failed":failed,"unstarted":unstarted,
-        "p99_ms":p99,"run_started_ms":started_ms,"run_ended_ms":status::now_ms(),"protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false});
+        "query_path":if query_origin == origin {"same_origin"} else {"separate_query_origin"},"p99_ms":p99,"run_started_ms":started_ms,"run_ended_ms":status::now_ms(),"protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false});
     writeln!(summary, "{result}")?;
     summary.sync_all()?;
     println!("{result}");

@@ -1,0 +1,14 @@
+{
+  "started_at": "2026-09-25T16:51:41.806768+00:00",
+  "planned_seconds": 21600,
+  "offered_qps": 20,
+  "planned_arrivals": 432000,
+  "unit": "status-router-steady-load",
+  "binary_sha256": "6da0f61bf6f5a2947178291e78346ac3a3a332daaa8bc687eb9fbc645a91f151",
+  "report_dir": "/var/lib/status-pir-controller/router-steady-20260925T165141Z",
+  "query_origin": "http://127.0.0.1:8492",
+  "initialization_origin": "http://127.0.0.1:8480",
+  "path": "load client -> dedicated SSH tunnel -> router -> worker; no coordinator query forwarding",
+  "public_status_enabled": false,
+  "production_qualified": false
+}
