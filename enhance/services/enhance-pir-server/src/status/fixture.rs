@@ -54,10 +54,12 @@ pub fn snapshot(entries: usize, advanced: bool) -> Result<Snapshot, Error> {
     Snapshot::build(NETWORK, SALT, &blocks, &mempool, &forks)
 }
 pub fn cases(entries: usize, advanced: bool) -> Vec<(Hash, Observation)> {
+    let mined = entries.saturating_sub(2);
+    let last_mined_height = START + (((mined - 1) * BLOCKS / mined) as u32);
     vec![
         (
             txid((entries - 3) as u64),
-            Observation::Mined(START + BLOCKS as u32 - 1),
+            Observation::Mined(last_mined_height),
         ),
         (
             txid(u64::MAX - 1),
@@ -90,4 +92,39 @@ pub fn case_at(
         txid(i as u64),
         Observation::Mined(START + (i * BLOCKS / mined) as u32),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_fixture_oracle_uses_the_actual_mined_height() {
+        let snapshot = snapshot(4, false).unwrap();
+        let (txid, expected) = cases(4, false)[0];
+        let row = bucket(&snapshot.network, &snapshot.salt, &txid);
+        let manifest = Manifest {
+            protocol: PROTOCOL.into(),
+            network: snapshot.network,
+            salt: snapshot.salt,
+            generation: 1,
+            recovery_epoch: 0,
+            coverage_start: snapshot.start,
+            anchor_height: snapshot.height,
+            anchor_hash: snapshot.anchor,
+            observed_ms: 1,
+            entries: snapshot.entries,
+            rows_digest: snapshot.digest,
+            public_digest: [0; 32],
+        };
+        assert_eq!(
+            decode_row(
+                &manifest,
+                &txid,
+                Some(snapshot.height),
+                &snapshot.rows[row * ROW_BYTES..(row + 1) * ROW_BYTES],
+            ),
+            Ok(expected),
+        );
+    }
 }

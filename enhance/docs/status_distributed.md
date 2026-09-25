@@ -1,0 +1,114 @@
+# Distributed live Status qualification
+
+Public Status remains disabled. This implementation adds a live publication path
+and independent serving roles; it does not establish production qualification.
+
+## Deployment
+
+The coordinator integration is `enhance-pir-server coordinator --status-config
+<file>`. Omission disables Status. Its Status controller runs on a dedicated,
+bounded Tokio runtime with its own journal and source cache. It uses the
+coordinator-local Zakura cookie; the P4000 never receives that credential.
+
+The initial SSH rollout runs the same controller through `status-pir
+serve-distributed` in `status-controller-qualification.service` on the coordinator
+host. This isolates qualification from the existing Enhance process. Switching
+the deployed Enhance executable to the integrated entry point remains a separate
+cutover gate: the deployed native Enhance binary has an older upstream revision,
+so its serving compatibility must be checked before replacement.
+
+| Endpoint | Owner | Reachability |
+| --- | --- | --- |
+| Coordinator `127.0.0.1:8480` | Private Status routes and immutable candidate transfer | Coordinator loopback |
+| P4000 `127.0.0.1:8481` | CUDA worker and private control | Loopback; coordinator SSH forward |
+| P4000 `127.0.0.1:8482` | CPU packing router and private control | Loopback; coordinator SSH forward |
+| P4000 `127.0.0.1:8495` | Reverse forward to coordinator artifacts | P4000 loopback |
+
+`status-control-tunnel.service` uses a dedicated forwarding-only account, pinned
+host key, and explicit permitted destinations/listen address. Its service key is
+stored in the production `/status-pir/control` folder of the `spendability-pir
+deploy` Infisical project as `STATUS_CONTROL_SSH_PRIVATE_KEY`. The installed copy
+is root-only under `/etc/status-pir-control/`. It is separate from the APM key.
+The service-unit templates are under `enhance/ops/deploy/` and substitute a
+checksummed release directory and the canonical network genesis hash.
+
+The existing synthetic `status-pir.service` and monitoring deployment remain
+separate from this qualification topology. APM's synthetic pane is not evidence
+that the private live topology is ready.
+
+## Publication and recovery
+
+Control binds network, recovery epoch, generation, process incarnation and
+material digests. Roles start unready. The coordinator persists its epoch,
+obtains role fence acknowledgments, prepares worker and router material, persists
+the serving decision, activates both roles, then advertises the manifest. A
+failed activation causes a new epoch before further publication.
+
+The worker owns database units and hint construction; the router owns packing
+material and public material. Requests pin immutable generations. Active and
+previous sessions are bounded; an older session returns 409, while an explicit
+recovery fence revokes already-pinned controllers and returns 410 where an old
+identity remains known. Unready roles return 503. The wallet permits one bounded
+reinitialization retry with fresh encryption; it never switches to plaintext
+lookup or payload retrieval.
+
+Five-second control watchdogs stop admission without changing source timestamps.
+The coordinator checks canonical anchors before publication and during control
+heartbeats. Reorg or heartbeat failure removes local admission. Restart never
+uses cached material as serving authority. Durable files use exclusive locks,
+fsync and atomic rename. Ambiguous persistence failure poisons the role.
+
+Live observation and preparation run independently with a latest-value pending
+snapshot. Complete identical observations may reaffirm existing material after
+five seconds. Changed snapshots retain their original observation timestamp;
+preparation cannot extend freshness. Superseded mempool snapshots must remain
+visible in qualification evidence, as specified in `status_qualification.md`.
+
+## Preparation and transfer
+
+- Private transfers use either canonical full rows or ordered changed-row
+  records bound to a base digest. The receiver bounds length and indices and
+  verifies the reconstructed full digest before preparing material.
+- At most 4,096 changed plaintext coefficients per polynomial unit use the
+  linear update `H' = H + A * (D' - D)` in `Z_q[X]/(X^d+1)`. Wraparound changes
+  sign. Larger updates use upstream full NTT reconstruction. Candidate GPU data
+  is separately allocated; active data is never modified.
+- Sparse arithmetic is checked against full reconstruction, including positive
+  and negative deltas at first/last row and coefficient boundaries.
+- Failed preparation may retain one calculation cache. Its content digest can
+  seed a subsequent delta, but it cannot authorize queries or restore readiness.
+- Router preparation reuses immutable upstream public key images and exact
+  precomputation for unchanged, content-hashed hint blocks. Public PIR
+  geometry, q48 arithmetic, setup domain and encrypted response format remain
+  unchanged.
+
+These optimizations require joint hardware measurement. Passing a sparse update
+does not qualify dense block bursts or the 75% occupancy ceiling.
+
+## Compatibility and qualification
+
+The server and wallet use `status-pir-v1-q48`, a 20,000-ms maximum age, and
+ipir-sp rc.5 at `c5075a4059dadedf63d14e9009711338d202a022`. Wallet-library commit
+`b13b59aa204b6ac063af189169a56ac2e3cdcfee` carries the matching contract. Vizor's
+wallet-library pins must move together to avoid distinct Rust types from two
+copies of the Status crate. Its release-ready feature gate remains disabled.
+
+`status-pir validate-distributed --cuda --entries 1572864 --state-dir <fresh-dir>`
+starts real worker/router child processes and verifies encrypted fixture answers
+and remote fencing. It does not use a live source.
+
+`status-pir probe-live-load --origin http://127.0.0.1:8480 --cookie
+/root/.cache/zakura/.cookie --seconds 60 --report-dir <new-dir>` offers 20 complete
+lookups per second, including initialization and bounded session retries. It
+checks mined answers against canonical node blocks and writes arrival evidence.
+This is a live mined-answer smoke campaign, not a complete publication oracle or
+six-hour qualification. It intentionally reports `production_qualified: false`.
+
+Production also requires a complete six-hour publication/resource capture,
+explicit supersession evidence, independent block/mempool publication checks,
+the qualified update envelope, fault recovery tests, protocol review, and a
+restricted HTTPS ingress rehearsal. Those gates must pass before public routes
+or `VIZOR_STATUS_PIR_RELEASE_READY` are enabled.
+
+Rollback stops private Status admission and preserves its latest durable
+journals. Never restore an older authority directory to match an older binary.

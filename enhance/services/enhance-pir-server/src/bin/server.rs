@@ -93,6 +93,9 @@ enum Command {
         requests: usize,
     },
     Coordinator {
+        /// Independently scheduled live Status controller; omitted disables Status.
+        #[arg(long)]
+        status_config: Option<PathBuf>,
         /// Private packing-router inventory; omitted retains legacy query serving.
         #[arg(long)]
         packing_router_config: Option<PathBuf>,
@@ -315,6 +318,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )?;
         }
         Command::Coordinator {
+            status_config,
             packing_router_config,
             query_ingress,
             pool_placement,
@@ -398,13 +402,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 });
             }
-            let serving = coordinator.clone();
-            let task = tokio::spawn(async move {
-                axum::serve(
-                    tokio::net::TcpListener::bind(listen).await?,
-                    serving.router(),
+            let status_publisher = status_config
+                .map(
+                    |path| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                        if isolated_fixture {
+                            return Err("live Status cannot use isolated Enhance fixtures".into());
+                        }
+                        let config: enhance_pir_server::status::publisher::Config =
+                            serde_json::from_slice(&std::fs::read(path)?)?;
+                        let enabled = config.public_enabled;
+                        let publisher =
+                            enhance_pir_server::status::publisher::Publisher::new(config)?;
+                        let cookie = zakura_cookie
+                            .as_ref()
+                            .ok_or("Status requires canonical node authentication")?;
+                        publisher
+                            .start(ZakuraClient::from_cookie_file(&zakura_rpc_url, cookie)?)?;
+                        Ok((publisher, enabled))
+                    },
                 )
-                .await
+                .transpose()?;
+            let serving = coordinator.clone();
+            let mut routes = serving.router();
+            if let Some((publisher, true)) = status_publisher {
+                routes = routes.merge(publisher.routes());
+            }
+            let task = tokio::spawn(async move {
+                axum::serve(tokio::net::TcpListener::bind(listen).await?, routes).await
             });
             let mut journal = EnhanceJournal::open(&data_dir)?;
             let rpc = zakura_cookie

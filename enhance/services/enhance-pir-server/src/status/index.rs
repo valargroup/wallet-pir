@@ -3,7 +3,7 @@ use enhance_pir::status::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Block {
     pub height: u32,
     pub hash: Hash,

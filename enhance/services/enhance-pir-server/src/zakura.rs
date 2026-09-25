@@ -156,6 +156,50 @@ impl ZakuraClient {
         })
     }
 
+    /// Read every transaction type for the Status index and verify the raw
+    /// block against the node's canonical hash at this height.
+    pub async fn status_block(
+        &self,
+        height: u64,
+    ) -> Result<crate::status::index::Block, ZakuraError> {
+        let raw_hex: String = self
+            .call("getblock", json!([height.to_string(), 0]))
+            .await?;
+        let raw = hex::decode(raw_hex)?;
+        let block = Block::zcash_deserialize(raw.as_slice())
+            .map_err(|error| ZakuraError::Block(error.to_string()))?;
+        let hash = block.hash();
+        let canonical: zakura_chain::block::Hash = self
+            .block_hash(height)
+            .await?
+            .parse()
+            .map_err(|error| ZakuraError::Block(format!("invalid canonical hash: {error}")))?;
+        if hash != canonical {
+            return Err(ZakuraError::Block("raw block is not canonical".into()));
+        }
+        Ok(crate::status::index::Block {
+            height: u32::try_from(height)
+                .map_err(|_| ZakuraError::Block("height exceeds Status encoding".into()))?,
+            hash: hash.0,
+            parent: block.header.previous_block_hash.0,
+            txids: block.transactions.iter().map(|tx| tx.hash().0).collect(),
+        })
+    }
+
+    /// RPC display-order txids are parsed into protocol byte order before
+    /// hashing into Status buckets.
+    pub async fn status_mempool(&self) -> Result<Vec<[u8; 32]>, ZakuraError> {
+        let displayed: Vec<String> = self.call("getrawmempool", json!([false])).await?;
+        displayed
+            .into_iter()
+            .map(|id| {
+                id.parse::<zakura_chain::transaction::Hash>()
+                    .map(|hash| hash.0)
+                    .map_err(|error| ZakuraError::Block(format!("invalid mempool txid: {error}")))
+            })
+            .collect()
+    }
+
     async fn call<T: DeserializeOwned>(
         &self,
         method: &str,

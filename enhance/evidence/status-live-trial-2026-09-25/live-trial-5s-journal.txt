@@ -1,0 +1,11 @@
+Started status-pir-live-trial-7375041e.service - /root/status-pir-live-trial-7375041e serve-live --rpc-url http://127.0.0.1:8232 --cookie /root/.cache/zakura/.cookie --salt-hex 0101010101010101010101010101010101010101010101010101010101010101 --window-blocks 64 --listen 127.0.0.1:8480 --worker 127.0.0.1:8481 --router 127.0.0.1:8482 --monitoring 127.0.0.1:8483 --state-dir /root/status-pir-live-trial-580e4c88.
+{"anchor_height":3495774,"generation":212,"phase":"live_initial_publication","preparation":{"database_hint_ms":2645.9065640000003,"packing_ms":2156.7164199999997,"rebuilt_units":4,"reused_units":0,"total_ms":4802.623267999999,"unit_rows":2048},"queryable_ms":1790343498952,"recovery_epoch":4,"source_observed_ms":1790343498369,"source_unchanged":true}
+{"coordinator":"127.0.0.1:8480","phase":"listening","router":"127.0.0.1:8482","single_process":true,"source":"live canonical RPC","worker":"127.0.0.1:8481"}
+{"generation":213,"phase":"live_prepared","source_unchanged":false,"stats":{"database_hint_ms":1219.287531,"packing_ms":2119.69567,"rebuilt_units":1,"reused_units":3,"total_ms":3338.983493,"unit_rows":2048}}
+{"generation":213,"phase":"live_publication","queryable_ms":1790343505469,"recovery_epoch":4,"source_observed_ms":1790343500956}
+{"generation":214,"phase":"live_prepared","source_unchanged":false,"stats":{"database_hint_ms":1789.2523,"packing_ms":2279.994667,"rebuilt_units":2,"reused_units":2,"total_ms":4069.2472820000003,"unit_rows":2048}}
+{"generation":214,"phase":"live_publication","queryable_ms":1790343510732,"recovery_epoch":4,"source_observed_ms":1790343505471}
+{"generation":215,"phase":"live_prepared","source_unchanged":false,"stats":{"database_hint_ms":2322.2982220000004,"packing_ms":2077.471837,"rebuilt_units":4,"reused_units":0,"total_ms":4399.770329,"unit_rows":2048}}
+{"generation":215,"phase":"live_publication","queryable_ms":1790343516455,"recovery_epoch":4,"source_observed_ms":1790343510734}
+{"generation":216,"phase":"live_prepared","source_unchanged":true,"stats":{"database_hint_ms":1361.809064,"packing_ms":1838.001372,"rebuilt_units":1,"reused_units":3,"total_ms":3199.81068,"unit_rows":2048}}
+{"generation":216,"phase":"live_publication","queryable_ms":1790343520973,"recovery_epoch":4,"source_observed_ms":1790343520380}

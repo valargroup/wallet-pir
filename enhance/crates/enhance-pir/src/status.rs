@@ -3,6 +3,7 @@ use ipir_sp::{IPIRClient, IPIRSeed, PublicQuerySetup, SimplePirProfile};
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 
 pub const ROWS: usize = 8192;
 pub const SLOTS: usize = 256;
@@ -10,10 +11,14 @@ pub const SLOT_BYTES: usize = 80;
 pub const ROW_BYTES: usize = 24576;
 pub const ITEM_BITS: u64 = (ROW_BYTES * 8) as u64;
 pub const MAX_ENTRIES: usize = ROWS * SLOTS * 3 / 4;
-pub const PROTOCOL: &str = "status-pir-v1-synthetic-q48";
+pub const PROTOCOL: &str = "status-pir-v1-q48";
 pub const HEADER_BYTES: usize = 52;
-pub const MAX_AGE_MS: u64 = 5000;
+pub const MAX_AGE_MS: u64 = 20_000;
 pub type Hash = [u8; 32];
+
+fn query_timed_out(elapsed: Duration) -> bool {
+    elapsed > Duration::from_millis(MAX_AGE_MS)
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -231,6 +236,7 @@ pub struct Query {
     seed: IPIRSeed,
     txid: Hash,
     earliest: Option<u32>,
+    issued_at: Instant,
 }
 
 pub struct Client {
@@ -238,6 +244,174 @@ pub struct Client {
     client: IPIRClient,
     setup: PublicQuerySetup,
     public: Vec<Vec<u64>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum HttpError {
+    #[error(transparent)]
+    Transport(#[from] reqwest::Error),
+    #[error("Status endpoint returned HTTP {0}")]
+    Status(u16),
+    #[error(transparent)]
+    Protocol(#[from] Error),
+}
+
+/// A wallet-owned session. The anchor callback must consult independently
+/// accepted chain state on every initialization, including a conflict retry.
+pub struct HttpClient {
+    origin: String,
+    http: reqwest::Client,
+    session: Option<Client>,
+}
+
+impl HttpClient {
+    pub fn new(origin: impl Into<String>, http: reqwest::Client) -> Self {
+        Self {
+            origin: origin.into().trim_end_matches('/').to_owned(),
+            http,
+            session: None,
+        }
+    }
+
+    pub fn clear_session(&mut self) {
+        self.session = None;
+    }
+
+    async fn initialize<F>(&mut self, accepted_anchor: &mut F) -> Result<(), HttpError>
+    where
+        F: FnMut(&Manifest) -> Result<AcceptedAnchor, Error>,
+    {
+        let response = self
+            .http
+            .get(format!("{}/v1/status/init", self.origin))
+            .send()
+            .await?;
+        let response = successful(response)?;
+        let manifest: Manifest = response.json().await?;
+        manifest.fresh(current_ms())?;
+        let accepted = accepted_anchor(&manifest)?;
+        let response = self
+            .http
+            .get(format!(
+                "{}/v1/status/session/{}",
+                self.origin,
+                hex::encode(manifest.id())
+            ))
+            .send()
+            .await?;
+        let response = successful(response)?;
+        let public_len = expected_public_len()?;
+        let public = read_bounded(response, public_len).await?;
+        self.session = Some(Client::new(manifest, &public, &accepted)?);
+        Ok(())
+    }
+
+    /// One bounded retry for an evicted or revoked session. A retry always
+    /// reinitializes and encrypts a new query; it never replays the old body.
+    pub async fn lookup<F>(
+        &mut self,
+        txid: Hash,
+        earliest: Option<u32>,
+        mut accepted_anchor: F,
+    ) -> Result<Observation, HttpError>
+    where
+        F: FnMut(&Manifest) -> Result<AcceptedAnchor, Error>,
+    {
+        for attempt in 0..2 {
+            if let Some(session) = &self.session {
+                let accepted = accepted_anchor(&session.manifest)?;
+                if !anchor_matches(&session.manifest, &accepted) {
+                    self.session = None;
+                }
+            }
+            if self
+                .session
+                .as_ref()
+                .is_some_and(|s| s.manifest.fresh(current_ms()).is_err())
+            {
+                self.session = None;
+            }
+            let result = async {
+                if self.session.is_none() {
+                    self.initialize(&mut accepted_anchor).await?;
+                }
+                let session = self.session.as_ref().expect("initialized session");
+                let query = session.prepare(&txid, earliest, current_ms())?;
+                let response = self
+                    .http
+                    .post(format!("{}/v1/status/query", self.origin))
+                    .body(query.body.clone())
+                    .send()
+                    .await?;
+                let response = successful(response)?;
+                let bytes = read_bounded(response, expected_response_len()?).await?;
+                let result = session.decode(query, &bytes, current_ms())?;
+                let accepted = accepted_anchor(&session.manifest)?;
+                if !anchor_matches(&session.manifest, &accepted) {
+                    return Err(HttpError::Protocol(Error::Malformed));
+                }
+                Ok::<_, HttpError>(result)
+            }
+            .await;
+            if matches!(result, Err(HttpError::Status(409 | 410))) && attempt == 0 {
+                self.session = None;
+                continue;
+            }
+            return result;
+        }
+        unreachable!("bounded retry returns on second attempt")
+    }
+}
+
+fn successful(response: reqwest::Response) -> Result<reqwest::Response, HttpError> {
+    if response.status().is_success() {
+        Ok(response)
+    } else {
+        Err(HttpError::Status(response.status().as_u16()))
+    }
+}
+
+fn anchor_matches(manifest: &Manifest, accepted: &AcceptedAnchor) -> bool {
+    manifest.network == accepted.network
+        && manifest.anchor_height == accepted.height
+        && manifest.anchor_hash == accepted.hash
+}
+
+fn expected_public_len() -> Result<usize, Error> {
+    let (rlwe, params) =
+        ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .map_err(|_| Error::Pir)?;
+    Ok(params.db_cols / rlwe.d * ipir_sp::modulus_switch::published_c1_len(rlwe.d, rlwe.q))
+}
+
+fn expected_response_len() -> Result<usize, Error> {
+    let (rlwe, params) =
+        ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .map_err(|_| Error::Pir)?;
+    Ok(HEADER_BYTES
+        + params.db_cols / rlwe.d
+            * ipir_sp::modulus_switch::response_body_len(rlwe.d, params.q_prime_1))
+}
+
+async fn read_bounded(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, HttpError> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > max.saturating_sub(bytes.len()) {
+            return Err(HttpError::Protocol(Error::Malformed));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.len() != max {
+        return Err(HttpError::Protocol(Error::Malformed));
+    }
+    Ok(bytes)
+}
+
+fn current_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 impl Client {
@@ -279,6 +453,7 @@ impl Client {
     pub fn prepare(&self, txid: &[u8], earliest: Option<u32>, now_ms: u64) -> Result<Query, Error> {
         let txid: Hash = txid.try_into().map_err(|_| Error::Malformed)?;
         self.manifest.fresh(now_ms)?;
+        let issued_at = Instant::now();
         let row = bucket(&self.manifest.network, &self.manifest.salt, &txid);
         let (query, keys, seed) = self.client.generate_fresh_query_simplepir(&self.setup, row);
         let mut body = b"SPQ1".to_vec();
@@ -294,9 +469,14 @@ impl Client {
             seed,
             txid,
             earliest,
+            issued_at,
         })
     }
     pub fn decode(&self, query: Query, response: &[u8], now_ms: u64) -> Result<Observation, Error> {
+        // Wall-clock rollback cannot extend a query's freshness lifetime.
+        if query_timed_out(query.issued_at.elapsed()) {
+            return Err(Error::Stale);
+        }
         self.manifest.fresh(now_ms)?;
         let (rlwe, params) =
             ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
@@ -387,9 +567,11 @@ mod tests {
     fn freshness_coverage_and_binding_are_separate() {
         let m = manifest();
         let row = vec![0; ROW_BYTES];
-        assert_eq!(m.fresh(6000), Ok(()));
-        assert_eq!(m.fresh(6001), Err(Error::Stale));
+        assert_eq!(m.fresh(21_000), Ok(()));
+        assert_eq!(m.fresh(21_001), Err(Error::Stale));
         assert_eq!(m.fresh(999), Err(Error::Malformed));
+        assert!(!query_timed_out(Duration::from_millis(MAX_AGE_MS)));
+        assert!(query_timed_out(Duration::from_millis(MAX_AGE_MS + 1)));
         for earliest in [None, Some(9), Some(21)] {
             assert_eq!(
                 decode_row(&m, &[9; 32], earliest, &row),

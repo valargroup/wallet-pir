@@ -1,0 +1,23 @@
+[Unit]
+Description=Status PIR CPU packing router (private qualification)
+After=network-online.target status-worker.service
+
+[Service]
+User=paperspace
+Group=paperspace
+ExecStart=@RELEASE@/status-pir role --role router --network-hex @NETWORK@ --listen 127.0.0.1:8482 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router
+Environment=LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64
+Environment=RAYON_NUM_THREADS=4
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=3
+MemoryMax=8G
+MemorySwapMax=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/status-pir-router
+
+[Install]
+WantedBy=multi-user.target

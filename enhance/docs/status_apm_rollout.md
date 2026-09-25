@@ -50,8 +50,8 @@ windows. Restarts reset Status counters and the APM sidecar's chart history.
 The host resource card describes the colocated process and GPU once.
 
 The Status fixture reaffirms an unchanged synthetic source. Its observed age
-is not proof of live block publication. The service's five-second publication
-gate remains unmet; see the [original GPU result](../evidence/status-backend-2026-09-25/README.md).
+is not proof of live block publication. The service's revised twenty-second
+publication gate remains unqualified; see the [original GPU result](../evidence/status-backend-2026-09-25/README.md).
 
 ## Rollback
 

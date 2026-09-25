@@ -1,0 +1,47 @@
+Started status-pir-live-trial-f34721c5.service - /root/status-pir-live-trial-f34721c5 serve-live --rpc-url http://127.0.0.1:8232 --cookie /root/.cache/zakura/.cookie --salt-hex 0101010101010101010101010101010101010101010101010101010101010101 --window-blocks 64 --listen 127.0.0.1:8480 --worker 127.0.0.1:8481 --router 127.0.0.1:8482 --monitoring 127.0.0.1:8483 --state-dir /root/status-pir-live-trial-580e4c88.
+{"anchor_height":3495767,"generation":177,"phase":"live_initial_publication","preparation":{"database_hint_ms":2516.020226,"packing_ms":2776.460258,"rebuilt_units":4,"reused_units":0,"total_ms":5292.480895,"unit_rows":2048},"queryable_ms":1790343091670,"recovery_epoch":3,"source_observed_ms":1790343085163,"source_unchanged":false}
+{"coordinator":"127.0.0.1:8480","phase":"listening","router":"127.0.0.1:8482","single_process":true,"source":"live canonical RPC","worker":"127.0.0.1:8481"}
+{"generation":178,"phase":"live_prepared","source_unchanged":true,"stats":{"database_hint_ms":1259.302267,"packing_ms":1979.8633,"rebuilt_units":1,"reused_units":3,"total_ms":3239.165962,"unit_rows":2048}}
+{"generation":178,"phase":"live_publication","queryable_ms":1790343096129,"recovery_epoch":3,"source_observed_ms":1790343095545}
+{"generation":179,"phase":"live_publication","queryable_ms":1790343096719,"recovery_epoch":3,"source_observed_ms":1790343096130}
+{"generation":180,"phase":"live_publication","queryable_ms":1790343097303,"recovery_epoch":3,"source_observed_ms":1790343096721}
+{"generation":181,"phase":"live_publication","queryable_ms":1790343097888,"recovery_epoch":3,"source_observed_ms":1790343097306}
+{"generation":182,"phase":"live_publication","queryable_ms":1790343098474,"recovery_epoch":3,"source_observed_ms":1790343097891}
+{"generation":183,"phase":"live_publication","queryable_ms":1790343099062,"recovery_epoch":3,"source_observed_ms":1790343098476}
+{"generation":184,"phase":"live_publication","queryable_ms":1790343099648,"recovery_epoch":3,"source_observed_ms":1790343099064}
+{"generation":185,"phase":"live_publication","queryable_ms":1790343100233,"recovery_epoch":3,"source_observed_ms":1790343099650}
+{"generation":186,"phase":"live_publication","queryable_ms":1790343100819,"recovery_epoch":3,"source_observed_ms":1790343100235}
+{"generation":187,"phase":"live_publication","queryable_ms":1790343101407,"recovery_epoch":3,"source_observed_ms":1790343100822}
+{"generation":188,"phase":"live_publication","queryable_ms":1790343102264,"recovery_epoch":3,"source_observed_ms":1790343101675}
+{"generation":189,"phase":"live_publication","queryable_ms":1790343103262,"recovery_epoch":3,"source_observed_ms":1790343102674}
+{"generation":190,"phase":"live_publication","queryable_ms":1790343104258,"recovery_epoch":3,"source_observed_ms":1790343103674}
+{"generation":191,"phase":"live_publication","queryable_ms":1790343105258,"recovery_epoch":3,"source_observed_ms":1790343104674}
+{"generation":192,"phase":"live_prepared","source_unchanged":true,"stats":{"database_hint_ms":1141.211944,"packing_ms":1942.822425,"rebuilt_units":1,"reused_units":3,"total_ms":3084.03482,"unit_rows":2048}}
+{"generation":192,"phase":"live_publication","queryable_ms":1790343109946,"recovery_epoch":3,"source_observed_ms":1790343109348}
+{"generation":193,"phase":"live_publication","queryable_ms":1790343110542,"recovery_epoch":3,"source_observed_ms":1790343109947}
+{"generation":194,"phase":"live_publication","queryable_ms":1790343111130,"recovery_epoch":3,"source_observed_ms":1790343110545}
+{"generation":195,"phase":"live_publication","queryable_ms":1790343111814,"recovery_epoch":3,"source_observed_ms":1790343111142}
+{"generation":196,"phase":"live_publication","queryable_ms":1790343112499,"recovery_epoch":3,"source_observed_ms":1790343111816}
+{"generation":197,"phase":"live_publication","queryable_ms":1790343113094,"recovery_epoch":3,"source_observed_ms":1790343112501}
+{"generation":198,"phase":"live_prepared","source_unchanged":false,"stats":{"database_hint_ms":1150.83536,"packing_ms":1879.951757,"rebuilt_units":1,"reused_units":3,"total_ms":3030.787593,"unit_rows":2048}}
+{"generation":198,"phase":"live_publication","queryable_ms":1790343117307,"recovery_epoch":3,"source_observed_ms":1790343113096}
+{"generation":199,"phase":"live_prepared","source_unchanged":false,"stats":{"database_hint_ms":1255.3785129999999,"packing_ms":2546.433748,"rebuilt_units":1,"reused_units":3,"total_ms":3801.8126800000005,"unit_rows":2048}}
+{"generation":199,"phase":"live_publication","queryable_ms":1790343122381,"recovery_epoch":3,"source_observed_ms":1790343117308}
+{"generation":200,"phase":"live_prepared","source_unchanged":true,"stats":{"database_hint_ms":2587.3375039999996,"packing_ms":1977.341927,"rebuilt_units":4,"reused_units":0,"total_ms":4564.679803999999,"unit_rows":2048}}
+{"generation":200,"phase":"live_publication","queryable_ms":1790343128199,"recovery_epoch":3,"source_observed_ms":1790343127605}
+{"generation":201,"phase":"live_publication","queryable_ms":1790343128794,"recovery_epoch":3,"source_observed_ms":1790343128201}
+{"generation":202,"phase":"live_publication","queryable_ms":1790343129381,"recovery_epoch":3,"source_observed_ms":1790343128796}
+{"generation":203,"phase":"live_publication","queryable_ms":1790343129970,"recovery_epoch":3,"source_observed_ms":1790343129383}
+{"generation":204,"phase":"live_publication","queryable_ms":1790343130560,"recovery_epoch":3,"source_observed_ms":1790343129972}
+{"generation":205,"phase":"live_publication","queryable_ms":1790343131146,"recovery_epoch":3,"source_observed_ms":1790343130562}
+{"generation":206,"phase":"live_prepared","source_unchanged":true,"stats":{"database_hint_ms":1187.882871,"packing_ms":1895.120732,"rebuilt_units":1,"reused_units":3,"total_ms":3083.0041709999996,"unit_rows":2048}}
+{"generation":206,"phase":"live_publication","queryable_ms":1790343135409,"recovery_epoch":3,"source_observed_ms":1790343134823}
+{"generation":207,"phase":"live_publication","queryable_ms":1790343136065,"recovery_epoch":3,"source_observed_ms":1790343135410}
+{"generation":208,"phase":"live_publication","queryable_ms":1790343136850,"recovery_epoch":3,"source_observed_ms":1790343136068}
+{"generation":209,"phase":"live_publication","queryable_ms":1790343137510,"recovery_epoch":3,"source_observed_ms":1790343136853}
+{"generation":210,"phase":"live_publication","queryable_ms":1790343138148,"recovery_epoch":3,"source_observed_ms":1790343137512}
+{"generation":211,"phase":"live_publication","queryable_ms":1790343138800,"recovery_epoch":3,"source_observed_ms":1790343138151}
+Stopping status-pir-live-trial-f34721c5.service - /root/status-pir-live-trial-f34721c5 serve-live --rpc-url http://127.0.0.1:8232 --cookie /root/.cache/zakura/.cookie --salt-hex 0101010101010101010101010101010101010101010101010101010101010101 --window-blocks 64 --listen 127.0.0.1:8480 --worker 127.0.0.1:8481 --router 127.0.0.1:8482 --monitoring 127.0.0.1:8483 --state-dir /root/status-pir-live-trial-580e4c88...
+status-pir-live-trial-f34721c5.service: Deactivated successfully.
+Stopped status-pir-live-trial-f34721c5.service - /root/status-pir-live-trial-f34721c5 serve-live --rpc-url http://127.0.0.1:8232 --cookie /root/.cache/zakura/.cookie --salt-hex 0101010101010101010101010101010101010101010101010101010101010101 --window-blocks 64 --listen 127.0.0.1:8480 --worker 127.0.0.1:8481 --router 127.0.0.1:8482 --monitoring 127.0.0.1:8483 --state-dir /root/status-pir-live-trial-580e4c88.
+status-pir-live-trial-f34721c5.service: Consumed 1min 45.467s CPU time.

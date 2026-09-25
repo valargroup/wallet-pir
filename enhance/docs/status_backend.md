@@ -1,12 +1,16 @@
-# Status PIR synthetic backend
+# Status PIR backend
+
+For the current private live rollout, see [distributed Status qualification](status_distributed.md).
+The sections below retain the isolated fixture baseline. Public Status remains disabled.
 
 This is an isolated backend experiment for the [status architecture](architecture_status.md).
 It adds no external wallet integration and enables no status routes in the
 production server. The `status-pir` binary is a dedicated entry point.
 
 The [September 25 GPU run](../evidence/status-backend-2026-09-25/README.md)
-passed encrypted correctness and a one-minute fixed-source 20-QPS test. The
-five-second publication gate failed; see the measured update costs in that report.
+passed encrypted correctness and a one-minute fixed-source 20-QPS test. Its
+13.8-second one-row preparation fits the revised twenty-second budget in
+isolation; no live source-to-query publication measurement exists yet.
 
 ## Implemented experiment
 
@@ -15,7 +19,8 @@ five-second publication gate failed; see the measured update costs in that repor
   complete-block eviction on global or bucket overflow.
 - Explicit coverage-incomplete errors on misses without a sufficient local bound.
 - Domain-separated q48 queries with fresh randomness and request IDs. The backend
-  protocol name is `status-pir-v1-synthetic-q48`, deliberately distinct from a release.
+  protocol name is now `status-pir-v1-q48`, matching the separately pinned wallet contract.
+  Historical fixture captures used `status-pir-v1-synthetic-q48`.
 - Independent coordinator/ingress, router, and worker HTTP listeners. They run
   in one process for this experiment and share an in-memory publication controller.
   The status routes are merged with an actual Enhance coordinator using isolated
@@ -24,6 +29,9 @@ five-second publication gate failed; see the measured update costs in that repor
   bounded HTTP bodies, fixed admission, and retained observation views.
 - Candidate preparation reuses identical 2,048-row units. Changed units and
   packing material are rebuilt. This measures a baseline, not row-level deltas.
+- Rapid synthetic activations retain only the immediately previous material
+  generation. Older session IDs receive a conflict and require a fresh init and
+  query; already admitted work remains pinned to its original generation.
 
 The source is an explicitly synthetic, deterministic set of complete blocks,
 mempool entries, and fork observations. Synthetic txids and block hashes are
@@ -64,6 +72,54 @@ It also tests worker listener loss and recovery-epoch rejection of old views.
 The unit tests deliberately construct a 257-entry bucket to exercise complete
 block eviction and refusal when mandatory mempool contents alone overflow.
 
+### Live-source observation and isolated serving
+
+`status-pir observe-live` reads a bounded canonical block interval and one
+complete mempool snapshot from the configured Zakura RPC. It checks every raw
+block against the canonical hash at its height, checks that the tip is unchanged
+at the end, and builds a Status index covering all transaction types. It prints
+aggregate collection/index facts without txids or transaction contents. With
+`--samples N`, it caches the canonical window across observations, reports
+changed-row counts, and retains observed disconnected blocks as fork records.
+It does not publish or serve. Pass `--state-dir` to persist a compact block and
+fork cache with fsync and atomic rename. A restart must still observe the
+canonical source and current mempool before it can build a candidate.
+
+```sh
+target/release-fast/status-pir observe-live \
+  --rpc-url http://127.0.0.1:8232 --cookie /path/to/zakura/.cookie \
+  --salt-hex <64-hex-character-public-index-salt> --window-blocks 64 \
+  --samples 60 --interval-ms 1000
+```
+
+`status-pir serve-live` is an isolated loopback integration path. It opens the
+source checkpoint and durable publication counter, starts a new recovery epoch,
+builds from a live observation, reobserves the source after preparation, and
+publishes only if its anchor remains canonical and its original observation is
+still fresh. If the source changes during preparation, the candidate keeps its
+original timestamp; a newer source observation gets another candidate. Later
+unchanged observations renew the manifest using the committed counter. Failed
+polls and disconnected candidates do not renew freshness. It uses the synthetic protocol identifier and all HTTP roles still
+share one process, so it is not the production service.
+
+```sh
+target/release-fast/status-pir serve-live \
+  --rpc-url http://127.0.0.1:8232 --cookie /path/to/zakura/.cookie \
+  --salt-hex <64-hex-character-public-index-salt> --window-blocks 64 \
+  --state-dir /tmp/status-pir-live
+```
+
+On the coordinator host, `probe-live` selects a txid from a canonical block,
+checks the manifest anchor independently through RPC, and verifies the encrypted
+answer without logging the txid or query body. It can target an isolated
+loopback `serve-live` listener with `--origin` and needs the same local RPC
+cookie path. The [SSH trial](../evidence/status-live-trial-2026-09-25/README.md)
+records the first deployed synthetic load and live encrypted checks.
+
+The default 64-block window is for source inspection and the diagnostic is
+bounded to 4,096 blocks. It does not establish
+the production retention window or publication cadence.
+
 ## Isolated deployment and probes
 
 Install the checksummed binary as `/opt/status-pir/status-pir`, create
@@ -100,6 +156,11 @@ target/release-fast/status-pir probe --entries 1572864 \
   --queries 1200 --concurrency 4 --qps 20
 ```
 
+The probe can schedule a six-hour synthetic run with `--seconds 21600 --qps 20
+--concurrency 16 --report-jsonl /tmp/status-load.jsonl --max-p99-ms 1000`.
+It streams one outcome per scheduled arrival and bounds the number of retained
+tasks. This remains a fixture test: it does not qualify live publication.
+
 Each measured lookup includes initialization, public-material download, client
 setup, encrypted query, and validation. Failures and arrivals skipped due to
 client concurrency limits are reported and cause a nonzero exit. This is a
@@ -108,12 +169,11 @@ load run does not qualify concurrent block publication.
 
 ## Boundaries before rollout
 
-The backend does not implement live canonical/mempool ingestion, durable status
-journaling/recovery, distributed control acknowledgments, process-separated
-roles, row-level hint/GPU updates, or the six-hour concurrent-publication gate.
-Restart reconstructs the synthetic fixture. Controller state is in memory and
-must not be used for production recovery authority. No claim of malicious-server
-data authentication or full-history absence is made.
-
-External wallet work requires a separate user confirmation. No Vizor, Dart,
-Swift, C ABI, or external wallet-library repository changes are part of this backend.
+The isolated live path now has canonical ingestion, a durable observation cache,
+and a durable generation/recovery counter. It still needs integration with the
+deployed Enhance coordinator and HTTPS origin, authenticated publication and
+acknowledgments to independent router/worker processes, full-size concurrent
+preparation qualification, a release protocol with reviewed client compatibility,
+and the six-hour concurrent-publication gate. Its material controller is still
+in memory and rebuilds only after a fresh observation on restart. It makes no
+claim of malicious-server data authentication or full-history absence.

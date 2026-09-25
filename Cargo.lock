@@ -1079,6 +1079,7 @@ dependencies = [
  "tracing-subscriber",
  "zakura-chain",
  "zakura-orchard",
+ "zakura-pir-status",
  "zcash_note_encryption",
 ]
 
@@ -5271,6 +5272,20 @@ dependencies = [
  "rand 0.10.2",
  "static_assertions",
  "subtle",
+]
+
+[[package]]
+name = "zakura-pir-status"
+version = "0.0.1-rc0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=b13b59aa204b6ac063af189169a56ac2e3cdcfee#b13b59aa204b6ac063af189169a56ac2e3cdcfee"
+dependencies = [
+ "hex",
+ "ipir-sp",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

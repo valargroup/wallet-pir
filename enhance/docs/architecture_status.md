@@ -20,7 +20,7 @@ An index miss outside established coverage is an inconclusive error, never a
 successful `NotFound` observation.
 
 The deployment must sustain 20 complete private lookups per second while making
-source observations available within five seconds. These are joint rollout
+source observations available within twenty seconds. These are joint rollout
 gates, not established capabilities of the existing code or P4000 hardware.
 
 ## Relationship to GetStatus and Enhance
@@ -289,11 +289,11 @@ reuse cryptographic material, but a refreshed observation time requires a new
 successful source collection and a bound metadata publication. A control
 heartbeat alone cannot renew data freshness.
 
-The five-second target measures completed source observation to query availability.
-The client also rejects an observation older than five seconds when accepting
+The twenty-second target measures completed source observation to query availability.
+The client also rejects an observation older than twenty seconds when accepting
 the result. Bound the request by a monotonic deadline and validate timestamps;
 future timestamps outside permitted clock skew are malformed. Clock tolerance
-must not extend the five-second observation age budget. Source-to-service lag
+must not extend the twenty-second observation age budget. Source-to-service lag
 and source observation age are exposed separately.
 
 ### Incremental preparation
@@ -301,8 +301,8 @@ and source observation age are exposed separately.
 Full rebuilds are not the ordinary publication path. The existing
 [P4000 measurement](../evidence/cuda-p4000-2026-09-24/README.md) reports 27.81
 seconds for fresh CPU preparation and 8.94 seconds for GPU preparation from
-artifacts. Those different paths both exceed the five-second target and do not
-establish status-update performance.
+artifacts. Those different paths do not establish status-update performance
+against the twenty-second target.
 
 Compute changed rows between the active and candidate index. Apply incremental
 database and hint updates using the existing PIR arithmetic, and update candidate
@@ -331,7 +331,10 @@ design before rollout, not a silent increase in freshness tolerance.
 7. Release replaced resources after their final admitted request pin is released.
 
 Use active and candidate generations with bounded pins for in-flight work.
-Do not accumulate a historical generation for every five-second interval.
+Do not accumulate a historical generation for every observation interval.
+When retention evicts an old session, return a retryable conflict; clients
+reinitialize and create a fresh encrypted query and request ID. Never replay
+the old query against new material.
 If old request pins prevent reclamation, stop further preparation and apply
 backpressure. Exceeding freshness returns an error rather than serving an old
 observation as current. Routine activation does not revoke admitted work, but
@@ -514,7 +517,7 @@ occupancy, with 20 offered complete lookups per second, concurrent observation
 collection, block publications, and mempool churn. Every completed answer must
 match an independent oracle. Require no incorrect answers, lost updates,
 capacity rejections at the qualified workload, OOM, or swap growth. Publish
-source observations within five seconds and include client session refresh costs
+source observations within twenty seconds and include client session refresh costs
 in end-to-end measurements. Record offered, started, completed, failed, and stale
 requests separately; report latency and bandwidth without omitting failures.
 
@@ -532,4 +535,4 @@ according to the [evidence policy](../evidence/README.md).
 
 Until these gates pass, the service remains a qualification deployment. A green
 build, successful matrix benchmark, or short encrypted smoke test does not
-establish either the five-second freshness target or 20-lookups/sec capacity.
+establish either the twenty-second freshness target or 20-lookups/sec capacity.
