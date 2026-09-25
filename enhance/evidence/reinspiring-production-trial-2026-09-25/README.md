@@ -79,8 +79,7 @@ power-of-two matrix interface (including CUDA) without fabricating NTT params.
 The wallet integration is opt-in via `native-reinspiring`, uses a distinct
 `ironwood-enhance-pir-v8-native-poc` protocol and control version 3, and keeps
 coordinator-owned preparation, worker evaluation, router packing, live
-publication/retention and current admission limits. Integration validation and
-production cutover are not yet complete. No native production switch has occurred.
+publication/retention and current admission limits. The short integration checks and production cutover below are complete.
 
 
 ## Distributed integration checks
@@ -104,3 +103,61 @@ and `enhance-pir/native-reinspiring` for load client. Router/coordinator/CPU wor
 use Skylake AVX-512. The GPU host's Xeon E5-2623 v4 requires a separate Haswell
 build; the initial AVX-512 oracle trapped before deployment. CUDA verification
 must use its `/usr/local/cuda-12.2/lib64` runtime library path.
+
+
+## Production cutover and early results
+
+Main `ac06df3` is deployed. Public Enhance was paused at 06:56:19 UTC; native
+load through the reopened default endpoint began at 06:59:55 UTC. A private
+smoke check passed 30/30 exact real-record answers before reopening. The actual
+Quadro P4000 CUDA differential passed zero, Q-1 and mixed coefficient cases
+against independent u128 arithmetic. `deployment.json` records binary hashes,
+profiles and state roots. All roles use fresh native state; previous v7 roots,
+binaries, unit overrides and Caddy config remain preserved. No rollback occurred.
+
+Coordinator preparation, CPU/GPU worker evaluation, router packing and live chain
+publication remain distributed. The GPU remains preferred. Publication advanced
+from initial anchor 3,495,448 to 3,495,454 during the initial ramp; router packing
+preparations stayed zero. Request/object admission settings were unchanged.
+
+| One-minute load step | Correct/completed | HTTP errors | Unstarted | Client p99 |
+|---|---:|---:|---:|---:|
+| 8 QPS | 480/480 | 0 | 0 | 122.05 ms |
+| 15 QPS | 900/900 | 0 | 0 | 141.18 ms |
+| 20 QPS | 1,200/1,200 | 0 | 0 | 111.94 ms |
+
+Router comparison uses the saved 20-QPS baseline at 06:15–06:22 UTC (414 seconds)
+and samples inside the first native 20-QPS minute (50 seconds, 1,000 successful
+queries). Stage p99 values interpolate Prometheus buckets, as APM does; these are
+not exact raw-sample percentiles. Client p99 above includes client/HTTP costs and
+is distinct from router total, which excludes body upload and response download.
+
+| Router metric at 20 QPS | Previous profile | Native early sample |
+|---|---:|---:|
+| Packing mean | 84.05 ms | 17.86 ms |
+| Packing p99, histogram estimate | 245.81 ms | 25.00 ms |
+| Router total mean | 167.90 ms | 39.33 ms |
+| Router total p99, histogram estimate | 492.62 ms | 62.50 ms |
+| Mean CPU cores | 3.32 | 1.15 |
+| Observed cgroup memory peak | 4,375 MiB | 802 MiB |
+| Artifact load mean | 7.59 s (3 loads) | 1.25 s (1 load) |
+
+Both compared windows recorded zero OOM events and zero artifact-load failures.
+The memory peaks are since their respective process starts, not equal-length
+steady-state bounds. The native run is short and has fewer publication overlaps;
+this is promising POC evidence, not six-hour qualification or proof of the new
+capacity limit. The native cryptographic correctness-bound caveat remains open.
+
+`analyze_native.py` reproduces `native-summary.json` from the saved resource
+samples and `raw/native-load-early.tar.gz`. Samples include process incarnation
+and raw counters; do not average report percentiles. The archive is an early
+cutoff while subsequent load remains active. APM's five-minute window initially
+contains pre-cutover samples, so use the isolated counter deltas for comparison.
+
+Sustained native load runs as `apm-native-load-ac06df3` on the coordinator at
+20 QPS after the short ramp, plus one init request/second, retaining the original
+10:56:32 UTC / 14:56:32 Dubai deadline. It stops on a failed batch, timeout, or
+incorrect answer and never rolls services back. Live reports and timestamps:
+`/root/reinspiring-trial-20260925/native-load/`. The router's existing five-second
+resource sampler continues through the same deadline. No CI deployment or long
+pre-cutover soak was added.

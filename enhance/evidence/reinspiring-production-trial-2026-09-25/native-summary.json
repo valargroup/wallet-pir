@@ -1,0 +1,244 @@
+{
+  "baseline_20qps": {
+    "start_utc": "2026-09-25T06:15:02.473574+00:00",
+    "seconds": 414.37510991096497,
+    "samples": 84,
+    "peak_memory_mib": 4375.1796875,
+    "mean_cpu_cores": 3.315199393359241,
+    "stages": {
+      "packing": {
+        "count": 8178.0,
+        "mean_ms": 84.04997131963796,
+        "p50_ms_estimated": 45.17465956187093,
+        "p99_ms_estimated": 245.8117170228445
+      },
+      "worker": {
+        "count": 8178.0,
+        "mean_ms": 17.17194362924938,
+        "p50_ms_estimated": 8.30611254851229,
+        "p99_ms_estimated": 96.00300601202406
+      },
+      "total": {
+        "count": 8178.0,
+        "mean_ms": 167.90268157887036,
+        "p50_ms_estimated": 89.62209302325583,
+        "p99_ms_estimated": 492.62233622730867
+      }
+    },
+    "enhance_packing_router_artifact_loads_total": 3.0,
+    "enhance_packing_router_artifact_load_microseconds_total": 22758036.0,
+    "enhance_packing_router_artifact_load_failures_total": 0.0,
+    "enhance_packing_preparations_total": 0.0,
+    "memory_events_end": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0"
+    }
+  },
+  "native_batches": [
+    {
+      "batch": 1,
+      "utc_start": "2026-09-25T06:59:55.683157+00:00",
+      "utc_end": "2026-09-25T07:00:56.150179+00:00",
+      "rate": 8,
+      "exit": 0,
+      "report": "/root/reinspiring-trial-20260925/native-load/load-0001-8qps.json",
+      "report_data": {
+        "protocol": "ironwood-enhance-pir-v8-native-poc",
+        "seconds": 59.989098903,
+        "concurrency": 8,
+        "offered_qps": 8.0,
+        "completed": 480,
+        "succeeded": 480,
+        "incorrect_answers": 0,
+        "errors": {},
+        "unstarted_arrivals": 0,
+        "correct_queries_per_second": 8.001453743723356,
+        "p50_ms": 86.335,
+        "p95_ms": 109.247,
+        "p99_ms": 122.047,
+        "scheduled_p99_ms": 123.519,
+        "exact_answer_oracle": true,
+        "warmup_errors": {},
+        "warmup_correct_answers": 8,
+        "warmup_incorrect_answers": 0
+      },
+      "router_window": {
+        "start_utc": "2026-09-25T06:59:59.193687+00:00",
+        "seconds": 55.03175354003906,
+        "samples": 12,
+        "peak_memory_mib": 407.16015625,
+        "mean_cpu_cores": 0.4377942269724538,
+        "stages": {
+          "packing": {
+            "count": 440.0,
+            "mean_ms": 17.231527879545467,
+            "p50_ms_estimated": 17.5,
+            "p99_ms_estimated": 24.850000000000005
+          },
+          "worker": {
+            "count": 440.0,
+            "mean_ms": 7.2529749999999975,
+            "p50_ms_estimated": 7.505694760820046,
+            "p99_ms_estimated": 9.96127562642369
+          },
+          "total": {
+            "count": 440.0,
+            "mean_ms": 39.303500140909115,
+            "p50_ms_estimated": 37.672811059907836,
+            "p99_ms_estimated": 63.33333333333352
+          }
+        },
+        "enhance_packing_router_artifact_loads_total": 0.0,
+        "enhance_packing_router_artifact_load_microseconds_total": 0.0,
+        "enhance_packing_router_artifact_load_failures_total": 0.0,
+        "enhance_packing_preparations_total": 0.0,
+        "memory_events_end": {
+          "low": "0",
+          "high": "0",
+          "max": "0",
+          "oom": "0",
+          "oom_kill": "0",
+          "oom_group_kill": "0"
+        }
+      }
+    },
+    {
+      "batch": 2,
+      "utc_start": "2026-09-25T07:00:56.150277+00:00",
+      "utc_end": "2026-09-25T07:01:56.462248+00:00",
+      "rate": 15,
+      "exit": 0,
+      "report": "/root/reinspiring-trial-20260925/native-load/load-0002-15qps.json",
+      "report_data": {
+        "protocol": "ironwood-enhance-pir-v8-native-poc",
+        "seconds": 60.019352534,
+        "concurrency": 8,
+        "offered_qps": 15.0,
+        "completed": 900,
+        "succeeded": 900,
+        "incorrect_answers": 0,
+        "errors": {},
+        "unstarted_arrivals": 0,
+        "correct_queries_per_second": 14.995163426499218,
+        "p50_ms": 111.679,
+        "p95_ms": 127.935,
+        "p99_ms": 141.183,
+        "scheduled_p99_ms": 142.335,
+        "exact_answer_oracle": true,
+        "warmup_errors": {},
+        "warmup_correct_answers": 8,
+        "warmup_incorrect_answers": 0
+      },
+      "router_window": {
+        "start_utc": "2026-09-25T07:00:59.236765+00:00",
+        "seconds": 55.03591227531433,
+        "samples": 12,
+        "peak_memory_mib": 606.09375,
+        "mean_cpu_cores": 0.8794887919339672,
+        "stages": {
+          "packing": {
+            "count": 826.0,
+            "mean_ms": 17.98559652421312,
+            "p50_ms_estimated": 17.564102564102566,
+            "p99_ms_estimated": 24.97692307692308
+          },
+          "worker": {
+            "count": 826.0,
+            "mean_ms": 7.134223970944314,
+            "p50_ms_estimated": 7.5,
+            "p99_ms_estimated": 9.950000000000001
+          },
+          "total": {
+            "count": 826.0,
+            "mean_ms": 39.62651035108957,
+            "p50_ms_estimated": 37.637698898408814,
+            "p99_ms_estimated": 56.16666666666675
+          }
+        },
+        "enhance_packing_router_artifact_loads_total": 1.0,
+        "enhance_packing_router_artifact_load_microseconds_total": 1187166.0,
+        "enhance_packing_router_artifact_load_failures_total": 0.0,
+        "enhance_packing_preparations_total": 0.0,
+        "memory_events_end": {
+          "low": "0",
+          "high": "0",
+          "max": "0",
+          "oom": "0",
+          "oom_kill": "0",
+          "oom_group_kill": "0"
+        }
+      }
+    },
+    {
+      "batch": 3,
+      "utc_start": "2026-09-25T07:01:56.462337+00:00",
+      "utc_end": "2026-09-25T07:02:56.782918+00:00",
+      "rate": 20,
+      "exit": 0,
+      "report": "/root/reinspiring-trial-20260925/native-load/load-0003-20qps.json",
+      "report_data": {
+        "protocol": "ironwood-enhance-pir-v8-native-poc",
+        "seconds": 60.035853163,
+        "concurrency": 8,
+        "offered_qps": 20.0,
+        "completed": 1200,
+        "succeeded": 1200,
+        "incorrect_answers": 0,
+        "errors": {},
+        "unstarted_arrivals": 0,
+        "correct_queries_per_second": 19.988056082786844,
+        "p50_ms": 94.655,
+        "p95_ms": 97.599,
+        "p99_ms": 111.935,
+        "scheduled_p99_ms": 113.471,
+        "exact_answer_oracle": true,
+        "warmup_errors": {},
+        "warmup_correct_answers": 8,
+        "warmup_incorrect_answers": 0
+      },
+      "router_window": {
+        "start_utc": "2026-09-25T07:01:59.275117+00:00",
+        "seconds": 50.02632927894592,
+        "samples": 11,
+        "peak_memory_mib": 802.0390625,
+        "mean_cpu_cores": 1.1531577437619167,
+        "stages": {
+          "packing": {
+            "count": 1000.0,
+            "mean_ms": 17.855788721999982,
+            "p50_ms_estimated": 17.575757575757578,
+            "p99_ms_estimated": 25.0
+          },
+          "worker": {
+            "count": 1000.0,
+            "mean_ms": 7.3694270000000035,
+            "p50_ms_estimated": 7.51004016064257,
+            "p99_ms_estimated": 9.96987951807229
+          },
+          "total": {
+            "count": 1000.0,
+            "mean_ms": 39.3258679169999,
+            "p50_ms_estimated": 37.65182186234818,
+            "p99_ms_estimated": 62.5
+          }
+        },
+        "enhance_packing_router_artifact_loads_total": 1.0,
+        "enhance_packing_router_artifact_load_microseconds_total": 1248208.0,
+        "enhance_packing_router_artifact_load_failures_total": 0.0,
+        "enhance_packing_preparations_total": 0.0,
+        "memory_events_end": {
+          "low": "0",
+          "high": "0",
+          "max": "0",
+          "oom": "0",
+          "oom_kill": "0",
+          "oom_group_kill": "0"
+        }
+      }
+    }
+  ]
+}

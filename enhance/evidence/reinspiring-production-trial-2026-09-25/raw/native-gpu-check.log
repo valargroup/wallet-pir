@@ -1,0 +1,5 @@
+Haswell build, actual Quadro P4000 GPU, LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:/usr/lib/x86_64-linux-gnu
+case=0 exact=true rows=4096 cols=16 q=18014398509481984
+case=1 exact=true rows=4096 cols=16 q=18014398509481984
+case=2 exact=true rows=4096 cols=16 q=18014398509481984
+native CUDA differential passed

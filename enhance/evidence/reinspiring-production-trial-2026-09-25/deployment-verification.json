@@ -1,0 +1,35 @@
+{
+  "utc": "2026-09-25T07:04:09.987170+00:00",
+  "services": [
+    {
+      "host": "root@167.99.42.60",
+      "unit": "enhance-pir-coordinator",
+      "verification": "MainPID=3528729\nNRestarts=0\nMemoryCurrent=2040471552\nMemoryPeak=2095960064\nActiveState=active\n04afddfbfc33cb4ba7ec2ef8d9ab68240dae452d55d358b61fb1398637ff279e  /opt/enhance-pir/releases/native-ac06df3/enhance-pir-server\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "host": "root@167.99.42.60",
+      "unit": "enhance-pir-query-ingress",
+      "verification": "MainPID=3528727\nNRestarts=0\nMemoryCurrent=5586944\nMemoryPeak=7438336\nActiveState=active\n04afddfbfc33cb4ba7ec2ef8d9ab68240dae452d55d358b61fb1398637ff279e  /opt/enhance-pir/releases/native-ac06df3/enhance-pir-server\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "host": "root@10.142.0.14",
+      "unit": "enhance-pir-packing-router",
+      "verification": "MainPID=48702\nNRestarts=0\nMemoryCurrent=838787072\nMemoryPeak=842174464\nActiveState=active\n04afddfbfc33cb4ba7ec2ef8d9ab68240dae452d55d358b61fb1398637ff279e  /opt/enhance-pir/releases/native-ac06df3/enhance-pir-server\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "host": "root@10.142.0.15",
+      "unit": "enhance-pir-worker",
+      "verification": "MainPID=237177\nNRestarts=0\nMemoryCurrent=1208193024\nMemoryPeak=1414955008\nActiveState=active\n04afddfbfc33cb4ba7ec2ef8d9ab68240dae452d55d358b61fb1398637ff279e  /opt/enhance-pir/releases/native-ac06df3/enhance-pir-server\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "host": "root@10.142.0.16",
+      "unit": "enhance-pir-worker",
+      "verification": "MainPID=243071\nNRestarts=0\nMemoryCurrent=744316928\nMemoryPeak=1349304320\nActiveState=active\n04afddfbfc33cb4ba7ec2ef8d9ab68240dae452d55d358b61fb1398637ff279e  /opt/enhance-pir/releases/native-ac06df3/enhance-pir-server\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+    },
+    {
+      "host": "paperspace@10.250.90.3",
+      "unit": "enhance-pir-gpu-worker",
+      "verification": "MainPID=195294\nNRestarts=0\nMemoryCurrent=1007480832\nActiveState=active\nb85090a74db2b5e9eb1bd810c1a8eca32f81aa73f0b009ae7c3cfd36a668ec44  /opt/enhance-pir/releases/native-ac06df3/enhance-pir-server\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n"
+    }
+  ]
+}
