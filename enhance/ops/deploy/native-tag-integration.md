@@ -2,9 +2,8 @@
 
 The Enhance native path already exists on wallet-pir main and is serving the
 controlled production trial. This integration replaces its trial-commit pin
-with `v0.1.0-rc.5`, resolving to `674116d0` in Cargo.lock. The tag was published
-from [ipir-sp PR #23](https://github.com/valargroup/ipir-sp/pull/23); merge that
-upstream PR before merging this integration PR. rc.4 alone lacks the mapped
+with `v0.1.0-rc.5`, resolving to `c5075a4` in Cargo.lock. The tag points to the merged
+[ipir-sp PR #23](https://github.com/valargroup/ipir-sp/pull/23) commit on main. rc.4 alone lacks the mapped
 codecs, native query-mask accessor, and power-of-two CUDA interface.
 
 The native protocol remains `ironwood-enhance-pir-v8-native-poc`, control version
