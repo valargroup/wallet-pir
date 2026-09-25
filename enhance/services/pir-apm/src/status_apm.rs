@@ -1,4 +1,4 @@
-//! Independent scrape and presentation of the synthetic Status PIR service.
+//! Independent scrape and presentation of live Status roles.
 use crate::dashboard::SharedDashboard;
 use serde_json::Value;
 use std::{
@@ -58,7 +58,18 @@ fn esc(value: &str) -> String {
 }
 
 const LIMITS_MS: [f64; 12] = [
-    5., 10., 25., 50., 75., 100., 200., 500., 1000., 2000., 5000., 10000.,
+    5.,
+    10.,
+    25.,
+    50.,
+    75.,
+    100.,
+    200.,
+    500.,
+    1000.,
+    2000.,
+    5000.,
+    f64::INFINITY,
 ];
 fn delta(newer: &Value, older: &Value, path: &[&str]) -> Option<f64> {
     let a = number(newer, path)?;
@@ -112,9 +123,9 @@ fn rate(view: &View, key: &str, field: &str) -> Option<f64> {
 fn graph(view: &View) -> String {
     let mut out = String::from("<div class=\"mini-charts\">");
     for (key, label) in [
-        ("init", "Init"),
-        ("public_material", "Public material"),
-        ("query", "Query"),
+        ("router_query", "Router admitted processing"),
+        ("worker_evaluate", "Worker admitted processing"),
+        ("router_pack", "Router packing"),
     ] {
         for latency in [false, true] {
             let mut points = Vec::new();
@@ -122,7 +133,9 @@ fn graph(view: &View) -> String {
                 let (start_time, start) = &view.history[i - 12];
                 let (end_time, end) = &view.history[i];
                 let value = if latency {
-                    interval_quantiles(start, end, key).map(|p| p[2])
+                    interval_quantiles(start, end, key)
+                        .map(|p| p[2])
+                        .filter(|v| v.is_finite())
                 } else {
                     delta(end, start, &["operations", key, "arrivals"])
                         .and_then(|n| Some(n / duration(*start_time, *end_time)?))
@@ -131,7 +144,11 @@ fn graph(view: &View) -> String {
             }
             let title = format!(
                 "{label} {} · last hour",
-                if latency { "p99 latency" } else { "arrivals/s" }
+                if latency {
+                    "p99 upper bound"
+                } else {
+                    "completions/s"
+                }
             );
             out.push_str(&format!("<figure><figcaption>{title}</figcaption><svg viewBox=\"0 0 580 145\" role=\"img\" aria-label=\"{title}\">"));
             let max = points.iter().filter_map(|(_, v)| *v).fold(1f64, f64::max);
@@ -173,7 +190,93 @@ fn graph(view: &View) -> String {
     out
 }
 
-pub async fn monitor(url: String, host: String, dashboard: SharedDashboard) {
+async fn fetch(client: &reqwest::Client, url: &str) -> Result<Value, &'static str> {
+    let mut response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|_| "Status scrape failed")?
+        .error_for_status()
+        .map_err(|_| "Status metrics unavailable")?;
+    let mut raw = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| "Status scrape failed")? {
+        if chunk.len() > (64 * 1024usize).saturating_sub(raw.len()) {
+            return Err("Status metrics too large");
+        }
+        raw.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&raw).map_err(|_| "Malformed Status metrics")
+}
+
+fn merge_roles(
+    mut coordinator: Value,
+    router: Value,
+    worker: Value,
+    manifest: Option<Value>,
+) -> Result<Value, &'static str> {
+    for sample in [&coordinator, &router, &worker] {
+        if !sample.get("operations").is_some_and(Value::is_object)
+            || !sample.get("admission").is_some_and(Value::is_object)
+        {
+            return Err("Malformed Status role metrics");
+        }
+    }
+    let mut operations = serde_json::Map::new();
+    let mut admission = serde_json::Map::new();
+    let mut resources = serde_json::Map::new();
+    for (role, sample, key) in [
+        ("coordinator", &coordinator, "query"),
+        ("router", &router, "router_query"),
+        ("worker", &worker, "worker_evaluate"),
+    ] {
+        resources.insert(role.into(), sample["resources"].clone());
+        let counters = &sample["admission"][role];
+        if let Some(buckets) = counters["execution_buckets"].as_array() {
+            if buckets.len() != 12 || buckets.iter().any(|v| !v.is_u64()) {
+                return Err("Malformed admission histogram");
+            }
+            let count: u64 = buckets.iter().filter_map(Value::as_u64).sum();
+            operations.insert(
+                key.into(),
+                serde_json::json!({"arrivals":count,"buckets":buckets}),
+            );
+        }
+        if counters.is_object() {
+            admission.insert(role.into(), counters.clone());
+        }
+    }
+    if router["operations"]["router_pack"].is_object() {
+        operations.insert(
+            "router_pack".into(),
+            router["operations"]["router_pack"].clone(),
+        );
+    }
+    coordinator["operations"] = Value::Object(operations);
+    coordinator["admission"] = Value::Object(admission);
+    coordinator["role_resources"] = Value::Object(resources);
+    coordinator["live_roles"] = Value::Bool(true);
+    coordinator["publication_available"] = Value::Bool(manifest.is_some());
+    if let Some(manifest) = manifest {
+        for key in [
+            "generation",
+            "recovery_epoch",
+            "coverage_start",
+            "anchor_height",
+            "observed_ms",
+        ] {
+            coordinator[key] = manifest[key].clone();
+        }
+    }
+    Ok(coordinator)
+}
+
+pub async fn monitor(
+    url: String,
+    router_url: Option<String>,
+    worker_url: Option<String>,
+    host: String,
+    dashboard: SharedDashboard,
+) {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(4))
         .redirect(reqwest::redirect::Policy::none())
@@ -190,35 +293,28 @@ pub async fn monitor(url: String, host: String, dashboard: SharedDashboard) {
     loop {
         ticker.tick().await;
         let result = async {
-            let response = client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|_| "Status scrape failed")?;
-            let response = response
-                .error_for_status()
-                .map_err(|_| "Status metrics unavailable")?;
-            if response.content_length().is_some_and(|len| len > 64 * 1024) {
-                return Err("Status metrics too large");
-            }
-            let mut response = response;
-            let mut raw = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(|_| "Status scrape failed")? {
-                if chunk.len() > (64 * 1024usize).saturating_sub(raw.len()) {
-                    return Err("Status metrics too large");
-                }
-                raw.extend_from_slice(&chunk);
-            }
-            let body: Value =
-                serde_json::from_slice(&raw).map_err(|_| "Malformed Status metrics")?;
-            if !body.get("operations").is_some_and(Value::is_object)
-                || !body
-                    .get("generation")
-                    .is_some_and(|v| v.is_null() || v.is_u64())
-                || !body
-                    .get("observed_ms")
-                    .is_some_and(|v| v.is_null() || v.is_u64())
-            {
+            let body = if let (Some(router_url), Some(worker_url)) = (&router_url, &worker_url) {
+                let (coordinator, router, worker) = tokio::join!(
+                    fetch(&client, &url),
+                    fetch(&client, router_url),
+                    fetch(&client, worker_url)
+                );
+                let manifest_url = url.replace("/internal/status-apm", "/v1/status/init");
+                let manifest = fetch(&client, &manifest_url).await.ok().filter(|v| {
+                    [
+                        "generation",
+                        "recovery_epoch",
+                        "observed_ms",
+                        "anchor_height",
+                    ]
+                    .iter()
+                    .all(|k| v[*k].is_u64())
+                });
+                merge_roles(coordinator?, router?, worker?, manifest)?
+            } else {
+                fetch(&client, &url).await?
+            };
+            if !body.get("operations").is_some_and(Value::is_object) {
                 return Err("Malformed Status metrics");
             }
             Ok::<_, &str>(body)
@@ -229,11 +325,19 @@ pub async fn monitor(url: String, host: String, dashboard: SharedDashboard) {
             Ok(sample) => {
                 let now = SystemTime::now();
                 if data.status.sample.as_ref().is_some_and(|previous| {
-                    ["init", "public_material", "query", "router_query", "worker_evaluate", "router_pack"]
-                        .iter().any(|operation| {
-                            let path = ["operations", *operation, "arrivals"];
-                            matches!((number(&sample, &path), number(previous, &path)), (Some(new), Some(old)) if new < old)
-                        })
+                    [
+                        "init",
+                        "public_material",
+                        "query",
+                        "router_query",
+                        "worker_evaluate",
+                        "router_pack",
+                    ]
+                    .iter()
+                    .any(|operation| {
+                        let path = ["operations", *operation, "arrivals"];
+                        number(&sample, &path).unwrap_or(0.) < number(previous, &path).unwrap_or(0.)
+                    })
                 }) {
                     data.status.history.clear();
                 }
@@ -272,27 +376,33 @@ pub fn pane(view: &View) -> String {
     } else {
         "Unavailable or stale"
     };
-    let mut html = format!("<section class=\"card\"><h2 class=\"section-title\">Status APM</h2><p class=\"intro\">Synthetic Status service · {} · {}. Request metrics are aggregate server observations; the server cannot see decrypted transaction states.</p>",esc(&view.host),source);
+    let mut html = format!("<section class=\"card\"><h2 class=\"section-title\">Status APM</h2><p class=\"intro\">Live Status roles · {} · {}. Separate coordinator, router and worker processes. Public Status remains disabled pending qualification.</p>",esc(&view.host),source);
     if let Some(error) = &view.error {
         html.push_str(&format!(
             "<p class=\"notice\">{}; showing the last successful sample.</p>",
             esc(error)
         ));
     }
-    if age.is_some_and(|seconds| !(0. ..=5.).contains(&seconds)) {
-        html.push_str("<p class=\"notice\">Status source observation is older than the five-second target.</p>");
+    if age.is_some_and(|seconds| !(0. ..=20.).contains(&seconds)) {
+        html.push_str("<p class=\"notice\">Status source observation is older than the twenty-second freshness gate.</p>");
     }
-    html.push_str("<div class=\"wrap\"><table><thead><tr><th>Operation</th><th>Requests/s</th><th>Failures</th><th>p50</th><th>p90</th><th>p99</th><th>Upload/s</th><th>Download/s</th></tr></thead><tbody>");
+    html.push_str("<div class=\"wrap\"><table><thead><tr><th>Operation</th><th>Completions/s</th><th>Operation failures</th><th>p50</th><th>p90</th><th>p99</th><th>Upload/s</th><th>Download/s</th></tr></thead><tbody>");
     for (key, label) in [
-        ("init", "Init"),
-        ("public_material", "Public material"),
-        ("query", "Query"),
-        ("router_query", "Router processing"),
-        ("worker_evaluate", "Worker evaluation"),
+        ("router_query", "Router admitted processing"),
+        ("worker_evaluate", "Worker admitted processing"),
         ("router_pack", "Router packing"),
     ] {
         let percentiles = quantiles(view, key);
-        let f = |n: Option<f64>| n.map(|v| format!("{v:.1}")).unwrap_or_else(|| "—".into());
+        let f = |n: Option<f64>| {
+            n.map(|v| {
+                if v.is_infinite() {
+                    ">5000".into()
+                } else {
+                    format!("{v:.1}")
+                }
+            })
+            .unwrap_or_else(|| "—".into())
+        };
         let transfer = |field| {
             if key == "router_pack" {
                 None
@@ -303,55 +413,45 @@ pub fn pane(view: &View) -> String {
         let row = format!("<tr><th>{label}</th><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",f(rate(view,key,"arrivals")),display(sample,&["operations",key,"failures"]),f(percentiles.map(|p|p[0])),f(percentiles.map(|p|p[1])),f(percentiles.map(|p|p[2])),f(transfer("upload_bytes")),f(transfer("download_bytes")));
         html.push_str(&row);
     }
-    html.push_str("</tbody></table></div><p class=\"intro\">Latency is in milliseconds, estimated from five-minute histogram buckets. Query is counted once at the coordinator ingress. Router processing includes worker transport and packing; Router packing measures only the final packing operation. Stage percentiles are independent and cannot be added. Failures are cumulative since process start; rates use recent successful scrapes.</p>");
+    html.push_str("</tbody></table></div><p class=\"intro\">Latency values are histogram upper bounds in milliseconds over the last five minutes. Router admitted processing includes worker transport and packing. Admission wait, request upload before admission, and client preparation/decoding are excluded. These are server measurements, not end-to-end client p99. Completions include unsuccessful admitted work; unavailable operation failure counts show a dash. Stage percentiles cannot be added.</p>");
+    if sample["publication_available"] == false {
+        html.push_str("<p class=\"notice\">Live publication is unavailable; monitoring reachability does not imply serving readiness.</p>");
+    }
+    html.push_str("<h3>Admission and rejection counters</h3><div class=\"wrap\"><table><tr><th>Role</th><th>Active</th><th>Waiting</th><th>Rejections / refused checks since start</th></tr>");
+    for role in ["coordinator", "router", "worker"] {
+        let reasons = sample["admission"][role]["rejections"]
+            .as_object()
+            .map(|r| {
+                r.iter()
+                    .map(|(k, v)| format!("{}: {}", esc(k), v.as_u64().unwrap_or(0)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        html.push_str(&format!(
+            "<tr><th>{role}</th><td>{}</td><td>{}</td><td>{}</td></tr>",
+            display(sample, &["admission", role, "active"]),
+            display(sample, &["admission", role, "waiting"]),
+            if reasons.is_empty() {
+                "None recorded"
+            } else {
+                &reasons
+            }
+        ));
+    }
+    html.push_str("</table></div>");
     html.push_str(&graph(view));
     html.push_str("<div class=\"grid\">");
-    let cards: &[(&str, &[(&str, &str)])] = &[
-        (
-            "Publication",
-            &[
-                ("generation", "Generation"),
-                ("recovery_epoch", "Recovery epoch"),
-                ("coverage_start", "Coverage start"),
-                ("anchor_height", "Anchor height"),
-                ("observed_ms", "Observed at · Unix ms"),
-                ("last_activation_ms", "Last activation · Unix ms"),
-            ],
-        ),
-        (
-            "Capacity",
-            &[
-                ("entries", "Entries / 1,572,864 ceiling"),
-                ("max_bucket_occupancy", "Largest bucket / 256 slots"),
-                ("evicted_blocks", "Complete blocks evicted"),
-            ],
-        ),
-        (
-            "Preparation · last generation",
-            &[
-                ("index_ms", "Index ms"),
-                ("database_hint_ms", "Hint ms"),
-                ("packing_ms", "Packing ms"),
-                ("preparation_ms", "PIR preparation ms"),
-                ("rebuilt_units", "Units rebuilt"),
-                ("reused_units", "Units reused"),
-            ],
-        ),
-        (
-            "Colocated host resources",
-            &[
-                ("resources.host_memory_total_bytes", "Host memory · bytes"),
-                (
-                    "resources.host_memory_available_bytes",
-                    "Available memory · bytes",
-                ),
-                ("resources.process_rss_bytes", "Process RSS · bytes"),
-                ("resources.gpu_utilization_percent", "GPU utilization %"),
-                ("resources.gpu_memory_used_mib", "GPU memory used · MiB"),
-                ("resources.gpu_memory_total_mib", "GPU memory total · MiB"),
-            ],
-        ),
-    ];
+    let cards: &[(&str, &[(&str, &str)])] = &[(
+        "Publication",
+        &[
+            ("generation", "Generation"),
+            ("recovery_epoch", "Recovery epoch"),
+            ("coverage_start", "Coverage start"),
+            ("anchor_height", "Anchor height"),
+            ("observed_ms", "Observed at · Unix ms"),
+        ],
+    )];
     for (title, fields) in cards {
         html.push_str(&format!(
             "<section class=\"card\"><h3>{title}</h3><ul class=\"rows\">"
@@ -366,10 +466,10 @@ pub fn pane(view: &View) -> String {
         html.push_str("</ul></section>");
     }
     html.push_str("</div>");
-    if number(sample, &["preparation_ms"]).is_some_and(|ms| ms > 5000.) {
-        html.push_str("<p class=\"notice\">Last PIR preparation exceeded the five-second publication target. Index time is additional.</p>");
+    for role in ["coordinator", "router", "worker"] {
+        html.push_str(&format!("<section class=\"card\"><h3>{role} resources</h3><p>Process RSS: {} bytes · host available memory: {} bytes · GPU utilization: {}%</p></section>", display(sample,&["role_resources",role,"process_rss_bytes"]), display(sample,&["role_resources",role,"host_memory_available_bytes"]), display(sample,&["role_resources",role,"gpu_utilization_percent"])));
     }
-    html.push_str("<p class=\"intro\">The service reaffirms an unchanged synthetic fixture. Last activation is the generation build time; it is not a live block publication measurement.</p></section>");
+    html.push_str("<p class=\"intro\">Live publication is read from the coordinator manifest. Router and worker share the P4000 host; their host memory and GPU readings overlap and must not be summed. No client load-test percentile is inferred from these server histograms.</p></section>");
     html
 }
 
@@ -377,12 +477,63 @@ pub fn topology(view: &View) -> String {
     if !view.configured {
         return String::new();
     }
-    format!("<div class=\"trunk\" style=\"margin:auto;border-style:dashed\"></div><p class=\"summary\">Planned shared coordinator connection</p><a class=\"node-link coord-link\" href=\"/apm/status/\"><strong>{}</strong><span>One GPU host · Status coordinator, router, worker · one process</span><span class=\"{}\">{}</span></a>",esc(&view.host),if view.fresh(){"ok"}else{"bad"},if view.fresh(){"Status monitoring reachable"}else{"Status monitoring unavailable"})
+    format!("<div class=\"trunk\" style=\"margin:auto;border-style:dashed\"></div><p class=\"summary\">Live authenticated coordinator connection</p><a class=\"node-link coord-link\" href=\"/apm/status/\"><strong>{}</strong><span>Coordinator on Enhance host → separate router and worker processes on P4000</span><span class=\"{}\">{}</span></a>",esc(&view.host),if view.fresh(){"ok"}else{"bad"},if view.fresh(){"Status monitoring reachable"}else{"Status monitoring unavailable"})
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_roles_preserve_latency_boundaries_and_readiness() {
+        let role = |name: &str, bucket: usize| {
+            let mut buckets = vec![0; 12];
+            buckets[bucket] = 100;
+            serde_json::json!({"operations":{}, "admission":{name:{"execution_buckets":buckets,"active":0,"waiting":0,"rejections":{}}},"resources":{"process_rss_bytes":42}})
+        };
+        let merged = merge_roles(
+            role("coordinator", 8),
+            role("router", 5),
+            role("worker", 2),
+            Some(serde_json::json!({"generation":123,"observed_ms":1})),
+        )
+        .unwrap();
+        assert_eq!(merged["generation"], 123);
+        assert_eq!(merged["operations"]["query"]["buckets"][8], 100);
+        assert_eq!(merged["operations"]["router_query"]["buckets"][5], 100);
+        assert!(merged["operations"]["query"]["failures"].is_null());
+        let view = View {
+            configured: true,
+            sample: Some(merged),
+            success: Some(SystemTime::now()),
+            ..Default::default()
+        };
+        let html = pane(&view);
+        assert!(html.contains("not end-to-end client p99"));
+        assert!(html.contains("twenty-second freshness gate"));
+        assert!(!html.contains("Synthetic"));
+        let missing = merge_roles(
+            role("coordinator", 8),
+            role("router", 5),
+            role("worker", 2),
+            None,
+        )
+        .unwrap();
+        assert_eq!(missing["publication_available"], false);
+        assert!(merge_roles(
+            role("coordinator", 8),
+            serde_json::json!({}),
+            role("worker", 2),
+            None
+        )
+        .is_err());
+    }
+    #[test]
+    fn overflow_latency_is_not_reported_as_ten_seconds() {
+        let empty = serde_json::json!({"operations":{}});
+        let full =
+            serde_json::json!({"operations":{"query":{"buckets":[0,0,0,0,0,0,0,0,0,0,0,1]}}});
+        assert!(interval_quantiles(&empty, &full, "query").unwrap()[2].is_infinite());
+    }
     #[test]
     fn first_operation_after_idle_has_latency_and_rate() {
         let now = SystemTime::now();

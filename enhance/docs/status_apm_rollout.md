@@ -1,62 +1,76 @@
-# Unified PIR APM rollout
+# Live Status APM rollout
 
-The public [PIR APM dashboard](https://enhance-pir.valargroup.dev/apm/) now
-has Enhance and Status panes above one deployment topology. Status is the
-synthetic, isolated service. Its coordinator, router, and worker are one process
-on `status-pir-p4000-ams1`; the connection to the production Enhance
-coordinator is labelled planned. No wallet application was changed.
-The [deployment check](../evidence/status-backend-2026-09-25/README.md) records
-the build hashes, probe results, public page checks, and outage exercise.
+The public [Status pane](https://enhance-pir.valargroup.dev/apm/?pane=status)
+monitors the live, separate coordinator, router, and worker processes. It no longer
+scrapes the original synthetic single-process service.
 
-## Deployed components
+## Sources and deployment
 
-- Status service: `/opt/status-pir/status-pir` on
-  `status-pir-p4000-ams1`, with monitoring on `127.0.0.1:8383`.
-- Private monitoring tunnel: `status-pir-apm-tunnel.service` on the Enhance
-  coordinator, forwarding `127.0.0.1:8384` to Status monitoring port 8383.
-- APM sidecar: `/opt/enhance-pir/releases/apm-status-d07ab140/pir-apm` on
-  `enhance-pir-coordinator-01`, selected by
-  `/etc/systemd/system/pir-apm.service.d/zzzz-status-apm-20260925.conf`.
-- Status URL, host label, and page title in `/etc/default/pir-apm`. The
-  original environment file is saved as
-  `/etc/default/pir-apm.before-status-apm-20260925`.
+The APM sidecar runs on the Enhance coordinator. Its `/etc/default/pir-apm` sets:
 
-The tunnel key is in ValarGroup Infisical project `spendability-pir deploy`,
-production environment, `/status-pir/apm`, key
-`STATUS_APM_TUNNEL_SSH_PRIVATE_KEY`. The APM host keeps a root-only deployed
-copy under `/etc/status-pir-apm/`; the Status host authorizes that key only
-for forwarding to its loopback monitoring port. The host key is pinned in
-`/etc/status-pir-apm/known_hosts`. No secret value is in this repository.
+```text
+PIR_APM_STATUS_URL=http://127.0.0.1:8480/internal/status-apm
+PIR_APM_STATUS_ROUTER_URL=http://127.0.0.1:8482/internal/status-apm
+PIR_APM_STATUS_WORKER_URL=http://127.0.0.1:8481/internal/status-apm
+PIR_APM_STATUS_HOST=enhance-coordinator-and-p4000
+```
 
-## Checks
+The first source is local. Router and worker monitoring use the existing
+`status-control-tunnel` authenticated SSH forwards. Public monitoring does not
+expose these private listeners. No new credentials were created for this change.
+The old monitoring tunnel on port 8384 is no longer a source for this pane.
+
+The APM scraper fetches all three role samples every five seconds. Publication
+metadata comes from the coordinator's `/v1/status/init` manifest. Failure of any
+role scrape marks the aggregate unavailable/stale and preserves the previous
+sample. Failure to obtain a valid manifest is shown as publication unavailable,
+separately from monitoring reachability. Observation age uses the 20-second gate.
+
+Deployed sidecar:
+`/opt/enhance-pir/releases/apm-live-d04da53aed43306a/pir-apm`.
+SHA-256: `d04da53aed43306ad51742599aa86f3ada32206768b6a817f7268b6dc9a63b18`.
+The existing systemd override and credential-loading wrapper are retained.
+
+## Metric meanings
+
+- **Router admitted processing:** worker transport and router packing included.
+- **Worker admitted processing:** worker execution after admission.
+- **Router packing:** final packing operation only.
+
+The private diagnostic coordinator-forwarding path is excluded from the dashboard's query table and charts. Clients are intended to query the router directly.
+
+Percentiles are five-minute histogram upper bounds, not exact percentiles.
+Admission wait, upload before admission, client preparation and decoding are
+excluded. They are **not end-to-end client load-test p99**. Overflow is shown as
+`>5000` ms; it is not assigned an invented finite upper bound.
+
+Role completion rates include unsuccessful admitted work. HTTP operation failure
+counts are not present in the deployed role admission telemetry and are shown as
+unavailable rather than zero. Active/waiting gauges and fixed rejection-reason
+counters are displayed separately. Rejection counters count refused checks and
+must not be summed as unique failed client lookups.
+
+Role resources show process RSS and host memory/GPU observations. Router and
+worker share the P4000 host, so their host/GPU readings must not be summed.
+Counter resets clear aggregate chart history. Restarts reset sidecar history;
+latencies remain blank until requests occur across successful scrapes.
+
+## Verification
 
 ```sh
 cargo test --locked -p pir-apm
-cargo test --locked -p enhance-pir-server --lib status::telemetry::tests
-curl -fsS 'https://enhance-pir.valargroup.dev/apm/?pane=enhance'
+cargo clippy --locked -p pir-apm --all-targets -- -D warnings
 curl -fsS 'https://enhance-pir.valargroup.dev/apm/?pane=status'
-ssh root@167.99.42.60 'systemctl is-active pir-apm status-pir-apm-tunnel'
-ssh status-pir-p4000-ams1 'systemctl is-active status-pir'
+ssh root@167.99.42.60 'systemctl is-active pir-apm status-control-tunnel'
 ```
 
-The Status host can run the encrypted backend probe from the
-[Status runbook](status_backend.md). The private APM endpoint should report one
-coordinator Query arrival per probe, with separate router and worker stage
-arrivals. Public HTML should include one deployment topology on either pane.
-
-Status request histograms and bytes are measured at the three Status listeners.
-The Status pane uses one-hour in-memory history and five-minute histogram
-windows. Restarts reset Status counters and the APM sidecar's chart history.
-The host resource card describes the colocated process and GPU once.
-
-The Status fixture reaffirms an unchanged synthetic source. Its observed age
-is not proof of live block publication. The service's revised twenty-second
-publication gate remains unqualified; see the [original GPU result](../evidence/status-backend-2026-09-25/README.md).
+Public Status serving remains disabled pending qualification. Monitoring the live
+roles does not enable public Status queries or imply that load gates have passed.
 
 ## Rollback
 
-Remove `zzzz-status-apm-20260925.conf`, restore the saved APM environment
-file, reload systemd, and restart `pir-apm`. The previous binary remains at
-`/opt/enhance-pir/releases/apm-3685438/pir-apm`. Stop and disable
-`status-pir-apm-tunnel.service` if Status monitoring is no longer needed.
-The previous Status binary is retained on the host for rollback.
+The pre-change systemd override and environment file are backed up on the
+coordinator at `/root/pir-apm-before-live.conf` and
+`/root/pir-apm-before-live.env` (the environment backup is mode 0600).
+Restore those files to their original locations, reload systemd and restart only
+`pir-apm`. The prior binary is retained. This does not restart Status serving roles.

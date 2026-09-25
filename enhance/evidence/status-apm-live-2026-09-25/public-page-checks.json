@@ -1,0 +1,11 @@
+{
+  "coordinator_forwarding_absent": true,
+  "router_present": true,
+  "worker_present": true,
+  "packing_present": true,
+  "live_roles_present": true,
+  "synthetic_description_absent": true,
+  "shared_topology_once": true,
+  "server_latency_scope": true,
+  "live_source_reachable": true
+}
