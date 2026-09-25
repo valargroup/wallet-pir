@@ -1,0 +1,11 @@
+   Compiling ipir-sp v0.1.0-rc.3 (https://github.com/valargroup/ipir-sp.git?rev=8168d158442ad6defac9ba0f5ff2d294b99e2ecd#8168d158)
+   Compiling enhance-pir v0.0.1 (/Users/roman/projects/wallet-pir/enhance/crates/enhance-pir)
+   Compiling enhance-pir-server v0.0.1 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 17.15s
+     Running tests/packing_http.rs (target/debug/deps/packing_http-85817b36994f503d)
+
+running 1 test
+test extracted_path_preserves_wallet_answers_and_pool_replication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.80s
+

@@ -1,0 +1,78 @@
+warning: unused import: `ITEM_SIZE_BITS`
+ --> enhance/crates/enhance-pir/src/client.rs:3:28
+  |
+3 | use crate::{EnhanceRecord, ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES};
+  |                            ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `published_c1_len`, `recover_published_c1`, and `response_body_len`
+ --> enhance/crates/enhance-pir/src/client.rs:5:31
+  |
+5 | use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
+  |                               ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ipir_sp::serialize::serialize_packing_keys`
+ --> enhance/crates/enhance-pir/src/client.rs:6:5
+  |
+6 | use ipir_sp::serialize::serialize_packing_keys;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `IPIRClient` and `IPIRSeed`
+ --> enhance/crates/enhance-pir/src/client.rs:7:15
+  |
+7 | use ipir_sp::{IPIRClient, IPIRSeed, YpirSchemeParams};
+  |               ^^^^^^^^^^  ^^^^^^^^
+
+warning: `enhance-pir` (lib) generated 4 warnings (run `cargo fix --lib -p enhance-pir` to apply 4 suggestions)
+warning: unused import: `deserialize_first_dim_query`
+ --> enhance/services/enhance-pir-server/src/runtime.rs:3:61
+  |
+3 |     add_crs_blocks_assign_mod, add_intermediate_assign_mod, deserialize_first_dim_query,
+  |                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `QueryPackPreprocessed` and `TopKeyImages`
+  --> enhance/services/enhance-pir-server/src/runtime.rs:12:17
+   |
+12 | use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
+   |                 ^^^^^^^^^^^^^^^^^^^^^              ^^^^^^^^^^^^
+
+warning: unused imports: `deserialize_packing_keys` and `serialized_packing_keys_len`
+  --> enhance/services/enhance-pir-server/src/runtime.rs:13:26
+   |
+13 | use ipir_sp::serialize::{deserialize_packing_keys, serialized_packing_keys_len};
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `build_pack_preprocessed_blocks`, `pack_intermediate_blocks`, and `published_c1_rows`
+  --> enhance/services/enhance-pir-server/src/runtime.rs:15:5
+   |
+15 |     build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows, CrsBlock,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ipir_sp::YpirSchemeParams`
+  --> enhance/services/enhance-pir-server/src/runtime.rs:17:5
+   |
+17 | use ipir_sp::YpirSchemeParams;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `rlwe`
+   --> enhance/services/enhance-pir-server/src/ipir.rs:286:28
+    |
+286 |     pub fn evaluate(&self, rlwe: &RlweParams, query: &[u64]) -> Result<Vec<u64>, InspiringError> {
+    |                            ^^^^ help: if this is intentional, prefix it with an underscore: `_rlwe`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `enhance-pir-server` (lib) generated 6 warnings (run `cargo fix --lib -p enhance-pir-server` to apply 5 suggestions)
+   Compiling enhance-pir-server v0.0.1 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3.08s
+     Running tests/packing_http.rs (target/debug/deps/packing_http-cec1063fbb644664)
+
+running 1 test
+QUALIFICATION_COMPLETE records=67 publications=0 watchdog=passed restart=false revocation=passed
+test extracted_path_preserves_wallet_answers_and_pool_replication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.27s
+

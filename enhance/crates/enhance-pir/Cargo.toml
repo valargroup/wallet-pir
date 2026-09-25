@@ -20,13 +20,14 @@ required-features = ["cli"]
 
 [features]
 default = []
+native-reinspiring = ["dep:reinspiring", "dep:rand_chacha", "ipir-sp/native-reinspiring"]
 cli = ["dep:clap", "dep:tokio"]
 
 [dependencies]
 base64 = "0.22"
 clap = { version = "4", features = ["derive"], optional = true }
 hex = "0.4"
-ipir-sp = { version = "=0.1.0-rc.3", git = "https://github.com/valargroup/ipir-sp.git", rev = "66b05ac59139897674489a5ea6461118772ee1c0" }
+ipir-sp = { version = "=0.1.0-rc.3", git = "https://github.com/valargroup/ipir-sp.git", rev = "8168d158442ad6defac9ba0f5ff2d294b99e2ecd" }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -34,3 +35,6 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"], optional = true }
+
+reinspiring = {git="https://github.com/valargroup/ipir-sp.git",rev="8168d158442ad6defac9ba0f5ff2d294b99e2ecd", optional=true}
+rand_chacha = {version="0.3", optional=true}

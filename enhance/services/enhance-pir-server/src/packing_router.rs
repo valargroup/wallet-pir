@@ -25,7 +25,10 @@ use std::{
 };
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
+#[cfg(not(feature = "native-reinspiring"))]
 pub const CONTROL_VERSION: u16 = 2;
+#[cfg(feature = "native-reinspiring")]
+pub const CONTROL_VERSION: u16 = 3;
 const BODY_LIMIT: usize = 512 * 1024;
 // A liveness watchdog, not permission to complete recovery without a fence ACK.
 const CONTROL_WATCHDOG: Duration = Duration::from_secs(5);

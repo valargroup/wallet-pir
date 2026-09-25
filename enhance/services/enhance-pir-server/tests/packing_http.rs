@@ -224,11 +224,15 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         .await
         .unwrap();
     assert_eq!(health["resident_objects"], 1);
-    let artifacts = std::fs::read_dir(root.path().join("coordinator/prepared-packing-v1"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|e| e == "bin"))
-        .collect::<Vec<_>>();
+    let artifacts = std::fs::read_dir(
+        root.path()
+            .join("coordinator")
+            .join(enhance_pir_server::prepared_packing::DIRECTORY),
+    )
+    .unwrap()
+    .filter_map(Result::ok)
+    .filter(|e| e.path().extension().is_some_and(|e| e == "bin"))
+    .collect::<Vec<_>>();
     assert_eq!(
         artifacts.len(),
         1,

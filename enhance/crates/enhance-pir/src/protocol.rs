@@ -6,7 +6,10 @@ use sha2::{Digest, Sha256};
 /// Frozen schema-11 wallet limit, independent of worker placement density.
 pub const MAX_QUERY_SHARDS: u64 = 24;
 pub const SCHEMA_VERSION: u16 = 11;
+#[cfg(not(feature = "native-reinspiring"))]
 pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v7";
+#[cfg(feature = "native-reinspiring")]
+pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v8-native-poc";
 pub const RETAINED_GENERATIONS: usize = 5;
 pub const HEADER_BYTES: usize = 116;
 
@@ -499,7 +502,19 @@ pub fn parameters(logical_rows: u64) -> Result<ipir_sp::YpirSchemeParams, String
         (RECORD_BYTES * RECORDS_PER_ROW * 8) as u64,
         ipir_sp::SimplePirProfile::P16Q48,
     )
-    .map(|(_, p)| p)
+    .map(|(_, p)| {
+        #[cfg(feature = "native-reinspiring")]
+        {
+            let mut p = p;
+            p.query_bits = 49;
+            p.q_prime_1 = 1 << 22;
+            p
+        }
+        #[cfg(not(feature = "native-reinspiring"))]
+        {
+            p
+        }
+    })
     .map_err(|e| e.to_string())
 }
 

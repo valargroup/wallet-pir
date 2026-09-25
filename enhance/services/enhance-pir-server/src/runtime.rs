@@ -21,6 +21,22 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 
+#[cfg(feature = "native-reinspiring")]
+#[path = "native_runtime.rs"]
+pub(crate) mod native_runtime;
+#[cfg(feature = "native-reinspiring")]
+pub use native_runtime::NativePacking as Packing;
+pub fn modulus() -> u64 {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        enhance_pir::native::Q
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        rlwe().q
+    }
+}
+
 pub fn rlwe() -> &'static RlweParams {
     static RLWE: OnceLock<RlweParams> = OnceLock::new();
     RLWE.get_or_init(|| {
@@ -143,7 +159,7 @@ impl Evaluation {
     pub fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, EvaluationError> {
         let params =
             parameters(self.plan.shard.logical_rows).map_err(EvaluationError::Unavailable)?;
-        if coefficients.len() != params.db_rows || coefficients.iter().any(|v| *v >= rlwe().q) {
+        if coefficients.len() != params.db_rows || coefficients.iter().any(|v| *v >= modulus()) {
             return Err(EvaluationError::InvalidQuery);
         }
         let mut answer = vec![0; params.db_cols];
@@ -154,7 +170,7 @@ impl Evaluation {
                 .runtime
                 .evaluate(rlwe(), &coefficients[start..end])
                 .map_err(|e| EvaluationError::Unavailable(e.to_string()))?;
-            add_intermediate_assign_mod(&mut answer, &partial, rlwe().q)
+            add_intermediate_assign_mod(&mut answer, &partial, modulus())
                 .map_err(|e| EvaluationError::Unavailable(e.to_string()))?;
         }
         Ok(answer)
@@ -180,6 +196,7 @@ impl Evaluation {
     }
 }
 
+#[cfg(not(feature = "native-reinspiring"))]
 pub struct Packing {
     _charge: super::packing_budget::Charge,
     pub params: YpirSchemeParams,
@@ -189,6 +206,7 @@ pub struct Packing {
     mapped: Option<inspiring::prepared::MappedPrepared<'static>>,
 }
 
+#[cfg(not(feature = "native-reinspiring"))]
 impl Packing {
     pub(crate) fn write_prepared(&self, out: &mut impl std::io::Write) -> Result<(), String> {
         out.write_all(&(self.params.db_rows as u64).to_le_bytes())
@@ -308,7 +326,7 @@ impl Packing {
     pub fn pack(&self, body: &[u8], intermediate: &[u64]) -> Result<Vec<u8>, String> {
         let binding = QueryBinding::decode(body)?;
         self.query_coefficients(body, binding)?;
-        if intermediate.len() != self.params.db_cols || intermediate.iter().any(|v| *v >= rlwe().q)
+        if intermediate.len() != self.params.db_cols || intermediate.iter().any(|v| *v >= modulus())
         {
             return Err("invalid worker intermediate".into());
         }
@@ -454,15 +472,21 @@ impl Engine {
         plan.validate()?;
         let mut units = Vec::new();
         // A full-size setup keeps unchanged unit setup slices stable through logical growth.
-        let params = parameters(32768)?;
-        let client = ipir_sp::IPIRClient::from_profile(
-            params.num_items,
-            params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q48,
-        )
-        .map_err(|e| e.to_string())?;
-        let setup =
-            client.generate_public_query_setup_simplepir_from_seed(setup_seed(plan.shard.id));
+        #[cfg(feature = "native-reinspiring")]
+        let masks = enhance_pir::native::query_masks(plan.shard.id);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let masks = {
+            let params = parameters(32768)?;
+            let client = ipir_sp::IPIRClient::from_profile(
+                params.num_items,
+                params.item_size_bits,
+                ipir_sp::SimplePirProfile::P16Q48,
+            )
+            .map_err(|e| e.to_string())?;
+            let setup =
+                client.generate_public_query_setup_simplepir_from_seed(setup_seed(plan.shard.id));
+            setup.polys().to_vec()
+        };
         for (spec, identity) in plan.shard.units.iter().zip(&plan.units) {
             let id = identity.digest();
             if let Some(unit) = self.units.get(&id).and_then(Weak::upgrade) {
@@ -507,7 +531,7 @@ impl Engine {
                         identity.content_sha256.clone(),
                         &rows,
                         rlwe(),
-                        setup.polys(),
+                        &masks,
                         self.backend,
                     )
                     .map_err(|e| e.to_string())?;

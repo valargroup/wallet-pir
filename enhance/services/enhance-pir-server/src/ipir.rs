@@ -103,7 +103,11 @@ pub fn add_crs_blocks_assign_mod(
             }
         }
         for (left_row, right_row) in left_block.rows.iter_mut().zip(&right_block.rows) {
-            add_intermediate_assign_mod(left_row, right_row, params.q)?;
+            #[cfg(feature = "native-reinspiring")]
+            let modulus = enhance_pir::native::Q;
+            #[cfg(not(feature = "native-reinspiring"))]
+            let modulus = params.q;
+            add_intermediate_assign_mod(left_row, right_row, modulus)?;
         }
     }
 
@@ -152,7 +156,7 @@ impl ArtifactMetadata {
             && self.table == table.as_str()
             && self.pir_profile == layout.pir_profile.id()
             && self.rlwe_degree == rlwe.d
-            && self.rlwe_modulus == rlwe.q
+            && self.rlwe_modulus == crate::runtime::modulus()
             && self.shard_id == shard_id
             && self.query_row_start == query_row_start
             && self.rows_sha256 == rows_sha256
@@ -287,17 +291,24 @@ impl ShardRuntime {
                 query.len()
             )));
         }
-        if query.iter().any(|coefficient| *coefficient >= rlwe.q) {
+        if query
+            .iter()
+            .any(|coefficient| *coefficient >= crate::runtime::modulus())
+        {
             return Err(InspiringError::PreprocessMismatch(
                 "query coefficient is not reduced modulo q".to_string(),
             ));
         }
-        self.server
-            .try_multiply_query(rlwe, query)
-            .map_err(|error| {
-                tracing::error!(%error, "matrix-vector evaluation failed");
-                InspiringError::Internal("matrix-vector evaluation failed")
-            })
+        #[cfg(feature = "native-reinspiring")]
+        let result = self
+            .server
+            .try_multiply_power_of_two(enhance_pir::native::Q, query);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let result = self.server.try_multiply_query(rlwe, query);
+        result.map_err(|error| {
+            tracing::error!(%error, "matrix-vector evaluation failed");
+            InspiringError::Internal("matrix-vector evaluation failed")
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -456,6 +467,10 @@ impl PreparedShard {
             .ok_or_else(|| {
                 InspiringError::PreprocessMismatch("global setup does not cover shard".to_string())
             })?;
+        #[cfg(feature = "native-reinspiring")]
+        let crs_blocks = crate::runtime::native_runtime::hint(&server, setup)
+            .map_err(InspiringError::PreprocessMismatch)?;
+        #[cfg(not(feature = "native-reinspiring"))]
         let crs_blocks = server
             .perform_offline_precomputation_simplepir(rlwe, setup)
             .crs_blocks;
@@ -500,7 +515,7 @@ impl PreparedShard {
             table: table.as_str().to_string(),
             pir_profile: layout.pir_profile.id().to_string(),
             rlwe_degree: rlwe.d,
-            rlwe_modulus: rlwe.q,
+            rlwe_modulus: crate::runtime::modulus(),
             db_rows: runtime.server.params().db_rows,
             db_cols: runtime.server.params().db_cols,
             plaintext_modulus: runtime.server.params().p,

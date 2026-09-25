@@ -81,3 +81,26 @@ The wallet integration is opt-in via `native-reinspiring`, uses a distinct
 coordinator-owned preparation, worker evaluation, router packing, live
 publication/retention and current admission limits. Integration validation and
 production cutover are not yet complete. No native production switch has occurred.
+
+
+## Distributed integration checks
+
+Dependency integration is pinned to `8168d158442ad6defac9ba0f5ff2d294b99e2ecd`.
+Both native and legacy `packing_http` tests passed. A native run with
+`QUALIFY_PUBLICATIONS=1 QUALIFY_QUERY_LANES=2 QUALIFY_QUERIES_PER_LANE=3`
+also passed, verifying six queries during publication of 33 additional records,
+plus request admission, slow-upload disconnects, watchdog and revocation checks.
+These are short correctness checks, not sustained qualification.
+
+Independent inspection found no blocking integration issue for this controlled
+trial. Native control state must be rebuilt in a separate root; v7 control
+manifests are incompatible. Prepared arithmetic caches trust the authenticated
+coordinator. Build Enhance targets separately: Cargo feature unification means
+an unrelated transparent binary built together with the native feature is not
+an approved transparent-service artifact.
+
+Linux build uses Rust 1.91.0, release-fast, `native-reinspiring,cuda` for server,
+and `enhance-pir/native-reinspiring` for load client. Router/coordinator/CPU workers
+use Skylake AVX-512. The GPU host's Xeon E5-2623 v4 requires a separate Haswell
+build; the initial AVX-512 oracle trapped before deployment. CUDA verification
+must use its `/usr/local/cuda-12.2/lib64` runtime library path.

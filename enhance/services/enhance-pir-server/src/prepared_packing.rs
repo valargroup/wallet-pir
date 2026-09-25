@@ -7,8 +7,14 @@ use std::{
     io::{self, BufWriter, Read, Write},
     path::Path,
 };
+#[cfg(not(feature = "native-reinspiring"))]
 pub const DIRECTORY: &str = "prepared-packing-v1";
+#[cfg(feature = "native-reinspiring")]
+pub const DIRECTORY: &str = "prepared-native-packing-v1";
+#[cfg(not(feature = "native-reinspiring"))]
 pub const FORMAT: u16 = 1;
+#[cfg(feature = "native-reinspiring")]
+pub const FORMAT: u16 = 2;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
@@ -22,7 +28,7 @@ impl Artifact {
         if self.format != FORMAT
             || self.name != artifact_name(rows, public)?
             || !enhance_pir::protocol::canonical_hash(&self.sha256)
-            || self.bytes != expected_len(rows)?
+            || !valid_len(self.bytes, rows)?
         {
             return Err("invalid prepared artifact identity or size".into());
         }
@@ -42,6 +48,17 @@ pub fn describe_hint(root: &Path, hint: &str, rows: u64) -> Result<Artifact, Str
     let artifact = describe(root, &artifact_name(rows, public)?)?;
     artifact.validate(rows, public)?;
     Ok(artifact)
+}
+fn valid_len(bytes: u64, rows: u64) -> Result<bool, String> {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        enhance_pir::protocol::parameters(rows)?;
+        Ok((192 * 1024 * 1024..=400 * 1024 * 1024).contains(&bytes))
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        Ok(bytes == expected_len(rows)?)
+    }
 }
 pub fn expected_len(rows: u64) -> Result<u64, String> {
     let params = enhance_pir::protocol::parameters(rows)?;
@@ -127,7 +144,7 @@ pub fn load(
     rows: u64,
     budget: &crate::PackingBudget,
 ) -> Result<Packing, String> {
-    if a.format != FORMAT || a.bytes != expected_len(rows)? {
+    if a.format != FORMAT || !valid_len(a.bytes, rows)? {
         return Err("incompatible prepared artifact".into());
     }
     let mut file = File::open(path).map_err(|e| e.to_string())?;
