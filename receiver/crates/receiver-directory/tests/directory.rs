@@ -174,3 +174,85 @@ fn overflow_and_bad_padding_fail_closed() {
     b[ROW_BYTES - 1] = 1;
     assert!(lookup_row(&s.manifest, &r, 0, &b).is_err());
 }
+
+#[cfg(feature = "store")]
+#[test]
+fn durable_coverage_atomic_failure_and_reorg() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("directory.sqlite");
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(&path, config.clone()).unwrap();
+    assert!(store.snapshot(8).is_err());
+    let empty = IndexedBlock {
+        height: 100,
+        hash: [10; 32],
+        parent: [2; 32],
+        start_position: 200,
+        end_position: 200,
+        coinbase_actions: 0,
+        payments: vec![],
+    };
+    store.append(&empty).unwrap();
+    assert_eq!(store.snapshot(8).unwrap().manifest.end_height, 100);
+    let mut r = record(0, 1);
+    r.payment.position = 202;
+    let mut block = IndexedBlock {
+        height: 101,
+        hash: [3; 32],
+        parent: [10; 32],
+        start_position: 200,
+        end_position: 204,
+        coinbase_actions: 2,
+        payments: vec![(r.receiver, r.payment.clone())],
+    };
+    // The first two positions belong to excluded coinbase outputs.
+    store.append(&block).unwrap();
+    drop(store);
+    let mut store = Store::open(&path, config.clone()).unwrap();
+    assert_eq!(store.tip().unwrap().position, 204);
+    assert_eq!(store.counts().unwrap(), (1, 2));
+    let old = store.snapshot(8).unwrap();
+    assert_eq!(
+        lookup_row(&old.manifest, &r.receiver, 0, row(&old, &r.receiver, 0))
+            .unwrap()
+            .unwrap()
+            .payment
+            .position,
+        202
+    );
+    block.height = 102;
+    block.parent = [3; 32];
+    block.hash = [4; 32];
+    block.start_position = 204;
+    block.end_position = 208;
+    // Failure after inserting the block must roll back both the block and its records.
+    assert!(store.append(&block).is_err());
+    assert_eq!(store.tip().unwrap().height, 101);
+    assert!(store.rewind(100, [99; 32]).is_err());
+    store.rewind(100, [10; 32]).unwrap();
+    assert_eq!(store.counts().unwrap(), (0, 0));
+    block.height = 101;
+    block.parent = [10; 32];
+    block.start_position = 200;
+    block.end_position = 203;
+    block.coinbase_actions = 0;
+    block.payments[0].1.block_hash = block.hash;
+    store.append(&block).unwrap();
+    let new = store.snapshot(8).unwrap();
+    assert_ne!(
+        old.manifest.revision().unwrap(),
+        new.manifest.revision().unwrap()
+    );
+    assert!(old.manifest.accept([1; 32], 100, 101, block.hash).is_err());
+    let mut wrong = config.clone();
+    wrong.genesis = [99; 32];
+    assert!(Store::open(&path, wrong).is_err());
+    store.rewind(99, config.start_parent).unwrap();
+    assert!(store.snapshot(8).is_err());
+}

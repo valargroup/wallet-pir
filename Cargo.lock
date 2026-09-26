@@ -1065,6 +1065,7 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "rayon",
+ "receiver-directory",
  "reinspiring",
  "reqwest",
  "serde",
@@ -2993,6 +2994,7 @@ name = "receiver-directory"
 version = "0.0.1"
 dependencies = [
  "hex",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",

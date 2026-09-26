@@ -209,7 +209,7 @@ impl ZakuraClient {
             .collect()
     }
 
-    async fn call<T: DeserializeOwned>(
+    pub(crate) async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
         params: serde_json::Value,

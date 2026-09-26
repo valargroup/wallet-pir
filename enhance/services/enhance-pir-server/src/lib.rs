@@ -17,6 +17,8 @@ pub mod types;
 pub mod wire;
 pub mod worker;
 pub mod zakura;
+/// Public receiver extraction for the standalone directory indexer.
+pub mod receiver;
 
 pub use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
 

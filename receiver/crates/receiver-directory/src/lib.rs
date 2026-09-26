@@ -2,6 +2,8 @@
 pub mod extract;
 pub mod record;
 pub mod snapshot;
+#[cfg(feature = "store")]
+pub mod store;
 
 pub use record::{Payment, Receiver, Record, RECORD_BYTES};
 pub type Hash = [u8; 32];
@@ -16,6 +18,9 @@ pub enum Error {
     Capacity,
     #[error("missing continuation page")]
     MissingPage,
+    #[cfg(feature = "store")]
+    #[error(transparent)]
+    Sql(#[from] rusqlite::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }

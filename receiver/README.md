@@ -55,3 +55,41 @@ coverage, deterministic publications, and bucket overflow.
 Outgoing recovery delegates to `zakura-orchard`. Protocol reference:
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`,
 v2026.7.0-202-gafa086, NU6.3 proposal, section 4.19.3 (`decryptovk`).
+
+## Local indexing
+
+The standalone `receiver-directory` binary lives in `enhance-pir-server` to reuse
+its canonical block parser and RPC client. It does not enable an Enhance route or
+modify an Enhance journal. Receiver extraction, records, lookup, and SQLite
+storage live in the shared crate. Wallets do not need its optional `store` feature.
+
+```sh
+cargo run -p enhance-pir-server --bin receiver-directory -- \
+  --data-dir /path/to/receiver-state \
+  --rpc-url http://127.0.0.1:8232 --cookie /path/to/.cookie
+```
+
+For an explicitly selected node without authentication, replace `--cookie` with
+`--no-auth`. The command verifies the mainnet genesis and defaults to coverage
+from Ironwood activation through the startup tip minus ten blocks. Use
+`--start-height` and `--end-height` for a bounded test. Such a publication does
+not cover earlier history. The node supplies consensus validation and tree sizes.
+
+Each block commits its records and coverage together. Restarting checks saved
+hashes, removes orphaned blocks and their payments, then resumes. A reorg crossing
+the configured start boundary requires an explicit rebuild in a new directory.
+RPC failures stop the run without advancing the failed block. Rerun the same
+command to resume. This is a bounded backfill command, not a polling daemon.
+
+Successful runs write `<revision>.rows` and `<revision>.json` under
+`publications/`, then atomically replace `current.json` with that manifest.
+Consumers must revalidate its terminal block against their accepted chain. Old
+revision files may remain after a reorg and are not evidence of current coverage.
+The prototype stops rather than dropping records if its 65,536-row limit is
+exceeded. No public serving process is started.
+
+`cargo test -p receiver-directory --features store` adds restart and transactional
+rollback checks. `cargo test -p enhance-pir-server --test receiver` covers coinbase
+exclusion with preserved positions, RPC anchor validation, and command-line
+restart/reorg publication. Its synthetic block envelopes test indexing contracts,
+not consensus validation.

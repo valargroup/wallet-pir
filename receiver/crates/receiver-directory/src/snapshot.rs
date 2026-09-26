@@ -163,7 +163,7 @@ pub fn lookup_row(
         return Err(Error::Malformed);
     }
     let mut found = None;
-    for slot in bytes[..SLOTS * RECORD_BYTES].chunks_exact(RECORD_BYTES) {
+    for slot in bytes[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
         if let Some(record) = Record::decode(slot)? {
             validate_location(m, &record)?;
             if row_for(m, &record.receiver, record.page)? != wanted_row {

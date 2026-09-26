@@ -15,6 +15,10 @@ path = "src/bin/server.rs"
 name = "status-pir"
 path = "src/bin/status.rs"
 
+[[bin]]
+name = "receiver-directory"
+path = "src/bin/receiver.rs"
+
 [features]
 default = []
 native-reinspiring = ["enhance-pir/native-reinspiring", "dep:reinspiring", "ipir-sp/native-reinspiring", "zakura-pir-enhance/native-reinspiring"]
@@ -22,6 +26,8 @@ cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 
 [dependencies]
 rayon="1"
+receiver-directory = { path = "../../../receiver/crates/receiver-directory", features = ["store"] }
+tempfile = "3"
 reinspiring = {git="https://github.com/valargroup/ipir-sp.git",tag = "v0.1.0-rc.6", optional=true}
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", optional = true, features = ["cuda"] }
 axum = "0.7"
