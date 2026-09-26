@@ -1,6 +1,9 @@
 //! Standalone resumable public-chain indexer. No wallet or receiver query endpoint.
 use clap::Parser;
-use enhance_pir_server::zakura::ZakuraClient;
+use enhance_pir_server::{
+    receiver::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
+    zakura::ZakuraClient,
+};
 use receiver_directory::{
     snapshot::{Snapshot, MAX_ROWS},
     store::{Config, Store},
@@ -29,6 +32,12 @@ struct Args {
     end_height: Option<u32>,
     #[arg(long, default_value_t = 10)]
     confirmations: u32,
+    /// Maximum blocks retained for one validated batch.
+    #[arg(long, default_value_t = MAX_RECEIVER_BATCH_BLOCKS, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_BATCH_BLOCKS)))]
+    batch_size: u32,
+    /// Maximum simultaneous raw-block RPC requests.
+    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_CONCURRENCY)))]
+    concurrency: u32,
 }
 
 #[tokio::main]
@@ -86,12 +95,29 @@ async fn main() -> Result<()> {
     if end < tip.height {
         return Err("end height precedes stored tip".into());
     }
-    for height in tip.height + 1..=end {
-        store.append(&rpc.receiver_block(height).await?)?;
-        if height % 100 == 0 || height == end {
-            let (records, coinbase) = store.counts()?;
-            eprintln!("height={height} recovered={records} excluded_coinbase_actions={coinbase}");
+    let started = std::time::Instant::now();
+    let resume_height = tip.height;
+    eprintln!(
+        "backfill start={} target={end} batch_size={} concurrency={}",
+        resume_height + 1,
+        args.batch_size,
+        args.concurrency
+    );
+    while tip.height < end {
+        let batch = rpc
+            .receiver_batch(
+                &tip,
+                (end - tip.height).min(args.batch_size),
+                args.concurrency,
+            )
+            .await?;
+        for block in batch {
+            store.append(&block)?;
         }
+        tip = store.tip()?;
+        let (records, coinbase) = store.counts()?;
+        let rate = f64::from(tip.height - resume_height) / started.elapsed().as_secs_f64();
+        eprintln!("height={} target={end} recovered={records} excluded_coinbase_actions={coinbase} blocks_per_second={rate:.2}",tip.height);
     }
     let records = store.counts()?.0;
     // Start at half occupancy. A crowded bucket grows the entire candidate.

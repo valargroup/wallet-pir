@@ -72,12 +72,12 @@ async fn rpc(State(s): State<Rpc>, Json(r): Json<Value>) -> Json<Value> {
             }
         }
         "getblock" => {
-            // Tree size and raw bytes must both be fetched by hash, never mixed by height.
-            assert_eq!(
-                r["params"][0],
-                if s.wrong_hash { "00".repeat(32) } else { hash }
-            );
-            if r["params"][1] == 2 {
+            if r["params"][1] == 1 {
+                // Tree size is fetched by hash. Raw blocks arrive concurrently by height.
+                assert_eq!(
+                    r["params"][0],
+                    if s.wrong_hash { "00".repeat(32) } else { hash }
+                );
                 json!({"trees":{"ironwood":{"size":610504}}})
             } else {
                 let mut raw = Vec::new();
@@ -101,7 +101,15 @@ async fn rpc_checks_raw_block_against_canonical_anchor() {
         let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let result = ZakuraClient::unauthenticated(url)
             .unwrap()
-            .receiver_block(3496114)
+            .receiver_batch(
+                &receiver_directory::store::Checkpoint {
+                    height: 3496113,
+                    hash: [0; 32],
+                    position: 610502,
+                },
+                1,
+                8,
+            )
             .await;
         assert_eq!(result.is_err(), wrong_hash);
         task.abort();
@@ -129,7 +137,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             }
             "getblockhash" if r["params"][0] == height - 1 => json!("00".repeat(32)),
             "getblockhash" => json!(b.hash().to_string()),
-            "getblock" if r["params"][1] == 2 => json!({"trees":{"ironwood":{"size":2}}}),
+            "getblock" if r["params"][1] == 1 => json!({"trees":{"ironwood":{"size":2}}}),
             "getblock" => {
                 let mut raw = Vec::new();
                 b.zcash_serialize(&mut raw).unwrap();
@@ -192,4 +200,134 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     assert_ne!(first["revision"], next["revision"]);
     assert_eq!(next, run());
     task.abort();
+}
+
+#[tokio::test]
+async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
+    use receiver_directory::store::Checkpoint;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[derive(Clone)]
+    struct BatchRpc {
+        blocks: Arc<Vec<Block>>,
+        fault: u8,
+        calls: Arc<AtomicUsize>,
+        active: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+    async fn handler(State(s): State<BatchRpc>, Json(r): Json<Value>) -> Json<Value> {
+        let call = s.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let terminal = s.blocks.last().unwrap().hash().to_string();
+        let result = match r["method"].as_str().unwrap() {
+            "getblockhash" => {
+                if s.fault == 4 || (s.fault == 7 && call == 7) {
+                    json!("00".repeat(32))
+                } else {
+                    json!(terminal)
+                }
+            }
+            "getblock" if r["params"][1] == 1 => {
+                assert_eq!(
+                    r["params"][0],
+                    if s.fault == 4 {
+                        "00".repeat(32)
+                    } else {
+                        terminal
+                    }
+                );
+                json!({"trees":{"ironwood":{"size":if s.fault == 3 {209} else {208}}}})
+            }
+            "getblock" => {
+                assert_eq!(r["params"][1], 0);
+                let height: usize = r["params"][0].as_str().unwrap().parse().unwrap();
+                let i = height - 3496114;
+                let active = s.active.fetch_add(1, Ordering::SeqCst) + 1;
+                s.peak.fetch_max(active, Ordering::SeqCst);
+                // Force responses out of order while also observing the concurrency bound.
+                tokio::time::sleep(std::time::Duration::from_millis(if i.is_multiple_of(2) {
+                    30
+                } else {
+                    5
+                }))
+                .await;
+                s.active.fetch_sub(1, Ordering::SeqCst);
+                if s.fault == 6 && i == 1 {
+                    return Json(
+                        json!({"result":null,"error":{"code":-8,"message":"missing block"}}),
+                    );
+                }
+                let mut raw = Vec::new();
+                s.blocks[i].zcash_serialize(&mut raw).unwrap();
+                if s.fault == 5 && i == 1 {
+                    raw.push(1);
+                }
+                json!(hex::encode(raw))
+            }
+            _ => panic!("unexpected method"),
+        };
+        Json(json!({"result":result,"error":null}))
+    }
+    for fault in 0..=7 {
+        let mut blocks = Vec::new();
+        let mut parent = [0; 32];
+        for i in 0..4 {
+            let mut b = block();
+            let tx = Arc::make_mut(&mut b.transactions[0]);
+            if let Transaction::V6 { inputs, .. } = tx {
+                if let Input::Coinbase { height, .. } = &mut inputs[0] {
+                    *height = Height(3496114 + i + u32::from(fault == 2 && i == 1));
+                }
+            }
+            Arc::make_mut(&mut b.header).previous_block_hash =
+                zakura_chain::block::Hash(if fault == 1 && i == 1 {
+                    [99; 32]
+                } else {
+                    parent
+                });
+            parent = b.hash().0;
+            blocks.push(b);
+        }
+        let state = BatchRpc {
+            blocks: Arc::new(blocks),
+            fault,
+            calls: Arc::new(AtomicUsize::new(0)),
+            active: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let router = Router::new()
+            .route("/", post(handler))
+            .with_state(state.clone());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = ZakuraClient::unauthenticated(url).unwrap();
+        let previous = Checkpoint {
+            height: 3496113,
+            hash: [0; 32],
+            position: 200,
+        };
+        for (count, concurrency) in [(0, 2), (65, 2), (4, 0), (4, 17)] {
+            assert!(client
+                .receiver_batch(&previous, count, concurrency)
+                .await
+                .is_err());
+        }
+        assert_eq!(state.calls.load(Ordering::SeqCst), 0);
+        let result = client.receiver_batch(&previous, 4, 2).await;
+        assert_eq!(result.is_err(), fault != 0, "fault={fault}");
+        assert_eq!(state.peak.load(Ordering::SeqCst), 2);
+        if let Ok(indexed) = result {
+            assert_eq!(indexed.len(), 4);
+            // Four raw-block requests plus three terminal checks, rather than 20 requests.
+            assert_eq!(state.calls.load(Ordering::SeqCst), 7);
+            for (i, b) in indexed.iter().enumerate() {
+                let expected =
+                    extract_block(&state.blocks[i], 3496114 + i as u32, 202 + i as u64 * 2)
+                        .unwrap();
+                assert_eq!(b.payments, expected.payments);
+                assert_eq!(b.start_position, 200 + i as u64 * 2);
+                assert_eq!(b.coinbase_actions, 1);
+            }
+        }
+        task.abort();
+    }
 }

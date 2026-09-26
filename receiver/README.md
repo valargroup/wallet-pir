@@ -81,6 +81,14 @@ the configured start boundary requires an explicit rebuild in a new directory.
 RPC failures stop the run without advancing the failed block. Rerun the same
 command to resume. This is a bounded backfill command, not a polling daemon.
 
+Backfill downloads raw blocks concurrently, with defaults of `--concurrency 8`
+and `--batch-size 64`. It checks every height and parent link against the saved
+checkpoint, counts all Actions to derive positions, then verifies the terminal
+block hash and tree size before returning a batch for storage. Tree metadata uses
+verbosity 1, which returns transaction IDs rather than full transactions. A
+64-block batch requires 67 RPC calls instead of 320. Concurrency is limited to 16
+and batches to 64 blocks. No database or publication format change is required.
+
 Successful runs write `<revision>.rows` and `<revision>.json` under
 `publications/`, then atomically replace `current.json` with that manifest.
 Consumers must revalidate its terminal block against their accepted chain. Old
