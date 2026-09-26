@@ -10,11 +10,11 @@ use std::{
 #[cfg(not(feature = "native-reinspiring"))]
 pub const DIRECTORY: &str = "prepared-packing-v1";
 #[cfg(feature = "native-reinspiring")]
-pub const DIRECTORY: &str = "prepared-native-packing-v1";
+pub const DIRECTORY: &str = "prepared-native-packing-v2";
 #[cfg(not(feature = "native-reinspiring"))]
 pub const FORMAT: u16 = 1;
 #[cfg(feature = "native-reinspiring")]
-pub const FORMAT: u16 = 2;
+pub const FORMAT: u16 = 3;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {

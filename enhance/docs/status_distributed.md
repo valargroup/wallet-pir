@@ -88,7 +88,9 @@ does not qualify dense block bursts or the 75% occupancy ceiling.
 ## Compatibility and qualification
 
 The server and wallet use `status-pir-v2-q48`, a 20,000-ms maximum age, and
-ipir-sp rc.5 at `c5075a4059dadedf63d14e9009711338d202a022`. Wallet-library commit
+ipir-sp rc.6. A `native-reinspiring` build serves the incompatible
+`status-pir-v3-native-two-mask-m29` profile instead, which the wallet library
+does not implement. Wallet-library commit
 `e153ad393ac4bfb12ac1e06a57a31f631fb9ce3e` carries the matching contract. Vizor's
 wallet-library pins must move together to avoid distinct Rust types from two
 copies of the Status crate. Its release-ready feature gate remains disabled.

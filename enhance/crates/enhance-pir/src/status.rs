@@ -1,4 +1,9 @@
 //! Status-PIR wire contract and private client. No transaction payload API.
+//!
+//! The default build uses the q48 SimplePIR/InspiRING profile. The
+//! `native-reinspiring` feature selects a separate native two-mask protocol
+//! with its own identifiers, setup domains and query magic.
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::{IPIRClient, IPIRSeed, PublicQuerySetup, SimplePirProfile};
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -11,7 +16,16 @@ pub const SLOT_BYTES: usize = 40;
 pub const ROW_BYTES: usize = 12288;
 pub const ITEM_BITS: u64 = (ROW_BYTES * 8) as u64;
 pub const MAX_ENTRIES: usize = ROWS * SLOTS * 3 / 4;
+#[cfg(not(feature = "native-reinspiring"))]
 pub const PROTOCOL: &str = "status-pir-v2-q48";
+#[cfg(feature = "native-reinspiring")]
+pub const PROTOCOL: &str = "status-pir-v3-native-two-mask-m29";
+#[cfg(not(feature = "native-reinspiring"))]
+pub const QUERY_MAGIC: &[u8; 4] = b"SPQ2";
+#[cfg(feature = "native-reinspiring")]
+pub const QUERY_MAGIC: &[u8; 4] = b"SPN1";
+/// Plaintext u16 coefficients per row.
+pub const COLS: usize = ROW_BYTES / 2;
 pub const HEADER_BYTES: usize = 52;
 pub const MAX_AGE_MS: u64 = 20_000;
 pub type Hash = [u8; 32];
@@ -113,6 +127,40 @@ pub fn setup_seed(network: &Hash, salt: &Hash) -> Hash {
     h.update(network);
     h.update(salt);
     h.finalize().into()
+}
+
+/// First-dimension query-mask domain for the native profile. Distinct from the
+/// q48 setup and from every Enhance setup.
+#[cfg(feature = "native-reinspiring")]
+pub fn native_setup_seed(network: &Hash, salt: &Hash) -> Hash {
+    let mut h = Sha256::new();
+    h.update(b"status-pir/v3/native-setup\0");
+    h.update(network);
+    h.update(salt);
+    h.finalize().into()
+}
+
+/// Packing key-switching setup domain for the native profile.
+#[cfg(feature = "native-reinspiring")]
+pub fn native_packing_seed(network: &Hash, salt: &Hash) -> Hash {
+    let mut h = Sha256::new();
+    h.update(b"status-pir/v3/native-packing\0");
+    h.update(network);
+    h.update(salt);
+    h.finalize().into()
+}
+
+#[cfg(feature = "native-reinspiring")]
+pub fn native_query_masks(network: &Hash, salt: &Hash) -> Vec<Vec<u64>> {
+    crate::native::public_query_masks(native_setup_seed(network, salt), ROWS, COLS)
+}
+
+#[cfg(feature = "native-reinspiring")]
+pub fn native_packing_setup(network: &Hash, salt: &Hash) -> reinspiring::native::NativeSetup {
+    reinspiring::native::NativeSetup::new(
+        crate::native::params(),
+        native_packing_seed(network, salt),
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -230,7 +278,10 @@ pub fn decode_row(
 
 pub struct Query {
     pub body: Vec<u8>,
+    #[cfg(not(feature = "native-reinspiring"))]
     seed: IPIRSeed,
+    #[cfg(feature = "native-reinspiring")]
+    secret: reinspiring::native::NativeSecret,
     txid: Hash,
     earliest: Option<u32>,
     issued_at: Instant,
@@ -238,9 +289,18 @@ pub struct Query {
 
 pub struct Client {
     pub manifest: Manifest,
+    #[cfg(not(feature = "native-reinspiring"))]
     client: IPIRClient,
+    #[cfg(not(feature = "native-reinspiring"))]
     setup: PublicQuerySetup,
+    #[cfg(not(feature = "native-reinspiring"))]
     public: Vec<Vec<u64>>,
+    #[cfg(feature = "native-reinspiring")]
+    packing: reinspiring::native::NativeSetup,
+    #[cfg(feature = "native-reinspiring")]
+    masks: Vec<Vec<u64>>,
+    #[cfg(feature = "native-reinspiring")]
+    public: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -374,6 +434,17 @@ fn anchor_matches(manifest: &Manifest, accepted: &AcceptedAnchor) -> bool {
         && manifest.anchor_hash == accepted.hash
 }
 
+#[cfg(feature = "native-reinspiring")]
+fn expected_public_len() -> Result<usize, Error> {
+    Ok(crate::native::public_len(COLS))
+}
+
+#[cfg(feature = "native-reinspiring")]
+fn expected_response_len() -> Result<usize, Error> {
+    Ok(HEADER_BYTES + crate::native::response_len(COLS))
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
 fn expected_public_len() -> Result<usize, Error> {
     let (rlwe, params) =
         ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
@@ -381,6 +452,7 @@ fn expected_public_len() -> Result<usize, Error> {
     Ok(params.db_cols / rlwe.d * ipir_sp::modulus_switch::published_c1_len(rlwe.d, rlwe.q))
 }
 
+#[cfg(not(feature = "native-reinspiring"))]
 fn expected_response_len() -> Result<usize, Error> {
     let (rlwe, params) =
         ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
@@ -411,6 +483,74 @@ fn current_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[cfg(feature = "native-reinspiring")]
+impl Client {
+    pub fn new(
+        manifest: Manifest,
+        public: &[u8],
+        accepted: &AcceptedAnchor,
+    ) -> Result<Self, Error> {
+        manifest.validate()?;
+        if manifest.network != accepted.network
+            || manifest.anchor_height != accepted.height
+            || manifest.anchor_hash != accepted.hash
+        {
+            return Err(Error::Malformed);
+        }
+        if public.len() != expected_public_len()?
+            || Hash::from(Sha256::digest(public)) != manifest.public_digest
+        {
+            return Err(Error::Malformed);
+        }
+        Ok(Self {
+            packing: native_packing_setup(&manifest.network, &manifest.salt),
+            masks: native_query_masks(&manifest.network, &manifest.salt),
+            public: public.to_vec(),
+            manifest,
+        })
+    }
+    pub fn prepare(&self, txid: &[u8], earliest: Option<u32>, now_ms: u64) -> Result<Query, Error> {
+        let txid: Hash = txid.try_into().map_err(|_| Error::Malformed)?;
+        self.manifest.fresh(now_ms)?;
+        let issued_at = Instant::now();
+        let row = bucket(&self.manifest.network, &self.manifest.salt, &txid);
+        let (secret, payload) = crate::native::prepare_with(&self.packing, &self.masks, ROWS, row)
+            .map_err(|_| Error::Pir)?;
+        let mut body = QUERY_MAGIC.to_vec();
+        body.extend(self.manifest.id());
+        body.extend(OsRng.gen::<[u8; 16]>());
+        body.extend(payload);
+        Ok(Query {
+            body,
+            secret,
+            txid,
+            earliest,
+            issued_at,
+        })
+    }
+    pub fn decode(&self, query: Query, response: &[u8], now_ms: u64) -> Result<Observation, Error> {
+        // Wall-clock rollback cannot extend a query's freshness lifetime.
+        if query_timed_out(query.issued_at.elapsed()) {
+            return Err(Error::Stale);
+        }
+        self.manifest.fresh(now_ms)?;
+        if response.len() != expected_response_len()?
+            || response[..HEADER_BYTES] != query.body[..HEADER_BYTES]
+        {
+            return Err(Error::Malformed);
+        }
+        let row = crate::native::decode_cols(
+            &query.secret,
+            &self.public,
+            &response[HEADER_BYTES..],
+            COLS,
+        )
+        .map_err(|_| Error::Pir)?;
+        decode_row(&self.manifest, &query.txid, query.earliest, &row)
+    }
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
 impl Client {
     pub fn new(
         manifest: Manifest,
@@ -453,7 +593,7 @@ impl Client {
         let issued_at = Instant::now();
         let row = bucket(&self.manifest.network, &self.manifest.salt, &txid);
         let (query, keys, seed) = self.client.generate_fresh_query_simplepir(&self.setup, row);
-        let mut body = b"SPQ2".to_vec();
+        let mut body = QUERY_MAGIC.to_vec();
         body.extend(self.manifest.id());
         body.extend(OsRng.gen::<[u8; 16]>());
         body.extend(

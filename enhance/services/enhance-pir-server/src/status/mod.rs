@@ -16,10 +16,17 @@ use axum::{
     Json, Router,
 };
 use enhance_pir::status::*;
-use inspiring::{QueryPackPreprocessed, TopKeyImages};
+#[cfg(not(feature = "native-reinspiring"))]
+use inspiring::QueryPackPreprocessed;
+use inspiring::TopKeyImages;
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::{
-    server::{pack_intermediate_blocks, published_c1_rows, CrsBlock, MatvecBackend},
-    IPIRClient, IPIRServer, ProductionSimplePirParams, SimplePirProfile,
+    server::{pack_intermediate_blocks, published_c1_rows},
+    IPIRClient,
+};
+use ipir_sp::{
+    server::{CrsBlock, MatvecBackend},
+    IPIRServer, ProductionSimplePirParams, SimplePirProfile,
 };
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
@@ -47,6 +54,25 @@ pub fn profile() -> &'static ProductionSimplePirParams {
     })
 }
 
+/// Ciphertext modulus of the selected Status profile.
+fn modulus() -> u64 {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        enhance_pir::native::Q
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        profile().rlwe().q
+    }
+}
+
+/// Router-side packing material for one d-column hint block.
+#[cfg(not(feature = "native-reinspiring"))]
+type PackingBlock = QueryPackPreprocessed<'static>;
+#[cfg(feature = "native-reinspiring")]
+type PackingBlock = Arc<reinspiring::native::NativePreprocessed>;
+
+#[cfg(not(feature = "native-reinspiring"))]
 fn top_images() -> Arc<TopKeyImages<'static>> {
     static TOP: OnceLock<Arc<TopKeyImages<'static>>> = OnceLock::new();
     TOP.get_or_init(|| Arc::new(TopKeyImages::build(profile().rlwe())))
@@ -62,12 +88,13 @@ struct Unit {
 /// Update H = A * D in Z_q[X]/(X^d+1) for at most 4096 changed
 /// plaintext coefficients per unit. A coefficient delta at row r contributes
 /// delta * X^r * A to its column; wrapping X^d negates the coefficient.
-/// The public setup and q48 profile are unchanged. Dense changes use upstream
-/// NTT reconstruction. The candidate owns its hint; admitted views are immutable.
+/// The public setup and profile are unchanged. Dense changes use upstream
+/// reconstruction. The candidate owns its hint; admitted views are immutable.
+/// The native profile uses the same exact negacyclic product modulo 2^54.
 fn incremental_hint(old: &Unit, bytes: &[u8], setup: &[u64]) -> Option<Vec<CrsBlock>> {
     let p = profile();
     let d = p.rlwe().d;
-    let q = p.rlwe().q;
+    let q = modulus();
     let columns = ROW_BYTES / 2;
     let mut changes = Vec::new();
     if bytes.len() != old.rows.len() {
@@ -122,7 +149,7 @@ pub struct Generation {
     pub manifest: Manifest,
     pub public: Arc<Vec<u8>>,
     units: Vec<Arc<Unit>>,
-    packing: Arc<Vec<QueryPackPreprocessed<'static>>>,
+    packing: Arc<Vec<PackingBlock>>,
     top: Option<Arc<TopKeyImages<'static>>>,
     packing_digests: Vec<Hash>,
 }
@@ -174,7 +201,7 @@ impl Generation {
     /// Fixed-shape, little-endian hint artifact. Never includes wallet queries.
     pub fn hint_bytes(&self) -> Result<Vec<u8>, Error> {
         let mut hint = self.units.first().ok_or(Error::Unavailable)?.hint.clone();
-        let q = profile().rlwe().q;
+        let q = modulus();
         if q > u64::MAX / 2 {
             return Err(Error::Malformed);
         }
@@ -234,66 +261,105 @@ impl Generation {
                     .chunks_exact(8)
                     .map(|v| u64::from_le_bytes(v.try_into().unwrap()))
                     .collect();
-                if values.iter().any(|v| *v >= p.rlwe().q) {
+                if values.iter().any(|v| *v >= modulus()) {
                     return Err(Error::Malformed);
                 }
                 rows.push(values);
             }
             blocks.push(CrsBlock { rows });
         }
-        let top = top_images();
         let packing_digests: Vec<Hash> = bytes
             .par_chunks(d * d * 8)
             .map(|block| Sha256::digest(block).into())
             .collect();
         let previous = previous
             .filter(|g| g.manifest.network == manifest.network && g.manifest.salt == manifest.salt);
-        let packing: Vec<_> = blocks
-            .par_iter()
-            .enumerate()
-            .map(|(i, block)| {
-                if let Some(old) = previous
-                    .filter(|g| g.packing_digests.get(i) == packing_digests.get(i))
-                    .and_then(|g| g.packing.get(i))
-                {
-                    // Upstream's precomputation owns immutable matrices. Copy the
-                    // exact values rather than rebuilding unchanged CRS blocks.
-                    return Ok(QueryPackPreprocessed {
-                        params: old.params,
-                        collapse_a_final_ntt: old.collapse_a_final_ntt.clone(),
-                        digits_ntt: old.digits_ntt.clone(),
-                    });
-                }
-                QueryPackPreprocessed::build_with_top(p.rlwe(), &block.to_ntt(p.rlwe()), &top)
-                    .map_err(|_| Error::Pir)
+        #[cfg(feature = "native-reinspiring")]
+        {
+            let setup = native_packing_setup(&manifest.network, &manifest.salt);
+            let packing: Vec<PackingBlock> = blocks
+                .par_iter()
+                .enumerate()
+                .map(|(i, block)| {
+                    if let Some(old) = previous
+                        .filter(|g| g.packing_digests.get(i) == packing_digests.get(i))
+                        .and_then(|g| g.packing.get(i))
+                    {
+                        return Ok(old.clone());
+                    }
+                    reinspiring::native::NativePreprocessed::build_two_mask(&setup, &block.rows)
+                        .map(Arc::new)
+                        .map_err(|_| Error::Pir)
+                })
+                .collect::<Result<_, _>>()?;
+            let packing_matrix_bytes: usize = packing.iter().map(|b| b.coefficient_bytes()).sum();
+            tracing::info!(
+                hint_bytes = bytes.len(),
+                packing_matrix_bytes,
+                preparation_threads = rayon::current_num_threads(),
+                "Status native packing material geometry"
+            );
+            let public = enhance_pir::native::publish(&packing).map_err(|_| Error::Pir)?;
+            manifest.public_digest = Sha256::digest(&public).into();
+            Ok(Self {
+                manifest,
+                public: Arc::new(public),
+                units: Vec::new(),
+                packing: Arc::new(packing),
+                top: None,
+                packing_digests,
             })
-            .collect::<Result<_, _>>()?;
-        // Measure public preprocessing transport cost before moving preparation
-        // across hosts. Includes fixed-shape matrix values, excluding framing.
-        let packing_matrix_bytes: usize = packing
-            .iter()
-            .map(|block| {
-                (block.collapse_a_final_ntt.data.len()
-                    + block.digits_ntt.iter().map(|m| m.data.len()).sum::<usize>())
-                    * 8
+        }
+        #[cfg(not(feature = "native-reinspiring"))]
+        {
+            let top = top_images();
+            let packing: Vec<_> = blocks
+                .par_iter()
+                .enumerate()
+                .map(|(i, block)| {
+                    if let Some(old) = previous
+                        .filter(|g| g.packing_digests.get(i) == packing_digests.get(i))
+                        .and_then(|g| g.packing.get(i))
+                    {
+                        // Upstream's precomputation owns immutable matrices. Copy the
+                        // exact values rather than rebuilding unchanged CRS blocks.
+                        return Ok(QueryPackPreprocessed {
+                            params: old.params,
+                            collapse_a_final_ntt: old.collapse_a_final_ntt.clone(),
+                            digits_ntt: old.digits_ntt.clone(),
+                        });
+                    }
+                    QueryPackPreprocessed::build_with_top(p.rlwe(), &block.to_ntt(p.rlwe()), &top)
+                        .map_err(|_| Error::Pir)
+                })
+                .collect::<Result<_, _>>()?;
+            // Measure public preprocessing transport cost before moving preparation
+            // across hosts. Includes fixed-shape matrix values, excluding framing.
+            let packing_matrix_bytes: usize = packing
+                .iter()
+                .map(|block| {
+                    (block.collapse_a_final_ntt.data.len()
+                        + block.digits_ntt.iter().map(|m| m.data.len()).sum::<usize>())
+                        * 8
+                })
+                .sum();
+            tracing::info!(
+                hint_bytes = bytes.len(),
+                packing_matrix_bytes,
+                preparation_threads = rayon::current_num_threads(),
+                "Status packing material geometry"
+            );
+            let public = published_c1_rows(&packing, p.rlwe().q);
+            manifest.public_digest = Sha256::digest(&public).into();
+            Ok(Self {
+                manifest,
+                public: Arc::new(public),
+                units: Vec::new(),
+                packing: Arc::new(packing),
+                top: Some(top),
+                packing_digests,
             })
-            .sum();
-        tracing::info!(
-            hint_bytes = bytes.len(),
-            packing_matrix_bytes,
-            preparation_threads = rayon::current_num_threads(),
-            "Status packing material geometry"
-        );
-        let public = published_c1_rows(&packing, p.rlwe().q);
-        manifest.public_digest = Sha256::digest(&public).into();
-        Ok(Self {
-            manifest,
-            public: Arc::new(public),
-            units: Vec::new(),
-            packing: Arc::new(packing),
-            top: Some(top),
-            packing_digests,
-        })
+        }
     }
 
     /// Reuse unchanged polynomial units. Changed units are rebuilt; this baseline
@@ -309,12 +375,7 @@ impl Generation {
         let start = Instant::now();
         let p = profile();
         let d = p.rlwe().d;
-        let client = IPIRClient::from_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
-            .map_err(|_| Error::Pir)?;
-        let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(
-            &snapshot.network,
-            &snapshot.salt,
-        ));
+        let masks = query_masks(&snapshot.network, &snapshot.salt)?;
         let local = ProductionSimplePirParams::new(d as u64, ITEM_BITS, SimplePirProfile::P16Q48)
             .map_err(|_| Error::Pir)?;
         let mut units = Vec::new();
@@ -345,15 +406,13 @@ impl Generation {
                     prev.manifest.network == snapshot.network && prev.manifest.salt == snapshot.salt
                 })
                 .and_then(|prev| prev.units.get(i));
-            let hint = if let Some(hint) =
-                base.and_then(|old| incremental_hint(old, bytes, &setup.polys()[i]))
-            {
-                incremental_units += 1;
-                hint
-            } else {
-                db.perform_offline_precomputation_simplepir(p.rlwe(), &setup.polys()[i..i + 1])
-                    .crs_blocks
-            };
+            let hint =
+                if let Some(hint) = base.and_then(|old| incremental_hint(old, bytes, &masks[i])) {
+                    incremental_units += 1;
+                    hint
+                } else {
+                    unit_hint(&db, &masks[i..i + 1])?
+                };
             units.push(Arc::new(Unit {
                 bytes_digest: digest,
                 rows: bytes.to_vec(),
@@ -403,11 +462,12 @@ impl Generation {
             stats,
         ))
     }
+    #[cfg(not(feature = "native-reinspiring"))]
     pub fn coefficients(&self, bytes: &[u8]) -> Result<Vec<u64>, Error> {
         let p = profile();
         let keys_len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
         if bytes.len() != HEADER_BYTES + keys_len + ROWS * 48 / 8
-            || &bytes[..4] != b"SPQ2"
+            || &bytes[..4] != QUERY_MAGIC
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
@@ -430,22 +490,61 @@ impl Generation {
         let p = profile();
         if self.units.len() != ROWS / p.rlwe().d
             || coefficients.len() != ROWS
-            || coefficients.iter().any(|v| *v >= p.rlwe().q)
+            || coefficients.iter().any(|v| *v >= modulus())
         {
             return Err(Error::Malformed);
         }
         let mut out = vec![0u64; p.ypir().db_cols];
         for (unit, query) in self.units.iter().zip(coefficients.chunks_exact(p.rlwe().d)) {
-            let partial = unit
-                .db
-                .try_multiply_query(p.rlwe(), query)
-                .map_err(|_| Error::Unavailable)?;
+            #[cfg(feature = "native-reinspiring")]
+            let partial = unit.db.try_multiply_power_of_two(modulus(), query);
+            #[cfg(not(feature = "native-reinspiring"))]
+            let partial = unit.db.try_multiply_query(p.rlwe(), query);
+            let partial = partial.map_err(|_| Error::Unavailable)?;
             for (a, b) in out.iter_mut().zip(partial) {
-                *a = ((u128::from(*a) + u128::from(b)) % u128::from(p.rlwe().q)) as u64;
+                *a = ((u128::from(*a) + u128::from(b)) % u128::from(modulus())) as u64;
             }
         }
         Ok(out)
     }
+    #[cfg(feature = "native-reinspiring")]
+    fn native_request(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(reinspiring::native::NativeKeys, Vec<u64>), Error> {
+        if bytes.len() != HEADER_BYTES + enhance_pir::native::request_len(ROWS)
+            || &bytes[..4] != QUERY_MAGIC
+            || bytes[4..36] != self.manifest.id()
+        {
+            return Err(Error::Malformed);
+        }
+        enhance_pir::native::parse_with(
+            &native_packing_setup(&self.manifest.network, &self.manifest.salt),
+            &bytes[HEADER_BYTES..],
+            ROWS,
+        )
+        .map_err(|_| Error::Malformed)
+    }
+    #[cfg(feature = "native-reinspiring")]
+    pub fn coefficients(&self, bytes: &[u8]) -> Result<Vec<u64>, Error> {
+        self.native_request(bytes).map(|(_, query)| query)
+    }
+    #[cfg(feature = "native-reinspiring")]
+    pub fn pack(&self, body: &[u8], values: &[u64]) -> Result<Vec<u8>, Error> {
+        let (keys, _) = self.native_request(body)?;
+        if self.packing.is_empty() {
+            return Err(Error::Unavailable);
+        }
+        if values.len() != profile().ypir().db_cols {
+            return Err(Error::Malformed);
+        }
+        let mut response = body[..HEADER_BYTES].to_vec();
+        response.extend(
+            enhance_pir::native::pack(&self.packing, &keys, values).map_err(|_| Error::Pir)?,
+        );
+        Ok(response)
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
     pub fn pack(&self, body: &[u8], values: &[u64]) -> Result<Vec<u8>, Error> {
         self.coefficients(body)?;
         if self.packing.is_empty() {
@@ -487,15 +586,8 @@ impl Generation {
             false,
             true,
         );
-        let client = IPIRClient::from_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
-            .map_err(|_| Error::Pir)?;
-        let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(
-            &snapshot.network,
-            &snapshot.salt,
-        ));
-        let expected = db
-            .perform_offline_precomputation_simplepir(p.rlwe(), setup.polys())
-            .crs_blocks;
+        let masks = query_masks(&snapshot.network, &snapshot.salt)?;
+        let expected = unit_hint(&db, &masks)?;
         for (block_i, block) in expected.iter().enumerate() {
             for (r, row) in block.rows.iter().enumerate() {
                 for (c, value) in row.iter().enumerate() {
@@ -503,7 +595,7 @@ impl Generation {
                         .units
                         .iter()
                         .fold(0u128, |a, u| a + u128::from(u.hint[block_i].rows[r][c]))
-                        % u128::from(p.rlwe().q);
+                        % u128::from(modulus());
                     if sum != u128::from(*value) {
                         return Err(Error::Pir);
                     }
@@ -511,6 +603,37 @@ impl Generation {
             }
         }
         Ok(())
+    }
+}
+
+/// Public first-dimension query masks of the selected profile, one per d rows.
+fn query_masks(network: &Hash, salt: &Hash) -> Result<Vec<Vec<u64>>, Error> {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        Ok(native_query_masks(network, salt))
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        let client = IPIRClient::from_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .map_err(|_| Error::Pir)?;
+        Ok(client
+            .generate_public_query_setup_simplepir_from_seed(setup_seed(network, salt))
+            .polys()
+            .to_vec())
+    }
+}
+
+/// Hint contribution H = A * D for the rows covered by `masks`.
+fn unit_hint(db: &IPIRServer<u16>, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        crate::runtime::native_runtime::hint(db, masks).map_err(|_| Error::Pir)
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        Ok(db
+            .perform_offline_precomputation_simplepir(profile().rlwe(), masks)
+            .crs_blocks)
     }
 }
 
@@ -552,7 +675,7 @@ impl Controller {
             .ok_or(StatusCode::CONFLICT)
     }
     fn for_body(&self, body: &[u8]) -> Result<Arc<Generation>, StatusCode> {
-        if body.len() < HEADER_BYTES || &body[..4] != b"SPQ2" {
+        if body.len() < HEADER_BYTES || &body[..4] != QUERY_MAGIC {
             return Err(StatusCode::BAD_REQUEST);
         }
         self.resolve(body[4..36].try_into().unwrap())
@@ -904,7 +1027,7 @@ mod controller_tests {
             held.push(state.permits.acquire("router").await.unwrap());
         }
         let mut body = vec![0; HEADER_BYTES];
-        body[..4].copy_from_slice(b"SPQ2");
+        body[..4].copy_from_slice(QUERY_MAGIC);
         body[4..36].copy_from_slice(&controller.current().manifest.id());
         let request = query(State(state), Bytes::from(body));
         tokio::pin!(request);
@@ -929,7 +1052,7 @@ mod controller_tests {
             held.push(state.permits.acquire("router").await.unwrap());
         }
         let mut body = vec![0; HEADER_BYTES];
-        body[..4].copy_from_slice(b"SPQ2");
+        body[..4].copy_from_slice(QUERY_MAGIC);
         body[4..36].copy_from_slice(&controller.current().manifest.id());
         let request = query(State(state), Bytes::from(body));
         tokio::pin!(request);

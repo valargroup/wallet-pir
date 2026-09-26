@@ -120,13 +120,29 @@ and session identity. This design does not hide transaction broadcast, wallet
 network identity, or correlations with other services. Existing Tor/direct
 policy continues to apply.
 
-Use the existing non-native q48 PIR profile and CUDA implementation, with
-status-specific setup and transcript domain separation. Do not inherit Enhance
-protocol identifiers, setup tags, or cached material. The
+The default build uses the non-native q48 PIR profile and CUDA implementation
+(`status-pir-v2-q48`), with status-specific setup and transcript domain
+separation. Do not inherit Enhance protocol identifiers, setup tags, or cached
+material.
+
+Building with `native-reinspiring` selects `status-pir-v3-native-two-mask-m29`
+instead. It uses the Enhance native packing parameters (d=2048, q=2^54, p=2^16,
+two-limb Gaussian) through ipir-sp's two-mask output. Its query masks and
+packing setup come from separate `status-pir/v3/native-setup` and
+`status-pir/v3/native-packing` domains, and queries use the `SPN1` magic. Per
+query, the client uploads a 27,648-byte packing key and a 50,176-byte selection
+and receives 16,896 response bytes. The session's public material is 44,544
+bytes: two 29-bit rounded masks per column.
+Hints use exact products modulo 2^54, so sparse incremental updates still apply.
+The independent wallet library implements only q48. The native profile is
+tested with the in-repo client.
+
+The native profile is experimental. The
 [native packing trial](../evidence/reinspiring-production-trial-2026-09-25/README.md)
-records open cryptographic gates; adopting that experimental profile is outside
-the initial status release. Reuse of implementation code does not itself qualify
-the status protocol: independent vectors and protocol review are release gates.
+and ipir-sp record open cryptographic gates. The two-mask 29-bit correctness
+certificate covers only ipir-sp's recorded fixture, not the Status geometry.
+Reuse of implementation code does not itself qualify the status protocol:
+independent vectors and protocol review are release gates.
 
 An authenticated response is a server assertion. PIR does not prove that a
 mempool is complete, that absence is globally true, or that returned chain
