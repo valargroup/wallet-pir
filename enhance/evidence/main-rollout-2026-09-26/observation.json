@@ -1,0 +1,15 @@
+{
+  "commit": "13ec1fbe875254d45ba2b37c99b7eb55a517f56d",
+  "mode": "shadow",
+  "started_utc": "2026-09-26T20:09:04.912619+00:00",
+  "earliest_shadow_review_utc": "2026-09-27T20:09:04.912619+00:00",
+  "collection_hours": 72,
+  "evidence_path": "/var/lib/pir-monitor/rollout-evidence-13ec1fb",
+  "evidence_service": "pir-observability-evidence-13ec1fb.service",
+  "previous_evidence_preserved": [
+    "/var/lib/pir-monitor/rollout-evidence",
+    "/var/lib/pir-monitor/rollout-evidence-003af40"
+  ],
+  "activation": "manual review after 24 hours; no automatic promotion",
+  "active_gate": "24 additional hours after activation"
+}

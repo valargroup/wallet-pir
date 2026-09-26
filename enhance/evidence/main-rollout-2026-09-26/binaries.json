@@ -1,0 +1,13 @@
+{
+  "cpu": {
+    "enhance-pir-server": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d",
+    "status-pir": "81ae0b247f05288f646f82e02eac83fda4c387ca90d90269f6102beb66a46dd3",
+    "enhance-pir-load-test": "f4cdcd08b6d120994b7799050d9011f37c836ef03582c40e6baf74369782b942",
+    "pir-apm": "3af2f4919d2832d16dd7c895ea8bfbbcc78f1ba0522ae54a96aa3e56f3aaf71e",
+    "pir-monitor": "282ee3f9c9b6697f9c58ac0513ed13ebb7fc9200864d7b54a5da0e4f984e9c8c"
+  },
+  "gpu": {
+    "enhance-pir-server": "55929c2d261a0611b1283de01f1da1a5e7e3c3379d6566d6970c217cb5822df7",
+    "status-pir": "272c746f1a482dadea9cc4c7c8c96473eaf4bec1c957d661a5993ad116aa820e"
+  }
+}

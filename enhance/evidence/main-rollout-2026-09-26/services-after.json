@@ -1,0 +1,124 @@
+{
+  "coordinator": [
+    {
+      "unit": "enhance-pir-coordinator",
+      "MainPID": "3908658",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:06:39 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server",
+      "sha256": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d"
+    },
+    {
+      "unit": "enhance-pir-query-ingress",
+      "MainPID": "3908476",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:06:37 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server",
+      "sha256": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d"
+    },
+    {
+      "unit": "status-controller-qualification",
+      "MainPID": "3907923",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:05:21 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/status-pir",
+      "sha256": "81ae0b247f05288f646f82e02eac83fda4c387ca90d90269f6102beb66a46dd3"
+    },
+    {
+      "unit": "pir-apm",
+      "MainPID": "3909473",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:07:18 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/pir-apm",
+      "sha256": "3af2f4919d2832d16dd7c895ea8bfbbcc78f1ba0522ae54a96aa3e56f3aaf71e"
+    }
+  ],
+  "router": [
+    {
+      "unit": "enhance-pir-packing-router",
+      "MainPID": "61660",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:06:35 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server",
+      "sha256": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d"
+    }
+  ],
+  "worker1": [
+    {
+      "unit": "enhance-pir-worker",
+      "MainPID": "249782",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:04:56 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server",
+      "sha256": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d"
+    }
+  ],
+  "worker2": [
+    {
+      "unit": "enhance-pir-worker",
+      "MainPID": "255288",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:05:34 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server",
+      "sha256": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d"
+    }
+  ],
+  "gpu": [
+    {
+      "unit": "enhance-pir-gpu-worker",
+      "MainPID": "275139",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:06:05 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server",
+      "sha256": "55929c2d261a0611b1283de01f1da1a5e7e3c3379d6566d6970c217cb5822df7"
+    }
+  ],
+  "status-gpu": [
+    {
+      "unit": "status-router",
+      "MainPID": "342323",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:05:19 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/status-pir",
+      "sha256": "272c746f1a482dadea9cc4c7c8c96473eaf4bec1c957d661a5993ad116aa820e"
+    },
+    {
+      "unit": "status-worker",
+      "MainPID": "342199",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:05:17 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/status-pir",
+      "sha256": "272c746f1a482dadea9cc4c7c8c96473eaf4bec1c957d661a5993ad116aa820e"
+    },
+    {
+      "unit": "status-pir",
+      "MainPID": "342468",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:05:36 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/status-pir",
+      "sha256": "272c746f1a482dadea9cc4c7c8c96473eaf4bec1c957d661a5993ad116aa820e"
+    }
+  ],
+  "monitor": [
+    {
+      "unit": "pir-monitor",
+      "MainPID": "13131",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 20:07:23 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/pir-monitor",
+      "sha256": "282ee3f9c9b6697f9c58ac0513ed13ebb7fc9200864d7b54a5da0e4f984e9c8c"
+    }
+  ]
+}

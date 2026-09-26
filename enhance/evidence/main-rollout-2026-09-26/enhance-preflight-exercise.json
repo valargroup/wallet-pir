@@ -1,0 +1,56 @@
+{
+  "background_correct_answers": 5607,
+  "background_errors": 0,
+  "background_p99_ms": 194.943,
+  "binary_sha256": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d",
+  "concurrency": 2,
+  "exact_boundary_and_retained_probes": 36,
+  "expired_refreshes": 2,
+  "expired_reorg_target_reselections": 0,
+  "final_metrics": [
+    {
+      "file": "coordinator.prom",
+      "sha256": "4e61b1dcf4b681de5c916e3767057f4da0a6a62f18b5a16f4eeda3a45a96cb3a",
+      "target": {
+        "role": "coordinator"
+      }
+    },
+    {
+      "file": "worker-0.prom",
+      "sha256": "9be7013aea3f01ed62594da872f2d257d2f7daa59a3c2ffeee169600b85613f4",
+      "target": {
+        "group": "g0",
+        "replica": "worker-0",
+        "role": "worker"
+      }
+    },
+    {
+      "file": "worker-1.prom",
+      "sha256": "318183ef9bf26a11abee67596052c846eb8d1dd1db002dd892ae1195da7d79d6",
+      "target": {
+        "group": "g0",
+        "replica": "worker-1",
+        "role": "worker"
+      }
+    }
+  ],
+  "finished_wall_ns": 1790451316745488142,
+  "kind": "enhance-workload",
+  "max_fixture_publication_ms": 21119,
+  "measurement_seconds": 127.069533461,
+  "measurement_started_wall_ns": 1790451189672472085,
+  "min_publications": 6,
+  "origin": "http://127.0.0.1:33263",
+  "placement_policy": {
+    "sealed_shards": 6
+  },
+  "profile": "smoke",
+  "publications": 6,
+  "publications_sha256": "dfa6abe367c286a9e4d319d87e1f11f66c3b39966d0b72eda0bbd87c89f6227e",
+  "qualification": "unqualified",
+  "seconds_requested": 3,
+  "six_hour_publication_gate": false,
+  "started_wall_ns": 1790451172211911421,
+  "status": "recorded",
+  "workload_host_id_sha256": "dff17613609d6a64aa857c10121d3f5c006e6b6120d12e5299660f5206b8b81a"
+}

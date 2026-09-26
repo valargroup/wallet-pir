@@ -1,0 +1,1040 @@
+{
+  "chain": {
+    "advanced_at": 1790453298,
+    "error": false,
+    "hash": "00000000005610fb3eaeb9a71801a411c7528f3ad613575c6ba21b7331ac5771",
+    "height": 3497224,
+    "oracle_anchor_hash": "00000000002d515daf3dc7f8f6b3d6e9471800ac8cfa435bccf93c0bdda53338",
+    "oracle_anchor_height": 3494753,
+    "oracle_valid": true,
+    "sampled_at": 1790453298
+  },
+  "delivery": {
+    "configured": true,
+    "failure": null,
+    "last_success": 1790425241,
+    "oldest_pending_age": 0,
+    "pending": 0,
+    "worker_at": 1790453302
+  },
+  "evaluated_at": 1790453303,
+  "incidents": [
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "chain_inactive",
+        "observed": "last tip change 1790453298",
+        "resource": "chain_rpc",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": "no tip change for 600s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 300,
+        "key": "coordinator_ready",
+        "observed": "readiness Some(200)",
+        "resource": "coordinator",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "non-200 for 300s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_chain_rpc_critical",
+        "observed": "fresh",
+        "resource": "chain_rpc",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_chain_rpc_warning",
+        "observed": "fresh",
+        "resource": "chain_rpc",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_coordinator_critical",
+        "observed": "fresh",
+        "resource": "coordinator",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_coordinator_warning",
+        "observed": "fresh",
+        "resource": "coordinator",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_domain_0_eligibility_critical",
+        "observed": "fresh",
+        "resource": "domain_0_eligibility",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 16,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_domain_0_eligibility_warning",
+        "observed": "fresh",
+        "resource": "domain_0_eligibility",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 16,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_init_ingress_critical",
+        "observed": "fresh",
+        "resource": "init_ingress",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 18,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_init_ingress_warning",
+        "observed": "fresh",
+        "resource": "init_ingress",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 18,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_placement_critical",
+        "observed": "fresh",
+        "resource": "placement",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_placement_warning",
+        "observed": "fresh",
+        "resource": "placement",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_publication_metrics_critical",
+        "observed": "fresh",
+        "resource": "publication_metrics",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 7,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_publication_metrics_warning",
+        "observed": "fresh",
+        "resource": "publication_metrics",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 7,
+      "id": "coverage_publication_metrics_warning-1790453258",
+      "last_evaluated": 1790453303,
+      "last_reminder": 1790453258,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_query_ingress_critical",
+        "observed": "fresh",
+        "resource": "query_ingress",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 17,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_query_ingress_warning",
+        "observed": "fresh",
+        "resource": "query_ingress",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 17,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_router_enhance-pir-packing-01_critical",
+        "observed": "fresh",
+        "resource": "router_enhance-pir-packing-01",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_router_enhance-pir-packing-01_warning",
+        "observed": "fresh",
+        "resource": "router_enhance-pir-packing-01",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_router_inventory_critical",
+        "observed": "fresh",
+        "resource": "router_inventory",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_router_inventory_warning",
+        "observed": "fresh",
+        "resource": "router_inventory",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_worker_enhance-pir-gpu-01_critical",
+        "observed": "fresh",
+        "resource": "worker_enhance-pir-gpu-01",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 21,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_worker_enhance-pir-gpu-01_warning",
+        "observed": "fresh",
+        "resource": "worker_enhance-pir-gpu-01",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 21,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_worker_enhance-pir-worker-01_critical",
+        "observed": "fresh",
+        "resource": "worker_enhance-pir-worker-01",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 36,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_worker_enhance-pir-worker-01_warning",
+        "observed": "fresh",
+        "resource": "worker_enhance-pir-worker-01",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 36,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_worker_enhance-pir-worker-02_critical",
+        "observed": "fresh",
+        "resource": "worker_enhance-pir-worker-02",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_worker_enhance-pir-worker-02_warning",
+        "observed": "fresh",
+        "resource": "worker_enhance-pir-worker-02",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "coverage_worker_inventory_critical",
+        "observed": "fresh",
+        "resource": "worker_inventory",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "unavailable for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 45,
+        "key": "coverage_worker_inventory_warning",
+        "observed": "fresh",
+        "resource": "worker_inventory",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "unavailable for 45s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "delivery_backlog_critical",
+        "observed": "local 0s, peer 0s",
+        "resource": "delivery",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "critical",
+        "threshold": "oldest pending >= 300s"
+      },
+      "healthy_samples": 255,
+      "id": "delivery_backlog_critical-1790424975",
+      "last_evaluated": 1790453303,
+      "last_reminder": 1790424975,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "delivery_backlog_warning",
+        "observed": "local 0s, peer 0s",
+        "resource": "delivery",
+        "retired": false,
+        "sample": 1790453303,
+        "severity": "warning",
+        "threshold": "oldest pending >= 60s"
+      },
+      "healthy_samples": 255,
+      "id": "delivery_backlog_warning-1790424975",
+      "last_evaluated": 1790453303,
+      "last_reminder": 1790424975,
+      "last_sample": 1790453303,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "disk_usage",
+        "observed": "50.212674958749034% used",
+        "resource": "coordinator_host",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": ">90%"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "domain_0_redundancy",
+        "observed": "Some(3.0)/3 replicas",
+        "resource": "domain_0",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": "all assigned replicas eligible"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 30,
+        "key": "domain_0_unavailable",
+        "observed": "replicas Some(3.0), ready routers 1",
+        "resource": "domain_0",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "at least one replica and router"
+      },
+      "healthy_samples": 6,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 60,
+        "key": "external_monitor",
+        "observed": "external monitor progress",
+        "resource": "external_monitor",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "no healthy progress for 60s"
+      },
+      "healthy_samples": 255,
+      "id": "external_monitor-1790425345",
+      "last_evaluated": 1790453303,
+      "last_reminder": 1790425345,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "init_5xx",
+        "observed": "0 failures / 5 requests",
+        "resource": "init",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "> 5% over 5m; minimum 10 requests"
+      },
+      "healthy_samples": 17,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "init_latency",
+        "observed": "p99 0.000s",
+        "resource": "init",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": "p99 > 2s, minimum 20 samples"
+      },
+      "healthy_samples": 17,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "memory_available",
+        "observed": "57430749184 bytes available",
+        "resource": "coordinator_host",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "<512 MiB"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "pending_abort_critical",
+        "observed": "oldest age Some(0.0)",
+        "resource": "pending_abort",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": ">= 300s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "pending_abort_warning",
+        "observed": "oldest age Some(0.0)",
+        "resource": "pending_abort",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": ">= 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "pending_commit_critical",
+        "observed": "oldest age Some(0.0)",
+        "resource": "pending_commit",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": ">= 300s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "pending_commit_warning",
+        "observed": "oldest age Some(0.0)",
+        "resource": "pending_commit",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": ">= 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 300,
+        "key": "publication_backlog_critical",
+        "observed": "lag Some(1) blocks",
+        "resource": "publication",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": ">= 16 blocks behind continuously for 300s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "publication_backlog_warning",
+        "observed": "lag Some(1) blocks",
+        "resource": "publication",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": ">= 8 blocks behind continuously for 120s"
+      },
+      "healthy_samples": 255,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 300,
+        "key": "publication_failure_critical",
+        "observed": "consecutive failures Some(0), blocked Some(false)",
+        "resource": "publication",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "3 consecutive failures or blocked continuously for 300s"
+      },
+      "healthy_samples": 7,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "publication_failure_warning",
+        "observed": "consecutive failures Some(0), blocked Some(false)",
+        "resource": "publication",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": "3 consecutive failures or blocked continuously for 120s"
+      },
+      "healthy_samples": 7,
+      "id": "publication_failure_warning-1790429886",
+      "last_evaluated": 1790453303,
+      "last_reminder": 1790429886,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "publication_lag_critical",
+        "observed": "tip 3497224, anchor Some(3497223), lag Some(1) blocks, last advancement Some(36)s ago",
+        "resource": "publication",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "behind tip for 300s and no successful advancement for 300s"
+      },
+      "healthy_samples": 3,
+      "id": "publication_lag_critical-1790441716",
+      "last_evaluated": 1790453303,
+      "last_reminder": 1790441716,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "publication_lag_warning",
+        "observed": "tip 3497224, anchor Some(3497223), lag Some(1) blocks, last advancement Some(36)s ago",
+        "resource": "publication",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": "behind tip for 120s and no successful advancement for 120s"
+      },
+      "healthy_samples": 3,
+      "id": "publication_lag_warning-1790453203",
+      "last_evaluated": 1790453303,
+      "last_reminder": 1790453203,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "query_5xx",
+        "observed": "0 failures / 114 requests",
+        "resource": "query",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "critical",
+        "threshold": "> 5% over 5m; minimum 10 requests"
+      },
+      "healthy_samples": 16,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 120,
+        "key": "query_latency",
+        "observed": "p99 0.465s",
+        "resource": "query",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": "p99 > 5s, minimum 20 samples"
+      },
+      "healthy_samples": 16,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "router_enhance-pir-packing-01_failures",
+        "observed": "five-minute outcomes Some((112.0, 0.0))",
+        "resource": "router_enhance-pir-packing-01",
+        "retired": false,
+        "sample": 1790453298,
+        "severity": "warning",
+        "threshold": ">5% failed, minimum 10 terminal outcomes"
+      },
+      "healthy_samples": 4,
+      "id": "",
+      "last_evaluated": 1790453303,
+      "last_reminder": 0,
+      "last_sample": 1790453298,
+      "since": null
+    }
+  ],
+  "peer": {
+    "checked_at": 1790453298,
+    "delivery_backlog_age": 0,
+    "delivery_configured": true,
+    "progress_ok": true
+  },
+  "progress_ok": true,
+  "publication": {
+    "advancement_age_seconds": 36,
+    "anchor_height": 3497223,
+    "behind_since": 1790453303,
+    "blocked": false,
+    "consecutive_failures": 0,
+    "lag_blocks": 1,
+    "sampled_at": 1790453298
+  },
+  "shadow": true
+}

@@ -1,0 +1,27 @@
+{
+  "source_head": "8e7caf420ba261f2390b7f6b9949f6df9e367d2f",
+  "source_tree": "8c1c1d24d032e558402da4aa3e8e46c099b0abc3",
+  "source_archive_sha256": "e118f1fd9aea6e250293ca77bde5d05980df2ffd4d5b3ef74ffc39a71fdc682b",
+  "archive_excludes": "retained evidence directories; source and fixtures included",
+  "installer_sha256": "cc6cd31bece72c35ff8b7e05ee6817174f05119cc528ab1af06cf5ee60b67eea",
+  "native_features": [
+    "native-reinspiring"
+  ],
+  "gpu_additional_features": [
+    "cuda"
+  ],
+  "cpu_baseline": "haswell",
+  "profile": "release",
+  "state": "deployed and verified",
+  "merge_commit": "13ec1fbe875254d45ba2b37c99b7eb55a517f56d",
+  "merge_tree": "8c1c1d24d032e558402da4aa3e8e46c099b0abc3",
+  "source_tree_matches_merge": true,
+  "pr": "https://github.com/valargroup/wallet-pir/pull/114",
+  "scope": [
+    "Enhance",
+    "Status",
+    "APM",
+    "external monitor"
+  ],
+  "transparent": "excluded by user"
+}

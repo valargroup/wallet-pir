@@ -1,0 +1,124 @@
+{
+  "coordinator": [
+    {
+      "unit": "enhance-pir-coordinator",
+      "MainPID": "3860336",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 12:15:22 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/enhance-pir/releases/observability-20260926/enhance-pir-server",
+      "sha256": "2272d1d1f3bb9cbe12acd753a9ec003a633acd1608b0c623c6d1627644eb789b"
+    },
+    {
+      "unit": "enhance-pir-query-ingress",
+      "MainPID": "3773521",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 11:31:30 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server",
+      "sha256": "9c48032d46f4cbd0f6b6a039c2376e37571563e3f7677d6a663af3fab4d82ab3"
+    },
+    {
+      "unit": "status-controller-qualification",
+      "MainPID": "3699919",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 03:49:06 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/status-pir/releases/native2m-dc0355b/status-pir",
+      "sha256": "b902b9582be0412437b5102119f86574e6701fc1df08bff5cd93af9e612128df"
+    },
+    {
+      "unit": "pir-apm",
+      "MainPID": "3891413",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 17:52:18 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/enhance-pir/releases/observability-20260926/pir-apm",
+      "sha256": "b72b10c22d3c45cfb648db654eb8e21be8961f8a60ecaa583a01d71e82804329"
+    }
+  ],
+  "router": [
+    {
+      "unit": "enhance-pir-packing-router",
+      "MainPID": "58975",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 12:15:25 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/enhance-pir/releases/observability-20260926/enhance-pir-server",
+      "sha256": "2272d1d1f3bb9cbe12acd753a9ec003a633acd1608b0c623c6d1627644eb789b"
+    }
+  ],
+  "worker1": [
+    {
+      "unit": "enhance-pir-worker",
+      "MainPID": "247017",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 11:30:48 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server",
+      "sha256": "9c48032d46f4cbd0f6b6a039c2376e37571563e3f7677d6a663af3fab4d82ab3"
+    }
+  ],
+  "worker2": [
+    {
+      "unit": "enhance-pir-worker",
+      "MainPID": "252632",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 11:30:52 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server",
+      "sha256": "9c48032d46f4cbd0f6b6a039c2376e37571563e3f7677d6a663af3fab4d82ab3"
+    }
+  ],
+  "gpu": [
+    {
+      "unit": "enhance-pir-gpu-worker",
+      "MainPID": "257499",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 11:30:56 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server",
+      "sha256": "9bc9d0d250767f3856f47f0f07424c4f46cfcd934214c3eabc549e000eab6da2"
+    }
+  ],
+  "status-gpu": [
+    {
+      "unit": "status-router",
+      "MainPID": "113917",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 03:48:59 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/status-pir/releases/native2m-dc0355b/status-pir",
+      "sha256": "2e26f698800638ac14f794f18664506b8c87a43ef866abf0e9ee22d6574c2d12"
+    },
+    {
+      "unit": "status-worker",
+      "MainPID": "113915",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 03:48:59 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/status-pir/releases/native2m-dc0355b/status-pir",
+      "sha256": "2e26f698800638ac14f794f18664506b8c87a43ef866abf0e9ee22d6574c2d12"
+    },
+    {
+      "unit": "status-pir",
+      "MainPID": "29219",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Fri 2026-09-25 13:41:17 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/status-pir/status-pir",
+      "sha256": "7375041eec28d72c87ce1c3d7898314194b6295c2f501aa3bb6a8fe17ffa5384"
+    }
+  ],
+  "monitor": [
+    {
+      "unit": "pir-monitor",
+      "MainPID": "11703",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Sat 2026-09-26 17:52:53 UTC",
+      "ActiveState": "active",
+      "executable": "/opt/pir-monitor/releases/observability-20260926/pir-monitor",
+      "sha256": "c5a0b6b8a6d2433e6399c4f70f5e81a2396e6dc39e4ee3ada88380b5a371e374"
+    }
+  ]
+}
