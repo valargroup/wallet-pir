@@ -94,8 +94,11 @@ def validate(plan, policy, before, existing):
             if after.get('name') != 'enhance-pir-v4-workers' or set(after.get('tags') or []) != {'enhance-pir-v4-worker'}:
                 raise ValueError('unexpected firewall identity')
             inbound = after.get('inbound_rule') or []
+            # Evaluation (8291) is reached by the coordinator and, under the
+            # packing-router topology, by each router listed in the policy.
+            evaluators = {policy['coordinator_private_ipv4']} | set(policy.get('packing_router_private_ipv4s') or [])
             expected = {'22': set(policy['operator_ssh_cidrs']) | {policy['coordinator_private_ipv4'] + '/32'},
-                        '8291': {policy['coordinator_private_ipv4'] + '/32'}}
+                        '8291': {ip + '/32' for ip in evaluators}}
             ports = set()
             for rule in inbound:
                 port = rule.get('port_range')

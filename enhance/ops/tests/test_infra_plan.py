@@ -102,6 +102,18 @@ class V4PlanTests(unittest.TestCase):
             with self.subTest(mutation=mutate), self.assertRaises(ValueError):
                 module.validate(plan, POLICY, 0, {})
 
+    def test_packing_routers_may_reach_evaluation(self):
+        plan = fixture()
+        rules = resource(plan, 'digitalocean_firewall.worker')['change']['after']['inbound_rule']
+        evaluation = next(r for r in rules if r['port_range'] == '8291')
+        evaluation['source_addresses'] = sorted(set(evaluation['source_addresses']) | {'192.0.2.14/32'})
+        with self.assertRaises(ValueError):
+            module.validate(plan, POLICY, 0, {})
+        policy = {**POLICY, 'packing_router_private_ipv4s': ['192.0.2.14']}
+        module.validate(plan, policy, 0, {})
+        with self.assertRaises(ValueError):
+            module.validate(fixture(), policy, 0, {})
+
     def test_fleet_ceiling(self):
         with self.assertRaises(ValueError):
             module.validate(fixture(), POLICY, 4, {})
