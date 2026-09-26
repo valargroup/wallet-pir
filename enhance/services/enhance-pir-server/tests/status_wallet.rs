@@ -5,6 +5,59 @@ use ipir_sp::server::MatvecBackend;
 #[cfg(not(feature = "native-reinspiring"))]
 use zakura_pir_status as wallet;
 
+/// In-memory stand-in for the HTTPS origin: the wallet library only speaks
+/// through its typed transport, so the server generation answers behind it.
+#[cfg(not(feature = "native-reinspiring"))]
+struct InProcess {
+    g: std::sync::Arc<Generation>,
+    manifest: Vec<u8>,
+    bodies: std::sync::Mutex<Vec<Vec<u8>>>,
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
+impl wallet::transport::Transport for InProcess {
+    async fn get(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, wallet::Error> {
+        let bytes = if url.ends_with("/v1/status/init") {
+            self.manifest.clone()
+        } else if url.ends_with(&format!(
+            "/v1/status/session/{}",
+            hex::encode(self.g.manifest.id())
+        )) {
+            self.g.public.to_vec()
+        } else {
+            return Err(wallet::Error::Unavailable);
+        };
+        assert!(bytes.len() <= max_bytes, "wallet limit below served length");
+        Ok(bytes)
+    }
+    async fn post(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, wallet::Error> {
+        assert!(url.ends_with("/v1/status/query"));
+        let coefficients = self
+            .g
+            .coefficients(&body)
+            .map_err(|_| wallet::Error::Unavailable)?;
+        let values = self
+            .g
+            .evaluate(&coefficients)
+            .map_err(|_| wallet::Error::Unavailable)?;
+        let response = self
+            .g
+            .pack(&body, &values)
+            .map_err(|_| wallet::Error::Unavailable)?;
+        self.bodies.lock().unwrap().push(body);
+        assert!(
+            response.len() <= max_bytes,
+            "wallet limit below served length"
+        );
+        Ok(response)
+    }
+}
+
 #[cfg(not(feature = "native-reinspiring"))]
 #[test]
 fn wallet_and_server_share_wire_identity_and_encrypted_observations() {
@@ -21,6 +74,7 @@ fn wallet_and_server_share_wire_identity_and_encrypted_observations() {
     );
     assert_eq!(enhance_pir_server::status::profile().ypir().db_cols, 6144);
     assert_eq!(server::MAX_AGE_MS, wallet::MAX_AGE_MS);
+    assert_eq!(server::SKEW_MS, wallet::MAX_FUTURE_SKEW_MS);
     let entries = std::env::var("STATUS_TEST_ENTRIES")
         .map(|n| n.parse::<usize>().unwrap())
         .unwrap_or(32);
@@ -38,22 +92,54 @@ fn wallet_and_server_share_wire_identity_and_encrypted_observations() {
         wallet::setup_seed(&snapshot.network, &snapshot.salt),
         server::setup_seed(&snapshot.network, &snapshot.salt)
     );
-    let anchor = wallet::AcceptedAnchor {
+    let origin = InProcess {
+        manifest: serde_json::to_vec(&g.manifest).unwrap(),
+        g: std::sync::Arc::new(g),
+        bodies: Default::default(),
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let base = "https://status.invalid";
+    // Wallet-owned anchors: an exact anchor and a recent-window verifier both
+    // accept the served anchor; a foreign anchor is refused before session setup.
+    let exact = wallet::AcceptedAnchor {
         network: snapshot.network,
         height: snapshot.height,
         hash: snapshot.anchor,
     };
-    let client = wallet::Client::new(manifest, &g.public, &anchor).unwrap();
+    let window = wallet::AcceptedAnchors {
+        network: snapshot.network,
+        known: vec![
+            (snapshot.height.saturating_sub(1), [9; 32]),
+            (snapshot.height, snapshot.anchor),
+        ],
+    };
+    let foreign = wallet::AcceptedAnchor {
+        network: snapshot.network,
+        height: snapshot.height,
+        hash: [7; 32],
+    };
+    let client = runtime.block_on(async {
+        let pending = wallet::transport::PendingClient::fetch(&origin, base, now_ms)
+            .await
+            .unwrap();
+        assert!(pending.accept(&origin, &foreign).await.is_err());
+        let pending = wallet::transport::PendingClient::fetch(&origin, base, now_ms)
+            .await
+            .unwrap();
+        pending.accept(&origin, &window).await.unwrap();
+        let pending = wallet::transport::PendingClient::fetch(&origin, base, now_ms)
+            .await
+            .unwrap();
+        pending.accept(&origin, &exact).await.unwrap()
+    });
     let coverage = wallet::LocalCoverageContext {
         earliest_possible_inclusion: Some(snapshot.start),
         required_through: Some(snapshot.height),
     };
     for (txid, expected) in fixture::cases(entries, false) {
-        let query = client.prepare(&txid, coverage, now_ms()).unwrap();
-        let coefficients = g.coefficients(&query.body).unwrap();
-        let values = g.evaluate(&coefficients).unwrap();
-        let response = g.pack(&query.body, &values).unwrap();
-        let actual = client.decode(query, &response, now_ms()).unwrap();
+        let actual = runtime
+            .block_on(client.observe(&origin, &txid, coverage))
+            .unwrap();
         let expected = match expected {
             server::Observation::Mined(h) => wallet::Observation::Mined(h),
             server::Observation::Mempool => wallet::Observation::Mempool,
@@ -62,27 +148,37 @@ fn wallet_and_server_share_wire_identity_and_encrypted_observations() {
         };
         assert_eq!(actual, expected);
     }
-    assert!(client
-        .manifest
-        .fresh(client.manifest.observed_ms + 20_000)
-        .is_ok());
+    let observed = client.manifest().observed_ms;
+    assert!(client.manifest().fresh(observed + 20_000).is_ok());
     assert_eq!(
-        client.manifest.fresh(client.manifest.observed_ms + 20_001),
+        client.manifest().fresh(observed + 20_001),
         Err(wallet::Error::Stale)
     );
-    let a = client
-        .prepare(&fixture::txid(0), coverage, now_ms())
+    assert!(client
+        .manifest()
+        .fresh(observed.saturating_sub(4_000))
+        .is_ok());
+    assert_eq!(
+        client.manifest().fresh(observed.saturating_sub(6_000)),
+        Err(wallet::Error::Malformed)
+    );
+    // Fresh randomness per request; stale-envelope and cross-session replays are refused.
+    let txid = fixture::txid(0);
+    runtime
+        .block_on(client.observe(&origin, &txid, coverage))
         .unwrap();
-    let b = client
-        .prepare(&fixture::txid(0), coverage, now_ms())
+    runtime
+        .block_on(client.observe(&origin, &txid, coverage))
         .unwrap();
-    assert_ne!(a.body, b.body);
-    let mut old_envelope = a.body.clone();
+    let bodies = origin.bodies.lock().unwrap();
+    let (a, b) = (&bodies[bodies.len() - 2], &bodies[bodies.len() - 1]);
+    assert_ne!(a, b);
+    let mut old_envelope = a.clone();
     old_envelope[..4].copy_from_slice(b"SPQ1");
-    assert!(g.coefficients(&old_envelope).is_err());
-    let mut other_session = a.body.clone();
+    assert!(origin.g.coefficients(&old_envelope).is_err());
+    let mut other_session = a.clone();
     other_session[4] ^= 1;
-    assert!(g.coefficients(&other_session).is_err());
+    assert!(origin.g.coefficients(&other_session).is_err());
 }
 
 /// The independent wallet implements only q48. The native profile is checked

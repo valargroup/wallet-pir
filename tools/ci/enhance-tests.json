@@ -1,4 +1,4 @@
 {
   "fast": ["boundary_recovery_model", "record_layout", "schema11_cutover"],
-  "full": ["canonical_record", "http", "matvec_config", "note_recovery", "packing_http", "rpc", "status_wallet"]
+  "full": ["canonical_record", "enhance_wallet_native", "http", "matvec_config", "note_recovery", "packing_http", "rpc", "status_wallet"]
 }
