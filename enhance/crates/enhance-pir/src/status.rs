@@ -28,6 +28,10 @@ pub const QUERY_MAGIC: &[u8; 4] = b"SPN1";
 pub const COLS: usize = ROW_BYTES / 2;
 pub const HEADER_BYTES: usize = 52;
 pub const MAX_AGE_MS: u64 = 20_000;
+/// Tolerated client/server clock skew. A manifest observed up to this far in
+/// the client's future is treated as age zero. The tolerance never extends the
+/// maximum age, which is always measured from `observed_ms`.
+pub const SKEW_MS: u64 = 5_000;
 pub type Hash = [u8; 32];
 
 fn query_timed_out(elapsed: Duration) -> bool {
@@ -214,13 +218,18 @@ impl Manifest {
         }
         Ok(())
     }
+    /// Accepts `now_ms + SKEW_MS >= observed_ms` and
+    /// `now_ms - observed_ms <= MAX_AGE_MS`. A timestamp further in the future
+    /// than the skew tolerance is malformed, not merely stale.
     pub fn fresh(&self, now_ms: u64) -> Result<(), Error> {
         self.validate()?;
-        // No future timestamp tolerance in the synthetic backend.
-        match now_ms.checked_sub(self.observed_ms) {
-            Some(age) if age <= MAX_AGE_MS => Ok(()),
-            Some(_) => Err(Error::Stale),
-            None => Err(Error::Malformed),
+        if self.observed_ms > now_ms.saturating_add(SKEW_MS) {
+            return Err(Error::Malformed);
+        }
+        if now_ms.saturating_sub(self.observed_ms) <= MAX_AGE_MS {
+            Ok(())
+        } else {
+            Err(Error::Stale)
         }
     }
 }
@@ -712,7 +721,11 @@ mod tests {
         let row = vec![0; ROW_BYTES];
         assert_eq!(m.fresh(21_000), Ok(()));
         assert_eq!(m.fresh(21_001), Err(Error::Stale));
-        assert_eq!(m.fresh(999), Err(Error::Malformed));
+        // observed_ms 1000 is within skew tolerance of now 0; beyond it is malformed.
+        assert_eq!(m.fresh(0), Ok(()));
+        let mut future = m.clone();
+        future.observed_ms = SKEW_MS + 1;
+        assert_eq!(future.fresh(0), Err(Error::Malformed));
         assert!(!query_timed_out(Duration::from_millis(MAX_AGE_MS)));
         assert!(query_timed_out(Duration::from_millis(MAX_AGE_MS + 1)));
         for earliest in [None, Some(9), Some(21)] {
@@ -738,6 +751,19 @@ mod tests {
         let mut changed = m;
         changed.protocol = "other".into();
         assert_eq!(changed.validate(), Err(Error::Unsupported));
+    }
+    #[test]
+    fn clock_skew_tolerance_does_not_extend_age_budget() {
+        let mut m = manifest();
+        m.observed_ms = 100_000;
+        // Observed 4 s in the client's future: within tolerance, age counts as 0.
+        assert_eq!(m.fresh(96_000), Ok(()));
+        // Observed 6 s in the future: beyond tolerance, malformed rather than stale.
+        assert_eq!(m.fresh(94_000), Err(Error::Malformed));
+        // Age is still measured from observed_ms; skew never extends it.
+        assert_eq!(m.fresh(120_000), Ok(()));
+        assert_eq!(m.fresh(120_001), Err(Error::Stale));
+        assert_eq!((SKEW_MS, MAX_AGE_MS), (5_000, 20_000));
     }
     #[test]
     fn complete_row_is_validated_even_after_a_match() {
