@@ -274,6 +274,28 @@ jobs:
         env:
           SHA: ${{ github.sha }}
         run: python3 tools/ci/release.py assemble --sha "$SHA" --output release-bundles
+      # The native profile serves an incompatible protocol; build it in its own
+      # target directory so feature unification never leaks into the q48 bundle.
+      - name: Build native Enhance binaries
+        env:
+          CARGO_TARGET_DIR: target-native
+        run: >-
+          cargo build --locked --release
+          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test
+          --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli
+          --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
+      - name: Assemble native Enhance bundle
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind enhance-pir-native --target target-native --output release-bundles-native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: enhance-pir-native-${{ github.sha }}
+          path: release-bundles-native/enhance-pir-native.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: enhance-pir-${{ github.sha }}
