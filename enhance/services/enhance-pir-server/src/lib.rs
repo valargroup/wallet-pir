@@ -6,6 +6,7 @@ pub mod control;
 pub mod coordinator;
 pub mod exercise;
 pub mod ingest;
+pub mod internal_auth;
 pub mod ipir;
 pub mod runtime;
 /// Isolated synthetic status-PIR backend; no production route is enabled implicitly.

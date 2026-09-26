@@ -33,6 +33,8 @@ const QUERY_ACTIVE_LIMIT: usize = 4;
 const QUERY_WAIT_LIMIT: usize = 16;
 const QUERY_WAIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 const QUERY_BODY_LIMIT: usize = 512 * 1024;
+/// Concurrent public manifest/session reads; a flood cannot pin the snapshot lock.
+const PUBLIC_READ_LIMIT: usize = 64;
 
 #[derive(Default)]
 struct QueryStats {
@@ -79,6 +81,7 @@ pub struct Coordinator {
     publication: Arc<Semaphore>,
     queries: Arc<Semaphore>,
     query_waiters: Arc<Semaphore>,
+    public_reads: Arc<Semaphore>,
     query_stats: Arc<QueryStats>,
     http_metrics: super::http_metrics::HttpMetrics,
     http: reqwest::Client,
@@ -265,9 +268,10 @@ impl Coordinator {
             publication: Arc::new(Semaphore::new(1)),
             queries: Arc::new(Semaphore::new(QUERY_ACTIVE_LIMIT)),
             query_waiters: Arc::new(Semaphore::new(QUERY_WAIT_LIMIT)),
+            public_reads: Arc::new(Semaphore::new(PUBLIC_READ_LIMIT)),
             query_stats: Arc::new(QueryStats::default()),
             http_metrics: super::http_metrics::HttpMetrics::default(),
-            http: reqwest::Client::builder()
+            http: super::internal_auth::client_builder()
                 .timeout(std::time::Duration::from_secs(180))
                 .build()
                 .map_err(|e| e.to_string())?,
@@ -925,10 +929,9 @@ async fn query_body(request: Request) -> QueryResult<axum::body::Bytes> {
     .map_err(|e| QueryError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))
 }
 
-async fn reject_query(c: &Coordinator, request: Request) -> QueryResult<Response> {
-    // Finish reading the bounded body before responding; otherwise the public
-    // reverse proxy can be left writing to a closed upstream connection.
-    let _ = query_body(request).await?;
+/// Callers have already read the bounded body, so the public reverse proxy is
+/// never left writing to a closed upstream connection.
+fn reject_query(c: &Coordinator) -> QueryResult<Response> {
     c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
     Err(QueryError(
         StatusCode::TOO_MANY_REQUESTS,
@@ -936,7 +939,15 @@ async fn reject_query(c: &Coordinator, request: Request) -> QueryResult<Response
     ))
 }
 
+fn public_read(c: &Coordinator) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {
+    c.public_reads
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "overloaded".into()))
+}
+
 async fn init(State(c): State<Coordinator>) -> ApiResult<Json<Manifest>> {
+    let _read = public_read(&c)?;
     let manifest = c.manifest().await;
     if c.serving.as_ref().is_some_and(|s| {
         manifest
@@ -957,6 +968,7 @@ async fn session(
     State(c): State<Coordinator>,
     Path((generation, shard)): Path<(u64, u64)>,
 ) -> ApiResult<Json<ShardSession>> {
+    let _read = public_read(&c)?;
     let snapshots = c.snapshots.read().await;
     let s = snapshots
         .iter()
@@ -987,6 +999,7 @@ async fn session_by_id(
     State(c): State<Coordinator>,
     Path(id): Path<String>,
 ) -> QueryResult<Json<ShardSession>> {
+    let _read = public_read(&c)?;
     if !enhance_pir::protocol::canonical_hash(&id) {
         return Err(QueryError(
             StatusCode::BAD_REQUEST,
@@ -1027,9 +1040,11 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
             "query serving moved to packing router".into(),
         ));
     }
+    // Read the bounded body before any wait or admission permit is charged.
+    let body = query_body(request).await?;
     let waiting = match c.query_waiters.clone().try_acquire_owned() {
         Ok(permit) => permit,
-        Err(_) => return reject_query(&c, request).await,
+        Err(_) => return reject_query(&c),
     };
     let started_wait = std::time::Instant::now();
     let acquired =
@@ -1041,9 +1056,8 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
     drop(waiting);
     let permit = match acquired {
         Ok(Ok(permit)) => permit,
-        _ => return reject_query(&c, request).await,
+        _ => return reject_query(&c),
     };
-    let body = query_body(request).await?;
     let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let generation_pin = c.snapshots.clone().read_owned().await;
     if c.store
@@ -1366,6 +1380,50 @@ mod admission_tests {
             permits.push(coordinator.queries.clone().acquire_owned().await.unwrap());
         }
         permits
+    }
+
+    #[tokio::test]
+    async fn public_reads_are_bounded_and_released() {
+        use axum::{extract::Path, http::StatusCode};
+        let coordinator = test_coordinator();
+        let mut held = Vec::new();
+        for _ in 0..super::PUBLIC_READ_LIMIT {
+            held.push(
+                coordinator
+                    .public_reads
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            super::init(State(coordinator.clone())).await.unwrap_err().0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            super::session(State(coordinator.clone()), Path((1, 0)))
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            super::session_by_id(State(coordinator.clone()), Path("aa".repeat(32)))
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        drop(held);
+        assert_eq!(
+            super::init(State(coordinator.clone())).await.unwrap_err().0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            coordinator.public_reads.available_permits(),
+            super::PUBLIC_READ_LIMIT
+        );
     }
 
     #[tokio::test]

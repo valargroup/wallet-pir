@@ -248,7 +248,7 @@ pub async fn run(config: Config, groups: Vec<Group>) -> Result<()> {
 }
 
 async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Result<()> {
-    let http = reqwest::Client::builder()
+    let http = crate::internal_auth::client_builder()
         .timeout(Duration::from_secs(10))
         .build()?;
     let mut identities = BTreeSet::new();

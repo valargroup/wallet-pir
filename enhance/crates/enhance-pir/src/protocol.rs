@@ -518,10 +518,47 @@ pub fn parameters(logical_rows: u64) -> Result<ipir_sp::YpirSchemeParams, String
     .map_err(|e| e.to_string())
 }
 
+/// Native identity binds the q48 transport profile to every native packing
+/// parameter, so a change to any of them changes the published identity.
+#[cfg(feature = "native-reinspiring")]
+#[derive(Serialize)]
+struct NativeIdentity<'a> {
+    q48: &'a ipir_sp::YpirSchemeParams,
+    native_encoding: Vec<u8>,
+    mask_bits: usize,
+    query_bits: usize,
+    response_bits: usize,
+    cols: usize,
+}
+
+#[cfg(feature = "native-reinspiring")]
+fn native_identity(q48: &ipir_sp::YpirSchemeParams, mask_bits: usize) -> String {
+    use crate::native::{params, COLS, QUERY_BITS, RESPONSE_BITS};
+    digest(&NativeIdentity {
+        q48,
+        native_encoding: params().encoding(),
+        mask_bits,
+        query_bits: QUERY_BITS,
+        response_bits: RESPONSE_BITS,
+        cols: COLS,
+    })
+}
+
+fn parameter_identity(params: &ipir_sp::YpirSchemeParams) -> String {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        native_identity(params, crate::native::MASK_BITS)
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        digest(params)
+    }
+}
+
 pub fn parameter_id(logical_rows: u64) -> Result<String, String> {
     Ok(format!(
         "{PROTOCOL_REVISION}/{}",
-        digest(&parameters(logical_rows)?)
+        parameter_identity(&parameters(logical_rows)?)
     ))
 }
 
@@ -535,7 +572,10 @@ pub fn unit_parameter_id(rows: u64) -> Result<String, String> {
         ipir_sp::SimplePirProfile::P16Q48,
     )
     .map_err(|e| e.to_string())?;
-    Ok(format!("{PROTOCOL_REVISION}/unit/{}", digest(&params)))
+    Ok(format!(
+        "{PROTOCOL_REVISION}/unit/{}",
+        parameter_identity(&params)
+    ))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -607,6 +647,45 @@ mod tests {
         assert_eq!(l.identities, ids);
         assert!(l.coverage(0, g).is_err());
         assert!(l.coverage(u64::MAX, g).is_err());
+    }
+
+    #[test]
+    #[cfg(not(feature = "native-reinspiring"))]
+    fn v7_parameter_identities_are_frozen() {
+        assert_eq!(
+            parameter_id(32768).unwrap(),
+            "ironwood-enhance-pir-v7/b731a410f932c354abd6a01a05b32865d327b287e021a8d9769190d28c08290c"
+        );
+        assert_eq!(
+            unit_parameter_id(8192).unwrap(),
+            "ironwood-enhance-pir-v7/unit/943a13f970b8cd1fe917c1442bdb487aebafdedd0c79fa14554d346b85746d57"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "native-reinspiring")]
+    fn native_parameter_identity_binds_every_native_parameter() {
+        let id = parameter_id(32768).unwrap();
+        assert!(id.starts_with("ironwood-enhance-pir-v9-native-two-mask-m29/"));
+        let params = parameters(32768).unwrap();
+        let mask_bits = crate::native::MASK_BITS;
+        assert_eq!(
+            id,
+            format!(
+                "{PROTOCOL_REVISION}/{}",
+                native_identity(&params, mask_bits)
+            )
+        );
+        // The identity is no longer the bare q48 digest, and a different mask
+        // width yields a different digest.
+        assert_ne!(id, format!("{PROTOCOL_REVISION}/{}", digest(&params)));
+        assert_ne!(
+            native_identity(&params, mask_bits),
+            native_identity(&params, mask_bits + 1)
+        );
+        assert!(unit_parameter_id(8192)
+            .unwrap()
+            .starts_with("ironwood-enhance-pir-v9-native-two-mask-m29/unit/"));
     }
 
     #[test]

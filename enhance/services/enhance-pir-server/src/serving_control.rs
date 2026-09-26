@@ -81,7 +81,7 @@ impl ServingControl {
             active: Mutex::new(None),
             acknowledged_fence: Mutex::new(None),
             ready: std::sync::atomic::AtomicBool::new(false),
-            http: reqwest::Client::builder()
+            http: crate::internal_auth::client_builder()
                 .timeout(std::time::Duration::from_secs(3))
                 .build()
                 .map_err(|e| e.to_string())?,
@@ -283,6 +283,9 @@ impl ServingControl {
             self.ready.store(false, std::sync::atomic::Ordering::SeqCst);
             return Err("router refresh failed; readiness requires reconciliation".into());
         }
+        // Every participant acknowledged the activated view again, so a transient
+        // refresh failure no longer leaves the public manifest unavailable.
+        self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
     pub async fn revoke(&self, fence: &Revocation) -> Result<(), String> {
@@ -367,4 +370,51 @@ async fn stream_artifact(path: PathBuf) -> Result<impl IntoResponse, (StatusCode
         receiver
     });
     Ok(Body::from_stream(stream))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::routing::post;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn successful_refresh_restores_readiness() {
+        let accept = std::sync::Arc::new(AtomicBool::new(false));
+        let gate = accept.clone();
+        let app = Router::new().route(
+            "/internal/refresh",
+            post(move || {
+                let gate = gate.clone();
+                async move {
+                    if gate.load(Ordering::SeqCst) {
+                        StatusCode::NO_CONTENT
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let control = ServingControl::open(root.path(), Vec::new(), vec![url.clone()]).unwrap();
+        let ack = Ack {
+            incarnation: "i".into(),
+            digest: "d".into(),
+            controller_epoch: 1,
+        };
+        *control.active.lock().unwrap() = Some(Decision {
+            generation: 7,
+            acks: [(ServingControl::ingress_registration(&url).name, ack)].into(),
+        });
+        assert!(control.refresh().await.is_err());
+        assert!(!control.public_ready(7));
+        accept.store(true, Ordering::SeqCst);
+        control.refresh().await.unwrap();
+        assert!(control.public_ready(7));
+        assert!(!control.public_ready(8));
+        server.abort();
+    }
 }

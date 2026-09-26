@@ -221,7 +221,7 @@ impl PackingRouter {
             root: root.into(),
             origin: artifact_origin.trim_end_matches('/').into(),
             incarnation: hex::encode(rand::random::<[u8; 16]>()),
-            http: reqwest::Client::builder()
+            http: crate::internal_auth::client_builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .map_err(|e| e.to_string())?,
@@ -246,6 +246,7 @@ impl PackingRouter {
             .route("/internal/drain", post(drain))
             .route("/internal/health", get(health))
             .route("/internal/metrics", get(metrics))
+            .layer(crate::internal_auth::Token::from_env().layer())
             .with_state(self.clone())
     }
 
@@ -857,6 +858,16 @@ async fn query(State(r): State<PackingRouter>, request: Request) -> Response {
     }
 }
 async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
+    // Read the bounded body before any queue or admission permit is charged.
+    let body_started = Instant::now();
+    let bytes = tokio::time::timeout(
+        Duration::from_secs(30),
+        to_bytes(request.into_body(), BODY_LIMIT),
+    )
+    .await
+    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
+    .map_err(|e| (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
+    let body_read = body_started.elapsed();
     let waiting = r
         .waiters
         .clone()
@@ -867,15 +878,6 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
         .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "admission deadline".into()))?
         .map_err(unavailable)?;
     drop(waiting);
-    let body_started = Instant::now();
-    let bytes = tokio::time::timeout(
-        Duration::from_secs(30),
-        to_bytes(request.into_body(), BODY_LIMIT),
-    )
-    .await
-    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
-    .map_err(|e| (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
-    let body_read = body_started.elapsed();
     let binding = QueryBinding::decode(&bytes).map_err(bad)?;
     let session = hex::encode(binding.session_id);
     let (routes, preferred, epoch, pack) = {

@@ -42,8 +42,33 @@ with an inventory at `/etc/enhance-pir/workers.json`. The inventory contains
 ordered groups, each with a name and two replicas carrying `name` and private
 `url`; [workers.example.json](../ops/deploy/workers.example.json) shows the shape.
 Keep worker port 8091 on the private network and expose only the coordinator's
-client routes through the public origin. The worker API has no application-layer
-authentication.
+client routes through the public origin. Network isolation is the primary
+control; the optional shared token below is an additional layer, not a
+replacement.
+
+### Internal control token
+
+Setting `ENHANCE_INTERNAL_TOKEN` in the environment of every role enables a
+shared bearer token on the private APIs. Worker routes, packing-router control
+routes and query-ingress control routes (all `/internal/*` paths except the
+ingress `/internal/metrics` scrape) then reject requests without
+`Authorization: Bearer <token>` with HTTP 401. The coordinator, packing router
+and `exercise` clients read the same variable and attach the header. Set it on
+all roles together, or on none: a worker with the token and a coordinator
+without it stops publication. Unset keeps the previous behaviour. Provide the
+value through the unit's environment file, never on the command line.
+
+### Query ingress uploads
+
+The ingress (`query-ingress`, loopback 8082) now buffers each complete request
+body (at most 512 KiB, 30-second deadline) before it takes one of its
+`--requests` forwarding permits (default 16) and forwards the buffered body to a
+packing router. Buffering is bounded by `--uploads` (default 256 concurrent
+bodies) and by four concurrent uploads per client, identified by the first
+`X-Forwarded-For` address, else `X-Real-IP`, else the socket peer. Either limit
+answers HTTP 429 `overloaded` without charging a forwarding permit. Caddy must
+keep sending `X-Forwarded-For` so the per-client cap does not collapse onto the
+proxy's loopback address.
 
 The coordinator admits four active queries and lets up to 16 more wait for two
 seconds. A full or expired queue returns HTTP 429 with `Retry-After: 1`; a busy

@@ -23,6 +23,17 @@
   (`ironwood-enhance-pir-v9-native-two-mask-m29`, control version 4). This
   halves the native packing-key upload. The same feature adds a native Status
   profile, `status-pir-v3-native-two-mask-m29`. Default q48 protocols are unchanged.
+- Production hardening. The query ingress buffers the complete bounded body
+  under a separate `--uploads` limit (default 256, four per client) before
+  taking a forwarding permit; the packing router and legacy coordinator read
+  the body before admission. Coordinator readiness recovers after a successful
+  control refresh. Public 5xx/429 messages no longer echo upstream transport
+  text. `ENHANCE_INTERNAL_TOKEN` optionally requires a shared bearer token on
+  worker, router and ingress control routes. Public manifest and session reads
+  are bounded to 64 concurrent requests. Under `native-reinspiring`, parameter
+  identities bind the native params encoding, mask/query/response widths and
+  column count; default v7 identities are unchanged. The interim
+  `ironwood-enhance-pir-v8-native-poc` revision is retired.
 
 This entry describes the source prepared for the first release. Production
 promotion requires separate hardware and operational qualification; the

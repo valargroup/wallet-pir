@@ -76,6 +76,9 @@ enum Command {
         control_listen: SocketAddr,
         #[arg(long, default_value_t = 16)]
         requests: usize,
+        /// Bodies buffered concurrently before router admission; 4 per client.
+        #[arg(long, default_value_t = enhance_pir_server::query_ingress::DEFAULT_UPLOADS)]
+        uploads: usize,
     },
     /// Decode and pack wallet queries on a dedicated private host.
     PackingRouter {
@@ -265,14 +268,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             listen,
             control_listen,
             requests,
+            uploads,
         } => {
-            let ingress =
-                enhance_pir_server::query_ingress::QueryIngress::open(&data_dir, requests)?;
+            let ingress = enhance_pir_server::query_ingress::QueryIngress::open_with_uploads(
+                &data_dir, requests, uploads,
+            )?;
             tokio::try_join!(
                 async {
                     axum::serve(
                         tokio::net::TcpListener::bind(listen).await?,
-                        ingress.public_router(),
+                        ingress
+                            .public_router()
+                            .into_make_service_with_connect_info::<SocketAddr>(),
                     )
                     .await
                 },

@@ -2,8 +2,8 @@
 use crate::packing_router::{Ack, Activation, CONTROL_VERSION};
 use crate::worker::Revocation;
 use axum::{
-    body::Bytes,
-    extract::{Request, State},
+    body::{to_bytes, Bytes},
+    extract::{ConnectInfo, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -14,12 +14,19 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::sync::Semaphore;
-use tokio_stream::StreamExt;
+
+const BODY_LIMIT: usize = 512 * 1024;
+const UPLOAD_DEADLINE: Duration = Duration::from_secs(30);
+/// Concurrent in-flight uploads across all clients before admission is considered.
+pub const DEFAULT_UPLOADS: usize = 256;
+/// Concurrent in-flight uploads per client identity.
+const CLIENT_UPLOADS: usize = 4;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IngressView {
@@ -48,13 +55,22 @@ pub struct QueryIngress {
     root: PathBuf,
     incarnation: String,
     admission: Arc<Semaphore>,
+    uploads: Arc<Semaphore>,
+    client_uploads: Arc<Mutex<BTreeMap<String, usize>>>,
     http: reqwest::Client,
     _lock: Arc<File>,
 }
 impl QueryIngress {
     pub fn open(root: &Path, requests: usize) -> Result<Self, String> {
+        Self::open_with_uploads(root, requests, DEFAULT_UPLOADS)
+    }
+    /// `requests` bounds router forwarding; `uploads` bounds bodies being buffered.
+    pub fn open_with_uploads(root: &Path, requests: usize, uploads: usize) -> Result<Self, String> {
         if requests == 0 || requests > 64 {
             return Err("ingress concurrency must be 1..64".into());
+        }
+        if uploads < requests || uploads > 4096 {
+            return Err("ingress uploads must be requests..4096".into());
         }
         fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let lock = fs::OpenOptions::new()
@@ -86,6 +102,8 @@ impl QueryIngress {
             root: root.into(),
             incarnation: hex::encode(rand::random::<[u8; 16]>()),
             admission: Arc::new(Semaphore::new(requests)),
+            uploads: Arc::new(Semaphore::new(uploads)),
+            client_uploads: Arc::new(Mutex::new(BTreeMap::new())),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(90))
                 .build()
@@ -107,9 +125,11 @@ impl QueryIngress {
             .route("/internal/prepare", post(prepare))
             .route("/internal/activate", post(activate))
             .route("/internal/refresh", post(refresh))
-            .route("/internal/metrics", get(metrics))
             .route("/internal/revoke", post(revoke))
             .route("/internal/health", get(health))
+            .layer(crate::internal_auth::Token::from_env().layer())
+            // Metrics stay scrape-able without the shared token.
+            .route("/internal/metrics", get(metrics))
             .with_state(self.clone())
     }
     fn fence(&self, i: &mut Inner, epoch: u64, fence: Revocation) -> Result<(), String> {
@@ -135,6 +155,18 @@ impl QueryIngress {
         i.refreshed = None;
         Ok(())
     }
+    fn client_slot(&self, client: String) -> Option<ClientSlot> {
+        let mut clients = self.client_uploads.lock().unwrap();
+        let count = clients.entry(client.clone()).or_default();
+        if *count >= CLIENT_UPLOADS {
+            return None;
+        }
+        *count += 1;
+        Some(ClientSlot {
+            clients: self.client_uploads.clone(),
+            client,
+        })
+    }
     fn allowed(&self, session: &str, epoch: u64) -> Result<(), String> {
         let i = self.inner.lock().unwrap();
         if i.fence.sessions.contains(session) {
@@ -149,9 +181,54 @@ impl QueryIngress {
         Ok(())
     }
 }
+struct ClientSlot {
+    clients: Arc<Mutex<BTreeMap<String, usize>>>,
+    client: String,
+}
+impl Drop for ClientSlot {
+    fn drop(&mut self) {
+        let mut clients = self.clients.lock().unwrap();
+        if let Some(count) = clients.get_mut(&self.client) {
+            *count -= 1;
+            if *count == 0 {
+                clients.remove(&self.client);
+            }
+        }
+    }
+}
+/// Proxy-supplied client address when present, else the socket peer.
+fn client_identity(request: &Request) -> String {
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    };
+    header("x-forwarded-for")
+        .or_else(|| header("x-real-ip"))
+        .or_else(|| {
+            request
+                .extensions()
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|info| info.0.ip().to_string())
+        })
+        .unwrap_or_else(|| "unknown".into())
+}
 type Error = (StatusCode, String);
 fn fail(e: impl ToString) -> Error {
     (StatusCode::SERVICE_UNAVAILABLE, e.to_string())
+}
+fn overloaded(e: &str) -> Error {
+    (StatusCode::TOO_MANY_REQUESTS, e.into())
+}
+/// Router transport failures are logged privately; wallets see a fixed message.
+fn router_unavailable(e: impl std::fmt::Display) -> Error {
+    tracing::warn!(error = %e, "packing router request failed; no replay");
+    fail("router unavailable")
 }
 async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {
     let i = r.inner.lock().unwrap();
@@ -241,32 +318,39 @@ async fn query(State(r): State<QueryIngress>, request: Request) -> Response {
     }
 }
 async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
+    // Buffer the complete body before charging router admission, so a slow or
+    // stalled wallet upload cannot hold one of the few forwarding permits.
+    let upload = r
+        .uploads
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| overloaded("uploads full"))?;
+    let slot = r
+        .client_slot(client_identity(&request))
+        .ok_or_else(|| overloaded("client uploads full"))?;
+    let bytes: Bytes =
+        tokio::time::timeout(UPLOAD_DEADLINE, to_bytes(request.into_body(), BODY_LIMIT))
+            .await
+            .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "upload deadline".into()))?
+            .map_err(|e| {
+                if e.to_string().contains("length limit") {
+                    (StatusCode::PAYLOAD_TOO_LARGE, "oversized upload".into())
+                } else {
+                    (StatusCode::BAD_REQUEST, "truncated upload".into())
+                }
+            })?;
+    drop(slot);
+    drop(upload);
+    if bytes.len() < HEADER_BYTES {
+        return Err((StatusCode::BAD_REQUEST, "truncated prefix".into()));
+    }
     let permit = r
         .admission
         .clone()
         .try_acquire_owned()
-        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "ingress full".into()))?;
-    let mut stream = request.into_body().into_data_stream();
-    let mut prefix = Vec::with_capacity(HEADER_BYTES);
-    let mut remainder = Bytes::new();
-    let started = Instant::now();
-    while prefix.len() < HEADER_BYTES {
-        let chunk = tokio::time::timeout(
-            Duration::from_secs(30).saturating_sub(started.elapsed()),
-            stream.next(),
-        )
-        .await
-        .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "prefix deadline".into()))?
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "truncated prefix".into()))?
-        .map_err(fail)?;
-        if chunk.len() > 512 * 1024 {
-            return Err((StatusCode::PAYLOAD_TOO_LARGE, "oversized chunk".into()));
-        }
-        let n = (HEADER_BYTES - prefix.len()).min(chunk.len());
-        prefix.extend_from_slice(&chunk[..n]);
-        remainder = chunk.slice(n..);
-    }
-    let binding = QueryBinding::decode(&prefix).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        .map_err(|_| overloaded("ingress full"))?;
+    let binding =
+        QueryBinding::decode(&bytes[..HEADER_BYTES]).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let session = hex::encode(binding.session_id);
     let (url, epoch) = {
         let mut i = r.inner.lock().unwrap();
@@ -294,82 +378,39 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
         i.cursor = i.cursor.wrapping_add(1);
         (url, i.epoch)
     };
-    let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let upload = tokio::spawn(async move {
-        let send = async {
-            let mut total = prefix.len() + remainder.len();
-            sender
-                .send(Ok::<Bytes, std::io::Error>(prefix.into()))
-                .await
-                .map_err(|_| ())?;
-            if !remainder.is_empty() {
-                sender.send(Ok(remainder)).await.map_err(|_| ())?;
-            }
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|_| ())?;
-                total = total.checked_add(chunk.len()).ok_or(())?;
-                if total > 512 * 1024 {
-                    return Err(());
-                }
-                sender.send(Ok(chunk)).await.map_err(|_| ())?;
-            }
-            Ok::<_, ()>(())
-        };
-        if !matches!(
-            tokio::time::timeout(
-                Duration::from_secs(30).saturating_sub(started.elapsed()),
-                send
-            )
-            .await,
-            Ok(Ok(()))
-        ) {
-            let _ = sender
-                .send(Err(std::io::Error::other(
-                    "upload incomplete or exceeded bounds",
-                )))
-                .await;
-        }
-    });
     // Never retry a forwarded body. The detached task retains admission even if
     // the wallet disconnects while the router may already be doing crypto work.
     let task = tokio::spawn(async move {
-        let result = async {
-            let response = r
-                .http
-                .post(format!("{url}/v1/enhance/query"))
-                .body(reqwest::Body::wrap_stream(
-                    tokio_stream::wrappers::ReceiverStream::new(receiver),
-                ))
-                .send()
-                .await
-                .map_err(fail)?;
-            let status = response.status();
-            let headers = response.headers().clone();
-            let bytes = crate::packing_router::bounded(response, 1024 * 1024)
-                .await
-                .map_err(fail)?;
-            r.allowed(&session, epoch).map_err(|e| {
-                if e == "noncanonical_session" {
-                    (StatusCode::GONE, e)
-                } else {
-                    fail(e)
-                }
-            })?;
-            let mut response = (
-                status,
-                crate::response_body::guarded(bytes, permit, move || r.allowed(&session, epoch)),
-            )
-                .into_response();
-            for name in ["content-type", "retry-after"] {
-                if let Some(value) = headers.get(name) {
-                    response.headers_mut().insert(name, value.clone());
-                }
+        let response = r
+            .http
+            .post(format!("{url}/v1/enhance/query"))
+            .body(bytes)
+            .send()
+            .await
+            .map_err(router_unavailable)?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = crate::packing_router::bounded(response, 1024 * 1024)
+            .await
+            .map_err(router_unavailable)?;
+        r.allowed(&session, epoch).map_err(|e| {
+            if e == "noncanonical_session" {
+                (StatusCode::GONE, e)
+            } else {
+                fail(e)
             }
-            Ok::<_, Error>(response)
+        })?;
+        let mut response = (
+            status,
+            crate::response_body::guarded(bytes, permit, move || r.allowed(&session, epoch)),
+        )
+            .into_response();
+        for name in ["content-type", "retry-after"] {
+            if let Some(value) = headers.get(name) {
+                response.headers_mut().insert(name, value.clone());
+            }
         }
-        .await;
-        upload.abort();
-        result
+        Ok::<_, Error>(response)
     });
     task.await.map_err(fail)?
 }
@@ -477,6 +518,41 @@ mod tests {
         );
         assert_eq!(r.admission.available_permits(), 1);
         task.abort();
+    }
+    #[tokio::test]
+    async fn upload_caps_reject_before_admission_is_charged() {
+        let root = tempfile::tempdir().unwrap();
+        let r = QueryIngress::open_with_uploads(root.path(), 1, 5).unwrap();
+        let stalled = |client: &str| {
+            let router = r.public_router();
+            let request = Request::builder()
+                .method("POST")
+                .uri("/v1/enhance/query")
+                .header("x-forwarded-for", format!("{client}, 10.0.0.1"))
+                .body(axum::body::Body::from_stream(tokio_stream::pending::<
+                    Result<Bytes, std::io::Error>,
+                >()))
+                .unwrap();
+            tokio::spawn(async move { router.oneshot(request).await.unwrap() })
+        };
+        let mut stalled_uploads: Vec<_> = (0..CLIENT_UPLOADS).map(|_| stalled("1.2.3.4")).collect();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(r.uploads.available_permits(), 5 - CLIENT_UPLOADS);
+        assert_eq!(r.admission.available_permits(), 1);
+        let same_client = stalled("1.2.3.4").await.unwrap();
+        assert_eq!(same_client.status(), StatusCode::TOO_MANY_REQUESTS);
+        stalled_uploads.push(stalled("5.6.7.8"));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(r.uploads.available_permits(), 0);
+        let other_client = stalled("9.9.9.9").await.unwrap();
+        assert_eq!(other_client.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(r.admission.available_permits(), 1);
+        for task in stalled_uploads {
+            task.abort();
+            let _ = task.await;
+        }
+        assert_eq!(r.uploads.available_permits(), 5);
+        assert!(r.client_uploads.lock().unwrap().is_empty());
     }
     #[tokio::test]
     async fn ambiguous_router_failure_is_never_replayed() {

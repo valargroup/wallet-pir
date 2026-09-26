@@ -547,6 +547,7 @@ impl Worker {
             .route("/internal/retain", post(retain))
             .route("/internal/evaluate", post(evaluate))
             .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+            .layer(crate::internal_auth::Token::from_env().layer())
             .with_state(self)
     }
 }
