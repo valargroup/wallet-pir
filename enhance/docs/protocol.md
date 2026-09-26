@@ -1,8 +1,15 @@
 # Protocol
 
-The supported server implements schema 11, `ironwood-enhance-pir-v7`.
-The wallet must use the v7/q48 profile and the same pinned IPIR implementation.
-The v6/q48 and older clients are incompatible with this framing and routing contract.
+The server implements schema 11. The served protocol revision is selected at
+build time, not at runtime: the default build publishes `ironwood-enhance-pir-v7`
+(q48 profile, control version 2); a build with the `native-reinspiring` Cargo
+feature publishes `ironwood-enhance-pir-v9-native-two-mask-m29` (native two-mask
+packing, control version 4). A deployment serves exactly one of them, and the
+wallet library must be built with the matching feature. The interim
+`ironwood-enhance-pir-v8-native-poc` revision is retired and is no longer produced
+by any build. The remainder of this document describes the shared framing and
+routing contract; the v7 wallet must use the v7/q48 profile and the same pinned
+IPIR implementation. The v6/q48 and older clients are incompatible.
 
 ## Record format
 
@@ -105,8 +112,10 @@ The authoritative wire types and validation are in
 
 ## Compatibility and trust
 
-Schema-9, schema-10, v5/q46 and v6/q48 clients are incompatible. The repository
-serves only v7. Controller state is version 7. Use fresh controller and worker
+Schema-9, schema-10, v5/q46 and v6/q48 clients are incompatible. A default build
+serves only v7; a `native-reinspiring` build serves only v9. v7 and v9 state,
+manifests and parameter identities are mutually incompatible, and v8 state is not
+readable by either build. Controller state is version 7. Use fresh controller and worker
 directories and rebuild publications/caches. Existing schema-11 canonical journals
 may be copied while stopped and validated; older record-width journals cannot
 supply the required suffix records. Never adopt v6 serving state as v7 state.

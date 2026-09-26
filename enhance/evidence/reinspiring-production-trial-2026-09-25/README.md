@@ -161,3 +161,28 @@ incorrect answer and never rolls services back. Live reports and timestamps:
 `/root/reinspiring-trial-20260925/native-load/`. The router's existing five-second
 resource sampler continues through the same deadline. No CI deployment or long
 pre-cutover soak was added.
+
+## Additional native load steps (unassessed)
+
+`raw/load-30-40-summary.tar.gz` and `raw/ramp50-early.tar.gz` hold the load
+client reports, batch logs and scripts for further one-minute steps against the
+same deployment, protocol `ironwood-enhance-pir-v8-native-poc`. They were not
+independently reviewed and are not six-hour qualification; they record what the
+client observed and nothing about router internals.
+
+| Step | Correct/completed | HTTP errors | Client p99 |
+|---|---:|---:|---:|
+| 30 QPS, run 1 | 1,800/1,800 | 0 | 114.6 ms |
+| 30 QPS, run 2 | 1,800/1,800 | 0 | 134.9 ms |
+| 30 QPS, run 3 | 1,800/1,800 | 0 | 141.7 ms |
+| 40 QPS, run 1 | 2,400/2,400 | 0 | 149.8 ms |
+| 40 QPS, run 2 | 2,400/2,400 | 0 | 149.5 ms |
+| 42 QPS | 2,519/2,520 | 1 HTTP 502 | 180.6 ms |
+| fast ramp, 42 QPS | all correct | 0 | 154.8 ms |
+| fast ramp, 44 QPS | all correct | 0 | 155.6 ms |
+| fast ramp, 46 QPS | all correct | 0 | 175.0 ms |
+| fast ramp, 48 QPS | all correct | 0 | 188.4 ms |
+
+The 42 QPS step's single 502 made the load script exit with status 1; the fast
+ramp used ten-second steps rather than one-minute steps. The reports do not
+identify the 502's origin.

@@ -2,8 +2,13 @@
 
 Use the `enhance-v7` implementation of `zakura/pir-enhance` in
 [wallet-libraries](https://github.com/zakura-core/wallet-libraries). The server
-publishes `ironwood-enhance-pir-v7`, schema 11, with 653-byte records and 33 records
-per row. v6 clients are incompatible. The q48 IPIR dependency remains pinned to
+publishes schema 11 with 653-byte records and 33 records per row. Its protocol
+revision is fixed at build time: `ironwood-enhance-pir-v7` by default, or
+`ironwood-enhance-pir-v9-native-two-mask-m29` when the server is built with the
+`native-reinspiring` feature. The `enhance-pir` client crate must be built with
+the same feature as the server it talks to; a mismatched build rejects the
+manifest. The retired `ironwood-enhance-pir-v8-native-poc` revision is not served.
+v6 clients are incompatible. The q48 IPIR dependency remains pinned to
 `611a29284264d844bf4dba00de2874c5b762f8c2`. See [protocol](protocol.md) for the
 116-byte `EPQ7` binding and canonical session identity.
 
