@@ -106,8 +106,16 @@ class ReleaseTests(unittest.TestCase):
             for name in set(sum(release.BINARIES.values(), [])):
                 (root / 'target/release' / name).write_bytes(b'fake binary')
             release.assemble(SHA, root / 'target', root / 'bundles')
+            # The native bundle is only assembled on request, from its own target.
+            self.assertFalse((root / 'bundles' / 'enhance-pir-native.tar.gz').exists())
+            release.assemble(SHA, root / 'target', root / 'bundles-native', 'enhance-pir-native')
             for kind in release.BINARIES:
-                release.extract(root / 'bundles' / f'{kind}.tar.gz', root / kind, SHA, kind)
+                bundles = root / ('bundles-native' if kind == 'enhance-pir-native' else 'bundles')
+                release.extract(bundles / f'{kind}.tar.gz', root / kind, SHA, kind)
+            native = json.loads((root / 'enhance-pir-native' / 'candidate.json').read_text())
+            self.assertEqual(native['protocol_revision'], 'ironwood-enhance-pir-v9-native-two-mask-m29')
+            with self.assertRaises(ValueError):
+                release.extract(root / 'bundles-native' / 'enhance-pir-native.tar.gz', root / 'cross', SHA, 'enhance-pir')
 
     def test_enhance_candidate_cannot_claim_qualification(self):
         kind = 'enhance-pir'
