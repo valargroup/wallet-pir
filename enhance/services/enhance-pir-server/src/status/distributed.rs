@@ -243,7 +243,9 @@ impl Service {
             StatusCode::SERVICE_UNAVAILABLE
         })
     }
-    pub fn routes(&self) -> Router {
+    /// Control, artifact, public material, worker evaluation and telemetry.
+    /// Never contains the public query route.
+    pub fn control_routes(&self) -> Router {
         Router::new()
             .route("/control/health", get(health))
             .route("/control/fence", post(fence))
@@ -254,16 +256,50 @@ impl Service {
             .route("/artifact/:id", get(artifact))
             .route("/public/:id", get(public))
             .route("/evaluate", post(worker_query))
-            .route("/v1/status/query", post(router_query))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
             .merge(telemetry::routes())
     }
-    pub async fn serve(self, listen: SocketAddr) -> Result<(), Failure> {
-        if !listen.ip().is_loopback() {
+    /// Only the router's forwarded query route, with the same body limit and
+    /// admission as the merged listener.
+    pub fn query_routes(&self) -> Router {
+        Router::new()
+            .route("/v1/status/query", post(router_query))
+            .layer(DefaultBodyLimit::max(512 * 1024))
+            .with_state(self.clone())
+    }
+    /// Merged single-listener layout.
+    pub fn routes(&self) -> Router {
+        self.control_routes().merge(self.query_routes())
+    }
+    /// With `query_listen`, a router serves only `/v1/status/query` there and
+    /// everything else on `listen`. Without it, both share `listen`.
+    pub async fn serve(
+        self,
+        listen: SocketAddr,
+        query_listen: Option<SocketAddr>,
+    ) -> Result<(), Failure> {
+        if !listen.ip().is_loopback() || query_listen.is_some_and(|q| !q.ip().is_loopback()) {
             return Err("Status role listener must be loopback".into());
         }
-        axum::serve(tokio::net::TcpListener::bind(listen).await?, self.routes()).await?;
+        let Some(query_listen) = query_listen else {
+            axum::serve(tokio::net::TcpListener::bind(listen).await?, self.routes()).await?;
+            return Ok(());
+        };
+        if self.role != Role::Router {
+            return Err("--query-listen applies only to the router role".into());
+        }
+        if query_listen == listen {
+            return Err("Status query listener must differ from the control listener".into());
+        }
+        let control = tokio::net::TcpListener::bind(listen).await?;
+        let queries = tokio::net::TcpListener::bind(query_listen).await?;
+        let control = axum::serve(control, self.control_routes());
+        let queries = axum::serve(queries, self.query_routes());
+        tokio::select! {
+            result = control => result?,
+            result = queries => result?,
+        }
         Ok(())
     }
 }
@@ -843,6 +879,87 @@ mod tests {
             s.serving().await.unwrap().current().manifest.observed_ms,
             a.manifest.observed_ms
         );
+    }
+    #[tokio::test]
+    async fn split_listeners_keep_query_route_off_the_control_router() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let dir = tempfile::tempdir().unwrap();
+        let s = open(Role::Router, dir.path());
+        async fn status(router: Router, method: &str, path: &str) -> StatusCode {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+        // Control router: no query route; control routes present.
+        assert_eq!(
+            status(s.control_routes(), "POST", "/v1/status/query").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status(s.control_routes(), "GET", "/control/health").await,
+            StatusCode::OK
+        );
+        // Query router: only the query route (unready role answers 503, not 404).
+        assert_eq!(
+            status(s.query_routes(), "POST", "/v1/status/query").await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        for path in [
+            "/control/health",
+            "/control/fence",
+            "/control/prepare",
+            "/control/activate",
+            "/control/heartbeat",
+            "/artifact/00",
+            "/public/00",
+            "/evaluate",
+            "/internal/metrics",
+            "/internal/health",
+        ] {
+            for method in ["GET", "POST"] {
+                assert_eq!(
+                    status(s.query_routes(), method, path).await,
+                    StatusCode::NOT_FOUND,
+                    "{method} {path}"
+                );
+            }
+        }
+        // Merged layout still serves both.
+        assert_eq!(
+            status(s.routes(), "POST", "/v1/status/query").await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status(s.routes(), "GET", "/control/health").await,
+            StatusCode::OK
+        );
+        // A split worker or a non-loopback query listener is refused.
+        let worker_dir = tempfile::tempdir().unwrap();
+        let worker = open(Role::Worker, worker_dir.path());
+        assert!(worker
+            .serve(
+                "127.0.0.1:0".parse().unwrap(),
+                Some("127.0.0.1:0".parse().unwrap())
+            )
+            .await
+            .is_err());
+        assert!(s
+            .clone()
+            .serve(
+                "127.0.0.1:0".parse().unwrap(),
+                Some("0.0.0.0:0".parse().unwrap())
+            )
+            .await
+            .is_err());
     }
     #[test]
     fn router_preparation_rejects_unbounded_threads() {

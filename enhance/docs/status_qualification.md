@@ -14,6 +14,16 @@ metadata; compact wallet replies are status observations, not inclusion proofs.
 Prior v1 timing and resource captures are protocol-incompatible historical
 evidence. Preserve their raw files; remeasure every gate for v2.
 
+## Residual risks
+
+Passing the gates below does not close these; they are accepted with the
+release decision. (1) Mempool bucket grinding against the public salt can force
+publication `Capacity` failures and is not mitigated in code; it degrades
+availability (stale, then 503), not privacy. (2) `NotFound` and `observed_ms`
+are server assertions, not proofs; see "Residual risks" and the trust boundary
+in `architecture_status.md`. (3) The native `status-pir-v3` profile has no
+wallet implementation; only `status-pir-v2-q48` can be qualified for wallets.
+
 ## Capture contract
 
 Run the production candidate at full 8,192-row geometry on the intended host.
