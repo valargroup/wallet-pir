@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "receiver/crates/receiver-directory",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "transparent/crates/transparent-events",

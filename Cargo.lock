@@ -2989,6 +2989,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "receiver-directory"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "zakura-orchard",
+ "zcash_note_encryption",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

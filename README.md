@@ -47,6 +47,7 @@ remains available for historical context. The
 |---|---|
 | `enhance/` | Enhance crates, services, tools, operations, documentation and evidence |
 | `transparent/` | Transparent crates, services, tools, operations, documentation and evidence |
+| `receiver/` | [Receiver directory prototype](receiver/README.md), shared lookup records and zero-OVK extraction |
 | `ops/` | Shared production infrastructure, coordinator configuration and deployment contracts |
 | `docs/` | Repository-wide indexes, migration records and personal working notes |
 | `evidence/` | Shared evidence policy, checksums and historical-path mappings |
