@@ -223,6 +223,11 @@ fn fail(e: impl ToString) -> Error {
 fn overloaded(e: &str) -> Error {
     (StatusCode::TOO_MANY_REQUESTS, e.into())
 }
+/// Router transport failures are logged privately; wallets see a fixed message.
+fn router_unavailable(e: impl std::fmt::Display) -> Error {
+    tracing::warn!(error = %e, "packing router request failed; no replay");
+    fail("router unavailable")
+}
 async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {
     let i = r.inner.lock().unwrap();
     Json(
@@ -380,12 +385,12 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
             .body(bytes)
             .send()
             .await
-            .map_err(fail)?;
+            .map_err(router_unavailable)?;
         let status = response.status();
         let headers = response.headers().clone();
         let bytes = crate::packing_router::bounded(response, 1024 * 1024)
             .await
-            .map_err(fail)?;
+            .map_err(router_unavailable)?;
         r.allowed(&session, epoch).map_err(|e| {
             if e == "noncanonical_session" {
                 (StatusCode::GONE, e)

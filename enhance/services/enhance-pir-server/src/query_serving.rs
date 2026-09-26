@@ -83,7 +83,8 @@ pub(crate) async fn evaluate_observed<G>(
             }
             Err(e) => {
                 observe(AttemptFailure::Failed);
-                return Err(unavailable(format!("evaluation acceptance unknown: {e}")));
+                tracing::warn!(error = %e, "worker evaluation transport failed; no replay");
+                return Err(unavailable("evaluation acceptance unknown"));
             }
             Ok(response) => {
                 let status = response.status();
@@ -166,6 +167,14 @@ pub(crate) async fn bounded(
     Ok(bytes)
 }
 
+const PUBLIC_CODES: [&str; 5] = [
+    "stale_routing",
+    "noncanonical_session",
+    "session_unavailable",
+    "overloaded",
+    "temporarily_unavailable",
+];
+
 pub(crate) fn public_error(error: Error) -> Response {
     let code = match error.0 {
         StatusCode::CONFLICT => "stale_routing",
@@ -175,9 +184,22 @@ pub(crate) fn public_error(error: Error) -> Response {
         StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY => "temporarily_unavailable",
         _ => "invalid_request",
     };
+    // Overload and upstream failures never echo transport text, URLs or
+    // private addresses; only the fixed public vocabulary is returned.
+    let message = if (error.0.is_server_error() || error.0 == StatusCode::TOO_MANY_REQUESTS)
+        && !PUBLIC_CODES.contains(&error.1.as_str())
+    {
+        if error.0 == StatusCode::TOO_MANY_REQUESTS {
+            "too many requests".to_string()
+        } else {
+            "service temporarily unavailable".to_string()
+        }
+    } else {
+        error.1
+    };
     let mut response = (
         error.0,
-        Json(serde_json::json!({"code":code,"message":error.1})),
+        Json(serde_json::json!({"code":code,"message":message})),
     )
         .into_response();
     if error.0 == StatusCode::TOO_MANY_REQUESTS {
@@ -277,6 +299,41 @@ mod tests {
         at.abort();
         bt.abort();
         (result, counts.0, counts.1)
+    }
+    #[tokio::test]
+    async fn public_errors_never_echo_upstream_transport_text() {
+        for status in [
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::TOO_MANY_REQUESTS,
+        ] {
+            let response = public_error((
+                status,
+                "error sending request for url (http://10.1.2.3:8092/v1/enhance/query)".into(),
+            ));
+            assert_eq!(response.status(), status);
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            assert!(!text.contains("http://10."), "{text}");
+            assert!(!text.contains("reqwest"), "{text}");
+        }
+        let response = public_error((StatusCode::SERVICE_UNAVAILABLE, "overloaded".into()));
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(String::from_utf8(body.to_vec())
+            .unwrap()
+            .contains("\"message\":\"overloaded\""));
+        let response = public_error((StatusCode::BAD_REQUEST, "wrong shard".into()));
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(String::from_utf8(body.to_vec())
+            .unwrap()
+            .contains("wrong shard"));
     }
     #[tokio::test]
     async fn only_explicit_nonacceptance_allows_replay() {
