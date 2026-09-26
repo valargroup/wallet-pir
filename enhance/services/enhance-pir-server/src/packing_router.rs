@@ -221,7 +221,7 @@ impl PackingRouter {
             root: root.into(),
             origin: artifact_origin.trim_end_matches('/').into(),
             incarnation: hex::encode(rand::random::<[u8; 16]>()),
-            http: reqwest::Client::builder()
+            http: crate::internal_auth::client_builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .map_err(|e| e.to_string())?,
@@ -246,6 +246,7 @@ impl PackingRouter {
             .route("/internal/drain", post(drain))
             .route("/internal/health", get(health))
             .route("/internal/metrics", get(metrics))
+            .layer(crate::internal_auth::Token::from_env().layer())
             .with_state(self.clone())
     }
 

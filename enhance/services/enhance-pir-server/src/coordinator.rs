@@ -267,7 +267,7 @@ impl Coordinator {
             query_waiters: Arc::new(Semaphore::new(QUERY_WAIT_LIMIT)),
             query_stats: Arc::new(QueryStats::default()),
             http_metrics: super::http_metrics::HttpMetrics::default(),
-            http: reqwest::Client::builder()
+            http: super::internal_auth::client_builder()
                 .timeout(std::time::Duration::from_secs(180))
                 .build()
                 .map_err(|e| e.to_string())?,

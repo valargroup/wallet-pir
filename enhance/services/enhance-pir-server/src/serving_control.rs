@@ -81,7 +81,7 @@ impl ServingControl {
             active: Mutex::new(None),
             acknowledged_fence: Mutex::new(None),
             ready: std::sync::atomic::AtomicBool::new(false),
-            http: reqwest::Client::builder()
+            http: crate::internal_auth::client_builder()
                 .timeout(std::time::Duration::from_secs(3))
                 .build()
                 .map_err(|e| e.to_string())?,

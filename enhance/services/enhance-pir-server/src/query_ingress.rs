@@ -125,9 +125,11 @@ impl QueryIngress {
             .route("/internal/prepare", post(prepare))
             .route("/internal/activate", post(activate))
             .route("/internal/refresh", post(refresh))
-            .route("/internal/metrics", get(metrics))
             .route("/internal/revoke", post(revoke))
             .route("/internal/health", get(health))
+            .layer(crate::internal_auth::Token::from_env().layer())
+            // Metrics stay scrape-able without the shared token.
+            .route("/internal/metrics", get(metrics))
             .with_state(self.clone())
     }
     fn fence(&self, i: &mut Inner, epoch: u64, fence: Revocation) -> Result<(), String> {
