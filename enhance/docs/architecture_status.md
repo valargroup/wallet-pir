@@ -152,6 +152,21 @@ and publication anchor validation. `NotFound` means no
 observation in the declared, sufficiently fresh coverage, never proof that a
 transaction was not broadcast.
 
+### Residual risks
+
+Three risks are accepted, not mitigated, in the current code. (1) Bucket
+grinding: the index salt is public, so an adversary can craft mempool
+transactions whose txids land in one bucket and push it past 256 slots. The
+per-bucket check then fails publication closed with `Capacity`; the service
+stays on its last fresh generation until it goes stale and then answers 503.
+This is availability, not privacy, loss, and no code rate-limits or rotates
+the salt against it. (2) `NotFound` and `observed_ms` are server assertions, as
+stated above: freshness and absence are only as trustworthy as the operator.
+(3) The native `status-pir-v3-native-two-mask-m29` profile has an in-repo test
+client but no wallet-library implementation; only `status-pir-v2-q48` is
+wallet-reachable. See `status_qualification.md` for the same list against the
+release gates.
+
 ## Index layout and coverage
 
 ### Geometry and record encoding
