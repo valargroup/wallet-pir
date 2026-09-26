@@ -81,64 +81,69 @@ fn main() {
         (None, Some(digest)) => hash32(digest),
         _ => panic!("pass exactly one of --public or --public-sha256"),
     };
-    let (setup, hint, rows, query, binding): (NativeSetup, Vec<CrsBlock>, usize, Vec<WeightNorms>, String) =
-        match product.as_str() {
-            "enhance" => {
-                let rows: usize = flags["rows"].parse().unwrap();
-                let bytes = std::fs::read(&flags["hint"]).expect("hint");
-                let blocks = n::COLS / n::D;
-                let hint = enhance_pir_server::wire::decode_crs_blocks(&bytes, blocks, n::D)
-                    .expect("MPH1 hint");
-                // Any u16 column: L1 <= 65535*rows, L2^2 <= 65535^2*rows.
-                let worst = WeightNorms {
-                    l1: 65535 * rows as u128,
-                    l2_squared: 65535u128 * 65535 * rows as u128,
-                    max: 65535,
-                };
-                (
-                    n::packing_setup(),
-                    hint,
-                    rows,
-                    vec![worst; blocks],
-                    format!("hint_sha256:{}", hex(&Sha256::digest(&bytes))),
-                )
-            }
-            "status" => {
-                use enhance_pir::status::{native_packing_setup, COLS, ROWS, ROW_BYTES};
-                let rows_bin = std::fs::read(&flags["rows-bin"]).expect("rows.bin");
-                let network = hash32(&flags["network-hex"]);
-                let salt = hash32(&flags["salt-hex"]);
-                let hint = status_hint(&rows_bin, &network, &salt);
-                let worst_case = flags.get("worst-case-query").is_some_and(|v| v == "true");
-                let query = (0..COLS / n::D)
-                    .map(|block| {
-                        if worst_case {
-                            return WeightNorms {
-                                l1: 65535 * ROWS as u128,
-                                l2_squared: 65535u128 * 65535 * ROWS as u128,
-                                max: 65535,
-                            };
-                        }
-                        (block * n::D..(block + 1) * n::D)
-                            .map(|col| {
-                                WeightNorms::measure((0..ROWS).map(|r| {
-                                    let at = r * ROW_BYTES + 2 * col;
-                                    u16::from_le_bytes([rows_bin[at], rows_bin[at + 1]]) as i128
-                                }))
-                            })
-                            .fold(WeightNorms::default(), WeightNorms::envelope)
-                    })
-                    .collect();
-                (
-                    native_packing_setup(&network, &salt),
-                    hint,
-                    ROWS,
-                    query,
-                    format!("rows_sha256:{}", hex(&Sha256::digest(&rows_bin))),
-                )
-            }
-            _ => panic!("product must be enhance or status"),
-        };
+    let (setup, hint, rows, query, binding): (
+        NativeSetup,
+        Vec<CrsBlock>,
+        usize,
+        Vec<WeightNorms>,
+        String,
+    ) = match product.as_str() {
+        "enhance" => {
+            let rows: usize = flags["rows"].parse().unwrap();
+            let bytes = std::fs::read(&flags["hint"]).expect("hint");
+            let blocks = n::COLS / n::D;
+            let hint = enhance_pir_server::wire::decode_crs_blocks(&bytes, blocks, n::D)
+                .expect("MPH1 hint");
+            // Any u16 column: L1 <= 65535*rows, L2^2 <= 65535^2*rows.
+            let worst = WeightNorms {
+                l1: 65535 * rows as u128,
+                l2_squared: 65535u128 * 65535 * rows as u128,
+                max: 65535,
+            };
+            (
+                n::packing_setup(),
+                hint,
+                rows,
+                vec![worst; blocks],
+                format!("hint_sha256:{}", hex(&Sha256::digest(&bytes))),
+            )
+        }
+        "status" => {
+            use enhance_pir::status::{native_packing_setup, COLS, ROWS, ROW_BYTES};
+            let rows_bin = std::fs::read(&flags["rows-bin"]).expect("rows.bin");
+            let network = hash32(&flags["network-hex"]);
+            let salt = hash32(&flags["salt-hex"]);
+            let hint = status_hint(&rows_bin, &network, &salt);
+            let worst_case = flags.get("worst-case-query").is_some_and(|v| v == "true");
+            let query = (0..COLS / n::D)
+                .map(|block| {
+                    if worst_case {
+                        return WeightNorms {
+                            l1: 65535 * ROWS as u128,
+                            l2_squared: 65535u128 * 65535 * ROWS as u128,
+                            max: 65535,
+                        };
+                    }
+                    (block * n::D..(block + 1) * n::D)
+                        .map(|col| {
+                            WeightNorms::measure((0..ROWS).map(|r| {
+                                let at = r * ROW_BYTES + 2 * col;
+                                u16::from_le_bytes([rows_bin[at], rows_bin[at + 1]]) as i128
+                            }))
+                        })
+                        .fold(WeightNorms::default(), WeightNorms::envelope)
+                })
+                .collect();
+            (
+                native_packing_setup(&network, &salt),
+                hint,
+                ROWS,
+                query,
+                format!("rows_sha256:{}", hex(&Sha256::digest(&rows_bin))),
+            )
+        }
+        _ => panic!("product must be enhance or status"),
+    };
     let cols = hint.len() * n::D;
     let analyzed: Vec<_> = hint
         .par_iter()
