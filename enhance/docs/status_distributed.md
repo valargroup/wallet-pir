@@ -17,9 +17,36 @@ the deployed Enhance executable to the integrated entry point remains a separate
 cutover gate: the deployed native Enhance binary has an older upstream revision,
 so its serving compatibility must be checked before replacement.
 
+When a controller config sets `public_enabled`, `serve-distributed` requires
+`--public-listen <loopback addr>` and serves the public `/v1/status/init`,
+`/v1/status/session/:id` and `/v1/status/query` routes only there; the private
+listener keeps telemetry and candidate transfer. `public_enabled` without
+`--public-listen`, or the flag without `public_enabled`, is refused. Public
+admission still depends on the publisher's live-publication health flag, so an
+unpublished or fenced controller answers 503 on the public listener. The
+forwarded query route also caps each client (first `X-Forwarded-For` address,
+else `X-Real-IP`) at two concurrent requests and answers 429 beyond that. The
+intended HTTPS ingress wiring is:
+
+```
+status-pir serve-distributed --config /etc/status-pir-control/controller.json \
+  --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489
+```
+
+```
+handle /v1/status/* {
+    reverse_proxy 127.0.0.1:8489
+}
+```
+
+Enabling `public_enabled` is a deployment decision gated by
+`status_qualification.md`; this section documents the wiring, not a live
+configuration.
+
 | Endpoint | Owner | Reachability |
 | --- | --- | --- |
 | Coordinator `127.0.0.1:8480` | Private Status routes and immutable candidate transfer | Coordinator loopback |
+| Coordinator `127.0.0.1:8489` | Public `/v1/status/*` when `public_enabled` (`--public-listen`) | Coordinator loopback; Caddy `handle /v1/status/*` |
 | P4000 `127.0.0.1:8481` | CUDA worker and private control | Loopback; coordinator SSH forward |
 | P4000 `127.0.0.1:8482` | CPU packing router private control, public material, telemetry | Loopback; coordinator SSH forward (`status-control-tunnel`, local 8482) |
 | P4000 `127.0.0.1:8484` | CPU packing router query route only (`/v1/status/query`, `--query-listen`) | Loopback; coordinator SSH forward (`status-query-tunnel`, local 8492) |

@@ -50,6 +50,11 @@ enum Command {
         rpc_url: String,
         #[arg(long)]
         cookie: PathBuf,
+        /// Loopback listener for the public `/v1/status/*` routes that the
+        /// HTTPS ingress proxies to. Required when the config enables public
+        /// routes; refused otherwise.
+        #[arg(long)]
+        public_listen: Option<SocketAddr>,
     },
     /// Encrypted oracle validation across real router and worker child processes.
     ValidateDistributed {
@@ -974,16 +979,40 @@ async fn main() -> Result<(), AnyError> {
             config,
             rpc_url,
             cookie,
+            public_listen,
         } => {
             let config: status::publisher::Config =
                 serde_json::from_slice(&std::fs::read(config)?)?;
             require(
-                !config.public_enabled,
-                "qualification controller cannot enable public routes",
+                !config.public_enabled || public_listen.is_some(),
+                "public_enabled requires --public-listen",
+            )?;
+            require(
+                config.public_enabled || public_listen.is_none(),
+                "--public-listen requires public_enabled in the controller config",
+            )?;
+            require(
+                public_listen.is_none_or(|l| l.ip().is_loopback()),
+                "--public-listen must be loopback; the HTTPS ingress proxies to it",
             )?;
             let publisher = status::publisher::Publisher::new(config)?;
+            // Bind before starting the controller so a port conflict fails fast.
+            let public = match public_listen {
+                Some(listen) => Some(TcpListener::bind(listen).await?),
+                None => None,
+            };
             publisher.start(ZakuraClient::from_cookie_file(rpc_url, cookie)?)?;
-            tokio::signal::ctrl_c().await?;
+            match public {
+                // Public admission still depends on the publisher's healthy flag.
+                Some(listener) => {
+                    let routes = publisher.routes();
+                    tokio::select! {
+                        result = axum::serve(listener, routes) => result?,
+                        result = tokio::signal::ctrl_c() => result?,
+                    }
+                }
+                None => tokio::signal::ctrl_c().await?,
+            }
         }
         Command::ValidateDistributed {
             entries,
