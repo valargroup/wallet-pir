@@ -386,6 +386,18 @@ under the wallet's existing policy before issuing a query. Coverage does not
 substitute for anchor acceptance. Unsupported capability is detected through
 public metadata, never by submitting a real wallet txid to another operation.
 
+Anchor acceptance is an `AnchorVerifier`: the manifest is accepted iff the
+verifier's network matches and it accepts the manifest's `(anchor_height,
+anchor_hash)` pair. `AcceptedAnchor` accepts exactly one pair; `AcceptedAnchors`
+accepts any pair in a wallet-supplied window. Wallets should populate that
+window with recently verified `(height, hash)` pairs from their own chain state
+(for example the last few blocks at their verified tip), so a server publishing a
+block or two behind or ahead of the wallet remains usable. Never build the window
+from the server's manifest values; that would turn the check into a tautology.
+The client also tolerates up to `SKEW_MS` (5 s) of clock skew when the manifest's
+`observed_ms` is in its future; the 20-second maximum age is still measured from
+`observed_ms`, so skew tolerance never extends the freshness budget.
+
 The transport-neutral API has the following logical shape; concrete ownership
 and cancellation types follow the existing wallet client conventions:
 
