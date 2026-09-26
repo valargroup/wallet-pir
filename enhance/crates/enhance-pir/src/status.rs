@@ -810,7 +810,11 @@ mod tests {
             hash: [3; 32],
         };
         assert!(exact.accepts_manifest(&m));
-        assert!(!AcceptedAnchor { height: 21, ..exact }.accepts_manifest(&m));
+        assert!(!AcceptedAnchor {
+            height: 21,
+            ..exact
+        }
+        .accepts_manifest(&m));
         assert!(!AcceptedAnchor {
             network: [9; 32],
             ..exact
@@ -837,7 +841,12 @@ mod tests {
             known: Vec::new(),
         }
         .accepts_manifest(&m));
-        assert!((&window).accepts_manifest(&m));
+        // Blanket reference impl lets callers hand out borrowed verifiers.
+        fn by_ref<A: AnchorVerifier>(a: A, m: &Manifest) -> bool {
+            a.accepts_manifest(m)
+        }
+        assert!(by_ref(&window, &m));
+        assert!(by_ref(&exact as &dyn AnchorVerifier, &m));
     }
     #[test]
     fn complete_row_is_validated_even_after_a_match() {
