@@ -20,6 +20,19 @@ use std::{
 };
 use zakura_chain::serialization::ZcashDeserialize;
 
+#[tokio::test]
+async fn explicit_no_auth_rpc_omits_authorization() {
+    async fn handler(headers: HeaderMap, Json(request): Json<Value>) -> Json<Value> {
+        assert!(!headers.contains_key("authorization"));
+        assert_eq!(request["method"], "getblockcount");
+        Json(json!({"result":3496806,"error":null,"id":request["id"]}))
+    }
+    let (url, task) = serve(Router::new().route("/", post(handler))).await;
+    let rpc = enhance_pir_server::zakura::ZakuraClient::unauthenticated(url).unwrap();
+    assert_eq!(rpc.tip_height().await.unwrap(), 3496806);
+    task.abort();
+}
+
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {

@@ -36,6 +36,13 @@ bundle verification does not grant hardware qualification.
 
 ## Fresh deployment layout
 
+The coordinator normally uses `--zakura-cookie PATH`. For an explicitly selected
+canonical node with authentication disabled, use `--zakura-no-auth` instead.
+It sends no Authorization header and cannot be combined with a cookie or
+`--isolated-fixture`. This option also supplies the RPC connection to an enabled
+Status publisher. Verify the node's network and canonical chain independently;
+the option does not authenticate an HTTP endpoint or change wallet anchor checks.
+
 Install the same checked binary revision on the coordinator and worker hosts.
 Use new `/srv/enhance-pir-v7/canonical` and `/srv/enhance-pir-v7/worker` directories,
 with an inventory at `/etc/enhance-pir/workers.json`. The inventory contains

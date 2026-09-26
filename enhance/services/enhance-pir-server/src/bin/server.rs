@@ -124,6 +124,9 @@ enum Command {
         zakura_rpc_url: String,
         #[arg(long)]
         zakura_cookie: Option<PathBuf>,
+        /// Explicitly use a canonical RPC with authentication disabled.
+        #[arg(long, conflicts_with_all = ["zakura_cookie", "isolated_fixture"])]
+        zakura_no_auth: bool,
         /// Dedicated synthetic fixture environment only. Never use on serving production data.
         #[arg(long)]
         isolated_fixture: bool,
@@ -337,6 +340,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             worker_config,
             zakura_rpc_url,
             zakura_cookie,
+            zakura_no_auth,
             isolated_fixture,
             fixture_records,
             fixture_append_records,
@@ -353,9 +357,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             capacity_policy.validate()?;
             if poll_seconds == 0
                 || (isolated_fixture && zakura_cookie.is_some())
-                || (!isolated_fixture && zakura_cookie.is_none())
+                || (!isolated_fixture && zakura_cookie.is_none() && !zakura_no_auth)
             {
-                return Err("select either a canonical RPC cookie or an isolated fixture; polling must be nonzero".into());
+                return Err("select a canonical RPC cookie, explicit no-auth RPC, or an isolated fixture; polling must be nonzero".into());
             }
             let mut groups = load_inventory(&worker_config)?;
             for group in &mut groups {
@@ -420,11 +424,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         let enabled = config.public_enabled;
                         let publisher =
                             enhance_pir_server::status::publisher::Publisher::new(config)?;
-                        let cookie = zakura_cookie
-                            .as_ref()
-                            .ok_or("Status requires canonical node authentication")?;
-                        publisher
-                            .start(ZakuraClient::from_cookie_file(&zakura_rpc_url, cookie)?)?;
+                        let rpc = if zakura_no_auth {
+                            ZakuraClient::unauthenticated(&zakura_rpc_url)?
+                        } else {
+                            ZakuraClient::from_cookie_file(
+                                &zakura_rpc_url,
+                                zakura_cookie
+                                    .as_ref()
+                                    .ok_or("Status requires canonical RPC")?,
+                            )?
+                        };
+                        publisher.start(rpc)?;
                         Ok((publisher, enabled))
                     },
                 )
@@ -438,9 +448,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 axum::serve(tokio::net::TcpListener::bind(listen).await?, routes).await
             });
             let mut journal = EnhanceJournal::open(&data_dir)?;
-            let rpc = zakura_cookie
-                .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
-                .transpose()?;
+            let rpc = if zakura_no_auth {
+                Some(ZakuraClient::unauthenticated(&zakura_rpc_url)?)
+            } else {
+                zakura_cookie
+                    .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
+                    .transpose()?
+            };
             loop {
                 if let Err(error) = coordinator.reconcile().await {
                     tracing::error!(%error, "publication recovery blocked");

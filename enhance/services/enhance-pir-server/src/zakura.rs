@@ -33,8 +33,7 @@ pub enum ZakuraError {
 pub struct ZakuraClient {
     http: reqwest::Client,
     rpc_url: String,
-    username: String,
-    password: String,
+    credentials: Option<(String, String)>,
 }
 
 #[derive(Debug)]
@@ -90,8 +89,18 @@ impl ZakuraClient {
                 .timeout(std::time::Duration::from_secs(120))
                 .build()?,
             rpc_url: rpc_url.into(),
-            username: username.to_string(),
-            password: password.to_string(),
+            credentials: Some((username.to_string(), password.to_string())),
+        })
+    }
+
+    /// Connect to an explicitly selected canonical RPC that disables authentication.
+    pub fn unauthenticated(rpc_url: impl Into<String>) -> Result<Self, ZakuraError> {
+        Ok(Self {
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()?,
+            rpc_url: rpc_url.into(),
+            credentials: None,
         })
     }
 
@@ -205,10 +214,11 @@ impl ZakuraClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, ZakuraError> {
-        let response = self
-            .http
-            .post(&self.rpc_url)
-            .basic_auth(&self.username, Some(&self.password))
+        let mut request = self.http.post(&self.rpc_url);
+        if let Some((username, password)) = &self.credentials {
+            request = request.basic_auth(username, Some(password));
+        }
+        let response = request
             .json(
                 &json!({"jsonrpc": "1.0", "id": "enhance-pir", "method": method, "params": params}),
             )
