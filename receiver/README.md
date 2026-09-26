@@ -149,3 +149,30 @@ traffic. This measures the receiver lookup only, not complete wallet recovery.
 request/session binding, coverage, public setup corruption, missing continuations,
 and invalid requests. The pinned ipir-sp and InspiRING release candidates are not
 on crates.io. Their git source matches the existing workspace's locked revision.
+
+## Local PIR service
+
+`receiver-pir-server` loads one immutable publication and serves the HTTP client.
+It verifies the row file's length and digest before preprocessing. The executable
+requires a loopback bind and defaults to `127.0.0.1:18380`. It has no publication
+rotation, node validation, public TLS endpoint, or production deployment policy.
+Restart it explicitly to load a newly verified publication.
+
+```sh
+cargo run -p receiver-pir-server -- \
+  --manifest /path/to/receiver-state/publications/current.json
+```
+
+Two admission slots bound request uploads and CPU evaluation together. Uploads
+have a 15-second deadline and exact protocol size limit. A disconnected request
+does not free its CPU slot until evaluation finishes. Oversized requests return
+413, malformed messages 400, stale sessions 409, and full admission 503.
+
+`cargo test -p receiver-pir-server` covers actual HTTP queries, full pagination,
+absence, page budgets, malformed/oversized requests, and correctly hashed but
+inconsistent histories. An opt-in public-chain test loads the verified September
+26 backfill and looks up the known refund using encrypted HTTP. It requires
+`RECEIVER_MAINNET_MANIFEST` and runs with
+`cargo test -p receiver-pir-server --test http known_mainnet_refund -- --ignored`.
+Its accepted anchor is fixed to the independently verified block at 3,497,109.
+No wallet data is used.
