@@ -138,7 +138,7 @@ impl QuerySession {
         let hash = Sha256::digest(&bytes);
         #[cfg(feature = "native-reinspiring")]
         if hex::encode(hash) != reference.public_params_sha256
-            || bytes.len() != crate::native::COLS * 8
+            || bytes.len() != crate::native::public_len(crate::native::COLS)
         {
             return Err(ClientError::Generation(
                 "native public material mismatch".into(),
@@ -269,7 +269,7 @@ impl QuerySession {
     pub fn decode(&self, query: PreparedQuery, response: &[u8]) -> Result<Vec<u8>, ClientError> {
         let binding = QueryBinding::decode(response).map_err(ClientError::Response)?;
         #[cfg(feature = "native-reinspiring")]
-        let size = crate::native::COLS * 22 / 8;
+        let size = crate::native::response_len(crate::native::COLS);
         #[cfg(not(feature = "native-reinspiring"))]
         let size = self.params.db_cols / self.client.rlwe_params().d
             * response_body_len(self.client.rlwe_params().d, self.params.q_prime_1);

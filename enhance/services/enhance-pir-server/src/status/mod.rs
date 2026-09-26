@@ -1,6 +1,12 @@
 //! Experimental isolated HTTP service. Production controller recovery is not wired here.
+mod admission;
+pub mod artifact;
+pub mod authority;
+pub mod distributed;
 pub mod fixture;
 pub mod index;
+pub mod publisher;
+pub mod source;
 pub mod telemetry;
 use axum::{
     body::Bytes,
@@ -10,20 +16,25 @@ use axum::{
     Json, Router,
 };
 use enhance_pir::status::*;
-use inspiring::{QueryPackPreprocessed, TopKeyImages};
+#[cfg(not(feature = "native-reinspiring"))]
+use inspiring::QueryPackPreprocessed;
+use inspiring::TopKeyImages;
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::{
-    server::{
-        build_pack_preprocessed_blocks, pack_intermediate_blocks, published_c1_rows, CrsBlock,
-        MatvecBackend,
-    },
-    IPIRClient, IPIRServer, ProductionSimplePirParams, SimplePirProfile,
+    server::{pack_intermediate_blocks, published_c1_rows},
+    IPIRClient,
 };
+use ipir_sp::{
+    server::{CrsBlock, MatvecBackend},
+    IPIRServer, ProductionSimplePirParams, SimplePirProfile,
+};
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::{
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, OnceLock, RwLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::Semaphore;
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -34,23 +45,113 @@ pub fn now_ms() -> u64 {
 pub fn profile() -> &'static ProductionSimplePirParams {
     static P: OnceLock<ProductionSimplePirParams> = OnceLock::new();
     P.get_or_init(|| {
-        ProductionSimplePirParams::new(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
-            .expect("fixed status profile")
+        let p = ProductionSimplePirParams::new(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .expect("fixed status profile");
+        assert_eq!(p.ypir().db_cols, 6144);
+        assert_eq!(p.ypir().db_cols * 2, ROW_BYTES);
+        assert_eq!(ROWS * ROW_BYTES, 96 * 1024 * 1024);
+        p
     })
+}
+
+/// Ciphertext modulus of the selected Status profile.
+fn modulus() -> u64 {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        enhance_pir::native::Q
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        profile().rlwe().q
+    }
+}
+
+/// Router-side packing material for one d-column hint block.
+#[cfg(not(feature = "native-reinspiring"))]
+type PackingBlock = QueryPackPreprocessed<'static>;
+#[cfg(feature = "native-reinspiring")]
+type PackingBlock = Arc<reinspiring::native::NativePreprocessed>;
+
+#[cfg(not(feature = "native-reinspiring"))]
+fn top_images() -> Arc<TopKeyImages<'static>> {
+    static TOP: OnceLock<Arc<TopKeyImages<'static>>> = OnceLock::new();
+    TOP.get_or_init(|| Arc::new(TopKeyImages::build(profile().rlwe())))
+        .clone()
 }
 
 struct Unit {
     bytes_digest: Hash,
+    rows: Vec<u8>,
     db: IPIRServer<u16>,
     hint: Vec<CrsBlock>,
 }
+/// Update H = A * D in Z_q[X]/(X^d+1) for at most 4096 changed
+/// plaintext coefficients per unit. A coefficient delta at row r contributes
+/// delta * X^r * A to its column; wrapping X^d negates the coefficient.
+/// The public setup and profile are unchanged. Dense changes use upstream
+/// reconstruction. The candidate owns its hint; admitted views are immutable.
+/// The native profile uses the same exact negacyclic product modulo 2^54.
+fn incremental_hint(old: &Unit, bytes: &[u8], setup: &[u64]) -> Option<Vec<CrsBlock>> {
+    let p = profile();
+    let d = p.rlwe().d;
+    let q = modulus();
+    let columns = ROW_BYTES / 2;
+    let mut changes = Vec::new();
+    if bytes.len() != old.rows.len() {
+        return None;
+    }
+    for (i, (value, prior)) in bytes
+        .chunks_exact(2)
+        .zip(old.rows.chunks_exact(2))
+        .enumerate()
+    {
+        let value = u16::from_le_bytes(value.try_into().unwrap());
+        let row = i / columns;
+        let col = i % columns;
+        let prior = u16::from_le_bytes(prior.try_into().unwrap());
+        if value != prior {
+            if changes.len() == 4096 {
+                return None;
+            }
+            changes.push((row, col, i64::from(value) - i64::from(prior)));
+        }
+    }
+    let mut hint = old.hint.clone();
+    for (row, col, delta) in changes {
+        let out = &mut hint[col / d].rows[col % d];
+        for (j, a) in setup.iter().enumerate() {
+            let position = row + j;
+            let subtract = (delta < 0) != (position >= d);
+            let change =
+                ((u128::from(*a) * u128::from(delta.unsigned_abs())) % u128::from(q)) as u64;
+            let target = &mut out[position % d];
+            *target = if subtract {
+                if *target >= change {
+                    *target - change
+                } else {
+                    q - (change - *target)
+                }
+            } else {
+                let sum = *target + change;
+                if sum >= q {
+                    sum - q
+                } else {
+                    sum
+                }
+            };
+        }
+    }
+    Some(hint)
+}
+
 #[derive(Clone)]
 pub struct Generation {
     pub manifest: Manifest,
-    pub public: Vec<u8>,
+    pub public: Arc<Vec<u8>>,
     units: Vec<Arc<Unit>>,
-    packing: Arc<Vec<QueryPackPreprocessed<'static>>>,
-    top: Arc<TopKeyImages<'static>>,
+    packing: Arc<Vec<PackingBlock>>,
+    top: Option<Arc<TopKeyImages<'static>>>,
+    packing_digests: Vec<Hash>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -58,15 +159,212 @@ pub struct Preparation {
     pub unit_rows: usize,
     pub rebuilt_units: usize,
     pub reused_units: usize,
+    pub incremental_units: usize,
     pub database_hint_ms: f64,
     pub packing_ms: f64,
     pub total_ms: f64,
 }
 
 impl Generation {
+    pub fn prepare(
+        snapshot: &index::Snapshot,
+        generation: u64,
+        recovery_epoch: u64,
+        observed_ms: u64,
+        previous: Option<&Self>,
+        backend: MatvecBackend,
+    ) -> Result<(Self, Preparation), Error> {
+        let (mut worker, mut stats) = Self::prepare_worker(
+            snapshot,
+            generation,
+            recovery_epoch,
+            observed_ms,
+            previous,
+            backend,
+        )?;
+        let started = Instant::now();
+        let router = Self::prepare_router_with_previous(
+            worker.manifest.clone(),
+            &worker.hint_bytes()?,
+            previous,
+        )?;
+        worker.manifest = router.manifest;
+        worker.public = router.public;
+        worker.packing = router.packing;
+        worker.top = router.top;
+        worker.packing_digests = router.packing_digests;
+        stats.packing_ms = started.elapsed().as_secs_f64() * 1000.;
+        stats.total_ms += stats.packing_ms;
+        Ok((worker, stats))
+    }
+
+    /// Fixed-shape, little-endian hint artifact. Never includes wallet queries.
+    pub fn hint_bytes(&self) -> Result<Vec<u8>, Error> {
+        let mut hint = self.units.first().ok_or(Error::Unavailable)?.hint.clone();
+        let q = modulus();
+        if q > u64::MAX / 2 {
+            return Err(Error::Malformed);
+        }
+        hint.par_iter_mut()
+            .enumerate()
+            .try_for_each(|(i, block)| -> Result<(), Error> {
+                for unit in &self.units[1..] {
+                    for (out, input) in block.rows.iter_mut().zip(&unit.hint[i].rows) {
+                        for (a, b) in out.iter_mut().zip(input) {
+                            if *a >= q || *b >= q {
+                                return Err(Error::Malformed);
+                            }
+                            let sum = *a + *b;
+                            *a = if sum >= q { sum - q } else { sum };
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+        let mut out = vec![0; Self::hint_len()];
+        let block_bytes = profile().rlwe().d * profile().rlwe().d * 8;
+        out.par_chunks_mut(block_bytes)
+            .zip(hint.par_iter())
+            .for_each(|(out, block)| {
+                for (out, value) in out.chunks_exact_mut(8).zip(block.rows.iter().flatten()) {
+                    out.copy_from_slice(&value.to_le_bytes());
+                }
+            });
+        Ok(out)
+    }
+
+    pub fn hint_len() -> usize {
+        let p = profile();
+        p.ypir().db_cols.div_ceil(p.rlwe().d) * p.rlwe().d * p.rlwe().d * 8
+    }
+
+    /// Router material owns no database or GPU allocations.
+    pub fn prepare_router(manifest: Manifest, bytes: &[u8]) -> Result<Self, Error> {
+        Self::prepare_router_with_previous(manifest, bytes, None)
+    }
+    pub fn prepare_router_with_previous(
+        mut manifest: Manifest,
+        bytes: &[u8],
+        previous: Option<&Self>,
+    ) -> Result<Self, Error> {
+        manifest.validate()?;
+        let p = profile();
+        let d = p.rlwe().d;
+        if bytes.len() != Self::hint_len() {
+            return Err(Error::Malformed);
+        }
+        let mut blocks = Vec::new();
+        for block in bytes.chunks_exact(d * d * 8) {
+            let mut rows = Vec::new();
+            for row in block.chunks_exact(d * 8) {
+                let values: Vec<_> = row
+                    .chunks_exact(8)
+                    .map(|v| u64::from_le_bytes(v.try_into().unwrap()))
+                    .collect();
+                if values.iter().any(|v| *v >= modulus()) {
+                    return Err(Error::Malformed);
+                }
+                rows.push(values);
+            }
+            blocks.push(CrsBlock { rows });
+        }
+        let packing_digests: Vec<Hash> = bytes
+            .par_chunks(d * d * 8)
+            .map(|block| Sha256::digest(block).into())
+            .collect();
+        let previous = previous
+            .filter(|g| g.manifest.network == manifest.network && g.manifest.salt == manifest.salt);
+        #[cfg(feature = "native-reinspiring")]
+        {
+            let setup = native_packing_setup(&manifest.network, &manifest.salt);
+            let packing: Vec<PackingBlock> = blocks
+                .par_iter()
+                .enumerate()
+                .map(|(i, block)| {
+                    if let Some(old) = previous
+                        .filter(|g| g.packing_digests.get(i) == packing_digests.get(i))
+                        .and_then(|g| g.packing.get(i))
+                    {
+                        return Ok(old.clone());
+                    }
+                    reinspiring::native::NativePreprocessed::build_two_mask(&setup, &block.rows)
+                        .map(Arc::new)
+                        .map_err(|_| Error::Pir)
+                })
+                .collect::<Result<_, _>>()?;
+            let packing_matrix_bytes: usize = packing.iter().map(|b| b.coefficient_bytes()).sum();
+            tracing::info!(
+                hint_bytes = bytes.len(),
+                packing_matrix_bytes,
+                preparation_threads = rayon::current_num_threads(),
+                "Status native packing material geometry"
+            );
+            let public = enhance_pir::native::publish(&packing).map_err(|_| Error::Pir)?;
+            manifest.public_digest = Sha256::digest(&public).into();
+            Ok(Self {
+                manifest,
+                public: Arc::new(public),
+                units: Vec::new(),
+                packing: Arc::new(packing),
+                top: None,
+                packing_digests,
+            })
+        }
+        #[cfg(not(feature = "native-reinspiring"))]
+        {
+            let top = top_images();
+            let packing: Vec<_> = blocks
+                .par_iter()
+                .enumerate()
+                .map(|(i, block)| {
+                    if let Some(old) = previous
+                        .filter(|g| g.packing_digests.get(i) == packing_digests.get(i))
+                        .and_then(|g| g.packing.get(i))
+                    {
+                        // Upstream's precomputation owns immutable matrices. Copy the
+                        // exact values rather than rebuilding unchanged CRS blocks.
+                        return Ok(QueryPackPreprocessed {
+                            params: old.params,
+                            collapse_a_final_ntt: old.collapse_a_final_ntt.clone(),
+                            digits_ntt: old.digits_ntt.clone(),
+                        });
+                    }
+                    QueryPackPreprocessed::build_with_top(p.rlwe(), &block.to_ntt(p.rlwe()), &top)
+                        .map_err(|_| Error::Pir)
+                })
+                .collect::<Result<_, _>>()?;
+            // Measure public preprocessing transport cost before moving preparation
+            // across hosts. Includes fixed-shape matrix values, excluding framing.
+            let packing_matrix_bytes: usize = packing
+                .iter()
+                .map(|block| {
+                    (block.collapse_a_final_ntt.data.len()
+                        + block.digits_ntt.iter().map(|m| m.data.len()).sum::<usize>())
+                        * 8
+                })
+                .sum();
+            tracing::info!(
+                hint_bytes = bytes.len(),
+                packing_matrix_bytes,
+                preparation_threads = rayon::current_num_threads(),
+                "Status packing material geometry"
+            );
+            let public = published_c1_rows(&packing, p.rlwe().q);
+            manifest.public_digest = Sha256::digest(&public).into();
+            Ok(Self {
+                manifest,
+                public: Arc::new(public),
+                units: Vec::new(),
+                packing: Arc::new(packing),
+                top: Some(top),
+                packing_digests,
+            })
+        }
+    }
+
     /// Reuse unchanged polynomial units. Changed units are rebuilt; this baseline
     /// deliberately does not claim row-level incremental preprocessing.
-    pub fn prepare(
+    pub fn prepare_worker(
         snapshot: &index::Snapshot,
         generation: u64,
         recovery_epoch: u64,
@@ -77,17 +375,13 @@ impl Generation {
         let start = Instant::now();
         let p = profile();
         let d = p.rlwe().d;
-        let client = IPIRClient::from_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
-            .map_err(|_| Error::Pir)?;
-        let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(
-            &snapshot.network,
-            &snapshot.salt,
-        ));
+        let masks = query_masks(&snapshot.network, &snapshot.salt)?;
         let local = ProductionSimplePirParams::new(d as u64, ITEM_BITS, SimplePirProfile::P16Q48)
             .map_err(|_| Error::Pir)?;
         let mut units = Vec::new();
         let mut rebuilt = 0;
         let mut reused = 0;
+        let mut incremental_units = 0;
         for (i, bytes) in snapshot.rows.chunks_exact(d * ROW_BYTES).enumerate() {
             let digest: Hash = Sha256::digest(bytes).into();
             let old = previous
@@ -107,31 +401,31 @@ impl Generation {
             let db =
                 IPIRServer::try_from_profile_with_backend(&local, values, false, true, backend)
                     .map_err(|_| Error::Unavailable)?;
-            let hint = db
-                .perform_offline_precomputation_simplepir(p.rlwe(), &setup.polys()[i..i + 1])
-                .crs_blocks;
+            let base = previous
+                .filter(|prev| {
+                    prev.manifest.network == snapshot.network && prev.manifest.salt == snapshot.salt
+                })
+                .and_then(|prev| prev.units.get(i));
+            let hint =
+                if let Some(hint) = base.and_then(|old| incremental_hint(old, bytes, &masks[i])) {
+                    incremental_units += 1;
+                    hint
+                } else {
+                    unit_hint(&db, &masks[i..i + 1])?
+                };
             units.push(Arc::new(Unit {
                 bytes_digest: digest,
+                rows: bytes.to_vec(),
                 db,
                 hint,
             }));
             rebuilt += 1;
         }
-        let mut hint = units[0].hint.clone();
-        for unit in &units[1..] {
-            for (out, input) in hint.iter_mut().zip(&unit.hint) {
-                for (out, input) in out.rows.iter_mut().zip(&input.rows) {
-                    for (a, b) in out.iter_mut().zip(input) {
-                        *a = ((u128::from(*a) + u128::from(*b)) % u128::from(p.rlwe().q)) as u64;
-                    }
-                }
-            }
-        }
         let database_hint_ms = start.elapsed().as_secs_f64() * 1000.;
-        let packing_start = Instant::now();
-        let packing = build_pack_preprocessed_blocks(p.rlwe(), &hint).map_err(|_| Error::Pir)?;
-        let public = published_c1_rows(&packing, p.rlwe().q);
-        let top = TopKeyImages::build(p.rlwe());
+        let packing_ms = 0.;
+        let public = Vec::new();
+        let packing = Vec::new();
+        let top = None;
         let manifest = Manifest {
             protocol: PROTOCOL.into(),
             network: snapshot.network,
@@ -151,26 +445,29 @@ impl Generation {
             unit_rows: d,
             rebuilt_units: rebuilt,
             reused_units: reused,
+            incremental_units,
             database_hint_ms,
-            packing_ms: packing_start.elapsed().as_secs_f64() * 1000.,
+            packing_ms,
             total_ms: start.elapsed().as_secs_f64() * 1000.,
         };
         Ok((
             Self {
                 manifest,
-                public,
+                public: Arc::new(public),
                 units,
                 packing: Arc::new(packing),
-                top: Arc::new(top),
+                top,
+                packing_digests: Vec::new(),
             },
             stats,
         ))
     }
+    #[cfg(not(feature = "native-reinspiring"))]
     pub fn coefficients(&self, bytes: &[u8]) -> Result<Vec<u64>, Error> {
         let p = profile();
         let keys_len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
         if bytes.len() != HEADER_BYTES + keys_len + ROWS * 48 / 8
-            || &bytes[..4] != b"SPQ1"
+            || &bytes[..4] != QUERY_MAGIC
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
@@ -191,23 +488,68 @@ impl Generation {
     }
     pub fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, Error> {
         let p = profile();
-        if coefficients.len() != ROWS || coefficients.iter().any(|v| *v >= p.rlwe().q) {
+        if self.units.len() != ROWS / p.rlwe().d
+            || coefficients.len() != ROWS
+            || coefficients.iter().any(|v| *v >= modulus())
+        {
             return Err(Error::Malformed);
         }
         let mut out = vec![0u64; p.ypir().db_cols];
         for (unit, query) in self.units.iter().zip(coefficients.chunks_exact(p.rlwe().d)) {
-            let partial = unit
-                .db
-                .try_multiply_query(p.rlwe(), query)
-                .map_err(|_| Error::Unavailable)?;
+            #[cfg(feature = "native-reinspiring")]
+            let partial = unit.db.try_multiply_power_of_two(modulus(), query);
+            #[cfg(not(feature = "native-reinspiring"))]
+            let partial = unit.db.try_multiply_query(p.rlwe(), query);
+            let partial = partial.map_err(|_| Error::Unavailable)?;
             for (a, b) in out.iter_mut().zip(partial) {
-                *a = ((u128::from(*a) + u128::from(b)) % u128::from(p.rlwe().q)) as u64;
+                *a = ((u128::from(*a) + u128::from(b)) % u128::from(modulus())) as u64;
             }
         }
         Ok(out)
     }
+    #[cfg(feature = "native-reinspiring")]
+    fn native_request(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(reinspiring::native::NativeKeys, Vec<u64>), Error> {
+        if bytes.len() != HEADER_BYTES + enhance_pir::native::request_len(ROWS)
+            || &bytes[..4] != QUERY_MAGIC
+            || bytes[4..36] != self.manifest.id()
+        {
+            return Err(Error::Malformed);
+        }
+        enhance_pir::native::parse_with(
+            &native_packing_setup(&self.manifest.network, &self.manifest.salt),
+            &bytes[HEADER_BYTES..],
+            ROWS,
+        )
+        .map_err(|_| Error::Malformed)
+    }
+    #[cfg(feature = "native-reinspiring")]
+    pub fn coefficients(&self, bytes: &[u8]) -> Result<Vec<u64>, Error> {
+        self.native_request(bytes).map(|(_, query)| query)
+    }
+    #[cfg(feature = "native-reinspiring")]
+    pub fn pack(&self, body: &[u8], values: &[u64]) -> Result<Vec<u8>, Error> {
+        let (keys, _) = self.native_request(body)?;
+        if self.packing.is_empty() {
+            return Err(Error::Unavailable);
+        }
+        if values.len() != profile().ypir().db_cols {
+            return Err(Error::Malformed);
+        }
+        let mut response = body[..HEADER_BYTES].to_vec();
+        response.extend(
+            enhance_pir::native::pack(&self.packing, &keys, values).map_err(|_| Error::Pir)?,
+        );
+        Ok(response)
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
     pub fn pack(&self, body: &[u8], values: &[u64]) -> Result<Vec<u8>, Error> {
         self.coefficients(body)?;
+        if self.packing.is_empty() {
+            return Err(Error::Unavailable);
+        }
         let p = profile();
         if values.len() != p.ypir().db_cols || values.iter().any(|v| *v >= p.rlwe().q) {
             return Err(Error::Malformed);
@@ -218,8 +560,13 @@ impl Generation {
             &body[HEADER_BYTES..HEADER_BYTES + len],
         )
         .map_err(|_| Error::Malformed)?;
-        let ciphertexts = pack_intermediate_blocks(values, &keys, &self.top, &self.packing)
-            .map_err(|_| Error::Pir)?;
+        let ciphertexts = pack_intermediate_blocks(
+            values,
+            &keys,
+            self.top.as_deref().ok_or(Error::Unavailable)?,
+            &self.packing,
+        )
+        .map_err(|_| Error::Pir)?;
         let mut response = body[..HEADER_BYTES].to_vec();
         response.extend(ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
             &ciphertexts,
@@ -239,15 +586,8 @@ impl Generation {
             false,
             true,
         );
-        let client = IPIRClient::from_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
-            .map_err(|_| Error::Pir)?;
-        let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(
-            &snapshot.network,
-            &snapshot.salt,
-        ));
-        let expected = db
-            .perform_offline_precomputation_simplepir(p.rlwe(), setup.polys())
-            .crs_blocks;
+        let masks = query_masks(&snapshot.network, &snapshot.salt)?;
+        let expected = unit_hint(&db, &masks)?;
         for (block_i, block) in expected.iter().enumerate() {
             for (r, row) in block.rows.iter().enumerate() {
                 for (c, value) in row.iter().enumerate() {
@@ -255,7 +595,7 @@ impl Generation {
                         .units
                         .iter()
                         .fold(0u128, |a, u| a + u128::from(u.hint[block_i].rows[r][c]))
-                        % u128::from(p.rlwe().q);
+                        % u128::from(modulus());
                     if sum != u128::from(*value) {
                         return Err(Error::Pir);
                     }
@@ -266,6 +606,37 @@ impl Generation {
     }
 }
 
+/// Public first-dimension query masks of the selected profile, one per d rows.
+fn query_masks(network: &Hash, salt: &Hash) -> Result<Vec<Vec<u64>>, Error> {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        Ok(native_query_masks(network, salt))
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        let client = IPIRClient::from_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .map_err(|_| Error::Pir)?;
+        Ok(client
+            .generate_public_query_setup_simplepir_from_seed(setup_seed(network, salt))
+            .polys()
+            .to_vec())
+    }
+}
+
+/// Hint contribution H = A * D for the rows covered by `masks`.
+fn unit_hint(db: &IPIRServer<u16>, masks: &[Vec<u64>]) -> Result<Vec<CrsBlock>, Error> {
+    #[cfg(feature = "native-reinspiring")]
+    {
+        crate::runtime::native_runtime::hint(db, masks).map_err(|_| Error::Pir)
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        Ok(db
+            .perform_offline_precomputation_simplepir(profile().rlwe(), masks)
+            .crs_blocks)
+    }
+}
+
 struct Views {
     active: Arc<Generation>,
     retained: Vec<Arc<Generation>>,
@@ -273,15 +644,24 @@ struct Views {
 #[derive(Clone)]
 pub struct Controller {
     views: Arc<RwLock<Views>>,
+    revoked: Arc<AtomicBool>,
 }
 impl Controller {
     pub fn new(g: Generation) -> Self {
         Self {
+            revoked: Arc::new(AtomicBool::new(false)),
             views: Arc::new(RwLock::new(Views {
                 active: Arc::new(g),
                 retained: Vec::new(),
             })),
         }
+    }
+    pub fn can_prepare(&self) -> bool {
+        let views = self.views.read().unwrap();
+        views.retained.iter().all(|g| Arc::strong_count(g) == 1)
+    }
+    pub fn revoke(&self) {
+        self.revoked.store(true, Ordering::SeqCst);
     }
     pub fn current(&self) -> Arc<Generation> {
         self.views.read().unwrap().active.clone()
@@ -295,12 +675,13 @@ impl Controller {
             .ok_or(StatusCode::CONFLICT)
     }
     fn for_body(&self, body: &[u8]) -> Result<Arc<Generation>, StatusCode> {
-        if body.len() < HEADER_BYTES || &body[..4] != b"SPQ1" {
+        if body.len() < HEADER_BYTES || &body[..4] != QUERY_MAGIC {
             return Err(StatusCode::BAD_REQUEST);
         }
         self.resolve(body[4..36].try_into().unwrap())
     }
     pub fn activate(&self, g: Generation) -> Result<(), Error> {
+        g.manifest.fresh(now_ms())?;
         let mut views = self.views.write().unwrap();
         if g.manifest.generation <= views.active.manifest.generation
             || g.manifest.recovery_epoch < views.active.manifest.recovery_epoch
@@ -308,24 +689,25 @@ impl Controller {
         {
             return Err(Error::Malformed);
         }
-        // Only two distinct material generations may be retained by the Status controller.
-        views
-            .retained
-            .retain(|old| old.manifest.fresh(now_ms()).is_ok());
-        if views
-            .retained
-            .iter()
-            .any(|old| old.manifest.generation != views.active.manifest.generation)
-        {
-            return Err(Error::Unavailable);
-        }
-        let old = views.active.clone();
-        views.retained.push(old);
+        // Keep only the immediately preceding material generation. In-flight
+        // requests pin their own Arc; older sessions receive 409 and must
+        // reinitialize. This bounds material retention without serializing
+        // publications behind the entire freshness window.
+        let old_active = views.active.clone();
+        // Preserve pins across metadata-only refreshes as well as material
+        // changes. `can_prepare` applies backpressure until older pins drain;
+        // losing their bookkeeping here would allow unbounded hidden material.
+        views.retained.retain(|old| Arc::strong_count(old) > 1);
+        // Retain one revoked view as a tombstone so clients receive 410 on
+        // epoch changes. `check` rejects it before its material is used.
+        views.retained.push(old_active);
         views.active = Arc::new(g);
         Ok(())
     }
     fn check(&self, g: &Generation) -> Result<(), StatusCode> {
-        if self.current().manifest.recovery_epoch != g.manifest.recovery_epoch {
+        if self.revoked.load(Ordering::SeqCst)
+            || self.current().manifest.recovery_epoch != g.manifest.recovery_epoch
+        {
             return Err(StatusCode::GONE);
         }
         g.manifest
@@ -345,7 +727,9 @@ impl Controller {
         views
             .retained
             .retain(|old| old.manifest.fresh(now_ms()).is_ok());
-        if views.retained.len() >= 8 {
+        // A one-second observation cadence needs enough retained identities to
+        // cover the full freshness window while admitted requests finish.
+        if views.retained.len() >= (MAX_AGE_MS / 1000 + 2) as usize {
             return Err(Error::Unavailable);
         }
         let mut next = (*views.active).clone();
@@ -387,27 +771,32 @@ impl Controller {
     }
 }
 
+/// Reuse TCP connections across lookups, including SSH forwarding channels.
+/// Authority/freshness checks remain mandatory for every request on reused connections.
+fn serving_http_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .timeout(admission::REQUEST_BUDGET)
+        .connect_timeout(Duration::from_secs(1))
+        .pool_max_idle_per_host(4)
+        .pool_idle_timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
 #[derive(Clone)]
 struct HttpState {
     controller: Controller,
     origin: String,
     http: reqwest::Client,
-    permits: Arc<Semaphore>,
+    permits: Arc<admission::Admission>,
 }
 impl HttpState {
     fn new(controller: Controller, origin: String) -> Self {
         Self {
             controller,
             origin,
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                // Keep Status listener shutdown observable: no surviving idle connection
-                // may mask a stopped role in the end-to-end failure scenario.
-                .pool_max_idle_per_host(0)
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap(),
-            permits: Arc::new(Semaphore::new(4)),
+            http: serving_http_client().expect("Status HTTP client"),
+            permits: Arc::new(admission::Admission::production()),
         }
     }
 }
@@ -426,7 +815,7 @@ async fn session(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let g = s.controller.resolve(id)?;
     s.controller.check(&g)?;
-    Ok(g.public.clone())
+    Ok(g.public.as_ref().clone())
 }
 async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
     if !response.status().is_success() {
@@ -448,12 +837,18 @@ async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8
     Ok(out)
 }
 async fn forward(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    let _permit = s
-        .permits
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+    match tokio::time::timeout(admission::REQUEST_BUDGET, forward_admitted(s, body)).await {
+        Ok(result) => result,
+        Err(_) => {
+            telemetry::admission_rejected("coordinator", "request_deadline");
+            Err(StatusCode::GATEWAY_TIMEOUT)
+        }
+    }
+}
+async fn forward_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     let g = s.controller.for_body(&body)?;
+    s.controller.check(&g)?;
+    let _permit = s.permits.acquire("coordinator").await?;
     s.controller.check(&g)?;
     let response = s
         .http
@@ -467,12 +862,18 @@ async fn forward(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, Sta
     Ok(bytes)
 }
 async fn evaluate(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    let permit = s
-        .permits
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+    match tokio::time::timeout(admission::REQUEST_BUDGET, evaluate_admitted(s, body)).await {
+        Ok(result) => result,
+        Err(_) => {
+            telemetry::admission_rejected("worker", "request_deadline");
+            Err(StatusCode::GATEWAY_TIMEOUT)
+        }
+    }
+}
+async fn evaluate_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     let g = s.controller.for_body(&body)?;
+    s.controller.check(&g)?;
+    let permit = s.permits.acquire("worker").await?;
     s.controller.check(&g)?;
     if body.len() != HEADER_BYTES + ROWS * 8 {
         return Err(StatusCode::BAD_REQUEST);
@@ -498,12 +899,18 @@ async fn evaluate(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, St
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 async fn query(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    let permit = s
-        .permits
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+    match tokio::time::timeout(admission::REQUEST_BUDGET, query_admitted(s, body)).await {
+        Ok(result) => result,
+        Err(_) => {
+            telemetry::admission_rejected("router", "request_deadline");
+            Err(StatusCode::GATEWAY_TIMEOUT)
+        }
+    }
+}
+async fn query_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     let g = s.controller.for_body(&body)?;
+    s.controller.check(&g)?;
+    let permit = s.permits.acquire("router").await?;
     s.controller.check(&g)?;
     let coefficients = g.coefficients(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
     let mut request = body[..HEADER_BYTES].to_vec();
@@ -538,4 +945,205 @@ async fn query(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, Statu
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+#[cfg(test)]
+mod controller_tests {
+    use super::*;
+
+    fn generation() -> Generation {
+        Generation {
+            manifest: Manifest {
+                protocol: PROTOCOL.into(),
+                network: [1; 32],
+                salt: [2; 32],
+                generation: 1,
+                recovery_epoch: 0,
+                coverage_start: 1,
+                anchor_height: 1,
+                anchor_hash: [3; 32],
+                observed_ms: now_ms(),
+                entries: 0,
+                rows_digest: [4; 32],
+                public_digest: [5; 32],
+            },
+            public: Arc::new(Vec::new()),
+            units: Vec::new(),
+            packing: Arc::new(Vec::new()),
+            top: None,
+            packing_digests: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn serving_client_clones_reuse_forwarding_connection() {
+        async fn peer(
+            axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+        ) -> String {
+            peer.to_string()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route("/", get(peer));
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let client = serving_http_client().unwrap();
+        let first = client
+            .get(&origin)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        let second = client
+            .clone()
+            .get(&origin)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(
+            first, second,
+            "requests must reuse the same TCP/SSH channel"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn authority_is_rechecked_after_admission_wait() {
+        let controller = Controller::new(generation());
+        let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(state.permits.acquire("router").await.unwrap());
+        }
+        let mut body = vec![0; HEADER_BYTES];
+        body[..4].copy_from_slice(QUERY_MAGIC);
+        body[4..36].copy_from_slice(&controller.current().manifest.id());
+        let request = query(State(state), Bytes::from(body));
+        tokio::pin!(request);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut request)
+                .await
+                .is_err()
+        );
+        controller.revoked.store(true, Ordering::Release);
+        drop(held);
+        assert_eq!(request.await, Err(StatusCode::GONE));
+    }
+
+    #[tokio::test]
+    async fn source_freshness_is_rechecked_after_admission_wait() {
+        let mut g = generation();
+        g.manifest.observed_ms = now_ms() - MAX_AGE_MS + 100;
+        let controller = Controller::new(g);
+        let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(state.permits.acquire("router").await.unwrap());
+        }
+        let mut body = vec![0; HEADER_BYTES];
+        body[..4].copy_from_slice(QUERY_MAGIC);
+        body[4..36].copy_from_slice(&controller.current().manifest.id());
+        let request = query(State(state), Bytes::from(body));
+        tokio::pin!(request);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(120), &mut request)
+                .await
+                .is_err()
+        );
+        drop(held);
+        assert_eq!(request.await, Err(StatusCode::SERVICE_UNAVAILABLE));
+    }
+
+    #[test]
+    fn rapid_activation_bounds_retention_and_recovery_fences_old_sessions() {
+        let base = generation();
+        let controller = Controller::new(base.clone());
+        let first = base.manifest.id();
+        let mut second = base.clone();
+        second.manifest.generation = 2;
+        let second_id = second.manifest.id();
+        controller.activate(second).unwrap();
+        assert!(controller.resolve(first).is_ok());
+        let mut third = base.clone();
+        third.manifest.generation = 3;
+        let third_id = third.manifest.id();
+        controller.activate(third).unwrap();
+        assert_eq!(controller.resolve(first).err(), Some(StatusCode::CONFLICT));
+        assert!(controller.resolve(second_id).is_ok());
+        let mut recovered = base;
+        recovered.manifest.generation = 4;
+        recovered.manifest.recovery_epoch = 1;
+        controller.activate(recovered).unwrap();
+        let revoked = controller.resolve(third_id).unwrap();
+        assert_eq!(controller.check(&revoked), Err(StatusCode::GONE));
+    }
+
+    #[test]
+    fn stale_candidate_cannot_be_activated() {
+        let base = generation();
+        let controller = Controller::new(base.clone());
+        let mut stale = base;
+        stale.manifest.generation = 2;
+        stale.manifest.observed_ms = now_ms() - MAX_AGE_MS - 1;
+        assert_eq!(controller.activate(stale), Err(Error::Stale));
+        assert_eq!(controller.current().manifest.generation, 1);
+    }
+}
+
+#[cfg(test)]
+mod incremental_tests {
+    use super::*;
+    #[test]
+    fn sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries() {
+        let mut snapshot = fixture::snapshot(32, false).unwrap();
+        let (base, _) =
+            Generation::prepare_worker(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu)
+                .unwrap();
+        let locations = [
+            0,
+            ROW_BYTES - 2,
+            (profile().rlwe().d - 1) * ROW_BYTES,
+            ROWS * ROW_BYTES - 2,
+        ];
+        let original: Vec<_> = locations
+            .iter()
+            .map(|i| [snapshot.rows[*i], snapshot.rows[*i + 1]])
+            .collect();
+        for i in locations {
+            snapshot.rows[i..i + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+        }
+        snapshot.digest = Sha256::digest(&snapshot.rows).into();
+        let (changed, stats) =
+            Generation::prepare_worker(&snapshot, 2, 1, now_ms(), Some(&base), MatvecBackend::Cpu)
+                .unwrap();
+        assert_eq!(stats.incremental_units, 2);
+        changed.verify_full_hint(&snapshot).unwrap();
+        for (i, bytes) in locations.into_iter().zip(original) {
+            snapshot.rows[i..i + 2].copy_from_slice(&bytes);
+        }
+        snapshot.digest = Sha256::digest(&snapshot.rows).into();
+        let (restored, stats) = Generation::prepare_worker(
+            &snapshot,
+            3,
+            1,
+            now_ms(),
+            Some(&changed),
+            MatvecBackend::Cpu,
+        )
+        .unwrap();
+        assert_eq!(stats.incremental_units, 2);
+        restored.verify_full_hint(&snapshot).unwrap();
+        assert_eq!(base.hint_bytes().unwrap(), restored.hint_bytes().unwrap());
+    }
 }

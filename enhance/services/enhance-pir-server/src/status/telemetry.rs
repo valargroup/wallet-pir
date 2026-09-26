@@ -36,6 +36,7 @@ pub struct Operation {
 
 #[derive(Clone, Default, Serialize)]
 pub struct Telemetry {
+    pub admission: BTreeMap<String, AdmissionMetrics>,
     pub operations: BTreeMap<String, Operation>,
     pub index_ms: Option<f64>,
     pub database_hint_ms: Option<f64>,
@@ -53,6 +54,52 @@ pub struct Telemetry {
     pub entries: Option<usize>,
     pub max_bucket_occupancy: Option<usize>,
     pub resources: Resources,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct AdmissionMetrics {
+    pub active: u64,
+    pub waiting: u64,
+    pub rejections: BTreeMap<String, u64>,
+    pub wait_buckets: [u64; 12],
+    pub execution_buckets: [u64; 12],
+}
+pub(super) fn admission_rejected(role: &'static str, reason: &'static str) {
+    let mut t = shared().lock().unwrap();
+    *t.admission
+        .entry(role.into())
+        .or_default()
+        .rejections
+        .entry(reason.into())
+        .or_default() += 1;
+}
+pub(super) fn admission_gauge(role: &'static str, waiting: bool, increment: bool) {
+    let mut t = shared().lock().unwrap();
+    let m = t.admission.entry(role.into()).or_default();
+    let value = if waiting {
+        &mut m.waiting
+    } else {
+        &mut m.active
+    };
+    if increment {
+        *value += 1;
+    } else {
+        *value -= 1;
+    }
+}
+pub(super) fn admission_timing(role: &'static str, waiting: bool, elapsed: std::time::Duration) {
+    let mut t = shared().lock().unwrap();
+    let m = t.admission.entry(role.into()).or_default();
+    let buckets = if waiting {
+        &mut m.wait_buckets
+    } else {
+        &mut m.execution_buckets
+    };
+    let index = LIMITS
+        .iter()
+        .position(|limit| elapsed.as_secs_f64() <= *limit)
+        .unwrap_or(LIMITS.len());
+    buckets[index] += 1;
 }
 
 static TELEMETRY: OnceLock<Mutex<Telemetry>> = OnceLock::new();
@@ -227,6 +274,27 @@ async fn health() -> impl IntoResponse {
 async fn prometheus() -> impl IntoResponse {
     let data = shared().lock().unwrap().clone();
     let mut body = String::from("# TYPE status_pir_requests_total counter\n# TYPE status_pir_request_duration_seconds_bucket counter\n");
+    for (role, metrics) in &data.admission {
+        body.push_str(&format!("status_pir_admission_active{{role=\"{role}\"}} {}\nstatus_pir_admission_waiting{{role=\"{role}\"}} {}\n", metrics.active, metrics.waiting));
+        for (reason, count) in &metrics.rejections {
+            body.push_str(&format!("status_pir_admission_rejections_total{{role=\"{role}\",reason=\"{reason}\"}} {count}\n"));
+        }
+        for (phase, buckets) in [
+            ("wait", &metrics.wait_buckets),
+            ("permit_hold", &metrics.execution_buckets),
+        ] {
+            let mut cumulative = 0;
+            for (i, count) in buckets.iter().enumerate() {
+                cumulative += count;
+                let limit = if i == LIMITS.len() {
+                    "+Inf".into()
+                } else {
+                    LIMITS[i].to_string()
+                };
+                body.push_str(&format!("status_pir_admission_duration_seconds_bucket{{role=\"{role}\",phase=\"{phase}\",le=\"{limit}\"}} {cumulative}\n"));
+            }
+        }
+    }
     for operation in [
         "init",
         "public_material",

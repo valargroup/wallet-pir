@@ -17,6 +17,8 @@ pub struct Config {
     pub scrape_url: String,
     pub query_scrape_urls: Vec<String>,
     pub status_apm_url: Option<String>,
+    pub status_router_url: Option<String>,
+    pub status_worker_url: Option<String>,
     pub status_host: String,
     pub metrics_path: String,
     pub health_path: String,
@@ -117,7 +119,17 @@ impl Config {
             }
         }
         let status_apm_url = get("PIR_APM_STATUS_URL");
-        if let Some(url) = &status_apm_url {
+        let status_router_url = get("PIR_APM_STATUS_ROUTER_URL");
+        let status_worker_url = get("PIR_APM_STATUS_WORKER_URL");
+        if status_router_url.is_some() != status_worker_url.is_some()
+            || (status_router_url.is_some() && status_apm_url.is_none())
+        {
+            anyhow::bail!("Status role monitoring requires all three URLs");
+        }
+        for url in [&status_apm_url, &status_router_url, &status_worker_url]
+            .into_iter()
+            .flatten()
+        {
             let parsed = reqwest::Url::parse(url).context("invalid Status APM URL")?;
             if parsed.scheme() != "http"
                 || parsed.host_str() != Some("127.0.0.1")
@@ -137,6 +149,8 @@ impl Config {
             scrape_url,
             query_scrape_urls,
             status_apm_url,
+            status_router_url,
+            status_worker_url,
             status_host: get_or("PIR_APM_STATUS_HOST", "status-pir-p4000-ams1"),
             metrics_path: path_value(&get_or("PIR_APM_METRICS_PATH", "/metrics"))?,
             health_path: path_value(&get_or("PIR_APM_HEALTH_PATH", "/v1/health"))?,

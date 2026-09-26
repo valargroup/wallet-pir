@@ -18,6 +18,12 @@
   routing-, session-, request- and anchor-bound responses. Wallets remain responsible for accepting the
   chain anchor and authenticating reconstructed notes.
 
+- Move to ipir-sp rc.6. The experimental `native-reinspiring` build uses
+  two-mask output with 29-bit rounded public masks
+  (`ironwood-enhance-pir-v9-native-two-mask-m29`, control version 4). This
+  halves the native packing-key upload. The same feature adds a native Status
+  profile, `status-pir-v3-native-two-mask-m29`. Default q48 protocols are unchanged.
+
 This entry describes the source prepared for the first release. Production
 promotion requires separate hardware and operational qualification; the
 repository's dated evidence does not qualify this source tree automatically.

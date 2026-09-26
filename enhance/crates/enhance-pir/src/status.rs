@@ -1,19 +1,38 @@
 //! Status-PIR wire contract and private client. No transaction payload API.
+//!
+//! The default build uses the q48 SimplePIR/InspiRING profile. The
+//! `native-reinspiring` feature selects a separate native two-mask protocol
+//! with its own identifiers, setup domains and query magic.
+#[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::{IPIRClient, IPIRSeed, PublicQuerySetup, SimplePirProfile};
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 
 pub const ROWS: usize = 8192;
 pub const SLOTS: usize = 256;
-pub const SLOT_BYTES: usize = 80;
-pub const ROW_BYTES: usize = 24576;
+pub const SLOT_BYTES: usize = 40;
+pub const ROW_BYTES: usize = 12288;
 pub const ITEM_BITS: u64 = (ROW_BYTES * 8) as u64;
 pub const MAX_ENTRIES: usize = ROWS * SLOTS * 3 / 4;
-pub const PROTOCOL: &str = "status-pir-v1-synthetic-q48";
+#[cfg(not(feature = "native-reinspiring"))]
+pub const PROTOCOL: &str = "status-pir-v2-q48";
+#[cfg(feature = "native-reinspiring")]
+pub const PROTOCOL: &str = "status-pir-v3-native-two-mask-m29";
+#[cfg(not(feature = "native-reinspiring"))]
+pub const QUERY_MAGIC: &[u8; 4] = b"SPQ2";
+#[cfg(feature = "native-reinspiring")]
+pub const QUERY_MAGIC: &[u8; 4] = b"SPN1";
+/// Plaintext u16 coefficients per row.
+pub const COLS: usize = ROW_BYTES / 2;
 pub const HEADER_BYTES: usize = 52;
-pub const MAX_AGE_MS: u64 = 5000;
+pub const MAX_AGE_MS: u64 = 20_000;
 pub type Hash = [u8; 32];
+
+fn query_timed_out(elapsed: Duration) -> bool {
+    elapsed > Duration::from_millis(MAX_AGE_MS)
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -46,14 +65,13 @@ pub struct Record {
     pub txid: Hash,
     pub tag: u8,
     pub height: u32,
-    pub block: Hash,
 }
 
 impl Record {
     pub fn validate(&self) -> Result<(), Error> {
         match self.tag {
-            1 if self.height == 0 && self.block == [0; 32] => Ok(()),
-            2 | 3 if self.height > 0 && self.block != [0; 32] => Ok(()),
+            1 if self.height == 0 => Ok(()),
+            2 | 3 if self.height > 0 => Ok(()),
             _ => Err(Error::Malformed),
         }
     }
@@ -63,7 +81,6 @@ impl Record {
         out[..32].copy_from_slice(&self.txid);
         out[32] = self.tag;
         out[36..40].copy_from_slice(&self.height.to_le_bytes());
-        out[40..72].copy_from_slice(&self.block);
         Ok(out)
     }
     pub fn decode(bytes: &[u8]) -> Result<Option<Self>, Error> {
@@ -73,14 +90,13 @@ impl Record {
         if bytes.iter().all(|b| *b == 0) {
             return Ok(None);
         }
-        if bytes[33..36].iter().chain(&bytes[72..]).any(|b| *b != 0) {
+        if bytes[33..36].iter().any(|b| *b != 0) {
             return Err(Error::Malformed);
         }
         let r = Self {
             txid: bytes[..32].try_into().unwrap(),
             tag: bytes[32],
             height: u32::from_le_bytes(bytes[36..40].try_into().unwrap()),
-            block: bytes[40..72].try_into().unwrap(),
         };
         r.validate()?;
         Ok(Some(r))
@@ -97,7 +113,7 @@ impl Record {
 
 pub fn bucket(network: &Hash, salt: &Hash, txid: &Hash) -> usize {
     let mut h = Sha256::new();
-    h.update(b"status-pir/v1/bucket\0");
+    h.update(b"status-pir/v2/bucket\0");
     h.update(network);
     h.update(salt);
     h.update(txid);
@@ -107,10 +123,44 @@ pub fn bucket(network: &Hash, salt: &Hash, txid: &Hash) -> usize {
 
 pub fn setup_seed(network: &Hash, salt: &Hash) -> Hash {
     let mut h = Sha256::new();
-    h.update(b"status-pir/v1/setup\0");
+    h.update(b"status-pir/v2/setup\0");
     h.update(network);
     h.update(salt);
     h.finalize().into()
+}
+
+/// First-dimension query-mask domain for the native profile. Distinct from the
+/// q48 setup and from every Enhance setup.
+#[cfg(feature = "native-reinspiring")]
+pub fn native_setup_seed(network: &Hash, salt: &Hash) -> Hash {
+    let mut h = Sha256::new();
+    h.update(b"status-pir/v3/native-setup\0");
+    h.update(network);
+    h.update(salt);
+    h.finalize().into()
+}
+
+/// Packing key-switching setup domain for the native profile.
+#[cfg(feature = "native-reinspiring")]
+pub fn native_packing_seed(network: &Hash, salt: &Hash) -> Hash {
+    let mut h = Sha256::new();
+    h.update(b"status-pir/v3/native-packing\0");
+    h.update(network);
+    h.update(salt);
+    h.finalize().into()
+}
+
+#[cfg(feature = "native-reinspiring")]
+pub fn native_query_masks(network: &Hash, salt: &Hash) -> Vec<Vec<u64>> {
+    crate::native::public_query_masks(native_setup_seed(network, salt), ROWS, COLS)
+}
+
+#[cfg(feature = "native-reinspiring")]
+pub fn native_packing_setup(network: &Hash, salt: &Hash) -> reinspiring::native::NativeSetup {
+    reinspiring::native::NativeSetup::new(
+        crate::native::params(),
+        native_packing_seed(network, salt),
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -134,7 +184,7 @@ impl Manifest {
     /// Canonical fixed-width identity commits to coverage and observation time too.
     pub fn id(&self) -> Hash {
         let mut h = Sha256::new();
-        h.update(b"status-pir/v1/manifest\0");
+        h.update(b"status-pir/v2/manifest\0");
         h.update((self.protocol.len() as u64).to_le_bytes());
         h.update(self.protocol.as_bytes());
         h.update(self.network);
@@ -228,18 +278,279 @@ pub fn decode_row(
 
 pub struct Query {
     pub body: Vec<u8>,
+    #[cfg(not(feature = "native-reinspiring"))]
     seed: IPIRSeed,
+    #[cfg(feature = "native-reinspiring")]
+    secret: reinspiring::native::NativeSecret,
     txid: Hash,
     earliest: Option<u32>,
+    issued_at: Instant,
 }
 
 pub struct Client {
     pub manifest: Manifest,
+    #[cfg(not(feature = "native-reinspiring"))]
     client: IPIRClient,
+    #[cfg(not(feature = "native-reinspiring"))]
     setup: PublicQuerySetup,
+    #[cfg(not(feature = "native-reinspiring"))]
     public: Vec<Vec<u64>>,
+    #[cfg(feature = "native-reinspiring")]
+    packing: reinspiring::native::NativeSetup,
+    #[cfg(feature = "native-reinspiring")]
+    masks: Vec<Vec<u64>>,
+    #[cfg(feature = "native-reinspiring")]
+    public: Vec<u8>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum HttpError {
+    #[error(transparent)]
+    Transport(#[from] reqwest::Error),
+    #[error("Status endpoint returned HTTP {0}")]
+    Status(u16),
+    #[error(transparent)]
+    Protocol(#[from] Error),
+}
+
+/// A wallet-owned session. The anchor callback must consult independently
+/// accepted chain state on every initialization, including a conflict retry.
+pub struct HttpClient {
+    origin: String,
+    http: reqwest::Client,
+    session: Option<Client>,
+}
+
+impl HttpClient {
+    pub fn new(origin: impl Into<String>, http: reqwest::Client) -> Self {
+        Self {
+            origin: origin.into().trim_end_matches('/').to_owned(),
+            http,
+            session: None,
+        }
+    }
+
+    pub fn clear_session(&mut self) {
+        self.session = None;
+    }
+
+    async fn initialize<F>(&mut self, accepted_anchor: &mut F) -> Result<(), HttpError>
+    where
+        F: FnMut(&Manifest) -> Result<AcceptedAnchor, Error>,
+    {
+        let response = self
+            .http
+            .get(format!("{}/v1/status/init", self.origin))
+            .send()
+            .await?;
+        let response = successful(response)?;
+        let manifest: Manifest = response.json().await?;
+        manifest.fresh(current_ms())?;
+        let accepted = accepted_anchor(&manifest)?;
+        let response = self
+            .http
+            .get(format!(
+                "{}/v1/status/session/{}",
+                self.origin,
+                hex::encode(manifest.id())
+            ))
+            .send()
+            .await?;
+        let response = successful(response)?;
+        let public_len = expected_public_len()?;
+        let public = read_bounded(response, public_len).await?;
+        self.session = Some(Client::new(manifest, &public, &accepted)?);
+        Ok(())
+    }
+
+    /// One bounded retry for an evicted or revoked session. A retry always
+    /// reinitializes and encrypts a new query; it never replays the old body.
+    pub async fn lookup<F>(
+        &mut self,
+        txid: Hash,
+        earliest: Option<u32>,
+        mut accepted_anchor: F,
+    ) -> Result<Observation, HttpError>
+    where
+        F: FnMut(&Manifest) -> Result<AcceptedAnchor, Error>,
+    {
+        for attempt in 0..2 {
+            if let Some(session) = &self.session {
+                let accepted = accepted_anchor(&session.manifest)?;
+                if !anchor_matches(&session.manifest, &accepted) {
+                    self.session = None;
+                }
+            }
+            if self
+                .session
+                .as_ref()
+                .is_some_and(|s| s.manifest.fresh(current_ms()).is_err())
+            {
+                self.session = None;
+            }
+            let result = async {
+                if self.session.is_none() {
+                    self.initialize(&mut accepted_anchor).await?;
+                }
+                let session = self.session.as_ref().expect("initialized session");
+                let query = session.prepare(&txid, earliest, current_ms())?;
+                let response = self
+                    .http
+                    .post(format!("{}/v1/status/query", self.origin))
+                    .body(query.body.clone())
+                    .send()
+                    .await?;
+                let response = successful(response)?;
+                let bytes = read_bounded(response, expected_response_len()?).await?;
+                let result = session.decode(query, &bytes, current_ms())?;
+                let accepted = accepted_anchor(&session.manifest)?;
+                if !anchor_matches(&session.manifest, &accepted) {
+                    return Err(HttpError::Protocol(Error::Malformed));
+                }
+                Ok::<_, HttpError>(result)
+            }
+            .await;
+            if matches!(result, Err(HttpError::Status(409 | 410))) && attempt == 0 {
+                self.session = None;
+                continue;
+            }
+            return result;
+        }
+        unreachable!("bounded retry returns on second attempt")
+    }
+}
+
+fn successful(response: reqwest::Response) -> Result<reqwest::Response, HttpError> {
+    if response.status().is_success() {
+        Ok(response)
+    } else {
+        Err(HttpError::Status(response.status().as_u16()))
+    }
+}
+
+fn anchor_matches(manifest: &Manifest, accepted: &AcceptedAnchor) -> bool {
+    manifest.network == accepted.network
+        && manifest.anchor_height == accepted.height
+        && manifest.anchor_hash == accepted.hash
+}
+
+#[cfg(feature = "native-reinspiring")]
+fn expected_public_len() -> Result<usize, Error> {
+    Ok(crate::native::public_len(COLS))
+}
+
+#[cfg(feature = "native-reinspiring")]
+fn expected_response_len() -> Result<usize, Error> {
+    Ok(HEADER_BYTES + crate::native::response_len(COLS))
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
+fn expected_public_len() -> Result<usize, Error> {
+    let (rlwe, params) =
+        ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .map_err(|_| Error::Pir)?;
+    Ok(params.db_cols / rlwe.d * ipir_sp::modulus_switch::published_c1_len(rlwe.d, rlwe.q))
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
+fn expected_response_len() -> Result<usize, Error> {
+    let (rlwe, params) =
+        ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
+            .map_err(|_| Error::Pir)?;
+    Ok(HEADER_BYTES
+        + params.db_cols / rlwe.d
+            * ipir_sp::modulus_switch::response_body_len(rlwe.d, params.q_prime_1))
+}
+
+async fn read_bounded(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, HttpError> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > max.saturating_sub(bytes.len()) {
+            return Err(HttpError::Protocol(Error::Malformed));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.len() != max {
+        return Err(HttpError::Protocol(Error::Malformed));
+    }
+    Ok(bytes)
+}
+
+fn current_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+#[cfg(feature = "native-reinspiring")]
+impl Client {
+    pub fn new(
+        manifest: Manifest,
+        public: &[u8],
+        accepted: &AcceptedAnchor,
+    ) -> Result<Self, Error> {
+        manifest.validate()?;
+        if manifest.network != accepted.network
+            || manifest.anchor_height != accepted.height
+            || manifest.anchor_hash != accepted.hash
+        {
+            return Err(Error::Malformed);
+        }
+        if public.len() != expected_public_len()?
+            || Hash::from(Sha256::digest(public)) != manifest.public_digest
+        {
+            return Err(Error::Malformed);
+        }
+        Ok(Self {
+            packing: native_packing_setup(&manifest.network, &manifest.salt),
+            masks: native_query_masks(&manifest.network, &manifest.salt),
+            public: public.to_vec(),
+            manifest,
+        })
+    }
+    pub fn prepare(&self, txid: &[u8], earliest: Option<u32>, now_ms: u64) -> Result<Query, Error> {
+        let txid: Hash = txid.try_into().map_err(|_| Error::Malformed)?;
+        self.manifest.fresh(now_ms)?;
+        let issued_at = Instant::now();
+        let row = bucket(&self.manifest.network, &self.manifest.salt, &txid);
+        let (secret, payload) = crate::native::prepare_with(&self.packing, &self.masks, ROWS, row)
+            .map_err(|_| Error::Pir)?;
+        let mut body = QUERY_MAGIC.to_vec();
+        body.extend(self.manifest.id());
+        body.extend(OsRng.gen::<[u8; 16]>());
+        body.extend(payload);
+        Ok(Query {
+            body,
+            secret,
+            txid,
+            earliest,
+            issued_at,
+        })
+    }
+    pub fn decode(&self, query: Query, response: &[u8], now_ms: u64) -> Result<Observation, Error> {
+        // Wall-clock rollback cannot extend a query's freshness lifetime.
+        if query_timed_out(query.issued_at.elapsed()) {
+            return Err(Error::Stale);
+        }
+        self.manifest.fresh(now_ms)?;
+        if response.len() != expected_response_len()?
+            || response[..HEADER_BYTES] != query.body[..HEADER_BYTES]
+        {
+            return Err(Error::Malformed);
+        }
+        let row = crate::native::decode_cols(
+            &query.secret,
+            &self.public,
+            &response[HEADER_BYTES..],
+            COLS,
+        )
+        .map_err(|_| Error::Pir)?;
+        decode_row(&self.manifest, &query.txid, query.earliest, &row)
+    }
+}
+
+#[cfg(not(feature = "native-reinspiring"))]
 impl Client {
     pub fn new(
         manifest: Manifest,
@@ -279,9 +590,10 @@ impl Client {
     pub fn prepare(&self, txid: &[u8], earliest: Option<u32>, now_ms: u64) -> Result<Query, Error> {
         let txid: Hash = txid.try_into().map_err(|_| Error::Malformed)?;
         self.manifest.fresh(now_ms)?;
+        let issued_at = Instant::now();
         let row = bucket(&self.manifest.network, &self.manifest.salt, &txid);
         let (query, keys, seed) = self.client.generate_fresh_query_simplepir(&self.setup, row);
-        let mut body = b"SPQ1".to_vec();
+        let mut body = QUERY_MAGIC.to_vec();
         body.extend(self.manifest.id());
         body.extend(OsRng.gen::<[u8; 16]>());
         body.extend(
@@ -294,9 +606,14 @@ impl Client {
             seed,
             txid,
             earliest,
+            issued_at,
         })
     }
     pub fn decode(&self, query: Query, response: &[u8], now_ms: u64) -> Result<Observation, Error> {
+        // Wall-clock rollback cannot extend a query's freshness lifetime.
+        if query_timed_out(query.issued_at.elapsed()) {
+            return Err(Error::Stale);
+        }
         self.manifest.fresh(now_ms)?;
         let (rlwe, params) =
             ipir_sp::params_for_simplepir_profile(ROWS as u64, ITEM_BITS, SimplePirProfile::P16Q48)
@@ -337,27 +654,35 @@ mod tests {
         }
     }
     #[test]
+    fn v2_geometry_and_v1_rejection() {
+        assert_eq!((ROWS, SLOTS, SLOT_BYTES, ROW_BYTES), (8192, 256, 40, 12288));
+        assert_eq!(ROWS * ROW_BYTES, 96 * 1024 * 1024);
+        let mut m = manifest();
+        m.protocol = "status-pir-v1-q48".into();
+        assert_eq!(m.validate(), Err(Error::Unsupported));
+        assert_eq!(Record::decode(&[0; 80]), Err(Error::Malformed));
+    }
+    #[test]
     fn independent_python_hash_vector() {
         let txid = std::array::from_fn(|i| i as u8);
-        assert_eq!(bucket(&[1; 32], &[2; 32], &txid), 2864);
+        assert_eq!(bucket(&[1; 32], &[2; 32], &txid), 6818);
         assert_eq!(
             hex::encode(setup_seed(&[1; 32], &[2; 32])),
-            "123a8be9f96ce15268d7b6c024846c7a1794ebf0698c0510702f32c153415447"
+            "44ada24f0ddb452f8d8a6902d2c32d02fe64fde4088e71e60a81c453d81e9ea8"
         );
     }
     #[test]
     fn slot_codec_rejects_reserved_bytes_empty_garbage_and_invalid_states() {
-        for (tag, height, block) in [(1, 0, [0; 32]), (2, 10, [3; 32]), (3, 10, [3; 32])] {
+        for (tag, height) in [(1, 0), (2, 10), (3, 10)] {
             let r = Record {
                 txid: [4; 32],
                 tag,
                 height,
-                block,
             };
             let bytes = r.encode().unwrap();
             assert_eq!(Record::decode(&bytes), Ok(Some(r)));
             let mut bad = bytes;
-            bad[79] = 1;
+            bad[33] = 1;
             assert_eq!(Record::decode(&bad), Err(Error::Malformed));
             let mut bad = bytes;
             bad[32] = 4;
@@ -370,7 +695,6 @@ mod tests {
             txid: [0; 32],
             tag: 1,
             height: 1,
-            block: [0; 32]
         }
         .encode()
         .is_err());
@@ -378,7 +702,6 @@ mod tests {
             txid: [0; 32],
             tag: 2,
             height: 0,
-            block: [3; 32]
         }
         .encode()
         .is_err());
@@ -387,9 +710,11 @@ mod tests {
     fn freshness_coverage_and_binding_are_separate() {
         let m = manifest();
         let row = vec![0; ROW_BYTES];
-        assert_eq!(m.fresh(6000), Ok(()));
-        assert_eq!(m.fresh(6001), Err(Error::Stale));
+        assert_eq!(m.fresh(21_000), Ok(()));
+        assert_eq!(m.fresh(21_001), Err(Error::Stale));
         assert_eq!(m.fresh(999), Err(Error::Malformed));
+        assert!(!query_timed_out(Duration::from_millis(MAX_AGE_MS)));
+        assert!(query_timed_out(Duration::from_millis(MAX_AGE_MS + 1)));
         for earliest in [None, Some(9), Some(21)] {
             assert_eq!(
                 decode_row(&m, &[9; 32], earliest, &row),
@@ -422,7 +747,6 @@ mod tests {
             txid,
             tag: 2,
             height: 11,
-            block: [7; 32],
         };
         let mut row = vec![0; ROW_BYTES];
         row[..SLOT_BYTES].copy_from_slice(&r.encode().unwrap());

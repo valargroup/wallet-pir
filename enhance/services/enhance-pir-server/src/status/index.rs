@@ -3,12 +3,45 @@ use enhance_pir::status::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Block {
     pub height: u32,
     pub hash: Hash,
     pub parent: Hash,
     pub txids: Vec<Hash>,
+}
+
+/// Source metadata never crosses the compact wire boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForkRecord {
+    pub txid: Hash,
+    pub height: u32,
+    pub block: Hash,
+}
+impl ForkRecord {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.height == 0 || self.block == [0; 32] {
+            return Err(Error::Malformed);
+        }
+        Ok(())
+    }
+}
+#[derive(Clone)]
+struct SourceRecord {
+    txid: Hash,
+    tag: u8,
+    height: u32,
+    block: Hash,
+}
+impl SourceRecord {
+    fn encode(&self) -> Result<[u8; SLOT_BYTES], Error> {
+        Record {
+            txid: self.txid,
+            tag: self.tag,
+            height: self.height,
+        }
+        .encode()
+    }
 }
 
 pub struct Snapshot {
@@ -29,7 +62,7 @@ impl Snapshot {
         salt: Hash,
         blocks: &[Block],
         mempool: &[Hash],
-        forks: &[Record],
+        forks: &[ForkRecord],
     ) -> Result<Self, Error> {
         let last = blocks.last().ok_or(Error::CoverageIncomplete)?;
         for (i, b) in blocks.iter().enumerate() {
@@ -42,24 +75,29 @@ impl Snapshot {
                 return Err(Error::Malformed);
             }
         }
-        let mut records = BTreeMap::<Hash, Record>::new();
+        let mut records = BTreeMap::<Hash, SourceRecord>::new();
         for r in forks {
             r.validate()?;
-            if r.tag != 3 {
-                return Err(Error::Malformed);
-            }
             if r.height < blocks[0].height || r.height > last.height {
                 continue;
             }
             let old = records.get(&r.txid);
             if old.is_none_or(|o| (r.height, r.block) > (o.height, o.block)) {
-                records.insert(r.txid, r.clone());
+                records.insert(
+                    r.txid,
+                    SourceRecord {
+                        txid: r.txid,
+                        tag: 3,
+                        height: r.height,
+                        block: r.block,
+                    },
+                );
             }
         }
         for txid in mempool {
             records.insert(
                 *txid,
-                Record {
+                SourceRecord {
                     txid: *txid,
                     tag: 1,
                     height: 0,
@@ -74,7 +112,7 @@ impl Snapshot {
                 }
                 records.insert(
                     *txid,
-                    Record {
+                    SourceRecord {
                         txid: *txid,
                         tag: 2,
                         height: b.height,
@@ -146,15 +184,57 @@ mod tests {
         }
     }
     #[test]
+    fn fork_selection_is_deterministic_and_hashes_stay_internal() {
+        let blocks = [block(1, vec![]), block(2, vec![])];
+        let forks = vec![
+            ForkRecord {
+                txid: [8; 32],
+                height: 1,
+                block: [9; 32],
+            },
+            ForkRecord {
+                txid: [8; 32],
+                height: 2,
+                block: [4; 32],
+            },
+            ForkRecord {
+                txid: [8; 32],
+                height: 2,
+                block: [5; 32],
+            },
+        ];
+        let a = Snapshot::build([1; 32], [2; 32], &blocks, &[], &forks).unwrap();
+        let mut reversed = forks.clone();
+        reversed.reverse();
+        let b = Snapshot::build([1; 32], [2; 32], &blocks, &[], &reversed).unwrap();
+        assert_eq!(a.digest, b.digest);
+        let offset = bucket(&a.network, &a.salt, &[8; 32]) * ROW_BYTES;
+        let record = Record::decode(&a.rows[offset..offset + SLOT_BYTES])
+            .unwrap()
+            .unwrap();
+        assert_eq!((record.tag, record.height), (3, 2));
+        assert!(Snapshot::build(
+            [1; 32],
+            [2; 32],
+            &blocks,
+            &[],
+            &[ForkRecord {
+                txid: [8; 32],
+                height: 2,
+                block: [0; 32]
+            }]
+        )
+        .is_err());
+    }
+    #[test]
     fn precedence_and_missing_coverage() {
         let snapshot = Snapshot::build(
             [1; 32],
             [2; 32],
             &[block(1, vec![[3; 32]])],
             &[[3; 32], [4; 32]],
-            &[Record {
+            &[ForkRecord {
                 txid: [4; 32],
-                tag: 3,
                 height: 1,
                 block: [5; 32],
             }],

@@ -1576,8 +1576,10 @@ mod tests {
         assert_eq!(enhance.matches("Deployment topology").count(), 1);
         assert_eq!(status.matches("Deployment topology").count(), 1);
         assert!(enhance.contains("Entrypoint APM"));
-        assert!(status.contains("Synthetic Status service"));
-        assert!(status.contains("Planned shared coordinator connection"));
+        assert!(status.contains("Live Status roles"));
+        assert!(!status.contains("Coordinator forwarding"));
+        assert!(status.contains("Router admitted processing"));
+        assert!(status.contains("Live authenticated coordinator connection"));
         assert!(!status.contains("Entrypoint APM"));
     }
     use super::*;

@@ -9,7 +9,7 @@ pub const SCHEMA_VERSION: u16 = 11;
 #[cfg(not(feature = "native-reinspiring"))]
 pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v7";
 #[cfg(feature = "native-reinspiring")]
-pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v8-native-poc";
+pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v9-native-two-mask-m29";
 pub const RETAINED_GENERATIONS: usize = 5;
 pub const HEADER_BYTES: usize = 116;
 

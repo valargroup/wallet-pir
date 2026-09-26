@@ -82,6 +82,8 @@ async fn main() -> Result<()> {
     if let Some(url) = config.status_apm_url.clone() {
         tokio::spawn(status_apm::monitor(
             url,
+            config.status_router_url.clone(),
+            config.status_worker_url.clone(),
             config.status_host.clone(),
             dashboard.clone(),
         ));

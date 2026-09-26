@@ -1,0 +1,46 @@
+   Compiling zakura-pir-status v0.0.1-rc0 (https://github.com/zakura-core/wallet-libraries.git?rev=e153ad393ac4bfb12ac1e06a57a31f631fb9ce3e#e153ad39)
+   Compiling enhance-pir-server v0.0.1 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 11.94s
+     Running unittests src/lib.rs (target/debug/deps/enhance_pir-a80f89d8fe481897)
+
+running 5 tests
+test status::tests::independent_python_hash_vector ... ok
+test status::tests::slot_codec_rejects_reserved_bytes_empty_garbage_and_invalid_states ... ok
+test status::tests::complete_row_is_validated_even_after_a_match ... ok
+test status::tests::v2_geometry_and_v1_rejection ... ok
+test status::tests::freshness_coverage_and_binding_are_separate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/enhance_pir_server-bdab3cfcf6dd1687)
+
+running 27 tests
+test status::controller_tests::rapid_activation_bounds_retention_and_recovery_fences_old_sessions ... ok
+test status::controller_tests::stale_candidate_cannot_be_activated ... ok
+test status::distributed::tests::private_peers_reject_external_or_credentialed_origins ... ok
+test status::index::tests::broken_chain_and_duplicate_canonical_txid_rejected ... ok
+test status::source::tests::changing_tip_discards_candidate ... ok
+test status::distributed::tests::stale_source_does_not_revoke_valid_control_authority ... ok
+test status::authority::tests::wrong_network_and_corruption_fail_closed ... ok
+test status::distributed::tests::watchdog_does_not_renew_source_freshness ... ok
+test status::distributed::tests::restart_changes_incarnation_and_never_restores_readiness ... ok
+test status::distributed::tests::wrong_digest_activation_is_rejected_and_repeat_is_idempotent ... ok
+test status::source::tests::damaged_or_incompatible_checkpoint_fails_closed ... ok
+test status::distributed::tests::fence_revokes_already_pinned_controller_and_rejects_old_activation ... ok
+test status::telemetry::tests::counts_one_ingress_and_exports_no_request_identity ... ok
+test status::distributed::tests::refresh_cannot_launder_changed_source_or_coverage ... ok
+test status::authority::tests::restart_fences_prior_sessions_and_never_reuses_generation ... ok
+test status::source::tests::compact_wire_preserves_stsobs01_checkpoint_bytes ... ok
+test status::source::tests::noncanonical_raw_block_is_rejected ... ok
+test status::index::tests::precedence_and_missing_coverage ... ok
+test status::fixture::tests::small_fixture_oracle_uses_the_actual_mined_height ... ok
+test status::source::tests::canonical_observation_indexes_every_transaction_type ... ok
+test status::source::tests::disconnected_block_becomes_fork_observation ... ok
+test status::index::tests::fork_selection_is_deterministic_and_hashes_stay_internal ... ok
+test status::source::tests::checkpoint_recovers_only_as_a_cache_and_reobserves_canonical_source ... ok
+test status::artifact::tests::sparse_roundtrip_is_bound_to_base_and_result ... ok
+test status::index::tests::overflow_evicts_whole_blocks_and_mandatory_overflow_fails ... ok
+test status::source::tests::live_rpc_candidate_revalidates_before_durable_publication ... ok
+test status::incremental_tests::sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 113 filtered out; finished in 2.46s

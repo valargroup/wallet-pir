@@ -1,0 +1,9 @@
+   Compiling zakura-pir-status v0.0.1-rc0 (https://github.com/zakura-core/wallet-libraries.git?rev=e153ad393ac4bfb12ac1e06a57a31f631fb9ce3e#e153ad39)
+   Compiling enhance-pir-server v0.0.1 (/home/paperspace/status-compact-20260925/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 17.00s
+     Running tests/status_wallet.rs (/home/paperspace/status-pir/target/release-fast/deps/status_wallet-8f4c672193b6011b)
+
+running 1 test
+test wallet_and_server_share_wire_identity_and_encrypted_observations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.00s

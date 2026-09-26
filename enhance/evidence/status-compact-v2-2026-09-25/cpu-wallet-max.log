@@ -1,0 +1,8 @@
+   Compiling enhance-pir-server v0.0.1 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 8.46s
+     Running tests/status_wallet.rs (target/release/deps/status_wallet-2ce28d0c87e242ca)
+
+running 1 test
+test wallet_and_server_share_wire_identity_and_encrypted_observations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.72s

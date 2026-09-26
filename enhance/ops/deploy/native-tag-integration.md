@@ -1,16 +1,34 @@
-# Native distributed integration on ipir-sp rc.5
+# Native distributed integration on ipir-sp rc.6
 
-The Enhance native path already exists on wallet-pir main and is serving the
-controlled production trial. This integration replaces its trial-commit pin
-with `v0.1.0-rc.5`, resolving to `c5075a4` in Cargo.lock. The tag points to the merged
-[ipir-sp PR #23](https://github.com/valargroup/ipir-sp/pull/23) commit on main. rc.4 alone lacks the mapped
-codecs, native query-mask accessor, and power-of-two CUDA interface.
+The Enhance native path exists on wallet-pir main and served the controlled
+production trial with the rc.5 revision. This source moves to `v0.1.0-rc.6`,
+the ipir-sp tag containing [PR #24](https://github.com/valargroup/ipir-sp/pull/24)
+and [PR #25](https://github.com/valargroup/ipir-sp/pull/25). rc.5 lacks the
+two-mask output mode and rounded public-mask publication.
 
-The native protocol remains `ironwood-enhance-pir-v8-native-poc`, control version
-3. Preparation stays on the coordinator, matrix-vector evaluation on workers,
-and packing on the router. Live publications, mapped state, GPU preference and
-admission settings are preserved. This dependency update does not deploy services
-or change the default backend for existing clients.
+The native wire changes. Clients upload only the `K_g` packing key and decode
+under both published masks, rounded to 29 bits:
+
+| Native Enhance, per shard | rc.5 (`v8-native-poc`) | rc.6 (`v9-native-two-mask-m29`) |
+| --- | ---: | ---: |
+| Packing-key upload | 55,296 B | 27,648 B |
+| Public session material | 98,304 B | 89,088 B |
+| Response body | 33,792 B | 33,792 B |
+
+The protocol is `ironwood-enhance-pir-v9-native-two-mask-m29`, control version
+4, and prepared artifacts live under `prepared-native-packing-v2` with format 3.
+v8 and v9 clients, routers and coordinators are mutually incompatible and must not
+be mixed. Preparation stays on the coordinator, matrix-vector evaluation on workers,
+and packing on the router. This dependency update does not deploy services or
+change the default backend for existing clients.
+
+The same feature switches Status PIR to `status-pir-v3-native-two-mask-m29`.
+See [architecture_status.md](../../docs/architecture_status.md#privacy-and-trust-boundary).
+
+ipir-sp's correctness certificates for two-mask 29-bit publication cover only
+the recorded fixture snapshot. Neither the Enhance snapshot nor the Status
+geometry has a certificate, and runtime certificate enforcement is not
+implemented. The profile remains experimental.
 
 ## Build matching native components
 
@@ -52,13 +70,14 @@ cargo check --locked -p enhance-pir-server -p enhance-pir-load-test \
   --features native-reinspiring,cuda
 QUALIFY_PUBLICATIONS=1 QUALIFY_QUERY_LANES=2 QUALIFY_QUERIES_PER_LANE=3 \
   cargo test --locked -p enhance-pir-server --features native-reinspiring \
-  --test packing_http
+  --test packing_http --test status_wallet
+cargo test --locked -p enhance-pir --features native-reinspiring --lib native
 cargo test --locked -p enhance-pir-server --test packing_http
 ```
 
 CI runs the native distributed HTTP fixture separately from the legacy suite,
 including a publication while queries are in flight. CUDA compilation without a
 GPU is not CUDA hardware qualification. Prior production measurements are in
-`enhance/evidence/reinspiring-production-trial-2026-09-25`; they measured the trial
-revision, not the newly tagged binary. Native cryptographic production gates
+`enhance/evidence/reinspiring-production-trial-2026-09-25`; they measured the
+one-mask trial revision, not the two-mask rc.6 binary. Native cryptographic production gates
 remain those documented by ipir-sp; the profile is still experimental.

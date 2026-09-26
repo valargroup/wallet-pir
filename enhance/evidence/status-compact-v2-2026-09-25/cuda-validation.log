@@ -1,0 +1,13 @@
+{"coverage_start":1000,"entries":1572864,"evicted_blocks":0,"ms":5445.107357999999,"phase":"index"}
+{"advanced":false,"phase":"preparation","stats":{"database_hint_ms":2916.674617,"incremental_units":0,"packing_ms":3077.683498,"rebuilt_units":4,"reused_units":0,"total_ms":5994.363302,"unit_rows":2048},"twenty_second_preparation_gate":true}
+{"passed":true,"phase":"initial_full_hint_differential"}
+{"coordinator":"127.0.0.1:38019","phase":"listening","router":"127.0.0.1:40341","single_process":true,"source":"synthetic immutable fixture","worker":"127.0.0.1:39901"}
+{"advanced":false,"cases":["mined","mempool_or_mined_transition","forked","not_found","coverage_incomplete","fresh_randomness","short_txid","wrong_binding","wrong_response","no_payload_route"],"passed":true,"phase":"http_cases"}
+{"coverage_start":1000,"entries":1572864,"evicted_blocks":0,"ms":5107.465849,"phase":"index"}
+{"advanced":true,"phase":"preparation","stats":{"database_hint_ms":613.884497,"incremental_units":1,"packing_ms":1667.9652270000001,"rebuilt_units":1,"reused_units":3,"total_ms":2281.853801,"unit_rows":2048},"twenty_second_preparation_gate":true}
+{"changed_rows":1,"phase":"update"}
+{"advanced":true,"cases":["mined","mempool_or_mined_transition","forked","not_found","coverage_incomplete","fresh_randomness","short_txid","wrong_binding","wrong_response","no_payload_route"],"passed":true,"phase":"http_cases"}
+{"cases":["evicted_session_409","recovery_epoch_410"],"passed":true,"phase":"wallet_session_retry"}
+{"http_status":502,"passed":true,"phase":"worker_loss"}
+{"passed":true,"phase":"recovery_epoch_fence"}
+{"columns":6144,"cuda":true,"database_bytes":100663296,"incremental_granularity":"bounded coefficient deltas, dense-unit fallback; unchanged packing block reuse","passed":true,"phase":"validation_complete","production_qualified":false,"protocol":"status-pir-v2-q48","row_bytes":12288,"rows":8192,"slot_bytes":40,"slots":256,"wallet_changes":false}

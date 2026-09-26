@@ -1,0 +1,21 @@
+[Unit]
+Description=Status live publication qualification controller
+After=network-online.target status-control-tunnel.service
+Wants=status-control-tunnel.service
+
+[Service]
+ExecStart=@RELEASE@/status-pir serve-distributed --config /etc/status-pir-control/controller.json --cookie /root/.cache/zakura/.cookie
+Environment=RAYON_NUM_THREADS=2
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=5
+MemoryMax=4G
+MemorySwapMax=0
+CPUQuota=200%
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/status-pir-controller
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
