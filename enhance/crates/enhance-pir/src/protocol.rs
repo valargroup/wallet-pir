@@ -683,9 +683,24 @@ mod tests {
             native_identity(&params, mask_bits),
             native_identity(&params, mask_bits + 1)
         );
-        assert!(unit_parameter_id(8192)
-            .unwrap()
-            .starts_with("ironwood-enhance-pir-v9-native-two-mask-m29/unit/"));
+        // Frozen wire identities; the independent wallet library
+        // (zakura-pir-enhance, feature native-reinspiring) pins the same values.
+        assert_eq!(
+            id,
+            "ironwood-enhance-pir-v9-native-two-mask-m29/04612c53c821f0c235e8dd44036ac43cbf605bebd8012742a3d71bda18ec13f6"
+        );
+        assert_eq!(
+            unit_parameter_id(8192).unwrap(),
+            "ironwood-enhance-pir-v9-native-two-mask-m29/unit/0ce2b7a68ec0ea3bc9cbee600eb8a300bb2f06d121a2cc9caca7f6673537e070"
+        );
+        assert_eq!(
+            unit_parameter_id(4096).unwrap(),
+            "ironwood-enhance-pir-v9-native-two-mask-m29/unit/ac16d8451fb2cb1c523ec4b6a8ad17b20ba67c58b367b2ae40ba1783ddfc29f1"
+        );
+        assert_eq!(
+            unit_parameter_id(2048).unwrap(),
+            "ironwood-enhance-pir-v9-native-two-mask-m29/unit/2e03e17451928e9498fa614db9077f27709feda2d5a45c40ef2c4f0643dc478a"
+        );
     }
 
     #[test]
