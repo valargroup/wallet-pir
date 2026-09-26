@@ -42,9 +42,9 @@ The wallet checks coverage against an independently accepted chain anchor before
 using results. An indexer can still omit payments. A digest is not a completeness
 proof, and PIR conceals a query rather than authenticating the chain.
 
-No receiver-specific HTTP lookup or live PIR transport is provided by this crate.
-Row selection must happen inside PIR. These rows are not the compact bulk-download
-format discussed for restores.
+The directory crate does not send requests. The `receiver-pir` crate selects rows
+inside encrypted PIR queries. These rows are not the compact bulk-download format
+discussed for restores.
 
 ## Validation
 
@@ -101,3 +101,51 @@ rollback checks. `cargo test -p enhance-pir-server --test receiver` covers coinb
 exclusion with preserved positions, RPC anchor validation, and command-line
 restart/reorg publication. Its synthetic block envelopes test indexing contracts,
 not consensus validation.
+
+## Encrypted lookup
+
+`receiver-pir` provides a transport-independent client, an optional `http` client,
+and an optional `server` evaluator. The initial profile is
+`ironwood-receiver-pir-v1-q48`, using the existing ipir-sp P16Q48 implementation
+with 8192 rows of 4096 bytes. Other row counts fail explicitly. Qualify another
+profile before a larger publication is served.
+
+A session manifest contains the directory manifest, the PIR protocol identifier,
+and a SHA-256 digest of the public PIR setup. A domain-separated digest of this
+manifest identifies the session. Setup randomness is derived from the directory
+revision under a separate domain. Requests contain `RPQ1`, the 32-byte session ID,
+a fresh 16-byte nonce, serialized packing keys, and an encrypted row selection.
+The response echoes the 52-byte header before its encrypted payload. The receiver
+and page never appear in a public route or request header. Each attempt uses fresh
+encryption. The client rejects responses from another request or publication.
+
+The caller supplies `AcceptedCoverage` from its independently accepted chain:
+genesis, required history start, terminal height, and terminal hash. Connecting
+and looking up both check this contract. If the chain changes during a lookup,
+revalidate its anchor before using results. These checks bind the requested
+coverage, but do not prove indexer completeness or authenticate returned notes.
+
+The HTTP client initializes through `/v1/receiver/init` and `/v1/receiver/public`,
+then sends fixed-size POSTs to `/v1/receiver/query`. It bounds downloaded bodies.
+Callers configure their HTTP client's proxy and timeout. One session is immutable.
+A replacement publication returns a conflict. The caller reconnects against a
+newly accepted anchor and restarts unfinished histories, using fresh encryptions.
+There is no automatic cleartext lookup fallback.
+
+`lookup` returns all pages for a receiver from that revision, with consistent
+totals, increasing positions and chain locations, and unique output identities.
+Missing or inconsistent pages fail. Exceeding the caller's explicit page budget
+also fails and never returns partial success or absence. Empty page zero means no
+indexed payment within the accepted publication, not that an address is unused
+forever. The caller retains recovery work on every error.
+
+The measured wire payload is 14,336 bytes of reusable public setup, 135,220 bytes
+per request, and 5,172 bytes per response. Fifty single-page lookups therefore use
+7,033,936 bytes (6.71 MiB), plus the small manifest and HTTP/TLS overhead. Additional
+payments, retries, and follow-on note/witness/spentness retrieval are additional
+traffic. This measures the receiver lookup only, not complete wallet recovery.
+
+`cargo test -p receiver-pir --all-features` exercises actual encrypted round trips,
+request/session binding, coverage, public setup corruption, missing continuations,
+and invalid requests. The pinned ipir-sp and InspiRING release candidates are not
+on crates.io. Their git source matches the existing workspace's locked revision.

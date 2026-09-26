@@ -7,3 +7,5 @@
 - Add a standalone, resumable mainnet indexer with coinbase exclusion, atomic
   block storage, bounded concurrent downloads, batch anchor validation, reorg
   rollback, and immutable local publications.
+- Add reusable encrypted receiver lookups bound to one accepted publication,
+  with bounded HTTP downloads and complete-history pagination checks.
