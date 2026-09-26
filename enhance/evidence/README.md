@@ -8,6 +8,14 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Native two-mask production deployment and six-hour load](native-two-mask-production-2026-09-26/README.md) —
+  v9 Enhance and native Status v3 in production: no incorrect answers over six hours
+  (0.03% Enhance 502s, root-caused); not formal qualification.
+
+- [Native two-mask correctness certificates](native-certificate-2026-09-26/README.md) —
+  conditional per-snapshot bounds of 2^-158 (Enhance, worst-case query) and
+  2^-262 or better (Status); no runtime certification or independent review.
+
 - [Synthetic Status PIR backend and APM validation](status-backend-2026-09-25/README.md) —
   encrypted correctness and fixed-source load passed; the five-second publication
   target and live-chain integration remain open.

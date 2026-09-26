@@ -4,6 +4,8 @@ These are dated records, not claims about the current source or live fleet. Use 
 
 | Run | Recorded subject |
 |---|---|
+| [native-two-mask-production-2026-09-26](native-two-mask-production-2026-09-26/README.md) | dc0355b native v9 Enhance and native Status v3 SSH deployment, six-hour load and 502 root cause |
+| [native-certificate-2026-09-26](native-certificate-2026-09-26/README.md) | Conditional per-snapshot two-mask correctness certificates for live Enhance and Status |
 | [production-cleanup-2026-09-24](production-cleanup-2026-09-24/README.md) | PR #111 production rollout, exact-answer smoke, and rollback provenance |
 | [cuda-p4000-2026-09-24](cuda-p4000-2026-09-24/README.md) | Optional CUDA worker correctness and P4000 composed-domain matrix benchmark |
 | [packing-budget-2026-09-24](packing-budget-2026-09-24/README.md) | Packing component residency, construction overlap and Linux cgroup limits |
