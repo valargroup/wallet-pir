@@ -3045,6 +3045,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "clap",
+ "enhance-pir",
  "hex",
  "receiver-directory",
  "receiver-pir",

@@ -1,0 +1,52 @@
+{
+  "observed_at": "2026-09-26T22:39:36Z",
+  "client_commit": "f12f779",
+  "service_commit": "5921064",
+  "ipir_revision": "1f2aec65",
+  "profile": "ironwood-receiver-pir-v1-q48",
+  "directory": {
+    "start_height": 3428143,
+    "end_height": 3497109,
+    "receivers": 16848,
+    "payments": 20747,
+    "rows": 8192,
+    "row_bytes": 4096,
+    "revision": "f41cb5aaaafd23af0e8b981c26db4c0d0ed53bf9c1bee3af312204609beed9cf",
+    "terminal_hash": "00000000001a95c9545f79c6cceda87a7ba1e4bb06398f0559d39a330afb6fc5"
+  },
+  "lookup_payload_bytes": {
+    "public_setup": 14336,
+    "request": 135220,
+    "response": 5172,
+    "fifty_single_page_lookups_including_setup": 7033936
+  },
+  "refund": {
+    "txid": "2060cf68088b55dcd9e2f91556c72528e1ab8c6834ea3f71b8c80fca9fc51653",
+    "height": 3496114,
+    "tx_index": 16,
+    "action_index": 0,
+    "position": 610503,
+    "pages": 1
+  },
+  "enhance": {
+    "protocol": "ironwood-enhance-pir-v7",
+    "generation": 446,
+    "anchor_height": 3497346,
+    "anchor_hash": "00000000002e774a524040969147b50857ff4ce2e3a8e601ff3dacd9cd4ee200",
+    "query_elapsed_ms": 945
+  },
+  "checks": [
+    "encrypted HTTP receiver lookup against full publication",
+    "encrypted Enhance lookup at returned position",
+    "compact and full Action fields equal public RPC fixture",
+    "authenticated zero-OVK recovery matches requested receiver",
+    "both terminal anchors checked independently against canonical RPC"
+  ],
+  "limits": [
+    "No wallet state accessed",
+    "No wallet insertion, nullifier or witness test",
+    "No production deployment or service modification",
+    "Enhance timing is one integration query, not a benchmark",
+    "Receiver byte counts exclude manifest, HTTP/TLS, Enhance, witness and spentness traffic"
+  ]
+}

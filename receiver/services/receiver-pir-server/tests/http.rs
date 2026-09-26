@@ -151,6 +151,10 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
 #[tokio::test]
 #[ignore = "requires local mainnet publication; set RECEIVER_MAINNET_MANIFEST"]
 async fn known_mainnet_refund_over_encrypted_http() {
+    mainnet_lookup().await;
+}
+
+async fn mainnet_lookup() -> Payment {
     let path = std::path::PathBuf::from(std::env::var("RECEIVER_MAINNET_MANIFEST").unwrap());
     let manifest: Manifest = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let revision = hex::encode(manifest.revision().unwrap());
@@ -192,6 +196,7 @@ async fn known_mainnet_refund_over_encrypted_http() {
         "Verified mainnet receiver lookup: revision={revision}, position={}, height={}",
         p.position, p.height
     );
+    found.into_iter().next().unwrap()
 }
 
 #[tokio::test]
@@ -235,4 +240,36 @@ async fn reject_incomplete_or_inconsistent_pagination() {
             "fault {fault} must not produce partial success"
         );
     }
+}
+
+/// This is an authenticated public-output test, not a wallet ownership or witness test.
+#[tokio::test]
+#[ignore = "requires mainnet publication and ENHANCE_PIR_ORIGIN for an isolated integration service"]
+async fn known_mainnet_refund_through_receiver_and_enhance_pir() {
+    let payment = mainnet_lookup().await;
+    let origin = std::env::var("ENHANCE_PIR_ORIGIN").unwrap();
+    let mut client = enhance_pir::client::EnhancePirClient::connect(&origin)
+        .await
+        .unwrap();
+    assert_eq!(client.manifest().network, "main");
+    assert_eq!(client.manifest().pool, "ironwood");
+    assert!(client.manifest().anchor_height >= u64::from(payment.height));
+    let (enhancement, timing) = client
+        .query_position_with_timing(payment.position)
+        .await
+        .unwrap();
+    let joined = Action::from_payment(
+        &payment,
+        enhancement.enc_ciphertext_suffix(),
+        *enhancement.cv_net(),
+        *enhancement.out_ciphertext(),
+    );
+    let expected = fixture();
+    assert_eq!(joined.enc_ciphertext, expected.enc_ciphertext);
+    assert_eq!(joined.cv, expected.cv);
+    assert_eq!(joined.out_ciphertext, expected.out_ciphertext);
+    assert_eq!(joined.recover_receiver().unwrap(), Some(receiver()));
+    println!("Authenticated receiver + Enhance result: position={}, generation={}, anchor_height={}, anchor_hash={}, enhance_query_ms={}",
+        payment.position, client.manifest().generation, client.manifest().anchor_height,
+        client.manifest().anchor_block_hash, timing.total.as_millis());
 }

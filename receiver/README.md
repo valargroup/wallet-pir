@@ -176,3 +176,18 @@ inconsistent histories. An opt-in public-chain test loads the verified September
 `cargo test -p receiver-pir-server --test http known_mainnet_refund -- --ignored`.
 Its accepted anchor is fixed to the independently verified block at 3,497,109.
 No wallet data is used.
+
+## Enhancement handoff
+
+`Action::from_payment` joins a directory payment's compact context with an
+Enhance record's ciphertext suffix, value commitment, and outgoing ciphertext.
+Construction performs no authentication. Wallets still trial decrypt with their
+receiving key and validate chain position, witness, and spentness before crediting
+funds. The directory crate takes byte arrays here, so it does not depend on an
+Enhance transport or a wallet implementation.
+
+The opt-in `known_mainnet_refund_through_receiver_and_enhance_pir` test adds an
+actual Enhance lookup using the returned position and authenticates the combined
+public output. Set `ENHANCE_PIR_ORIGIN` in addition to the manifest path. See
+[the recorded integration result](evidence/2026-09-26-receiver-pir.md). Successful
+public zero-OVK authentication does not prove that a wallet can spend the note.

@@ -10,3 +10,5 @@
 - Add reusable encrypted receiver lookups bound to one accepted publication,
   with bounded HTTP downloads and complete-history pagination checks.
 - Add a bounded loopback PIR service and a public mainnet refund lookup test.
+- Add shared compact/Enhance reconstruction and verify a real refund through
+  both encrypted lookups with authenticated output recovery.

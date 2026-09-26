@@ -256,3 +256,21 @@ fn durable_coverage_atomic_failure_and_reorg() {
     store.rewind(99, config.start_parent).unwrap();
     assert!(store.snapshot(8).is_err());
 }
+
+#[test]
+fn enhancement_reconstruction_requires_authentication() {
+    let original = action();
+    let mut p = record(0, 1).payment;
+    p.action_nullifier = original.nullifier;
+    p.cmx = original.cmx;
+    p.ephemeral_key = original.ephemeral_key;
+    p.ciphertext_prefix
+        .copy_from_slice(&original.enc_ciphertext[..52]);
+    let mut suffix: [u8; 528] = original.enc_ciphertext[52..].try_into().unwrap();
+    let joined = Action::from_payment(&p, &suffix, original.cv, original.out_ciphertext);
+    assert_eq!(joined.enc_ciphertext, original.enc_ciphertext);
+    assert_eq!(joined.recover_receiver().unwrap(), Some(receiver()));
+    suffix[0] ^= 1;
+    let altered = Action::from_payment(&p, &suffix, original.cv, original.out_ciphertext);
+    assert!(altered.recover_receiver().unwrap().is_none());
+}
