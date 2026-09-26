@@ -269,6 +269,12 @@ pub async fn monitor(path: PathBuf, dashboard: SharedDashboard) {
             });
         }
         while tasks.join_next().await.is_some() {}
+        dashboard
+            .write()
+            .await
+            .monitoring
+            .loops
+            .insert("workers".into(), pir_apm::incidents::unix_time());
     }
 }
 

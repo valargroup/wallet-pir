@@ -395,8 +395,31 @@ impl PackingRouter {
 
 async fn health(State(r): State<PackingRouter>) -> Json<serde_json::Value> {
     let i = r.inner.lock().unwrap();
+    let domain_eligible: BTreeMap<u64, usize> = i
+        .active
+        .as_ref()
+        .and_then(|a| {
+            a.view
+                .snapshots
+                .iter()
+                .max_by_key(|s| s.manifest.generation)
+        })
+        .map(|s| {
+            s.preferred
+                .iter()
+                .map(|(domain, urls)| {
+                    (
+                        *domain,
+                        urls.iter()
+                            .filter(|url| i.worker_health.get(*url).is_some_and(|h| h.available))
+                            .count(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Json(
-        serde_json::json!({"protocol":PROTOCOL_REVISION,"control_version":CONTROL_VERSION,
+        serde_json::json!({"domain_eligible_workers":domain_eligible,"protocol":PROTOCOL_REVISION,"control_version":CONTROL_VERSION,
         "incarnation":r.incarnation,"controller_epoch":i.fence.controller_epoch,
         "active_digest":i.active.as_ref().map(|s| &s.digest),
         "ready":i.refreshed.is_some_and(|t| t.elapsed() <= CONTROL_WATCHDOG),

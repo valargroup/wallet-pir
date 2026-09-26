@@ -1,0 +1,200 @@
+{
+  "canary_at": 1790425565,
+  "canary_duration_seconds": 1.235410056,
+  "canary_ok": true,
+  "delivery": {
+    "configured": true,
+    "failure": null,
+    "last_success": 1790425222,
+    "oldest_pending_age": 0,
+    "pending": 0,
+    "worker_at": 1790425578
+  },
+  "evaluated_at": 1790425578,
+  "failure_category": "",
+  "incidents": [
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "apm_delivery_critical",
+        "observed": "APM Slack delivery health",
+        "resource": "apm",
+        "retired": false,
+        "sample": 1790425578,
+        "severity": "critical",
+        "threshold": "Slack unconfigured or oldest pending event >=300 seconds"
+      },
+      "healthy_samples": 13,
+      "id": "apm_delivery_critical-1790425394",
+      "last_evaluated": 1790425578,
+      "last_reminder": 1790425394,
+      "last_sample": 1790425578,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "apm_delivery_warning",
+        "observed": "APM Slack delivery health",
+        "resource": "apm",
+        "retired": false,
+        "sample": 1790425578,
+        "severity": "warning",
+        "threshold": "Slack unconfigured or oldest pending event >=60 seconds"
+      },
+      "healthy_samples": 13,
+      "id": "apm_delivery_warning-1790425394",
+      "last_evaluated": 1790425578,
+      "last_reminder": 1790425394,
+      "last_sample": 1790425578,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 60,
+        "key": "apm_progress",
+        "observed": "APM collector/evaluator/delivery progress",
+        "resource": "apm",
+        "retired": false,
+        "sample": 1790425578,
+        "severity": "critical",
+        "threshold": "APM progress unavailable for 60 seconds"
+      },
+      "healthy_samples": 13,
+      "id": "apm_progress-1790424869",
+      "last_evaluated": 1790425578,
+      "last_reminder": 1790424869,
+      "last_sample": 1790425578,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "canary_correctness",
+        "observed": "decrypted bytes compared with pinned oracle",
+        "resource": "public_pir",
+        "retired": false,
+        "sample": 1790425565,
+        "severity": "critical",
+        "threshold": "decrypted bytes must match the validated oracle"
+      },
+      "healthy_samples": 1,
+      "id": "",
+      "last_evaluated": 1790425578,
+      "last_reminder": 0,
+      "last_sample": 1790425565,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "canary_failures",
+        "observed": "0 consecutive failures; ",
+        "resource": "public_pir",
+        "retired": false,
+        "sample": 1790425565,
+        "severity": "critical",
+        "threshold": "three consecutive failed one-minute probes"
+      },
+      "healthy_samples": 1,
+      "id": "",
+      "last_evaluated": 1790425578,
+      "last_reminder": 0,
+      "last_sample": 1790425565,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "canary_latency",
+        "observed": "0 consecutive samples above 10s",
+        "resource": "public_pir",
+        "retired": false,
+        "sample": 1790425565,
+        "severity": "warning",
+        "threshold": "five consecutive successful probes above 10 seconds"
+      },
+      "healthy_samples": 1,
+      "id": "",
+      "last_evaluated": 1790425578,
+      "last_reminder": 0,
+      "last_sample": 1790425565,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 60,
+        "key": "canary_progress",
+        "observed": "canary task progress",
+        "resource": "public_pir",
+        "retired": false,
+        "sample": 1790425578,
+        "severity": "critical",
+        "threshold": "canary sample older than 90 seconds for 60 seconds"
+      },
+      "healthy_samples": 1,
+      "id": "",
+      "last_evaluated": 1790425578,
+      "last_reminder": 0,
+      "last_sample": 1790425578,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 60,
+        "key": "oracle_monitoring",
+        "observed": "oracle reference unavailable",
+        "resource": "apm",
+        "retired": false,
+        "sample": 1790425578,
+        "severity": "warning",
+        "threshold": "oracle reference unavailable for 60 seconds"
+      },
+      "healthy_samples": 16,
+      "id": "oracle_monitoring-1790424869",
+      "last_evaluated": 1790425578,
+      "last_reminder": 1790424869,
+      "last_sample": 1790425578,
+      "since": null
+    },
+    {
+      "active": false,
+      "condition": {
+        "firing": false,
+        "hold_seconds": 0,
+        "key": "oracle_validity",
+        "observed": "canonical oracle anchor validation",
+        "resource": "apm",
+        "retired": false,
+        "sample": 1790425578,
+        "severity": "warning",
+        "threshold": "pinned oracle block must remain canonical"
+      },
+      "healthy_samples": 16,
+      "id": "",
+      "last_evaluated": 1790425578,
+      "last_reminder": 0,
+      "last_sample": 1790425578,
+      "since": null
+    }
+  ],
+  "progress_ok": true,
+  "shadow": true,
+  "storage_error": false
+}

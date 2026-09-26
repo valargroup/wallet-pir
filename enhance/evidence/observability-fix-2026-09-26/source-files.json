@@ -1,0 +1,6 @@
+{
+  "enhance/services/pir-apm/src/monitoring.rs": "7cee21e0537092c389e15ccdc2e1e8c8f123897c56d88e3c0c583639b2b435fb",
+  "enhance/services/pir-apm/src/incidents.rs": "6445d75f3f70889b4b3ae9fbbcaab7c6d5bc0900d9c565fdb1b759ef625617e3",
+  "enhance/services/pir-apm/src/fleet_view.rs": "8d6d67165a381b285f256d56f888afaa07cad39b5d82ba68f80d636cba17cc5f",
+  "enhance/ops/scripts/observe-alerting.py": "28128d89f0f896b8f2b3e092981d00e0546905f6329c751042b331ba6efe03c5"
+}

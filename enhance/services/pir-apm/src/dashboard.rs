@@ -26,6 +26,9 @@ const REFRESH_SECONDS: u64 = 5;
 
 #[derive(Clone, Debug, Default)]
 pub struct EntrypointData {
+    pub alert_window: EndpointWindow,
+    pub alert_sample: Option<SystemTime>,
+    pub outcomes_available: bool,
     pub arrivals_10s: Option<f64>,
     pub stages: BTreeMap<String, LatencyWindow>,
     pub timing_error: bool,
@@ -37,6 +40,8 @@ pub struct EntrypointData {
 
 #[derive(Clone, Debug)]
 pub struct DashboardData {
+    pub monitoring: crate::monitoring::View,
+    pub domain_ready_replicas: BTreeMap<u64, f64>,
     pub status: crate::status_apm::View,
     pub placement: Option<crate::placement::Placement>,
     pub placement_success: Option<SystemTime>,
@@ -80,6 +85,8 @@ impl DashboardData {
         host: HostHealth,
     ) -> Self {
         Self {
+            monitoring: Default::default(),
+            domain_ready_replicas: BTreeMap::new(),
             status: crate::status_apm::View::default(),
             placement: None,
             placement_success: None,

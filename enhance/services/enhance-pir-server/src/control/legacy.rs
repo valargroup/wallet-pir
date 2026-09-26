@@ -66,6 +66,7 @@ mod tests {
                 s.recovery.revoked.insert("revoked-session".into());
                 s.recovery.epoch = 4;
                 s.pending_aborts.push(PendingAbort {
+                    enqueued_at: crate::control::notification_time(),
                     replica: "a".into(),
                     operation: "old".into(),
                     attempt: 1,

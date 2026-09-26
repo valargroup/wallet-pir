@@ -1,0 +1,204 @@
+# PIR alerting and external monitoring
+
+The distributed alert evaluator consumes coordinator, outer-ingress, worker,
+packing-router, placement, and direct Zakura RPC observations. Its state and
+Slack outbox live in SQLite. Collection never waits for notification delivery.
+The independent `pir-monitor` checks public HTTPS and exact decrypted records
+once per minute from a separate region, and monitors APM task progress.
+
+## Sources and semantics
+
+- Init HTTP outcomes and processing latency come from the coordinator. Query
+  outcomes and processing latency come from the configured outer ingress.
+  Router stage latency remains separate and describes successful matched work.
+- HTTP totals are per-source counter deltas, summed before calculating ratios.
+  Histogram buckets are merged before quantiles. Missing bandwidth does not
+  disable error monitoring. Missing counters, failed scrapes, and incompatible
+  histograms are unavailable, not zero.
+- Domain serving health combines published eligible replica counts with ready
+  routers that have an eligible worker for that domain. Worker metrics
+  reachability is a separate monitoring check. Standby workers do not count
+  toward domain redundancy.
+- Publication lag compares the published anchor against a fresh direct Zakura
+  RPC read. This bypasses the publisher observer but shares its node/host;
+  it is not an independent second blockchain node. Tip inactivity is distinct
+  from publisher lag. A published anchor above a regressed tip is not a positive
+  backlog. Lag alerts require both continuous time behind the tip and time since
+  successful advancement (120s warning / 300s critical). An idle chain therefore
+  does not cause an immediate alert when its next block arrives. APM restarts or
+  observation gaps start a new behind-tip grace period.
+- Sustained backlog alerts separately detect a publisher that keeps advancing but
+  cannot keep up: at least 8 blocks for 120s (warning), or 16 blocks for 300s
+  (critical). These are initial operational guardrails to review during shadow
+  observation, not measured service-level objectives.
+- Publication failure alerts require three consecutive failures or blocked state
+  continuously for 120s (warning) / 300s (critical). A single recovered canonical
+  anchor rejection does not page. Publication metrics, blocked state and the
+  last-advancement timestamp must be present and valid; otherwise checks become
+  unknown and coverage alerts report the missing source.
+- Queue timestamps are operational metadata only. Existing persisted decisions
+  without timestamps begin age tracking when first loaded after upgrade.
+- Unknown data cannot recover an incident. Recovery requires two distinct fresh
+  healthy samples. Valid inventory changes retire incidents for removed targets.
+- `/healthz` is HTTP liveness; `/readyz` is monitoring readiness. Public aggregate
+  `/apm/monitor-status` includes collector/evaluator/delivery progress, incident
+  state, direct chain observation, and delivery health, never credentials or
+  request contents. `monitor-pir.valargroup.dev/monitor-status` is the independent
+  checker's aggregate status.
+
+## Configuration
+
+Install `enhance/ops/deploy/pir-apm-observability.conf` as a systemd drop-in,
+retaining the deployed Slack credential wrapper and replacing only its binary
+path. Set `PIR_APM_ORACLE_ANCHOR_HEIGHT` and `PIR_APM_ORACLE_ANCHOR_HASH` from the
+pinned production oracle. The direct RPC loop validates that block hash each
+sample so oracle-invalid and service-answer-mismatch are separate conditions.
+
+`PIR_APM_ALERT_MODE=shadow` evaluates and persists the new rules without sending
+them; existing alerts remain active. `active` disables legacy sending and enables
+the durable outbox. Active mode requires a state path, RPC URL/cookie, and peer
+status URL. Promote both APM and external checker only after the shadow gate.
+An incident already firing in shadow is queued once on promotion.
+
+Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
+
+```json
+{
+  "error_ratio": 0.05,
+  "error_min_requests": 10,
+  "latency_min_samples": 20,
+  "init_latency_seconds": 2,
+  "query_latency_seconds": 5,
+  "latency_hold_seconds": 120,
+  "unavailable_seconds": 30,
+  "redundancy_seconds": 120,
+  "publication_warning_seconds": 120,
+  "publication_critical_seconds": 300,
+  "publication_warning_blocks": 8,
+  "publication_critical_blocks": 16,
+  "publication_failure_hold_seconds": 120
+}
+```
+
+The independent checker requires:
+
+- `PIR_MONITOR_ORIGIN=https://enhance-pir.valargroup.dev`
+- `PIR_MONITOR_APM_STATUS_URL=https://enhance-pir.valargroup.dev/apm/monitor-status`
+- `PIR_MONITOR_ORACLE`: protected JSON file with `anchor_height`, `anchor_hash`,
+  and `records` containing `position` and `record_hex`.
+- `PIR_MONITOR_ORACLE_SHA256`: SHA-256 of the exact file bytes.
+- `PIR_MONITOR_STATE_PATH=/var/lib/pir-monitor/incidents.sqlite`
+- `PIR_MONITOR_ALERT_MODE=shadow` initially; `active` after qualification.
+
+Package the independently extracted **production** oracle with its canonical
+anchor; synthetic test fixtures cannot establish live correctness. Validate its
+anchor with Zakura before deployment. Never update expected bytes using answers
+from the PIR service being tested. If the anchor becomes noncanonical, freeze
+correctness classification and regenerate/review the oracle from canonical
+source records.
+
+Both processes receive the existing production Slack webhook through encrypted
+systemd credentials and `credential-exec.py`/the existing APM wrapper. Do not put
+it in environment files, Terraform variables, logs, or checked-in artifacts.
+The node RPC cookie is loaded as a systemd credential; restart APM after cookie
+rotation so it receives the new value.
+
+## Delivery and response
+
+Transitions and their outbox records commit together. An independent worker uses
+five-second requests and retries transport errors, 429, and 5xx with backoff and
+jitter (five-minute cap); integer Retry-After is honored. Other 4xx responses are
+configuration failures retried every five minutes. Events remain ordered per
+incident, even while unrelated incidents can proceed. Critical reminders occur
+every 30 minutes; warnings have no repeated reminders. Delivery is at least once:
+a timeout after Slack accepted a message may produce a duplicate incident ID.
+
+Investigate by check family:
+
+| Check | First action |
+| --- | --- |
+| `query_5xx`, `init_5xx`, latency | Compare ingress outcomes with router outcomes; inspect admission and upstream service logs. |
+| `publication_*`, `pending_*` | Compare direct node tip and manifest; inspect publication attempts and oldest unacknowledged decision. |
+| `domain_*` | Check published placement and eligible replicas, then router authority and generation-specific worker health. |
+| `coverage_*` | Restore the named scraper/source/inventory before trusting retained values. |
+| `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |
+| `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
+| `*delivery*` | Check credential presence, sanitized last failure, and oldest pending age; preserve the outbox. |
+
+## Deployment and rollback
+
+1. Run APM, checker, telemetry/control/router tests and clippy. Build release
+   binaries on the CI host with `enhance/ops/scripts/build-observability.sh`.
+   It explicitly overrides the repository's developer `target-cpu=native` with
+   the fleet's Haswell baseline. A CLI `--help` check is insufficient: run the
+   isolated native workload on the deployment host before changing ExecStart,
+   and verify glibc compatibility. Never deploy an AMD-native CI build to the
+   Intel fleet.
+2. Add `monitor.tf` to the deployed production Terraform root. Use the existing
+   coordinator wrapper/lock to save a plan with `pir_monitor_enabled=true`.
+   Inspect JSON: exactly four new monitor resources and no unrelated changes.
+   Apply that saved plan and persist the enabled variable in protected production
+   tfvars so a later plan does not attempt removal.
+3. Install the monitor service, Caddy configuration, protected pinned oracle, and
+   scoped credential. Preserve existing binaries and drop-ins. Update additive
+   server telemetry first, then APM and the checker, initially in shadow mode.
+4. Collect 24 hours of shadow evidence: no unexplained incidents or missing
+   sources, one successful canary per minute, bounded resources, and healthy
+   collector/delivery progress. Do not shorten this gate because compilation
+   or spot checks pass.
+5. Promote both services to active. Verify a clearly labeled firing/recovery
+   through the real durable outbox and confirm receipt in the Slack destination.
+   Exercise monitoring-task failures without interrupting serving processes.
+6. Observe 24 additional hours of active alerting and record final acceptance.
+
+For rollback, restore the prior APM ExecStart/drop-ins and restart only APM;
+stop external checker sending or return it to shadow mode. Keep SQLite databases,
+including WAL files, with their owning process stopped or use SQLite backup.
+Retain the monitor infrastructure unless separately approved for deletion.
+Additive server metrics and queue timestamps are backward-compatible and can
+remain deployed. Never delete incident/outbox state to clear an alarm.
+
+## 2026-09-26 rollout handoff
+
+The implementation is deployed in **shadow mode** on the production coordinator
+and the independent NYC monitor. Existing legacy Slack alerting remains enabled
+during this gate. The new evaluator records events durably but does not send
+rule-generated Slack messages until activation. Explicit verification messages
+were delivered through both real outboxes; Roman confirmed receipt of both
+firing/recovery pairs.
+
+A 100-second monitor-process pause produced and recovered the expected
+`external_monitor` critical shadow incident. The pause was automatically reversed
+by a separate systemd timer. Serving processes were not paused for this test.
+A publication-lag warning also fired and recovered during catch-up; review its
+frequency in the full observation window before choosing to activate.
+
+The evidence collector runs as `pir-observability-evidence.service` on
+`wallet-pir-monitor-01`, writing one aggregate sample per minute to
+`/var/lib/pir-monitor/rollout-evidence/` for 72 hours. The checked-in evidence
+manifest records the final deployment time and earliest shadow-gate review.
+Collection is not automatic promotion. Review the full 24-hour window before
+changing `PIR_APM_ALERT_MODE` and `PIR_MONITOR_ALERT_MODE` to `active`, then observe
+another 24 hours. Extend collection if activation is delayed. Preserve the
+SQLite databases across mode changes and restarts.
+
+The initial CI build inherited `target-cpu=native` and failed with SIGILL on the
+Intel coordinator. Serving roles were rolled back, then rebuilt with an explicit
+Haswell baseline. The corrected server passed an isolated native smoke workload
+on the Intel coordinator (4,203 correct answers, zero query errors, six
+publications). This smoke result is not a long-duration workload qualification;
+its report deliberately retains `qualification: unqualified`.
+
+APM/checker tests and clippy passed. The existing native packing-router tests
+using the v7 session fixture remain incompatible with the native v9 format;
+those two failures are not represented as passing validation. See the evidence
+manifest and logs for the exact scope of completed checks.
+
+## Publication incident investigation and restarted observations
+
+The [2026-09-26 investigation](../evidence/observability-fix-2026-09-26/README.md)
+records the issues, corrections, tests, and new observation window. Its deployment
+manifest supersedes the original shadow start time. Earlier evidence remains
+retained; incident/outbox databases are not cleared. The updated observer retains
+publication measurements, chain state, and active incident details so the next
+review can distinguish stalls from sustained backlog and transient retries.

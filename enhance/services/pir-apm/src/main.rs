@@ -7,6 +7,7 @@ mod fleet;
 mod history;
 mod host;
 mod metrics;
+mod monitoring;
 mod packing_fleet;
 mod placement;
 mod schema;
@@ -33,6 +34,9 @@ use tokio::sync::RwLock;
 #[derive(Debug, Parser)]
 #[command(about = "Local PIR metrics dashboard and alerting sidecar")]
 struct Cli {
+    /// Queue labeled firing/recovery through the running service durable worker.
+    #[arg(long)]
+    enqueue_test_alert: bool,
     /// Send a test notification and exit.
     #[arg(long)]
     send_test_alert: bool,
@@ -52,6 +56,18 @@ enum ForcedAlert {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::from_env()?;
+    if cli.enqueue_test_alert {
+        let path = std::env::var("PIR_APM_STATE_PATH").context("PIR_APM_STATE_PATH required")?;
+        let url = std::env::var("PIR_APM_PUBLIC_URL")
+            .unwrap_or_else(|_| "https://enhance-pir.valargroup.dev/apm/".into());
+        pir_apm::incidents::Store::open(std::path::Path::new(&path))?.enqueue_test(
+            pir_apm::incidents::unix_time(),
+            &config.environment,
+            &url,
+        )?;
+        println!("Queued labeled test firing/recovery for durable delivery");
+        return Ok(());
+    }
     let notifier = SlackNotifier::new(&config);
     if cli.send_test_alert {
         notifier.test().await?;
@@ -88,6 +104,7 @@ async fn main() -> Result<()> {
             dashboard.clone(),
         ));
     }
+    monitoring::start(dashboard.clone(), config.clone())?;
     let scrape_dashboard = Arc::clone(&dashboard);
     let scrape_config = config.clone();
     tokio::spawn(async move {
@@ -139,6 +156,24 @@ async fn scrape_loop(
         let mut scrape_error = None;
         let mut metrics_success = false;
 
+        let domain_ready_replicas = metrics_result.as_ref().ok().map(|r| {
+            r.body
+                .lines()
+                .filter_map(|line| {
+                    let sample = metrics::parse_line(line).ok()?;
+                    if sample.name != "enhance_shard_published_ready_replicas"
+                        || !sample.value.is_finite()
+                        || sample.value < 0.0
+                    {
+                        return None;
+                    }
+                    Some((
+                        sample.labels.get("shard")?.parse::<u64>().ok()?,
+                        sample.value,
+                    ))
+                })
+                .collect()
+        });
         let group_metrics = metrics_result.as_ref().ok().map(|r| {
             fleet::groups(
                 &r.body,
@@ -197,6 +232,7 @@ async fn scrape_loop(
                 view.groups = groups;
             }
             if metrics_success {
+                view.domain_ready_replicas = domain_ready_replicas.unwrap_or_default();
                 view.last_scrape = Some(SystemTime::now());
             }
             view.scrape_error = scrape_error;
@@ -208,6 +244,9 @@ async fn scrape_loop(
                     .filter(|r| (200..300).contains(&r.status))
                     .map(|r| r.body.as_str()),
             );
+            view.monitoring
+                .loops
+                .insert("coordinator".into(), pir_apm::incidents::unix_time());
             view.health_status = health_status;
             view.health_body = health_result
                 .as_ref()
@@ -237,7 +276,7 @@ async fn scrape_loop(
             view.active_alerts = alerts.active();
             view.recent_alerts = alerts.recent();
         }
-        for transition in transitions {
+        for transition in transitions.into_iter().filter(|_| !monitoring::enabled()) {
             let result = match transition {
                 AlertTransition::Fired(alert) => notifier.fire(&alert).await,
                 AlertTransition::Recovered(alert) => notifier.recover(&alert).await,
@@ -299,5 +338,9 @@ fn dashboard_router(dashboard: SharedDashboard) -> Router {
             get(dashboard::packing_router_page),
         )
         .route("/healthz", get(dashboard::healthz))
+        .route("/readyz", get(monitoring::readyz))
+        .route("/apm/readyz", get(monitoring::readyz))
+        .route("/monitor-status", get(monitoring::status))
+        .route("/apm/monitor-status", get(monitoring::status))
         .with_state(dashboard)
 }

@@ -286,6 +286,7 @@ impl Coordinator {
                 for ack in &op.readiness {
                     if !s.pending_commits.iter().any(|p| p.replica == ack.replica) {
                         s.pending_commits.push(PendingCommit {
+                            enqueued_at: crate::control::notification_time(),
                             replica: ack.replica.clone(),
                             operation: op.id.clone(),
                             attempt: op.attempt,
