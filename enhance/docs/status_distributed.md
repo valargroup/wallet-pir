@@ -21,8 +21,17 @@ so its serving compatibility must be checked before replacement.
 | --- | --- | --- |
 | Coordinator `127.0.0.1:8480` | Private Status routes and immutable candidate transfer | Coordinator loopback |
 | P4000 `127.0.0.1:8481` | CUDA worker and private control | Loopback; coordinator SSH forward |
-| P4000 `127.0.0.1:8482` | CPU packing router and private control | Loopback; coordinator SSH forward |
+| P4000 `127.0.0.1:8482` | CPU packing router private control, public material, telemetry | Loopback; coordinator SSH forward (`status-control-tunnel`, local 8482) |
+| P4000 `127.0.0.1:8484` | CPU packing router query route only (`/v1/status/query`, `--query-listen`) | Loopback; coordinator SSH forward (`status-query-tunnel`, local 8492) |
 | P4000 `127.0.0.1:8495` | Reverse forward to coordinator artifacts | P4000 loopback |
+
+The router's `--query-listen` splits the forwarded query route from its control
+listener. Both listeners must be loopback; the control listener never carries
+`/v1/status/query`, and the query listener carries nothing else. Without
+`--query-listen` the router serves one merged loopback listener as before. The
+controller's `query_router_origin` (`http://127.0.0.1:8492`) reaches the query
+listener through `status-query-tunnel.service`; `router_origin` keeps the
+control path on 8482.
 
 `status-control-tunnel.service` uses a dedicated forwarding-only account, pinned
 host key, and explicit permitted destinations/listen address. Its service key is

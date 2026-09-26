@@ -70,6 +70,11 @@ enum Command {
         state_dir: PathBuf,
         #[arg(long)]
         listen: SocketAddr,
+        /// Router only: serve `/v1/status/query` on this separate loopback
+        /// listener and keep control, artifact, public, evaluate and telemetry
+        /// on `--listen`. Omitted: one merged listener.
+        #[arg(long)]
+        query_listen: Option<SocketAddr>,
         #[arg(long)]
         artifact_origin: String,
         #[arg(long, default_value = "http://127.0.0.1:8381")]
@@ -992,6 +997,7 @@ async fn main() -> Result<(), AnyError> {
             network_hex,
             state_dir,
             listen,
+            query_listen,
             artifact_origin,
             worker_origin,
             cuda,
@@ -1007,7 +1013,7 @@ async fn main() -> Result<(), AnyError> {
                 worker_origin,
                 cuda,
             )?
-            .serve(listen)
+            .serve(listen, query_listen)
             .await?;
         }
         Command::ObserveLive {
