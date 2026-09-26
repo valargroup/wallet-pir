@@ -2565,9 +2565,28 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "rand 0.8.5",
  "reqwest",
+ "rusqlite",
+ "serde",
  "serde_json",
  "sysinfo",
+ "tokio",
+]
+
+[[package]]
+name = "pir-monitor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "enhance-pir",
+ "hex",
+ "pir-apm",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 

@@ -110,6 +110,13 @@ fn measurements(metrics: &str, health: &str) -> Result<(BTreeMap<String, f64>, b
     let ready = health["ready"]
         .as_bool()
         .ok_or("Packing router readiness unavailable")?;
+    if let Some(domains) = health["domain_eligible_workers"].as_object() {
+        for (domain, count) in domains {
+            if let (Ok(id), Some(count)) = (domain.parse::<u64>(), count.as_u64()) {
+                values.insert(format!("domain_eligible_{id}"), count as f64);
+            }
+        }
+    }
     for key in ["available_requests", "controller_epoch"] {
         if let Some(n) = health[key].as_u64() {
             values.insert(key.into(), n as f64);
@@ -206,6 +213,12 @@ pub async fn monitor(path: PathBuf, dashboard: SharedDashboard) {
             });
         }
         while tasks.join_next().await.is_some() {}
+        dashboard
+            .write()
+            .await
+            .monitoring
+            .loops
+            .insert("routers".into(), pir_apm::incidents::unix_time());
     }
 }
 

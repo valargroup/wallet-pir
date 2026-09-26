@@ -202,6 +202,9 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
                 );
             }
         }
+        view.monitoring
+            .loops
+            .insert("entrypoints".into(), pir_apm::incidents::unix_time());
         view.entrypoints = BTreeMap::from([("init".into(), init), ("query".into(), query)]);
         if emit {
             minute = Instant::now();
@@ -223,6 +226,27 @@ fn summarize(sources: &[&Source], endpoint: &str) -> EntrypointData {
             })
     });
     EntrypointData {
+        alert_window: RollingMetrics::entrypoint(
+            &sources.iter().map(|s| &s.rolling).collect::<Vec<_>>(),
+            endpoint,
+        ),
+        outcomes_available: sources.iter().all(|s| {
+            s.ok && s.rolling.latest().is_some_and(|m| {
+                m.endpoints
+                    .get(endpoint)
+                    .is_some_and(|e| e.requests_available)
+            })
+        }),
+        alert_sample: sources
+            .iter()
+            .all(|s| {
+                s.ok && s.rolling.latest().is_some_and(|m| {
+                    m.endpoints
+                        .get(endpoint)
+                        .is_some_and(|e| e.requests_available)
+                })
+            })
+            .then(SystemTime::now),
         arrivals_10s: if available {
             sources.iter().try_fold(0.0, |sum, s| {
                 s.rolling
@@ -390,5 +414,37 @@ enhance_http_request_processing_duration_seconds_count{{endpoint="{endpoint}"}} 
         coord_task.abort();
         task_a.abort();
         task_b.abort();
+    }
+}
+
+#[cfg(test)]
+mod alert_source_tests {
+    use super::*;
+    #[test]
+    fn actual_ingress_counters_are_aggregated_without_bandwidth_and_missing_is_unknown() {
+        let mut source = Source {
+            url: "test".into(),
+            rolling: RollingMetrics::new(crate::schema::Schema::enhance_default()),
+            success: BTreeMap::new(),
+            ok: true,
+        };
+        let now = Instant::now();
+        for (at, ok, fail) in [
+            (now, 10, 1),
+            (now + std::time::Duration::from_secs(20), 30, 4),
+        ] {
+            let text=format!("enhance_http_requests_total{{endpoint=\"query\",status=\"200\"}} {ok}\nenhance_http_requests_total{{endpoint=\"query\",status=\"503\"}} {fail}\n");
+            source.rolling.push(
+                metrics::parse_prometheus(&crate::schema::Schema::enhance_default(), &text, at)
+                    .unwrap(),
+            );
+        }
+        let result = summarize(&[&source], "query");
+        assert!(result.outcomes_available);
+        assert_eq!(result.alert_window.requests, 23.);
+        assert_eq!(result.alert_window.errors_5xx, 3.);
+        assert!(!summarize(&[&source], "init").outcomes_available);
+        source.ok = false;
+        assert!(!summarize(&[&source], "query").outcomes_available);
     }
 }

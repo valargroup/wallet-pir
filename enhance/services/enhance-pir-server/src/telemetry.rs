@@ -49,8 +49,14 @@ pub(super) struct Publication {
     target: Option<Target>,
     pub last_attempt_seconds: Option<f64>,
     pub last_attempt_succeeded: Option<bool>,
+    pub consecutive_failures: u64,
+    pub last_advancement_unix_seconds: Option<u64>,
+    pub last_successful_target: Option<(u64, String)>,
 }
 impl Publication {
+    pub fn target_identity(&self) -> Option<(u64, String)> {
+        self.target.as_ref().map(|t| (t.height, t.hash.clone()))
+    }
     pub fn observe(&mut self, height: u64, records: u64, hash: &str) {
         if self
             .target
@@ -76,6 +82,35 @@ pub(super) fn coordinator(
     now: u64,
 ) -> String {
     let mut m = Metrics::default();
+    m.number(
+        "enhance_publication_consecutive_failures",
+        publication.consecutive_failures,
+    );
+    if let Some(at) = publication.last_advancement_unix_seconds {
+        m.number("enhance_publication_last_advancement_unix_seconds", at);
+    }
+    for (kind, oldest) in [
+        (
+            "enhance_pending_commit_oldest_seconds",
+            state
+                .pending_commits
+                .iter()
+                .map(|p| p.enqueued_at)
+                .filter(|at| *at > 0)
+                .min(),
+        ),
+        (
+            "enhance_pending_abort_oldest_seconds",
+            state
+                .pending_aborts
+                .iter()
+                .map(|p| p.enqueued_at)
+                .filter(|at| *at > 0)
+                .min(),
+        ),
+    ] {
+        m.number(kind, oldest.map(|at| now.saturating_sub(at)).unwrap_or(0));
+    }
     for (name, value) in [
         ("enhance_retained_generations", state.published.len() as u64),
         ("enhance_publication_blocked", u64::from(blocked)),

@@ -109,7 +109,9 @@ pub(super) fn overview_pane(data: &DashboardData, status: bool) -> String {
         || (!data.packing_routers.is_empty()
             && data.packing_inventory_error.is_none()
             && data.packing_routers.values().all(|r| r.status() == "ready"));
-    let healthy = packing_ok
+    let healthy = (data.monitoring.evaluated_at == 0
+        || !data.monitoring.incidents.iter().any(|i| i.active))
+        && packing_ok
         && redundancy_ok
         && (domain_mode || !data.groups.is_empty())
         && health_ok(data)
@@ -183,6 +185,7 @@ pub(super) fn overview_pane(data: &DashboardData, status: bool) -> String {
         body.push_str(&entrypoint_apm(data));
         body.push_str(&per_worker_latency(data));
     }
+    body.push_str(&monitoring_card(data));
     body.push_str(&format!("<section class=\"topology\"><h2>Deployment topology</h2><a class=\"node-link coord-link\" href=\"/apm/coordinator/\"><strong>Coordinator</strong><span>{}</span><span class=\"{}\">{}</span></a><div class=\"trunk\" style=\"margin:auto\"></div>",escape(&data.hostname),if health_ok(data){"ok"}else{"bad"},if health_ok(data){"Healthy"}else{"Needs attention"}));
     if domain_mode {
         body.push_str(&domain_topology(data));
@@ -374,7 +377,10 @@ fn coordinator(data: &DashboardData) -> String {
     ));
     body.push_str(&host_card(&data.host));
     body.push_str("</div>");
-    body.push_str(&active_alerts_card(&data.active_alerts));
+    body.push_str(&monitoring_card(data));
+    if data.monitoring.evaluated_at == 0 || data.monitoring.shadow {
+        body.push_str(&active_alerts_card(&data.active_alerts));
+    }
     body.push_str(
         "<details id=\"coordinator-secondary\"><summary>Additional coordinator metrics</summary>",
     );
@@ -721,4 +727,65 @@ mod domain_tests {
         assert!(!missing.contains("data-domain="));
         assert!(missing.contains("/packing-routers/shared/"));
     }
+}
+
+fn monitoring_card(data: &DashboardData) -> String {
+    if data.monitoring.evaluated_at == 0 {
+        return String::new();
+    }
+    let m = &data.monitoring;
+    let unknown = m
+        .incidents
+        .iter()
+        .filter(|i| i.condition.as_ref().is_some_and(|c| c.firing.is_none()))
+        .count();
+    let mut body=format!("<p>Mode: {} · {} checks unavailable · Slack: {} · Pending notifications: {} · Oldest: {}s</p>",
+        if m.shadow{"shadow; legacy alerts remain active"}else{"active"},unknown,
+        if m.delivery.configured{"configured"}else{"missing configuration"},m.delivery.pending,m.delivery.oldest_pending_age);
+    if m.storage_error {
+        body.push_str("<p class=\"bad\">Incident storage unavailable</p>");
+    }
+    if let Some(failure) = &m.delivery.failure {
+        body.push_str(&format!("<p class=\"bad\">{}</p>", escape(failure)));
+    }
+    for i in m.incidents.iter().filter(|i| i.active) {
+        if let Some(c) = &i.condition {
+            body.push_str(&format!(
+                "<p class=\"warn\">{} · {}: {} ({})</p>",
+                escape(&c.severity),
+                escape(&c.key),
+                escape(&c.observed),
+                if c.firing.is_none() {
+                    "observation unknown"
+                } else {
+                    "firing"
+                }
+            ));
+        }
+    }
+    for (name, e) in &data.entrypoints {
+        body.push_str(&format!(
+            "<p>{}: {} · five-minute HTTP outcomes: {:.0} completed, {:.0} 5xx ({:.2}%)</p>",
+            escape(name),
+            if e.outcomes_available {
+                "complete"
+            } else {
+                "monitoring unavailable"
+            },
+            e.alert_window.requests,
+            e.alert_window.errors_5xx,
+            e.alert_window.error_ratio * 100.
+        ));
+    }
+    body.push_str(&format!(
+        "<p>Reference chain tip: {} · Published anchor: {} · Chain observation: {}</p>",
+        m.chain.height,
+        value(&data.snapshot_gauges, "enhance_published_anchor_height"),
+        if m.chain.error || m.chain.sampled_at == 0 {
+            "unavailable"
+        } else {
+            "sampled"
+        }
+    ));
+    card("Alert coverage and delivery", body)
 }

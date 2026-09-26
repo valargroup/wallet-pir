@@ -14,7 +14,10 @@ pub struct SlackNotifier {
 impl SlackNotifier {
     pub fn new(config: &Config) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("Slack client"),
             webhook_url: config.slack_webhook_url.clone(),
             environment: config.environment.clone(),
             hostname: config.hostname.clone(),

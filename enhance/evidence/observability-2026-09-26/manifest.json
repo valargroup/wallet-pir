@@ -1,0 +1,92 @@
+{
+  "status": "deployed_shadow_observation_pending",
+  "base_commit": "1dae185",
+  "build_host": "wallet-pir-ci-01",
+  "monitor": {
+    "name": "wallet-pir-monitor-01",
+    "ipv4": "167.71.84.17",
+    "region": "nyc3",
+    "size": "s-2vcpu-4gb",
+    "monthly_compute_usd": 24
+  },
+  "terraform": {
+    "created": 4,
+    "changed": 0,
+    "destroyed": 0,
+    "post_apply_plan": "no changes"
+  },
+  "oracle": {
+    "sha256": "917bdd286fbdd41c9015c7b16f27dd8ce5b7b925fdd1c293d6939a83657a24bf",
+    "anchor_height": 3494753,
+    "anchor_hash": "00000000002d515daf3dc7f8f6b3d6e9471800ac8cfa435bccf93c0bdda53338",
+    "records": 28
+  },
+  "rejected_build": {
+    "binaries": {
+      "enhance-pir-server": "1b76ad4d88ab9310f39f94b4d423c6cd1d33aa40a81d1a0ffc37911035447078",
+      "pir-apm": "04f206976d20c2cb6ad571706b28c8ae19becf154734738bc89f66f42b2049eb",
+      "pir-monitor": "4314922437dfe32ce7e6c3d480c7655ff474b6019a544f66afa6cedcef1716ec"
+    },
+    "reason": "repository target-cpu=native inherited AMD CI CPU features; coordinator SIGILL; both serving roles rolled back",
+    "failed_coordinator_launches": 12,
+    "first_failure_utc": "2026-09-26T11:59:27.876208+00:00",
+    "last_failure_utc": "2026-09-26T12:00:42.477657+00:00",
+    "rollback_verified_ready_http": 200
+  },
+  "build_flags": {
+    "RUSTFLAGS": "-C target-cpu=haswell",
+    "CFLAGS": "-march=haswell",
+    "CXXFLAGS": "-march=haswell"
+  },
+  "initial_source_bundle_sha256": "03f738a874398b8bf63110cf344636611424f2a7bfa147457a1f09e1adb94b5f",
+  "source_provenance": "Runtime Rust/Cargo source matches CI. Local-only differences are an added migration unit test in control.rs and a scrape-gap unit-test interval in entrypoints.rs. Initial bundle predates final fixes; source-files.json hashes final local changes.",
+  "binaries": {
+    "enhance-pir-server": "2272d1d1f3bb9cbe12acd753a9ec003a633acd1608b0c623c6d1627644eb789b",
+    "pir-apm": "6f272c017228b8b16bd63843e4aa5cc8c4058adb7848549972def75cf2e50e21",
+    "pir-monitor": "42e7c3b8065632f273465ed007a179f095b3ed1461aaf6f4d437e030ce5defcc"
+  },
+  "slack_verification": {
+    "apm_firing_and_recovery": "HTTP accepted; queue drained",
+    "external_monitor_firing_and_recovery": "HTTP accepted; queue drained",
+    "destination_receipt": "Roman confirmed both pairs in conversation"
+  },
+  "monitor_pause_test": {
+    "pause_seconds": 100,
+    "shadow_fired_epoch": 1790425345,
+    "shadow_recovered_epoch": 1790425380,
+    "automatic_resume": true,
+    "followup": "Final APM additionally requires distinct successful peer observations before recovery."
+  },
+  "preflight": {
+    "type": "isolated native smoke on Intel coordinator",
+    "correct_answers": 4203,
+    "errors": 0,
+    "publications": 6,
+    "qualification": "smoke only; not long-duration workload qualification"
+  },
+  "tests": {
+    "apm_and_monitor_passed": 88,
+    "clippy": "passed all targets for APM, monitor, server with native features",
+    "native_telemetry_passed": 3,
+    "native_control_passed": 12,
+    "migration_passed": 1,
+    "legacy_router_passed": 4,
+    "canonical_record_integration": "passed",
+    "python_observation_passed": 8,
+    "known_failures": "2 existing native packing-router tests use incompatible v7 fixture with v9 runtime"
+  },
+  "gates": {
+    "shadow_started_utc": "2026-09-26T12:26:56.120008+00:00",
+    "earliest_shadow_review_utc": "2026-09-27T12:26:56.120008+00:00",
+    "active_observation_hours_required": 24,
+    "activation": "pending full shadow review; no automatic promotion",
+    "evidence_service": "pir-observability-evidence.service on wallet-pir-monitor-01",
+    "evidence_path": "/var/lib/pir-monitor/rollout-evidence/",
+    "collection_hours": 72
+  },
+  "shadow_findings": [
+    "Startup webhook false alarm fixed before final deployment",
+    "Publication lag warning fired while anchor behind chain and recovered; review frequency before activation",
+    "Intentional monitor pause produced and recovered expected critical incident"
+  ]
+}

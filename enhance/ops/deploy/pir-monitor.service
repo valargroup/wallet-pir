@@ -1,0 +1,26 @@
+[Unit]
+Description=Independent public PIR correctness and monitoring checker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pir-monitor
+Group=pir-monitor
+EnvironmentFile=/etc/pir-monitor/monitor.env
+Environment=PIR_MONITOR_STATE_PATH=/var/lib/pir-monitor/incidents.sqlite
+Environment=PIR_MONITOR_LISTEN=127.0.0.1:3003
+Environment=PIR_MONITOR_ALERT_MODE=shadow
+# Configure LoadCredentialEncrypted=slack-webhook:<path> in the host drop-in.
+ExecStart=/usr/bin/python3 /opt/pir-monitor/credential-exec.py /opt/pir-monitor/current/pir-monitor
+StateDirectory=pir-monitor
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 description = "Local APM dashboard and alerting sidecar for a PIR server"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rand = "0.8"
 anyhow = "1"
 axum = "0.7"
 chrono = "0.4"
