@@ -1,0 +1,16 @@
+{
+  "format": "native-certificate-two-mask-rounded-v1",
+  "setup_id": "5f39e115383c419c3c3f2f39491ac6500184ea74ca52d0892f193040ca933885",
+  "database_sha256": "rows_sha256:2bc18c70819a187f74f762f212fc10b5e74c3caaf0096b52bf2d58bd46131275",
+  "sampler_sha256": "bc68011d7224eb5dcb649a206c70697d4e6bce32af77966f4ebd60c0683cac2e",
+  "actual_profile": {
+    "key_bytes": 27648,
+    "certified_failure_bits": 262,
+    "meets_78": true,
+    "meets_128": true,
+    "max_deterministic_error": "11009916928",
+    "published_mask_bits": 29,
+    "published_bytes": 44580,
+    "no_extra_download": true
+  }
+}

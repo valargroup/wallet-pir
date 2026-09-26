@@ -1,0 +1,16 @@
+{
+  "run_id": "native-certificate-2026-09-26",
+  "utc": "2026-09-26T04:05:00Z",
+  "tool": "enhance-pir-server example native_certificate (feat/native-certificate)",
+  "checker": "ipir-sp v0.1.0-rc.6 reinspiring/tools/security/certify_native.py (default --require-bits 128)",
+  "deployed_source": "wallet-pir dc0355b7c631f79f0383783521f76adcf0cb805b, ipir-sp v0.1.0-rc.6 (1f2aec6)",
+  "profile": "native two-mask, d=2048 q=2^54 p=2^16, ell=2 z=2^19 Gaussian, 29-bit rounded public masks, 49-bit query, 22-bit response",
+  "enhance": {"protocol": "ironwood-enhance-pir-v9-native-two-mask-m29", "generation": 15, "shard": 0, "rows": 32768, "cols": 12288, "session_public_sha256": "e71e2a143b0c18df885f98cb9551c146f8a360feb17f250a19a530058951f0a1", "query_bound": "worst case for any u16 database"},
+  "status": {"protocol": "status-pir-v3-native-two-mask-m29", "generation": 203, "anchor_height": 3496462, "entries": 317, "rows": 8192, "cols": 6144, "query_bound": ["actual database", "worst case for any u16 database"]},
+  "host": "Apple silicon laptop (export); inputs copied from coordinator 167.99.42.60",
+  "commands": [
+    "native_certificate enhance --hint enhance-hint.bin --public enhance-public.bin --rows 32768 > enhance-noise.json",
+    "native_certificate status --rows-bin status-rows.bin --public-sha256 <manifest public_digest> --network-hex <network> --salt-hex <salt> [--worst-case-query true] > status-noise[-worst].json",
+    "python3 certify_native.py <report> > <certificate>"
+  ]
+}

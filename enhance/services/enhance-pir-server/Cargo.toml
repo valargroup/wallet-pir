@@ -61,3 +61,7 @@ zcash_note_encryption = "=0.4.2"
 [[example]]
 name = "cuda_domain"
 required-features = ["cuda"]
+
+[[example]]
+name = "native_certificate"
+required-features = ["native-reinspiring"]
