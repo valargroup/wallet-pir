@@ -45,8 +45,8 @@ def main():
             manifest += f'{name} = {{ path = {json.dumps(str(path))} }}\n'
         for name, subdir, features in [
             ('zakura-pir-enhance', 'zakura/pir-enhance', ['wallet']),
-            ('zakura-client-backend', 'librustzcash/zcash_client_backend', ['zakura-pir-enhance', 'test-dependencies']),
-            ('zakura-client-sqlite', 'librustzcash/zcash_client_sqlite', ['zakura-pir-enhance', 'test-dependencies']),
+            ('zakura-client-backend', 'librustzcash/zcash_client_backend', ['orchard', 'test-dependencies']),
+            ('zakura-client-sqlite', 'librustzcash/zcash_client_sqlite', ['orchard', 'test-dependencies']),
         ]:
             manifest += f'{name} = {{ path = {json.dumps(str(wallet / subdir))}, features = {json.dumps(features)} }}\n'
         manifest += '''zakura-primitives = "=1.2.0"
