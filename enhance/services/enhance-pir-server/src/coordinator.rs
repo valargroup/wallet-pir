@@ -925,10 +925,9 @@ async fn query_body(request: Request) -> QueryResult<axum::body::Bytes> {
     .map_err(|e| QueryError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))
 }
 
-async fn reject_query(c: &Coordinator, request: Request) -> QueryResult<Response> {
-    // Finish reading the bounded body before responding; otherwise the public
-    // reverse proxy can be left writing to a closed upstream connection.
-    let _ = query_body(request).await?;
+/// Callers have already read the bounded body, so the public reverse proxy is
+/// never left writing to a closed upstream connection.
+fn reject_query(c: &Coordinator) -> QueryResult<Response> {
     c.query_stats.rejected.fetch_add(1, Ordering::Relaxed);
     Err(QueryError(
         StatusCode::TOO_MANY_REQUESTS,
@@ -1027,9 +1026,11 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
             "query serving moved to packing router".into(),
         ));
     }
+    // Read the bounded body before any wait or admission permit is charged.
+    let body = query_body(request).await?;
     let waiting = match c.query_waiters.clone().try_acquire_owned() {
         Ok(permit) => permit,
-        Err(_) => return reject_query(&c, request).await,
+        Err(_) => return reject_query(&c),
     };
     let started_wait = std::time::Instant::now();
     let acquired =
@@ -1041,9 +1042,8 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
     drop(waiting);
     let permit = match acquired {
         Ok(Ok(permit)) => permit,
-        _ => return reject_query(&c, request).await,
+        _ => return reject_query(&c),
     };
-    let body = query_body(request).await?;
     let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let generation_pin = c.snapshots.clone().read_owned().await;
     if c.store

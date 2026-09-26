@@ -857,6 +857,16 @@ async fn query(State(r): State<PackingRouter>, request: Request) -> Response {
     }
 }
 async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
+    // Read the bounded body before any queue or admission permit is charged.
+    let body_started = Instant::now();
+    let bytes = tokio::time::timeout(
+        Duration::from_secs(30),
+        to_bytes(request.into_body(), BODY_LIMIT),
+    )
+    .await
+    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
+    .map_err(|e| (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
+    let body_read = body_started.elapsed();
     let waiting = r
         .waiters
         .clone()
@@ -867,15 +877,6 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
         .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "admission deadline".into()))?
         .map_err(unavailable)?;
     drop(waiting);
-    let body_started = Instant::now();
-    let bytes = tokio::time::timeout(
-        Duration::from_secs(30),
-        to_bytes(request.into_body(), BODY_LIMIT),
-    )
-    .await
-    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
-    .map_err(|e| (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
-    let body_read = body_started.elapsed();
     let binding = QueryBinding::decode(&bytes).map_err(bad)?;
     let session = hex::encode(binding.session_id);
     let (routes, preferred, epoch, pack) = {
