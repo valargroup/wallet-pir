@@ -16,6 +16,7 @@ pub struct HistogramCumulative {
 
 #[derive(Clone, Debug, Default)]
 pub struct EndpointCumulative {
+    pub requests_available: bool,
     pub arrivals: Option<f64>,
     pub arrivals_last_10s: Option<f64>,
     pub upload_bytes: Option<f64>,
@@ -285,6 +286,45 @@ impl RollingMetrics {
             }
             samples += count;
         }
+        // Outcomes use the same per-source window; never average source ratios.
+        for source in sources {
+            let Some(newest) = source.latest() else {
+                continue;
+            };
+            let start = source
+                .snapshots
+                .iter()
+                .position(|s| newest.at.duration_since(s.at).as_secs() <= seconds)
+                .unwrap_or(source.snapshots.len() - 1);
+            for index in start + 1..source.snapshots.len() {
+                let (before, after) = (&source.snapshots[index - 1], &source.snapshots[index]);
+                // Cumulative counters retain outcomes across a missed scrape;
+                // process-generation checks below handle a restart separately.
+                let (Some(a), Some(b)) = (
+                    before.endpoints.get(endpoint),
+                    after.endpoints.get(endpoint),
+                ) else {
+                    continue;
+                };
+                if !a.requests_available || !b.requests_available {
+                    continue;
+                }
+                let reset = process_generation_changed(before, after);
+                result.requests += counter_delta(b.requests, a.requests, reset);
+                result.errors_5xx += counter_delta(b.errors_5xx, a.errors_5xx, reset);
+            }
+        }
+        result.error_ratio = if result.requests > 0. {
+            result.errors_5xx / result.requests
+        } else {
+            0.
+        };
+        result.processing_available = !sources.is_empty()
+            && sources.iter().all(|s| {
+                s.latest()
+                    .and_then(|m| m.endpoints.get(endpoint))
+                    .is_some_and(|e| !e.processing.buckets.is_empty())
+            });
         result.processing = LatencyWindow {
             samples,
             p50: histogram_quantile(0.50, &buckets, samples),
@@ -682,6 +722,7 @@ pub fn parse_prometheus(
             });
         } else if name == schema.requests_total {
             if let Some(values) = endpoint_entry(&mut endpoints, &sample) {
+                values.requests_available = true;
                 values.requests += sample.value;
                 if sample
                     .labels
@@ -791,6 +832,7 @@ pub fn parse_prometheus(
                     "enhance_packing_preparation",
                     "enhance_last_publication_",
                     "enhance_registered_groups",
+                    "enhance_pending_",
                 ]
                 .iter()
                 .any(|prefix| name.starts_with(prefix)))

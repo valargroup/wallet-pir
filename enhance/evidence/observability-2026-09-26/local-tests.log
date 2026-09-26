@@ -1,0 +1,114 @@
+   Compiling pir-monitor v0.1.0 (/Users/roman/projects/wallet-pir/enhance/tools/monitor)
+   Compiling pir-apm v0.1.0 (/Users/roman/projects/wallet-pir/enhance/services/pir-apm)
+    Finished `test` profile [optimized + debuginfo] target(s) in 2.67s
+     Running unittests src/lib.rs (target/debug/deps/pir_apm-8582b1e0c376cf5f)
+
+running 4 tests
+test incidents::delivery_tests::promotion_enqueues_existing_shadow_incident_once_and_retirement_is_explicit ... ok
+test incidents::tests::unknown_cannot_recover_and_recovery_needs_distinct_samples ... ok
+test incidents::tests::restart_preserves_outbox_and_does_not_refire ... ok
+test incidents::delivery_tests::failed_delivery_retries_while_evaluation_and_recovery_continue ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.01s
+
+     Running unittests src/main.rs (target/debug/deps/pir_apm-642eb0bc7227be9e)
+
+running 83 tests
+test alerts::tests::loss_of_shard_group_redundancy_pages_without_failing_readiness ... ok
+test alerts::tests::applies_minimum_volume_to_thresholds ... ok
+test alerts::tests::budgets_come_from_the_schema ... ok
+test alerts::tests::missing_processing_metrics_do_not_fall_back_to_observed_latency ... ok
+test alerts::tests::fires_once_per_episode_and_recovers_once ... ok
+test alerts::tests::observed_total_is_informational_but_post_body_latency_pages ... ok
+test alerts::tests::discovered_and_informational_endpoints_follow_their_rules ... ok
+test alerts::tests::ready_requires_five_continuous_minutes ... ok
+test alerts::tests::capacity_counts_groups_not_replicas_and_recovers_after_append ... ok
+test config::tests::defaults_describe_the_enhance_coordinator ... ok
+test config::tests::env_overrides_the_schema ... ok
+test config::tests::production_env_block_parses ... ok
+test charts::tests::missing_samples_break_paths_and_query_has_toggle ... ok
+test charts::tests::hover_readout_converts_seconds_and_distinguishes_percentiles ... ok
+test config::tests::rejects_bad_values ... ok
+test dashboard::entrypoint_table_tests::table_only_shows_init_query_and_suppresses_stale_numbers ... ok
+test dashboard::tests::current_coordinator_shows_live_metrics_without_legacy_endpoint_claims ... ok
+test dashboard::tests::a_count_that_displays_as_zero_is_not_flagged_as_an_error ... ok
+test dashboard::tests::discovered_endpoints_appear_after_configured_ones ... ok
+test dashboard::tests::every_allowlisted_endpoint_gets_a_row_even_without_data ... ok
+test dashboard::tests::first_paint_before_any_scrape_is_renderable ... ok
+test dashboard::tests::gauge_names_become_readable_labels ... ok
+test dashboard::tests::latency_budgets_follow_endpoint_kind ... ok
+test dashboard::tests::latency_is_graded_against_the_alert_budget ... ok
+test dashboard::tests::hostile_values_are_escaped ... ok
+test dashboard::fleet_view::tests::detail_navigation_and_unknown_worker ... ok
+test dashboard::tests::meters_stay_within_the_track ... ok
+test dashboard::fleet_view::domain_tests::each_domain_contains_only_its_assigned_routers_and_workers ... ok
+test dashboard::tests::long_health_bodies_and_paths_are_allowed_to_wrap ... ok
+test dashboard::tests::fleet_card_draws_each_worker_with_its_health ... ok
+test dashboard::tests::relative_time_reads_naturally ... ok
+test dashboard::tests::explainer_lists_every_table_and_hides_without_them ... ok
+test dashboard::tests::renders_a_complete_document ... ok
+test dashboard::tests::processing_split_explains_nested_timing_scopes ... ok
+test dashboard::tests::table_capacity_meter_uses_pool_and_layout ... ok
+test dashboard::tests::the_raw_gauge_name_survives_as_a_tooltip ... ok
+test dashboard::tests::status_tab_keeps_one_shared_topology ... ok
+test dashboard::tests::tables_render_in_fixed_order_with_planned_ones_dimmed ... ok
+test entrypoints::tests::missing_instrumentation_and_failed_sources_are_unavailable ... ok
+test entrypoints::alert_source_tests::actual_ingress_counters_are_aggregated_without_bandwidth_and_missing_is_unknown ... ok
+test dashboard::tests::workers_are_ordered_by_index_and_list_per_table_shares ... ok
+test dashboard::tests::worker_ram_line_renders_when_memory_gauges_exist ... ok
+test fleet::tests::groups_preserve_labels_and_published_counts ... ok
+test dashboard::tests::worker_query_cards_are_stacked_in_inventory_order ... ok
+test fleet::tests::inventory_rejects_duplicates_and_embedded_credentials ... ok
+test fleet::tests::stale_values_remain_distinct_from_reachability ... ok
+test fleet::tests::unavailable_memory_is_not_zero_or_previous_sample ... ok
+test fleet::tests::worker_evaluation_histogram_keeps_individual_percentiles ... ok
+test history::tests::retains_only_last_hour_and_bounds_dense_samples ... ok
+test metrics::entrypoint_tests::aggregate_histograms_before_quantiles_and_reset_each_source ... ok
+test metrics::tests::a_different_prefix_and_endpoint_set_parses ... ok
+test metrics::entrypoint_tests::rates_use_latest_interval_and_missing_is_not_zero ... ok
+test metrics::tests::computes_histogram_deltas_and_interpolated_quantiles ... ok
+test metrics::tests::computes_independent_worker_query_windows ... ok
+test metrics::tests::current_coordinator_aggregates_are_kept_without_flattening_groups ... ok
+test metrics::tests::discovered_endpoints_get_windows_after_configured_ones ... ok
+test metrics::tests::endpoint_discovery_is_capped_and_validated ... ok
+test metrics::tests::histogram_reset_uses_only_the_new_process_distribution ... ok
+test metrics::tests::handles_counter_reset_and_caps_history ... ok
+test metrics::tests::keeps_observed_and_processing_latency_separate ... ok
+test metrics::tests::missing_processing_family_leaves_processing_unavailable ... ok
+test metrics::tests::parses_escaped_label_values ... ok
+test metrics::tests::process_start_time_detects_restart_when_counts_increase ... ok
+test metrics::tests::worker_query_windows_reset_with_the_coordinator_process ... ok
+test metrics::tests::parses_required_prometheus_families_and_labels ... ok
+test monitoring::tests::ingress_failures_alert_without_coordinator_query_or_bandwidth ... ok
+test packing_fleet::tests::readiness_is_distinct_from_reachability_and_stale_values ... ok
+test packing_fleet::tests::inventory_accepts_coordinator_format_and_rejects_unsafe_names_and_origins ... ok
+test monitoring::tests::stale_replica_counts_never_recover_unavailability ... ok
+test monitoring::tests::publication_uses_independent_tip_and_stale_rpc_is_unknown ... ok
+test placement::tests::failed_health_keeps_assignments_without_refreshing_timestamp ... ok
+test placement::tests::parses_numeric_domains_and_rejects_ambiguous_membership ... ok
+test schema::tests::builds_family_names_from_the_prefix ... ok
+test schema::tests::rejects_inconsistent_definitions ... ok
+test status_apm::tests::first_operation_after_idle_has_latency_and_rate ... ok
+test status_apm::tests::overflow_latency_is_not_reported_as_ten_seconds ... ok
+test status_apm::tests::topology_uses_a_service_name_and_placement_description ... ok
+test status_apm::tests::live_roles_preserve_latency_boundaries_and_readiness ... ok
+test status_apm::tests::outage_preserves_sample_and_marks_it_stale ... ok
+test metrics::entrypoint_tests::hour_retention_arrivals_and_stage_histograms ... ok
+test entrypoints::tests::separate_ingress_replaces_coordinator_query_and_failed_source_hides_aggregate ... ok
+test fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples ... ok
+test packing_fleet::tests::discovery_pages_and_failed_scrapes_preserve_last_valid_sample ... ok
+
+test result: ok. 83 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.06s
+
+     Running unittests src/main.rs (target/debug/deps/pir_monitor-ce4001109d39e8a1)
+
+running 1 test
+test tests::oracle_is_pinned_and_rejects_duplicate_positions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pir_apm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

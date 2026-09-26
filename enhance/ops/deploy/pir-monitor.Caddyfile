@@ -1,0 +1,9 @@
+monitor-pir.valargroup.dev {
+    handle /monitor-status {
+        header Cache-Control "no-store"
+        reverse_proxy 127.0.0.1:3003
+    }
+    handle {
+        respond 404
+    }
+}

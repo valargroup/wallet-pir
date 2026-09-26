@@ -87,6 +87,16 @@ impl Coordinator {
         let mut telemetry = self.telemetry.lock().unwrap();
         telemetry.last_attempt_seconds = Some(began.elapsed().as_secs_f64());
         telemetry.last_attempt_succeeded = Some(result.is_ok());
+        if result.is_ok() {
+            telemetry.consecutive_failures = 0;
+            let target = telemetry.target_identity();
+            if target != telemetry.last_successful_target {
+                telemetry.last_advancement_unix_seconds = Some(crate::control::notification_time());
+                telemetry.last_successful_target = target;
+            }
+        } else {
+            telemetry.consecutive_failures = telemetry.consecutive_failures.saturating_add(1);
+        }
         result
     }
 

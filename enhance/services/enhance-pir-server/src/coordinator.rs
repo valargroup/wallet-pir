@@ -1911,6 +1911,7 @@ mod admission_tests {
             .unwrap()
             .update(|state| {
                 state.pending_aborts.push(control::PendingAbort {
+                    enqueued_at: crate::control::notification_time(),
                     replica: groups[1].replicas[1].name.clone(),
                     operation: "pending".into(),
                     attempt: 1,
@@ -1970,6 +1971,7 @@ mod admission_tests {
             .unwrap()
             .update(|state| {
                 state.pending_aborts.push(control::PendingAbort {
+                    enqueued_at: crate::control::notification_time(),
                     replica: groups[0].replicas[0].name.clone(),
                     operation: "pending".into(),
                     attempt: 2,

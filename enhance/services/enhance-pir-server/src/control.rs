@@ -208,6 +208,8 @@ pub struct Operation {
 /// until acknowledged that worker cannot accept another candidate or retention set.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingCommit {
+    #[serde(default = "notification_time")]
+    pub enqueued_at: u64,
     pub replica: String,
     pub operation: String,
     pub attempt: u64,
@@ -219,6 +221,8 @@ pub struct PendingCommit {
 /// the abort. The worker is excluded from new candidates and retention updates.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingAbort {
+    #[serde(default = "notification_time")]
+    pub enqueued_at: u64,
     pub replica: String,
     pub operation: String,
     pub attempt: u64,
@@ -306,6 +310,7 @@ impl State {
             // Preserve that decision rather than issuing a conflicting abort.
             if !pending.contains(&replica.name) && !committed.contains(&replica.name) {
                 self.pending_aborts.push(PendingAbort {
+                    enqueued_at: crate::control::notification_time(),
                     replica: replica.name.clone(),
                     operation: op.id.clone(),
                     attempt: op.attempt,
@@ -583,6 +588,7 @@ impl Store {
                     return Err("worker has an unacknowledged decision".into());
                 }
                 s.pending_commits.push(PendingCommit {
+                    enqueued_at: crate::control::notification_time(),
                     replica: ack.replica.clone(),
                     operation: op.id.clone(),
                     attempt: op.attempt,
@@ -716,8 +722,31 @@ impl GrowthForecast {
     }
 }
 
+/// Timestamp only for operational queue age; never used for serving decisions.
+pub fn notification_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_notification_gets_an_operational_timestamp_without_changing_identity() {
+        let before = notification_time();
+        let pending: PendingAbort =
+            serde_json::from_str(r#"{"replica":"w","operation":"op","attempt":7}"#).unwrap();
+        assert!(pending.enqueued_at >= before && pending.enqueued_at <= notification_time());
+        assert_eq!(
+            (&pending.replica, &pending.operation, pending.attempt),
+            (&"w".to_string(), &"op".to_string(), 7)
+        );
+        let encoded = serde_json::to_string(&pending).unwrap();
+        let restored: PendingAbort = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(restored, pending);
+    }
+
     use super::*;
     trait ConfirmedFixture {
         fn confirmed(&mut self, records: u64, geometry: Geometry) -> Result<Coverage, String>;
@@ -949,6 +978,7 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let mut store = Store::open(directory.path()).unwrap();
             let older = PendingAbort {
+                enqueued_at: crate::control::notification_time(),
                 replica: "a".into(),
                 operation: "older".into(),
                 attempt: 0,
@@ -1003,6 +1033,7 @@ mod tests {
             let expected = vec![
                 older,
                 PendingAbort {
+                    enqueued_at: store.state().pending_aborts[1].enqueued_at,
                     replica: "b".into(),
                     operation: "current".into(),
                     attempt: 0,
@@ -1227,6 +1258,7 @@ mod tests {
             .update(|s| {
                 s.pending_commits.clear();
                 s.pending_aborts.push(PendingAbort {
+                    enqueued_at: crate::control::notification_time(),
                     replica: "a".into(),
                     operation: "earlier".into(),
                     attempt: 0,
@@ -1255,6 +1287,7 @@ mod tests {
         assert_eq!(
             store.state().pending_aborts,
             vec![PendingAbort {
+                enqueued_at: store.state().pending_aborts[0].enqueued_at,
                 replica: "b".into(),
                 operation: "next".into(),
                 attempt: 0
