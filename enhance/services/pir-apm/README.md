@@ -73,9 +73,10 @@ The Status service exports aggregate JSON at `/internal/status-apm` and
 Prometheus metrics at `/internal/metrics` on a separate loopback listener.
 Set `PIR_APM_STATUS_URL` to the APM host's private forwarding endpoint, for
 example `http://127.0.0.1:8384/internal/status-apm`, and optionally set
-`PIR_APM_STATUS_HOST`. APM scrapes it every five seconds with a four-second
-timeout. A Status scrape failure leaves Enhance monitoring independent and
-marks retained Status values stale. No txid or request ID is exported.
+`PIR_APM_STATUS_TOPOLOGY` to a human-readable placement description. APM
+scrapes it every five seconds with a four-second timeout. A Status scrape
+failure leaves Enhance monitoring independent and marks retained Status values
+stale. No txid or request ID is exported.
 Status Query counts at its coordinator ingress. Router processing spans request
 decode, worker RPC, and final packing; Worker evaluation measures matrix-vector
 work; Router packing measures the final packing operation. Stage percentiles

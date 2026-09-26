@@ -1568,7 +1568,7 @@ mod tests {
         let mut data = fleet_sample();
         data.fleet_enabled = true;
         data.status.configured = true;
-        data.status.host = "status-host".into();
+        data.status.topology = "Enhance host → P4000 router + worker".into();
         data.status.sample =
             Some(serde_json::json!({"operations":{},"generation":1,"observed_ms":0}));
         let enhance = render_pane(&data, false);

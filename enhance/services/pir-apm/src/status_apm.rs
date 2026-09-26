@@ -9,7 +9,7 @@ use std::{
 #[derive(Clone, Default, Debug)]
 pub struct View {
     pub configured: bool,
-    pub host: String,
+    pub topology: String,
     pub sample: Option<Value>,
     pub success: Option<SystemTime>,
     pub error: Option<String>,
@@ -274,7 +274,7 @@ pub async fn monitor(
     url: String,
     router_url: Option<String>,
     worker_url: Option<String>,
-    host: String,
+    topology: String,
     dashboard: SharedDashboard,
 ) {
     let client = reqwest::Client::builder()
@@ -285,7 +285,7 @@ pub async fn monitor(
     {
         let mut view = dashboard.write().await;
         view.status.configured = true;
-        view.status.host = host;
+        view.status.topology = topology;
         view.status.error = Some("waiting for first Status sample".into());
     }
     let mut ticker = tokio::time::interval(Duration::from_secs(5));
@@ -376,7 +376,7 @@ pub fn pane(view: &View) -> String {
     } else {
         "Unavailable or stale"
     };
-    let mut html = format!("<section class=\"card\"><h2 class=\"section-title\">Status APM</h2><p class=\"intro\">Live Status roles · {} · {}. Separate coordinator, router and worker processes. Public Status remains disabled pending qualification.</p>",esc(&view.host),source);
+    let mut html = format!("<section class=\"card\"><h2 class=\"section-title\">Status APM</h2><p class=\"intro\">Live Status roles · {}. {}. Separate coordinator, router and worker processes. Public Status remains disabled pending qualification.</p>",source,esc(&view.topology));
     if let Some(error) = &view.error {
         html.push_str(&format!(
             "<p class=\"notice\">{}; showing the last successful sample.</p>",
@@ -477,7 +477,7 @@ pub fn topology(view: &View) -> String {
     if !view.configured {
         return String::new();
     }
-    format!("<div class=\"trunk\" style=\"margin:auto;border-style:dashed\"></div><p class=\"summary\">Live authenticated coordinator connection</p><a class=\"node-link coord-link\" href=\"/apm/status/\"><strong>{}</strong><span>Coordinator on Enhance host → separate router and worker processes on P4000</span><span class=\"{}\">{}</span></a>",esc(&view.host),if view.fresh(){"ok"}else{"bad"},if view.fresh(){"Status monitoring reachable"}else{"Status monitoring unavailable"})
+    format!("<div class=\"trunk\" style=\"margin:auto;border-style:dashed\"></div><p class=\"summary\">Live authenticated coordinator connection</p><a class=\"node-link coord-link\" href=\"/apm/status/\"><strong>Status PIR</strong><span>{}</span><span class=\"{}\">{}</span></a>",esc(&view.topology),if view.fresh(){"ok"}else{"bad"},if view.fresh(){"Status monitoring reachable"}else{"Status monitoring unavailable"})
 }
 
 #[cfg(test)]
@@ -503,11 +503,13 @@ mod tests {
         assert!(merged["operations"]["query"]["failures"].is_null());
         let view = View {
             configured: true,
+            topology: "Enhance host → P4000 router + worker".into(),
             sample: Some(merged),
             success: Some(SystemTime::now()),
             ..Default::default()
         };
         let html = pane(&view);
+        assert!(html.contains("Enhance host → P4000 router + worker"));
         assert!(html.contains("not end-to-end client p99"));
         assert!(html.contains("twenty-second freshness gate"));
         assert!(!html.contains("Synthetic"));
@@ -535,6 +537,19 @@ mod tests {
         assert!(interval_quantiles(&empty, &full, "query").unwrap()[2].is_infinite());
     }
     #[test]
+    fn topology_uses_a_service_name_and_placement_description() {
+        let view = View {
+            configured: true,
+            topology: "Enhance host → P4000 router + worker".into(),
+            success: Some(SystemTime::now()),
+            ..Default::default()
+        };
+        let html = topology(&view);
+        assert!(html.contains("<strong>Status PIR</strong>"));
+        assert!(html.contains("Enhance host → P4000 router + worker"));
+        assert!(!html.contains("enhance-coordinator-and-p4000"));
+    }
+    #[test]
     fn first_operation_after_idle_has_latency_and_rate() {
         let now = SystemTime::now();
         let mut view = View::default();
@@ -550,7 +565,7 @@ mod tests {
     fn outage_preserves_sample_and_marks_it_stale() {
         let mut view = View {
             configured: true,
-            host: "status-host".into(),
+            topology: "Enhance host → P4000 router + worker".into(),
             sample: Some(serde_json::json!({"operations":{},"generation":1,"observed_ms":0})),
             success: Some(SystemTime::now()),
             ..Default::default()

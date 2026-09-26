@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
             url,
             config.status_router_url.clone(),
             config.status_worker_url.clone(),
-            config.status_host.clone(),
+            config.status_topology.clone(),
             dashboard.clone(),
         ));
     }

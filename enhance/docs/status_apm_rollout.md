@@ -12,7 +12,7 @@ The APM sidecar runs on the Enhance coordinator. Its `/etc/default/pir-apm` sets
 PIR_APM_STATUS_URL=http://127.0.0.1:8480/internal/status-apm
 PIR_APM_STATUS_ROUTER_URL=http://127.0.0.1:8482/internal/status-apm
 PIR_APM_STATUS_WORKER_URL=http://127.0.0.1:8481/internal/status-apm
-PIR_APM_STATUS_HOST=enhance-coordinator-and-p4000
+PIR_APM_STATUS_TOPOLOGY='Enhance host → P4000 router + worker'
 ```
 
 The first source is local. Router and worker monitoring use the existing
