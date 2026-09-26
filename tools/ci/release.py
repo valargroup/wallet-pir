@@ -14,6 +14,9 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[2]
 BINARIES = {
     'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    # Same binaries built with `native-reinspiring`; they serve an incompatible
+    # protocol and come from a separate target directory.
+    'enhance-pir-native': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'transparent-filter': ['transparent-filter-server'],
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
@@ -26,6 +29,12 @@ FILES = {
     'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
     'transparent-shard': ['transparent/ops/deploy/transparent-shard-server.service', 'transparent/ops/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
+}
+FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native-tag-integration.md']
+# Build-time protocol identity recorded in candidate.json and re-checked on extract.
+PROTOCOLS = {
+    'enhance-pir': 'ironwood-enhance-pir-v7',
+    'enhance-pir-native': 'ironwood-enhance-pir-v9-native-two-mask-m29',
 }
 
 
@@ -74,7 +83,9 @@ def assemble(sha, target, output, kind=None):
     check_sha(sha)
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=ROOT))
     output.mkdir(parents=True, exist_ok=False)
-    selected = {kind: BINARIES[kind]} if kind else BINARIES
+    # The native bundle needs its own feature build and target directory, so it
+    # is only assembled when requested explicitly.
+    selected = {kind: BINARIES[kind]} if kind else {k: v for k, v in BINARIES.items() if k != 'enhance-pir-native'}
     for kind, binaries in selected.items():
         directory = output / kind
         directory.mkdir()
@@ -83,9 +94,9 @@ def assemble(sha, target, output, kind=None):
             (directory / name).chmod(0o755)
         for source in FILES[kind]:
             shutil.copy2(ROOT / source, directory / Path(source).name)
-        if kind == 'enhance-pir':
+        if kind in PROTOCOLS:
             (directory / 'candidate.json').write_text(json.dumps({
-                'kind': kind, 'schema_version': 11, 'protocol_revision': 'ironwood-enhance-pir-v7',
+                'kind': kind, 'schema_version': 11, 'protocol_revision': PROTOCOLS[kind],
                 'qualification': 'unqualified', 'source_revision': sha, 'source_dirty': dirty,
             }, indent=2) + '\n')
         (directory / 'revision').write_text(sha + '\n')
@@ -108,7 +119,7 @@ def extract(archive_path, destination, sha, kind):
             raise ValueError('release archive must contain unique flat regular files')
         payload = {m.name: archive.extractfile(m).read() for m in members}
     required = set(BINARIES[kind]) | {Path(p).name for p in FILES[kind]} | {'revision', 'SHA256SUMS'}
-    if kind == 'enhance-pir':
+    if kind in PROTOCOLS:
         required.add('candidate.json')
     if set(payload) != required:
         raise ValueError('release archive contents differ from the required artifact inventory')
@@ -125,11 +136,11 @@ def extract(archive_path, destination, sha, kind):
     for name, digest in checksums.items():
         if hashlib.sha256(payload[name]).hexdigest() != digest:
             raise ValueError(f'checksum mismatch: {name}')
-    if kind == 'enhance-pir':
+    if kind in PROTOCOLS:
         candidate = json.loads(payload['candidate.json'])
         if (candidate.get('kind') != kind or candidate.get('source_revision') != sha
                 or candidate.get('schema_version') != 11
-                or candidate.get('protocol_revision') != 'ironwood-enhance-pir-v7'
+                or candidate.get('protocol_revision') != PROTOCOLS[kind]
                 or candidate.get('qualification') != 'unqualified'
                 or not isinstance(candidate.get('source_dirty'), bool)):
             raise ValueError('invalid candidate metadata; qualification is a separate gate')
