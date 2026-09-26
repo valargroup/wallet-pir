@@ -96,10 +96,6 @@ impl Store {
                 .map(|s| serde_json::from_str(&s))
                 .transpose()?
                 .unwrap_or_default();
-            if promoting && i.active {
-                i.active = false;
-                i.last_sample = 0;
-            }
             let previous_sample = i.last_sample;
             if now < i.last_evaluated || now.saturating_sub(i.last_evaluated) > 60 {
                 i.since = None;
@@ -109,7 +105,9 @@ impl Store {
             i.condition = Some(c.clone());
             let fresh = c.sample > previous_sample;
             i.last_sample = i.last_sample.max(c.sample);
-            let mut event = None;
+            // Promotion announces existing active state without clearing an incident
+            // whose current input is unknown or whose recovery is not yet confirmed.
+            let mut event = (promoting && i.active && !c.retired).then_some("FIRED");
             if c.retired {
                 if i.active {
                     event = Some("RETIRED");
@@ -131,7 +129,8 @@ impl Store {
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
                             event = Some("FIRED");
-                        } else if i.active
+                        } else if event.is_none()
+                            && i.active
                             && c.severity == "critical"
                             && now.saturating_sub(i.last_reminder) >= 1800
                         {
@@ -372,6 +371,27 @@ mod tests {
         assert!(s.next(141).unwrap().is_none());
         s.delivered(first, 150).unwrap();
         assert!(s.next(150).unwrap().is_some());
+    }
+    #[test]
+    fn promotion_preserves_active_unknown_and_requires_confirmed_recovery() {
+        let mut s = Store::open(Path::new(":memory:")).unwrap();
+        for t in [100, 110] {
+            s.evaluate(&[condition(Some(true), t)], t, true, "test", "")
+                .unwrap();
+        }
+        let id = s.incidents().unwrap()[0].id.clone();
+        s.evaluate(&[condition(None, 120)], 120, false, "test", "")
+            .unwrap();
+        assert!(s.incidents().unwrap()[0].active);
+        assert_eq!(s.incidents().unwrap()[0].id, id);
+        assert_eq!(s.health(true, 120).unwrap().pending, 1);
+        s.evaluate(&[condition(Some(false), 130)], 130, false, "test", "")
+            .unwrap();
+        assert!(s.incidents().unwrap()[0].active);
+        s.evaluate(&[condition(Some(false), 140)], 140, false, "test", "")
+            .unwrap();
+        assert!(!s.incidents().unwrap()[0].active);
+        assert_eq!(s.health(true, 140).unwrap().pending, 2);
     }
     #[test]
     fn restart_preserves_outbox_and_does_not_refire() {

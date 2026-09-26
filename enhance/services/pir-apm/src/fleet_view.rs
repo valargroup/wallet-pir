@@ -787,5 +787,15 @@ fn monitoring_card(data: &DashboardData) -> String {
             "sampled"
         }
     ));
+    let p = &m.publication;
+    let metric = |v: Option<u64>| {
+        v.map(|n| n.to_string())
+            .unwrap_or_else(|| "unavailable".into())
+    };
+    body.push_str(&format!(
+        "<p>Publication backlog: {} blocks · Last advancement: {}s ago · Consecutive failures: {} · Blocked: {}</p>",
+        metric(p.lag_blocks), metric(p.advancement_age_seconds), metric(p.consecutive_failures),
+        p.blocked.map(|v| v.to_string()).unwrap_or_else(|| "unavailable".into())
+    ));
     card("Alert coverage and delivery", body)
 }

@@ -22,7 +22,20 @@ once per minute from a separate region, and monitors APM task progress.
 - Publication lag compares the published anchor against a fresh direct Zakura
   RPC read. This bypasses the publisher observer but shares its node/host;
   it is not an independent second blockchain node. Tip inactivity is distinct
-  from publisher lag. Height differences remain signed across reorgs.
+  from publisher lag. A published anchor above a regressed tip is not a positive
+  backlog. Lag alerts require both continuous time behind the tip and time since
+  successful advancement (120s warning / 300s critical). An idle chain therefore
+  does not cause an immediate alert when its next block arrives. APM restarts or
+  observation gaps start a new behind-tip grace period.
+- Sustained backlog alerts separately detect a publisher that keeps advancing but
+  cannot keep up: at least 8 blocks for 120s (warning), or 16 blocks for 300s
+  (critical). These are initial operational guardrails to review during shadow
+  observation, not measured service-level objectives.
+- Publication failure alerts require three consecutive failures or blocked state
+  continuously for 120s (warning) / 300s (critical). A single recovered canonical
+  anchor rejection does not page. Publication metrics, blocked state and the
+  last-advancement timestamp must be present and valid; otherwise checks become
+  unknown and coverage alerts report the missing source.
 - Queue timestamps are operational metadata only. Existing persisted decisions
   without timestamps begin age tracking when first loaded after upgrade.
 - Unknown data cannot recover an incident. Recovery requires two distinct fresh
@@ -60,7 +73,10 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "unavailable_seconds": 30,
   "redundancy_seconds": 120,
   "publication_warning_seconds": 120,
-  "publication_critical_seconds": 300
+  "publication_critical_seconds": 300,
+  "publication_warning_blocks": 8,
+  "publication_critical_blocks": 16,
+  "publication_failure_hold_seconds": 120
 }
 ```
 
@@ -177,3 +193,12 @@ APM/checker tests and clippy passed. The existing native packing-router tests
 using the v7 session fixture remain incompatible with the native v9 format;
 those two failures are not represented as passing validation. See the evidence
 manifest and logs for the exact scope of completed checks.
+
+## Publication incident investigation and restarted observations
+
+The [2026-09-26 investigation](../evidence/observability-fix-2026-09-26/README.md)
+records the issues, corrections, tests, and new observation window. Its deployment
+manifest supersedes the original shadow start time. Earlier evidence remains
+retained; incident/outbox databases are not cleared. The updated observer retains
+publication measurements, chain state, and active incident details so the next
+review can distinguish stalls from sustained backlog and transient retries.

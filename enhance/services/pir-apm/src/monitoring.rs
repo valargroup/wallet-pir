@@ -24,6 +24,56 @@ pub struct View {
     pub delivery: DeliveryHealth,
     pub chain: Chain,
     pub peer: Peer,
+    pub publication: Publication,
+}
+/// Fresh measurements used by publication rules, also retained by the observer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Publication {
+    pub sampled_at: u64,
+    pub anchor_height: Option<u64>,
+    pub lag_blocks: Option<u64>,
+    pub behind_since: Option<u64>,
+    pub advancement_age_seconds: Option<u64>,
+    pub consecutive_failures: Option<u64>,
+    pub blocked: Option<bool>,
+}
+fn publication(d: &DashboardData, now: u64) -> Publication {
+    let sample = epoch(d.last_scrape);
+    let coord = fresh(sample, now) && d.scrape_error.is_none();
+    let gauge = |name: &str| {
+        d.snapshot_gauges
+            .get(name)
+            .copied()
+            .filter(|v| coord && v.is_finite() && *v >= 0. && v.fract() == 0.)
+            .map(|v| v as u64)
+    };
+    let anchor = gauge("enhance_published_anchor_height");
+    let chain = &d.monitoring.chain;
+    let lag_blocks = if fresh(chain.sampled_at, now) && !chain.error {
+        anchor.map(|a| chain.height.saturating_sub(a))
+    } else {
+        None
+    };
+    let previous = &d.monitoring.publication;
+    let behind_since = lag_blocks.filter(|n| *n > 0).map(|_| {
+        previous
+            .behind_since
+            .filter(|at| *at <= now && fresh(previous.sampled_at, now))
+            .unwrap_or(now)
+    });
+    Publication {
+        sampled_at: sample.min(chain.sampled_at),
+        anchor_height: anchor,
+        lag_blocks,
+        behind_since,
+        advancement_age_seconds: gauge("enhance_publication_last_advancement_unix_seconds")
+            .filter(|at| *at > 0 && *at <= now)
+            .map(|at| now - at),
+        consecutive_failures: gauge("enhance_publication_consecutive_failures"),
+        blocked: gauge("enhance_publication_blocked")
+            .filter(|v| *v <= 1)
+            .map(|v| v == 1),
+    }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Chain {
@@ -111,6 +161,7 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                     continue;
                 }
             }
+            snapshot.monitoring.publication = publication(&snapshot, now);
             update_router_rates(&mut snapshot, &mut router_history, now);
             let mut conditions = conditions(&snapshot, now, &policy);
             if snapshot.placement.is_some()
@@ -140,6 +191,7 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                 Ok((store.incidents()?, store.health(configured, now)?))
             })();
             let mut view = eval_dashboard.write().await;
+            view.monitoring.publication = snapshot.monitoring.publication;
             view.monitoring.router_outcomes = snapshot.monitoring.router_outcomes;
             view.monitoring.shadow = shadow;
             view.monitoring.evaluated_at = now;
@@ -175,6 +227,9 @@ pub struct Policy {
     pub redundancy_seconds: u64,
     pub publication_warning_seconds: u64,
     pub publication_critical_seconds: u64,
+    pub publication_warning_blocks: u64,
+    pub publication_critical_blocks: u64,
+    pub publication_failure_hold_seconds: u64,
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -189,6 +244,9 @@ impl Default for Policy {
             redundancy_seconds: 120,
             publication_warning_seconds: 120,
             publication_critical_seconds: 300,
+            publication_warning_blocks: 8,
+            publication_critical_blocks: 16,
+            publication_failure_hold_seconds: 120,
         }
     }
 }
@@ -208,7 +266,11 @@ impl Policy {
                 ]
                 .iter()
                 .all(|v| v.is_finite() && *v > 0.)
-                && p.publication_critical_seconds >= p.publication_warning_seconds,
+                && p.publication_warning_seconds > 0
+                && p.publication_critical_seconds >= p.publication_warning_seconds
+                && p.publication_warning_blocks > 0
+                && p.publication_critical_blocks > p.publication_warning_blocks
+                && p.publication_failure_hold_seconds > 0,
             "invalid alert policy"
         );
         Ok(p)
@@ -398,63 +460,105 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         300,
         coordinator_sample,
     );
+    let publication = publication(d, now);
     sources.insert(
         "publication_metrics".into(),
         coord
             && [
+                "enhance_published_anchor_height",
+                "enhance_publication_last_advancement_unix_seconds",
+                "enhance_publication_blocked",
                 "enhance_publication_consecutive_failures",
                 "enhance_pending_commit_oldest_seconds",
                 "enhance_pending_abort_oldest_seconds",
             ]
             .iter()
-            .all(|name| d.snapshot_gauges.contains_key(*name)),
+            .all(|name| {
+                d.snapshot_gauges
+                    .get(*name)
+                    .is_some_and(|v| v.is_finite() && *v >= 0.)
+            })
+            && publication.advancement_age_seconds.is_some()
+            && publication.anchor_height.is_some()
+            && publication.blocked.is_some()
+            && publication.consecutive_failures.is_some(),
     );
     let chain = &d.monitoring.chain;
     let chain_ok = fresh(chain.sampled_at, now) && !chain.error;
     sources.insert("chain_rpc".into(), chain_ok);
-    let anchor = d
-        .snapshot_gauges
-        .get("enhance_published_anchor_height")
-        .copied();
-    let behind = if coord && chain_ok {
-        anchor.map(|a| (chain.height as i128) - (a as i128) > 0)
-    } else {
-        None
-    };
-    for (severity, hold) in [
-        ("warning", p.publication_warning_seconds),
-        ("critical", p.publication_critical_seconds),
+    for (severity, hold, blocks) in [
+        (
+            "warning",
+            p.publication_warning_seconds,
+            p.publication_warning_blocks,
+        ),
+        (
+            "critical",
+            p.publication_critical_seconds,
+            p.publication_critical_blocks,
+        ),
     ] {
+        let stalled = match (publication.lag_blocks, publication.advancement_age_seconds) {
+            (Some(0), _) => Some(false),
+            (Some(_), Some(age)) => Some(
+                age >= hold
+                    && publication
+                        .behind_since
+                        .is_some_and(|since| now.saturating_sub(since) >= hold),
+            ),
+            _ => None,
+        };
         add(
             format!("publication_lag_{severity}"),
             "publication".into(),
             severity,
-            behind,
-            format!("tip {}, anchor {anchor:?}", chain.height),
-            format!("continuously behind for {hold}s"),
-            hold,
-            coordinator_sample.min(chain.sampled_at),
+            stalled,
+            format!(
+                "tip {}, anchor {:?}, lag {:?} blocks, last advancement {:?}s ago",
+                chain.height,
+                publication.anchor_height,
+                publication.lag_blocks,
+                publication.advancement_age_seconds
+            ),
+            format!("behind tip for {hold}s and no successful advancement for {hold}s"),
+            0,
+            publication.sampled_at,
         );
-        let blocked = d
-            .snapshot_gauges
-            .get("enhance_publication_blocked")
-            .copied();
-        let failures = d
-            .snapshot_gauges
-            .get("enhance_publication_consecutive_failures")
-            .copied();
+        add(
+            format!("publication_backlog_{severity}"),
+            "publication".into(),
+            severity,
+            publication.lag_blocks.map(|n| n >= blocks),
+            format!("lag {:?} blocks", publication.lag_blocks),
+            format!(">= {blocks} blocks behind continuously for {hold}s"),
+            hold,
+            publication.sampled_at,
+        );
         add(
             format!("publication_failure_{severity}"),
             "publication".into(),
             severity,
-            if coord {
-                failures.map(|n| n >= 3. || blocked == Some(1.))
-            } else {
-                None
+            match (publication.consecutive_failures, publication.blocked) {
+                (Some(n), Some(blocked)) => Some(n >= 3 || blocked),
+                _ => None,
             },
-            format!("consecutive failures {failures:?}, blocked {blocked:?}"),
-            "3 consecutive failures or blocked".into(),
-            if severity == "warning" { 0 } else { hold },
+            format!(
+                "consecutive failures {:?}, blocked {:?}",
+                publication.consecutive_failures, publication.blocked
+            ),
+            format!(
+                "3 consecutive failures or blocked continuously for {}s",
+                if severity == "warning" {
+                    p.publication_failure_hold_seconds
+                } else {
+                    hold
+                }
+            ),
+            if severity == "warning" {
+                p.publication_failure_hold_seconds
+            } else {
+                hold
+            },
             coordinator_sample,
         );
         for kind in ["commit", "abort"] {
@@ -667,7 +771,7 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
     let now = incidents::unix_time();
     let progress = progress_ok(&d, now);
     Json(
-        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer}),
+        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication}),
     )
 }
 pub async fn readyz(State(d): State<SharedDashboard>) -> (StatusCode, Json<serde_json::Value>) {
@@ -779,6 +883,10 @@ mod tests {
         let mut d = view(100);
         d.snapshot_gauges
             .insert("enhance_published_anchor_height".into(), 50.);
+        d.snapshot_gauges.insert(
+            "enhance_publication_last_advancement_unix_seconds".into(),
+            1.,
+        );
         d.monitoring.chain = Chain {
             sampled_at: 100,
             height: 51,
@@ -791,11 +899,152 @@ mod tests {
                 .find(|c| c.key == "publication_lag_warning")
                 .unwrap()
         };
-        assert_eq!(get(&d).firing, Some(true));
+        assert_eq!(get(&d).firing, Some(false));
         d.monitoring.chain.height = 49;
         assert_eq!(get(&d).firing, Some(false));
         d.monitoring.chain.error = true;
         assert_eq!(get(&d).firing, None);
+    }
+    fn publication_view(now: u64, age: u64, lag: u64) -> DashboardData {
+        let mut d = view(now);
+        d.monitoring.publication = Publication {
+            sampled_at: now,
+            behind_since: Some(1),
+            ..Default::default()
+        };
+        d.monitoring.chain = Chain {
+            sampled_at: now,
+            height: 100 + lag,
+            ..Default::default()
+        };
+        for (key, value) in [
+            ("enhance_published_anchor_height", 100.),
+            (
+                "enhance_publication_last_advancement_unix_seconds",
+                (now - age) as f64,
+            ),
+            ("enhance_publication_consecutive_failures", 0.),
+            ("enhance_publication_blocked", 0.),
+        ] {
+            d.snapshot_gauges.insert(key.into(), value);
+        }
+        d
+    }
+    fn check(d: &DashboardData, now: u64, key: &str) -> Condition {
+        conditions(d, now, &Policy::default())
+            .into_iter()
+            .find(|c| c.key == key)
+            .unwrap()
+    }
+    #[test]
+    fn advancing_behind_tip_is_not_a_stall_but_stalls_and_backlogs_are_detected() {
+        let now = 1000;
+        let d = publication_view(now, 60, 4);
+        assert_eq!(
+            check(&d, now, "publication_lag_warning").firing,
+            Some(false)
+        );
+        assert_eq!(
+            check(&d, now, "publication_backlog_warning").firing,
+            Some(false)
+        );
+        let d = publication_view(now, 121, 1);
+        assert_eq!(check(&d, now, "publication_lag_warning").firing, Some(true));
+        assert_eq!(
+            check(&d, now, "publication_lag_critical").firing,
+            Some(false)
+        );
+        let d = publication_view(now, 301, 1);
+        assert_eq!(
+            check(&d, now, "publication_lag_critical").firing,
+            Some(true)
+        );
+        let d = publication_view(now, 30, 16);
+        assert_eq!(
+            check(&d, now, "publication_lag_critical").firing,
+            Some(false)
+        );
+        let c = check(&d, now, "publication_backlog_critical");
+        assert_eq!(c.firing, Some(true));
+        assert_eq!(c.hold_seconds, 300);
+        let d = publication_view(now, 301, 0);
+        assert_eq!(
+            check(&d, now, "publication_lag_critical").firing,
+            Some(false)
+        );
+    }
+    #[test]
+    fn first_new_block_after_idle_chain_gets_full_publication_grace() {
+        let mut d = publication_view(1000, 900, 1);
+        d.monitoring.publication = Publication::default();
+        assert_eq!(
+            check(&d, 1000, "publication_lag_critical").firing,
+            Some(false)
+        );
+        d.monitoring.publication = publication(&d, 1000);
+        d.last_scrape = Some(UNIX_EPOCH + Duration::from_secs(1030));
+        d.monitoring.chain.sampled_at = 1030;
+        assert_eq!(
+            check(&d, 1030, "publication_lag_warning").firing,
+            Some(false)
+        );
+    }
+    #[test]
+    fn missing_or_future_advancement_and_missing_blocked_are_unknown() {
+        let mut d = publication_view(1000, 30, 1);
+        for value in [f64::NAN, 1001., 0.] {
+            d.snapshot_gauges.insert(
+                "enhance_publication_last_advancement_unix_seconds".into(),
+                value,
+            );
+            assert_eq!(check(&d, 1000, "publication_lag_warning").firing, None);
+        }
+        d.snapshot_gauges.remove("enhance_publication_blocked");
+        assert_eq!(check(&d, 1000, "publication_failure_warning").firing, None);
+        assert_eq!(
+            check(&d, 1000, "coverage_publication_metrics_warning").firing,
+            Some(true)
+        );
+    }
+    #[test]
+    fn transient_blocked_retry_is_suppressed_but_persistent_failure_fires() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for t in (1000..=1080).step_by(5) {
+            let mut d = publication_view(t, 30, 1);
+            d.snapshot_gauges
+                .insert("enhance_publication_blocked".into(), 1.);
+            let c = check(&d, t, "publication_failure_warning");
+            store.evaluate(&[c], t, true, "test", "").unwrap();
+        }
+        assert!(!store.incidents().unwrap()[0].active);
+        store
+            .evaluate(
+                &[check(
+                    &publication_view(1085, 10, 0),
+                    1085,
+                    "publication_failure_warning",
+                )],
+                1085,
+                true,
+                "test",
+                "",
+            )
+            .unwrap();
+        for t in (1090..=1210).step_by(5) {
+            let mut d = publication_view(t, 30, 1);
+            d.snapshot_gauges
+                .insert("enhance_publication_blocked".into(), 1.);
+            store
+                .evaluate(
+                    &[check(&d, t, "publication_failure_warning")],
+                    t,
+                    true,
+                    "test",
+                    "",
+                )
+                .unwrap();
+        }
+        assert!(store.incidents().unwrap()[0].active);
     }
     #[test]
     fn stale_replica_counts_never_recover_unavailability() {

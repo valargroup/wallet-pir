@@ -21,6 +21,10 @@ def sample(url):
             "canary_duration_seconds": body.get("canary_duration_seconds"),
             "failure_category": body.get("failure_category"),
             "delivery": body.get("delivery"),
+            "publication": body.get("publication"),
+            "chain": body.get("chain"),
+            "incident_details": [i for i in body.get("incidents", [])
+                                 if i.get("active")],
             "active": [i["condition"]["key"] for i in body.get("incidents", []) if i.get("active")],
             "unknown": [i["condition"]["key"] for i in body.get("incidents", [])
                         if i.get("condition") and not i["condition"].get("retired")
