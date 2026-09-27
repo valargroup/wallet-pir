@@ -21,7 +21,9 @@ use transparent_shard::layout::{
     by_name as geometry_by_name, entries_per_row, Geometry, EVENTS_PER_PAGE, PAGE_ROW_BYTES,
     PAGE_ROW_HEADER_BYTES,
 };
-use transparent_shard::seal::{Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer};
+use transparent_shard::seal::{
+    ChoiceMeasure, Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer,
+};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -97,6 +99,13 @@ struct Cli {
     /// and reports how much headroom the fullest row has left.
     #[arg(long)]
     placement: bool,
+    /// Build each shard's single-lookup choice table from its real placement.
+    ///
+    /// Implies `--placement`. Reports the table's encoded size, bits per
+    /// script, seed retries and build time per shard, which is what a wallet
+    /// downloads per matched shard to send one directory query instead of two.
+    #[arg(long)]
+    single_lookup: bool,
     /// Count how many shards each exact script appears in, spilling sorted runs
     /// under this directory.
     ///
@@ -138,6 +147,14 @@ struct Cli {
     /// answers neither.
     #[arg(long)]
     start_height: Option<u64>,
+    /// Shard id the first sealed shard takes. Defaults to 0.
+    ///
+    /// Placement salts every candidate row with the shard id, so a bounded run
+    /// that should reproduce published shards — the recent tier started from
+    /// its cutoff, say — must number them as the publisher did. Single-tier
+    /// runs only; a two-tier run continues the archive tier's ids.
+    #[arg(long)]
+    first_shard_id: Option<u64>,
     /// Last height to census, inclusive. Defaults to the journal's last.
     ///
     /// Inclusive at both ends, matching the journal's own `covered_through`.
@@ -361,6 +378,68 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
         page_pinned as f64 / pinned as f64 * 100.0,
     );
     placement(shards, geometry, dir_segments);
+    single_lookup(shards);
+}
+
+/// What each shard's choice table costs, from its real placement.
+///
+/// Silent unless `--single-lookup` asked for it.
+fn single_lookup(shards: &[SealedShard]) {
+    let measured: Vec<(&SealedShard, &Result<ChoiceMeasure, String>)> = shards
+        .iter()
+        .filter_map(|shard| shard.choice.as_ref().map(|c| (shard, c)))
+        .collect();
+    if measured.is_empty() {
+        return;
+    }
+    println!("  single lookup (choice table built from the real placement)");
+    let mut failed = 0usize;
+    let mut sizes: Vec<u64> = Vec::new();
+    let mut retries = 0u32;
+    let mut slowest = 0u64;
+    for (shard, choice) in &measured {
+        match choice {
+            Ok(choice) => {
+                println!(
+                    "    choice\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}",
+                    shard.shard_id,
+                    if shard.reason.is_some() {
+                        "sealed"
+                    } else {
+                        "tail"
+                    },
+                    choice.keys,
+                    choice.bytes,
+                    choice.bytes as f64 * 8.0 / f64::from(choice.keys.max(1)),
+                    choice.seed,
+                    choice.micros,
+                );
+                sizes.push(choice.bytes);
+                retries += choice.seed;
+                slowest = slowest.max(choice.micros);
+            }
+            Err(error) => {
+                failed += 1;
+                println!("    choice\t{}\tFAILED\t{error}", shard.shard_id);
+            }
+        }
+    }
+    sizes.sort_unstable();
+    let total: u64 = sizes.iter().sum();
+    println!(
+        "    columns      shard_id, kind, scripts, bytes, bits_per_script, seed, build_micros"
+    );
+    println!(
+        "    tables       {} built, {failed} failed, {retries} seed retries, slowest {slowest} us",
+        sizes.len()
+    );
+    if !sizes.is_empty() {
+        println!(
+            "    bytes        total {total}, p50 {}, max {}",
+            percentile(&sizes, 50.0),
+            sizes[sizes.len() - 1]
+        );
+    }
 }
 
 /// What the real two-choice placer does with the same script sets.
@@ -796,6 +875,9 @@ fn main() -> Result<(), BoxError> {
         (Some(_), None) | (None, Some(_)) => {
             return Err("--archive-geometry and --recent-from go together".into())
         }
+        (Some(_), Some(_)) if cli.first_shard_id.is_some() => {
+            return Err("--first-shard-id is for single-tier runs".into())
+        }
         (Some(archive), Some(recent_from)) => {
             return tiers(&cli, &store, first, covered, archive, recent_from);
         }
@@ -939,8 +1021,15 @@ choose parameters for a set that will be published"
         .into_iter()
         .map(|(name, policy)| Run {
             sealer: {
-                let mut sealer = Sealer::with_geometry(policy, first, basis, geometry);
-                sealer.measure_placement(cli.placement);
+                let mut sealer = Sealer::resume(
+                    policy,
+                    first,
+                    basis,
+                    geometry,
+                    cli.first_shard_id.unwrap_or(0),
+                );
+                sealer.measure_placement(cli.placement || cli.single_lookup);
+                sealer.measure_choice(cli.single_lookup);
                 sealer.retain_scripts(spill.is_some());
                 sealer
             },
@@ -1069,7 +1158,8 @@ sweeps do not apply to it"
     }
     let mut matches = spill.map(|dir| MatchCounter::new(dir, "tiers"));
     let mut sealer = Sealer::with_geometry(archive_policy, first, basis, archive);
-    sealer.measure_placement(cli.placement);
+    sealer.measure_placement(cli.placement || cli.single_lookup);
+    sealer.measure_choice(cli.single_lookup);
     sealer.retain_scripts(spill.is_some());
     let mut archive_shards: Vec<SealedShard> = Vec::new();
     let mut recent_shards: Vec<SealedShard> = Vec::new();
@@ -1090,7 +1180,8 @@ sweeps do not apply to it"
             drain_scripts_in_tier(&mut matches, sealed, &mut archive_shards, tier)?;
             let next_shard_id = sealer.next_shard_id();
             sealer = Sealer::resume(recent_policy, height, basis, recent, next_shard_id);
-            sealer.measure_placement(cli.placement);
+            sealer.measure_placement(cli.placement || cli.single_lookup);
+            sealer.measure_choice(cli.single_lookup);
             sealer.retain_scripts(spill.is_some());
             tier = 1;
         }

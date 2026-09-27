@@ -21,6 +21,7 @@ The following records establish only their stated revision, workload and coverag
 | [Full-chain census](census-2026-09-08/README.md) | Sizing inputs, not measured wallet capacity |
 | [Publication verification](publication-2026-09-08/README.md) | Independent spot checks and publication provenance |
 | [Frozen workload sample](workload-sample-2026-09-08/README.md) | Still used by the load workflow |
+| [Single-lookup directory census](single-lookup-census-2026-09-27/README.md) | Offline choice-table sizes, 4K placement limit and projected bytes; no wallet measurement |
 | [Initial full-chain publication](continuous-publication-2026-09-08/README.md) | Historical topology and rollout; M1 is the later operational acceptance |
 | [Parent-filter evaluation](parent-filters-2026-09-08/README.md) | Offline sweep and incomplete paired HTTP performance evaluation |
 | [Parent-filter artifact rollout](parent-filters-production-2026-09-08/README.md) | Bounded recovery canary; not heavy-wallet performance acceptance |

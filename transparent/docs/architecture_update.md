@@ -153,6 +153,23 @@ Mapping all 491,458 recent entries at three bits each costs approximately
 184,297 bytes before artifact framing. This is why removing a query is the
 larger opportunity: the packing-key upload is a substantial fixed cost.
 
+### Offline evaluation, 2026-09-27
+
+The [single-lookup census](../evidence/single-lookup-census-2026-09-27/README.md)
+evaluated a lighter variant first. A PIR response returns a whole row, so the
+wallet needs the row, not the entry. A per-shard xor-retrieval table (about 1.23
+bits per script) records which of the two existing candidate rows holds each
+script. Placement, directory rows and the server are unchanged.
+
+- It built on all 14 recent shards with no seed retries, at up to 7,006 bytes per shard.
+- A wallet fetches the table only for shards it already opens.
+- Projected restore-6m payload falls about 24% at recent-8k, and 40-script payload
+  about 35%. These are projections, not measurements.
+
+Two-choice placement at 4,096 directory rows reached 14 of 14 slots in one shard.
+recent-4k-8k therefore needs a denser placement, and is not selected with this
+variant. Wallet measurement remains open.
+
 ### Scope and requirements
 
 Use this layout first for sealed recent shards. Retain the existing directory

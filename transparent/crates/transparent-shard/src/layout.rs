@@ -358,6 +358,21 @@ pub const RECENT_4K: Geometry = Geometry {
     ..RECENT_8K
 };
 
+/// A recent candidate with half the directory rows and all of the page rows.
+///
+/// Not a default. It lowers each directory query's selection upload without
+/// shrinking page capacity, which is what closed every sealed recent shard in
+/// the September census, so it should not add boundaries the way `recent-4k`
+/// does. Its 57,344 directory slots held every recent shard of that census
+/// only on dense arithmetic; two-choice placement at this load must be replayed
+/// before it is promoted. `recent-4k` keeps its own meaning.
+pub const RECENT_4K_8K: Geometry = Geometry {
+    name: "recent-4k-8k",
+    directory_rows: 4_096,
+    page_rows: 8_192,
+    ..RECENT_8K
+};
+
 /// The square archive candidate, and the fallback if the wider one does not
 /// validate.
 pub const ARCHIVE_32K: Geometry = Geometry {
@@ -386,7 +401,13 @@ pub const ARCHIVE_WIDE: Geometry = Geometry {
 /// scheme serves, whose parameters a client validates once and reuses for every
 /// shard of that geometry; an arbitrary shape would cost a parameter set per
 /// shard and give a wallet nothing to check the server's choice against.
-pub const PROFILES: &[Geometry] = &[RECENT_8K, RECENT_4K, ARCHIVE_32K, ARCHIVE_WIDE];
+pub const PROFILES: &[Geometry] = &[
+    RECENT_8K,
+    RECENT_4K,
+    RECENT_4K_8K,
+    ARCHIVE_32K,
+    ARCHIVE_WIDE,
+];
 
 /// The registry entry named `name`, or `None` if there is no such geometry.
 ///
@@ -623,6 +644,8 @@ mod tests {
         assert_eq!(ARCHIVE_WIDE.directory_capacity(), 458_752);
         assert_eq!(ARCHIVE_WIDE.page_rows, 2 * ARCHIVE_WIDE.directory_rows);
         assert_eq!(RECENT_4K.directory_capacity(), 57_344);
+        assert_eq!(RECENT_4K_8K.directory_capacity(), 57_344);
+        assert_eq!(RECENT_4K_8K.page_rows, RECENT_8K.page_rows);
         // A narrower directory buys a smaller query; a wider page table buys
         // rows for old history. The two move independently, which is the point
         // of having a pair rather than one number.

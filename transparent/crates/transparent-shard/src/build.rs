@@ -157,6 +157,37 @@ pub fn candidate_rows(shard_id: u64, script: &[u8], rows: u64) -> [u64; DIRECTOR
     std::array::from_fn(|choice| bucket_for(&bucket_salt(shard_id, choice), script, rows))
 }
 
+/// Where a history of `total_events` falls in the order scripts are placed.
+///
+/// Short paged histories first, in increasing paged length; then long
+/// histories; then histories held entirely inline. Within a rank, scripts
+/// sort by raw bytes. This is the order [`build_shard`] lays entries out in,
+/// because it allocates page rows by class before any directory entry can
+/// name one.
+fn placement_rank(total_events: u32) -> (u8, u32) {
+    match shape_of(total_events) {
+        Shape::Short(p) => (0, p),
+        Shape::Long(_) => (1, 0),
+        Shape::None => (2, 0),
+    }
+}
+
+/// Orders indexable scripts, each with its total event count in the shard,
+/// exactly as the builder places them.
+///
+/// Placement with relocation is order dependent: a script's row depends on
+/// every script placed before it. A census that predicts a shard's placement
+/// must therefore feed [`place_scripts`] this order, not any other sorted
+/// order, or it reports row loads the builder never produces.
+pub fn placement_order<'a>(scripts: impl IntoIterator<Item = (&'a [u8], u32)>) -> Vec<&'a [u8]> {
+    let mut keyed: Vec<((u8, u32), &'a [u8])> = scripts
+        .into_iter()
+        .map(|(script, total)| (placement_rank(total), script))
+        .collect();
+    keyed.sort_unstable();
+    keyed.into_iter().map(|(_, script)| script).collect()
+}
+
 /// Builds one shard from the events of its sealed range.
 ///
 /// `events` need not be sorted; they are ordered here, because the published
@@ -358,6 +389,14 @@ pub fn build_shard(
         });
     }
 
+    // Pinned rather than implied by the loops above, because the sealer's
+    // census places in this order too. A stable sort of entries already in it
+    // is the identity, so published bytes do not move.
+    entries.sort_by(|a, b| {
+        (placement_rank(a.total_events), &a.script)
+            .cmp(&(placement_rank(b.total_events), &b.script))
+    });
+
     let fragments: u64 = by_script
         .iter()
         .filter(|(script, _)| script.len() <= MAX_SCRIPT_BYTES)
@@ -503,6 +542,28 @@ pub fn place_scripts(
             assignment,
         ));
     }
+}
+
+/// The choice table for a placement: which candidate row each script took.
+///
+/// `scripts` and `assignment` are what [`place_scripts`] was given and
+/// returned, and `rows` is the logical row space it settled on. A script whose
+/// two candidates name the same row takes bit 0; either answer names that row.
+pub fn choice_table(
+    shard_id: u64,
+    scripts: &[&[u8]],
+    assignment: &[u32],
+    rows: u64,
+) -> Result<crate::choice::ChoiceTable, crate::choice::ChoiceError> {
+    let entries: Vec<(&[u8], u8)> = scripts
+        .iter()
+        .zip(assignment)
+        .map(|(script, row)| {
+            let [first, _] = candidate_rows(shard_id, script, rows);
+            (*script, u8::from(u64::from(*row) != first))
+        })
+        .collect();
+    crate::choice::ChoiceTable::build(shard_id, &entries)
 }
 
 /// Rows a relocation search may visit before giving up and taking a segment.
@@ -1060,6 +1121,149 @@ mod tests {
             built.directory_segments(),
             "the sealer and the builder disagree about segments"
         );
+    }
+
+    /// Scripts of every shape: inline-only, short paged and long histories,
+    /// interleaved in raw-byte order so that the builder's placement order
+    /// and a lexicographic one differ.
+    fn mixed_fixture(count: u32) -> Vec<(ScriptBytes, TransparentEvent)> {
+        let mut events = Vec::new();
+        for tag in 0..count {
+            let per = [1, 2, 3, 5, 12, 30, 41, 90][(tag % 8) as usize];
+            for i in 0..per {
+                events.push((script(tag), event(100 + i % 101, tag * 100_000 + i)));
+            }
+        }
+        events
+    }
+
+    /// The rows [`place_scripts`] assigns, fed [`placement_order`], must be the
+    /// rows the builder publishes, entry for entry.
+    ///
+    /// Row membership rather than a load summary, because placement is order
+    /// dependent and a census fed another order agrees on segment counts long
+    /// before it agrees on which rows are full.
+    #[test]
+    fn placement_order_reproduces_the_published_rows() {
+        let events = mixed_fixture(6_000);
+        let built = build(&events);
+
+        let mut counts: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
+        for (script, _) in &events {
+            *counts.entry(script.as_slice().to_vec()).or_default() += 1;
+        }
+        let order = placement_order(counts.iter().map(|(s, n)| (s.as_slice(), *n)));
+        let (placement, assignment) = place_scripts(
+            0,
+            &order,
+            RECENT_8K.directory_rows,
+            RECENT_8K.directory_slots(),
+        )
+        .expect("fits");
+        assert_eq!(placement.segments, built.directory_segments());
+
+        let rows = RECENT_8K.directory_rows * placement.segments as u64;
+        let mut predicted: Vec<Vec<&[u8]>> = vec![Vec::new(); rows as usize];
+        for (script, row) in order.iter().zip(&assignment) {
+            predicted[*row as usize].push(script);
+        }
+        for (row, expected) in predicted.iter_mut().enumerate() {
+            expected.sort_unstable();
+            let published: Vec<Vec<u8>> = decode_directory_row(built.directory_row(row as u64))
+                .expect("decodes")
+                .into_iter()
+                .map(|entry| entry.script)
+                .collect();
+            let published: Vec<&[u8]> = published.iter().map(Vec::as_slice).collect();
+            assert_eq!(*expected, published, "row {row} differs");
+        }
+
+        // The lexicographic order the census used before is a different
+        // placement on this content, which is why the order is shared.
+        let mut lexicographic = order.clone();
+        lexicographic.sort_unstable();
+        let (_, other) = place_scripts(
+            0,
+            &lexicographic,
+            RECENT_8K.directory_rows,
+            RECENT_8K.directory_slots(),
+        )
+        .expect("fits");
+        let by_script = |order: &[&[u8]], rows: &[u32]| -> BTreeMap<Vec<u8>, u32> {
+            order
+                .iter()
+                .map(|s| s.to_vec())
+                .zip(rows.iter().copied())
+                .collect()
+        };
+        assert_ne!(
+            by_script(&order, &assignment),
+            by_script(&lexicographic, &other)
+        );
+    }
+
+    /// One row, chosen by the published choice bit, holds every placed script:
+    /// the single-lookup property, at the default geometry and at the
+    /// half-height directory, where placement runs near 80% of capacity.
+    #[test]
+    fn the_choice_bit_names_the_one_row_holding_each_script() {
+        let rows = 4_096u64;
+        let slots = crate::records::DIRECTORY_SLOTS as u64;
+        for (count, rows) in [(6_000u32, 8_192u64), (45_454, rows)] {
+            let owned = placement_set(count);
+            let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
+            let (placement, assignment) = place_scripts(11, &refs, rows, slots).expect("fits");
+            // The largest recent shard of the September census fits one
+            // half-height segment under two-choice placement with relocation.
+            assert_eq!(placement.segments, 1, "{count} scripts at {rows} rows");
+            let space = rows * placement.segments as u64;
+            let table = choice_table(11, &refs, &assignment, space).expect("peels");
+            for (script, row) in refs.iter().zip(&assignment) {
+                let chosen = candidate_rows(11, script, space)[table.choice(11, script)];
+                assert_eq!(chosen, u64::from(*row), "{count} scripts at {rows} rows");
+            }
+        }
+    }
+
+    /// The sealer's measured placement matches the builder's on content of
+    /// mixed shapes, not only on the single-shape fixture above.
+    #[test]
+    fn the_sealer_measures_the_builders_fullest_row_on_mixed_shapes() {
+        use crate::seal::{Limit, PageBasis, SealPolicy, Sealer};
+
+        let events = mixed_fixture(6_000);
+        let policy = SealPolicy {
+            scripts: Limit::new(1_000_000, 2_000_000).expect("valid"),
+            page_rows: Limit::new(1_000_000, 2_000_000).expect("valid"),
+        };
+        let mut sealer = Sealer::with_basis(policy, 100, PageBasis::default());
+        sealer.measure_placement(true);
+        for height in 100..=200u64 {
+            let block: Vec<_> = events
+                .iter()
+                .filter(|(_, event)| u64::from(event.height()) == height)
+                .cloned()
+                .collect();
+            sealer.push_block(height, &block).expect("valid block");
+        }
+        let predicted = sealer
+            .finish()
+            .expect("a tail")
+            .placement
+            .expect("placement was asked for");
+
+        let built = build(&events);
+        let rows = RECENT_8K.directory_rows * built.directory_segments() as u64;
+        let fullest = (0..rows)
+            .map(|row| {
+                decode_directory_row(built.directory_row(row))
+                    .expect("decodes")
+                    .len() as u64
+            })
+            .max()
+            .unwrap_or(0);
+        assert_eq!(predicted.segments, built.directory_segments());
+        assert_eq!(predicted.max_row_load, fullest);
     }
 
     /// A script's whole history must be reconstructible: the inline events plus

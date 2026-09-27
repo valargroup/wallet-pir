@@ -1,0 +1,23 @@
+	Command being timed: "/root/wallet-pir-single-lookup/target/release/shard-census --data-dir /root/journal-recent-3262749-3473686 --geometry recent-8k --first-shard-id 160 --end-height 3473686 --single-lookup --per-shard"
+	User time (seconds): 31.02
+	System time (seconds): 0.96
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:31.99
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 44264
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 12891
+	Voluntary context switches: 44
+	Involuntary context switches: 145
+	Swaps: 0
+	File system inputs: 1023072
+	File system outputs: 152
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

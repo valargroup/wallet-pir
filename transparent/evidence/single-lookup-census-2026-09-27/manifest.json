@@ -1,0 +1,74 @@
+{
+  "run_id": "single-lookup-census-2026-09-27",
+  "generated_at": "2026-09-27",
+  "kind": "offline census and derived projection",
+  "source": {
+    "base_commit": "a843ce24",
+    "patch": "source.patch",
+    "patch_sha256": "fa35e77d8d8d313591c33f9c769c016212905b1eea6cd59e861095ad0f7148c2"
+  },
+  "tool": {
+    "binary": "shard-census",
+    "profile": "release",
+    "build_env": [
+      "PROTOC=/root/protoc-local/bin/protoc (28.3)",
+      "LIBCLANG_PATH=/root/libclang-shim",
+      "BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include"
+    ]
+  },
+  "host": "roman-ipir-bench-8vcpu (see host.txt)",
+  "journal": {
+    "source": "enhance-pir-coordinator-01:/srv/zakura/transparent-event-data (read-only byte slice)",
+    "genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "heights": [
+      3262749,
+      3473686
+    ],
+    "anchor": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "events_bin_bytes": [
+      42853870036,
+      43367545915
+    ],
+    "block_records": 210938,
+    "checksums": "journal-slice-SHA256SUMS"
+  },
+  "commands": [
+    "shard-census --data-dir /root/journal-recent-3262749-3473686 --geometry recent-8k --first-shard-id 160 --end-height 3473686 --single-lookup --per-shard",
+    "shard-census --data-dir /root/journal-recent-3262749-3473686 --geometry recent-4k-8k --first-shard-id 160 --end-height 3473686 --single-lookup --per-shard",
+    "python3 pairs.py census-recent-8k.txt sample.json /root/journal-recent-3262749-3473686"
+  ],
+  "schema": "transparent-shard-v7 (unchanged; choice table not published)",
+  "geometries": {
+    "recent-8k": {
+      "directory_rows": 8192,
+      "page_rows": 8192,
+      "row_bytes": 3584,
+      "seal": "98304:114688,7936:8192"
+    },
+    "recent-4k-8k": {
+      "directory_rows": 4096,
+      "page_rows": 8192,
+      "row_bytes": 3584,
+      "seal": "49152:57344,7936:8192"
+    }
+  },
+  "workload": "../workload-sample-2026-09-08/sample.json",
+  "baseline": "../runs/fleet-series-2026-09-08-r3/report.json, concurrency 32",
+  "outputs": [
+    "census-recent-8k.txt",
+    "census-recent-8k-time.txt",
+    "census-recent-4k-8k.txt",
+    "census-recent-4k-8k-time.txt",
+    "pairs.tsv",
+    "host.txt"
+  ],
+  "measured": [
+    "choice table bytes, seeds, build time",
+    "two-choice placement row loads",
+    "matched pairs per sampled wallet"
+  ],
+  "projected": [
+    "per-sync bytes; formula in README"
+  ],
+  "failures": 0
+}

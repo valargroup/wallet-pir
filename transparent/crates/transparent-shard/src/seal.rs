@@ -232,6 +232,24 @@ pub struct SealedShard {
     /// is holding the journal's whole script set, which over a genesis-to-tip
     /// journal is not bounded by anything useful.
     pub scripts: Option<Vec<(Vec<u8>, u32)>>,
+    /// The choice table this shard's placement would publish, if asked for.
+    ///
+    /// `Err` carries why construction failed. `None` unless the sealer was
+    /// asked with [`Sealer::measure_choice`].
+    pub choice: Option<Result<ChoiceMeasure, String>>,
+}
+
+/// What a shard's choice table costs, measured by building it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChoiceMeasure {
+    /// Encoded bytes, header included.
+    pub bytes: u64,
+    /// Scripts indexed.
+    pub keys: u32,
+    /// The seed construction settled on; above zero means retries.
+    pub seed: u32,
+    /// Wall time to build, in microseconds.
+    pub micros: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +291,8 @@ pub struct Sealer {
     geometry: Geometry,
     /// Whether each closed shard reports its real directory placement.
     measure_placement: bool,
+    /// Whether each closed shard reports the choice table its placement implies.
+    measure_choice: bool,
     /// Whether each closed shard carries its script set out with it.
     retain_scripts: bool,
     next_shard_id: u64,
@@ -340,6 +360,7 @@ impl Sealer {
             basis,
             geometry,
             measure_placement: false,
+            measure_choice: false,
             retain_scripts: false,
             next_shard_id: 0,
             scripts: HashMap::new(),
@@ -363,6 +384,12 @@ impl Sealer {
     /// them anyway.
     pub fn measure_placement(&mut self, on: bool) {
         self.measure_placement = on;
+    }
+
+    /// Asks each closed shard to build the choice table its placement implies,
+    /// and report its size and construction cost. Implies placement.
+    pub fn measure_choice(&mut self, on: bool) {
+        self.measure_choice = on;
     }
 
     /// Asks each closed shard to carry its indexable script set out with it.
@@ -413,39 +440,56 @@ impl Sealer {
 
     /// Runs the builder's placement rule over the scripts this shard holds.
     ///
-    /// Only the scripts a directory entry can hold, in lexicographic raw-byte
+    /// Only the scripts a directory entry can hold, in the builder's placement
     /// order — the two things the builder does, and both of them matter. A
     /// script too long to index is filtered publicly but never placed, and
     /// placement in any other order is a different placement.
     fn placeable(&self) -> Vec<&[u8]> {
-        let mut placeable: Vec<&[u8]> = self
-            .scripts
-            .keys()
-            .map(|script| script.as_slice())
-            .filter(|script| script.len() <= MAX_SCRIPT_BYTES)
-            .collect();
-        placeable.sort_unstable();
-        placeable
+        crate::build::placement_order(
+            self.scripts
+                .iter()
+                .filter(|(script, _)| script.len() <= MAX_SCRIPT_BYTES)
+                .map(|(script, events)| (script.as_slice(), *events)),
+        )
     }
 
-    fn placement(&self) -> Placement {
+    fn placement(&self) -> (Placement, Option<Result<ChoiceMeasure, String>>) {
         let placeable = self.placeable();
-        crate::build::place_scripts(
+        let (placement, assignment) = crate::build::place_scripts(
             self.next_shard_id,
             &placeable,
             self.geometry.directory_rows,
             self.geometry.directory_slots(),
         )
-        .map(|(placement, _)| placement)
         // The rule adds a segment until everything fits and the cap is a
         // bug-catcher far above any reachable load, so a census reaching it is
         // a defect in the rule rather than a property of the journal.
-        .unwrap_or_else(|script| panic!("placement gave up on script {script}"))
+        .unwrap_or_else(|script| panic!("placement gave up on script {script}"));
+        let choice = self.measure_choice.then(|| {
+            let started = std::time::Instant::now();
+            let rows = self.geometry.directory_rows * u64::from(placement.segments);
+            crate::build::choice_table(self.next_shard_id, &placeable, &assignment, rows)
+                .map(|table| ChoiceMeasure {
+                    bytes: table.encode().len() as u64,
+                    keys: table.keys(),
+                    seed: table.seed(),
+                    micros: started.elapsed().as_micros() as u64,
+                })
+                .map_err(|error| error.to_string())
+        });
+        (placement, choice)
     }
 
     fn close(&mut self, reason: Option<SealReason>) -> SealedShard {
+        let (placement, choice) = if self.measure_placement || self.measure_choice {
+            let (placement, choice) = self.placement();
+            (Some(placement), choice)
+        } else {
+            (None, None)
+        };
         let shard = SealedShard {
-            placement: self.measure_placement.then(|| self.placement()),
+            placement,
+            choice,
             scripts: self.retain_scripts.then(|| {
                 self.placeable()
                     .into_iter()
@@ -678,6 +722,17 @@ mod tests {
         assert_eq!(policy.scripts.target, 98_304);
         assert_eq!(policy.page_rows.capacity, 8_192);
         assert_eq!(policy.page_rows.target, 7_936);
+    }
+
+    /// The seal policy the deployment plan names for `recent-4k-8k`
+    /// (`49152:57344,7936:8192`) is the one the geometry derives.
+    #[test]
+    fn the_recent_4k_8k_policy_is_the_one_deployment_names() {
+        let policy = SealPolicy::for_geometry(&crate::layout::RECENT_4K_8K);
+        assert_eq!(policy.scripts.target, 49_152);
+        assert_eq!(policy.scripts.capacity, 57_344);
+        assert_eq!(policy.page_rows.target, 7_936);
+        assert_eq!(policy.page_rows.capacity, 8_192);
     }
 
     /// Every registry entry must imply a policy that is actually sealable:

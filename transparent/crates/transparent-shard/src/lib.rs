@@ -18,18 +18,23 @@
 //! data and it does not serve queries.
 
 pub mod build;
+pub mod choice;
 pub mod layout;
 pub mod manifest;
 pub mod page_row;
 pub mod records;
 pub mod seal;
 
-pub use build::{build_shard, candidate_rows, place_scripts, BuildError, BuiltShard, Placement};
+pub use build::{
+    build_shard, candidate_rows, choice_table, place_scripts, placement_order, BuildError,
+    BuiltShard, Placement,
+};
+pub use choice::{ChoiceError, ChoiceTable};
 pub use layout::{
     by_name as geometry_by_name, entries_per_row, entry_bytes, fragments_for, shape_of, Geometry,
     PackedDemand, Shape, ARCHIVE_32K, ARCHIVE_WIDE, DIRECTORY_ROWS, DIRECTORY_ROW_BYTES,
     EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW, PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS,
-    PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES, PROFILES, RECENT_4K, RECENT_8K,
+    PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES, PROFILES, RECENT_4K, RECENT_4K_8K, RECENT_8K,
 };
 pub use manifest::{
     query_binding, ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry,
@@ -40,4 +45,6 @@ pub use records::{
     decode_directory_row, encode_directory_row, DirectoryEntry, RecordError, DIRECTORY_ENTRY_BYTES,
     DIRECTORY_ENTRY_HEADER_BYTES, DIRECTORY_ROW_HEADER_BYTES, DIRECTORY_SLOTS, MAX_SCRIPT_BYTES,
 };
-pub use seal::{Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer};
+pub use seal::{
+    ChoiceMeasure, Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer,
+};
