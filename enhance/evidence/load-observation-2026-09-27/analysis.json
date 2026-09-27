@@ -1,0 +1,10 @@
+{
+  "samples": 28,
+  "active": [],
+  "firing": [],
+  "unknown": [],
+  "changed_incident_ids": [],
+  "all_progress_healthy": true,
+  "all_canary_samples_passed": true,
+  "max_status_router_waiting": 0
+}
