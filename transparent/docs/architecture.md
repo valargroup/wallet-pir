@@ -8,6 +8,8 @@ The service indexes confirmed receive and spend events under exact raw locking s
 
 A shard is a consecutive height range (called a generation in historical research). Each shard has a public activity filter, a private two-choice script directory and private packed event pages. Short histories may fit inline. A table can have multiple equal-geometry segments for an indivisible oversized block. Both directory candidate rows and every required page are retrieved privately across all table segments; routing must not expose the chosen row or segment.
 
+A manifest may also publish a directory choice table: an xor-retrieval function recording which of each placed script's two candidate rows holds it. A wallet that reads it retrieves only that row, one directory query per matched script instead of two. The query count per matched script remains fixed for the shard, and absence is still decided by exact script comparison. The table is optional and additive: directory rows are unchanged, a manifest without it serializes as before, and a wallet that ignores it queries both rows. The publisher and the server both verify that it routes every entry to its row before it is published or served, because a wrong bit would make a wallet read a present script as absent.
+
 ```mermaid
 flowchart TD
   N[Archive node] --> I[Event ingest and durable journal]
@@ -39,7 +41,7 @@ The router, assignment pools, external artifact origin and atomic fleet activati
 
 ## Identity and geometry
 
-The source schema is `transparent-shard-v7`. A shard declares a named geometry from the compiled registry. A manifest commits layout and table digests; the public map names manifest revisions. Sealed contents remain immutable and manifests chain through parent digests. A tier boundary must be a shard boundary. Profile names must never be reused with different row shapes.
+The source schema is `transparent-shard-v7`; the optional manifest field `directory_choice` does not change it. A shard declares a named geometry from the compiled registry. A manifest commits layout and table digests; the public map names manifest revisions. Sealed contents remain immutable and manifests chain through parent digests. A tier boundary must be a shard boundary. Profile names must never be reused with different row shapes.
 
 Revision identity must be preserved through setup, query, response, runtime cache and wallet coverage. The server verifies manifests when opening a set. The wallet retrieves and verifies revision manifests, their map fields, parent digests and registry geometry before private requests. Hash consistency does not prove completeness or authenticate a malicious publisher's index merely because its terminal block hash is accepted.
 

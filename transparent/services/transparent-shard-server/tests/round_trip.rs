@@ -149,6 +149,7 @@ fn publish(dir: &Path) -> ShardMap {
                 txids: 0,
                 excluded_scripts: built.excluded_scripts,
             },
+            directory_choice: None,
         };
 
         let digest = manifest.digest();

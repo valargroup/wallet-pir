@@ -199,6 +199,12 @@ The following remain separately scoped; they do not block this recovery beta:
   equal limits and resolve recent-latency/total-byte gates before wider promotion.
 - [ ] Evaluate a new `recent-4k-8k` profile without changing existing registry
   meanings; require measured byte and tail-latency benefit before promotion.
+  Two-choice placement reaches its slot limit there (see the
+  [single-lookup census](../evidence/single-lookup-census-2026-09-27/README.md)).
+- [ ] Qualify single-lookup directories: port the choice-table lookup to
+  wallet-libraries, measure whole-wallet bytes, latency and client CPU against
+  the same data with and without tables, then enable `--directory-choice sealed`
+  on a candidate publication before the fleet serves it.
 - [ ] Track aged recent-shaped shard growth and re-census before expansion.
   Epoch re-cutting needs explicit lineage/cache/replay/migration/rollback design.
 - [ ] Scope archive/router redundancy for general availability, mobile, sending

@@ -26,8 +26,8 @@ pub mod records;
 pub mod seal;
 
 pub use build::{
-    build_shard, candidate_rows, choice_table, place_scripts, placement_order, BuildError,
-    BuiltShard, Placement,
+    build_shard, candidate_rows, choice_table, place_scripts, placement_order, verify_choice,
+    BuildError, BuiltShard, Placement,
 };
 pub use choice::{ChoiceError, ChoiceTable};
 pub use layout::{

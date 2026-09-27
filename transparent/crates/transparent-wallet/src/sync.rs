@@ -795,7 +795,7 @@ pub fn sync_into<S: WalletStore>(
                 transport,
                 &mut charges,
                 limits,
-                |store, prepared, transport, charges| {
+                |store, prepared, transport, charges, _| {
                     finish_pages(
                         store,
                         &entry,
@@ -1283,12 +1283,16 @@ fn read_shard_into<S: WalletStore>(
         transport,
         charges,
         limits,
-        |store, prepared, transport, charges| {
+        |store, prepared, transport, charges, manifest| {
+            // Validated when the manifest was verified; decoded again here
+            // rather than carried, since it is a few kilobytes.
+            let choice = directory_choice(manifest)?;
             retrieve_shard_into(
                 store,
                 entry,
                 &matched_scripts,
                 &unmatched,
+                choice.as_ref(),
                 prepared,
                 transport,
                 charges,
@@ -1350,6 +1354,7 @@ where
         &mut GeometryClients,
         &mut T,
         &mut ByteCharges,
+        &ShardManifest,
     ) -> Result<Option<Completion>, SyncError>,
 {
     let _ = limits;
@@ -1384,7 +1389,7 @@ where
             },
         };
         let prepared = clients.prepare(&verified.geometry, &geometry.geometries)?;
-        match work(store, prepared, transport, charges) {
+        match work(store, prepared, transport, charges, verified) {
             Ok(stopped) => return Ok(stopped),
             Err(SyncError::Client(ClientError::Stale(stale))) => {
                 return Err(SyncError::StaleRevision {
@@ -1539,7 +1544,22 @@ fn verify_manifest(
             return Err(mismatch("seal"));
         }
     }
+    directory_choice(&manifest)?;
     Ok(manifest)
+}
+
+/// The manifest's directory choice table, if it publishes one.
+///
+/// A table that does not decode, or that indexes a different number of
+/// scripts than the shard places, stops the sync. Falling back to two queries
+/// would be safe for this shard, but it would hide a malformed publication
+/// behind a working one.
+fn directory_choice(
+    manifest: &ShardManifest,
+) -> Result<Option<transparent_shard::ChoiceTable>, SyncError> {
+    manifest.directory_choice().map_err(|error| {
+        SyncError::Invalid(format!("shard {} manifest: {error}", manifest.shard_id))
+    })
 }
 
 /// How long to wait before re-asking an overloaded service.
@@ -1664,6 +1684,7 @@ fn retrieve_shard_into<S: WalletStore>(
     entry: &transparent_filter::ShardMapEntry,
     matched: &[Vec<u8>],
     unmatched: &[Vec<u8>],
+    choice: Option<&transparent_shard::ChoiceTable>,
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
@@ -1736,14 +1757,21 @@ fn retrieve_shard_into<S: WalletStore>(
     let mut pending_upsert: Vec<PendingPages> = Vec::new();
 
     for script in matched {
-        // Both candidate rows are queried. Querying only the first and stopping
-        // on a hit would make the number of queries depend on where the script
-        // landed, which is a function of the script. Candidates are taken over
-        // the shard's whole logical row space; each names one row within a
-        // segment, and every segment answers it.
+        // With a published choice table, exactly the one candidate row it
+        // names is queried. Without one, both candidate rows are. Either way
+        // the query count per matched script is fixed for the shard: querying
+        // the first and stopping on a hit would make it depend on where the
+        // script landed, which is a function of the script. Candidates are
+        // taken over the shard's whole logical row space; each names one row
+        // within a segment, and every segment answers it.
         let mut found: Option<(u64, DirectoryEntry)> = None;
         let rows = geometry.directory_rows * entry.directory_segments as u64;
-        for row in candidate_rows(shard_id, script, rows) {
+        let candidates = candidate_rows(shard_id, script, rows);
+        let queried: &[u64] = match choice {
+            Some(table) => std::slice::from_ref(&candidates[table.choice(shard_id, script)]),
+            None => &candidates,
+        };
+        for &row in queried {
             let (_, within) = transparent_shard::layout::split_row(row, geometry.directory_rows);
             let answers = directory.fetch_row(
                 transport,
@@ -2419,6 +2447,42 @@ mod tests {
                 txids: 1,
                 excluded_scripts: 0,
             },
+            directory_choice: None,
+        }
+    }
+
+    /// A published choice table is checked with the manifest: one that does
+    /// not decode, or indexes a different number of scripts than the shard
+    /// places, stops the sync rather than falling back to two queries.
+    #[test]
+    fn a_malformed_directory_choice_is_refused_with_the_manifest() {
+        let script: &[u8] = &[0x51, 0x01];
+        let valid = transparent_shard::manifest::encode_directory_choice(
+            &transparent_shard::ChoiceTable::build(0, &[(script, 1)]).unwrap(),
+        );
+        let two = transparent_shard::manifest::encode_directory_choice(
+            &transparent_shard::ChoiceTable::build(0, &[(script, 1), (&[0x51, 0x02], 0)]).unwrap(),
+        );
+        for (choice, accepted) in [
+            (valid, true),
+            (two, false),
+            ("not base64!".to_string(), false),
+            (String::new(), false),
+        ] {
+            let mut entry = entry(0, 100, 199, true);
+            let map = map(vec![entry.clone()]);
+            let mut manifest = manifest_for(&entry, "", &map);
+            manifest.directory_choice = Some(choice.clone());
+            entry.manifest_digest = manifest.digest();
+            let map = self::map(vec![entry.clone()]);
+            let verified = verify_manifest(&manifest.canonical_bytes(), &entry, "", &map);
+            match (accepted, verified) {
+                (true, Ok(verified)) => {
+                    assert!(directory_choice(&verified).unwrap().is_some())
+                }
+                (false, Err(SyncError::Invalid(_))) => {}
+                (_, other) => panic!("{choice:?}: {other:?}"),
+            }
         }
     }
 

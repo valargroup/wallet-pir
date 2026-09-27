@@ -197,6 +197,7 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        directory_choice: None,
     };
 
     let digest = manifest.digest();

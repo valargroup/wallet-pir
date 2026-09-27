@@ -88,6 +88,34 @@ pub struct PublishOptions {
     /// Source commit of this tool, recorded verbatim.
     #[arg(long)]
     pub source_sha: Option<String>,
+    /// Which newly built shards publish a directory choice table.
+    ///
+    /// `off` publishes none, which is every set before this option. `sealed`
+    /// adds one to shards as they seal, `all` to tail revisions too. A shard
+    /// whose published revision is reproduced keeps whatever it published, so
+    /// turning this on never changes an existing digest.
+    #[arg(long, value_enum, default_value_t = DirectoryChoice::Off)]
+    pub directory_choice: DirectoryChoice,
+}
+
+/// Where the publisher publishes directory choice tables.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    clap::ValueEnum,
+    serde::Deserialize,
+    serde::Serialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum DirectoryChoice {
+    #[default]
+    Off,
+    Sealed,
+    All,
 }
 
 /// Writes `bytes` to `path` so that a reader sees either all of them or none.
@@ -358,7 +386,19 @@ pub fn publish(
         // this is: one that reproduces the published digest is the same shard
         // again and keeps its identity, while one that does not is a tail that
         // has grown and takes the next revision.
-        let make = |revision: u32, supersedes: String| ShardManifest {
+        let wanted_choice = match cli.directory_choice {
+            DirectoryChoice::Off => false,
+            DirectoryChoice::Sealed => shard.reason.is_some(),
+            DirectoryChoice::All => true,
+        };
+        if wanted_choice && built.choice.is_none() {
+            eprintln!(
+                "shard {} has no directory choice table: no seed peeled; \
+                 publishing it for two directory queries",
+                shard.shard_id
+            );
+        }
+        let make = |revision: u32, supersedes: String, with_choice: bool| ShardManifest {
             schema: SCHEMA.to_string(),
             profile: transparent_filter::RANGE_PROFILE.to_string(),
             geometry: geometry.name.to_string(),
@@ -415,6 +455,11 @@ pub fn publish(
                 txids: shard.occupancy.txids,
                 excluded_scripts: built.excluded_scripts,
             },
+            directory_choice: built
+                .choice
+                .as_ref()
+                .filter(|_| with_choice)
+                .map(transparent_shard::manifest::encode_directory_choice),
         };
 
         let published = match previous.get(&shard.shard_id) {
@@ -426,20 +471,32 @@ pub fn publish(
                         .join("manifest.json"),
                 )?;
                 let published: ShardManifest = serde_json::from_slice(&raw)?;
-                Some(PublishedRevision {
-                    digest: entry.manifest_digest.clone(),
-                    revision: published.revision,
-                    supersedes: published.supersedes,
-                    sealed: published.sealed,
-                })
+                Some((
+                    PublishedRevision {
+                        digest: entry.manifest_digest.clone(),
+                        revision: published.revision,
+                        supersedes: published.supersedes,
+                        sealed: published.sealed,
+                    },
+                    published.directory_choice.is_some(),
+                ))
             }
         };
-        let reproduced = published.as_ref().is_some_and(|previous| {
-            make(previous.revision, previous.supersedes.clone()).digest() == previous.digest
+        // Reproduction is judged against what the published revision chose,
+        // so the same content keeps its identity whatever this run's option
+        // says. Only a revision that changes anyway takes the option.
+        let reproduced = published.as_ref().is_some_and(|(previous, had_choice)| {
+            make(previous.revision, previous.supersedes.clone(), *had_choice).digest()
+                == previous.digest
         });
+        let with_choice = match &published {
+            Some((_, had_choice)) if reproduced => *had_choice,
+            _ => wanted_choice,
+        };
+        let published = published.map(|(previous, _)| previous);
         let (revision, supersedes) =
             PublishedRevision::next(shard.shard_id, published.as_ref(), reproduced)?;
-        let manifest = make(revision, supersedes);
+        let manifest = make(revision, supersedes, with_choice);
 
         let digest = manifest.digest();
         let dir = cli.output.join(&digest);
@@ -835,6 +892,7 @@ mod tests {
             through: None,
             record: None,
             source_sha: None,
+            directory_choice: DirectoryChoice::Off,
         }
     }
     fn block(store: &mut EventStore, h: u64, tag: u8) {
@@ -892,6 +950,70 @@ mod tests {
         let repeated = publish(&options(&b, None), &journal, zero).unwrap();
         assert_eq!(after, repeated);
         transparent_shard_server::shardset::ShardSet::open(&b, 3).unwrap();
+    }
+    /// The choice option never changes an existing digest: a republication
+    /// that reproduces keeps what it published, and only content that changes
+    /// anyway (a grown tail, a fresh set) takes the option.
+    #[test]
+    fn directory_choice_is_added_without_changing_published_digests() {
+        let root = tempfile::tempdir().unwrap();
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let with = |output: &Path, previous: Option<&Path>, choice: DirectoryChoice| {
+            let mut options = options(output, previous);
+            options.directory_choice = choice;
+            options
+        };
+        let read = |dir: &Path, e: &transparent_filter::ShardMapEntry| -> ShardManifest {
+            serde_json::from_slice(
+                &std::fs::read(dir.join(&e.manifest_digest).join("manifest.json")).unwrap(),
+            )
+            .unwrap()
+        };
+
+        let a = root.path().join("a");
+        let before = publish(&with(&a, None, DirectoryChoice::Off), &journal, zero).unwrap();
+        for entry in &before.shards {
+            assert_eq!(read(&a, entry).directory_choice, None);
+        }
+        // The same journal again, now asking for tables everywhere: nothing
+        // changes, because every shard reproduces.
+        let again = publish(&with(&a, None, DirectoryChoice::All), &journal, zero).unwrap();
+        assert_eq!(before, again);
+
+        // A grown tail is a new revision, and takes the option. The sealed
+        // prefix is reused as published.
+        block(&mut journal, 4, 5);
+        let b = root.path().join("b");
+        let snapshot = Snapshot::capture(&journal, &before).unwrap();
+        let after = publish(&with(&b, Some(&a), DirectoryChoice::All), &snapshot, zero).unwrap();
+        assert_eq!(before.shards[0], after.shards[0]);
+        let tail = read(&b, &after.shards[1]);
+        assert_eq!(tail.revision, 1);
+        let table = tail
+            .directory_choice()
+            .unwrap()
+            .expect("a grown tail takes the option");
+        assert_eq!(u64::from(table.keys()), tail.occupancy.scripts);
+        transparent_shard_server::shardset::ShardSet::open(&b, 3).unwrap();
+
+        // A fresh set under `sealed` tables its sealed shards and not its tail.
+        let c = root.path().join("c");
+        let sealed = publish(&with(&c, None, DirectoryChoice::Sealed), &journal, zero).unwrap();
+        for entry in &sealed.shards {
+            let manifest = read(&c, entry);
+            assert_eq!(
+                manifest.directory_choice().unwrap().is_some(),
+                entry.sealed,
+                "shard {}",
+                entry.shard_id
+            );
+        }
+        transparent_shard_server::shardset::ShardSet::open(&c, 3).unwrap();
     }
     #[test]
     fn sealed_reorg_builds_a_separate_suffix_and_snapshot_survives_rollback() {

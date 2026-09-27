@@ -170,6 +170,14 @@ Two-choice placement at 4,096 directory rows reached 14 of 14 slots in one shard
 recent-4k-8k therefore needs a denser placement, and is not selected with this
 variant. Wallet measurement remains open.
 
+The source now implements this variant as an optional manifest field, not a
+schema change. Manifests without it keep their bytes and digests, and existing
+wallets ignore it and query both rows. The publisher adds tables only to
+revisions it builds anew (`--directory-choice`, default `off`). The builder and
+the server verify every entry's route. The wallet sends one query per matched
+script when a table is present. None of this is published or deployed; see
+[status](status.md).
+
 ### Scope and requirements
 
 Use this layout first for sealed recent shards. Retain the existing directory

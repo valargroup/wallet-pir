@@ -97,8 +97,9 @@ index completeness. No mnemonic, private ledger or raw wallet log is published.
 |---|---|
 | Shard schema | `transparent-shard-v7` in `transparent/crates/transparent-shard/src/manifest.rs` |
 | Registry | `recent-8k` 8192/8192; `recent-4k` 4096/4096; `archive-32k` 32768/32768; `archive-wide` 32768/65536 |
-| Desired optional recent pairing | 4096/8192 absent; add a new name, never reinterpret `recent-4k` |
-| Census ranges | `--start-height`, `--end-height`, geometry overrides, `--placement`, `--per-shard`, exact script matches exist in `shard-census.rs` |
+| Optional recent pairing | `recent-4k-8k` 4096/8192 registered; not published. The [single-lookup census](../evidence/single-lookup-census-2026-09-27/README.md) found two-choice placement at 14 of 14 slots in one shard at this geometry |
+| Single-lookup directory | Optional manifest `directory_choice`; publisher `--directory-choice off\|sealed\|all` (controller config `directory_choice`, default `off`); builder and server verify routing; wallet sends one directory query per matched script when present. Not published or deployed; wallet-libraries not updated |
+| Census ranges | `--start-height`, `--end-height`, `--first-shard-id`, geometry overrides, `--placement`, `--single-lookup`, `--per-shard`, exact script matches exist in `shard-census.rs` |
 | Two-tier publisher | `--recent-geometry`, `--archive-geometry`, `--recent-from` exist in `shard-publish.rs` |
 | Workflow exposure | `publish-transparent-shards.yml` exposes commit, journal, output directory, anchor, `recent_from` (re-derived and checked) and both geometries; the backfill workflow's `inventory` action records journal identity, cutoff and an independent event spot-check |
 | Loading/cache | `ShardSet::open_with` loads the whole set or an assignment's subset: every shard's manifest and filter, tables only for assigned ids, global ids and manifest chain intact; bounded runtime cache and file-backed plaintext sources |

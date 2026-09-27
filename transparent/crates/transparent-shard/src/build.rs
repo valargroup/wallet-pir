@@ -90,6 +90,14 @@ pub struct BuiltShard {
     /// for. Not the row count: short histories share rows.
     pub fragments: u64,
     pub events: u64,
+    /// Which candidate row holds each placed script, for a single-lookup
+    /// directory. See [`crate::choice`].
+    ///
+    /// Always built, because it is a function of the placement just made and
+    /// costs a fraction of it; the publisher decides whether to publish it.
+    /// `None` only if no seed peeled, which leaves the shard on two queries
+    /// rather than failing the build.
+    pub choice: Option<crate::choice::ChoiceTable>,
     /// Scripts in the filter but not the directory, because they exceed
     /// [`MAX_SCRIPT_BYTES`].
     ///
@@ -420,7 +428,7 @@ pub fn build_shard(
         .map(<[u8]>::to_vec)
         .collect();
 
-    let (directory, scripts) = place_directory(shard_id, entries, geometry)?;
+    let (directory, scripts, choice) = place_directory(shard_id, entries, geometry)?;
 
     Ok(BuiltShard {
         shard_id,
@@ -431,6 +439,7 @@ pub fn build_shard(
         directory,
         pages: page_table,
         scripts,
+        choice,
         page_rows,
         fragments,
         events: total_events,
@@ -566,6 +575,23 @@ pub fn choice_table(
     crate::choice::ChoiceTable::build(shard_id, &entries)
 }
 
+/// Checks that `table` names the row each script is held in.
+///
+/// `row_of(i)` is the logical row holding `scripts[i]`, over `rows` rows.
+/// Returns the index of the first script it misroutes, or `None` if it routes
+/// every one.
+pub fn verify_choice(
+    shard_id: u64,
+    table: &crate::choice::ChoiceTable,
+    scripts: &[&[u8]],
+    rows: u64,
+    row_of: impl Fn(usize) -> u64,
+) -> Option<usize> {
+    scripts.iter().enumerate().position(|(index, script)| {
+        candidate_rows(shard_id, script, rows)[table.choice(shard_id, script)] != row_of(index)
+    })
+}
+
 /// Rows a relocation search may visit before giving up and taking a segment.
 ///
 /// A bound rather than a budget for the whole shard: the search is per script,
@@ -655,12 +681,16 @@ fn relocate(
 /// segment re-hashes every script rather than spilling the leftovers into a
 /// last segment that would then be the only crowded one.
 ///
-/// Returns one encoded table per segment, and the number of scripts placed.
+/// A placed directory: one encoded table per segment, the number of scripts
+/// placed, and the choice table for the placement.
+type PlacedDirectory = (Vec<Vec<u8>>, u64, Option<crate::choice::ChoiceTable>);
+
+/// Returns the encoded directory and its choice table.
 fn place_directory(
     shard_id: u64,
     entries: Vec<DirectoryEntry>,
     geometry: &Geometry,
-) -> Result<(Vec<Vec<u8>>, u64), BuildError> {
+) -> Result<PlacedDirectory, BuildError> {
     let scripts_only: Vec<&[u8]> = entries
         .iter()
         .map(|entry| entry.script.as_slice())
@@ -699,7 +729,21 @@ fn place_directory(
         }
         tables.push(table);
     }
-    Ok((tables, scripts))
+    let choice = choice_table(shard_id, &scripts_only, &assignment, rows).ok();
+    if let Some(table) = &choice {
+        // A wrong bit is not an error a wallet can see: it queries the other
+        // row, finds no entry, and reads the script as absent. So every placed
+        // script is checked before the table can be published.
+        if let Some(index) = verify_choice(shard_id, table, &scripts_only, rows, |i| {
+            u64::from(assignment[i])
+        }) {
+            return Err(BuildError::Invalid(format!(
+                "choice table sends script {} to the wrong row",
+                hex::encode(scripts_only[index])
+            )));
+        }
+    }
+    Ok((tables, scripts, choice))
 }
 
 #[cfg(test)]
@@ -1223,6 +1267,27 @@ mod tests {
                 assert_eq!(chosen, u64::from(*row), "{count} scripts at {rows} rows");
             }
         }
+    }
+
+    /// Routing holds across segments: a script set too large for one segment
+    /// is placed over the whole logical row space, and the table names rows in
+    /// that space.
+    #[test]
+    fn the_choice_bit_routes_across_segments() {
+        let rows = 2_048u64;
+        let slots = crate::records::DIRECTORY_SLOTS as u64;
+        let owned = placement_set((rows * slots) as u32 + 1_000);
+        let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
+        let (placement, assignment) = place_scripts(5, &refs, rows, slots).expect("fits");
+        assert!(placement.segments > 1);
+        let space = rows * u64::from(placement.segments);
+        let table = choice_table(5, &refs, &assignment, space).expect("peels");
+        assert_eq!(
+            verify_choice(5, &table, &refs, space, |i| u64::from(assignment[i])),
+            None
+        );
+        // And a check against a different placement does catch misrouting.
+        assert!(verify_choice(5, &table, &refs, space, |i| u64::from(assignment[i]) ^ 1).is_some());
     }
 
     /// The sealer's measured placement matches the builder's on content of

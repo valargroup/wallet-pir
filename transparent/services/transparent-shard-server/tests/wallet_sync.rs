@@ -14,7 +14,7 @@ use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{
     filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
-use transparent_shard::build::build_shard;
+use transparent_shard::build::{build_shard, BuiltShard};
 use transparent_shard::layout::{Geometry, RECENT_4K, RECENT_8K};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
@@ -164,6 +164,26 @@ fn publish_with(
     tail_revision: u32,
     tail_supersedes: &str,
 ) -> ShardMap {
+    publish_choosing(
+        dir,
+        per_shard,
+        geometry_for,
+        tail_revision,
+        tail_supersedes,
+        |_, _| None,
+    )
+}
+
+/// As [`publish_with`], with `choice` deciding each shard's published
+/// directory choice field from its id and build: `None` publishes none.
+fn publish_choosing(
+    dir: &Path,
+    per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
+    geometry_for: impl Fn(u64) -> &'static Geometry,
+    tail_revision: u32,
+    tail_supersedes: &str,
+    choice: impl Fn(u64, &BuiltShard) -> Option<String>,
+) -> ShardMap {
     let mut entries = Vec::new();
     let mut parent_digest = String::new();
     for (shard_id, events) in per_shard.iter().enumerate() {
@@ -248,6 +268,7 @@ fn publish_with(
                 txids: 0,
                 excluded_scripts: built.excluded_scripts,
             },
+            directory_choice: choice(shard_id, &built),
         };
 
         let digest = manifest.digest();
@@ -1925,4 +1946,184 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool) {
         }
         other => panic!("expected a named stale revision, got: {other}"),
     }
+}
+
+/// Publishes the choice table the builder made for every shard.
+fn tabled(_: u64, built: &BuiltShard) -> Option<String> {
+    built
+        .choice
+        .as_ref()
+        .map(transparent_shard::manifest::encode_directory_choice)
+}
+
+/// Wallet scripts with activity in `shard`, which is what its filter matches.
+fn active_in(
+    per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
+    shard: usize,
+    wallet: &[ScriptBytes],
+) -> u64 {
+    wallet
+        .iter()
+        .filter(|script| per_shard[shard].iter().any(|(s, _)| s == *script))
+        .count() as u64
+}
+
+/// A published choice table costs one directory query per matched script
+/// instead of two, and changes nothing else: the same directory rows, the
+/// same page queries, and exactly the same ledger.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_choice_table_sends_one_directory_query_per_matched_script() {
+    let per_shard = chain();
+    let wallet = vec![script(1), script(2), script(3), script(999)];
+
+    let two = tempfile::tempdir().unwrap();
+    let two_map = publish(two.path(), &per_shard);
+    let one = tempfile::tempdir().unwrap();
+    let one_map = publish_choosing(one.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    for (a, b) in two_map.shards.iter().zip(&one_map.shards) {
+        assert_ne!(a.manifest_digest, b.manifest_digest);
+        assert_eq!(
+            std::fs::read(two.path().join(&a.manifest_digest).join("directory.0.bin")).unwrap(),
+            std::fs::read(one.path().join(&b.manifest_digest).join("directory.0.bin")).unwrap(),
+            "the table changes the manifest, never the rows"
+        );
+    }
+
+    let two_base = serve(two.path()).await;
+    let one_base = serve(one.path()).await;
+    let without = run_sync(two.path(), two_base, wallet.clone(), FIRST, two_map).await;
+    let with = run_sync(one.path(), one_base, wallet.clone(), FIRST, one_map).await;
+
+    compare(&with.ledger, &traverse(&per_shard, &wallet, 0));
+    compare(&with.ledger, &without.ledger);
+    assert_eq!(with.covered_through, without.covered_through);
+    assert_eq!(with.settled_through, without.settled_through);
+
+    let pairs: u64 = (0..per_shard.len())
+        .map(|shard| active_in(&per_shard, shard, &wallet))
+        .sum();
+    assert!(
+        pairs > 1,
+        "the fixture must match several script-shard pairs"
+    );
+    assert_eq!(without.charges.directory.queries, 2 * pairs);
+    assert_eq!(with.charges.directory.queries, pairs);
+    assert_eq!(with.charges.pages.queries, without.charges.pages.queries);
+    assert!(with.charges.query_upload() < without.charges.query_upload());
+    // The table travels in the manifest, which is where its bytes are charged.
+    assert!(with.charges.manifest_bytes > without.charges.manifest_bytes);
+}
+
+/// With tables on sealed shards only, the tail keeps both candidate queries.
+/// The count per matched script stays fixed per shard either way.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tail_without_a_table_keeps_two_directory_queries() {
+    let per_shard = chain();
+    let wallet = vec![script(1), script(2), script(3), script(999)];
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish_choosing(
+        dir.path(),
+        &per_shard,
+        |_| &RECENT_8K,
+        0,
+        "",
+        |id, built| (id + 1 < SHARDS).then(|| tabled(id, built)).flatten(),
+    );
+    let base = serve(dir.path()).await;
+    let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
+    compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
+
+    let tail = (SHARDS - 1) as usize;
+    let sealed: u64 = (0..tail)
+        .map(|shard| active_in(&per_shard, shard, &wallet))
+        .sum();
+    let in_tail = active_in(&per_shard, tail, &wallet);
+    assert!(in_tail > 0, "the fixture must match the tail");
+    assert_eq!(outcome.charges.directory.queries, sealed + 2 * in_tail);
+}
+
+/// One query per script, whichever scripts they are, including scripts that
+/// share a directory row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_choice_table_costs_one_query_per_script_whatever_the_script() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut events = Vec::new();
+    for tag in 0..3u32 {
+        for i in 0..3u32 {
+            events.push((
+                script(tag),
+                TransparentEvent::Receive(ReceiveEvent {
+                    height: (FIRST + u64::from(i)) as u32,
+                    txid: txid(u64::from(tag) * 10 + u64::from(i)),
+                    transaction_index: i as u16,
+                    output_index: 0,
+                    value: 500 + u64::from(i),
+                    coinbase: false,
+                }),
+            ));
+        }
+    }
+    let per_shard = vec![events];
+    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let base = serve(dir.path()).await;
+    for scripts in 1..=3usize {
+        let wallet: Vec<ScriptBytes> = (0..scripts as u32).map(script).collect();
+        let outcome = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
+        compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
+        assert_eq!(outcome.charges.directory.queries, scripts as u64);
+        assert_eq!(outcome.charges.pages.queries, scripts as u64);
+    }
+}
+
+/// A table that does not route every entry to its row would make a wallet
+/// read a present script as absent, so the server refuses to load it, and
+/// likewise one that does not decode or indexes the wrong number of scripts.
+#[test]
+fn a_server_refuses_a_choice_table_that_misroutes_or_does_not_match() {
+    use transparent_shard::manifest::encode_directory_choice;
+    use transparent_shard::records::decode_directory_row;
+    use transparent_shard::{candidate_rows, ChoiceTable};
+
+    // Every entry sent to the candidate it is not in.
+    let misrouting = |id: u64, built: &BuiltShard| {
+        let rows = built.geometry.directory_rows * u64::from(built.directory_segments());
+        let mut entries: Vec<(Vec<u8>, u8)> = Vec::new();
+        for row in 0..rows {
+            for entry in decode_directory_row(built.directory_row(row)).unwrap() {
+                let candidates = candidate_rows(id, &entry.script, rows);
+                entries.push((entry.script, u8::from(candidates[0] == row)));
+            }
+        }
+        let entries: Vec<(&[u8], u8)> = entries.iter().map(|(s, b)| (s.as_slice(), *b)).collect();
+        Some(encode_directory_choice(
+            &ChoiceTable::build(id, &entries).unwrap(),
+        ))
+    };
+    let short = |id: u64, _: &BuiltShard| {
+        Some(encode_directory_choice(
+            &ChoiceTable::build(id, &[(&[0x51][..], 0)]).unwrap(),
+        ))
+    };
+    let garbage = |_: u64, _: &BuiltShard| Some("not base64!".to_string());
+
+    let per_shard = chain();
+    for (name, choose) in [
+        (
+            "misrouting",
+            &misrouting as &dyn Fn(u64, &BuiltShard) -> Option<String>,
+        ),
+        ("short", &short),
+        ("garbage", &garbage),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", choose);
+        let error = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS)
+            .err()
+            .unwrap_or_else(|| panic!("a {name} table was loaded"));
+        assert!(error.to_string().contains("choice"), "{name}: {error}");
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("a genuine table loads");
 }

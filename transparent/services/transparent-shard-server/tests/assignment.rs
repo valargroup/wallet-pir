@@ -153,6 +153,7 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        directory_choice: None,
     };
     let digest = manifest.digest();
     let shard_dir = dir.join(&digest);
@@ -744,6 +745,7 @@ fn manifest_for(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        directory_choice: None,
     }
 }
 
