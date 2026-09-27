@@ -1,23 +1,22 @@
 [Unit]
-Description=Status PIR CUDA evaluation worker (private qualification)
+Description=Status PIR CPU evaluation worker (private qualification)
 After=network-online.target
 
 [Service]
-User=paperspace
-Group=paperspace
-ExecStart=@RELEASE@/status-pir role --role worker --cuda --network-hex @NETWORK@ --listen 127.0.0.1:8481 --artifact-origin http://127.0.0.1:8495 --state-dir /var/lib/status-pir-worker
-Environment=LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64
+User=status-pir
+Group=status-pir
+ExecStart=@RELEASE@/status-pir role --role worker --network-hex @NETWORK@ --listen 127.0.0.1:8481 --artifact-origin http://127.0.0.1:8495 --state-dir /var/lib/status-pir-worker-native
 Environment=RAYON_NUM_THREADS=4
 Environment=RUST_LOG=info
 Restart=on-failure
 RestartSec=3
-MemoryMax=12G
+MemoryMax=4G
 MemorySwapMax=0
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/status-pir-worker
+ReadWritePaths=/var/lib/status-pir-worker-native
 
 [Install]
 WantedBy=multi-user.target

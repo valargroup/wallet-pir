@@ -8,7 +8,7 @@ and independent serving roles; it does not establish production qualification.
 The coordinator integration is `enhance-pir-server coordinator --status-config
 <file>`. Omission disables Status. Its Status controller runs on a dedicated,
 bounded Tokio runtime with its own journal and source cache. It uses the
-coordinator-local Zakura cookie; the P4000 never receives that credential.
+coordinator-local Zakura cookie; the Status host never receives that credential.
 
 The initial SSH rollout runs the same controller through `status-pir
 serve-distributed` in `status-controller-qualification.service` on the coordinator
@@ -47,10 +47,10 @@ configuration.
 | --- | --- | --- |
 | Coordinator `127.0.0.1:8480` | Private Status routes and immutable candidate transfer | Coordinator loopback |
 | Coordinator `127.0.0.1:8489` | Public `/v1/status/*` when `public_enabled` (`--public-listen`) | Coordinator loopback; Caddy `handle /v1/status/*` |
-| P4000 `127.0.0.1:8481` | CUDA worker and private control | Loopback; coordinator SSH forward |
-| P4000 `127.0.0.1:8482` | CPU packing router private control, public material, telemetry | Loopback; coordinator SSH forward (`status-control-tunnel`, local 8482) |
-| P4000 `127.0.0.1:8484` | CPU packing router query route only (`/v1/status/query`, `--query-listen`) | Loopback; coordinator SSH forward (`status-query-tunnel`, local 8492) |
-| P4000 `127.0.0.1:8495` | Reverse forward to coordinator artifacts | P4000 loopback |
+| Status host `127.0.0.1:8481` | CPU evaluation worker and private control | Loopback; coordinator SSH forward |
+| Status host `127.0.0.1:8482` | CPU packing router private control, public material, telemetry | Loopback; coordinator SSH forward (`status-control-tunnel`, local 8482) |
+| Status host `127.0.0.1:8484` | CPU packing router query route only (`/v1/status/query`, `--query-listen`) | Loopback; coordinator SSH forward (`status-query-tunnel`, local 8492) |
+| Status host `127.0.0.1:8495` | Reverse forward to coordinator artifacts | Status host loopback |
 
 The router's `--query-listen` splits the forwarded query route from its control
 listener. Both listeners must be loopback; the control listener never carries
@@ -66,11 +66,16 @@ stored in the production `/status-pir/control` folder of the `spendability-pir
 deploy` Infisical project as `STATUS_CONTROL_SSH_PRIVATE_KEY`. The installed copy
 is root-only under `/etc/status-pir-control/`. It is separate from the APM key.
 The service-unit templates are under `enhance/ops/deploy/` and substitute a
-checksummed release directory and the canonical network genesis hash.
+checksummed release directory (`@RELEASE@`), the canonical network genesis hash
+(`@NETWORK@`) and, for the two tunnels, the Status host's private VPC address
+(`@STATUS_HOST@`).
 
-The existing synthetic `status-pir.service` and monitoring deployment remain
-separate from this qualification topology. APM's synthetic pane is not evidence
-that the private live topology is ready.
+The Status host is the Terraform `status-pir-01` droplet (`status.tf`, enabled by
+`status_host_count`). Worker and router run CPU-only, as the dedicated
+`status-pir` user, from a binary built without the `cuda` feature. Its cloud-init
+installs the forwarding-only `status-control` key with explicit `permitopen`
+(8481, 8482, 8484) and `permitlisten` (8495) restrictions. The CUDA worker
+remains an optional build (`--features cuda`, `--cuda`) and is not deployed.
 
 ## Publication and recovery
 
@@ -131,7 +136,7 @@ does not implement. Wallet-library commit
 wallet-library pins must move together to avoid distinct Rust types from two
 copies of the Status crate. Its release-ready feature gate remains disabled.
 
-`status-pir validate-distributed --cuda --entries 1572864 --state-dir <fresh-dir>`
+`status-pir validate-distributed --entries 1572864 --state-dir <fresh-dir>` (add `--cuda` on a GPU host)
 starts real worker/router child processes and verifies encrypted fixture answers
 and remote fencing. It does not use a live source.
 

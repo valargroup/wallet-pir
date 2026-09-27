@@ -153,7 +153,7 @@ impl Config {
             status_worker_url,
             status_topology: get_or(
                 "PIR_APM_STATUS_TOPOLOGY",
-                "Enhance host → P4000 router + worker",
+                "Enhance host → CPU router + worker",
             ),
             metrics_path: path_value(&get_or("PIR_APM_METRICS_PATH", "/metrics"))?,
             health_path: path_value(&get_or("PIR_APM_HEALTH_PATH", "/v1/health"))?,

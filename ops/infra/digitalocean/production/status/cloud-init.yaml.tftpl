@@ -1,0 +1,27 @@
+#cloud-config
+package_update: true
+packages: ${packages}
+%{ if deploy_public_key != "" ~}
+ssh_authorized_keys:
+  - ${jsonencode(deploy_public_key)}
+%{ endif ~}
+write_files:
+  # Forwarding only: the coordinator reaches the worker, router control and router
+  # query listeners; the worker reaches coordinator artifacts through 8495.
+  - path: /etc/ssh/status-control/authorized_keys
+    permissions: "0644"
+    content: |
+      restrict,port-forwarding,command="/bin/false",permitopen="127.0.0.1:8481",permitopen="127.0.0.1:8482",permitopen="127.0.0.1:8484",permitlisten="127.0.0.1:8495" ${control_public_key}
+  - path: /etc/ssh/sshd_config.d/60-status-control.conf
+    permissions: "0644"
+    content: |
+      Match User status-control
+          AuthorizedKeysFile /etc/ssh/status-control/authorized_keys
+          AllowTcpForwarding yes
+          X11Forwarding no
+          PermitTTY no
+runcmd:
+  - [useradd, --system, --no-create-home, --shell, /usr/sbin/nologin, status-pir]
+  - [install, -d, -o, status-pir, -g, status-pir, -m, "0700", /var/lib/status-pir-worker-native, /var/lib/status-pir-router-native]
+  - [useradd, --system, --no-create-home, --shell, /usr/sbin/nologin, status-control]
+  - [systemctl, reload, ssh]
