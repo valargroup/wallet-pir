@@ -260,6 +260,23 @@ impl Coordinator {
                 &packing_budget,
             )?);
         }
+        // A restart must not make publication health "unknown" until the next
+        // block: the newest snapshot file is written atomically at publication,
+        // so its modification time is the last successful advancement.
+        let restored_advancement = store
+            .state()
+            .published
+            .iter()
+            .map(|m| m.generation)
+            .max()
+            .and_then(|generation| {
+                fs::metadata(root.join("snapshots").join(format!("{generation}.json"))).ok()
+            })
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|at| at.as_secs());
+        let mut telemetry = super::telemetry::Publication::default();
+        telemetry.last_advancement_unix_seconds = restored_advancement;
         Ok(Self {
             packing_budget,
             serving,
@@ -277,7 +294,7 @@ impl Coordinator {
                 .map_err(|e| e.to_string())?,
             root: root.into(),
             blocked: Arc::new(Mutex::new(None)),
-            telemetry: Arc::new(Mutex::new(super::telemetry::Publication::default())),
+            telemetry: Arc::new(Mutex::new(telemetry)),
         })
     }
 
