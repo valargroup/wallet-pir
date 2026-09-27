@@ -62,6 +62,19 @@ was restored by hand at 18:55 and added to the template in `2c658d43`.
 Shadow mode itself withdraws public metadata while workers upgrade, here about
 14 minutes, as the maintenance path does.
 
+**Directory choice tables enabled, 22:43.**
+- `directory_choice: "all"` was added to `/opt/transparent-publisher/controller.json`
+  (backup `controller.json.before-directory-choice`) and the controller restarted.
+- The first new tail revision (shard 175, revision 1172, height 3,498,503)
+  carries a 4,321-byte table for 27,989 scripts. Workers loaded it, and loading
+  verifies every entry's route.
+- 25 public syncs against it completed with no failures.
+- Existing sealed shards keep their table-free manifests until a full
+  republication. Wallets built before the field cannot read tabled manifests;
+  none is shipped.
+- To revert: remove the field and restart the controller. The next tail
+  revision is then published without a table.
+
 ## M1 accepted observation
 
 The matching loaded canary ran for more than six hours and 300 blocks with
@@ -142,7 +155,7 @@ index completeness. No mnemonic, private ledger or raw wallet log is published.
 | Shard schema | `transparent-shard-v7` in `transparent/crates/transparent-shard/src/manifest.rs` |
 | Registry | `recent-8k` 8192/8192; `recent-4k` 4096/4096; `archive-32k` 32768/32768; `archive-wide` 32768/65536 |
 | Optional recent pairing | `recent-4k-8k` 4096/8192 registered; not published. Real shards and a [placement study](../evidence/directory-placement-4k-2026-09-28/README.md) fit it in one segment with no overflow up to 96% load |
-| Single-lookup directory | Optional manifest `directory_choice`; publisher `--directory-choice off\|sealed\|all` (controller config `directory_choice`, default `off`); builder and server verify routing; wallet sends one directory query per matched script when present. [Measured locally](../evidence/single-lookup-measure-2026-09-27/README.md): 939/939 exact syncs, directory queries halved, restore-6m payload −24%; a [temporary bench fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) reproduced this at 8 and 32 wallets. Not published or deployed; wallet-libraries not updated |
+| Single-lookup directory | **Live for new tail and sealed revisions since 2026-09-27 22:43 UTC** (see the release rollout above). Optional manifest `directory_choice`; publisher `--directory-choice off\|sealed\|all` (controller config `directory_choice`, default `off`); builder and server verify routing; wallet sends one directory query per matched script when present. [Measured locally](../evidence/single-lookup-measure-2026-09-27/README.md): 939/939 exact syncs, directory queries halved, restore-6m payload −24%; a [temporary bench fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) reproduced this at 8 and 32 wallets. wallet-libraries not updated |
 | Census ranges | `--start-height`, `--end-height`, `--first-shard-id`, geometry overrides, `--placement`, `--single-lookup`, `--per-shard`, exact script matches exist in `shard-census.rs` |
 | Two-tier publisher | `--recent-geometry`, `--archive-geometry`, `--recent-from` exist in `shard-publish.rs` |
 | Workflow exposure | `publish-transparent-shards.yml` exposes commit, journal, output directory, anchor, `recent_from` (re-derived and checked) and both geometries; the backfill workflow's `inventory` action records journal identity, cutoff and an independent event spot-check |
