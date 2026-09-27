@@ -148,6 +148,11 @@ pub enum PageBasis {
     /// can be compared over one journal; a set must not be built this way,
     /// because the table would be sized for more than the builder writes.
     Fragments,
+    /// Packed rows of short histories only, as if long histories lived in a
+    /// separate bulk table that does not decide boundaries. A census option for
+    /// the bulk-isolation design in the architecture update; no builder lays
+    /// out tables this way.
+    PackedOrdinary,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -402,10 +407,11 @@ impl Sealer {
     }
 
     /// The page figure a limit is compared against.
-    fn page_rows(basis: PageBasis, fragments: u64, packed: u64) -> u64 {
+    fn page_rows(basis: PageBasis, fragments: u64, demand: &PackedDemand) -> u64 {
         match basis {
             PageBasis::Fragments => fragments,
-            PageBasis::Packed => packed,
+            PageBasis::Packed => demand.rows(),
+            PageBasis::PackedOrdinary => demand.rows() - demand.long_rows(),
         }
     }
 
@@ -413,7 +419,7 @@ impl Sealer {
         let packed = self.demand.rows();
         Occupancy {
             scripts: self.scripts.len() as u64,
-            page_rows: Self::page_rows(self.basis, self.fragments, packed),
+            page_rows: Self::page_rows(self.basis, self.fragments, &self.demand),
             fragments: self.fragments,
             txids: self.txids.len() as u64,
             events: self.events,
@@ -550,7 +556,7 @@ impl Sealer {
         let packed = demand.rows();
         Occupancy {
             scripts,
-            page_rows: Self::page_rows(self.basis, fragments, packed),
+            page_rows: Self::page_rows(self.basis, fragments, &demand),
             fragments,
             txids,
             events: self.events + events.len() as u64,

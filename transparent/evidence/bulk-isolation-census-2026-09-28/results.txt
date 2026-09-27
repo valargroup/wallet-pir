@@ -1,0 +1,42 @@
+== single-lookup-census-recent-8k.txt
+shards	14
+class	clients	sealed_pairs	tail_pairs	matched_shards
+catch-up-1d	120	1.350	1.367	1.808
+catch-up-30d	120	2.225	0.108	1.808
+catch-up-7d	120	1.925	0.225	1.217
+multi-script	120	52.525	0.600	13.258
+restore-6m	120	5.892	0.042	4.925
+restore-old	120	0.233	0.008	0.242
+reused-tail	120	6.408	0.517	6.925
+small-active	120	1.108	0.000	1.108
+unused	120	0.000	0.000	0.000
+summary	P=19	M=784931	bytes=1293378	bits_per_element=21.054	false_match_per_absent_test=1.274e-6
+summary	P=13	M=12288	bytes=924952	bits_per_element=15.056	false_match_per_absent_test=8.138e-5
+== bulk-census-recent-8k.txt
+shards	5
+class	clients	sealed_pairs	tail_pairs	matched_shards
+catch-up-1d	120	0.000	2.000	1.000
+catch-up-30d	120	1.242	0.908	1.583
+catch-up-7d	120	0.000	2.000	1.000
+multi-script	120	42.000	4.050	4.992
+restore-6m	120	4.825	0.625	3.525
+restore-old	120	0.142	0.025	0.167
+reused-tail	120	2.158	0.808	2.967
+small-active	120	0.942	0.125	1.067
+unused	120	0.000	0.000	0.000
+summary	P=19	M=784931	bytes=1136251	bits_per_element=21.054	false_match_per_absent_test=1.274e-6
+summary	P=13	M=12288	bytes=812577	bits_per_element=15.056	false_match_per_absent_test=8.138e-5
+== bulk-census-recent-4k-8k.txt
+shards	10
+class	clients	sealed_pairs	tail_pairs	matched_shards
+catch-up-1d	120	0.000	2.000	1.000
+catch-up-30d	120	1.683	0.592	1.792
+catch-up-7d	120	0.883	1.450	1.608
+multi-script	120	47.967	2.675	9.900
+restore-6m	120	5.450	0.358	4.567
+restore-old	120	0.192	0.025	0.217
+reused-tail	120	4.558	0.700	5.258
+small-active	120	1.033	0.058	1.092
+unused	120	0.000	0.000	0.000
+summary	P=19	M=784931	bytes=1236033	bits_per_element=21.053	false_match_per_absent_test=1.274e-6
+summary	P=13	M=12288	bytes=883934	bits_per_element=15.056	false_match_per_absent_test=8.138e-5

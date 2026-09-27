@@ -34,6 +34,45 @@ operating targets, [status](status.md) for observed implementation and live stat
 and [remaining work](remaining-work.md) for tracked milestones. The
 [contract](contract.md) continues to govern correctness, coverage, and privacy.
 
+## Investigation results and recommended design (2026-09-28)
+
+This section records what the follow-up work measured and deployed. The
+sections below keep the original review text, with dated notes. Evidence
+directories hold the raw inputs; [status](status.md) records live state.
+
+| Question | Result | Evidence |
+|---|---|---|
+| §2 Single-lookup directory | Implemented as a per-shard choice table (about 1.23 bits per script) in an optional manifest field. Measured locally, on a bench fleet and under emulated delay. **Live in production since 2026-09-27 22:43 UTC for new tail and sealed revisions.** | [census](../evidence/single-lookup-census-2026-09-27/README.md), [local](../evidence/single-lookup-measure-2026-09-27/README.md), [fleet](../evidence/single-lookup-fleet-2026-09-27/README.md), [latency](../evidence/single-lookup-latency-2026-09-28/README.md) |
+| §2 recent-4k-8k | Two-choice placement never overflows up to 96% load, so the geometry is feasible without denser placement. It saves about 21.5 KB per directory query. | [placement](../evidence/directory-placement-4k-2026-09-28/README.md) |
+| §3 Lower-precision filters | Exact sizes: P=13 (M=12,288) cuts recent filter bytes by 28% and never costs more than today up to about 2,000 tested scripts. P=12 saves 35% but costs more above about 200 scripts. The combined MPHF/fingerprint artifact is not preferred: P=13 GCS plus a per-matched-shard choice table is smaller. | [sweep](../evidence/filter-precision-sweep-2026-09-28/README.md) |
+| §4 Bulk-history isolation | Recent shards seal on scripts instead of pages: 14 become 5 at recent-8k. restore-6m matched shards fall 28% and projected bytes about 11%. The cost is a new table type, a privacy review of the table choice, and tails that live about 6 weeks. Deferred. | [bulk census](../evidence/bulk-isolation-census-2026-09-28/README.md) |
+| §5 Cold archive service | Not investigated beyond cache behaviour. Runtime snapshots restore in about 1 s per recent table and survive the ipir-sp accc424→rc.6 upgrade. Archive restore latency and on-demand admission remain unmeasured. | [status](status.md) (release rollout) |
+| §6 Bounded concurrency | Filter prefetch implemented in the wallet's HTTP filter source: over 8 connections, one-shot, and stopping on the first failure. Under an emulated 100 ms round trip, restore-6m p50 fell from 3.62 to 2.51 s with tables (4.40 s with neither). About 16 sequential private and setup requests remain. | [latency](../evidence/single-lookup-latency-2026-09-28/README.md) |
+
+**Recommended design for ordinary wallets.** It is ordered by benefit per unit
+of risk. The projected figures chain measured per-request sizes; only the first
+row is measured whole-wallet.
+
+| Step | Status | restore-6m bytes | restore-6m p50 at 100 ms RTT |
+|---|---|---:|---:|
+| Baseline (fleet r3, bench fleet off) | Measured | 3.15 MB | 4.40 s |
+| + choice tables | **Live** for new revisions; measured | 2.39 MB (−24%) | 3.62 s |
+| + filter prefetch | In the wallet on `main`; measured | 2.39 MB | 2.51 s |
+| + filter profile P=13 | Projected | about 2.02 MB | slightly lower |
+| + recent-4k-8k | Projected | about 1.89 MB (−40%) | slightly lower |
+| + cross-shard request concurrency | Projected from request counts | unchanged | about 1.5 s |
+
+The filter profile, recent-4k-8k and tables on already-sealed shards all
+change published bytes. They belong in **one full republication** under a new
+filter profile name, with wallets selecting P and M by profile and refusing
+unknown profiles. Current wallets decode every filter with the compiled
+constants, so the profile change is breaking.
+
+No shipped wallet uses transparent PIR yet: the client exists only on unmerged
+wallet-libraries branches. So the cheapest time for the republication is
+before the wallet ships. Bulk isolation and cold archive service remain
+separate, later experiments.
+
 ## 1. Baseline and workload interpretation
 
 The current path downloads public shard filters, matches wallet scripts locally,

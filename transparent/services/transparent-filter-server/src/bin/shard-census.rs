@@ -106,6 +106,13 @@ struct Cli {
     /// downloads per matched shard to send one directory query instead of two.
     #[arg(long)]
     single_lookup: bool,
+    /// Seal on short histories' packed rows only, as if long histories lived
+    /// in a separate bulk table that does not decide boundaries.
+    ///
+    /// Scores the bulk-isolation design; no builder lays tables out this way.
+    /// Reports the bulk rows each shard would need alongside.
+    #[arg(long, conflicts_with = "unpacked")]
+    bulk_long: bool,
     /// Count how many shards each exact script appears in, spilling sorted runs
     /// under this directory.
     ///
@@ -547,6 +554,21 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
             println!("      figure. Not a set that could be published: the builder packs, so");
             println!("      these are not boundaries it would produce. ===");
         }
+        PageBasis::PackedOrdinary => {
+            println!("  === Boundaries chosen by short histories' packed rows alone; long");
+            println!("      histories are counted as a separate bulk table. ===");
+            let mut bulk: Vec<u64> = shards
+                .iter()
+                .map(|s| s.occupancy.demand.long_rows())
+                .collect();
+            let total: u64 = bulk.iter().sum();
+            bulk.sort_unstable();
+            println!(
+                "  bulk_rows  total {total}, p50 {}, max {} per shard",
+                percentile(&bulk, 50.0),
+                bulk.last().copied().unwrap_or(0)
+            );
+        }
     }
 
     // Per class: scripts across the whole set, and rows, which must be summed
@@ -924,6 +946,8 @@ fn main() -> Result<(), BoxError> {
     let page_rows_per_segment = geometry.page_rows;
     let basis = if cli.unpacked {
         PageBasis::Fragments
+    } else if cli.bulk_long {
+        PageBasis::PackedOrdinary
     } else {
         PageBasis::Packed
     };
