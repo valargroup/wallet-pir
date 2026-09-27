@@ -946,14 +946,32 @@ fn public_read(c: &Coordinator) -> ApiResult<tokio::sync::OwnedSemaphorePermit> 
         .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "overloaded".into()))
 }
 
+/// Publication inserts a generation before its packing routers are activated;
+/// init waits out that short window instead of answering a transient 503.
+const INIT_ACTIVATION_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 async fn init(State(c): State<Coordinator>) -> ApiResult<Json<Manifest>> {
     let _read = public_read(&c)?;
-    let manifest = c.manifest().await;
-    if c.serving.as_ref().is_some_and(|s| {
-        manifest
-            .as_ref()
-            .is_none_or(|m| !s.public_ready(m.generation))
-    }) {
+    let deadline = tokio::time::Instant::now() + INIT_ACTIVATION_WAIT;
+    let manifest = loop {
+        let manifest = c.manifest().await;
+        let unready = c.serving.as_ref().is_some_and(|s| {
+            manifest
+                .as_ref()
+                .is_none_or(|m| !s.public_ready(m.generation))
+        });
+        if !unready || manifest.is_none() {
+            break manifest;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "packing routers not activated".into(),
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    };
+    if c.serving.is_some() && manifest.is_none() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             "packing routers not activated".into(),

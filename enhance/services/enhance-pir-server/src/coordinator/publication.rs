@@ -511,21 +511,37 @@ impl Coordinator {
         }
         let reusable: BTreeSet<_> = packing.keys().copied().collect();
         let mut routes = BTreeMap::<u64, Vec<String>>::new();
+        // Replicas prepare independently on their own hosts. Upload rows and run
+        // every replica's preparation concurrently, so publication waits for the
+        // slowest replica rather than their sum; hints are verified below in order.
+        let mut jobs = tokio::task::JoinSet::new();
         for group in &groups {
             for replica in &group.replicas {
                 let Some((candidate, missing, _)) = candidates.get(&replica.name) else {
                     continue;
                 };
-                let prepared: Result<(), String> = async {
+                let mut uploads = Vec::new();
+                let rows_read = (|| -> Result<(), String> {
                     for plan in &candidate.plans {
                         for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
-                            if !missing.contains(&unit.digest()) {
-                                continue;
+                            if missing.contains(&unit.digest()) {
+                                let rows = runtime::unit_rows(&plan.shard, spec, &mut { read })?;
+                                uploads.push((unit.digest(), rows));
                             }
-                            let rows = runtime::unit_rows(&plan.shard, spec, &mut { read })?;
+                        }
+                    }
+                    Ok(())
+                })();
+                let http = self.http.clone();
+                let name = replica.name.clone();
+                let url = replica.url.clone();
+                let candidate = candidate.clone();
+                jobs.spawn(async move {
+                    let result = async {
+                        rows_read?;
+                        for (digest, rows) in uploads {
                             checked(
-                                self.http
-                                    .put(format!("{}/internal/rows/{}", replica.url, unit.digest()))
+                                http.put(format!("{url}/internal/rows/{digest}"))
                                     .header("x-enhance-epoch", candidate.epoch)
                                     .header("x-enhance-attempt", candidate.attempt)
                                     .header("x-enhance-operation", &candidate.operation)
@@ -536,15 +552,35 @@ impl Coordinator {
                             )
                             .await?;
                         }
+                        checked(
+                            preparation_request(&http, &url)
+                                .json(&candidate)
+                                .send()
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        )
+                        .await?;
+                        Ok::<(), String>(())
                     }
-                    checked(
-                        preparation_request(&self.http, &replica.url)
-                            .json(candidate)
-                            .send()
-                            .await
-                            .map_err(|e| e.to_string())?,
-                    )
-                    .await?;
+                    .await;
+                    (name, result)
+                });
+            }
+        }
+        let mut worker_preparations = BTreeMap::new();
+        while let Some(joined) = jobs.join_next().await {
+            let (name, result) = joined.map_err(|e| e.to_string())?;
+            worker_preparations.insert(name, result);
+        }
+        for group in &groups {
+            for replica in &group.replicas {
+                let Some((candidate, _, _)) = candidates.get(&replica.name) else {
+                    continue;
+                };
+                let prepared: Result<(), String> = async {
+                    worker_preparations
+                        .remove(&replica.name)
+                        .ok_or_else(|| "worker preparation missing".to_string())??;
                     for plan in &candidate.plans {
                         if reusable.contains(&plan.shard.id) {
                             routes
