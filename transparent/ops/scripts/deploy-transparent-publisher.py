@@ -303,7 +303,13 @@ async def main():
     ROOT.mkdir(exist_ok=True)
     for name in ['credentials','state','rollback']:
         (ROOT/name).mkdir(exist_ok=True,mode=0o700)
+    previous_files={}
     if args.mode=='shadow':
+        # Keep what is running so a failure before any worker changes can put
+        # it back: the credentials the live controller uses and its config.
+        for name in ['credentials/deploy-ssh','credentials/known_hosts','controller.json','fleet.json','roster.json']:
+            if (ROOT/name).exists():
+                previous_files[name]=(ROOT/name).read_bytes()
         # Reuse the environment's existing deployment identity at runtime.
         secret_file(ROOT/'credentials/deploy-ssh',os.environ['WALLET_PIR_DEPLOY_SSH_KEY'])
         secret_file(ROOT/'credentials/known_hosts',os.environ['TRANSPARENT_SSH_KNOWN_HOSTS'])
@@ -326,9 +332,34 @@ async def main():
         await rollback(fleet,saved)
         return
     if args.mode=='shadow':
+        def restore_previous():
+            for name,data in previous_files.items():
+                atomic_bytes(ROOT/name,data)
+            if (ROOT/'credentials/deploy-ssh').exists():
+                os.chmod(ROOT/'credentials/deploy-ssh',0o600)
+        # Every host must accept the deployment identity before anything
+        # stops: a rotated secret that the fleet does not authorise would
+        # otherwise leave the live controller stopped with credentials that
+        # cannot reach its own workers.
+        hosts=[fleet.c['router_host']]+[w['ssh_host'] for w in fleet.roster]
+        try:
+            for host in hosts:
+                await fleet.ssh(host,'true',multiplex=False)
+        except Exception as error:
+            restore_previous()
+            raise RuntimeError('deployment identity is not accepted by '+host+'; nothing was changed') from error
+        saved.mkdir(parents=True,exist_ok=True)
+        if 'controller.json' in previous_files and not (saved/'controller.previous.json').exists():
+            atomic_bytes(saved/'controller.previous.json',previous_files['controller.json'])
         subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        align_filter_origin(args.initial_publication)
-        await save_baseline(fleet,saved)
+        try:
+            align_filter_origin(args.initial_publication)
+            await save_baseline(fleet,saved)
+        except Exception:
+            # No worker has changed yet: resume the previous controller.
+            restore_previous()
+            subprocess.run(['systemctl','start','transparent-publish-controller'],check=False)
+            raise
         for name in ['transparent-publish-controller','shard-assign']:
             shutil.copy2(args.artifacts/name,'/usr/local/bin/'+name+'.next')
             os.chmod('/usr/local/bin/'+name+'.next',0o755)

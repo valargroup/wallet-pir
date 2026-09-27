@@ -1,6 +1,6 @@
 # Transparent PIR status
 
-Updated 2026-09-13. The target remains an opt-in, recovery-only macOS beta on
+Updated 2026-09-27 (release rollout below); milestone text last updated 2026-09-13. The target remains an opt-in, recovery-only macOS beta on
 existing infrastructure. **M0, M1 and M2 are accepted; M3 is partially validated;
 M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
@@ -17,6 +17,50 @@ checklist; [deployment](deployment.md) owns operating targets.
 | M4 — Whole-wallet benefit | [80 exact paired recoveries](../evidence/block-comparison-2026-09-09/README.md) give a derived 99.19% reduction in additional transparent payload | Representation-size comparison is not whole-wallet incremental latency or capacity |
 | M5 — Capacity and recovery | Historical [fleet series](../evidence/runs/fleet-series-2026-09-08-r1/README.md) and M1 observations exist | No accepted sustained beta operating envelope or complete failure-recovery rehearsal |
 | M6 — Release and beta | No acceptance evidence | Review, versioned distribution and tester observation follow M3–M5 |
+
+## Release rollout, 2026-09-27
+
+Observed by the operator (Claude, for Roman) on 2026-09-27; times UTC.
+
+**Public metadata outage, 14:18–18:55.** The Enhance deploy re-rendered the
+coordinator Caddyfile from `ops/deploy/coordinator/Caddyfile`, which lacked the
+continuous-publication route. `/v1/shards`, `/v1/shards/init` and manifests
+returned 404, and `/v1/filters/shards` served the stale static map. The route
+was restored by hand at 18:55 and added to the template in `2c658d43`.
+
+**Worker and publisher release.**
+- Workers were on source `a5f79ed` (binary `200ca850…`, ipir-sp `accc424`).
+- `9d47b05b` passed full CI and was rolled out with `deploy-transparent-publisher.yml`
+  in shadow mode (recent-01, archive-01, archive-02, recent-02..04, 22:26–22:40)
+  and activated at 22:40:42. All six workers now report binary `c735a6b3…` and
+  are warm with every runtime. The publisher serves source `9d47b05b`, with
+  directory choice tables **off**.
+- Before the rollout:
+  - A local test restored a runtime cache written by the `a5f79ed` worker in the
+    `9d47b05b` worker. All 28 runtimes restored, and 52/52 syncs were exact.
+  - A rc.6 client synced against the old fleet with no transport failures.
+- After activation, 17 public syncs completed with no failures. Archive restores
+  were 6/6 exact. The recent mismatches are consistent with activity since the
+  sample's 3,473,686 anchor: 30/120 restore-6m and 32/120 catch-up-30d sample
+  clients have later events.
+
+**Failed first attempt, 22:20–22:25.**
+- The shadow run failed before touching workers. The rotated
+  `WALLET_PIR_DEPLOY_SSH_KEY` (`enhance-pir-deploy`) was not authorized on any
+  transparent host.
+- By then the script had already stopped the controller and overwritten its
+  working credentials, so public metadata returned 502 until the previous
+  controller config was restored by hand.
+- The rotated key's public half was then appended to `authorized_keys` on the
+  router and all six workers; each host keeps an
+  `authorized_keys.before-deploy-key-2026-09-27` backup.
+- The deploy script now:
+  - checks every host accepts the identity before stopping anything;
+  - keeps the previous controller config;
+  - restores the controller if it fails before any worker changes.
+
+Shadow mode itself withdraws public metadata while workers upgrade, here about
+14 minutes, as the maintenance path does.
 
 ## M1 accepted observation
 
