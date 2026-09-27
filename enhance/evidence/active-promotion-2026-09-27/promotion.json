@@ -1,0 +1,19 @@
+{
+  "mode": "active",
+  "apm_active_at_utc": "2026-09-27T07:01:07.700666+00:00",
+  "monitor_active_at_utc": "2026-09-27T07:02:30.724457+00:00",
+  "observation_started_utc": "2026-09-27T07:04:40.778257+00:00",
+  "earliest_active_review_utc": "2026-09-28T07:04:40.778257+00:00",
+  "shadow_gate_completed": false,
+  "early_promotion_reason": "User explicitly requested promotion to real mode now; 24-hour shadow gate waived by user instruction",
+  "latest_shadow_window_minutes_at_review": 21,
+  "shadow_observations": "No active incidents; transient monitor startup/init failure and observation transport failures recovered before promotion",
+  "verification": "One labeled TEST FIRED / TEST RECOVERED pair per service queued through durable outboxes; both queues drained with fresh successful Slack delivery timestamps",
+  "slack_recipient_confirmation": "requested; pending",
+  "databases": "retained",
+  "collection_hours": 72,
+  "evidence_path": "/var/lib/pir-monitor/active-evidence-20260927",
+  "evidence_service": "pir-observability-active-20260927.service",
+  "previous_shadow_evidence": "/var/lib/pir-monitor/rollout-evidence-c5a64864",
+  "rollback": "Restore prior mode configs under /root/alert-promotion-20260927T0701 on each host, daemon-reload and restart monitoring services only; preserve databases. For monitor restore both unit and /etc/pir-monitor/monitor.env mode."
+}

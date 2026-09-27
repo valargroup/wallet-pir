@@ -1,0 +1,13 @@
+{
+  "unit": "pir-apm",
+  "at": "2026-09-27T07:01:07.700666+00:00",
+  "from": "shadow",
+  "to": "active",
+  "reason": "user explicitly requested promotion now before the 24-hour shadow gate",
+  "config_path": "/etc/systemd/system/pir-apm.service.d/zzzzzzzzzzzz-observability.conf",
+  "backup": "/root/alert-promotion-20260927T0701/pir-apm-before.conf",
+  "prior_pid": "3966223",
+  "binary": "/opt/wallet-pir/releases/76590592ea93d6a6ba8e75fd4f4701dccbc6377b/native/pir-apm",
+  "binary_sha256": "e3dd49033391c49fd5a4068478e6f27d3e4eac5197c9b6ddb733925fc93fba98",
+  "incident_database": "retained; no database modification by promotion script"
+}

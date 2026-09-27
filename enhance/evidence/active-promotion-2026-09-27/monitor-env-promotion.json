@@ -1,0 +1,6 @@
+{
+  "at": "2026-09-27T07:02:30.724457+00:00",
+  "file": "/etc/pir-monitor/monitor.env",
+  "backup": "/root/alert-promotion-20260927T0701/pir-monitor-env-before.conf",
+  "change": "PIR_MONITOR_ALERT_MODE shadow -> active"
+}
