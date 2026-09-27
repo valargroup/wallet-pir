@@ -71,7 +71,7 @@ cargo run -p enhance-pir-server --bin receiver-directory -- \
 
 For an explicitly selected node without authentication, replace `--cookie` with
 `--no-auth`. The command verifies the mainnet genesis and defaults to coverage
-from Ironwood activation through the startup tip minus ten blocks. Use
+from Ironwood activation through the startup tip, like Enhance. Use
 `--start-height` and `--end-height` for a bounded test. Such a publication does
 not cover earlier history. The node supplies consensus validation and tree sizes.
 
@@ -79,7 +79,8 @@ Each block commits its records and coverage together. Restarting checks saved
 hashes, removes orphaned blocks and their payments, then resumes. A reorg crossing
 the configured start boundary requires an explicit rebuild in a new directory.
 RPC failures stop the run without advancing the failed block. Rerun the same
-command to resume. This is a bounded backfill command, not a polling daemon.
+command to resume, or use `--serve` for continuous operation. A shorter canonical
+node view rewinds to the matching saved ancestor before indexing resumes.
 
 Backfill downloads raw blocks concurrently, with defaults of `--concurrency 8`
 and `--batch-size 64`. It checks every height and parent link against the saved
@@ -94,7 +95,7 @@ Successful runs write `<revision>.rows` and `<revision>.json` under
 Consumers must revalidate its terminal block against their accepted chain. Old
 revision files may remain after a reorg and are not evidence of current coverage.
 The prototype stops rather than dropping records if its 65,536-row limit is
-exceeded. No public serving process is started.
+exceeded. Without `--serve`, no serving process is started.
 
 `cargo test -p receiver-directory --features store` adds restart and transactional
 rollback checks. `cargo test -p enhance-pir-server --test receiver` covers coinbase
@@ -125,10 +126,13 @@ and looking up both check this contract. If the chain changes during a lookup,
 revalidate its anchor before using results. These checks bind the requested
 coverage, but do not prove indexer completeness or authenticate returned notes.
 
-The HTTP client initializes through `/v1/receiver/init` and `/v1/receiver/public`,
+The HTTP client initializes through `/v1/receiver/init` and
+`/v1/receiver/public/:session`,
 then sends fixed-size POSTs to `/v1/receiver/query`. It bounds downloaded bodies.
 Callers configure their HTTP client's proxy and timeout. One session is immutable.
-A replacement publication returns a conflict. The caller reconnects against a
+Setup and witness downloads are pinned to the same session ID as queries.
+An unavailable revision returns 409; a known revoked revision returns 410.
+The client maps both to a revision error. The caller reconnects against a
 newly accepted anchor and restarts unfinished histories, using fresh encryptions.
 There is no automatic cleartext lookup fallback.
 
@@ -150,13 +154,35 @@ request/session binding, coverage, public setup corruption, missing continuation
 and invalid requests. The pinned ipir-sp and InspiRING release candidates are not
 on crates.io. Their git source matches the existing workspace's locked revision.
 
-## Local PIR service
+## Continuous canonical serving
+
+`receiver-directory --serve --min-rows 8192 --witnesses` follows the same
+canonical-chain lifecycle as Enhance. It polls every 10 seconds, ingests through
+the observed tip without an additional confirmation delay, prepares an immutable
+revision, rechecks its anchor, and atomically swaps the HTTP publication. An
+unchanged tip skips preparation. The independent canonical guard keeps checking
+served anchors while a replacement is prepared. A mismatch revokes all sessions
+before rebuilding; a failed canonical check also revokes rather than treating
+unknown coverage as absence. A recovery epoch fences in-flight query replies and
+preparation that began before revocation. The HTTP listener stays running.
+
+One previous canonical session is retained for up to 60 seconds, bounded to one
+revision, to let short lookups finish across ordinary publications. The wallet
+still independently accepts the anchor and revalidates it before crediting
+results. This is the same lifecycle policy, not the Enhance shard/worker protocol;
+receiver row formats and encrypted query framing remain unchanged. Restart
+revalidates the persisted journal and publishes anew before answering requests.
+Old disk revision files are not loaded as serving authority. After successful
+publication, the single writer removes obsolete revision files, keeping the
+current and previous publications plus the full canonical SQLite journal. A fork across the
+configured starting boundary requires an explicit rebuild.
+
+## Immutable fixture service
 
 `receiver-pir-server` loads one immutable publication and serves the HTTP client.
 It verifies the row file's length and digest before preprocessing. The executable
-requires a loopback bind and defaults to `127.0.0.1:18380`. It has no publication
-rotation, node validation, public TLS endpoint, or production deployment policy.
-Restart it explicitly to load a newly verified publication.
+requires a loopback bind and defaults to `127.0.0.1:18380`. It has no node validation or automatic rotation; use this executable only for
+immutable fixtures. Continuous operation uses `receiver-directory --serve`.
 
 ```sh
 cargo run -p receiver-pir-server -- \
@@ -216,18 +242,18 @@ height 3,497,852 covers 20,911 payments and uses 4,033,115 witness bytes. Its fi
 PIR row file is 32 MiB and stays on the server. A wallet downloads the proof file,
 PIR setup, and encrypted replies.
 
-For an automatically refreshed local test service, build both binaries and run:
+For a continuously refreshed local service, build the integrated binary and run:
 
 ```sh
 cargo build --profile release-fast -p enhance-pir-server --bin receiver-directory
-cargo build --profile release-fast -p receiver-pir-server
 python3 receiver/ops/local_poc.py --binary-dir target/release-fast \
   --data-dir /absolute/path/to/commitment-index \
   --rpc-url http://your-archive-node:8232
 ```
 
-The helper publishes with `--min-rows 8192`, refreshes every five minutes and
-serves only on loopback port 18380. It retains the previous service if indexing
-fails. A new publication restarts the immutable service. Clients retry stale
-sessions and never treat an HTTP failure as an absent payment. This helper uses
-an explicitly unauthenticated RPC and is for the isolated POC.
+The compatibility helper launches `receiver-directory --serve` with
+`--min-rows 8192 --witnesses`, polls every 10 seconds and binds loopback port 18380.
+Its `--refresh-seconds` option maps to `--poll-seconds`. Clients retry stale
+sessions and never treat an HTTP failure as an absent payment. The helper uses
+an explicitly unauthenticated RPC. Public TLS remains the reverse proxy
+operator's responsibility.

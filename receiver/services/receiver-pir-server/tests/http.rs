@@ -84,10 +84,121 @@ impl Drop for Running {
 }
 async fn serve(snapshot: Snapshot) -> Running {
     let app = receiver_pir_server::router(Server::new(snapshot).unwrap());
+    serve_router(app).await
+}
+async fn serve_router(app: axum::Router) -> Running {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", socket.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
     Running { origin, task }
+}
+
+#[tokio::test]
+async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
+    use receiver_pir_server::{Publication, Publications};
+    let publications = Publications::default();
+    assert!(publications.publish(
+        Publication::new(Server::new(snapshot(2)).unwrap(), None).unwrap(),
+        0
+    ));
+    let server = serve_router(receiver_pir_server::router_with_publications(
+        publications.clone(),
+    ))
+    .await;
+    let old = HttpClient::connect(&server.origin, http(), accepted())
+        .await
+        .unwrap();
+    let old_id = hex::encode(old.manifest().id().unwrap());
+    let mut next = snapshot(2);
+    next.manifest.end_height = 102;
+    next.manifest.end_hash = [9; 32];
+    // Empty canonical extension: old payments remain unchanged.
+    assert!(publications.publish(
+        Publication::new(
+            Server::new(Snapshot {
+                manifest: next.manifest.clone(),
+                data: next.data.clone()
+            })
+            .unwrap(),
+            None
+        )
+        .unwrap(),
+        0
+    ));
+    let public = http()
+        .get(format!("{}/v1/receiver/public/{old_id}", server.origin))
+        .send()
+        .await
+        .unwrap();
+    assert!(public.status().is_success());
+    assert_eq!(
+        old.lookup(receiver(), NonZeroU32::new(2).unwrap(), accepted())
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    let mut anchor = accepted();
+    anchor.height = 102;
+    anchor.hash = [9; 32];
+    let new = HttpClient::connect(&server.origin, http(), anchor)
+        .await
+        .unwrap();
+    assert_eq!(
+        new.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // Preparation started before the canonical guard detected the fork.
+    let preparing_epoch = publications.epoch();
+    let prepared = Publication::new(Server::new(next).unwrap(), None).unwrap();
+    publications.revoke();
+    assert!(!publications.publish(prepared, preparing_epoch));
+    assert_eq!(
+        http()
+            .get(format!("{}/v1/receiver/init", server.origin))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        http()
+            .get(format!("{}/v1/receiver/public/{old_id}", server.origin))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::GONE
+    );
+    assert!(matches!(old.witnesses().await, Err(Error::Revision)));
+    assert!(matches!(
+        new.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
+            .await,
+        Err(Error::Revision)
+    ));
+
+    // Canonical replacement drops the orphaned payment entirely.
+    let mut replacement = snapshot(0);
+    replacement.manifest.end_height = 102;
+    replacement.manifest.end_hash = [10; 32];
+    assert!(publications.publish(
+        Publication::new(Server::new(replacement).unwrap(), None).unwrap(),
+        publications.epoch()
+    ));
+    anchor.hash = [10; 32];
+    let recovered = HttpClient::connect(&server.origin, http(), anchor)
+        .await
+        .unwrap();
+    assert!(recovered
+        .lookup(receiver(), NonZeroU32::new(1).unwrap(), anchor)
+        .await
+        .unwrap()
+        .is_empty());
 }
 fn http() -> reqwest::Client {
     reqwest::Client::builder()

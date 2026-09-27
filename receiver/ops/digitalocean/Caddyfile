@@ -1,0 +1,12 @@
+161-35-182-172.sslip.io {
+    @receiver path /v1/receiver/*
+    handle @receiver {
+        request_body {
+            max_size 2MB
+        }
+        reverse_proxy 127.0.0.1:18380
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

@@ -1,21 +1,22 @@
-//! Local integration service for one immutable publication. No production deployment policy.
+//! Receiver PIR serving with immutable publications and atomic session revocation.
+pub mod publication;
 use axum::{
     body::to_bytes,
-    extract::{Request, State},
+    extract::{Path, Request, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+pub use publication::{Publication, Publications};
 use receiver_pir::{query_bytes, server::Server, Error};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
 #[derive(Clone)]
 struct Service {
-    server: Arc<Server>,
+    publications: Publications,
     slots: Arc<Semaphore>,
-    witnesses: Option<axum::body::Bytes>,
 }
 
 /// Limit uploads and CPU evaluation together. Cancellation never frees a still-running CPU slot.
@@ -25,32 +26,83 @@ pub fn router(server: Server) -> Router {
 
 /// Optional common proof file. Callers validate it against the served publication first.
 pub fn router_with_witnesses(server: Server, witnesses: Option<Vec<u8>>) -> Router {
+    let publications = Publications::default();
+    publications.publish(
+        Publication::new(server, witnesses).expect("validated publication"),
+        0,
+    );
+    router_with_publications(publications)
+}
+
+/// Serve the current publication while the owner prepares, validates and rotates revisions.
+pub fn router_with_publications(publications: Publications) -> Router {
     let service = Service {
-        witnesses: witnesses.map(Into::into),
-        server: Arc::new(server),
+        publications,
         slots: Arc::new(Semaphore::new(2)),
     };
     Router::new()
         .route(
             "/v1/receiver/init",
-            get(|State(s): State<Service>| async move { Json(s.server.manifest().clone()) }),
+            get(|State(s): State<Service>| async move {
+                match s.publications.select(None) {
+                    Ok((p, _)) => (
+                        [(header::CACHE_CONTROL, "no-store")],
+                        Json(p.server.manifest().clone()),
+                    )
+                        .into_response(),
+                    Err(status) => status.into_response(),
+                }
+            }),
         )
         .route(
             "/v1/receiver/public",
-            get(|State(s): State<Service>| async move { binary(s.server.public().to_vec()) }),
+            get(|State(s): State<Service>| async move { material(&s, None, false) }),
+        )
+        .route(
+            "/v1/receiver/public/:session",
+            get(
+                |State(s): State<Service>, Path(id): Path<String>| async move {
+                    material(&s, Some(&id), false)
+                },
+            ),
         )
         .route("/v1/receiver/query", post(query))
         .route(
             "/v1/receiver/witness",
-            get(|State(s): State<Service>| async move {
-                match s.witnesses {
-                    Some(bytes) => ([(header::CONTENT_TYPE, "application/octet-stream")], bytes)
-                        .into_response(),
-                    None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-                }
-            }),
+            get(|State(s): State<Service>| async move { material(&s, None, true) }),
+        )
+        .route(
+            "/v1/receiver/witness/:session",
+            get(
+                |State(s): State<Service>, Path(id): Path<String>| async move {
+                    material(&s, Some(&id), true)
+                },
+            ),
         )
         .with_state(service)
+}
+
+fn material(s: &Service, id: Option<&str>, witness: bool) -> Response {
+    let id = match id.map(|id| hex::decode(id).ok().and_then(|v| v.try_into().ok())) {
+        Some(Some(id)) => Some(id),
+        Some(None) => return StatusCode::BAD_REQUEST.into_response(),
+        None => None,
+    };
+    match s.publications.select(id) {
+        Ok((p, _)) if witness => match &p.witnesses {
+            Some(bytes) => (
+                [
+                    (header::CONTENT_TYPE, "application/octet-stream"),
+                    (header::CACHE_CONTROL, "no-store"),
+                ],
+                bytes.clone(),
+            )
+                .into_response(),
+            None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        },
+        Ok((p, _)) => binary(p.server.public().to_vec()),
+        Err(status) => status.into_response(),
+    }
 }
 
 fn binary(body: Vec<u8>) -> Response {
@@ -78,12 +130,22 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
+    if body.len() != query_bytes() || &body[..4] != b"RPQ1" {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let (publication, epoch) = match s.publications.select(Some(body[4..36].try_into().unwrap())) {
+        Ok(p) => p,
+        Err(status) => return status.into_response(),
+    };
     let result = tokio::task::spawn_blocking(move || {
         // The blocking task outlives a disconnected request, so it owns admission until it finishes.
         let _permit = permit;
-        s.server.respond(&body)
+        publication.server.respond(&body)
     })
     .await;
+    if s.publications.epoch() != epoch {
+        return StatusCode::GONE.into_response();
+    }
     match result {
         Ok(Ok(body)) => binary(body),
         Ok(Err(Error::Revision)) => StatusCode::CONFLICT.into_response(),

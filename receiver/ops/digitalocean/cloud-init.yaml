@@ -1,0 +1,10 @@
+#cloud-config
+package_update: true
+packages: [build-essential, pkg-config, clang, libssl-dev, curl, ca-certificates, ufw, caddy]
+runcmd:
+  - [ufw, allow, '22/tcp']
+  - [ufw, allow, '80/tcp']
+  - [ufw, allow, '443/tcp']
+  - [ufw, --force, enable]
+  - [mkdir, -p, /opt/receiver-pir/releases, /srv/receiver-pir]
+  - [sh, -c, 'curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.0']

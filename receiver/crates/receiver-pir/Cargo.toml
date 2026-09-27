@@ -10,6 +10,8 @@ server = ["dep:inspiring"]
 http = ["dep:reqwest"]
 
 [dependencies]
+hex = "0.4"
+log = "0.4"
 receiver-directory = { path = "../receiver-directory" }
 ipir-sp = { version = "=0.1.0-rc.6", git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
 inspiring = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", optional = true }
@@ -19,6 +21,3 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
-
-[dev-dependencies]
-hex = "0.4"

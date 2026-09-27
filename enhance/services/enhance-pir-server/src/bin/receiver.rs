@@ -1,4 +1,4 @@
-//! Standalone resumable public-chain indexer. No wallet or receiver query endpoint.
+//! Resumable public-chain indexer and continuous canonical receiver PIR service.
 use clap::Parser;
 use enhance_pir_server::{
     receiver::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
@@ -9,13 +9,16 @@ use receiver_directory::{
     store::{Config, Store},
     Error,
 };
+use receiver_pir_server::{Publication, Publications};
 use std::{
     io::Write,
+    net::SocketAddr,
     path::{Path, PathBuf},
+    time::Duration,
 };
 use zakura_chain::{block::Hash, parameters::Network};
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -36,8 +39,16 @@ struct Args {
     start_height: u32,
     #[arg(long)]
     end_height: Option<u32>,
-    #[arg(long, default_value_t = 10)]
+    /// Additional indexing delay. Serving follows the tip and requires zero.
+    #[arg(long, default_value_t = 0)]
     confirmations: u32,
+    /// Continuously reconcile the canonical chain and atomically rotate the loopback service.
+    #[arg(long, conflicts_with = "end_height")]
+    serve: bool,
+    #[arg(long, default_value = "127.0.0.1:18380")]
+    bind: SocketAddr,
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..))]
+    poll_seconds: u64,
     /// Maximum blocks retained for one validated batch.
     #[arg(long, default_value_t = MAX_RECEIVER_BATCH_BLOCKS, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_BATCH_BLOCKS)))]
     batch_size: u32,
@@ -55,13 +66,109 @@ async fn main() -> Result<()> {
     if u64::from(args.start_height) < enhance_pir::ACTIVATION_HEIGHT {
         return Err("start must be at or after Ironwood activation".into());
     }
-    let rpc = match args.cookie {
+    if args.serve && (!args.bind.ip().is_loopback() || args.confirmations != 0) {
+        return Err(
+            "continuous serving requires a loopback bind and zero confirmation delay".into(),
+        );
+    }
+    let rpc = match &args.cookie {
         Some(p) => ZakuraClient::from_cookie_file(&args.rpc_url, p)?,
         None => ZakuraClient::unauthenticated(&args.rpc_url)?,
     };
     let genesis: Hash = rpc.block_hash(0).await?.parse()?;
     if genesis != Network::Mainnet.genesis_hash() {
         return Err("this indexer currently requires mainnet".into());
+    }
+    if !args.serve {
+        refresh(&args, &rpc, genesis, None).await?;
+        return Ok(());
+    }
+    let publications = Publications::default();
+    let listener = tokio::net::TcpListener::bind(args.bind).await?;
+    let app = receiver_pir_server::router_with_publications(publications.clone());
+    eprintln!(
+        "Receiver PIR listening at {} (waiting for canonical publication)",
+        listener.local_addr()?
+    );
+    // Canonical checks continue while indexing, proofs and PIR preparation are in progress.
+    let guard_publications = publications.clone();
+    let guard_rpc = rpc.clone();
+    let poll_seconds = args.poll_seconds;
+    let guard = tokio::spawn(async move {
+        loop {
+            if let Err(error) = check_serving(&guard_publications, &guard_rpc).await {
+                eprintln!("canonical validation failed; revoking serving sessions: {error}");
+                guard_publications.revoke();
+            }
+            tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
+        }
+    });
+    let http = tokio::spawn(async move { axum::serve(listener, app).await });
+    let refresh_loop = async {
+        loop {
+            let started = std::time::Instant::now();
+            if let Err(error) = refresh(&args, &rpc, genesis, Some(&publications)).await {
+                eprintln!("ingestion/publication deferred: {error}");
+            }
+            eprintln!(
+                "receiver refresh elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+            tokio::time::sleep(Duration::from_secs(args.poll_seconds)).await;
+        }
+    };
+    tokio::select! {
+        result = http => { result??; },
+        result = guard => { result?; return Err("canonical guard stopped".into()); },
+        _ = refresh_loop => {},
+        _ = shutdown() => {},
+    }
+    Ok(())
+}
+
+async fn shutdown() {
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("SIGTERM handler");
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = term.recv() => {} }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// Revoke before rewind or rebuild. A shorter node view is handled like Enhance's common ancestor walk.
+async fn check_serving(publications: &Publications, rpc: &ZakuraClient) -> Result<()> {
+    let anchors = publications.anchors();
+    if anchors.is_empty() {
+        return Ok(());
+    }
+    let tip = rpc.tip_height().await?;
+    for (height, hash) in anchors {
+        if u64::from(height) > tip
+            || rpc.block_hash(u64::from(height)).await?.parse::<Hash>()?.0 != hash
+        {
+            publications.revoke();
+            eprintln!("revoked noncanonical receiver sessions");
+            break;
+        }
+    }
+    Ok(())
+}
+
+async fn refresh(
+    args: &Args,
+    rpc: &ZakuraClient,
+    genesis: Hash,
+    serving: Option<&Publications>,
+) -> Result<()> {
+    if let Some(serving) = serving {
+        if let Err(error) = check_serving(serving, rpc).await {
+            serving.revoke();
+            return Err(error);
+        }
     }
     let boundary = rpc.receiver_boundary(args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
@@ -82,16 +189,14 @@ async fn main() -> Result<()> {
         return Err("requested range is outside the available chain".into());
     }
     let mut tip = store.tip()?;
-    if tip.height > node_tip {
-        return Err("node is behind stored coverage; use a caught-up node".into());
-    }
     // A saved hash, not elapsed time or provider status, decides which data survives.
-    while rpc
-        .block_hash(u64::from(tip.height))
-        .await?
-        .parse::<Hash>()?
-        .0
-        != tip.hash
+    while tip.height > node_tip
+        || rpc
+            .block_hash(u64::from(tip.height))
+            .await?
+            .parse::<Hash>()?
+            .0
+            != tip.hash
     {
         if tip.height < args.start_height {
             return Err("reorg crossed the configured boundary; rebuild explicitly".into());
@@ -99,11 +204,19 @@ async fn main() -> Result<()> {
         tip = store.checkpoint(tip.height - 1)?;
     }
     if tip != store.tip()? {
+        if let Some(serving) = serving {
+            serving.revoke();
+        }
         store.rewind(tip.height, tip.hash)?;
     }
     if end < tip.height {
         return Err("end height precedes stored tip".into());
     }
+    if serving.is_some_and(|s| s.anchors().first() == Some(&(end, tip.hash))) && tip.height == end {
+        return Ok(());
+    }
+    // Capture the fence after any rewind; a concurrent revocation invalidates preparation below.
+    let epoch = serving.map(Publications::epoch);
     let started = std::time::Instant::now();
     let resume_height = tip.height;
     eprintln!(
@@ -173,6 +286,33 @@ async fn main() -> Result<()> {
         return Err("chain changed while building proofs; rerun to reconcile".into());
     }
     let revision = publish(&args.data_dir.join("publications"), &snapshot)?;
+    if let Some(serving) = serving {
+        let path = args
+            .data_dir
+            .join("publications")
+            .join(format!("{revision}.json"));
+        let publication = tokio::task::spawn_blocking(move || Publication::load(&path)).await??;
+        if rpc
+            .block_hash(u64::from(publication.manifest().end_height))
+            .await?
+            .parse::<Hash>()?
+            .0
+            != publication.manifest().end_hash
+        {
+            serving.revoke();
+            return Err("chain changed during PIR preparation; retrying".into());
+        }
+        if !serving.publish(publication, epoch.unwrap()) {
+            return Err("publication invalidated during preparation; retrying".into());
+        }
+        if let Err(error) = serving.prune_files(&args.data_dir.join("publications")) {
+            eprintln!("obsolete publication cleanup deferred: {error}");
+        }
+        eprintln!(
+            "Receiver PIR published height={} revision={revision}",
+            snapshot.manifest.end_height
+        );
+    }
     println!(
         "{}",
         serde_json::json!({"revision":revision,"start_height":snapshot.manifest.start_height,

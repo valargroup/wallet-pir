@@ -1,0 +1,22 @@
+[Unit]
+Description=Receiver PIR canonical ingestion and serving
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=receiver-pir
+Group=receiver-pir
+ExecStart=/opt/receiver-pir/current/receiver-directory --serve --data-dir /srv/receiver-pir/index --rpc-url http://159.65.183.89:8232 --no-auth --witnesses --min-rows 8192 --concurrency 12 --poll-seconds 10
+Restart=on-failure
+RestartSec=15
+KillMode=mixed
+TimeoutStopSec=60
+MemoryHigh=6G
+MemoryMax=7G
+MemorySwapMax=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/receiver-pir
+[Install]
+WantedBy=multi-user.target
