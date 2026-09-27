@@ -815,17 +815,24 @@ async fn init(State(s): State<HttpState>) -> Result<Json<Manifest>, StatusCode> 
     s.controller.check(&g)?;
     Ok(Json(g.manifest.clone()))
 }
-async fn session(
-    State(s): State<HttpState>,
-    Path(id): Path<String>,
-) -> Result<Vec<u8>, StatusCode> {
+/// Response body over shared immutable material, without copying it.
+struct SharedBytes(Arc<Vec<u8>>);
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+pub(crate) fn shared_bytes(bytes: Arc<Vec<u8>>) -> Bytes {
+    Bytes::from_owner(SharedBytes(bytes))
+}
+async fn session(State(s): State<HttpState>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
     let id: Hash = hex::decode(id)
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .try_into()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let g = s.controller.resolve(id)?;
     s.controller.check(&g)?;
-    Ok(g.public.as_ref().clone())
+    Ok(shared_bytes(g.public.clone()))
 }
 async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
     if !response.status().is_success() {

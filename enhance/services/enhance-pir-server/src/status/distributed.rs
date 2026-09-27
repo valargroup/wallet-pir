@@ -654,29 +654,35 @@ async fn heartbeat(
     state.contact = Some(Instant::now());
     Ok(Json(a.binding))
 }
-async fn artifact(State(s): State<Service>, Path(id): Path<String>) -> Result<Vec<u8>, StatusCode> {
+async fn artifact(State(s): State<Service>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
     if s.role != Role::Worker {
         return Err(StatusCode::NOT_FOUND);
     }
-    let state = s.state.lock().await;
-    let (_, digest) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    if hex::encode(digest) != id || state.poisoned {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(state
-        .candidate_artifact
-        .as_ref()
-        .ok_or(StatusCode::NOT_FOUND)?
-        .as_ref()
-        .clone())
+    let shared = {
+        let state = s.state.lock().await;
+        let (_, digest) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+        if hex::encode(digest) != id || state.poisoned {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        state
+            .candidate_artifact
+            .clone()
+            .ok_or(StatusCode::NOT_FOUND)?
+    };
+    // Copying ~100 MB while holding the role state lock stalled every query
+    // waiting on that lock; serve the shared bytes after releasing it.
+    Ok(shared_bytes(shared))
 }
-async fn public(State(s): State<Service>, Path(id): Path<String>) -> Result<Vec<u8>, StatusCode> {
-    let state = s.state.lock().await;
-    let (g, _) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    if s.role != Role::Router || hex::encode(g.manifest.public_digest) != id || state.poisoned {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(g.public.as_ref().clone())
+async fn public(State(s): State<Service>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
+    let shared = {
+        let state = s.state.lock().await;
+        let (g, _) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+        if s.role != Role::Router || hex::encode(g.manifest.public_digest) != id || state.poisoned {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        g.public.clone()
+    };
+    Ok(shared_bytes(shared))
 }
 async fn worker_query(State(s): State<Service>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     if s.role != Role::Worker {

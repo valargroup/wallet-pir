@@ -647,7 +647,7 @@ async fn init(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> 
 async fn session(
     State(s): State<Publisher>,
     Path(id): Path<String>,
-) -> Result<Vec<u8>, StatusCode> {
+) -> Result<axum::body::Bytes, StatusCode> {
     super::session(State(s.http_state()?), Path(id)).await
 }
 async fn forward(
@@ -667,13 +667,16 @@ async fn forward(
 async fn artifact(
     State(s): State<Publisher>,
     Path(id): Path<String>,
-) -> Result<Vec<u8>, StatusCode> {
-    let artifact = s.artifact.read().unwrap();
-    let (digest, bytes) = artifact.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    if hex::encode(digest) != id {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(bytes.as_ref().clone())
+) -> Result<axum::body::Bytes, StatusCode> {
+    let bytes = {
+        let artifact = s.artifact.read().unwrap();
+        let (digest, bytes) = artifact.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+        if hex::encode(digest) != id {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        bytes.clone()
+    };
+    Ok(super::shared_bytes(bytes))
 }
 
 async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, Failure> {
