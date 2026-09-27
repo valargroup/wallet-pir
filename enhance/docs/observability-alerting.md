@@ -46,6 +46,37 @@ once per minute from a separate region, and monitors APM task progress.
   request contents. `monitor-pir.valargroup.dev/monitor-status` is the independent
   checker's aggregate status.
 
+## Status HTTP alert coverage
+
+When Status monitoring is configured, `status_init_5xx` and `status_query_5xx`
+alert on HTTP 5xx divided by completed responses in the rolling five-minute
+window (default >5%, at least ten completions). `status_init_latency` and
+`status_query_latency` warn when processing p99 exceeds 2s / 5s respectively
+for 120 seconds, with at least twenty completions. Error ratio, sample minimums,
+and hold time use the shared policy; Status latency budgets can be set separately
+(up to 5s, the highest finite Status histogram boundary).
+These conditions use the same durable incident/outbox and shadow/active mode as
+Enhance, including two distinct fresh healthy samples to recover.
+
+Init outcomes come from the Status controller and query outcomes from the router,
+including its separate query listener. Router HTTP timing includes request-body
+extraction, admission wait, worker transport and packing until response creation;
+it excludes network delivery of the response and client decoding. This is not
+client end-to-end latency or the pane's admitted-work histogram. Worker calls and
+the controller's diagnostic query-forwarding route are not added to router totals.
+HTTP 4xx responses are counted as completed responses, but not server errors.
+Pre-admission HTTP 5xx failures are included; rejection-check counters are not
+summed as requests. Overflow latency remains >5s, not an invented finite value.
+
+HTTP counters carry an observation schema version and process incarnation. Old
+roles without these counters, malformed/inconsistent counters, scrape failures,
+staleness, and counter resets yield unknown rules, not healthy zeroes. A fresh
+idle pair of valid samples is healthy. A new process or observation gap starts a
+new delta baseline; two samples are required. Missing coverage also raises
+`coverage_status_init_*` / `coverage_status_query_*` after 45s warning / 120s
+critical. Roll out updated Status roles before APM so old telemetry is not
+mistaken for coverage. Unconfigured Status installations have no Status rules.
+
 ## Configuration
 
 Install `enhance/ops/deploy/pir-apm-observability.conf` as a systemd drop-in,
@@ -69,6 +100,8 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "latency_min_samples": 20,
   "init_latency_seconds": 2,
   "query_latency_seconds": 5,
+  "status_init_latency_seconds": 2,
+  "status_query_latency_seconds": 5,
   "latency_hold_seconds": 120,
   "unavailable_seconds": 30,
   "redundancy_seconds": 120,

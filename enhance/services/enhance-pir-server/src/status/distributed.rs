@@ -256,6 +256,9 @@ impl Service {
             .route("/artifact/:id", get(artifact))
             .route("/public/:id", get(public))
             .route("/evaluate", post(worker_query))
+            .layer(axum::middleware::from_fn(|request, next| {
+                telemetry::observe("worker", request, next)
+            }))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
             .merge(telemetry::routes())
@@ -265,6 +268,9 @@ impl Service {
     pub fn query_routes(&self) -> Router {
         Router::new()
             .route("/v1/status/query", post(router_query))
+            .layer(axum::middleware::from_fn(|request, next| {
+                telemetry::observe("router", request, next)
+            }))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
     }
@@ -726,6 +732,65 @@ mod tests {
             binding
         );
         binding
+    }
+    #[tokio::test]
+    async fn distributed_http_telemetry_counts_rejected_queries_on_both_listener_layouts() {
+        use axum::{
+            body::{to_bytes, Body},
+            http::Request,
+        };
+        use tower::ServiceExt;
+        for role in [Role::Router, Role::Worker] {
+            let dir = tempfile::tempdir().unwrap();
+            let service = open(role, dir.path());
+            let (path, operation) = if role == Role::Router {
+                ("/v1/status/query", "router_query")
+            } else {
+                ("/evaluate", "worker_evaluate")
+            };
+            for split in [false, true] {
+                let routes = if !split {
+                    service.routes()
+                } else if role == Role::Router {
+                    service.query_routes()
+                } else {
+                    service.control_routes()
+                };
+                let response = routes
+                    .oneshot(Request::post(path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+                let response = service
+                    .control_routes()
+                    .oneshot(
+                        Request::get("/internal/status-apm")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let value: serde_json::Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap())
+                        .unwrap();
+                assert_eq!(value["http_observation_version"], 1);
+                assert!(!value["http_instance"].as_str().unwrap().is_empty());
+                assert!(
+                    value["operations"][operation]["server_errors"]
+                        .as_u64()
+                        .unwrap()
+                        >= 1
+                );
+                assert!(value["operations"][operation]["failures"].as_u64().unwrap() >= 1);
+                assert_eq!(
+                    value["operations"][operation]["buckets"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    12
+                );
+            }
+        }
     }
     #[test]
     fn private_peers_reject_external_or_credentialed_origins() {

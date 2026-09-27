@@ -44,6 +44,10 @@ Admission wait, upload before admission, client preparation and decoding are
 excluded. They are **not end-to-end client load-test p99**. Overflow is shown as
 `>5000` ms; it is not assigned an invented finite upper bound.
 
+Dedicated Status HTTP alerts use separate controller-init and router-query counters; see
+[Status HTTP alert coverage](observability-alerting.md#status-http-alert-coverage).
+The query table below remains based on admitted-work telemetry.
+
 Role completion rates include unsuccessful admitted work. HTTP operation failure
 counts are not present in the deployed role admission telemetry and are shown as
 unavailable rather than zero. Active/waiting gauges and fixed rejection-reason
