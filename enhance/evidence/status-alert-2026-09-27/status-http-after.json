@@ -1,0 +1,548 @@
+{
+  "controller": {
+    "http_observation_version": 1,
+    "http_instance": "3967482-1790490685144665742",
+    "admission": {
+      "coordinator": {
+        "active": 0,
+        "waiting": 0,
+        "rejections": {
+          "publisher_unhealthy": 2
+        },
+        "wait_buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "execution_buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "operations": {
+      "init": {
+        "arrivals": 5480,
+        "successes": 5478,
+        "failures": 2,
+        "server_errors": 2,
+        "upload_bytes": 0,
+        "download_bytes": 4414399,
+        "buckets": [
+          5480,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "public_material": {
+        "arrivals": 5401,
+        "successes": 5401,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 240582144,
+        "buckets": [
+          5401,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "query": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "router_query": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "worker_evaluate": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "index_ms": null,
+    "database_hint_ms": null,
+    "packing_ms": null,
+    "preparation_ms": null,
+    "rebuilt_units": null,
+    "reused_units": null,
+    "evicted_blocks": null,
+    "last_activation_ms": null,
+    "generation": null,
+    "recovery_epoch": null,
+    "coverage_start": null,
+    "anchor_height": null,
+    "observed_ms": null,
+    "entries": null,
+    "max_bucket_occupancy": null,
+    "resources": {
+      "host_memory_total_bytes": 67427414016,
+      "host_memory_available_bytes": 56834637824,
+      "process_rss_bytes": 116121600,
+      "gpu_utilization_percent": null,
+      "gpu_memory_used_mib": null,
+      "gpu_memory_total_mib": null
+    }
+  },
+  "router": {
+    "http_observation_version": 1,
+    "http_instance": "396395-1790490248387049711",
+    "admission": {
+      "router": {
+        "active": 0,
+        "waiting": 0,
+        "rejections": {},
+        "wait_buckets": [
+          5401,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "execution_buckets": [
+          1,
+          0,
+          5332,
+          38,
+          13,
+          16,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "operations": {
+      "init": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "public_material": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "query": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "router_pack": {
+        "arrivals": 5400,
+        "successes": 5400,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          5336,
+          64,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "router_query": {
+        "arrivals": 5401,
+        "successes": 5400,
+        "failures": 1,
+        "server_errors": 0,
+        "upload_bytes": 420608276,
+        "download_bytes": 91519200,
+        "buckets": [
+          1,
+          0,
+          5330,
+          39,
+          14,
+          16,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "worker_evaluate": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "index_ms": null,
+    "database_hint_ms": null,
+    "packing_ms": null,
+    "preparation_ms": null,
+    "rebuilt_units": null,
+    "reused_units": null,
+    "evicted_blocks": null,
+    "last_activation_ms": null,
+    "generation": null,
+    "recovery_epoch": null,
+    "coverage_start": null,
+    "anchor_height": null,
+    "observed_ms": null,
+    "entries": null,
+    "max_bucket_occupancy": null,
+    "resources": {
+      "host_memory_total_bytes": 31527321600,
+      "host_memory_available_bytes": 25307213824,
+      "process_rss_bytes": 348602368,
+      "gpu_utilization_percent": 0,
+      "gpu_memory_used_mib": 457,
+      "gpu_memory_total_mib": 8192
+    }
+  },
+  "worker": {
+    "http_observation_version": 1,
+    "http_instance": "396238-1790490248387049418",
+    "admission": {
+      "worker": {
+        "active": 0,
+        "waiting": 0,
+        "rejections": {},
+        "wait_buckets": [
+          5400,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "execution_buckets": [
+          5360,
+          9,
+          8,
+          17,
+          6,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "operations": {
+      "init": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "public_material": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "query": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "router_query": {
+        "arrivals": 0,
+        "successes": 0,
+        "failures": 0,
+        "server_errors": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "worker_evaluate": {
+        "arrivals": 5401,
+        "successes": 5400,
+        "failures": 1,
+        "server_errors": 0,
+        "upload_bytes": 354240788,
+        "download_bytes": 265701600,
+        "buckets": [
+          5343,
+          10,
+          16,
+          18,
+          14,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "index_ms": null,
+    "database_hint_ms": null,
+    "packing_ms": null,
+    "preparation_ms": null,
+    "rebuilt_units": null,
+    "reused_units": null,
+    "evicted_blocks": null,
+    "last_activation_ms": null,
+    "generation": null,
+    "recovery_epoch": null,
+    "coverage_start": null,
+    "anchor_height": null,
+    "observed_ms": null,
+    "entries": null,
+    "max_bucket_occupancy": null,
+    "resources": {
+      "host_memory_total_bytes": 31527321600,
+      "host_memory_available_bytes": 25315622912,
+      "process_rss_bytes": 3629383680,
+      "gpu_utilization_percent": 0,
+      "gpu_memory_used_mib": 457,
+      "gpu_memory_total_mib": 8192
+    }
+  }
+}

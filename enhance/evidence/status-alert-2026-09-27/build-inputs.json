@@ -1,0 +1,22 @@
+{
+  "commit": "76590592ea93d6a6ba8e75fd4f4701dccbc6377b",
+  "source_tree": "4f78537c1eb5190c263ebdf9531106ddfce036e7",
+  "archive_sha256": "21bb26a07efbcfe6b0649f1b6ad1f8365475b0a58de3bb9ab020978dbd61b053",
+  "archive_matches_clean_commit": true,
+  "cpu_baseline": "haswell",
+  "features": [
+    "native-reinspiring"
+  ],
+  "gpu_additional_features": [
+    "cuda"
+  ],
+  "scope": [
+    "Status live controller",
+    "Status router",
+    "Status worker",
+    "APM"
+  ],
+  "publisher_followup_commit": "c5a6486476d91c88b692838c3449f4ddb917201c",
+  "publisher_followup_tree": "3cd749f08bc65d724cd37d0513298aaa4d8e4113",
+  "publisher_followup_source_sha256": "a1341b09feec2d0a447a7e5c8f32b0325161b1ec6e6d1abfa077fc4f6e7f6542"
+}

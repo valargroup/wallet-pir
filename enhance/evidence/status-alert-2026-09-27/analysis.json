@@ -1,0 +1,24 @@
+{
+  "samples": 28,
+  "active_samples": [
+    {
+      "at": "2026-09-27T06:32:08.776717+00:00",
+      "source": "apm",
+      "condition": {
+        "firing": true,
+        "hold_seconds": 0,
+        "key": "status_init_5xx",
+        "observed": "2 HTTP 5xx / 35 completed requests",
+        "resource": "status_init",
+        "retired": false,
+        "sample": 1790490720,
+        "severity": "critical",
+        "threshold": "> 5% over 5m; minimum 10 completions"
+      },
+      "id": "status_init_5xx-1790490725"
+    }
+  ],
+  "only_expected_restart_incident": true,
+  "all_canary_observations_passed": true,
+  "all_progress_healthy": true
+}

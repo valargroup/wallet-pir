@@ -1,0 +1,14 @@
+{
+  "final_source_commit": "c5a6486476d91c88b692838c3449f4ddb917201c",
+  "status_controller_commit": "c5a6486476d91c88b692838c3449f4ddb917201c",
+  "status_router_worker_apm_commit": "76590592ea93d6a6ba8e75fd4f4701dccbc6377b",
+  "mode": "shadow",
+  "started_utc": "2026-09-27T06:37:33.088698+00:00",
+  "earliest_shadow_review_utc": "2026-09-28T06:37:33.088698+00:00",
+  "collection_hours": 72,
+  "evidence_path": "/var/lib/pir-monitor/rollout-evidence-c5a64864",
+  "evidence_service": "pir-observability-evidence-c5a64864.service",
+  "previous_evidence_preserved": "/var/lib/pir-monitor/rollout-evidence-13ec1fb",
+  "activation": "manual review after 24 hours; no automatic promotion",
+  "active_gate": "24 additional hours after activation"
+}

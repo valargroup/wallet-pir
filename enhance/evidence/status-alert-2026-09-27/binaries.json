@@ -1,0 +1,9 @@
+{
+  "cpu": {
+    "status-pir": "32c654a128419382cf82c376a592151c9beb55ee4ad443043f151e5b0eb22161",
+    "pir-apm": "e3dd49033391c49fd5a4068478e6f27d3e4eac5197c9b6ddb733925fc93fba98"
+  },
+  "gpu": {
+    "status-pir": "ffd1fa653685bf5acdbad812ef9244513241dcef0f17a9c14744c721c8c47e44"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "logical_queries": 5400,
+  "correct": 5400,
+  "retried_queries": 1,
+  "router_http_requests": 5401,
+  "router_http_successes": 5400,
+  "router_http_4xx": 1,
+  "router_http_5xx": 0,
+  "retry_policy": "probe retries one HTTP 409/410 from session/query during publication"
+}

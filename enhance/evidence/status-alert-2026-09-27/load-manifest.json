@@ -1,0 +1,22 @@
+{
+  "commit": "c5a6486476d91c88b692838c3449f4ddb917201c",
+  "started_at": "2026-09-27T06:31:58.775591+00:00",
+  "enhance_stages": [
+    {
+      "qps": 5,
+      "seconds": 60
+    },
+    {
+      "qps": 20,
+      "seconds": 180
+    }
+  ],
+  "status_qps": 20,
+  "status_seconds": 270,
+  "alert_mode": "shadow",
+  "scope": [
+    "Enhance public HTTPS",
+    "Status private direct router"
+  ],
+  "existing_observation_preserved": true
+}

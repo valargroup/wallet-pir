@@ -1,0 +1,49 @@
+   Compiling enhance-pir-server v0.0.1 (/Users/roman/projects/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `test` profile [optimized + debuginfo] target(s) in 20.98s
+     Running unittests src/lib.rs (target/debug/deps/enhance_pir_server-68e62ab39d8b74a7)
+
+running 41 tests
+test status::admission::tests::bounded_queue_cancellation_timeout_and_recovery ... ok
+test status::admission::tests::cancelled_blocking_work_keeps_execution_permit ... ok
+test status::artifact::tests::sparse_roundtrip_is_bound_to_base_and_result ... ok
+test status::authority::tests::restart_fences_prior_sessions_and_never_reuses_generation ... ok
+test status::authority::tests::wrong_network_and_corruption_fail_closed ... ok
+test status::controller_tests::authority_is_rechecked_after_admission_wait ... ok
+test status::controller_tests::rapid_activation_bounds_retention_and_recovery_fences_old_sessions ... ok
+test status::controller_tests::serving_client_clones_reuse_forwarding_connection ... ok
+test status::controller_tests::source_freshness_is_rechecked_after_admission_wait ... ok
+test status::controller_tests::stale_candidate_cannot_be_activated ... ok
+test status::distributed::tests::distributed_http_telemetry_counts_rejected_queries_on_both_listener_layouts ... ok
+test status::distributed::tests::fence_revokes_already_pinned_controller_and_rejects_old_activation ... ok
+test status::distributed::tests::private_peers_reject_external_or_credentialed_origins ... ok
+test status::distributed::tests::refresh_cannot_launder_changed_source_or_coverage ... ok
+test status::distributed::tests::restart_changes_incarnation_and_never_restores_readiness ... ok
+test status::distributed::tests::router_preparation_rejects_unbounded_threads ... ok
+test status::distributed::tests::router_preparation_uses_its_own_bounded_pool ... ok
+test status::distributed::tests::split_listeners_keep_query_route_off_the_control_router ... ok
+test status::distributed::tests::stale_source_does_not_revoke_valid_control_authority ... ok
+test status::distributed::tests::watchdog_does_not_renew_source_freshness ... ok
+test status::distributed::tests::wrong_digest_activation_is_rejected_and_repeat_is_idempotent ... ok
+test status::fixture::tests::small_fixture_oracle_uses_the_actual_mined_height ... ok
+test status::incremental_tests::sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries ... ok
+test status::index::tests::broken_chain_and_duplicate_canonical_txid_rejected ... ok
+test status::index::tests::fork_selection_is_deterministic_and_hashes_stay_internal ... ok
+test status::index::tests::overflow_evicts_whole_blocks_and_mandatory_overflow_fails ... ok
+test status::index::tests::precedence_and_missing_coverage ... ok
+test status::publisher::query_transport_tests::client_key_prefers_first_forwarded_address ... ok
+test status::publisher::query_transport_tests::optional_query_transport_is_loopback_only ... ok
+test status::publisher::query_transport_tests::per_client_slots_cap_concurrency_and_evict_idle_keys ... ok
+test status::publisher::query_transport_tests::publisher_init_rejections_are_observed_as_http_server_errors ... ok
+test status::source::tests::canonical_observation_indexes_every_transaction_type ... ok
+test status::source::tests::changing_tip_discards_candidate ... ok
+test status::source::tests::checkpoint_recovers_only_as_a_cache_and_reobserves_canonical_source ... ok
+test status::source::tests::compact_wire_preserves_stsobs01_checkpoint_bytes ... ok
+test status::source::tests::damaged_or_incompatible_checkpoint_fails_closed ... ok
+test status::source::tests::disconnected_block_becomes_fork_observation ... ok
+test status::source::tests::live_rpc_candidate_revalidates_before_durable_publication ... ok
+test status::source::tests::noncanonical_raw_block_is_rejected ... ok
+test status::telemetry::http_tests::http_outcomes_distinguish_client_errors_and_record_latency_once ... ok
+test status::telemetry::tests::counts_one_ingress_and_exports_no_request_identity ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 120 filtered out; finished in 12.88s
+
