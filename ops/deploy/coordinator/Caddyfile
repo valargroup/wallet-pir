@@ -21,11 +21,22 @@ ENHANCE_PUBLIC_HOST {
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
+	# Continuous transparent publication: both origins read this authority.
+	# The map, init and manifests come from the transparent publisher. This
+	# block must stay in the rendered file: the transparent router proxies its
+	# public metadata here, and without it every wallet-facing metadata path
+	# falls through to Enhance and returns 404. The publisher's activation
+	# recognises this comment and leaves the block as it is.
+	@transparent_publication path /v1/shards /v1/shards/init /v1/shards/*/revisions/*/manifest /v1/filters/shards /v1/filters/shards/*
+	handle @transparent_publication {
+		reverse_proxy 127.0.0.1:8094
+	}
 	# Public transparent activity filters. Only the wallet-facing paths are
 	# routed: the filter service's own /metrics, /ready and /v1/health are not
 	# under this prefix and stay unreachable from the internet. Requests here
 	# carry chain range information only.
-	handle /v1/filters/* {
+	@legacy_transparent_filters path /v1/filters/*
+	handle @legacy_transparent_filters {
 		reverse_proxy 127.0.0.1:8090
 	}
 	# Unauthenticated, aggregate-only dashboard served by the pir-apm sidecar.
