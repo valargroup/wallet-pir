@@ -39,6 +39,12 @@ pub struct Incident {
     pub last_evaluated: u64,
     pub last_reminder: u64,
     pub condition: Option<Condition>,
+    /// Active at promotion but not yet confirmed firing, so not yet sent to Slack.
+    #[serde(default)]
+    pub announce_pending: bool,
+    /// A FIRED for this incident was queued for delivery; its end must be delivered too.
+    #[serde(default)]
+    pub notified: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -175,9 +181,17 @@ impl Store {
             i.condition = Some(c.clone());
             let fresh = c.sample > previous_sample;
             i.last_sample = i.last_sample.max(c.sample);
-            // Promotion announces existing active state without clearing an incident
-            // whose current input is unknown or whose recovery is not yet confirmed.
-            let mut event = (promoting && i.active && !c.retired).then_some("FIRED");
+            // Promotion announces existing active state only once its current input
+            // confirms it; an unknown input (e.g. right after a restart) waits rather
+            // than paging "unavailable", and never clears the incident.
+            let mut event = None;
+            if promoting && i.active && !c.retired {
+                if c.firing == Some(true) {
+                    event = Some("FIRED");
+                } else {
+                    i.announce_pending = true;
+                }
+            }
             if c.retired {
                 if i.active {
                     event = Some("RETIRED");
@@ -199,8 +213,12 @@ impl Store {
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
                             event = Some("FIRED");
+                        } else if event.is_none() && i.active && i.announce_pending && !shadow {
+                            i.last_reminder = now;
+                            event = Some("FIRED");
                         } else if event.is_none()
                             && i.active
+                            && !i.announce_pending
                             && c.severity == "critical"
                             && now.saturating_sub(i.last_reminder) >= 1800
                         {
@@ -221,13 +239,29 @@ impl Store {
                 }
             }
             if let Some(event) = event {
-                let body = slack_message(event, c, &i.id, now, shadow, environment, dashboard);
+                let closing = matches!(event, "RECOVERED" | "RETIRED");
+                // Deliver in active mode, except the end of an incident that was never
+                // announced; always deliver the end of one that was announced, even in
+                // shadow, so no Slack incident is left open.
+                let deliver = if closing {
+                    i.notified || (!shadow && !i.announce_pending)
+                } else {
+                    !shadow
+                };
+                if closing {
+                    i.notified = false;
+                    i.announce_pending = false;
+                } else if deliver && event == "FIRED" {
+                    i.notified = true;
+                    i.announce_pending = false;
+                }
+                let body = slack_message(event, c, &i.id, now, !deliver, environment, dashboard);
                 tx.execute("INSERT INTO metadata(key,value) VALUES ('last_event',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [&body])?;
                 tx.execute(
                     "INSERT INTO events(at,shadow,body) VALUES (?,?,?)",
-                    params![now, shadow, body],
+                    params![now, !deliver, body],
                 )?;
-                if !shadow {
+                if deliver {
                     tx.execute(
                         "INSERT INTO outbox(incident,body,created,due) VALUES (?,?,?,?)",
                         params![i.id, body, now, now],
@@ -489,14 +523,65 @@ mod tests {
             .unwrap();
         assert!(s.incidents().unwrap()[0].active);
         assert_eq!(s.incidents().unwrap()[0].id, id);
-        assert_eq!(s.health(true, 120).unwrap().pending, 1);
+        // Unknown input at promotion (e.g. just after restart) is not announced.
+        assert_eq!(s.health(true, 120).unwrap().pending, 0);
         s.evaluate(&[condition(Some(false), 130)], 130, false, "test", "")
             .unwrap();
         assert!(s.incidents().unwrap()[0].active);
         s.evaluate(&[condition(Some(false), 140)], 140, false, "test", "")
             .unwrap();
         assert!(!s.incidents().unwrap()[0].active);
-        assert_eq!(s.health(true, 140).unwrap().pending, 2);
+        // Never announced, so its recovery is recorded but not delivered.
+        assert_eq!(s.health(true, 140).unwrap().pending, 0);
+    }
+    #[test]
+    fn promotion_announces_once_input_confirms_firing() {
+        let mut s = Store::open(Path::new(":memory:")).unwrap();
+        for t in [100, 110] {
+            s.evaluate(&[condition(Some(true), t)], t, true, "test", "")
+                .unwrap();
+        }
+        s.evaluate(&[condition(None, 120)], 120, false, "test", "")
+            .unwrap();
+        assert_eq!(s.health(true, 120).unwrap().pending, 0);
+        s.evaluate(&[condition(Some(true), 130)], 130, false, "test", "")
+            .unwrap();
+        assert_eq!(s.health(true, 130).unwrap().pending, 1);
+        // Announced once, not again on the next firing sample.
+        s.evaluate(&[condition(Some(true), 140)], 140, false, "test", "")
+            .unwrap();
+        assert_eq!(s.health(true, 140).unwrap().pending, 1);
+        for t in [150, 160] {
+            s.evaluate(&[condition(Some(false), t)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(s.health(true, 160).unwrap().pending, 2);
+    }
+    #[test]
+    fn announced_incident_recovery_is_delivered_even_in_shadow() {
+        let mut s = Store::open(Path::new(":memory:")).unwrap();
+        for t in [100, 110] {
+            s.evaluate(&[condition(Some(true), t)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(s.health(true, 110).unwrap().pending, 1);
+        // Demoted to shadow for maintenance; the paged incident recovers there.
+        for t in [120, 130] {
+            s.evaluate(&[condition(Some(false), t)], t, true, "test", "")
+                .unwrap();
+        }
+        assert!(!s.incidents().unwrap()[0].active);
+        assert_eq!(s.health(true, 130).unwrap().pending, 2);
+        // A new incident raised only in shadow is still not delivered.
+        for t in [140, 150] {
+            s.evaluate(&[condition(Some(true), t)], t, true, "test", "")
+                .unwrap();
+        }
+        for t in [160, 170] {
+            s.evaluate(&[condition(Some(false), t)], t, true, "test", "")
+                .unwrap();
+        }
+        assert_eq!(s.health(true, 170).unwrap().pending, 2);
     }
     #[test]
     fn restart_preserves_outbox_and_does_not_refire() {

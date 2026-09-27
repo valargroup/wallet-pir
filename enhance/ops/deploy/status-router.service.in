@@ -7,8 +7,8 @@ User=status-pir
 Group=status-pir
 ExecStart=@RELEASE@/status-pir role --role router --network-hex @NETWORK@ --listen 127.0.0.1:8482 --query-listen 127.0.0.1:8484 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router-native
 Environment=RAYON_NUM_THREADS=4
-# Worker and router prepare serially on the shared 4-vCPU host; one thread let
-# the full-occupancy rebuild outlive the 20-second freshness limit.
+# Worker and router prepare serially; one thread let the full-occupancy rebuild
+# outlive the 20-second freshness limit. Preparation threads run at nice 10.
 Environment=STATUS_PREPARATION_THREADS=4
 Environment=RUST_LOG=info
 Restart=on-failure

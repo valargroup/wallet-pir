@@ -92,15 +92,18 @@ pub struct Service {
     permits: Arc<super::admission::Admission>,
 }
 
-fn router_preparation_pool() -> Result<rayon::ThreadPool, Failure> {
+fn preparation_pool() -> Result<rayon::ThreadPool, Failure> {
     let threads = std::env::var("STATUS_PREPARATION_THREADS")
         .ok()
         .map(|v| v.parse::<usize>())
         .transpose()?
         .unwrap_or(1);
-    build_router_preparation_pool(threads)
+    build_preparation_pool(threads)
 }
-fn build_router_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Failure> {
+/// Preparation runs below the query path: on a shared CPU host the worker's
+/// evaluations and the router's packing must preempt candidate preparation.
+const PREPARATION_NICE: i32 = 10;
+fn build_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Failure> {
     // Independent of RAYON_NUM_THREADS, the online query CPU budget. Explicitly
     // bounded to prevent accidental CPU oversubscription from deployment config.
     if !(1..=4).contains(&threads) {
@@ -109,7 +112,21 @@ fn build_router_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Fa
     Ok(rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .thread_name(|i| format!("status-prepare-{i}"))
+        .start_handler(|_| lower_thread_priority(PREPARATION_NICE))
         .build()?)
+}
+/// Lower only the calling thread's scheduling priority (Linux per-thread nice).
+fn lower_thread_priority(nice: i32) {
+    #[cfg(target_os = "linux")]
+    // SAFETY: setpriority on the calling thread's own tid touches no memory.
+    unsafe {
+        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        if libc::setpriority(libc::PRIO_PROCESS, tid, nice) != 0 {
+            tracing::warn!("could not lower Status preparation thread priority");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = nice;
 }
 
 pub fn loopback_origin(origin: &str) -> Result<(), Failure> {
@@ -195,11 +212,7 @@ impl Service {
                 poisoned: false,
             })),
             preparation: Arc::new(Mutex::new(())),
-            preparation_pool: if role == Role::Router {
-                Some(Arc::new(router_preparation_pool()?))
-            } else {
-                None
-            },
+            preparation_pool: Some(Arc::new(preparation_pool()?)),
             serving_http: serving_http_client()?,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
@@ -452,18 +465,23 @@ async fn prepare(
                 digest: manifest.rows_digest,
                 evicted_blocks: 0,
             };
-            let (mut g, _) = Generation::prepare_worker(
-                &snapshot,
-                manifest.generation,
-                manifest.recovery_epoch,
-                manifest.observed_ms,
-                previous.as_deref(),
-                if cuda {
-                    MatvecBackend::Cuda { device: 0 }
-                } else {
-                    MatvecBackend::Cpu
-                },
-            )?;
+            let (mut g, _) = preparation_pool
+                .as_ref()
+                .ok_or(Error::Unavailable)?
+                .install(|| {
+                    Generation::prepare_worker(
+                        &snapshot,
+                        manifest.generation,
+                        manifest.recovery_epoch,
+                        manifest.observed_ms,
+                        previous.as_deref(),
+                        if cuda {
+                            MatvecBackend::Cuda { device: 0 }
+                        } else {
+                            MatvecBackend::Cpu
+                        },
+                    )
+                })?;
             g.manifest = manifest;
             Ok(g)
         }
@@ -1027,14 +1045,28 @@ mod tests {
             .is_err());
     }
     #[test]
-    fn router_preparation_rejects_unbounded_threads() {
-        assert!(build_router_preparation_pool(0).is_err());
-        assert!(build_router_preparation_pool(5).is_err());
+    fn preparation_rejects_unbounded_threads() {
+        assert!(build_preparation_pool(0).is_err());
+        assert!(build_preparation_pool(5).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn preparation_threads_run_below_query_priority() {
+        let pool = build_preparation_pool(2).unwrap();
+        let nice = pool.install(|| {
+            // SAFETY: getpriority on the calling thread's own tid touches no memory.
+            unsafe {
+                let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+                libc::getpriority(libc::PRIO_PROCESS, tid)
+            }
+        });
+        assert_eq!(nice, PREPARATION_NICE);
     }
 
     #[test]
-    fn router_preparation_uses_its_own_bounded_pool() {
-        let pool = build_router_preparation_pool(2).unwrap();
+    fn preparation_uses_its_own_bounded_pool() {
+        let pool = build_preparation_pool(2).unwrap();
         pool.install(|| {
             assert_eq!(rayon::current_num_threads(), 2);
             (0..16).into_par_iter().for_each(|_| {
