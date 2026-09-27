@@ -295,6 +295,8 @@ async def main():
     cli.add_argument('--artifacts',type=Path,required=True)
     cli.add_argument('--initial-publication',type=Path,default=Path('/srv/zakura/transparent-shards-v7-full'))
     cli.add_argument('--source-sha',required=True)
+    cli.add_argument('--directory-choice',choices=['off','sealed','all'],default='off',
+                     help='Which newly built shards publish a directory choice table (shadow mode)')
     args=cli.parse_args()
     if os.geteuid()!=0:
         raise RuntimeError('run on the coordinator as root')
@@ -313,6 +315,10 @@ async def main():
         config=dict(data_dir='/srv/zakura/transparent-event-data',publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
                     recent_from=3262749,recent_geometry='recent-8k',archive_geometry='archive-wide',rpc_url='http://127.0.0.1:8232',rpc_cookie='/root/.cache/zakura/.cookie',
                     fleet_command=str(ROOT/'transparent-live-fleet.py'),fleet_config=str(ROOT/'fleet.json'),listen='127.0.0.1:8094',source_sha=args.source_sha,shadow=True)
+        # Written only when enabled, so a controller built before the field
+        # (whose config refuses unknown fields) can still read a default config.
+        if args.directory_choice!='off':
+            config['directory_choice']=args.directory_choice
         LIVE.atomic_json(ROOT/'controller.json',config)
     fleet=LIVE.Fleet(json.loads((ROOT/'fleet.json').read_text()))
     saved=ROOT/'rollback'/args.source_sha

@@ -27,7 +27,9 @@ pub mod transport;
 pub mod validate;
 pub mod wire;
 
-pub use build_filter::{build_filter, build_range_filter, element_count, FilterBytes};
+pub use build_filter::{
+    build_filter, build_range_filter, build_range_filter_with, element_count, FilterBytes,
+};
 pub use client::{
     check_batch, check_range_batch, sync_range, sync_shards, AcceptedChain, BlockMatch, ChainMap,
     CheckedRecord, CheckedShard, ShardMatch, ShardSyncOutcome, SyncOutcome,

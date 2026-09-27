@@ -43,6 +43,10 @@ path = "src/bin/shard-verify.rs"
 name = "script-sample"
 path = "src/bin/script-sample.rs"
 
+[[bin]]
+name = "filter-sweep"
+path = "src/bin/filter-sweep.rs"
+
 [dependencies]
 transparent-blocks = { path = "../../crates/transparent-blocks" }
 tempfile = "3"

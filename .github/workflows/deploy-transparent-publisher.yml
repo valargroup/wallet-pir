@@ -17,6 +17,12 @@ on:
         required: true
         default: /srv/zakura/transparent-shards-v7-full
         type: string
+      directory_choice:
+        description: Which newly built shards publish a directory choice table (shadow mode)
+        required: true
+        default: 'off'
+        type: choice
+        options: ['off', sealed, all]
 
 concurrency:
   group: wallet-pir-deploy
@@ -83,12 +89,14 @@ jobs:
           MODE: ${{ inputs.mode }}
           SHA: ${{ inputs.ref }}
           INITIAL: ${{ inputs.initial_publication }}
+          DIRECTORY_CHOICE: ${{ inputs.directory_choice }}
         run: |
           set -euo pipefail
           mkdir -p publisher-evidence
           sudo --preserve-env=WALLET_PIR_DEPLOY_SSH_KEY,TRANSPARENT_SSH_KNOWN_HOSTS,TRANSPARENT_FLEET_JSON,TRANSPARENT_ROUTER_HOST \
             python3 transparent/ops/scripts/deploy-transparent-publisher.py "$MODE" \
             --artifacts "$PWD/artifact" --initial-publication "$INITIAL" --source-sha "$SHA" \
+            --directory-choice "$DIRECTORY_CHOICE" \
             2>&1 | tee publisher-evidence/deploy.log
 
       - name: Capture nonsecret serving evidence

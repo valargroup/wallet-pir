@@ -74,7 +74,30 @@ pub fn build_range_filter(
 }
 
 /// The shared GCS encoding. Both profiles differ only in how they key it.
+/// Builds a range filter under explicit Golomb-Rice parameters.
+///
+/// For evaluating alternative profiles offline. Published filters use
+/// [`build_range_filter`], whose `M` and `P` are the profile's; a filter built
+/// here under other values is not readable as a profile filter.
+pub fn build_range_filter_with(
+    shard_key: ShardKey,
+    elements: &[ScriptBytes],
+    m: u64,
+    p: u8,
+) -> Result<FilterBytes, FilterError> {
+    encode_with(shard_key.filter_keys(), elements, m, p)
+}
+
 fn encode(keys: FilterKeys, elements: &[ScriptBytes]) -> Result<FilterBytes, FilterError> {
+    encode_with(keys, elements, M, P)
+}
+
+fn encode_with(
+    keys: FilterKeys,
+    elements: &[ScriptBytes],
+    m: u64,
+    p: u8,
+) -> Result<FilterBytes, FilterError> {
     // Filter membership is a set; sorting and deduplicating here (rather than
     // relying on the writer's internal set) keeps the element count we report
     // and the count the encoder writes the same number.
@@ -85,7 +108,7 @@ fn encode(keys: FilterKeys, elements: &[ScriptBytes]) -> Result<FilterBytes, Fil
         .collect();
 
     let mut bytes = Vec::new();
-    let mut writer = GcsFilterWriter::new(&mut bytes, keys.k0, keys.k1, M, P);
+    let mut writer = GcsFilterWriter::new(&mut bytes, keys.k0, keys.k1, m, p);
     for element in &deduplicated {
         writer.add_element(element);
     }
