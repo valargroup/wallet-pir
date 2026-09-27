@@ -515,7 +515,7 @@ async fn prepare(
     let mut state = s.state.lock().await;
     // Cached calculations are never authority. They may survive a fence, but
     // all serving requires a new matching prepare/activation decision.
-    state.preparation_cache = Some(Arc::new(g.clone()));
+    release_off_runtime(state.preparation_cache.replace(Arc::new(g.clone())));
     s.check(&state, &p.binding)?;
     g.manifest
         .fresh(now_ms())
@@ -525,9 +525,15 @@ async fn prepare(
         manifest: g.manifest.clone(),
         artifact_digest: digest,
     };
-    state.candidate = Some((g, digest));
-    state.candidate_artifact = artifact;
+    release_off_runtime(state.candidate.replace((g, digest)));
+    release_off_runtime(std::mem::replace(&mut state.candidate_artifact, artifact));
     Ok(Json(ready))
+}
+/// Free replaced generations and artifacts on a blocking thread. Queries wait
+/// on the role state and views locks, and freeing a generation's material while
+/// holding them stalled the router's query path for hundreds of milliseconds.
+fn release_off_runtime<T: Send + 'static>(value: T) {
+    tokio::task::spawn_blocking(move || drop(value));
 }
 /// Reaffirm only identical content and coverage; the coordinator must have
 /// completed a fresh identical source observation. This never rebuilds material.
@@ -560,8 +566,8 @@ async fn prepare_refresh(
     }
     let mut g = (*previous).clone();
     g.manifest = a.manifest.clone();
-    state.candidate = Some((g, a.manifest.public_digest));
-    state.candidate_artifact = None;
+    release_off_runtime(state.candidate.replace((g, a.manifest.public_digest)));
+    release_off_runtime(state.candidate_artifact.take());
     Ok(Json(Ready {
         binding: a.binding,
         manifest: a.manifest.clone(),
@@ -608,10 +614,13 @@ async fn activate(
     }
     state.poisoned = true;
     let (mut candidate, _) = state.candidate.take().unwrap();
-    state.candidate_artifact = None;
+    release_off_runtime(state.candidate_artifact.take());
     candidate.manifest = a.manifest.clone();
     if let Some(c) = &state.controller {
-        c.activate(candidate).map_err(|_| StatusCode::CONFLICT)?;
+        release_off_runtime(
+            c.activate_deferring_release(candidate)
+                .map_err(|_| StatusCode::CONFLICT)?,
+        );
     } else {
         state.controller = Some(Controller::new(candidate));
     }
