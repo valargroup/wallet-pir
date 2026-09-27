@@ -1,7 +1,9 @@
-# Distributed live Status qualification
+# Distributed live Status serving
 
-Public Status remains disabled. This implementation adds a live publication path
-and independent serving roles; it does not establish production qualification.
+The native v3 Status service is publicly reachable through the shared production
+origin as of 2026-09-27. Public reachability and the retained live smoke do not
+by themselves establish wallet release qualification; the independent wallet
+must implement the matching native protocol and pass interoperability gates.
 
 ## Deployment
 
@@ -39,9 +41,9 @@ handle /v1/status/* {
 }
 ```
 
-Enabling `public_enabled` is a deployment decision gated by
-`status_qualification.md`; this section documents the wiring, not a live
-configuration.
+Production enables `public_enabled`, binds the dedicated public listener to
+`127.0.0.1:8489`, and proxies only `/v1/status/*` to it. The private listener
+remains unproxied.
 
 | Endpoint | Owner | Reachability |
 | --- | --- | --- |
@@ -142,11 +144,11 @@ checks mined answers against canonical node blocks and writes arrival evidence.
 This is a live mined-answer smoke campaign, not a complete publication oracle or
 six-hour qualification. It intentionally reports `production_qualified: false`.
 
-Production also requires a complete six-hour publication/resource capture,
+Wallet release also requires a complete publication/resource assessment,
 explicit supersession evidence, independent block/mempool publication checks,
-the qualified update envelope, fault recovery tests, protocol review, and a
-restricted HTTPS ingress rehearsal. Those gates must pass before public routes
-or `VIZOR_STATUS_PIR_RELEASE_READY` are enabled.
+the qualified update envelope, fault recovery tests, protocol review, and
+wallet/server interoperability. Public reachability does not enable a wallet
+release gate by itself.
 
 Rollback stops private Status admission and preserves its latest durable
 journals. Never restore an older authority directory to match an older binary.

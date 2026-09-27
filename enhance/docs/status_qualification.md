@@ -1,10 +1,10 @@
 # Status PIR production qualification
 
-Public Status remains blocked until the compact `status-pir-v2-q48` candidate
-passes the complete live-source gate. The private production topology has an
-authenticated SSH publication tunnel and separate controller, worker and router
-processes. Integration into the deployed shared Enhance process and restricted
-HTTPS ingress rehearsal remain separate gates.
+The native `status-pir-v3-native-two-mask-m29` service became publicly reachable
+on 2026-09-27, while wallet release remains blocked on a matching independent
+client and interoperability evidence. The compact `status-pir-v2-q48` gate below
+is retained as the qualification contract for that protocol and cannot qualify
+native v3. Public reachability is not production qualification.
 
 V2 uses 8,192 rows, 256 slots per row, 40 bytes per slot, 12,288 padded row bytes,
 6,144 u16 columns and a 96 MiB database. Its 75% admission ceiling remains

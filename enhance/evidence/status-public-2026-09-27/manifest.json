@@ -1,0 +1,39 @@
+{
+  "run_id": "status-public-2026-09-27",
+  "activated_utc": "2026-09-27T14:18:21Z",
+  "origin": "https://enhance-pir.valargroup.dev",
+  "routes": [
+    "/v1/status/init",
+    "/v1/status/session/:id",
+    "/v1/status/query"
+  ],
+  "source_change": "wallet-pir c03cfe97b00eda54eff45408a04e8d592e93dcb5",
+  "deployed_binary": {
+    "source_revision": "c5a6486476d91c88b692838c3449f4ddb917201c",
+    "path": "/opt/wallet-pir/releases/c5a6486476d91c88b692838c3449f4ddb917201c/native/status-pir",
+    "sha256": "91ff7be048db39f879800cd7d97ffabfdece2c62c5d8b70b821544587c6a8292",
+    "protocol": "status-pir-v3-native-two-mask-m29"
+  },
+  "controller": {
+    "host": "167.99.42.60",
+    "private_listener": "127.0.0.1:8480",
+    "public_listener": "127.0.0.1:8489",
+    "first_public_generation": 26005,
+    "recovery_epoch": 8
+  },
+  "smoke": {
+    "started_ms": 1790518730334,
+    "ended_ms": 1790518790336,
+    "seconds": 60,
+    "qps": 20,
+    "offered": 1200,
+    "correct": 1200,
+    "failed": 0,
+    "unstarted": 0,
+    "p99_ms": 46.0,
+    "query_path": "same_origin",
+    "summary_sha256": "aa32f9991ed77e9a0e159fc41888ede484d9f08174b55523fd204e342e35747c",
+    "requests_sha256": "ff055dada96bf1516cd4e941e24261edd545e8b4e2b47d545edffc7aa1a57afc"
+  },
+  "rollback_backup": "/root/status-public-20260927T141812Z"
+}
