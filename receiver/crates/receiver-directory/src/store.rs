@@ -31,6 +31,7 @@ pub struct IndexedBlock {
     pub end_position: u64,
     pub coinbase_actions: u64,
     pub payments: Vec<(Receiver, Payment)>,
+    pub commitments: Vec<Hash>,
 }
 
 pub struct Store {
@@ -51,7 +52,7 @@ impl Store {
         )?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: u32 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(Error::Malformed);
         }
         tx.execute_batch("CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
@@ -60,7 +61,8 @@ impl Store {
                 receiver BLOB NOT NULL, position INTEGER NOT NULL UNIQUE, txid BLOB NOT NULL, action INTEGER NOT NULL, record BLOB NOT NULL,
                 UNIQUE(txid,action));
             CREATE INDEX IF NOT EXISTS receiver_payments ON payments(receiver,position);
-            PRAGMA user_version=1;")?;
+            CREATE TABLE IF NOT EXISTS commitments (position INTEGER PRIMARY KEY, height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE, cmx BLOB NOT NULL CHECK(length(cmx)=32));
+            PRAGMA user_version=2;")?;
         let encoded = serde_json::to_string(&config)?;
         tx.execute("INSERT OR IGNORE INTO config VALUES (1,?1)", [&encoded])?;
         let saved: String =
@@ -70,6 +72,35 @@ impl Store {
         }
         tx.commit()?;
         Ok(Self { db, config })
+    }
+
+    /// Old indexes without all commitments must be rebuilt before producing proofs.
+    pub fn witnesses(&self, manifest: &Manifest) -> Result<crate::witness::WitnessSnapshot, Error> {
+        if self.config.start_position != 0
+            || self.checkpoint(manifest.end_height)?.hash != manifest.end_hash
+        {
+            return Err(Error::Coverage);
+        }
+        let mut query = self
+            .db
+            .prepare("SELECT position,cmx FROM commitments WHERE position<?1 ORDER BY position")?;
+        let mut commitments = Vec::new();
+        for row in query.query_map([manifest.end_position], |r| {
+            Ok((r.get::<_, u64>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })? {
+            let (position, cmx) = row?;
+            if position != commitments.len() as u64 {
+                return Err(Error::Coverage);
+            }
+            commitments.push(cmx.try_into().map_err(|_| Error::Malformed)?);
+        }
+        let mut query = self
+            .db
+            .prepare("SELECT position FROM payments WHERE height<=?1")?;
+        let positions = query
+            .query_map([manifest.end_height], |r| r.get::<_, u32>(0))?
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+        crate::witness::WitnessSnapshot::build(manifest, &commitments, &positions)
     }
 
     pub fn tip(&self) -> Result<Checkpoint, Error> {
@@ -85,6 +116,8 @@ impl Store {
         if previous.height.checked_add(1) != Some(block.height)
             || previous.hash != block.parent
             || previous.position != block.start_position
+            || block.commitments.len() as u64
+                != block.end_position.saturating_sub(block.start_position)
             || block.end_position < block.start_position
             || block.end_position > i64::MAX as u64
             || block.coinbase_actions > block.end_position - block.start_position
@@ -102,12 +135,23 @@ impl Store {
                 block.coinbase_actions
             ],
         )?;
+        for (offset, cmx) in block.commitments.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO commitments VALUES (?1,?2,?3)",
+                params![
+                    block.start_position + offset as u64,
+                    block.height,
+                    cmx.as_slice()
+                ],
+            )?;
+        }
         let mut previous_position = None;
         for (receiver, p) in &block.payments {
             if p.height != block.height
                 || p.block_hash != block.hash
                 || p.position < block.start_position
                 || p.position >= block.end_position
+                || block.commitments.get((p.position-block.start_position) as usize) != Some(&p.cmx)
                 || previous_position.is_some_and(|pos| p.position <= pos)
             {
                 return Err(Error::Malformed);

@@ -164,12 +164,14 @@ pub fn extract_block(
         end_position,
         coinbase_actions: 0,
         payments: Vec::new(),
+        commitments: Vec::new(),
     };
     let mut position = start_position;
     for (tx_index, tx) in block.transactions.iter().enumerate() {
         let coinbase = tx.is_coinbase();
         let txid = tx.hash().0;
         for (action_index, a) in tx.ironwood_actions().enumerate() {
+            indexed.commitments.push(a.cm_x.into());
             if coinbase {
                 indexed.coinbase_actions += 1;
             } else {

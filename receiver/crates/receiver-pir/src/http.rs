@@ -17,15 +17,7 @@ impl HttpClient {
         accepted: AcceptedCoverage,
     ) -> Result<Self, Error> {
         let origin = origin.trim_end_matches('/').to_owned();
-        let bytes = read_bounded(
-            http.get(format!("{origin}/v1/receiver/init"))
-                .send()
-                .await?,
-            16384,
-        )
-        .await?;
-        let manifest: Manifest = serde_json::from_slice(&bytes)?;
-        manifest.validate()?;
+        let manifest = Self::fetch_manifest(&origin, &http).await?;
         accepted.check(&manifest.directory)?;
         let public = read_bounded(
             http.get(format!("{origin}/v1/receiver/public"))
@@ -42,8 +34,38 @@ impl HttpClient {
         })
     }
 
+    /// Fetch bounded public metadata before selecting the corresponding local chain anchor.
+    pub async fn fetch_manifest(origin: &str, http: &reqwest::Client) -> Result<Manifest, Error> {
+        let bytes = read_bounded(
+            http.get(format!("{}/v1/receiver/init", origin.trim_end_matches('/')))
+                .send()
+                .await?,
+            16384,
+        )
+        .await?;
+        let manifest: Manifest = serde_json::from_slice(&bytes)?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
     pub fn manifest(&self) -> &Manifest {
         self.session.manifest()
+    }
+
+    /// Download identical proof bytes for all wallets. This never contains a receiver in the request.
+    pub async fn witnesses(&self) -> Result<receiver_directory::witness::WitnessSnapshot, Error> {
+        let bytes = read_bounded(
+            self.http
+                .get(format!("{}/v1/receiver/witness", self.origin))
+                .send()
+                .await?,
+            receiver_directory::witness::MAX_WITNESS_BYTES,
+        )
+        .await?;
+        Ok(receiver_directory::witness::WitnessSnapshot::decode(
+            &bytes,
+            &self.manifest().directory,
+        )?)
     }
 
     /// Return every payment from one publication, or an error. No partial success or cleartext fallback.

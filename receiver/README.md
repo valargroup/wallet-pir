@@ -191,3 +191,43 @@ actual Enhance lookup using the returned position and authenticates the combined
 public output. Set `ENHANCE_PIR_ORIGIN` in addition to the manifest path. See
 [the recorded integration result](evidence/2026-09-26-receiver-pir.md). Successful
 public zero-OVK authentication does not prove that a wallet can spend the note.
+
+## Common witness snapshot
+
+The local POC publishes `<revision>.witness` when indexing with `--witnesses`.
+The index must contain every Ironwood commitment from position zero, including
+coinbase. A preexisting index without commitment history must be rebuilt in a
+separate directory. The store's version 2 keeps commitments with their block and
+removes them on rewind. Payment commitments must match their claimed positions.
+
+The `IWPROOF1` file contains a 152-byte header followed by sorted unique 37-byte
+nodes. The header binds genesis, directory revision, terminal height/hash, tree
+size and root. Each node holds its level (1 byte), index (4 bytes) and canonical
+hash (32 bytes). Sibling nodes shared by many payments appear once. Missing
+siblings beyond the tree end are canonical empty nodes. Other missing nodes are
+errors. Parsers cap the file at 64 MiB before allocation and reject malformed,
+duplicate or unsorted entries. Each reconstructed path must match the commitment
+and file root. Wallets must additionally verify the root against their own chain.
+
+Every participating test wallet fetches the same `/v1/receiver/witness` bytes
+before looking up receivers. The file supplies inclusion paths. It does not
+establish ownership or absence of a spend. The measured mainnet publication at
+height 3,497,852 covers 20,911 payments and uses 4,033,115 witness bytes. Its fixed
+PIR row file is 32 MiB and stays on the server. A wallet downloads the proof file,
+PIR setup, and encrypted replies.
+
+For an automatically refreshed local test service, build both binaries and run:
+
+```sh
+cargo build --profile release-fast -p enhance-pir-server --bin receiver-directory
+cargo build --profile release-fast -p receiver-pir-server
+python3 receiver/ops/local_poc.py --binary-dir target/release-fast \
+  --data-dir /absolute/path/to/commitment-index \
+  --rpc-url http://your-archive-node:8232
+```
+
+The helper publishes with `--min-rows 8192`, refreshes every five minutes and
+serves only on loopback port 18380. It retains the previous service if indexing
+fails. A new publication restarts the immutable service. Clients retry stale
+sessions and never treat an HTTP failure as an absent payment. This helper uses
+an explicitly unauthenticated RPC and is for the isolated POC.

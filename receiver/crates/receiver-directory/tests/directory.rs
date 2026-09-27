@@ -197,6 +197,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         end_position: 200,
         coinbase_actions: 0,
         payments: vec![],
+        commitments: vec![],
     };
     store.append(&empty).unwrap();
     assert_eq!(store.snapshot(8).unwrap().manifest.end_height, 100);
@@ -210,6 +211,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         end_position: 204,
         coinbase_actions: 2,
         payments: vec![(r.receiver, r.payment.clone())],
+        commitments: vec![[0; 32], [0; 32], r.payment.cmx, [0; 32]],
     };
     // The first two positions belong to excluded coinbase outputs.
     store.append(&block).unwrap();
@@ -241,6 +243,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     block.parent = [10; 32];
     block.start_position = 200;
     block.end_position = 203;
+    block.commitments.truncate(3);
     block.coinbase_actions = 0;
     block.payments[0].1.block_hash = block.hash;
     store.append(&block).unwrap();
@@ -273,4 +276,60 @@ fn enhancement_reconstruction_requires_authentication() {
     suffix[0] ^= 1;
     let altered = Action::from_payment(&p, &suffix, original.cv, original.out_ciphertext);
     assert!(altered.recover_receiver().unwrap().is_none());
+}
+
+#[test]
+fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
+    use incrementalmerkletree::{frontier::CommitmentTree, witness::IncrementalWitness};
+    use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
+    use receiver_directory::witness::WitnessSnapshot;
+    let commitments: Vec<[u8; 32]> = (1..=20u8).map(|i| [i; 32]).collect();
+    let mut manifest = manifest();
+    manifest.start_position = 0;
+    manifest.end_position = 20;
+    let positions = [0, 5, 6, 18, 19].into_iter().collect();
+    let snapshot = WitnessSnapshot::build(&manifest, &commitments, &positions).unwrap();
+    let encoded = snapshot.encode();
+    let restored = WitnessSnapshot::decode(&encoded, &manifest).unwrap();
+    for position in positions {
+        let mut tree = CommitmentTree::<MerkleHashOrchard, 32>::empty();
+        let mut witness = None;
+        for (index, cmx) in commitments.iter().enumerate() {
+            let hash =
+                MerkleHashOrchard::from_cmx(&ExtractedNoteCommitment::from_bytes(cmx).unwrap());
+            tree.append(hash).unwrap();
+            if index == position as usize {
+                witness = IncrementalWitness::from_tree(tree.clone());
+            } else if let Some(w) = &mut witness {
+                w.append(hash).unwrap();
+            }
+        }
+        let expected = witness.unwrap().path().unwrap();
+        assert_eq!(
+            restored
+                .path(position, commitments[position as usize])
+                .unwrap()
+                .as_slice(),
+            expected
+                .path_elems()
+                .iter()
+                .map(|h| h.to_bytes())
+                .collect::<Vec<_>>()
+        );
+        assert!(restored.path(position, [31; 32]).is_err());
+    }
+    let mut stale = manifest.clone();
+    stale.end_hash[0] ^= 1;
+    assert!(WitnessSnapshot::decode(&encoded, &stale).is_err());
+    assert!(WitnessSnapshot::decode(&encoded[..encoded.len() - 1], &manifest).is_err());
+    let mut corrupt = encoded.clone();
+    corrupt[152] = 32;
+    assert!(WitnessSnapshot::decode(&corrupt, &manifest).is_err());
+    let mut corrupt = encoded.clone();
+    corrupt[116] ^= 1;
+    assert!(WitnessSnapshot::decode(&corrupt, &manifest)
+        .unwrap()
+        .path(0, commitments[0])
+        .is_err());
+    assert_eq!(encoded, restored.encode());
 }

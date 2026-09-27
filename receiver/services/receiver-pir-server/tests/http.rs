@@ -273,3 +273,27 @@ async fn known_mainnet_refund_through_receiver_and_enhance_pir() {
         payment.position, client.manifest().generation, client.manifest().anchor_height,
         client.manifest().anchor_block_hash, timing.total.as_millis());
 }
+
+#[tokio::test]
+async fn common_witness_file_uses_the_same_publication() {
+    use receiver_directory::witness::WitnessSnapshot;
+    let mut manifest = snapshot(0).manifest;
+    manifest.start_position = 0;
+    manifest.end_position = 1;
+    let snapshot = Snapshot::build(manifest, &[]).unwrap();
+    let proof = WitnessSnapshot::build(&snapshot.manifest, &[[1; 32]], &[0].into_iter().collect())
+        .unwrap()
+        .encode();
+    let app =
+        receiver_pir_server::router_with_witnesses(Server::new(snapshot).unwrap(), Some(proof));
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", socket.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+    let server = Running { origin, task };
+    let client = HttpClient::connect(&server.origin, http(), accepted())
+        .await
+        .unwrap();
+    let proof = client.witnesses().await.unwrap();
+    proof.path(0, [1; 32]).unwrap();
+    assert!(proof.path(0, [2; 32]).is_err());
+}

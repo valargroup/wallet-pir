@@ -15,11 +15,18 @@ use tokio::sync::Semaphore;
 struct Service {
     server: Arc<Server>,
     slots: Arc<Semaphore>,
+    witnesses: Option<axum::body::Bytes>,
 }
 
 /// Limit uploads and CPU evaluation together. Cancellation never frees a still-running CPU slot.
 pub fn router(server: Server) -> Router {
+    router_with_witnesses(server, None)
+}
+
+/// Optional common proof file. Callers validate it against the served publication first.
+pub fn router_with_witnesses(server: Server, witnesses: Option<Vec<u8>>) -> Router {
     let service = Service {
+        witnesses: witnesses.map(Into::into),
         server: Arc::new(server),
         slots: Arc::new(Semaphore::new(2)),
     };
@@ -33,6 +40,16 @@ pub fn router(server: Server) -> Router {
             get(|State(s): State<Service>| async move { binary(s.server.public().to_vec()) }),
         )
         .route("/v1/receiver/query", post(query))
+        .route(
+            "/v1/receiver/witness",
+            get(|State(s): State<Service>| async move {
+                match s.witnesses {
+                    Some(bytes) => ([(header::CONTENT_TYPE, "application/octet-stream")], bytes)
+                        .into_response(),
+                    None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+                }
+            }),
+        )
         .with_state(service)
 }
 

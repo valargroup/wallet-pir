@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add common inclusion-proof snapshots, bounded HTTP retrieval and a local refresh
+  helper. Commitment indexing preserves coinbase positions and rewind semantics.
+
 - Add authenticated zero-OVK receiver extraction and shared, versioned payment
   records with pagination, coverage validation, and deterministic PIR row layouts.
 - Add a standalone, resumable mainnet indexer with coinbase exclusion, atomic

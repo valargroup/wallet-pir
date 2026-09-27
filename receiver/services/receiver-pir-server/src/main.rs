@@ -40,13 +40,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
     eprintln!("Preparing receiver PIR publication {revision}");
+    let proof_path = args.manifest.with_file_name(format!("{revision}.witness"));
+    let witnesses = if proof_path.exists() {
+        let mut proof = Vec::new();
+        File::open(proof_path)?
+            .take((receiver_directory::witness::MAX_WITNESS_BYTES + 1) as u64)
+            .read_to_end(&mut proof)?;
+        receiver_directory::witness::WitnessSnapshot::decode(&proof, &manifest)?;
+        Some(proof)
+    } else {
+        None
+    };
     let server = Server::new(Snapshot { manifest, data })?;
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     eprintln!("Receiver PIR ready at {}", listener.local_addr()?);
-    axum::serve(listener, receiver_pir_server::router(server))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    axum::serve(
+        listener,
+        receiver_pir_server::router_with_witnesses(server, witnesses),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
     Ok(())
 }

@@ -20,6 +20,12 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 struct Args {
     #[arg(long)]
     data_dir: PathBuf,
+    /// Minimum power-of-two row count. Use 8192 for the current receiver PIR profile.
+    #[arg(long, default_value_t = 1)]
+    min_rows: u32,
+    /// Publish common witness data. Requires commitment history from position zero.
+    #[arg(long)]
+    witnesses: bool,
     #[arg(long)]
     rpc_url: String,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -43,6 +49,9 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if !args.min_rows.is_power_of_two() || args.min_rows > MAX_ROWS {
+        return Err("invalid minimum row count".into());
+    }
     if u64::from(args.start_height) < enhance_pir::ACTIVATION_HEIGHT {
         return Err("start must be at or after Ironwood activation".into());
     }
@@ -121,7 +130,7 @@ async fn main() -> Result<()> {
     }
     let records = store.counts()?.0;
     // Start at half occupancy. A crowded bucket grows the entire candidate.
-    let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?;
+    let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
     let snapshot = loop {
         if rows > MAX_ROWS {
             return Err("directory exceeds prototype geometry; no publication created".into());
@@ -140,6 +149,28 @@ async fn main() -> Result<()> {
         != snapshot.manifest.end_hash
     {
         return Err("chain changed before publication; rerun to reconcile".into());
+    }
+    if args.witnesses {
+        let proof = store.witnesses(&snapshot.manifest)?.encode();
+        let dir = args.data_dir.join("publications");
+        std::fs::create_dir_all(&dir)?;
+        let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
+        temp.write_all(&proof)?;
+        temp.as_file().sync_all()?;
+        temp.persist(dir.join(format!(
+            "{}.witness",
+            hex::encode(snapshot.manifest.revision()?)
+        )))?;
+        eprintln!("witness_bytes={}", proof.len());
+    }
+    if rpc
+        .block_hash(u64::from(snapshot.manifest.end_height))
+        .await?
+        .parse::<Hash>()?
+        .0
+        != snapshot.manifest.end_hash
+    {
+        return Err("chain changed while building proofs; rerun to reconcile".into());
     }
     let revision = publish(&args.data_dir.join("publications"), &snapshot)?;
     println!(

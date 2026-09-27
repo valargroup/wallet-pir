@@ -2,6 +2,7 @@
 pub mod extract;
 pub mod record;
 pub mod snapshot;
+pub mod witness;
 #[cfg(feature = "store")]
 pub mod store;
 

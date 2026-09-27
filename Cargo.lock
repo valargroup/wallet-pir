@@ -3013,6 +3013,7 @@ name = "receiver-directory"
 version = "0.0.1"
 dependencies = [
  "hex",
+ "incrementalmerkletree",
  "rusqlite",
  "serde",
  "serde_json",
