@@ -42,4 +42,9 @@ they are not current instructions. Follow the [retention rules](../../evidence/R
 
 ## Experiments
 
+[Six-month architecture update](architecture_update.md) records the 2026-09-27
+review recommendations, projected costs, privacy constraints, and evaluation
+sequence for ordinary wallets waking after up to six months. It is a proposed
+design, not a replacement for accepted deployment settings or measured results.
+
 [Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. The later [production artifact rollout](../evidence/parent-filters-production-2026-09-08/README.md) records HTTPS verification and the bounded production recovery canary.
