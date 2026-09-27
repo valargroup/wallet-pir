@@ -1,0 +1,9 @@
+{
+ "protocol": "status-pir-v3-native-two-mask-m29",
+ "generation": 27330,
+ "recovery_epoch": 10,
+ "coverage_start": 3494078,
+ "anchor_height": 3498173,
+ "observed_ms": 1790525153446,
+ "entries": 32331
+}

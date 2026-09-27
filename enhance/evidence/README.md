@@ -8,6 +8,10 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Status window raised to 4,096 blocks](status-window-4096-2026-09-27/README.md) —
+  live coverage of 4,096 blocks with 32,331 entries (2.1% of admission);
+  12,000/12,000 correct at 20 QPS for 10 minutes.
+
 - [Status on a CPU droplet](status-cpu-host-2026-09-27/README.md) —
   live Status router and worker moved off the P4000; 36,000/36,000 correct at
   20 QPS for 30 minutes (p50 49 ms, p99 162 ms); not six-hour qualification.
