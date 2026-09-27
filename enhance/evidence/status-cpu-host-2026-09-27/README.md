@@ -33,8 +33,8 @@ APM `6c43798` shows the topology as `Enhance host → CPU router + worker` and
 shows GPU utilization only when a role reports it. After redeploy the shadow
 drop-in was removed (`PIR_APM_ALERT_MODE=active`), all Status coverage and HTTP
 rules read fresh and healthy, and a labeled test firing/recovery drained through
-the real Slack outbox (HTTP accepted, queue empty). Slack receipt was not
-confirmed by a person in this record. The external monitor stayed healthy.
+the real Slack outbox (HTTP accepted, queue empty). Roman confirmed receipt of
+the pair in Slack. The external monitor stayed healthy.
 
 ## Load gate
 

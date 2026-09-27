@@ -9,6 +9,7 @@
     "apm_redeployed": "2026-09-27T14:54Z",
     "apm_rearmed_active": "2026-09-27T14:55Z",
     "slack_test_delivered_epoch": 1790520942,
+    "slack_test_receipt": "Roman confirmed both messages arrived in Slack",
     "load_gate": ["2026-09-27T14:58:21Z", "2026-09-27T15:28:21Z"],
     "gpu_units_removed": "2026-09-27T15:30Z"
   },
