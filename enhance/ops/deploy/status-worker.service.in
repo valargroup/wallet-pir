@@ -10,7 +10,9 @@ Environment=RAYON_NUM_THREADS=4
 Environment=RUST_LOG=info
 Restart=on-failure
 RestartSec=3
-MemoryMax=4G
+# The CPU worker keeps host copies of the database, hints and the previous
+# generation: about 4.2 GB anonymous memory under 20 QPS with live updates.
+MemoryMax=6G
 MemorySwapMax=0
 NoNewPrivileges=true
 ProtectSystem=strict

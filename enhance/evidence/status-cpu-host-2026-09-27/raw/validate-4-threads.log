@@ -1,0 +1,3 @@
+2026-09-27T14:47:33.923273Z  INFO enhance_pir_server::status::distributed: Status role preparation role=Worker fetch_ms=706 prepare_ms=8663 total_ms=9338 source_age_ms=9339
+2026-09-27T14:47:40.823279Z  INFO enhance_pir_server::status::distributed: Status role preparation role=Router fetch_ms=743 prepare_ms=6898 total_ms=6898 source_age_ms=16239
+{"cases":["mined","mempool","forked","not_found","remote_fence"],"columns":6144,"cuda":false,"database_bytes":100663296,"entries":1572864,"passed":true,"phase":"distributed_validation","processes":3,"production_qualified":false,"protocol":"status-pir-v3-native-two-mask-m29","row_bytes":12288,"rows":8192,"slot_bytes":40,"slots":256}
