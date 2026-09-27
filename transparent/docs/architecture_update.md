@@ -171,8 +171,11 @@ recent-4k-8k therefore needs a denser placement, and is not selected with this
 variant. Wallet measurement remains open.
 
 The source now implements this variant as an optional manifest field, not a
-schema change. Manifests without it keep their bytes and digests, and existing
-wallets ignore it and query both rows. The publisher adds tables only to
+schema change. Manifests without it keep their bytes and digests. A manifest
+that carries a table is refused by servers and wallets built before the field:
+they drop the unknown field and the recomputed digest no longer matches. So
+every worker and wallet (including wallet-libraries) must be upgraded before
+any publication enables tables. The publisher adds tables only to
 revisions it builds anew (`--directory-choice`, default `off`). The builder and
 the server verify every entry's route. The wallet sends one query per matched
 script when a table is present. None of this is published or deployed; see

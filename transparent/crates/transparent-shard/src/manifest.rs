@@ -165,10 +165,16 @@ pub struct ShardManifest {
     /// Which of each placed script's two candidate rows holds it (see
     /// [`crate::choice`]). A wallet that reads it sends one directory query per
     /// matched script instead of two; the rows themselves are the same
-    /// two-choice rows either way, so a wallet that ignores the field still
-    /// retrieves correctly. That is why it is an optional field rather than a
-    /// schema change: absent, it is not serialized, and every manifest
-    /// published before it keeps its bytes and its digest.
+    /// two-choice rows either way. Absent, it is not serialized, so every
+    /// manifest published before it keeps its bytes and its digest, and a set
+    /// published without tables is served to old and new consumers alike.
+    ///
+    /// Present, it is **not** backward compatible. A consumer built before
+    /// this field parses the manifest, drops the field it does not know, and
+    /// recomputes the digest from what remains, which no longer matches. Such
+    /// a wallet stops with a digest mismatch and such a server refuses to load
+    /// the shard. Every server and wallet must understand this field before any
+    /// publication carries it.
     ///
     /// Bound by the manifest digest like everything else here. A consumer that
     /// reads it must decode it with [`crate::choice::ChoiceTable::decode`],
