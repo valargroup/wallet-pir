@@ -4,7 +4,7 @@ After=network-online.target status-control-tunnel.service
 Wants=status-control-tunnel.service
 
 [Service]
-ExecStart=@RELEASE@/status-pir serve-distributed --config /etc/status-pir-control/controller.json --cookie /root/.cache/zakura/.cookie
+ExecStart=@RELEASE@/status-pir serve-distributed --config /etc/status-pir-control/controller.json --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489
 Environment=RAYON_NUM_THREADS=2
 Environment=RUST_LOG=info
 Restart=on-failure
