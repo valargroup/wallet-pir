@@ -51,6 +51,76 @@ pub struct DeliveryHealth {
     pub worker_at: u64,
 }
 
+const RUNBOOK: &str =
+    "https://github.com/valargroup/wallet-pir/blob/main/enhance/docs/observability-alerting.md";
+
+/// Escape the three characters Slack mrkdwn treats as control sequences.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn duration(seconds: u64) -> String {
+    match seconds {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m {}s", s / 60, s % 60),
+        s => format!("{}h {}m", s / 3600, s % 3600 / 60),
+    }
+}
+
+/// Context line with a Slack date token (viewer's time zone, UTC fallback) and links.
+fn footer(id: &str, now: u64, dashboard: &str) -> String {
+    let utc = chrono::DateTime::from_timestamp(now as i64, 0)
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| now.to_string());
+    let mut links = format!("<{RUNBOOK}|Runbook>");
+    if !dashboard.is_empty() {
+        links = format!("<{dashboard}|Dashboard> · {links}");
+    }
+    format!(
+        "`{}` · <!date^{now}^{{date_short_pretty}} {{time_secs}}|{utc}> · {links}",
+        escape(id)
+    )
+}
+
+/// Slack mrkdwn body for one incident transition; stored verbatim in the outbox.
+fn slack_message(
+    event: &str,
+    c: &Condition,
+    id: &str,
+    now: u64,
+    shadow: bool,
+    environment: &str,
+    dashboard: &str,
+) -> String {
+    let icon = match (event, c.severity.as_str()) {
+        ("RECOVERED", _) => ":large_green_circle:",
+        ("RETIRED", _) => ":white_circle:",
+        ("REMINDER", _) => ":bell:",
+        (_, "critical") => ":red_circle:",
+        _ => ":large_orange_circle:",
+    };
+    // Incident ids end in their firing time.
+    let open_for = id
+        .rsplit_once('-')
+        .and_then(|(_, t)| t.parse::<u64>().ok())
+        .filter(|_| event != "FIRED")
+        .map(|fired| format!(" after {}", duration(now.saturating_sub(fired))))
+        .unwrap_or_default();
+    format!(
+        "{icon} *{}{event}{open_for} · {}* · `{}` on `{}` · {}\n>*Observed:* {}\n>*Threshold:* {}\n{}",
+        if shadow { "SHADOW " } else { "" },
+        escape(&c.severity),
+        escape(&c.key),
+        escape(&c.resource),
+        escape(environment),
+        escape(&c.observed),
+        escape(&c.threshold),
+        footer(id, now, dashboard),
+    )
+}
+
 pub struct Store {
     db: Connection,
 }
@@ -151,8 +221,7 @@ impl Store {
                 }
             }
             if let Some(event) = event {
-                let body = format!("{}PIR {event} [{}]\nEnvironment: {environment}\nIncident: {}\nResource: {}\nCheck: {}\nObserved: {}\nThreshold: {}\nEvent UTC epoch: {now}\nDashboard: {dashboard}\nRunbook: https://github.com/valargroup/wallet-pir/blob/main/enhance/docs/observability-alerting.md",
-                    if shadow { "SHADOW " } else { "" }, c.severity, i.id, c.resource, c.key, c.observed, c.threshold);
+                let body = slack_message(event, c, &i.id, now, shadow, environment, dashboard);
                 tx.execute("INSERT INTO metadata(key,value) VALUES ('last_event',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [&body])?;
                 tx.execute(
                     "INSERT INTO events(at,shadow,body) VALUES (?,?,?)",
@@ -177,7 +246,11 @@ impl Store {
         let tx = self.db.transaction()?;
         let id = format!("operator-test-{now}");
         for event in ["FIRED", "RECOVERED"] {
-            let body=format!("PIR APM TEST {event} [verification]\nEnvironment: {environment}\nIncident: {id}\nNo service failure: durable delivery verification.\nDashboard: {dashboard}");
+            let body = format!(
+                ":test_tube: *PIR test · {event}* · {}\nNo service failure: durable delivery verification.\n{}",
+                escape(environment),
+                footer(&id, now, dashboard)
+            );
             tx.execute(
                 "INSERT INTO outbox(incident,body,created,due) VALUES (?,?,?,?)",
                 params![id, body, now, now],
@@ -340,6 +413,38 @@ mod tests {
             hold_seconds: 10,
             sample,
         }
+    }
+    #[test]
+    fn slack_message_is_escaped_mrkdwn() {
+        let mut c = condition(Some(true), 100);
+        c.observed = "p99 <5s & >2s".into();
+        let fired = slack_message(
+            "FIRED",
+            &c,
+            "query_5xx-100",
+            100,
+            false,
+            "production",
+            "https://x/apm/",
+        );
+        assert!(fired.starts_with(
+            ":red_circle: *FIRED · critical* · `query_5xx` on `query` · production\n"
+        ));
+        assert!(fired.contains(">*Observed:* p99 &lt;5s &amp; &gt;2s\n"));
+        assert!(fired.contains("<!date^100^"));
+        assert!(fired.ends_with("<https://x/apm/|Dashboard> · <https://github.com/valargroup/wallet-pir/blob/main/enhance/docs/observability-alerting.md|Runbook>"));
+        let recovered = slack_message(
+            "RECOVERED",
+            &c,
+            "query_5xx-100",
+            231,
+            true,
+            "production",
+            "",
+        );
+        assert!(recovered
+            .starts_with(":large_green_circle: *SHADOW RECOVERED after 2m 11s · critical*"));
+        assert!(!recovered.contains("Dashboard"));
     }
     #[test]
     fn unknown_cannot_recover_and_recovery_needs_distinct_samples() {
