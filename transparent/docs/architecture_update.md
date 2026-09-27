@@ -212,6 +212,11 @@ At 8 and 32 wallets:
 At 128 wallets both variants hit a router health-check failure spiral. WAN
 clients and mobile devices remain unmeasured.
 
+Under an [emulated 100 ms round trip](../evidence/single-lookup-latency-2026-09-28/README.md),
+tables cut the median six-month restore from 4.40 to 3.62 s. Concurrent filter
+prefetch (§6, now in the wallet's HTTP filter source) brings it to 2.51 s, 43%
+below the starting point, with unchanged bytes and exact ledgers.
+
 ### Scope and requirements
 
 Use this layout first for sealed recent shards. Retain the existing directory

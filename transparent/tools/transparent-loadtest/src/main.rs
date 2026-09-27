@@ -250,6 +250,16 @@ impl<F: FilterSource> FilterSource for CountingFilters<F> {
         }
         result
     }
+    fn prefetch(&mut self, shard_ids: &[u64]) {
+        // Bytes are charged when each filter is handed out; the overlapped
+        // wall time is its own stage.
+        let started = Instant::now();
+        self.inner.prefetch(shard_ids);
+        let mut stages = self.stages.lock().unwrap();
+        let entry = stages.entry("filters_prefetch").or_default();
+        entry.calls += 1;
+        entry.micros += started.elapsed().as_micros() as u64;
+    }
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
         let started = Instant::now();
         let result = self.inner.filter(shard_id);

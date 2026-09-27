@@ -861,20 +861,24 @@ pub fn sync_into<S: WalletStore>(
             }
         }
 
-        if filters.uses_parents() {
-            let mut uncached = Vec::new();
-            for index in work.keys() {
-                let entry = &active.shards[*index];
-                if store
-                    .filter(&entry.manifest_digest, &entry.filter_hash)?
-                    .is_none()
-                {
-                    uncached.push(entry.shard_id);
-                }
+        let mut uncached = Vec::new();
+        for index in work.keys() {
+            let entry = &active.shards[*index];
+            if store
+                .filter(&entry.manifest_digest, &entry.filter_hash)?
+                .is_none()
+            {
+                uncached.push(entry.shard_id);
             }
+        }
+        if filters.uses_parents() {
             charges.filter_bytes += filters
                 .prepare_parents(&active, &uncached, store)
                 .map_err(|e| SyncError::Transport(e.to_string()))?;
+        } else {
+            // Every uncached filter in the walk is downloaded anyway; overlap
+            // them rather than paying one round trip each.
+            filters.prefetch(&uncached);
         }
         let mut index_iter: Vec<usize> = work.keys().copied().collect();
         let mut position = 0usize;

@@ -352,6 +352,17 @@ pub trait FilterSource {
     /// digest mismatch against the map rather than acting on.
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError>;
 
+    /// Starts fetching the filters of `shard_ids` ahead of the walk that asks
+    /// for them one at a time, where the source can overlap requests.
+    ///
+    /// Filters are public, and the wallet downloads every filter in its range
+    /// anyway, so fetching them together discloses nothing further. The
+    /// default does nothing. An implementation must hand each prefetched
+    /// filter out at most once through [`filter`](Self::filter) and fetch
+    /// afresh after that, so a republished tail's superseded filter cannot be
+    /// served twice; the sync still checks every filter against the map.
+    fn prefetch(&mut self, _shard_ids: &[u64]) {}
+
     /// Research-only parent discovery for uncached work. Default sources never
     /// skip child filters. Costs include manifest discovery even on fallback.
     fn prepare_parents(
@@ -457,6 +468,9 @@ impl<T: FilterSource + ?Sized> FilterSource for Box<T> {
     }
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
         (**self).filter(shard_id)
+    }
+    fn prefetch(&mut self, shard_ids: &[u64]) {
+        (**self).prefetch(shard_ids)
     }
 }
 

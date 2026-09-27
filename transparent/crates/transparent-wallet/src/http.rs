@@ -498,7 +498,14 @@ pub struct HttpFilterSource {
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
     retry: RetryPolicy,
+    /// Filters fetched ahead of the walk, each handed out at most once.
+    prefetched: std::collections::HashMap<u64, Vec<u8>>,
+    /// Requests a prefetch keeps in flight.
+    concurrency: usize,
 }
+
+/// Filter requests a prefetch keeps in flight by default.
+pub const FILTER_PREFETCH_CONCURRENCY: usize = 8;
 
 impl HttpFilterSource {
     /// Explicit research opt-in. The geometry prevents archive discovery from
@@ -520,7 +527,15 @@ impl HttpFilterSource {
                 overload: true,
                 timeout: options.timeout,
             },
+            prefetched: std::collections::HashMap::new(),
+            concurrency: FILTER_PREFETCH_CONCURRENCY,
         })
+    }
+
+    /// Filter requests a prefetch keeps in flight; 1 disables overlap.
+    pub fn with_prefetch_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency.max(1);
+        self
     }
 
     /// Opt into a bounded number of attempts per HTTP call (1–3). This is
@@ -601,7 +616,53 @@ impl FilterSource for HttpFilterSource {
         Ok((bytes, len))
     }
 
+    fn prefetch(&mut self, shard_ids: &[u64]) {
+        if self.concurrency <= 1 || shard_ids.len() <= 1 {
+            return;
+        }
+        let wanted: Vec<u64> = shard_ids
+            .iter()
+            .copied()
+            .filter(|id| !self.prefetched.contains_key(id))
+            .collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let failed = std::sync::atomic::AtomicBool::new(false);
+        let fetched = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for _ in 0..self.concurrency.min(wanted.len()) {
+                scope.spawn(|| loop {
+                    // One failure ends the prefetch: a refusing or unreachable
+                    // service should not receive a burst, and the walk's own
+                    // sequential requests carry the ordinary error handling.
+                    if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(&id) = wanted.get(at) else { break };
+                    match execute(
+                        self.client
+                            .get(format!("{}/v1/filters/shards/{id}/filter", self.base)),
+                        "filters",
+                        0,
+                        None,
+                        &self.observer,
+                        self.retry,
+                    ) {
+                        Ok(bytes) => fetched.lock().expect("unpoisoned").push((id, bytes)),
+                        Err(_) => failed.store(true, std::sync::atomic::Ordering::Relaxed),
+                    }
+                });
+            }
+        });
+        self.prefetched
+            .extend(fetched.into_inner().expect("unpoisoned"));
+    }
+
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
+        if let Some(bytes) = self.prefetched.remove(&shard_id) {
+            let len = bytes.len() as u64;
+            return Ok((bytes, len));
+        }
         let bytes = execute(
             self.client
                 .get(format!("{}/v1/filters/shards/{shard_id}/filter", self.base)),
@@ -633,6 +694,96 @@ mod observation_tests {
             headers.push(byte[0]);
             assert!(headers.len() < 8192);
         }
+    }
+
+    /// Prefetched filters are fetched together and each is handed out once;
+    /// asking for the same shard again goes back to the network.
+    #[test]
+    fn prefetched_filters_are_served_once_then_fetched_afresh() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = paths.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let seen = seen.clone();
+                std::thread::spawn(move || {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut headers = Vec::new();
+                    while !headers.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        if stream.read_exact(&mut byte).is_err() {
+                            return;
+                        }
+                        headers.push(byte[0]);
+                    }
+                    let line = String::from_utf8_lossy(&headers)
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .to_string();
+                    let path = line.split(' ').nth(1).unwrap().to_string();
+                    seen.lock().unwrap().push(path.clone());
+                    let body = path.into_bytes();
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = stream.write_all(&body);
+                });
+            }
+        });
+        let mut source = HttpFilterSource::new(
+            format!("http://{address}"),
+            &HttpOptions {
+                timeout: Duration::from_secs(5),
+                user_agent: "prefetch-test".into(),
+            },
+        )
+        .unwrap();
+        source.prefetch(&[1, 2, 3]);
+        assert_eq!(paths.lock().unwrap().len(), 3);
+        for id in [1u64, 2, 3] {
+            let (bytes, cost) = source.filter(id).unwrap();
+            assert_eq!(
+                bytes,
+                format!("/v1/filters/shards/{id}/filter").into_bytes()
+            );
+            assert_eq!(cost, bytes.len() as u64);
+        }
+        assert_eq!(
+            paths.lock().unwrap().len(),
+            3,
+            "prefetched filters cost no request"
+        );
+        source.filter(2).unwrap();
+        assert_eq!(
+            paths.lock().unwrap().len(),
+            4,
+            "a second request is fetched afresh"
+        );
+
+        let mut serial = HttpFilterSource::new(
+            format!("http://{address}"),
+            &HttpOptions {
+                timeout: Duration::from_secs(5),
+                user_agent: "prefetch-test".into(),
+            },
+        )
+        .unwrap()
+        .with_prefetch_concurrency(1);
+        serial.prefetch(&[1, 2, 3]);
+        assert_eq!(
+            paths.lock().unwrap().len(),
+            4,
+            "concurrency 1 disables prefetch"
+        );
     }
 
     #[test]
