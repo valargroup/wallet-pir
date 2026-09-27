@@ -167,8 +167,10 @@ script. Placement, directory rows and the server are unchanged.
   about 35%. These are projections, not measurements.
 
 Two-choice placement at 4,096 directory rows reached 14 of 14 slots in one shard.
-recent-4k-8k therefore needs a denser placement, and is not selected with this
-variant. Wallet measurement remains open.
+A later [placement study](../evidence/directory-placement-4k-2026-09-28/README.md)
+corrects the census's reading of that: a full row is expected with relocation,
+and no overflow occurred up to 96% load. So recent-4k-8k is feasible with the
+existing placement.
 
 The source now implements this variant as an optional manifest field, not a
 schema change. Manifests without it keep their bytes and digests. A manifest

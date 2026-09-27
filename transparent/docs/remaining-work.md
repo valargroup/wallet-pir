@@ -199,8 +199,9 @@ The following remain separately scoped; they do not block this recovery beta:
   equal limits and resolve recent-latency/total-byte gates before wider promotion.
 - [ ] Evaluate a new `recent-4k-8k` profile without changing existing registry
   meanings; require measured byte and tail-latency benefit before promotion.
-  Two-choice placement reaches its slot limit there (see the
-  [single-lookup census](../evidence/single-lookup-census-2026-09-27/README.md)).
+  Two-choice placement fits it without overflow (see the
+  [placement study](../evidence/directory-placement-4k-2026-09-28/README.md));
+  adopt it with the next full publication.
 - [ ] Qualify single-lookup directories. The paired
   [local measurement](../evidence/single-lookup-measure-2026-09-27/README.md)
   is done. Remaining:

@@ -97,7 +97,7 @@ index completeness. No mnemonic, private ledger or raw wallet log is published.
 |---|---|
 | Shard schema | `transparent-shard-v7` in `transparent/crates/transparent-shard/src/manifest.rs` |
 | Registry | `recent-8k` 8192/8192; `recent-4k` 4096/4096; `archive-32k` 32768/32768; `archive-wide` 32768/65536 |
-| Optional recent pairing | `recent-4k-8k` 4096/8192 registered; not published. The [single-lookup census](../evidence/single-lookup-census-2026-09-27/README.md) found two-choice placement at 14 of 14 slots in one shard at this geometry |
+| Optional recent pairing | `recent-4k-8k` 4096/8192 registered; not published. Real shards and a [placement study](../evidence/directory-placement-4k-2026-09-28/README.md) fit it in one segment with no overflow up to 96% load |
 | Single-lookup directory | Optional manifest `directory_choice`; publisher `--directory-choice off\|sealed\|all` (controller config `directory_choice`, default `off`); builder and server verify routing; wallet sends one directory query per matched script when present. [Measured locally](../evidence/single-lookup-measure-2026-09-27/README.md): 939/939 exact syncs, directory queries halved, restore-6m payload −24%; a [temporary bench fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) reproduced this at 8 and 32 wallets. Not published or deployed; wallet-libraries not updated |
 | Census ranges | `--start-height`, `--end-height`, `--first-shard-id`, geometry overrides, `--placement`, `--single-lookup`, `--per-shard`, exact script matches exist in `shard-census.rs` |
 | Two-tier publisher | `--recent-geometry`, `--archive-geometry`, `--recent-from` exist in `shard-publish.rs` |

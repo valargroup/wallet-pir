@@ -1,0 +1,16 @@
+$ python3 placement.py
+n=45454 load=79.3% d=2: max 13, full rows 0  max 13, full rows 0  max 14, full rows 1
+n=45454 load=79.3% d=3: max 13, full rows 0  max 13, full rows 0  max 13, full rows 0
+n=45454 load=79.3% d=4: max 12, full rows 0  max 12, full rows 0  max 12, full rows 0
+n=49152 load=85.7% d=2: max 14, full rows 102  max 14, full rows 87  max 14, full rows 112
+n=49152 load=85.7% d=3: max 14, full rows 2  max 14, full rows 4  max 14, full rows 1
+n=49152 load=85.7% d=4: max 14, full rows 1  max 13, full rows 0  max 13, full rows 0
+n=53000 load=92.4% d=2: max 14, full rows 1195  max 14, full rows 1159  max 14, full rows 1217
+n=53000 load=92.4% d=3: max 14, full rows 669  max 14, full rows 663  max 14, full rows 670
+n=53000 load=92.4% d=4: max 14, full rows 472  max 14, full rows 479  max 14, full rows 464
+n=55000 load=95.9% d=2: max 14, full rows 2375  max 14, full rows 2370  max 14, full rows 2401
+n=55000 load=95.9% d=3: max 14, full rows 2013  max 14, full rows 2038  max 14, full rows 2010
+n=55000 load=95.9% d=4: max 14, full rows 1871  max 14, full rows 1901  max 14, full rows 1868
+$ python3 placement.py seeds
+d=2 n=49152 load=85.7%: 0/40 overflowed, most full rows 121
+d=2 n=51000 load=88.9%: 0/40 overflowed, most full rows 448
