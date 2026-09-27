@@ -8,6 +8,10 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Status on a CPU droplet](status-cpu-host-2026-09-27/README.md) —
+  live Status router and worker moved off the P4000; 36,000/36,000 correct at
+  20 QPS for 30 minutes (p50 49 ms, p99 162 ms); not six-hour qualification.
+
 - [Native two-mask production deployment and six-hour load](native-two-mask-production-2026-09-26/README.md) —
   v9 Enhance and native Status v3 in production: no incorrect answers over six hours
   (0.03% Enhance 502s, root-caused); not formal qualification.

@@ -1,0 +1,22 @@
+{
+ "arrivals": 2031,
+ "span_s": 101.5,
+ "offered_qps": 20.01,
+ "results": {
+  "correct": 2006,
+  "error": 25
+ },
+ "errors": {
+  "HTTP status client error (429 Too Many Requests) for url (http://127.0.0.1:8480/": 25
+ },
+ "p50_ms_all": 51.0,
+ "p99_ms_all": 130.0,
+ "max_ms_all": 269.0,
+ "p50_ms_correct": 51.0,
+ "p99_ms_correct": 130.0,
+ "observation_age_ms_p50": 8112,
+ "observation_age_ms_max": 14741,
+ "max_start_lag_ms": 5,
+ "generations": 18,
+ "gate_pass": false
+}

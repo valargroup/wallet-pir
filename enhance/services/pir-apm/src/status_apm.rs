@@ -611,9 +611,18 @@ pub fn pane(view: &View) -> String {
     }
     html.push_str("</div>");
     for role in ["coordinator", "router", "worker"] {
-        html.push_str(&format!("<section class=\"card\"><h3>{role} resources</h3><p>Process RSS: {} bytes · host available memory: {} bytes · GPU utilization: {}%</p></section>", display(sample,&["role_resources",role,"process_rss_bytes"]), display(sample,&["role_resources",role,"host_memory_available_bytes"]), display(sample,&["role_resources",role,"gpu_utilization_percent"])));
+        // CPU-only hosts report no GPU reading; omit it rather than show a blank.
+        let gpu = number(sample, &["role_resources", role, "gpu_utilization_percent"])
+            .map(|_| {
+                format!(
+                    " · GPU utilization: {}%",
+                    display(sample, &["role_resources", role, "gpu_utilization_percent"])
+                )
+            })
+            .unwrap_or_default();
+        html.push_str(&format!("<section class=\"card\"><h3>{role} resources</h3><p>Process RSS: {} bytes · host available memory: {} bytes{gpu}</p></section>", display(sample,&["role_resources",role,"process_rss_bytes"]), display(sample,&["role_resources",role,"host_memory_available_bytes"])));
     }
-    html.push_str("<p class=\"intro\">Live publication is read from the coordinator manifest. Router and worker share the P4000 host; their host memory and GPU readings overlap and must not be summed. No client load-test percentile is inferred from these server histograms.</p></section>");
+    html.push_str("<p class=\"intro\">Live publication is read from the coordinator manifest. Router and worker share one host; their host readings overlap and must not be summed. No client load-test percentile is inferred from these server histograms.</p></section>");
     html
 }
 
@@ -715,16 +724,18 @@ mod tests {
         assert!(merged["operations"]["query"]["failures"].is_null());
         let view = View {
             configured: true,
-            topology: "Enhance host → P4000 router + worker".into(),
+            topology: "Enhance host → CPU router + worker".into(),
             sample: Some(merged),
             success: Some(SystemTime::now()),
             ..Default::default()
         };
         let html = pane(&view);
-        assert!(html.contains("Enhance host → P4000 router + worker"));
+        assert!(html.contains("Enhance host → CPU router + worker"));
         assert!(html.contains("not end-to-end client p99"));
         assert!(html.contains("twenty-second freshness gate"));
         assert!(!html.contains("Synthetic"));
+        assert!(!html.contains("GPU utilization"));
+        assert!(!html.contains("P4000"));
         let missing = merge_roles(
             role("coordinator", 8),
             role("router", 5),
@@ -742,6 +753,21 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn gpu_reading_is_shown_only_when_reported() {
+        let view = View {
+            configured: true,
+            sample: Some(
+                serde_json::json!({"operations":{},"generation":1,"observed_ms":0,
+                "role_resources":{"worker":{"process_rss_bytes":1,"gpu_utilization_percent":45}}}),
+            ),
+            success: Some(SystemTime::now()),
+            ..Default::default()
+        };
+        let html = pane(&view);
+        assert_eq!(html.matches("GPU utilization").count(), 1);
+        assert!(html.contains("GPU utilization: 45%"));
+    }
+    #[test]
     fn overflow_latency_is_not_reported_as_ten_seconds() {
         let empty = serde_json::json!({"operations":{}});
         let full =
@@ -752,13 +778,13 @@ mod tests {
     fn topology_uses_a_service_name_and_placement_description() {
         let view = View {
             configured: true,
-            topology: "Enhance host → P4000 router + worker".into(),
+            topology: "Enhance host → CPU router + worker".into(),
             success: Some(SystemTime::now()),
             ..Default::default()
         };
         let html = topology(&view);
         assert!(html.contains("<strong>Status PIR</strong>"));
-        assert!(html.contains("Enhance host → P4000 router + worker"));
+        assert!(html.contains("Enhance host → CPU router + worker"));
         assert!(!html.contains("enhance-coordinator-and-p4000"));
     }
     #[test]
@@ -777,7 +803,7 @@ mod tests {
     fn outage_preserves_sample_and_marks_it_stale() {
         let mut view = View {
             configured: true,
-            topology: "Enhance host → P4000 router + worker".into(),
+            topology: "Enhance host → CPU router + worker".into(),
             sample: Some(serde_json::json!({"operations":{},"generation":1,"observed_ms":0})),
             success: Some(SystemTime::now()),
             ..Default::default()

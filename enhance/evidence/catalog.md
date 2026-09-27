@@ -4,6 +4,7 @@ These are dated records, not claims about the current source or live fleet. Use 
 
 | Run | Recorded subject |
 |---|---|
+| [status-cpu-host-2026-09-27](status-cpu-host-2026-09-27/README.md) | Status router/worker moved from the P4000 to a CPU droplet; cutover, APM re-arm and 30-minute 20 QPS gate |
 | [native-two-mask-production-2026-09-26](native-two-mask-production-2026-09-26/README.md) | dc0355b native v9 Enhance and native Status v3 SSH deployment, six-hour load and 502 root cause |
 | [native-certificate-2026-09-26](native-certificate-2026-09-26/README.md) | Conditional per-snapshot two-mask correctness certificates for live Enhance and Status |
 | [production-cleanup-2026-09-24](production-cleanup-2026-09-24/README.md) | PR #111 production rollout, exact-answer smoke, and rollback provenance |

@@ -1,0 +1,94 @@
+{
+  "run_id": "status-cpu-host-2026-09-27",
+  "subject": "Move live Status router and worker from the Paperspace P4000 to a DigitalOcean CPU droplet",
+  "utc": {
+    "droplet_created": "2026-09-27T14:44Z",
+    "apm_shadow_and_tunnel_switch": "2026-09-27T14:50:00Z",
+    "last_epoch8_publication": "2026-09-27T14:49:58Z",
+    "first_epoch9_publication": "2026-09-27T14:50:19.9Z",
+    "apm_redeployed": "2026-09-27T14:54Z",
+    "apm_rearmed_active": "2026-09-27T14:55Z",
+    "slack_test_delivered_epoch": 1790520942,
+    "slack_test_receipt": "Roman confirmed both messages arrived in Slack",
+    "load_gate": ["2026-09-27T14:58:21Z", "2026-09-27T15:28:21Z"],
+    "gpu_units_removed": "2026-09-27T15:30Z"
+  },
+  "sources": {
+    "status_roles": "wallet-pir c5a6486476d91c88b692838c3449f4ddb917201c (same revision as the deployed controller)",
+    "pir_apm": "wallet-pir 6c437989336520658cb2af38190d9957c53f5d66 (branch status-cpu-host)",
+    "controller_unchanged": "/opt/wallet-pir/releases/c5a6486476d91c88b692838c3449f4ddb917201c/native/status-pir"
+  },
+  "binaries_sha256": {
+    "status_pir_cpu_haswell": "4106d51f0ee819c12a4ca837bda82a9448d127ab77e721821e2d9d69d1bb3b2a",
+    "pir_apm_haswell": "bab9fc1d998356aed03aa4b5b9624d961b6369541498a4b9f2dac348237eb3ba"
+  },
+  "build": {
+    "host": "roman-ipir-bench-8vcpu (Ubuntu 24.04.4)",
+    "toolchain": "Rust 1.91.0, --locked",
+    "status_pir": "RUSTFLAGS='-C target-cpu=haswell' CFLAGS/CXXFLAGS='-march=haswell -mpclmul' cargo build --profile release-fast -p enhance-pir-server --bin status-pir --features native-reinspiring",
+    "pir_apm": "RUSTFLAGS='-C target-cpu=haswell' cargo build --release -p pir-apm"
+  },
+  "hosts": {
+    "new": "status-pir-01, DO s-4vcpu-8gb (DO-Regular 4 vCPU, AVX2), ams3, private 10.142.0.17, Ubuntu 24.04.4, kernel 6.8.0-124",
+    "retired": "status-pir-p4000-ams1 (Paperspace, Xeon E5-2623 v4, Quadro P4000, 74.82.28.152): Status units disabled and archived; machine deletion pending in the Paperspace console",
+    "coordinator": "167.99.42.60 (controller, tunnels, APM, load client)",
+    "untouched": "Enhance optional GPU mirror enhance-pir-gpu-01 (10.250.90.3)"
+  },
+  "terraform": {
+    "wrapper": "/opt/enhance-pir/ops/wallet-pir-terraform.sh",
+    "plan": "4 to add, 0 to change, 0 to destroy (tag, firewall, droplet, project resources)",
+    "tfvars_backup": "/etc/enhance-pir/production.tfvars.before-status-host-20260927"
+  },
+  "role_config": {
+    "worker": "status-pir role --role worker (no --cuda), RAYON_NUM_THREADS=4, MemoryMax=6G",
+    "router": "status-pir role --role router --query-listen 127.0.0.1:8484, RAYON_NUM_THREADS=4, STATUS_PREPARATION_THREADS=4, MemoryMax=3G",
+    "controller_config": "unchanged /etc/status-pir-control/controller-native.json (public_enabled true)"
+  },
+  "pre_cutover_validation": {
+    "command": "status-pir validate-distributed --entries 1572864 --state-dir <fresh>",
+    "one_preparation_thread": "failed: router prepare 17,253 ms after worker 8,762 ms; candidate stale, /control/prepare 503",
+    "four_preparation_threads": "passed all cases; worker prepare 8,663 ms, router prepare 6,898 ms, source age 16,239 ms at router completion",
+    "peak_rss_kb_one_thread_run": 801524
+  },
+  "cutover": {
+    "switch_to_first_new_publication_seconds": 19.9,
+    "recovery_epoch": "8 -> 9",
+    "public_status_enabled": true
+  },
+  "load_gate": {
+    "command": "status-pir probe-live-load --origin http://127.0.0.1:8480 --query-origin http://127.0.0.1:8492 --cookie /root/.cache/zakura/.cookie --seconds 1800",
+    "criteria": "20 QPS, zero incorrect/errors/unstarted, p99 < 2000 ms, p50 < 700 ms, no alert, no OOM or role restart",
+    "result": "pass",
+    "offered": 36000,
+    "correct": 36000,
+    "p50_ms": 49.0,
+    "p99_ms": 162.0,
+    "max_ms": 401.0,
+    "observation_age_ms_p50": 5545,
+    "observation_age_ms_max": 18748,
+    "publications": 364,
+    "publication_age_at_queryable_ms": {"p50": 1593, "p99": 8506, "max": 9417},
+    "controller_warnings": "one deferred preparation (router preparation busy, 429) at 15:00:03; committed view retained",
+    "worker_peak_bytes": 4380676096,
+    "router_peak_bytes": 824414208,
+    "min_host_mem_available_kb": 2747200,
+    "max_load1": 5.17,
+    "oom_kills": 0,
+    "role_restarts": 0,
+    "apm_after": "active mode, no active incidents, status_query_5xx 0/5728, status_query_latency p99 0.200s"
+  },
+  "aborted_forwarded_run": {
+    "command": "same without --query-origin (coordinator-forwarded queries)",
+    "reason_stopped": "all 25 failures were coordinator client_concurrency 429s: a single load client exceeds the two-concurrent per-client cap; this morning's P4000 baseline used a separate query origin",
+    "arrivals": 2031,
+    "correct": 2006,
+    "p50_ms": 51.0,
+    "p99_ms": 130.0
+  },
+  "worker_memory_limit_change": "raised live from 4G to 6G with systemctl set-property at about 15:00 when anonymous memory reached 4.2 GB; no OOM, no restart",
+  "raw": {
+    "load-full.tgz": "ddaf9cb2becaab787bab1cf68e29df7fba850022b72a4bc10ae2b8c188d3a4c0",
+    "coordinator_copy": "/root/status-cpu-load-20260927-full.tgz"
+  },
+  "rollback_artifacts": "coordinator /root/status-cpu-cutover-20260927/ (tunnel units, APM drop-in and env, shadow drop-in, synthetic APM tunnel and key); P4000 /home/paperspace/status-gpu-retired-20260927/"
+}

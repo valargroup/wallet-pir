@@ -3,22 +3,23 @@ Description=Status PIR CPU packing router (private qualification)
 After=network-online.target status-worker.service
 
 [Service]
-User=paperspace
-Group=paperspace
-ExecStart=@RELEASE@/status-pir role --role router --network-hex @NETWORK@ --listen 127.0.0.1:8482 --query-listen 127.0.0.1:8484 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router
-Environment=LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64
+User=status-pir
+Group=status-pir
+ExecStart=@RELEASE@/status-pir role --role router --network-hex @NETWORK@ --listen 127.0.0.1:8482 --query-listen 127.0.0.1:8484 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router-native
 Environment=RAYON_NUM_THREADS=4
-Environment=STATUS_PREPARATION_THREADS=1
+# Worker and router prepare serially on the shared 4-vCPU host; one thread let
+# the full-occupancy rebuild outlive the 20-second freshness limit.
+Environment=STATUS_PREPARATION_THREADS=4
 Environment=RUST_LOG=info
 Restart=on-failure
 RestartSec=3
-MemoryMax=8G
+MemoryMax=3G
 MemorySwapMax=0
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/status-pir-router
+ReadWritePaths=/var/lib/status-pir-router-native
 
 [Install]
 WantedBy=multi-user.target
