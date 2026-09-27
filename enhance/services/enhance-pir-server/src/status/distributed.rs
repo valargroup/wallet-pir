@@ -158,6 +158,15 @@ fn persist(dir: &FsPath, fence: &Fence) -> Result<(), Failure> {
     File::open(dir)?.sync_all()?;
     Ok(())
 }
+/// Persist a fence on the blocking pool. An ext4 journal commit can hold
+/// `fsync` for hundreds of milliseconds; on a runtime worker that froze every
+/// task queued behind it, including queries and lock-free telemetry.
+async fn persist_off_runtime(dir: &FsPath, fence: &Fence) -> Result<(), ()> {
+    let (dir, fence) = (dir.to_path_buf(), fence.clone());
+    tokio::task::spawn_blocking(move || persist(&dir, &fence).map_err(drop))
+        .await
+        .unwrap_or(Err(()))
+}
 impl Service {
     pub fn open(
         role: Role,
@@ -362,7 +371,7 @@ async fn fence(
         state.contact = None;
         state.fence.epoch = b.epoch;
         state.fence.manifest = None;
-        if persist(&s.dir, &state.fence).is_err() {
+        if persist_off_runtime(&s.dir, &state.fence).await.is_err() {
             state.poisoned = true;
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
@@ -605,7 +614,7 @@ async fn activate(
     let mut next = state.fence.clone();
     next.generation = a.manifest.generation;
     next.manifest = Some(a.manifest.id());
-    if persist(&s.dir, &next).is_err() {
+    if persist_off_runtime(&s.dir, &next).await.is_err() {
         if let Some(c) = &state.controller {
             c.revoke();
         }
