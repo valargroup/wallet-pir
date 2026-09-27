@@ -1,0 +1,64 @@
+{
+  "run_id": "single-lookup-fleet-2026-09-27",
+  "generated_at": "2026-09-27",
+  "kind": "temporary bench fleet, paired off/all",
+  "source": {
+    "commit": "72c9031d",
+    "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+    "binaries_sha256": {
+      "transparent-shard-server": "2b748b0cb898440c8955ffde40d46ba2fb2a6157ba195a406d3bddfadce5638e",
+      "transparent-loadtest": "23aec6a67599474503645fac665480a2a8f7fbc9c155ab85ab1379ceea428388"
+    }
+  },
+  "fleet": {
+    "region": "ams3",
+    "workers": "4x s-4vcpu-8gb (sl-bench-worker-1..4)",
+    "router": "s-2vcpu-4gb Caddy 2.8.4 (sl-bench-router)",
+    "loadgen": "c-16 Xeon 8280 (sl-bench-loadgen)",
+    "network": "VPC plain HTTP",
+    "status": "destroyed after the run",
+    "production_touched": false
+  },
+  "shard_sets": {
+    "off": "0702ebeabc3e0a58f9aac13324bf3e44689d2cbcf506251196998e4f2f5894b3",
+    "all": "6458d6123635a6b77b8be989c8d1d21895b52383e633e747be0306134024e9bd"
+  },
+  "workload": {
+    "derived_sample_sha256": "be4eb6c2dd7c46bc1d476dc0210258ff0b1f918ac8f406ee8af54a57d1f998e6",
+    "classes": [
+      "restore-6m",
+      "multi-script",
+      "catch-up-1d",
+      "catch-up-7d",
+      "catch-up-30d"
+    ],
+    "seed": 1,
+    "min_completed_per_class": 100,
+    "max_queries": 6000,
+    "step_duration": "10m"
+  },
+  "passes": {
+    "first": {
+      "steps": [
+        8,
+        32,
+        128
+      ],
+      "files": "report-{off,all}-{1,2}.json",
+      "note": "step 128 invalid: client open-file limit 1024"
+    },
+    "rerun": {
+      "steps": [
+        128
+      ],
+      "files": "*-c128.*",
+      "note": "ulimit -n 1048576; router health-check failure spiral in off-1 and all-2"
+    }
+  },
+  "totals_steps_8_32": {
+    "syncs": 4578,
+    "exact": 4578,
+    "failed": 0
+  },
+  "summary": "summary.tsv (analyze.py; its 128 rows pool the invalid first pass and are superseded by the README's rerun tables)"
+}

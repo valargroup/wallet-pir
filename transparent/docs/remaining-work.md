@@ -205,8 +205,8 @@ The following remain separately scoped; they do not block this recovery beta:
   [local measurement](../evidence/single-lookup-measure-2026-09-27/README.md)
   is done. Remaining:
   - port the choice-table lookup to wallet-libraries;
-  - measure WAN/fleet latency and mobile client CPU against the same data,
-    with and without tables (fleet series against r3);
+  - measure mobile client CPU and WAN latency; the bench-fleet comparison is
+    [done](../evidence/single-lookup-fleet-2026-09-27/README.md);
   - decide whether tails carry tables;
   - enable `--directory-choice` on a candidate publication before the fleet
     serves it.

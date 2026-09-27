@@ -193,7 +193,22 @@ Payload per sync fell by these amounts:
 | 1-, 7- and 30-day catch-up | 26–34% |
 
 Loopback p50 sync time fell by about 45%. These figures come from one shared
-host over loopback. WAN, mobile and fleet behaviour are still unmeasured.
+host over loopback.
+
+A [temporary bench fleet](../evidence/single-lookup-fleet-2026-09-27/README.md)
+reproduced the result with 4 workers, a router and a dedicated load generator.
+At 8 and 32 wallets:
+
+| Measure | Change with tables |
+|---|---|
+| Bytes, restore-6m | −24% |
+| Bytes, 40-script | −35% |
+| Bytes, catch-ups | −27% to −34% |
+| p50 / p95 sync time | about 35–45% lower |
+| Completed syncs per second | 15–25% more |
+
+At 128 wallets both variants hit a router health-check failure spiral. WAN
+clients and mobile devices remain unmeasured.
 
 ### Scope and requirements
 
