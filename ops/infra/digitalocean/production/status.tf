@@ -9,9 +9,11 @@ variable "status_host_count" {
   }
 }
 
+# The CPU worker's retained generations outgrew 6 GiB under sustained 20 QPS
+# with live blocks, and preparation saturated four vCPUs at block arrivals.
 variable "status_host_size" {
   type    = string
-  default = "s-4vcpu-8gb"
+  default = "s-8vcpu-16gb"
 }
 
 variable "status_control_public_key" {
@@ -29,16 +31,18 @@ resource "digitalocean_tag" "status_host" {
 }
 
 resource "digitalocean_droplet" "status_host" {
-  count      = var.status_host_count
-  name       = "status-pir-01"
-  image      = var.image
-  region     = var.region
-  size       = var.status_host_size
-  ssh_keys   = var.ssh_key_ids
-  vpc_uuid   = digitalocean_vpc.wallet.id
-  tags       = [digitalocean_tag.status_host.name]
-  monitoring = true
-  ipv6       = true
+  count  = var.status_host_count
+  name   = "status-pir-01"
+  image  = var.image
+  region = var.region
+  size   = var.status_host_size
+  # CPU/RAM-only resizes stay reversible; a disk resize cannot be undone.
+  resize_disk = false
+  ssh_keys    = var.ssh_key_ids
+  vpc_uuid    = digitalocean_vpc.wallet.id
+  tags        = [digitalocean_tag.status_host.name]
+  monitoring  = true
+  ipv6        = true
   user_data = templatefile("${path.module}/status/cloud-init.yaml.tftpl", {
     packages           = jsonencode(local.common_packages)
     deploy_public_key  = var.enhance_worker_deploy_public_key
