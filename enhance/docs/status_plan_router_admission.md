@@ -1,6 +1,6 @@
 # Plan 2: bounded Status admission
 
-Keep four executing requests per serving role; retain the coordinator’s existing sixteen forwarding slots. Admit at most eight additional waiting requests, with a 250 ms maximum admission wait. Reject excess arrivals immediately with HTTP 429; do not retry internally. Count queue delay against a five-second role request deadline. The router's executing permit includes worker I/O and packing. Blocking CPU work retains its permit even when its caller times out or disconnects.
+Keep four executing requests per serving role; retain the coordinator’s existing sixteen forwarding slots. Serving roles admit at most thirty-two additional waiting requests, with a one-second maximum admission wait; the coordinator keeps eight waiting and 250 ms. Reject excess arrivals immediately with HTTP 429; do not retry internally. Count queue delay against a five-second role request deadline. The router's executing permit includes worker I/O and packing. Blocking CPU work retains its permit even when its caller times out or disconnects.
 
 Validate the session before waiting and recheck freshness and authority after admission and before returning. Queueing does not renew observation timestamps or authority leases. Bound coordinator forwarding and worker evaluation using the same policy; downstream failures remain explicit.
 
@@ -33,3 +33,6 @@ origin continues carrying publication and heartbeat traffic. This preserves the
 loopback and SSH authentication boundaries while separating TCP congestion for
 queries and control. Compare all arrivals, latency, and role rejection reasons;
 do not infer success solely from typical latency improving.
+
+
+The 2026-09-27 CPU-host soak failed the original four/eight/250 ms defaults: at 20 QPS the worker or router occasionally paused for 0.2-0.9 s and each pause became a burst of HTTP 429s (up to 81 of 12,000 per batch). The serving roles now allow thirty-two waiting requests and a one-second wait, which absorbs those pauses within the p99 budget; the cause of the pauses remains open.

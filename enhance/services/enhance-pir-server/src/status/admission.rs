@@ -15,8 +15,11 @@ pub(super) struct Admission {
     wait: Duration,
 }
 impl Admission {
+    /// Serving roles absorb pauses of up to a second: on the CPU host a role
+    /// occasionally stops for 0.2-0.9 s, and at 20 QPS the former eight-slot,
+    /// 250 ms queue turned each pause into a burst of 429s (2026-09-27 soak).
     pub(super) fn production() -> Self {
-        Self::new(4, 8, Duration::from_millis(250))
+        Self::new(4, 32, Duration::from_secs(1))
     }
     pub(super) fn coordinator() -> Self {
         Self::new(16, 8, Duration::from_millis(250))
