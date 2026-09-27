@@ -1,0 +1,33 @@
+{
+  "data_dir": "/root/journal-recent-3262749-3473686",
+  "elapsed_seconds": 14.769450198,
+  "generated_at": "2026-09-27T13:37:46.296918108+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3473686,
+    "events_stored": 4185700,
+    "start_height": 3262749
+  },
+  "network": "main",
+  "output": "/root/sl-shards-off",
+  "published": {
+    "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "archive_geometry": null,
+    "archive_policy": null,
+    "archive_shards": null,
+    "map_bytes": 9716,
+    "map_sha256": "0702ebeabc3e0a58f9aac13324bf3e44689d2cbcf506251196998e4f2f5894b3",
+    "multi_segment_shards": 0,
+    "recent_from": null,
+    "recent_geometry": "recent-8k",
+    "recent_policy": "SealPolicy { scripts: Limit { target: 98304, capacity: 114688 }, page_rows: Limit { target: 7936, capacity: 8192 } }",
+    "recent_shards": 14,
+    "shards": 14,
+    "start_height": 3262749,
+    "tail_revision": 0,
+    "through": 3473686
+  },
+  "schema": "transparent-publication-v1",
+  "shard_schema": "transparent-shard-v7",
+  "tool_sha": null
+}

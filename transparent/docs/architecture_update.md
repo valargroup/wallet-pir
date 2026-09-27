@@ -178,6 +178,20 @@ the server verify every entry's route. The wallet sends one query per matched
 script when a table is present. None of this is published or deployed; see
 [status](status.md).
 
+A [paired local measurement](../evidence/single-lookup-measure-2026-09-27/README.md)
+synced the same pinned wallets against the same slice, with and without tables.
+All 939 syncs were exact, and directory queries per sync were exactly halved.
+Payload per sync fell by these amounts:
+
+| Class | Payload change |
+|---|---|
+| restore-6m | 24–25% |
+| 40-script | 28–39% |
+| 1-, 7- and 30-day catch-up | 26–34% |
+
+Loopback p50 sync time fell by about 45%. These figures come from one shared
+host over loopback. WAN, mobile and fleet behaviour are still unmeasured.
+
 ### Scope and requirements
 
 Use this layout first for sealed recent shards. Retain the existing directory

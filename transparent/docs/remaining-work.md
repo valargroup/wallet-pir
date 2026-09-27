@@ -201,10 +201,15 @@ The following remain separately scoped; they do not block this recovery beta:
   meanings; require measured byte and tail-latency benefit before promotion.
   Two-choice placement reaches its slot limit there (see the
   [single-lookup census](../evidence/single-lookup-census-2026-09-27/README.md)).
-- [ ] Qualify single-lookup directories: port the choice-table lookup to
-  wallet-libraries, measure whole-wallet bytes, latency and client CPU against
-  the same data with and without tables, then enable `--directory-choice sealed`
-  on a candidate publication before the fleet serves it.
+- [ ] Qualify single-lookup directories. The paired
+  [local measurement](../evidence/single-lookup-measure-2026-09-27/README.md)
+  is done. Remaining:
+  - port the choice-table lookup to wallet-libraries;
+  - measure WAN/fleet latency and mobile client CPU against the same data,
+    with and without tables (fleet series against r3);
+  - decide whether tails carry tables;
+  - enable `--directory-choice` on a candidate publication before the fleet
+    serves it.
 - [ ] Track aged recent-shaped shard growth and re-census before expansion.
   Epoch re-cutting needs explicit lineage/cache/replay/migration/rollback design.
 - [ ] Scope archive/router redundancy for general availability, mobile, sending

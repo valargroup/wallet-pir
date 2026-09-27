@@ -1,0 +1,7 @@
+== step: 1 concurrent clients for 3m
+   25 syncs, 25 completed, 25 exact, 0 failed; 0.98 completed/s; error rate 0.000; 503 rate 0.000; worst p99 4.6s
+== step: 8 concurrent clients for 3m
+   49 syncs, 49 completed, 49 exact, 0 failed; 2.61 completed/s; error rate 0.000; 503 rate 0.000; worst p99 13.4s
+== step: 32 concurrent clients for 3m
+   161 syncs, 161 completed, 161 exact, 0 failed; 1.53 completed/s; error rate 0.000; 503 rate 0.000; worst p99 89.7s
+   saturation: throughput fell to 1.53/s from 2.61/s; not stepping further
