@@ -1,0 +1,13 @@
+{
+  "candidate_height": 3499612,
+  "cycle_seconds": 16.341751901,
+  "freshness_seconds": 16.402037305,
+  "journal_height": 3499612,
+  "map_sha256": "b2ac97c8d024030d78f3595bdc5c13d676509127a090e68dd7c7278bd957dbe8",
+  "node_hash": "00000000001e47427efca045b24c4b9add217ba55efa8e24181f47272a637456",
+  "node_height": 3499612,
+  "phase": "serving",
+  "public_hash": "00000000001e47427efca045b24c4b9add217ba55efa8e24181f47272a637456",
+  "public_height": 3499612,
+  "ready_replicas": 2
+}

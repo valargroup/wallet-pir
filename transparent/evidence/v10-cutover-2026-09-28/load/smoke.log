@@ -1,0 +1,3 @@
+served tip 3499628 is past the sample anchor 3473686; syncing every wallet to the sample anchor
+== step: 1 concurrent clients for 2m
+   124 syncs, 124 completed, 124 exact, 0 failed; 1.39 completed/s; error rate 0.000; 503 rate 0.000; worst p99 12.5s

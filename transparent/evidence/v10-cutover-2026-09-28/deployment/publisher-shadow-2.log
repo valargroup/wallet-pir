@@ -1,0 +1,78 @@
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.363712, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.339663, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.311616, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.321083, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.2964, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.250133, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.26138, "exit_code": 0}
+{"covered_through":3499341,"genesis_hash":"00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08","map_sha256":"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f","network":"main","profile":"zcash-transparent-range-v2","schema":"transparent-shard-v10","shard_dir":"/srv/zakura/transparent-publications/initial","shards":86,"start_height":0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.3991, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.336635, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.01572, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.437876, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.067341, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 5.73753, "exit_code": 0}
+[2m2026-09-28T22:07:24.455937Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-01" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.02032, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.786291, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.325431, "exit_code": 0}
+transparent-pir-recent-01: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.380663, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.010629, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.086055, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.06017, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 93.908699, "exit_code": 0}
+[2m2026-09-28T22:09:10.119829Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m39 [3mrevisions[0m[2m=[0m39 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-archive-01" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.258323, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.963661, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.253113, "exit_code": 0}
+transparent-pir-archive-01: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.260943, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.00971, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.083675, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.062651, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 96.464427, "exit_code": 0}
+[2m2026-09-28T22:13:13.640973Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m38 [3mrevisions[0m[2m=[0m38 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-archive-02" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.280359, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.356665, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.258525, "exit_code": 0}
+transparent-pir-archive-02: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.32282, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.015294, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.393441, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.071224, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 5.058488, "exit_code": 0}
+[2m2026-09-28T22:15:51.573015Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016522, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.742013, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.308497, "exit_code": 0}
+transparent-pir-recent-02: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.661351, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014847, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.4403, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.070767, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 5.092182, "exit_code": 0}
+[2m2026-09-28T22:16:08.970089Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-03" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.0204, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.704496, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.360516, "exit_code": 0}
+transparent-pir-recent-03: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.565431, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.013306, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.431626, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.067106, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 4.903028, "exit_code": 0}
+[2m2026-09-28T22:16:26.086978Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-04" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014468, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.535791, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.303615, "exit_code": 0}
+transparent-pir-recent-04: warm with publication control
+{
+  "build_seconds": 11.327197322,
+  "candidate_height": 3499627,
+  "journal_height": 3499627,
+  "node_hash": "0000000000053b84b2c12442a372b6cb77e844555429acd696712990a386aedc",
+  "node_height": 3499627,
+  "phase": "shadow_verified",
+  "shadow_hash": "00000000001e47427efca045b24c4b9add217ba55efa8e24181f47272a637456"
+}

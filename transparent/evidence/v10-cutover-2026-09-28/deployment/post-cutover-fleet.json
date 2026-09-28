@@ -1,0 +1,194 @@
+[
+  {
+    "worker": "transparent-pir-recent-01",
+    "observed_utc": "2026-09-28T22:18:24.346525+00:00",
+    "host": "Filesystem        1B-blocks       Used    Available Use% Mounted on\n/dev/vda1      165295407104 9169092608 156109537280   6% /\n/dev/vda1      165295407104 9169092608 156109537280   6% /\n               total        used        free      shared  buff/cache   available\nMem:      8326942720  1921519616  3863085056   103178240  2959962112  6405423104\nSwap:              0           0           0\nNRestarts=0\nMemoryCurrent=1255501824\nMemoryPeak=1403375616\nActiveState=active\n0.35 0.33 0.31 1/217 1788899\n",
+    "ready": {
+      "assigned_shards": 9,
+      "assignment_sha256": "94f6fbdb8b00c1efe9139671f271e2de97fcdbd6a49cd9be164abc6f6bfbcc5f",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "d9185ce716e6d641c3cf722389697c138fb6292aaee7b7caaed63dff318f2db3",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 7.661472,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1292895824,
+        "hits": 18,
+        "limit_bytes": 10737418240,
+        "misses": 6,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "b215d2e8d2d4f250c669b4999d3e9a0ee59d9b9973bd6e052b973b78fc4330b2",
+      "worker_id": "transparent-pir-recent-01"
+    }
+  },
+  {
+    "worker": "transparent-pir-recent-02",
+    "observed_utc": "2026-09-28T22:18:24.320630+00:00",
+    "host": "Filesystem        1B-blocks       Used    Available Use% Mounted on\n/dev/vda1      165295407104 8542470144 156736159744   6% /\n/dev/vda1      165295407104 8542470144 156736159744   6% /\n               total        used        free      shared  buff/cache   available\nMem:      8326942720  1762283520  4098920448     4259840  2786410496  6564659200\nSwap:              0           0           0\nNRestarts=0\nMemoryCurrent=1189826560\nMemoryPeak=1323393024\nActiveState=active\n0.29 0.24 0.25 1/217 1928471\n",
+    "ready": {
+      "assigned_shards": 9,
+      "assignment_sha256": "94f6fbdb8b00c1efe9139671f271e2de97fcdbd6a49cd9be164abc6f6bfbcc5f",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "d9185ce716e6d641c3cf722389697c138fb6292aaee7b7caaed63dff318f2db3",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 7.30203,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1292895824,
+        "hits": 18,
+        "limit_bytes": 10737418240,
+        "misses": 6,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "da88f3c7862936eed9070818166f268498517237b9b6c6c1de31a22f155cac53",
+      "worker_id": "transparent-pir-recent-02"
+    }
+  },
+  {
+    "worker": "transparent-pir-recent-03",
+    "observed_utc": "2026-09-28T22:18:24.335047+00:00",
+    "host": "Filesystem        1B-blocks       Used    Available Use% Mounted on\n/dev/vda1      165295407104 8537497600 156741132288   6% /\n/dev/vda1      165295407104 8537497600 156741132288   6% /\n               total        used        free      shared  buff/cache   available\nMem:      8326942720  1783857152  3799904256     4259840  3066277888  6543085568\nSwap:              0           0           0\nNRestarts=0\nMemoryCurrent=1198067712\nMemoryPeak=1314627584\nActiveState=active\n0.36 0.26 0.28 1/218 1918858\n",
+    "ready": {
+      "assigned_shards": 9,
+      "assignment_sha256": "94f6fbdb8b00c1efe9139671f271e2de97fcdbd6a49cd9be164abc6f6bfbcc5f",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "d9185ce716e6d641c3cf722389697c138fb6292aaee7b7caaed63dff318f2db3",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 8.094988,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1292895824,
+        "hits": 18,
+        "limit_bytes": 10737418240,
+        "misses": 6,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "330388bf70bad7963280eb7219c821da7eab328d351b6c5d8f7333fa5811377e",
+      "worker_id": "transparent-pir-recent-03"
+    }
+  },
+  {
+    "worker": "transparent-pir-recent-04",
+    "observed_utc": "2026-09-28T22:18:24.305255+00:00",
+    "host": "Filesystem        1B-blocks       Used    Available Use% Mounted on\n/dev/vda1      165295407104 8532107264 156746522624   6% /\n/dev/vda1      165295407104 8532107264 156746522624   6% /\n               total        used        free      shared  buff/cache   available\nMem:      8326942720  1676341248  3921797120     4259840  3047075840  6650601472\nSwap:              0           0           0\nNRestarts=0\nMemoryCurrent=1110839296\nMemoryPeak=1275027456\nActiveState=active\n0.25 0.20 0.21 1/217 1940702\n",
+    "ready": {
+      "assigned_shards": 9,
+      "assignment_sha256": "94f6fbdb8b00c1efe9139671f271e2de97fcdbd6a49cd9be164abc6f6bfbcc5f",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "d9185ce716e6d641c3cf722389697c138fb6292aaee7b7caaed63dff318f2db3",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 6.535415,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1292895824,
+        "hits": 18,
+        "limit_bytes": 10737418240,
+        "misses": 6,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "ab13079aff341b4e7bc69628dc60875f10aba196ab68c233022364f4be20387e",
+      "worker_id": "transparent-pir-recent-04"
+    }
+  },
+  {
+    "worker": "transparent-pir-archive-01",
+    "observed_utc": "2026-09-28T22:18:24.276738+00:00",
+    "host": "Filesystem        1B-blocks        Used    Available Use% Mounted on\n/dev/vda1      206900281344 92079792128 114803712000  45% /\n/dev/vda1      206900281344 92079792128 114803712000  45% /\n               total        used        free      shared  buff/cache   available\nMem:     67427405824 16948985856 43025805312     4263936  8163901440 50478419968\nSwap:              0           0           0\nNRestarts=0\nMemoryCurrent=15923130368\nMemoryPeak=16452608000\nActiveState=active\n0.03 0.36 0.53 1/270 1902457\n",
+    "ready": {
+      "assigned_shards": 39,
+      "assignment_sha256": "94f6fbdb8b00c1efe9139671f271e2de97fcdbd6a49cd9be164abc6f6bfbcc5f",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "d9185ce716e6d641c3cf722389697c138fb6292aaee7b7caaed63dff318f2db3",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 0.000185,
+      "ready": true,
+      "replica_group": null,
+      "role": "archive-owner",
+      "runtime_cache": {
+        "bytes": 18324443280,
+        "hits": 78,
+        "limit_bytes": 103079215104,
+        "misses": 0,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 78,
+      "warm_runtimes": 78,
+      "worker_assignment_sha256": "64375369ef0ceb03653006c229e8b269d8582d40486f3b3cb83076312cdae843",
+      "worker_id": "transparent-pir-archive-01"
+    }
+  },
+  {
+    "worker": "transparent-pir-archive-02",
+    "observed_utc": "2026-09-28T22:18:24.277715+00:00",
+    "host": "Filesystem        1B-blocks        Used    Available Use% Mounted on\n/dev/vda1      206900281344 91195224064 115688280064  45% /\n/dev/vda1      206900281344 91195224064 115688280064  45% /\n               total        used        free      shared  buff/cache   available\nMem:     67427401728 16583892992 43522539520     4263936  8035573760 50843508736\nSwap:              0           0           0\nNRestarts=0\nMemoryCurrent=15553384448\nMemoryPeak=16119189504\nActiveState=active\n0.18 0.76 1.52 1/275 1892455\n",
+    "ready": {
+      "assigned_shards": 38,
+      "assignment_sha256": "94f6fbdb8b00c1efe9139671f271e2de97fcdbd6a49cd9be164abc6f6bfbcc5f",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "d9185ce716e6d641c3cf722389697c138fb6292aaee7b7caaed63dff318f2db3",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 0.000159,
+      "ready": true,
+      "replica_group": null,
+      "role": "archive-owner",
+      "runtime_cache": {
+        "bytes": 17854585760,
+        "hits": 76,
+        "limit_bytes": 103079215104,
+        "misses": 0,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 76,
+      "warm_runtimes": 76,
+      "worker_assignment_sha256": "437e68eb7e90e8da2647dc9252b6f7753233b9156b5828655f19aa809a57614c",
+      "worker_id": "transparent-pir-archive-02"
+    }
+  }
+]

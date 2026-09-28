@@ -1,0 +1,15 @@
+{"start": "filter-check", "utc": "2026-09-28T21:21:23.738992+00:00"}
+{"done": "filter-check", "utc": "2026-09-28T21:21:23.892628+00:00"}
+{"start": "assignment", "utc": "2026-09-28T21:21:23.892718+00:00"}
+{"done": "assignment", "utc": "2026-09-28T21:21:23.897709+00:00"}
+{"start": "fleet-preflight", "utc": "2026-09-28T21:21:23.897742+00:00"}
+{"done": "fleet-preflight", "utc": "2026-09-28T21:24:44.965348+00:00"}
+{"start": "prewarm", "utc": "2026-09-28T21:24:44.965621+00:00"}
+Traceback (most recent call last):
+  File "/opt/transparent-v10-8e69ea75/stage.py", line 20, in <module>
+    run('prewarm',['python3',root/'prewarm.py'])
+  File "/opt/transparent-v10-8e69ea75/stage.py", line 15, in run
+    subprocess.run(list(map(str,args)),stdout=log,stderr=subprocess.STDOUT,check=True)
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['python3', '/opt/transparent-v10-8e69ea75/prewarm.py']' returned non-zero exit status 1.

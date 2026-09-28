@@ -1,0 +1,117 @@
+{
+  "utc": "2026-09-28T22:20:29.466753+00:00",
+  "retained_on_host": "roman-ipir-bench-8vcpu",
+  "root": "/root/wallet-pir-v10-validation-8e69ea75",
+  "files": [
+    {
+      "relative_path": "regression/active-p2sh/fresh.sqlite",
+      "bytes": 26497024,
+      "sha256": "a43a5d2bab1599822cd89f5f9729411ab483d6ad89bf9d1bf6e713f0c70a3a77"
+    },
+    {
+      "relative_path": "regression/active-p2sh/wallet.sqlite",
+      "bytes": 26497024,
+      "sha256": "e9dc23e4f597ee8d64b1a6f65f25dfe446f00860a28dbd7a2c80263370407766"
+    },
+    {
+      "relative_path": "regression/coinbase/fresh.sqlite",
+      "bytes": 27185152,
+      "sha256": "d5fe8ae24cad5658f60bfdb8205dae1f49dfb90611186876a8c118f70efb8fc6"
+    },
+    {
+      "relative_path": "regression/coinbase/wallet.sqlite",
+      "bytes": 27185152,
+      "sha256": "bf8c3ffa860205f6ad0c4df26e1a785a3eb7c4e5c885320486d045ddb98eda88"
+    },
+    {
+      "relative_path": "regression/multi-script-self-transfer/fresh.sqlite",
+      "bytes": 28299264,
+      "sha256": "17d3f87d4d14bf5245d2f7c4f71a772119891d1ae8c4b579eb482de89d721d3c"
+    },
+    {
+      "relative_path": "regression/multi-script-self-transfer/wallet.sqlite",
+      "bytes": 28303360,
+      "sha256": "c5a9607b2c5c14eb7daa19da533e0b2cf484de7f97681934dab7b2caa04bfef3"
+    },
+    {
+      "relative_path": "regression/offline-receive-spend/fresh.sqlite",
+      "bytes": 26497024,
+      "sha256": "46ed68f79f1d03725e0cbf606233ce20558a5942e4bfc328a5e1ec5d255e8803"
+    },
+    {
+      "relative_path": "regression/offline-receive-spend/wallet.sqlite",
+      "bytes": 26497024,
+      "sha256": "80df1caa635fd8ca1d12a9769e2ebee4a4b0ab73a4f3b6afcc8c35cd21c4220e"
+    },
+    {
+      "relative_path": "regression/old-receive-recent-spend/fresh.sqlite",
+      "bytes": 26521600,
+      "sha256": "15ed3823715a856e9fa82118e3ddb809bfafcf41d68a8f002dbbe9705ca74f4f"
+    },
+    {
+      "relative_path": "regression/old-receive-recent-spend/wallet.sqlite",
+      "bytes": 26521600,
+      "sha256": "393f4201902c71b3855033901358affb811f17d62c4bdf4c2f76d7765d66d423"
+    },
+    {
+      "relative_path": "regression/recent-birthday/fresh.sqlite",
+      "bytes": 888832,
+      "sha256": "878707c87f7178b6942db065a211a2ed40dd0a87c76e6f269f3828ee4a6be89b"
+    },
+    {
+      "relative_path": "regression/recent-birthday/wallet.sqlite",
+      "bytes": 901120,
+      "sha256": "2a9e15871056422c93420c754a01b6da9dfc5e6e4a23fb79d0d91c5315348148"
+    },
+    {
+      "relative_path": "regression/reused-pages/fresh.sqlite",
+      "bytes": 270336,
+      "sha256": "30a0c1064ab9ddbde191fa8c1832ac6686c1f3fb422e6c11c49907ca4df0057e"
+    },
+    {
+      "relative_path": "regression/reused-pages/wallet.sqlite",
+      "bytes": 270336,
+      "sha256": "2a2e8e776468ddebd049aaee701ae1876f4bffb6e3de34842f4fe9cee9f8c464"
+    },
+    {
+      "relative_path": "regression/small-active/fresh.sqlite",
+      "bytes": 26497024,
+      "sha256": "04ff958079a70d34e59bfd12a28ecc7916264ff70c40d64c00bf01bfd40f995c"
+    },
+    {
+      "relative_path": "regression/small-active/wallet.sqlite",
+      "bytes": 26497024,
+      "sha256": "5d5b6ec356712de60c43cf6df08d3c2023defbccbd56d1409b752cc15f47a966"
+    },
+    {
+      "relative_path": "regression/unused-p2pkh/fresh.sqlite",
+      "bytes": 26566656,
+      "sha256": "6c9c4f851a907b9ffd6af1c3236e4341c7876036f21e28c3f09f7d6ecaa77701"
+    },
+    {
+      "relative_path": "regression/unused-p2pkh/wallet.sqlite",
+      "bytes": 26578944,
+      "sha256": "a155f5678d8151c53a457e43c32eaec670b1db6cd9a1df5ed954c18c106ed49f"
+    },
+    {
+      "relative_path": "regression/unused-p2sh/fresh.sqlite",
+      "bytes": 26480640,
+      "sha256": "f8f24779c95b76edd5796b7655def9570a815cd7a4bbd42ca0dce1b22fb3e5e7"
+    },
+    {
+      "relative_path": "regression/unused-p2sh/wallet.sqlite",
+      "bytes": 26480640,
+      "sha256": "b30fd00e22372d6f9bc04d14ba330887925a0f557c0270f3c0e0c6d2d103d9ad"
+    },
+    {
+      "relative_path": "regression/zero-balance/fresh.sqlite",
+      "bytes": 26521600,
+      "sha256": "f3ead0d33458182405415ae5cb5bfb137c2be0569ae8ed8f4d9833cb7ff9f181"
+    },
+    {
+      "relative_path": "regression/zero-balance/wallet.sqlite",
+      "bytes": 26521600,
+      "sha256": "9c66b4cf57c79d893910552edeb644e66ff185ea29bf1011ef9743c9e884da7e"
+    }
+  ]
+}

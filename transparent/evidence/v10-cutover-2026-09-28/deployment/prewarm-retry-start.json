@@ -1,0 +1,6 @@
+{
+  "utc": "2026-09-28T21:48:52.648910+00:00",
+  "worker": "transparent-pir-archive-02",
+  "reason": "Projected single-thread completion exceeds the private 2400-second deadline. Restart private prewarm using saved cache and three low-priority Rayon threads; live v9 unchanged.",
+  "source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82"
+}

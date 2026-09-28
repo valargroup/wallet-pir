@@ -1,0 +1,28 @@
+transparent-pir-recent-04 candidate runtimes persisted; v9 remains online
+transparent-pir-recent-01 candidate runtimes persisted; v9 remains online
+transparent-pir-recent-03 candidate runtimes persisted; v9 remains online
+transparent-pir-recent-02 candidate runtimes persisted; v9 remains online
+transparent-pir-archive-01 candidate runtimes persisted; v9 remains online
+Traceback (most recent call last):
+  File "/opt/transparent-v10-8e69ea75/prewarm.py", line 75, in <module>
+    results=list(pool.map(one,roster))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 619, in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 317, in _result_or_cancel
+    return fut.result(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/usr/lib/python3.12/concurrent/futures/thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/transparent-v10-8e69ea75/prewarm.py", line 71, in one
+    subprocess.run(args,input=script,text=True,stdout=log,stderr=subprocess.STDOUT,check=True)
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['ssh', '-i', '/opt/transparent-publisher/credentials/deploy-ssh', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=/opt/transparent-publisher/credentials/known_hosts', 'root@10.142.0.9', 'python3 -']' returned non-zero exit status 1.

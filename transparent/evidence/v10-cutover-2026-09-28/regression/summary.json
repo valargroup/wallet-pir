@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "cases": 11,
+  "checkpoints": 68,
+  "http_all_cases_and_preflight": {
+    "requests": 2319,
+    "attempts": 2319,
+    "failed_attempts": 0,
+    "failed_requests": 0,
+    "recovered_requests": 0
+  }
+}

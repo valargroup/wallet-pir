@@ -1,0 +1,12 @@
+START pre-cutover-fleet
+COMPLETE pre-cutover-fleet
+START backup-v9
+Traceback (most recent call last):
+  File "/opt/transparent-v10-8e69ea75/cutover.py", line 26, in <module>
+    run('backup-v9',['python3',root/'backup-v9.py'])
+  File "/opt/transparent-v10-8e69ea75/cutover.py", line 24, in run
+    r.check_returncode();print('COMPLETE '+name,flush=True)
+    ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 502, in check_returncode
+    raise CalledProcessError(self.returncode, self.args, self.stdout,
+subprocess.CalledProcessError: Command '['python3', '/opt/transparent-v10-8e69ea75/backup-v9.py']' returned non-zero exit status 1.

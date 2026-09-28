@@ -1,0 +1,17 @@
+START pre-cutover-fleet
+COMPLETE pre-cutover-fleet
+START backup-v9
+COMPLETE backup-v9
+START fleet-deploy
+COMPLETE fleet-deploy
+START cutover-paths
+COMPLETE cutover-paths
+START publisher-shadow
+COMPLETE publisher-shadow
+START publisher-activate
+COMPLETE publisher-activate
+START control-sessions
+COMPLETE control-sessions
+START public-check
+COMPLETE public-check
+PUBLIC V10 CUTOVER VERIFIED

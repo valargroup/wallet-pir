@@ -1,0 +1,6 @@
+{
+  "/root/wallet-pir-v10-validation-8e69ea75/mainnet-v10.json": "8401c9309aa507e41593a75934b6d109b66450b3e0039be3392111d3825af4bc",
+  "/root/wallet-pir-8e69ea75/transparent/evidence/v9-cutover-2026-09-28/load/sample-v2codec.json": "d9ce4f84249f9559ba0adaee0bae88f13b3f97f86aa79d92119ae04141e5f0a1",
+  "/tmp/wallet-pir-v10-release-8e69ea75/transparent-regression": "19ff67b2cb854bf631f368647c48060ae3ada24cf0a0a7b5838f88ad43b6f2a6",
+  "/tmp/wallet-pir-v10-release-8e69ea75/transparent-loadtest": "368b57a56908e258e8f1aec43c792b6cefc5a92d4640adeb2c01f2b5a5ad503a"
+}

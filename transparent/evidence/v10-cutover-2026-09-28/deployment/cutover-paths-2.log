@@ -1,0 +1,9 @@
+Running as unit: wallet-pir-v10-hardlink-probe.service
+publisher sandbox hard-link probe passed
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 25ms
+CPU time consumed: 23ms
+Memory peak: 948.0K
+Memory swap peak: 0B
+v9 namespace retained; new v10 publisher paths and filter binary prepared

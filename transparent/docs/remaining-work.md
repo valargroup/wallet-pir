@@ -180,33 +180,39 @@ capacity, outage limitations, trust assumptions and excluded features.
 ## Schema v10 qualification and republication
 
 The compact codec, byte-weighted directory placement, greedy page packing and
-restart-safe fragment validation are implemented in source. The version-2 event
-journal remains compatible. [Layout evidence](../evidence/compact-layout-2026-09-28/README.md)
-separates storage measurements from service qualification. This work does not
-activate v10 or replace the recorded live v9 set.
+restart-safe fragment validation are implemented and deployed. The version-2
+journal remains unchanged. [Layout evidence](../evidence/compact-layout-2026-09-28/README.md)
+records the storage work; [cutover evidence](../evidence/v10-cutover-2026-09-28/README.md)
+records production source, failed attempts, public checks and bounded load.
 
-- [ ] Build a separate v10 candidate publication, verify its emitted tables and
-  full-chain ledger recovery, and retain v9 for rollback. Never extend a v9
-  publication directory with v10 bytes.
-- [ ] Recompute native correctness certificates on the actual compact directory
-  and page tables; denser row bytes can change the database noise term even
-  though the PIR row geometry is unchanged.
-- [ ] Run paired native query/build timing and whole-wallet recovery, interruption,
-  and resumed SQLite-store measurements on the candidate; quantify encoding CPU,
-  transient memory, query counts, and filter/choice/setup/query/response bytes.
-- [ ] Update wallet consumers for schema v10 and the persisted page-boundary field
-  before any coordinated service cutover. Existing v9 clients fail closed on v10;
-  changed seal thresholds also require a new publication lineage, not resuming
-  old pending pages as if their shard identifiers still matched.
-- [ ] Review and explicitly authorize a separate rollout after the candidate and
-  rollback procedure are concrete. Source tests and the storage census are not
-  deployment acceptance.
+- [x] Build a separate v10 full-chain publication, verify every emitted table and
+  filter, check exact selected ledger histories, and retain v9 for rollback.
+  All 86 emitted shards match the census; eight selected shards rebuilt exactly.
+  This is not an independent all-script audit of event extraction.
+- [x] Recompute native correctness certificates on the actual tables. All 172
+  pass the configured floor; the 170 sealed public setups match the reports.
+- [x] Verify native compact outpoints and the SQLite restart boundary. The
+  reference store persists the logical preceding event and fragment byte count.
+- [x] Deploy directly over SSH under explicit user authorization and run the full
+  public regression and staged bounded load. See the dated evidence for results
+  and the metadata maintenance interval; full CI was deliberately bypassed.
+- [ ] Run a controlled paired native query/build and whole-wallet timing study;
+  the full publication, private prewarm and public load observations are not a
+  controlled CPU or latency comparison. Keep all incomplete work in denominators.
+- [ ] Qualify downstream wallet consumers and existing-database migration for v10
+  and the new publication lineage. The reference client/store is covered by this
+  rollout; no application upgrade or release lifecycle acceptance is implied.
+  Existing v9 clients fail closed on v10; old pending pages must not be resumed
+  against changed shard identifiers.
+- [ ] Complete sustained capacity and recovery exercises, including a live
+  post-cutover rollback rehearsal. Preserved rollback material alone is not proof
+  of fleet recovery. The bounded load run does not close the M5 envelope.
 
 ## Schema v9 republication and cluster rollout
 
 The 2026-09-27 six-month architecture review is closed: its client, native-scheme
 and operations tracks are implemented, and [architecture](architecture.md)
-describes the result. What it leaves open is a format that exists only in source.
+describes the result. The v9 rollout is historical; v10 now supersedes its publication.
 Schema v9, the `zcash-transparent-range-v2` filter profile and the `recent-4k-8k`
 geometry all change every manifest, and runtime cache keys include the revision,
 so they ride one republication and one cold rebuild of every runtime, archive

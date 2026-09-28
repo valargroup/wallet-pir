@@ -1,22 +1,45 @@
 # Transparent PIR status
 
-Updated 2026-09-27 (release rollout below); milestone text last updated 2026-09-13. The target remains an opt-in, recovery-only macOS beta on
+Updated 2026-09-28 UTC (v10 rollout below); milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
 existing infrastructure. **M0, M1 and M2 are accepted; M3 is partially validated;
 M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
-## Compact layout source update, 2026-09-28
+## Compact layout production cutover, 2026-09-28
 
-Schema v10 is implemented in this checkout with 51-byte receives, 79-byte spends,
-43-byte local spends, variable entries in fixed rows, mixed-size page packing,
-and byte-weighted directory placement. The SQLite wallet store migrates to
-schema 3 to persist validation across page boundaries and restarts. This change
-leaves the version-2 journal format unchanged and does not deploy or publish
-v10. The recorded live state below remains v9. Measurement provenance and limits
-are in the [layout evidence](../evidence/compact-layout-2026-09-28/README.md);
-qualification and migration gates are in
-[remaining work](remaining-work.md#schema-v10-qualification-and-republication).
+Schema v10 is deployed on all six workers at runtime source `8e69ea75`, with
+operations overlays from `4905d3a3`. Direct SSH activation and public verification
+completed at **22:17:04 UTC**; long-running CI was bypassed at the user's request.
+The version-2 event journal is unchanged. The new publication has 77 archive and
+9 recent shards; the same pinned history uses **38.79% fewer allocated table
+bytes / 63.36% more capacity** than v9. This is a storage result, not throughput.
+
+Both public origins agreed, all six workers were warm on the expected binary,
+170 sealed public setup digests matched their certificates, and the served hash
+matched the node. The public native regression passed **11 cases / 68 checkpoints**
+with **2,319 HTTP attempts and no failed attempts**. A one-client smoke completed
+**124 exact synthetic range syncs**, zero failures. Subsequent bounded load and
+resource observations are recorded in the
+[cutover evidence](../evidence/v10-cutover-2026-09-28/README.md).
+
+The successful maintenance interval was **22:01:18–22:17:04**. An earlier backup
+attempt failed on transient Unix sockets and automatically resumed v9 before any
+worker binary changed; the corrected backup preserves durable files and excludes
+sockets. V9 publications, state, binaries and caches remain separate for rollback.
+A post-cutover rollback rehearsal is not claimed.
+
+The reference SQLite store migrates to schema 3 and preserves compact-fragment
+validation through restart; native tests cover the fragment-boundary outpoint
+case. Existing v9 clients fail closed on v10, and pending work needs the new
+publication lineage. This rollout does not qualify downstream wallet applications.
+All 172 actual-table native certificates pass the configured floor; seven archive
+page segments are below 128 correctness bits (minimum 96, accepted floor 83).
+These are conditional decryption-failure bounds, not security levels. Full
+publication took 80 min 23 s and peaked at 4.45 GiB RSS. See the evidence for
+commands, raw failures, exact hashes, limitations and the retained rollback paths.
+[Remaining work](remaining-work.md#schema-v10-qualification-and-republication)
+keeps consumer, sustained-capacity and controlled-comparison gates open.
 
 ## Current milestone evidence
 

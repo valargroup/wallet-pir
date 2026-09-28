@@ -1,5 +1,5 @@
 # Preserve unified-diff context lines and original SSH capture line endings.
 transparent/evidence/**/*.patch whitespace=-blank-at-eol
 transparent/evidence/productionize-m3-live-2026-09-13/coordinator-check.log whitespace=cr-at-eol
-# Raw terminal evidence retains carriage returns and trailing blank lines.
-transparent/evidence/v10-cutover-2026-09-28/**/*.log whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+# Raw terminal evidence retains line endings and embedded unified-diff spacing.
+transparent/evidence/v10-cutover-2026-09-28/**/*.log whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof,-space-before-tab
