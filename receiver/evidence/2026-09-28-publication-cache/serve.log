@@ -1,0 +1,30 @@
+Receiver PIR listening at 127.0.0.1:18482 (waiting for canonical publication)
+receiver stage=canonical_check elapsed_us=387737
+backfill start=3497894 target=3497893 batch_size=64 concurrency=4
+receiver stage=ingestion elapsed_us=48
+receiver stage=directory elapsed_us=212867
+receiver stage=witness_prepare elapsed_us=10616912
+receiver stage=witness_write elapsed_us=11377
+witness_bytes=4034521
+receiver stage=directory_write elapsed_us=32530
+receiver stage=pir_prepare elapsed_us=471971
+receiver stage=activate elapsed_us=155304
+receiver publication height=3497893 processing_ms=12112
+Receiver PIR published height=3497893 revision=00677727fcfedc93236bc50fd68b7c5fe20b2abdb3eae81588bd2b15bbda3d60
+{"actions":623834,"end_height":3497893,"excluded_coinbase_actions":5886,"records":20916,"revision":"00677727fcfedc93236bc50fd68b7c5fe20b2abdb3eae81588bd2b15bbda3d60","row_bytes":33554432,"rows":8192,"start_height":3428143}
+receiver refresh elapsed_ms=12117
+receiver stage=canonical_check elapsed_us=503011
+backfill start=3497894 target=3497894 batch_size=64 concurrency=4
+height=3497894 target=3497894 recovered=20916 excluded_coinbase_actions=5886 blocks_per_second=1.48
+receiver stage=ingestion elapsed_us=673841
+receiver stage=directory elapsed_us=193095
+receiver stage=witness_prepare elapsed_us=104680
+receiver stage=witness_write elapsed_us=11041
+witness_bytes=4034558
+receiver stage=directory_write elapsed_us=34453
+receiver stage=pir_prepare elapsed_us=468481
+receiver stage=activate elapsed_us=112911
+receiver publication height=3497894 processing_ms=2367
+Receiver PIR published height=3497894 revision=55e380571ead71e84f4c208a22f23e23303b64fa9b4ab31568e115c475b9beb7
+{"actions":623845,"end_height":3497894,"excluded_coinbase_actions":5886,"records":20916,"revision":"55e380571ead71e84f4c208a22f23e23303b64fa9b4ab31568e115c475b9beb7","row_bytes":33554432,"rows":8192,"start_height":3428143}
+receiver refresh elapsed_ms=2371
