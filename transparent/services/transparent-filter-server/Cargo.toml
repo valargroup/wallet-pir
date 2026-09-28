@@ -24,6 +24,10 @@ name = "transparent-filter-server"
 path = "src/bin/server.rs"
 
 [[bin]]
+name = "journal-convert-v1"
+path = "src/bin/journal-convert-v1.rs"
+
+[[bin]]
 name = "shard-cutoff"
 path = "src/bin/shard-cutoff.rs"
 
@@ -43,14 +47,18 @@ path = "src/bin/shard-verify.rs"
 name = "script-sample"
 path = "src/bin/script-sample.rs"
 
+[[bin]]
+name = "filter-sweep"
+path = "src/bin/filter-sweep.rs"
+
 [dependencies]
 transparent-blocks = { path = "../../crates/transparent-blocks" }
 tempfile = "3"
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
 axum = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+libc = "0.2"
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -63,6 +71,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-events = { path = "../../crates/transparent-events" }
 transparent-filter = { path = "../../crates/transparent-filter" }
+transparent-native = { path = "../../crates/transparent-native" }
 transparent-shard = { path = "../../crates/transparent-shard" }
 transparent-shard-server = { path = "../transparent-shard-server" }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }

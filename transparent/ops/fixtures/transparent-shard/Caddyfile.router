@@ -17,9 +17,10 @@ transparent.example {
 			lb_policy round_robin
 			lb_try_duration 2s
 			health_uri /v1/ready
-			health_interval 5s
-			health_timeout 3s
-			fail_duration 30s
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
 		}
 	}
 
@@ -27,9 +28,10 @@ transparent.example {
 	handle @owner_archive_01 {
 		reverse_proxy 10.0.1.1:8093 {
 			health_uri /v1/ready
-			health_interval 5s
-			health_timeout 3s
-			fail_duration 30s
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
 		}
 	}
 
@@ -37,9 +39,10 @@ transparent.example {
 	handle @owner_archive_02 {
 		reverse_proxy 10.0.1.2:8093 {
 			health_uri /v1/ready
-			health_interval 5s
-			health_timeout 3s
-			fail_duration 30s
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
 		}
 	}
 
@@ -48,9 +51,10 @@ transparent.example {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
 			health_uri /v1/ready
-			health_interval 5s
-			health_timeout 3s
-			fail_duration 30s
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
 		}
 	}
 
@@ -58,9 +62,10 @@ transparent.example {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
 			health_uri /v1/ready
-			health_interval 5s
-			health_timeout 3s
-			fail_duration 30s
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
 		}
 	}
 
@@ -68,9 +73,10 @@ transparent.example {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
 			health_uri /v1/ready
-			health_interval 5s
-			health_timeout 3s
-			fail_duration 30s
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
 		}
 	}
 
@@ -78,13 +84,19 @@ transparent.example {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
 			health_uri /v1/ready
-			health_interval 5s
-			health_timeout 3s
-			fail_duration 30s
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
 		}
 	}
 
 	handle {
 		respond 404
+	}
+
+	handle_errors {
+		header Retry-After 1
+		respond "no worker could take the request; retry shortly"
 	}
 }

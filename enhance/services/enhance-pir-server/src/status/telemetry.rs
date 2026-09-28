@@ -29,6 +29,7 @@ pub struct Operation {
     pub arrivals: u64,
     pub successes: u64,
     pub failures: u64,
+    pub server_errors: u64,
     pub upload_bytes: u64,
     pub download_bytes: u64,
     pub buckets: [u64; 12],
@@ -36,6 +37,8 @@ pub struct Operation {
 
 #[derive(Clone, Default, Serialize)]
 pub struct Telemetry {
+    pub http_observation_version: u32,
+    pub http_instance: String,
     pub admission: BTreeMap<String, AdmissionMetrics>,
     pub operations: BTreeMap<String, Operation>,
     pub index_ms: Option<f64>,
@@ -203,6 +206,9 @@ pub async fn observe(role: &'static str, request: Request, next: Next) -> Respon
         counter.successes += 1;
     } else {
         counter.failures += 1;
+        if response.status().is_server_error() {
+            counter.server_errors += 1;
+        }
     }
     counter.upload_bytes += upload;
     counter.download_bytes += download;
@@ -262,6 +268,30 @@ fn process_resources() -> Resources {
 }
 async fn snapshot() -> Json<Telemetry> {
     let mut data = shared().lock().unwrap().clone();
+    static INSTANCE: OnceLock<String> = OnceLock::new();
+    data.http_observation_version = 1;
+    data.http_instance = INSTANCE
+        .get_or_init(|| {
+            format!(
+                "{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )
+        })
+        .clone();
+    // Explicit zero counters distinguish an idle observed route from old telemetry.
+    for operation in [
+        "init",
+        "public_material",
+        "query",
+        "router_query",
+        "worker_evaluate",
+    ] {
+        data.operations.entry(operation.into()).or_default();
+    }
     data.resources = tokio::task::spawn_blocking(process_resources)
         .await
         .unwrap_or_default();
@@ -310,6 +340,7 @@ async fn prometheus() -> impl IntoResponse {
             ("arrival", item.arrivals),
             ("success", item.successes),
             ("failure", item.failures),
+            ("server_error", item.server_errors),
         ] {
             body.push_str(&format!("status_pir_requests_total{{operation=\"{operation}\",outcome=\"{outcome}\"}} {count}\n"));
         }
@@ -402,5 +433,55 @@ mod tests {
         assert_eq!(value["operations"]["query"]["download_bytes"], 2);
         assert_eq!(value["operations"]["router_pack"]["buckets"][0], 1);
         assert!(String::from_utf8_lossy(&bytes).find("xx").is_none());
+    }
+}
+
+#[cfg(test)]
+mod http_tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        extract::Path,
+        http::{Request as HttpRequest, StatusCode},
+    };
+    use tower::ServiceExt;
+    #[tokio::test]
+    async fn http_outcomes_distinguish_client_errors_and_record_latency_once() {
+        let app = Router::new()
+            .route(
+                "/v1/status/session/:code",
+                get(|Path(code): Path<u16>| async move { StatusCode::from_u16(code).unwrap() }),
+            )
+            .layer(axum::middleware::from_fn(|request, next| {
+                observe("coordinator", request, next)
+            }));
+        let before = shared()
+            .lock()
+            .unwrap()
+            .operations
+            .get("public_material")
+            .cloned()
+            .unwrap_or_default();
+        for code in [200, 400, 503] {
+            let r = app
+                .clone()
+                .oneshot(
+                    HttpRequest::get(format!("/v1/status/session/{code}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(r.status().as_u16(), code);
+        }
+        let after = shared().lock().unwrap().operations["public_material"].clone();
+        assert_eq!(after.arrivals - before.arrivals, 3);
+        assert_eq!(after.successes - before.successes, 1);
+        assert_eq!(after.failures - before.failures, 2);
+        assert_eq!(after.server_errors - before.server_errors, 1);
+        assert_eq!(
+            after.buckets.iter().sum::<u64>() - before.buckets.iter().sum::<u64>(),
+            3
+        );
     }
 }

@@ -221,7 +221,7 @@ fn found_in<E: std::error::Error + 'static>(error: &BoxError) -> Option<&E> {
 pub struct TableCharges {
     /// Published PIR setup, once per segment opened. A shard normally has one
     /// segment per table; one that did not fit the pinned geometry has more,
-    /// and each publishes its own `c1`.
+    /// and each publishes its own masks.
     pub setup_bytes: u64,
     /// Private query uploads.
     pub query_upload: u64,
@@ -352,6 +352,17 @@ pub trait FilterSource {
     /// digest mismatch against the map rather than acting on.
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError>;
 
+    /// Starts fetching the filters of `shard_ids` ahead of the walk that asks
+    /// for them one at a time, where the source can overlap requests.
+    ///
+    /// Filters are public, and the wallet downloads every filter in its range
+    /// anyway, so fetching them together discloses nothing further. The
+    /// default does nothing. An implementation must hand each prefetched
+    /// filter out at most once through [`filter`](Self::filter) and fetch
+    /// afresh after that, so a republished tail's superseded filter cannot be
+    /// served twice; the sync still checks every filter against the map.
+    fn prefetch(&mut self, _shard_ids: &[u64]) {}
+
     /// Research-only parent discovery for uncached work. Default sources never
     /// skip child filters. Costs include manifest discovery even on fallback.
     fn prepare_parents(
@@ -428,7 +439,149 @@ pub trait ShardTransport {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError>;
+
+    /// Requests this transport keeps in flight when handed a [`batch`].
+    ///
+    /// One, the default, means the sync issues every request itself, one at a
+    /// time, in the order of the sequential walk. That walk is the reference:
+    /// a larger value changes when requests are sent, never which.
+    ///
+    /// [`batch`]: Self::batch
+    fn concurrency(&self) -> usize {
+        1
+    }
+
+    /// Issues independent requests, overlapping them where the transport can.
+    ///
+    /// Returns one entry per request, in request order: `Some` with the reply
+    /// of a request that was sent, `None` for one that was not. An
+    /// implementation should stop sending after the first failure, so a
+    /// refusing or unreachable service does not receive a burst. The sync
+    /// uses each reply exactly where the sequential walk would have made that
+    /// request, refusals and failures included, so refusals must be
+    /// recognised as for the single methods; it makes any unsent request
+    /// itself, in its ordinary place. A query's cost is its response length.
+    ///
+    /// The default sends them one at a time through the methods above.
+    fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
+        let mut replies = Vec::with_capacity(requests.len());
+        let mut failed = false;
+        for request in requests {
+            if failed {
+                replies.push(None);
+                continue;
+            }
+            let reply = match *request {
+                ShardRequest::Manifest { shard_id, revision } => self.manifest(shard_id, revision),
+                ShardRequest::Setup {
+                    shard_id,
+                    revision,
+                    table,
+                    segment,
+                } => self.setup(shard_id, revision, table, segment),
+                ShardRequest::Query {
+                    shard_id,
+                    revision,
+                    table,
+                    body,
+                } => self.query(shard_id, revision, table, body).map(|bytes| {
+                    let len = bytes.len() as u64;
+                    (bytes, len)
+                }),
+            };
+            failed = reply.is_err();
+            replies.push(Some(reply));
+        }
+        replies
+    }
 }
+
+/// One request a sync may hand a transport to overlap with others.
+///
+/// The same requests the sequential walk makes through [`ShardTransport`]'s
+/// methods, with the same arguments; a batch changes when they are sent.
+#[derive(Clone, Copy, Debug)]
+pub enum ShardRequest<'a> {
+    Manifest {
+        shard_id: u64,
+        revision: &'a str,
+    },
+    Setup {
+        shard_id: u64,
+        revision: &'a str,
+        table: Table,
+        segment: u32,
+    },
+    Query {
+        shard_id: u64,
+        revision: &'a str,
+        table: Table,
+        body: &'a [u8],
+    },
+}
+
+impl ShardRequest<'_> {
+    /// The stage name the measurement tools report this request under.
+    pub fn stage(&self) -> &'static str {
+        match self {
+            ShardRequest::Manifest { .. } => "manifest",
+            ShardRequest::Setup {
+                table: Table::Directory,
+                ..
+            } => "setup_directory",
+            ShardRequest::Setup {
+                table: Table::Pages,
+                ..
+            } => "setup_pages",
+            ShardRequest::Query {
+                table: Table::Directory,
+                ..
+            } => "query_directory",
+            ShardRequest::Query {
+                table: Table::Pages,
+                ..
+            } => "query_pages",
+        }
+    }
+
+    /// The service route this request addresses.
+    pub fn route(&self) -> String {
+        match *self {
+            ShardRequest::Manifest { shard_id, revision } => {
+                format!("/v1/shards/{shard_id}/revisions/{revision}/manifest")
+            }
+            ShardRequest::Setup {
+                shard_id,
+                revision,
+                table,
+                segment,
+            } => format!(
+                "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
+                table.as_str()
+            ),
+            ShardRequest::Query {
+                shard_id,
+                revision,
+                table,
+                ..
+            } => format!(
+                "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                table.as_str()
+            ),
+        }
+    }
+
+    /// Bytes this request uploads.
+    pub fn upload(&self) -> u64 {
+        match self {
+            ShardRequest::Query { body, .. } => body.len() as u64,
+            _ => 0,
+        }
+    }
+}
+
+/// A reply to one [`ShardRequest`]: the bytes and what they cost.
+pub type ShardReply = Result<(Vec<u8>, u64), BoxError>;
 
 impl<T: FilterSource + ?Sized> FilterSource for Box<T> {
     fn uses_parents(&self) -> bool {
@@ -458,6 +611,9 @@ impl<T: FilterSource + ?Sized> FilterSource for Box<T> {
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
         (**self).filter(shard_id)
     }
+    fn prefetch(&mut self, shard_ids: &[u64]) {
+        (**self).prefetch(shard_ids)
+    }
 }
 
 impl<T: ShardTransport + ?Sized> ShardTransport for Box<T> {
@@ -484,6 +640,12 @@ impl<T: ShardTransport + ?Sized> ShardTransport for Box<T> {
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError> {
         (**self).query(shard_id, revision, table, body)
+    }
+    fn concurrency(&self) -> usize {
+        (**self).concurrency()
+    }
+    fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
+        (**self).batch(requests)
     }
 }
 

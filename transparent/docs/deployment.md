@@ -9,8 +9,8 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | Initial range | Last six calendar months of pinned anchor time | Genesis through block before recent range |
 | Initial profile | `recent-8k` | `archive-wide` |
 | Directory/page rows | 8192 / 8192 | 32768 / 65536 |
-| Row bytes; inline events | 3584; 2 | 3584; 2 |
-| Seal target:capacity (scripts, pages) | Derive with `SealPolicy::for_geometry` | `393216:458752,63488:65536`, verify against derivation |
+| Row bytes; inline events | 4096; 2 | 4096; 2 |
+| Seal target:capacity (scripts, pages) | Derive with `SealPolicy::for_geometry` (`147456:172032,7936:8192` at `recent-8k` under schema v9) | `589824:688128,63488:65536`, verify against derivation |
 | Workers | 4 full recent replicas | 2 disjoint archive assignments |
 | Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized |
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
@@ -32,7 +32,7 @@ Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure
 
 ## Geometry optimization, not a launch dependency
 
-Add optional `recent-4k-8k` (4096 directory / 8192 page rows), seal policy `49152:57344,7936:8192`. Do not change the meaning of `recent-4k`, which already means 4096/4096. Promote only on same-range census, real placement, and total wallet-byte/latency evidence. Smaller directory upload alone does not establish a smaller sync. Initial full-chain deployment proceeds with `recent-8k`.
+Add optional `recent-4k-8k` (4096 directory / 8192 page rows), seal policy `73728:86016,7936:8192` under schema v9 (`56174:65536,7936:8192` under v8's 16-slot directory row; `49152:57344,7936:8192` under v7's 14-slot row). Do not change the meaning of `recent-4k`, which already means 4096/4096. Promote only on same-range census, real placement, and total wallet-byte/latency evidence. Smaller directory upload alone does not establish a smaller sync. Initial full-chain deployment proceeds with `recent-8k`. Schema v9 is source only and is not published. A version-2 event journal is built only into a new directory. The version-1 production journal must be left untouched: this binary refuses it and does not move it aside.
 
 Do not publish `archive-32k` as the selected target: uniform-chain evidence favors `archive-wide`. Preserve the tested registry entry for compatibility/research. Geometry fallback is an explicit decision with re-census, storage, client and capacity review; never silently rewrite an already published profile.
 
@@ -259,6 +259,20 @@ when a pending observed block exceeds 30 seconds. Prometheus alert rules are in
 `transparent/ops/deploy/transparent-publication-alerts.yml`.
 The production deployment key is supplied by the GitHub Environment and stored
 only in the controller's root-readable runtime credential directory.
+
+### Deployment identity and coordinator routing
+
+- **Deploy identity.** The transparent router and every worker must authorise
+  the public half of `WALLET_PIR_DEPLOY_SSH_KEY` before that secret is rotated.
+  Publisher shadow mode now checks every host first and changes nothing if one
+  refuses it. On 2026-09-27 a rotated key was authorised nowhere; append the new
+  key and verify from the coordinator before removing the old one.
+- **Coordinator routing.** Public transparent metadata depends on the
+  continuous-publication route in the coordinator Caddyfile. Enhance deploys
+  render that file from `ops/deploy/coordinator/Caddyfile`, which carries the
+  route; `ops/tests/test_coordinator_caddyfile.py` fails if it is removed. After
+  any coordinator deploy, confirm that
+  `https://transparent-pir.valargroup.dev/v1/shards/init` returns 200.
 
 ## Hardening rollout gate
 

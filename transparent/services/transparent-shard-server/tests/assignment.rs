@@ -115,6 +115,7 @@ fn write_shard(
         end_height: end,
         parent_block_hash: hash_at(start - 1).to_display_hex(),
         terminal_block_hash: hash_at(end).to_display_hex(),
+        tag_salt_counter: built.tag_salt_counter,
         parent_manifest_digest: parent_manifest_digest.to_string(),
         sealed,
         revision: 0,
@@ -153,6 +154,7 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        directory_choice: None,
     };
     let digest = manifest.digest();
     let shard_dir = dir.join(&digest);
@@ -657,7 +659,7 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
 
     // Three superseded revisions on disk. A byte bound that fits one keeps the
     // newest and reports the two older ones prunable.
-    let one_revision = 2 * (4096 * 3584) + 1024;
+    let one_revision = 2 * (4096 * 4096) + 1024;
     let set = ShardSet::open_with(
         dir.path(),
         &LoadOptions {
@@ -706,6 +708,7 @@ fn manifest_for(
         end_height: end,
         parent_block_hash: hash_at(FIRST - 1).to_display_hex(),
         terminal_block_hash: hash_at(end).to_display_hex(),
+        tag_salt_counter: built.tag_salt_counter,
         parent_manifest_digest: String::new(),
         sealed: false,
         revision,
@@ -744,6 +747,7 @@ fn manifest_for(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        directory_choice: None,
     }
 }
 

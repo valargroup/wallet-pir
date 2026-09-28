@@ -55,13 +55,14 @@ use crate::transport::{ByteCharges, FilterSource, ShardTransport, StaleRevision}
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
-use transparent_filter::{
-    validate_filter, BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap,
-};
+use transparent_filter::{BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap};
 use transparent_shard::build::candidate_rows;
 use transparent_shard::manifest::ShardManifest;
 use transparent_shard::page_row::decode_page_row;
 use transparent_shard::records::{decode_directory_row, DirectoryEntry};
+
+#[path = "sync_ahead.rs"]
+mod ahead;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -99,6 +100,16 @@ pub enum SyncError {
          range"
     )]
     UnknownGeometry(String),
+    /// The map names a range-filter profile this build does not know.
+    ///
+    /// Its filters would be decoded under the wrong Golomb-Rice parameters,
+    /// which neither fails reliably nor matches correctly, so the sync stops
+    /// before matching anything.
+    #[error(
+        "shard set uses range-filter profile {0}, which this build does not know; upgrade \
+         before syncing this range"
+    )]
+    UnknownProfile(String),
     /// A revision this sync needed was withdrawn, and refreshing the map did
     /// not offer one that is served.
     ///
@@ -154,8 +165,8 @@ const MAX_OVERLOAD_ATTEMPTS: u32 = 4;
 /// attempt after that.
 const OVERLOAD_BACKOFF: Duration = Duration::from_millis(250);
 
-/// Ceiling on any single wait, so a service asking for an implausible delay
-/// cannot park a sync inside it.
+/// Ceiling on any single wait before jitter, so a service asking for an
+/// implausible delay cannot park a sync inside it.
 const OVERLOAD_BACKOFF_CAP: Duration = Duration::from_secs(2);
 
 /// Passes a sync makes while the wallet's rules keep adding scripts. A
@@ -173,11 +184,11 @@ pub struct GeometryParams {
     pub name: String,
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
-    pub directory_scheme: ipir_sp::YpirSchemeParams,
+    pub directory_scheme: transparent_native::NativeScheme,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
-    pub pages_scheme: ipir_sp::YpirSchemeParams,
+    pub pages_scheme: transparent_native::NativeScheme,
     pub pages_setup_seed: u64,
 }
 
@@ -250,16 +261,16 @@ impl Clients {
             let clients = GeometryClients {
                 directory: TableClient::new(
                     Table::Directory,
+                    name,
                     geometry.directory_rows,
                     geometry.directory_row_bytes as u32,
-                    params.directory_setup_seed,
                     &params.directory_scheme,
                 )?,
                 pages: TableClient::new(
                     Table::Pages,
+                    name,
                     geometry.page_rows,
                     geometry.page_row_bytes as u32,
-                    params.pages_setup_seed,
                     &params.pages_scheme,
                 )?,
             };
@@ -487,6 +498,9 @@ pub fn sync_into<S: WalletStore>(
     }
     map.check_shape()
         .map_err(|error| SyncError::Invalid(format!("shard map is malformed: {error}")))?;
+    if transparent_filter::range_profile(&map.profile).is_none() {
+        return Err(SyncError::UnknownProfile(map.profile.clone()));
+    }
     let genesis = BlockHash::from_display_hex(&map.genesis_hash)?;
     BlockHash::from_display_hex(&target_anchor.hash)?;
     if target_anchor.height < map.start_height {
@@ -740,6 +754,16 @@ pub fn sync_into<S: WalletStore>(
         })?;
     }
 
+    // Replies a lookahead sends early are held here until the walk asks for
+    // them; see `ahead`. With nothing stashed both pass straight through.
+    let transport = &mut ahead::Staged::new(transport);
+    let filters = &mut ahead::StagedFilters::new(filters);
+    // A budgeted sync walks in sequence: whether a later shard's queries are
+    // sent at all depends on page work the walk discovers on the way.
+    let look_ahead = transport.concurrency() > 1
+        && limits.max_queries.is_none()
+        && limits.max_private_bytes.is_none();
+
     // The wallet's script set, with its own required heights.
     store.add_scripts(&scripts.scripts())?;
     let mut scripts_added = 0usize;
@@ -795,11 +819,13 @@ pub fn sync_into<S: WalletStore>(
                 transport,
                 &mut charges,
                 limits,
-                |store, prepared, transport, charges| {
+                |store, prepared, transport, charges, manifest| {
+                    let salt = tag_salt_of(manifest)?;
                     finish_pages(
                         store,
                         &entry,
                         &items,
+                        &salt,
                         prepared,
                         transport,
                         charges,
@@ -861,22 +887,41 @@ pub fn sync_into<S: WalletStore>(
             }
         }
 
-        if filters.uses_parents() {
-            let mut uncached = Vec::new();
-            for index in work.keys() {
-                let entry = &active.shards[*index];
-                if store
-                    .filter(&entry.manifest_digest, &entry.filter_hash)?
-                    .is_none()
-                {
-                    uncached.push(entry.shard_id);
-                }
+        let mut uncached = Vec::new();
+        for index in work.keys() {
+            let entry = &active.shards[*index];
+            if store
+                .filter(&entry.manifest_digest, &entry.filter_hash)?
+                .is_none()
+            {
+                uncached.push(entry.shard_id);
             }
+        }
+        if filters.uses_parents() {
             charges.filter_bytes += filters
                 .prepare_parents(&active, &uncached, store)
                 .map_err(|e| SyncError::Transport(e.to_string()))?;
+        } else {
+            // Every uncached filter in the walk is downloaded anyway; overlap
+            // them rather than paying one round trip each.
+            filters.prefetch(&uncached);
         }
         let mut index_iter: Vec<usize> = work.keys().copied().collect();
+        if look_ahead && !filters.uses_parents() {
+            ahead::look_ahead(
+                store,
+                &active,
+                genesis,
+                &index_iter,
+                &work,
+                geometry,
+                &mut clients,
+                filters,
+                transport,
+                target_anchor,
+                chain,
+            )?;
+        }
         let mut position = 0usize;
         while position < index_iter.len() {
             let index = index_iter[position];
@@ -928,6 +973,10 @@ pub fn sync_into<S: WalletStore>(
                     // reading it. Refresh the map, check it is the same set
                     // continued, roll this shard's provisional coverage back,
                     // and re-derive from whatever replaced it.
+                    //
+                    // Nothing read ahead survives a refresh: the rest of this
+                    // pass is walked in sequence.
+                    ahead::clear(transport, filters, &mut clients);
                     if refreshes >= MAX_MAP_REFRESHES
                         || (stale.map_sha256.is_some()
                             && stale.map_sha256.as_deref() == held_map_digest.as_deref())
@@ -999,6 +1048,8 @@ pub fn sync_into<S: WalletStore>(
                 Err(other) => return Err(other),
             }
         }
+        // Anything read ahead and not consumed belongs to this pass only.
+        ahead::clear(transport, filters, &mut clients);
 
         let added = scripts.on_activity(&active_scripts);
         if added.is_empty() {
@@ -1149,14 +1200,7 @@ fn read_shard_into<S: WalletStore>(
     target_anchor: &Anchor,
     chain: &impl ChainView,
 ) -> Result<ShardRead, SyncError> {
-    let endpoint = if entry.end_height > target_anchor.height {
-        target_anchor.clone()
-    } else {
-        Anchor {
-            height: entry.end_height,
-            hash: entry.terminal_block_hash.clone(),
-        }
-    };
+    let endpoint = endpoint_of(entry, target_anchor);
     match chain.is_accepted(endpoint.height, &endpoint.hash) {
         Acceptance::Accepted => {}
         Acceptance::Unknown => {
@@ -1221,21 +1265,7 @@ fn read_shard_into<S: WalletStore>(
             }
         };
         charges.filters_checked += 1;
-        let validated = validate_filter(&bytes, FilterLimits::default())?;
-        let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
-        let key = ShardKey::derive(
-            &map.profile,
-            genesis,
-            entry.shard_id,
-            entry.start_height,
-            entry.end_height,
-            terminal,
-        );
-        let owned: Vec<ScriptBytes> = scripts
-            .iter()
-            .map(|script| ScriptBytes::new(script.clone()))
-            .collect();
-        transparent_filter::match_range_scripts(&validated, key, &owned)?
+        match_filter(map, entry, genesis, scripts, &bytes)?
     };
     if matches.is_empty() {
         // A genuinely empty range for every script here: coverage advances
@@ -1283,12 +1313,18 @@ fn read_shard_into<S: WalletStore>(
         transport,
         charges,
         limits,
-        |store, prepared, transport, charges| {
+        |store, prepared, transport, charges, manifest| {
+            // Validated when the manifest was verified; decoded again here
+            // rather than carried, since it is a few kilobytes.
+            let choice = directory_choice(manifest)?;
+            let salt = tag_salt_of(manifest)?;
             retrieve_shard_into(
                 store,
                 entry,
                 &matched_scripts,
                 &unmatched,
+                choice.as_ref(),
+                &salt,
                 prepared,
                 transport,
                 charges,
@@ -1327,6 +1363,49 @@ fn read_shard_into<S: WalletStore>(
     }
 }
 
+/// The block a shard's coverage ends on for this sync: its own terminal
+/// block, or the target when the shard runs past it.
+fn endpoint_of(entry: &transparent_filter::ShardMapEntry, target_anchor: &Anchor) -> Anchor {
+    if entry.end_height > target_anchor.height {
+        target_anchor.clone()
+    } else {
+        Anchor {
+            height: entry.end_height,
+            hash: entry.terminal_block_hash.clone(),
+        }
+    }
+}
+
+/// Which of `scripts` a shard's filter matches, by index.
+fn match_filter(
+    map: &ShardMap,
+    entry: &transparent_filter::ShardMapEntry,
+    genesis: BlockHash,
+    scripts: &[Vec<u8>],
+    bytes: &[u8],
+) -> Result<Vec<usize>, SyncError> {
+    let profile = transparent_filter::range_profile(&map.profile)
+        .ok_or_else(|| SyncError::UnknownProfile(map.profile.clone()))?;
+    let validated =
+        transparent_filter::validate_range_filter(bytes, FilterLimits::default(), profile)?;
+    let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
+    let key = ShardKey::derive(
+        &map.profile,
+        genesis,
+        entry.shard_id,
+        entry.start_height,
+        entry.end_height,
+        terminal,
+    );
+    let owned: Vec<ScriptBytes> = scripts
+        .iter()
+        .map(|script| ScriptBytes::new(script.clone()))
+        .collect();
+    Ok(transparent_filter::match_range_scripts(
+        &validated, key, &owned,
+    )?)
+}
+
 /// Runs `work` against a shard, verifying the manifest first and lifting the
 /// service's two refusals: a withdrawn revision propagates for the map
 /// refresh, an overload is retried with backoff and then reported as an
@@ -1350,6 +1429,7 @@ where
         &mut GeometryClients,
         &mut T,
         &mut ByteCharges,
+        &ShardManifest,
     ) -> Result<Option<Completion>, SyncError>,
 {
     let _ = limits;
@@ -1384,7 +1464,7 @@ where
             },
         };
         let prepared = clients.prepare(&verified.geometry, &geometry.geometries)?;
-        match work(store, prepared, transport, charges) {
+        match work(store, prepared, transport, charges, verified) {
             Ok(stopped) => return Ok(stopped),
             Err(SyncError::Client(ClientError::Stale(stale))) => {
                 return Err(SyncError::StaleRevision {
@@ -1476,6 +1556,9 @@ fn verify_manifest(
             expected: transparent_shard::SCHEMA,
         });
     }
+    if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
+        return Err(mismatch("tag_salt_counter"));
+    }
     if manifest.network != map.network {
         return Err(mismatch("network"));
     }
@@ -1539,7 +1622,22 @@ fn verify_manifest(
             return Err(mismatch("seal"));
         }
     }
+    directory_choice(&manifest)?;
     Ok(manifest)
+}
+
+/// The manifest's directory choice table, if it publishes one.
+///
+/// A table that does not decode, or that indexes a different number of
+/// scripts than the shard places, stops the sync. Falling back to two queries
+/// would be safe for this shard, but it would hide a malformed publication
+/// behind a working one.
+fn directory_choice(
+    manifest: &ShardManifest,
+) -> Result<Option<transparent_shard::ChoiceTable>, SyncError> {
+    manifest.directory_choice().map_err(|error| {
+        SyncError::Invalid(format!("shard {} manifest: {error}", manifest.shard_id))
+    })
 }
 
 /// How long to wait before re-asking an overloaded service.
@@ -1547,9 +1645,11 @@ fn verify_manifest(
 /// The service's own figure is preferred, because it knows why it refused, but
 /// it is capped: a delay a wallet cannot sanity-check is a delay a
 /// misconfigured or hostile service could use to park a sync inside one call.
+/// Either way the wait is jittered by up to half again, so wallets refused
+/// together do not return together.
 fn overload_backoff(attempt: u32, asked: Option<Duration>) -> Duration {
     let wait = asked.unwrap_or_else(|| OVERLOAD_BACKOFF * 2u32.saturating_pow(attempt - 1));
-    wait.min(OVERLOAD_BACKOFF_CAP)
+    crate::backoff::jittered(wait.min(OVERLOAD_BACKOFF_CAP))
 }
 
 /// Refetches the map after a withdrawn revision, and checks it continues the
@@ -1656,6 +1756,22 @@ fn check_continuation(
     Ok(())
 }
 
+/// Salt the wallet derives from a verified manifest. Records are accepted
+/// only under this salt.
+fn tag_salt_of(manifest: &ShardManifest) -> Result<[u8; 32], SyncError> {
+    let terminal = BlockHash::from_display_hex(&manifest.terminal_block_hash).map_err(|error| {
+        SyncError::Invalid(format!(
+            "shard {} terminal block hash: {error}",
+            manifest.shard_id
+        ))
+    })?;
+    Ok(transparent_shard::tag_salt(
+        manifest.shard_id,
+        &terminal,
+        manifest.tag_salt_counter,
+    ))
+}
+
 /// The directory phase for one shard: both candidate rows for every matched
 /// script, inline events committed, page work recorded; then the pages.
 #[allow(clippy::too_many_arguments)]
@@ -1664,6 +1780,8 @@ fn retrieve_shard_into<S: WalletStore>(
     entry: &transparent_filter::ShardMapEntry,
     matched: &[Vec<u8>],
     unmatched: &[Vec<u8>],
+    choice: Option<&transparent_shard::ChoiceTable>,
+    salt: &[u8; 32],
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
@@ -1689,6 +1807,7 @@ fn retrieve_shard_into<S: WalletStore>(
             store,
             entry,
             &pending,
+            salt,
             clients,
             transport,
             charges,
@@ -1736,14 +1855,22 @@ fn retrieve_shard_into<S: WalletStore>(
     let mut pending_upsert: Vec<PendingPages> = Vec::new();
 
     for script in matched {
-        // Both candidate rows are queried. Querying only the first and stopping
-        // on a hit would make the number of queries depend on where the script
-        // landed, which is a function of the script. Candidates are taken over
-        // the shard's whole logical row space; each names one row within a
-        // segment, and every segment answers it.
+        // With a published choice table, exactly the one candidate row it
+        // names is queried. Without one, both candidate rows are. Either way
+        // the query count per matched script is fixed for the shard: querying
+        // the first and stopping on a hit would make it depend on where the
+        // script landed, which is a function of the script. Candidates are
+        // taken over the shard's whole logical row space; each names one row
+        // within a segment, and every segment answers it.
+        let wanted = transparent_shard::script_tag(salt, script);
         let mut found: Option<(u64, DirectoryEntry)> = None;
         let rows = geometry.directory_rows * entry.directory_segments as u64;
-        for row in candidate_rows(shard_id, script, rows) {
+        let candidates = candidate_rows(shard_id, script, rows);
+        let queried: &[u64] = match choice {
+            Some(table) => std::slice::from_ref(&candidates[table.choice(shard_id, script)]),
+            None => &candidates,
+        };
+        for &row in queried {
             let (_, within) = transparent_shard::layout::split_row(row, geometry.directory_rows);
             let answers = directory.fetch_row(
                 transport,
@@ -1755,10 +1882,10 @@ fn retrieve_shard_into<S: WalletStore>(
             )?;
             for raw in answers {
                 for candidate in decode_directory_row(&raw)? {
-                    // The row is selected by a hash, and a hash can collide or
-                    // be misplaced; the segment is not named at all. The exact
-                    // script bytes are what settle both.
-                    if candidate.script == *script {
+                    // The row is selected by a hash of the raw script. The tag
+                    // derived from this manifest's salt is what settles a hit.
+                    // A tag from any other salt does not match.
+                    if candidate.tag == wanted {
                         match &found {
                             // The two candidate hashes can name the same row
                             // (one script in 8,192 at recent-8k). The row is
@@ -1768,7 +1895,7 @@ fn retrieve_shard_into<S: WalletStore>(
                             Some((seen_row, _)) if *seen_row == row => {}
                             Some(_) => {
                                 return Err(SyncError::Invalid(format!(
-                                    "shard {shard_id} holds a script twice"
+                                    "shard {shard_id} holds a script tag twice"
                                 )));
                             }
                             None => found = Some((row, candidate)),
@@ -1784,32 +1911,24 @@ fn retrieve_shard_into<S: WalletStore>(
             // wasted work rather than errors; coverage still advances.
             None => covered.push(script.clone()),
             Some(found) => {
-                if found.total_events < found.inline.len() as u32
-                    || (found.page_count == 0 && found.total_events != found.inline.len() as u32)
-                {
-                    return Err(SyncError::Invalid(
-                        "inline directory total disagrees with records".into(),
-                    ));
-                }
                 for event in &found.inline {
                     events.push(StoredEvent {
-                        script: found.script.clone(),
+                        script: script.clone(),
                         event: *event,
                         shard_id,
                         revision_digest: revision.to_string(),
                     });
                 }
-                if found.page_count > 0 {
+                if let Some(base) = found.page_base() {
                     pending_upsert.push(PendingPages {
                         validated_events: found.inline.len() as u32,
                         target_anchor: Some(target_anchor.clone()),
                         id: None,
                         shard_id,
                         revision_digest: revision.to_string(),
-                        script: found.script.clone(),
-                        first_page: found.first_page,
-                        page_count: found.page_count,
-                        total_events: found.total_events,
+                        script: script.clone(),
+                        first_page: base,
+                        page_count: 0,
                         inline: found.inline.clone(),
                         next_ordinal: 0,
                         attempts: 0,
@@ -1861,6 +1980,7 @@ fn retrieve_shard_into<S: WalletStore>(
         store,
         entry,
         &owed,
+        salt,
         clients,
         transport,
         charges,
@@ -1878,6 +1998,7 @@ fn finish_pages<S: WalletStore>(
     store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
     owed: &[PendingPages],
+    salt: &[u8; 32],
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
@@ -1924,13 +2045,19 @@ fn finish_pages<S: WalletStore>(
         charges,
     )?;
     for item in owed {
+        let wanted = transparent_shard::script_tag(salt, &item.script);
         let mut recovered = item.validated_events;
-        if recovered > item.total_events {
-            return Err(SyncError::Invalid(
-                "pending validation count exceeds directory total".into(),
-            ));
-        }
-        for ordinal in item.next_ordinal..item.page_count {
+        let mut ordinal = item.next_ordinal;
+        let mut page_count = item.page_count;
+        loop {
+            if page_count != 0 && ordinal >= page_count {
+                break;
+            }
+            if page_count == 0 && ordinal != 0 {
+                return Err(SyncError::Invalid(format!(
+                    "shard {shard_id} page extent is unknown past its first fragment"
+                )));
+            }
             if let Some(reason) = budget_stopped(charges, limits) {
                 return Ok(Some(Completion::Incomplete {
                     reason,
@@ -1971,17 +2098,18 @@ fn finish_pages<S: WalletStore>(
             let mut fragment = None;
             for raw in answers {
                 for candidate in decode_page_row(&raw)? {
-                    if candidate.script == item.script
-                        && candidate.ordinal == ordinal
-                        && candidate.fragment_count == item.page_count
-                    {
-                        if fragment.is_some() {
-                            return Err(SyncError::Invalid(format!(
-                                "shard {shard_id} holds page {row} twice"
-                            )));
-                        }
-                        fragment = Some(candidate);
+                    if candidate.tag != wanted || candidate.ordinal != ordinal {
+                        continue;
                     }
+                    if page_count != 0 && candidate.fragment_count != page_count {
+                        continue;
+                    }
+                    if fragment.is_some() {
+                        return Err(SyncError::Invalid(format!(
+                            "shard {shard_id} holds page {row} twice"
+                        )));
+                    }
+                    fragment = Some(candidate);
                 }
             }
             let fragment = fragment.ok_or_else(|| {
@@ -1989,14 +2117,24 @@ fn finish_pages<S: WalletStore>(
                     "shard {shard_id} page {row} does not belong to the entry that located it"
                 ))
             })?;
+            if page_count == 0 {
+                if fragment.fragment_count == 0 || ordinal != 0 {
+                    return Err(SyncError::Invalid(format!(
+                        "shard {shard_id} page {row} has no fragment count"
+                    )));
+                }
+                page_count = fragment.fragment_count;
+            }
+            let last = ordinal + 1 == page_count;
+            let full = transparent_shard::EVENTS_PER_PAGE as usize;
+            if !last && fragment.events.len() != full {
+                return Err(SyncError::Invalid(format!(
+                    "shard {shard_id} page {row} is not a full fragment"
+                )));
+            }
             recovered = recovered
                 .checked_add(fragment.events.len() as u32)
                 .ok_or_else(|| SyncError::Invalid("page event count overflow".into()))?;
-            if recovered > item.total_events {
-                return Err(SyncError::Invalid(
-                    "pages exceed the directory event total".into(),
-                ));
-            }
             let events: Vec<StoredEvent> = fragment
                 .events
                 .iter()
@@ -2007,16 +2145,8 @@ fn finish_pages<S: WalletStore>(
                     revision_digest: revision.to_string(),
                 })
                 .collect();
-            let last = ordinal + 1 == item.page_count;
-            // The directory promised a total; the pages must account for it,
-            // or the wallet cannot tell a complete history from a truncated one.
-            if last && recovered != item.total_events {
-                return Err(SyncError::Invalid(format!(
-                    "shard {shard_id} yielded {recovered} events where the directory promised {}",
-                    item.total_events
-                )));
-            }
             let mut progressed = item.clone();
+            progressed.page_count = page_count;
             progressed.next_ordinal = ordinal + 1;
             progressed.validated_events = recovered;
             progressed.attempts += 1;
@@ -2045,6 +2175,10 @@ fn finish_pages<S: WalletStore>(
                     },
                 },
             )?;
+            ordinal += 1;
+            if last {
+                break;
+            }
         }
     }
     Ok(None)
@@ -2377,6 +2511,7 @@ mod tests {
             end_height: entry.end_height,
             parent_block_hash: entry.parent_block_hash.clone(),
             terminal_block_hash: entry.terminal_block_hash.clone(),
+            tag_salt_counter: 0,
             parent_manifest_digest: parent.to_string(),
             sealed: entry.sealed,
             revision: entry.revision,
@@ -2419,6 +2554,42 @@ mod tests {
                 txids: 1,
                 excluded_scripts: 0,
             },
+            directory_choice: None,
+        }
+    }
+
+    /// A published choice table is checked with the manifest: one that does
+    /// not decode, or indexes a different number of scripts than the shard
+    /// places, stops the sync rather than falling back to two queries.
+    #[test]
+    fn a_malformed_directory_choice_is_refused_with_the_manifest() {
+        let script: &[u8] = &[0x51, 0x01];
+        let valid = transparent_shard::manifest::encode_directory_choice(
+            &transparent_shard::ChoiceTable::build(0, &[(script, 1)]).unwrap(),
+        );
+        let two = transparent_shard::manifest::encode_directory_choice(
+            &transparent_shard::ChoiceTable::build(0, &[(script, 1), (&[0x51, 0x02], 0)]).unwrap(),
+        );
+        for (choice, accepted) in [
+            (valid, true),
+            (two, false),
+            ("not base64!".to_string(), false),
+            (String::new(), false),
+        ] {
+            let mut entry = entry(0, 100, 199, true);
+            let map = map(vec![entry.clone()]);
+            let mut manifest = manifest_for(&entry, "", &map);
+            manifest.directory_choice = Some(choice.clone());
+            entry.manifest_digest = manifest.digest();
+            let map = self::map(vec![entry.clone()]);
+            let verified = verify_manifest(&manifest.canonical_bytes(), &entry, "", &map);
+            match (accepted, verified) {
+                (true, Ok(verified)) => {
+                    assert!(directory_choice(&verified).unwrap().is_some())
+                }
+                (false, Err(SyncError::Invalid(_))) => {}
+                (_, other) => panic!("{choice:?}: {other:?}"),
+            }
         }
     }
 
@@ -2534,21 +2705,26 @@ mod tests {
 
     #[test]
     fn backoff_prefers_the_services_figure_and_caps_it() {
-        assert_eq!(overload_backoff(1, None), OVERLOAD_BACKOFF);
-        assert_eq!(overload_backoff(2, None), OVERLOAD_BACKOFF * 2);
-        assert_eq!(
-            overload_backoff(1, Some(Duration::from_millis(10))),
-            Duration::from_millis(10),
+        // Each wait is its base jittered by up to half again, never less.
+        let within = |wait: Duration, base: Duration| wait >= base && wait <= base * 3 / 2;
+        assert!(within(overload_backoff(1, None), OVERLOAD_BACKOFF));
+        assert!(within(overload_backoff(2, None), OVERLOAD_BACKOFF * 2));
+        assert!(
+            within(
+                overload_backoff(1, Some(Duration::from_millis(10))),
+                Duration::from_millis(10)
+            ),
             "the service knows why it refused"
         );
-        assert_eq!(
-            overload_backoff(1, Some(Duration::from_secs(3600))),
-            OVERLOAD_BACKOFF_CAP,
+        assert!(
+            within(
+                overload_backoff(1, Some(Duration::from_secs(3600))),
+                OVERLOAD_BACKOFF_CAP
+            ),
             "a delay a wallet cannot sanity-check must not park a sync"
         );
-        assert_eq!(
-            overload_backoff(20, None),
-            OVERLOAD_BACKOFF_CAP,
+        assert!(
+            within(overload_backoff(20, None), OVERLOAD_BACKOFF_CAP),
             "doubling is capped too"
         );
     }

@@ -12,13 +12,13 @@ The APM sidecar runs on the Enhance coordinator. Its `/etc/default/pir-apm` sets
 PIR_APM_STATUS_URL=http://127.0.0.1:8480/internal/status-apm
 PIR_APM_STATUS_ROUTER_URL=http://127.0.0.1:8482/internal/status-apm
 PIR_APM_STATUS_WORKER_URL=http://127.0.0.1:8481/internal/status-apm
-PIR_APM_STATUS_TOPOLOGY='Enhance host → P4000 router + worker'
+PIR_APM_STATUS_TOPOLOGY='Enhance host → CPU router + worker'
 ```
 
 The first source is local. Router and worker monitoring use the existing
 `status-control-tunnel` authenticated SSH forwards. Public monitoring does not
 expose these private listeners. No new credentials were created for this change.
-The old monitoring tunnel on port 8384 is no longer a source for this pane.
+The old synthetic monitoring tunnel on port 8384 was retired with the P4000 host.
 
 The APM scraper fetches all three role samples every five seconds. Publication
 metadata comes from the coordinator's `/v1/status/init` manifest. Failure of any
@@ -44,6 +44,10 @@ Admission wait, upload before admission, client preparation and decoding are
 excluded. They are **not end-to-end client load-test p99**. Overflow is shown as
 `>5000` ms; it is not assigned an invented finite upper bound.
 
+Dedicated Status HTTP alerts use separate controller-init and router-query counters; see
+[Status HTTP alert coverage](observability-alerting.md#status-http-alert-coverage).
+The query table below remains based on admitted-work telemetry.
+
 Role completion rates include unsuccessful admitted work. HTTP operation failure
 counts are not present in the deployed role admission telemetry and are shown as
 unavailable rather than zero. Active/waiting gauges and fixed rejection-reason
@@ -51,7 +55,8 @@ counters are displayed separately. Rejection counters count refused checks and
 must not be summed as unique failed client lookups.
 
 Role resources show process RSS and host memory/GPU observations. Router and
-worker share the P4000 host, so their host/GPU readings must not be summed.
+worker share the Status host, so their host readings must not be summed. GPU
+utilization is shown only when a role reports it; the CPU host reports none.
 Counter resets clear aggregate chart history. Restarts reset sidecar history;
 latencies remain blank until requests occur across successful scrapes.
 

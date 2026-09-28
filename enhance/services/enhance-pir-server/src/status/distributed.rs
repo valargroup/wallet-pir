@@ -81,6 +81,10 @@ pub struct Service {
     dir: PathBuf,
     _lock: Arc<File>,
     state: Arc<Mutex<StateData>>,
+    /// Serializes the control handlers that change the fence or candidate, so
+    /// activation can persist its fence without holding the `state` lock that
+    /// every query takes.
+    control: Arc<Mutex<()>>,
     preparation: Arc<Mutex<()>>,
     // Query packing stays on the global pool; preparation cannot enqueue there.
     preparation_pool: Option<Arc<rayon::ThreadPool>>,
@@ -92,24 +96,43 @@ pub struct Service {
     permits: Arc<super::admission::Admission>,
 }
 
-fn router_preparation_pool() -> Result<rayon::ThreadPool, Failure> {
+fn preparation_pool() -> Result<rayon::ThreadPool, Failure> {
     let threads = std::env::var("STATUS_PREPARATION_THREADS")
         .ok()
         .map(|v| v.parse::<usize>())
         .transpose()?
         .unwrap_or(1);
-    build_router_preparation_pool(threads)
+    build_preparation_pool(threads)
 }
-fn build_router_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Failure> {
+/// Preparation runs below the query path: on a shared CPU host the worker's
+/// evaluations and the router's packing must preempt candidate preparation.
+const PREPARATION_NICE: i32 = 10;
+fn build_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Failure> {
     // Independent of RAYON_NUM_THREADS, the online query CPU budget. Explicitly
-    // bounded to prevent accidental CPU oversubscription from deployment config.
-    if !(1..=4).contains(&threads) {
-        return Err("STATUS_PREPARATION_THREADS must be between 1 and 4".into());
+    // bounded to prevent accidental CPU oversubscription from deployment config;
+    // these threads run below query priority, so up to eight is safe on the
+    // 8-vCPU host, where four let the serial pipeline exceed the freshness limit.
+    if !(1..=8).contains(&threads) {
+        return Err("STATUS_PREPARATION_THREADS must be between 1 and 8".into());
     }
     Ok(rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .thread_name(|i| format!("status-prepare-{i}"))
+        .start_handler(|_| lower_thread_priority(PREPARATION_NICE))
         .build()?)
+}
+/// Lower only the calling thread's scheduling priority (Linux per-thread nice).
+fn lower_thread_priority(nice: i32) {
+    #[cfg(target_os = "linux")]
+    // SAFETY: setpriority on the calling thread's own tid touches no memory.
+    unsafe {
+        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        if libc::setpriority(libc::PRIO_PROCESS, tid, nice) != 0 {
+            tracing::warn!("could not lower Status preparation thread priority");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = nice;
 }
 
 pub fn loopback_origin(origin: &str) -> Result<(), Failure> {
@@ -140,6 +163,15 @@ fn persist(dir: &FsPath, fence: &Fence) -> Result<(), Failure> {
     fs::rename(dir.join("fence.tmp"), dir.join("fence.json"))?;
     File::open(dir)?.sync_all()?;
     Ok(())
+}
+/// Persist a fence on the blocking pool. An ext4 journal commit can hold
+/// `fsync` for hundreds of milliseconds; on a runtime worker that froze every
+/// task queued behind it, including queries and lock-free telemetry.
+async fn persist_off_runtime(dir: &FsPath, fence: &Fence) -> Result<(), ()> {
+    let (dir, fence) = (dir.to_path_buf(), fence.clone());
+    tokio::task::spawn_blocking(move || persist(&dir, &fence).map_err(drop))
+        .await
+        .unwrap_or(Err(()))
 }
 impl Service {
     pub fn open(
@@ -194,12 +226,9 @@ impl Service {
                 contact: None,
                 poisoned: false,
             })),
+            control: Arc::new(Mutex::new(())),
             preparation: Arc::new(Mutex::new(())),
-            preparation_pool: if role == Role::Router {
-                Some(Arc::new(router_preparation_pool()?))
-            } else {
-                None
-            },
+            preparation_pool: Some(Arc::new(preparation_pool()?)),
             serving_http: serving_http_client()?,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
@@ -256,6 +285,9 @@ impl Service {
             .route("/artifact/:id", get(artifact))
             .route("/public/:id", get(public))
             .route("/evaluate", post(worker_query))
+            .layer(axum::middleware::from_fn(|request, next| {
+                telemetry::observe("worker", request, next)
+            }))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
             .merge(telemetry::routes())
@@ -265,6 +297,9 @@ impl Service {
     pub fn query_routes(&self) -> Router {
         Router::new()
             .route("/v1/status/query", post(router_query))
+            .layer(axum::middleware::from_fn(|request, next| {
+                telemetry::observe("router", request, next)
+            }))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
     }
@@ -325,6 +360,7 @@ async fn fence(
     State(s): State<Service>,
     Json(b): Json<Binding>,
 ) -> Result<Json<Binding>, StatusCode> {
+    let _control = s.control.lock().await;
     let mut state = s.state.lock().await;
     if state.poisoned
         || b.incarnation != s.incarnation
@@ -343,7 +379,7 @@ async fn fence(
         state.contact = None;
         state.fence.epoch = b.epoch;
         state.fence.manifest = None;
-        if persist(&s.dir, &state.fence).is_err() {
+        if persist_off_runtime(&s.dir, &state.fence).await.is_err() {
             state.poisoned = true;
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
@@ -446,18 +482,23 @@ async fn prepare(
                 digest: manifest.rows_digest,
                 evicted_blocks: 0,
             };
-            let (mut g, _) = Generation::prepare_worker(
-                &snapshot,
-                manifest.generation,
-                manifest.recovery_epoch,
-                manifest.observed_ms,
-                previous.as_deref(),
-                if cuda {
-                    MatvecBackend::Cuda { device: 0 }
-                } else {
-                    MatvecBackend::Cpu
-                },
-            )?;
+            let (mut g, _) = preparation_pool
+                .as_ref()
+                .ok_or(Error::Unavailable)?
+                .install(|| {
+                    Generation::prepare_worker(
+                        &snapshot,
+                        manifest.generation,
+                        manifest.recovery_epoch,
+                        manifest.observed_ms,
+                        previous.as_deref(),
+                        if cuda {
+                            MatvecBackend::Cuda { device: 0 }
+                        } else {
+                            MatvecBackend::Cpu
+                        },
+                    )
+                })?;
             g.manifest = manifest;
             Ok(g)
         }
@@ -488,10 +529,11 @@ async fn prepare(
         source_age_ms = now_ms().saturating_sub(g.manifest.observed_ms),
         "Status role preparation"
     );
+    let _control = s.control.lock().await;
     let mut state = s.state.lock().await;
     // Cached calculations are never authority. They may survive a fence, but
     // all serving requires a new matching prepare/activation decision.
-    state.preparation_cache = Some(Arc::new(g.clone()));
+    release_off_runtime(state.preparation_cache.replace(Arc::new(g.clone())));
     s.check(&state, &p.binding)?;
     g.manifest
         .fresh(now_ms())
@@ -501,9 +543,15 @@ async fn prepare(
         manifest: g.manifest.clone(),
         artifact_digest: digest,
     };
-    state.candidate = Some((g, digest));
-    state.candidate_artifact = artifact;
+    release_off_runtime(state.candidate.replace((g, digest)));
+    release_off_runtime(std::mem::replace(&mut state.candidate_artifact, artifact));
     Ok(Json(ready))
+}
+/// Free replaced generations and artifacts on a blocking thread. Queries wait
+/// on the role state and views locks, and freeing a generation's material while
+/// holding them stalled the router's query path for hundreds of milliseconds.
+fn release_off_runtime<T: Send + 'static>(value: T) {
+    tokio::task::spawn_blocking(move || drop(value));
 }
 /// Reaffirm only identical content and coverage; the coordinator must have
 /// completed a fresh identical source observation. This never rebuilds material.
@@ -515,6 +563,7 @@ async fn prepare_refresh(
         .preparation
         .try_lock()
         .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+    let _control = s.control.lock().await;
     let mut state = s.state.lock().await;
     s.check(&state, &a.binding)?;
     a.manifest
@@ -536,8 +585,8 @@ async fn prepare_refresh(
     }
     let mut g = (*previous).clone();
     g.manifest = a.manifest.clone();
-    state.candidate = Some((g, a.manifest.public_digest));
-    state.candidate_artifact = None;
+    release_off_runtime(state.candidate.replace((g, a.manifest.public_digest)));
+    release_off_runtime(state.candidate_artifact.take());
     Ok(Json(Ready {
         binding: a.binding,
         manifest: a.manifest.clone(),
@@ -549,45 +598,66 @@ async fn activate(
     State(s): State<Service>,
     Json(a): Json<Activate>,
 ) -> Result<Json<Ready>, StatusCode> {
-    let mut state = s.state.lock().await;
-    s.check(&state, &a.binding)?;
-    a.manifest
-        .fresh(now_ms())
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    if let Some(c) = &state.controller {
-        if c.current().manifest == a.manifest {
-            return Ok(Json(Ready {
-                binding: a.binding,
-                manifest: a.manifest.clone(),
-                artifact_digest: a.manifest.public_digest,
-            }));
+    // Holding `control` keeps the fence and candidate unchanged while the new
+    // fence is persisted, so queries keep serving the current generation
+    // instead of waiting on the fsync behind the `state` lock.
+    let _control = s.control.lock().await;
+    let next = {
+        let state = s.state.lock().await;
+        s.check(&state, &a.binding)?;
+        a.manifest
+            .fresh(now_ms())
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        if let Some(c) = &state.controller {
+            if c.current().manifest == a.manifest {
+                return Ok(Json(Ready {
+                    binding: a.binding,
+                    manifest: a.manifest.clone(),
+                    artifact_digest: a.manifest.public_digest,
+                }));
+            }
         }
-    }
-    let (candidate, _) = state.candidate.as_ref().ok_or(StatusCode::CONFLICT)?;
-    let mut expected = candidate.manifest.clone();
-    // The worker binds the router's public digest only at the durable activation decision.
-    if s.role == Role::Worker {
-        expected.public_digest = a.manifest.public_digest;
-    }
-    if expected != a.manifest || a.manifest.generation <= state.fence.generation {
-        return Err(StatusCode::CONFLICT);
-    }
-    let mut next = state.fence.clone();
-    next.generation = a.manifest.generation;
-    next.manifest = Some(a.manifest.id());
-    if persist(&s.dir, &next).is_err() {
+        let (candidate, _) = state.candidate.as_ref().ok_or(StatusCode::CONFLICT)?;
+        let mut expected = candidate.manifest.clone();
+        // The worker binds the router's public digest only at the durable activation decision.
+        if s.role == Role::Worker {
+            expected.public_digest = a.manifest.public_digest;
+        }
+        if expected != a.manifest || a.manifest.generation <= state.fence.generation {
+            return Err(StatusCode::CONFLICT);
+        }
+        let mut next = state.fence.clone();
+        next.generation = a.manifest.generation;
+        next.manifest = Some(a.manifest.id());
+        next
+    };
+    let persisted = persist_off_runtime(&s.dir, &next).await;
+    let mut state = s.state.lock().await;
+    if persisted.is_err() {
         if let Some(c) = &state.controller {
             c.revoke();
         }
         state.poisoned = true;
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+    // Every handler that changes the fence or candidate holds `control`, so the
+    // state validated above cannot have moved; refuse rather than assume.
+    if state.fence.epoch != next.epoch
+        || state.fence.generation >= next.generation
+        || state.candidate.is_none()
+    {
+        state.poisoned = true;
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
     state.poisoned = true;
     let (mut candidate, _) = state.candidate.take().unwrap();
-    state.candidate_artifact = None;
+    release_off_runtime(state.candidate_artifact.take());
     candidate.manifest = a.manifest.clone();
     if let Some(c) = &state.controller {
-        c.activate(candidate).map_err(|_| StatusCode::CONFLICT)?;
+        release_off_runtime(
+            c.activate_deferring_release(candidate)
+                .map_err(|_| StatusCode::CONFLICT)?,
+        );
     } else {
         state.controller = Some(Controller::new(candidate));
     }
@@ -621,29 +691,35 @@ async fn heartbeat(
     state.contact = Some(Instant::now());
     Ok(Json(a.binding))
 }
-async fn artifact(State(s): State<Service>, Path(id): Path<String>) -> Result<Vec<u8>, StatusCode> {
+async fn artifact(State(s): State<Service>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
     if s.role != Role::Worker {
         return Err(StatusCode::NOT_FOUND);
     }
-    let state = s.state.lock().await;
-    let (_, digest) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    if hex::encode(digest) != id || state.poisoned {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(state
-        .candidate_artifact
-        .as_ref()
-        .ok_or(StatusCode::NOT_FOUND)?
-        .as_ref()
-        .clone())
+    let shared = {
+        let state = s.state.lock().await;
+        let (_, digest) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+        if hex::encode(digest) != id || state.poisoned {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        state
+            .candidate_artifact
+            .clone()
+            .ok_or(StatusCode::NOT_FOUND)?
+    };
+    // Copying ~100 MB while holding the role state lock stalled every query
+    // waiting on that lock; serve the shared bytes after releasing it.
+    Ok(shared_bytes(shared))
 }
-async fn public(State(s): State<Service>, Path(id): Path<String>) -> Result<Vec<u8>, StatusCode> {
-    let state = s.state.lock().await;
-    let (g, _) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    if s.role != Role::Router || hex::encode(g.manifest.public_digest) != id || state.poisoned {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(g.public.as_ref().clone())
+async fn public(State(s): State<Service>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
+    let shared = {
+        let state = s.state.lock().await;
+        let (g, _) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+        if s.role != Role::Router || hex::encode(g.manifest.public_digest) != id || state.poisoned {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        g.public.clone()
+    };
+    Ok(shared_bytes(shared))
 }
 async fn worker_query(State(s): State<Service>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     if s.role != Role::Worker {
@@ -726,6 +802,65 @@ mod tests {
             binding
         );
         binding
+    }
+    #[tokio::test]
+    async fn distributed_http_telemetry_counts_rejected_queries_on_both_listener_layouts() {
+        use axum::{
+            body::{to_bytes, Body},
+            http::Request,
+        };
+        use tower::ServiceExt;
+        for role in [Role::Router, Role::Worker] {
+            let dir = tempfile::tempdir().unwrap();
+            let service = open(role, dir.path());
+            let (path, operation) = if role == Role::Router {
+                ("/v1/status/query", "router_query")
+            } else {
+                ("/evaluate", "worker_evaluate")
+            };
+            for split in [false, true] {
+                let routes = if !split {
+                    service.routes()
+                } else if role == Role::Router {
+                    service.query_routes()
+                } else {
+                    service.control_routes()
+                };
+                let response = routes
+                    .oneshot(Request::post(path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+                let response = service
+                    .control_routes()
+                    .oneshot(
+                        Request::get("/internal/status-apm")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let value: serde_json::Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap())
+                        .unwrap();
+                assert_eq!(value["http_observation_version"], 1);
+                assert!(!value["http_instance"].as_str().unwrap().is_empty());
+                assert!(
+                    value["operations"][operation]["server_errors"]
+                        .as_u64()
+                        .unwrap()
+                        >= 1
+                );
+                assert!(value["operations"][operation]["failures"].as_u64().unwrap() >= 1);
+                assert_eq!(
+                    value["operations"][operation]["buckets"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    12
+                );
+            }
+        }
     }
     #[test]
     fn private_peers_reject_external_or_credentialed_origins() {
@@ -962,14 +1097,28 @@ mod tests {
             .is_err());
     }
     #[test]
-    fn router_preparation_rejects_unbounded_threads() {
-        assert!(build_router_preparation_pool(0).is_err());
-        assert!(build_router_preparation_pool(5).is_err());
+    fn preparation_rejects_unbounded_threads() {
+        assert!(build_preparation_pool(0).is_err());
+        assert!(build_preparation_pool(9).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn preparation_threads_run_below_query_priority() {
+        let pool = build_preparation_pool(2).unwrap();
+        let nice = pool.install(|| {
+            // SAFETY: getpriority on the calling thread's own tid touches no memory.
+            unsafe {
+                let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+                libc::getpriority(libc::PRIO_PROCESS, tid)
+            }
+        });
+        assert_eq!(nice, PREPARATION_NICE);
     }
 
     #[test]
-    fn router_preparation_uses_its_own_bounded_pool() {
-        let pool = build_router_preparation_pool(2).unwrap();
+    fn preparation_uses_its_own_bounded_pool() {
+        let pool = build_preparation_pool(2).unwrap();
         pool.install(|| {
             assert_eq!(rayon::current_num_threads(), 2);
             (0..16).into_par_iter().for_each(|_| {

@@ -1,0 +1,2 @@
+== step: 1 concurrent clients for 10m
+   50 syncs, 50 completed, 50 exact, 0 failed; 0.15 completed/s; error rate 0.000; 503 rate 0.000; worst p99 24.8s

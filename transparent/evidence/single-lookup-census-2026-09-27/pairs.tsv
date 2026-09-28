@@ -1,0 +1,10 @@
+class	clients	sealed_pairs_per_client	tail_pairs_per_client	tail_fraction	matched_shards_per_client
+catch-up-1d	120	1.350	1.367	0.503	1.808
+catch-up-30d	120	2.225	0.108	0.046	1.808
+catch-up-7d	120	1.925	0.225	0.105	1.217
+multi-script	120	52.525	0.600	0.011	13.258
+restore-6m	120	5.892	0.042	0.007	4.925
+restore-old	120	0.233	0.008	0.034	0.242
+reused-tail	120	6.408	0.517	0.075	6.925
+small-active	120	1.108	0.000	0.000	1.108
+unused	120	0.000	0.000	0.000	0.000

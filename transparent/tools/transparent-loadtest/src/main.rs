@@ -29,7 +29,9 @@ use transparent_filter::ShardMap;
 use transparent_wallet::client::Table;
 use transparent_wallet::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
 use transparent_wallet::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
+use transparent_wallet::transport::{
+    BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
+};
 use transparent_wallet::{
     sync_into, Completion, IncompleteReason, MemoryStore, ServiceGeometry, StaticChain,
     StaticScripts, WorkLimits,
@@ -73,6 +75,17 @@ struct Args {
     /// million events then holds a step for hours.
     #[arg(long)]
     max_queries: Option<u64>,
+    /// Attempts per HTTP call for transient gateway, upload and connection
+    /// failures (1–3), as the wallet's transport offers. One keeps runs
+    /// comparable with earlier evidence; overload refusals keep the wallet's
+    /// own policy either way.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
+    http_attempts: u8,
+    /// Shard service requests one sync keeps in flight across matched shards;
+    /// 1 walks every request in sequence. A sync with --max-queries always
+    /// walks in sequence.
+    #[arg(long, default_value_t = transparent_wallet::http::SHARD_REQUEST_CONCURRENCY)]
+    shard_concurrency: usize,
     /// Only these classes, comma separated.
     #[arg(long, value_delimiter = ',')]
     classes: Option<Vec<String>>,
@@ -229,6 +242,33 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         );
         result
     }
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+    fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
+        // Each request that was sent is counted under its own stage, as if it
+        // had been made alone, so calls, bytes and refusals per stage match
+        // the sequential walk; the overlapped wall time is its own stage.
+        let started = Instant::now();
+        let replies = self.inner.batch(requests);
+        let elapsed = started.elapsed();
+        for (request, reply) in requests.iter().zip(&replies) {
+            let Some(reply) = reply else {
+                continue;
+            };
+            self.record(
+                request.stage(),
+                request.upload(),
+                sized(reply),
+                Duration::ZERO,
+            );
+        }
+        let mut stages = self.stages.lock().unwrap();
+        let entry = stages.entry("shards_batch").or_default();
+        entry.calls += 1;
+        entry.micros += elapsed.as_micros() as u64;
+        replies
+    }
 }
 
 struct CountingFilters<F> {
@@ -249,6 +289,16 @@ impl<F: FilterSource> FilterSource for CountingFilters<F> {
             Err(_) => entry.failures += 1,
         }
         result
+    }
+    fn prefetch(&mut self, shard_ids: &[u64]) {
+        // Bytes are charged when each filter is handed out; the overlapped
+        // wall time is its own stage.
+        let started = Instant::now();
+        self.inner.prefetch(shard_ids);
+        let mut stages = self.stages.lock().unwrap();
+        let entry = stages.entry("filters_prefetch").or_default();
+        entry.calls += 1;
+        entry.micros += started.elapsed().as_micros() as u64;
     }
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
         let started = Instant::now();
@@ -276,6 +326,32 @@ struct Outcome {
     failed: Option<String>,
     stages: BTreeMap<&'static str, StageTotals>,
     events: u64,
+}
+
+impl Outcome {
+    /// A sync that ended on an error, or stopped short because the service
+    /// stayed overloaded: one a real wallet would retry later.
+    fn refused(&self) -> bool {
+        self.failed.is_some()
+            || self
+                .incomplete
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("overloaded"))
+    }
+}
+
+/// The wait before a client resubmits after `failures` refused syncs in a
+/// row: half a second, doubled per failure up to 16 s, jittered.
+///
+/// Resubmitting at once is what kept the 2026-09-27 bench fleet's router
+/// refusing: 128 clients recorded about 28,000 failed syncs in ten minutes,
+/// each one more request against a pool that had none to spare.
+fn resubmit_backoff(failures: u32) -> Duration {
+    transparent_wallet::backoff::exponential(
+        Duration::from_millis(500),
+        failures,
+        Duration::from_secs(16),
+    )
 }
 
 /// Digest of the events a store holds, matching the sampler's rule.
@@ -311,6 +387,7 @@ fn run_client(
     map: &ShardMap,
     map_bytes: u64,
     geometry: &ServiceGeometry,
+    target: &transparent_wallet::Anchor,
     index: usize,
 ) -> Outcome {
     let started = Instant::now();
@@ -330,7 +407,10 @@ fn run_client(
             required_from: spec.required_from,
         })
         .collect();
-    let chain = StaticChain::from_map(map);
+    let mut chain = StaticChain::from_map(map);
+    // A pinned target below the tip is the sample's anchor, which the sample
+    // names by hash; the wallet must accept it as its own chain view would.
+    chain.hashes.insert(target.height, target.hash.clone());
     let filter_url = args
         .filter_url
         .clone()
@@ -342,15 +422,19 @@ fn run_client(
     let attempt = || -> anyhow::Result<(Option<String>, String, u64)> {
         let mut transport = Counting {
             inner: HttpShardTransport::new(&args.shard_url, &options)
-                .map_err(|e| anyhow::anyhow!(e))?,
+                .map_err(|e| anyhow::anyhow!(e))?
+                .with_transient_retry_attempts(args.http_attempts as usize)
+                .with_concurrency(args.shard_concurrency),
             stages: stages.clone(),
         };
         let mut filters = CountingFilters {
-            inner: HttpFilterSource::new(&filter_url, &options).map_err(|e| anyhow::anyhow!(e))?,
+            inner: HttpFilterSource::new(&filter_url, &options)
+                .map_err(|e| anyhow::anyhow!(e))?
+                .with_transient_retry_attempts(args.http_attempts as usize),
             stages: stages.clone(),
         };
         let mut provider = StaticScripts(scripts.clone());
-        let anchor = map.shards.last().map(|e| e.end_height).unwrap_or(0);
+        let anchor = target.height;
         let report = match &args.store_dir {
             Some(dir) => {
                 let path = dir.join(format!("client-{index}.sqlite"));
@@ -366,10 +450,7 @@ fn run_client(
                     &mut filters,
                     &mut transport,
                     &limits,
-                    &transparent_wallet::Anchor {
-                        height: map.shards.last().unwrap().end_height,
-                        hash: map.shards.last().unwrap().terminal_block_hash.clone(),
-                    },
+                    target,
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 let _ = std::fs::remove_file(&path);
@@ -387,10 +468,7 @@ fn run_client(
                     &mut filters,
                     &mut transport,
                     &limits,
-                    &transparent_wallet::Anchor {
-                        height: map.shards.last().unwrap().end_height,
-                        hash: map.shards.last().unwrap().terminal_block_hash.clone(),
-                    },
+                    target,
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 (incomplete_reason(&report.completion), digest, events)
@@ -611,14 +689,21 @@ async fn legacy_main() -> anyhow::Result<()> {
         .last()
         .context("the map names no shards")?
         .clone();
-    // The sample's expectations are about one set: refuse any other.
+    // The sample's expectations are about one chain up to its anchor. A served
+    // set at exactly that anchor is checked as it always was. A continuously
+    // published set whose tip has moved past it is qualified by syncing every
+    // wallet to the sample's anchor instead of the tip: the wallet discards
+    // events above its target, so the sample's digests still apply exactly.
+    // That needs the anchor's hash, and the set's coverage must reach it.
+    let pinned = tip.end_height > sample.anchor_height && sample.anchor_hash.is_some();
     if map.genesis_hash != sample.genesis_hash
         || map.start_height != sample.start_height
-        || tip.end_height != sample.anchor_height
-        || sample
-            .anchor_hash
-            .as_deref()
-            .is_some_and(|h| h != tip.terminal_block_hash)
+        || (tip.end_height != sample.anchor_height && !pinned)
+        || (!pinned
+            && sample
+                .anchor_hash
+                .as_deref()
+                .is_some_and(|h| h != tip.terminal_block_hash))
     {
         bail!(
             "the served set (genesis {}, {}-{}, tip {}) is not the sample's (genesis {}, {}-{}, tip {:?})",
@@ -639,8 +724,29 @@ async fn legacy_main() -> anyhow::Result<()> {
     if clients.is_empty() {
         bail!("no clients selected");
     }
+    let target = if pinned {
+        transparent_wallet::Anchor {
+            height: sample.anchor_height,
+            hash: sample
+                .anchor_hash
+                .clone()
+                .expect("pinned requires the anchor hash"),
+        }
+    } else {
+        transparent_wallet::Anchor {
+            height: tip.end_height,
+            hash: tip.terminal_block_hash.clone(),
+        }
+    };
+    if pinned {
+        eprintln!(
+            "served tip {} is past the sample anchor {}; syncing every wallet to the sample anchor",
+            tip.end_height, sample.anchor_height
+        );
+    }
     let map = Arc::new(map);
     let geometry = Arc::new(geometry);
+    let target = Arc::new(target);
     let args = Arc::new(args);
 
     let mut steps_out = Vec::new();
@@ -658,25 +764,31 @@ async fn legacy_main() -> anyhow::Result<()> {
         let deadline = Instant::now() + *args.step_duration;
         let stats: Arc<Mutex<BTreeMap<String, ClassStats>>> = Arc::new(Mutex::new(BTreeMap::new()));
         let completed_total = Arc::new(AtomicU64::new(0));
+        let backoff_millis = Arc::new(AtomicU64::new(0));
         let mut workers = Vec::new();
         for worker in 0..concurrency {
             let args = args.clone();
             let clients = clients.clone();
             let map = map.clone();
+            let target = target.clone();
             let geometry = geometry.clone();
             let next = next.clone();
             let stats = stats.clone();
             let completed_total = completed_total.clone();
+            let backoff_millis = backoff_millis.clone();
             workers.push(tokio::task::spawn_blocking(move || {
                 // Spread the start so the step does not open every connection
                 // in one instant.
                 std::thread::sleep(Duration::from_millis((worker as u64 * 37) % 1_000));
+                let mut failures = 0u32;
                 while Instant::now() < deadline {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let spec = &clients
                         [(index.wrapping_mul(2_654_435_761) ^ args.seed as usize) % clients.len()];
-                    let outcome = run_client(&args, spec, &map, map_bytes, &geometry, index);
+                    let outcome =
+                        run_client(&args, spec, &map, map_bytes, &geometry, &target, index);
                     completed_total.fetch_add(1, Ordering::Relaxed);
+                    failures = if outcome.refused() { failures + 1 } else { 0 };
                     stats
                         .lock()
                         .unwrap()
@@ -699,6 +811,13 @@ async fn legacy_main() -> anyhow::Result<()> {
                     };
                     if enough {
                         break;
+                    }
+                    // A wallet whose sync failed comes back later, not at once.
+                    if failures > 0 {
+                        let wait = resubmit_backoff(failures)
+                            .min(deadline.saturating_duration_since(Instant::now()));
+                        backoff_millis.fetch_add(wait.as_millis() as u64, Ordering::Relaxed);
+                        std::thread::sleep(wait);
                     }
                 }
             }));
@@ -755,6 +874,7 @@ async fn legacy_main() -> anyhow::Result<()> {
             "error_rate": error_rate,
             "http_503_rate": rate_503,
             "worst_p99_sync_seconds": worst_p99,
+            "resubmit_backoff_seconds": backoff_millis.load(Ordering::Relaxed) as f64 / 1e3,
             "classes": stats.iter().map(|(class, s)| (class.clone(), s.json())).collect::<serde_json::Map<_, _>>(),
             "metrics_before": metrics_before,
             "metrics_after": metrics_after,
@@ -839,6 +959,17 @@ fn write_report(
     started_all: Instant,
     in_progress: bool,
 ) -> anyhow::Result<()> {
+    // The same rule the run used: past the sample's anchor, wallets were
+    // synced to it rather than to the tip.
+    let pinned = tip.end_height > sample.anchor_height && sample.anchor_hash.is_some();
+    let (target_height, target_hash) = if pinned {
+        (
+            sample.anchor_height,
+            sample.anchor_hash.clone().unwrap_or_default(),
+        )
+    } else {
+        (tip.end_height, tip.terminal_block_hash.clone())
+    };
     let report = serde_json::json!({
         "schema": "transparent-loadtest-v1",
         "run_id": args.run_id,
@@ -855,6 +986,9 @@ fn write_report(
             "start_height": map.start_height,
             "anchor_height": tip.end_height,
             "anchor_hash": tip.terminal_block_hash,
+            "target_height": target_height,
+            "target_hash": target_hash,
+            "pinned_to_sample_anchor": pinned,
             "cutoff_height": sample.cutoff_height,
             "max_queries_per_sync": args.max_queries,
             "shards": map.shards.len(),
@@ -872,6 +1006,7 @@ fn write_report(
             "TLS handshake and connection bytes are not measured; byte figures are wallet-level payloads as the wallet charges them",
             "clients are synthetic groupings of public scripts, not a user population",
             "a step ends early once every class reached min_completed_per_class; rates are computed over the step's actual duration",
+            "a client whose sync failed or stopped overloaded waits a jittered exponential backoff (0.5 s doubling to 16 s) before its next sync; resubmit_backoff_seconds sums those waits per step",
             "a sync that stopped only for unresolved spends counts as completed: synthetic wallets begin with an empty store inside their history, so older receives are absent by construction; the count is reported per class",
         ],
     });

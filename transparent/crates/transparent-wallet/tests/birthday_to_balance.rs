@@ -399,29 +399,45 @@ fn the_ledger_replays_identically_from_shards_and_from_a_direct_traversal() {
                     transparent_shard::DIRECTORY_ROW_BYTES,
                 ))
                 .unwrap();
+                let salt =
+                    transparent_shard::tag_salt(entry.shard_id, &hash_at(entry.end_height), 0);
+                let wanted = transparent_shard::script_tag(&salt, want.as_slice());
                 for found in decoded {
-                    if found.script != want.as_slice() {
+                    if found.tag != wanted {
                         continue;
                     }
                     for event in &found.inline {
-                        events.push((found.script.clone(), *event));
+                        events.push((want.as_slice().to_vec(), *event));
                     }
-                    for ordinal in 0..found.page_count {
+                    let Some(base) = found.page_base() else {
+                        continue;
+                    };
+                    let first = transparent_shard::decode_page_row(published.row(
+                        entry.shard_id,
+                        "pages",
+                        u64::from(base),
+                        transparent_shard::PAGE_ROW_BYTES,
+                    ))
+                    .unwrap()
+                    .into_iter()
+                    .find(|e| e.tag == wanted && e.ordinal == 0)
+                    .expect("a located row holds the fragment that named it");
+                    for ordinal in 0..first.fragment_count {
                         // A packed row carries several scripts; take the one
-                        // fragment that claims this script and ordinal.
+                        // fragment that claims this tag and ordinal.
                         let row = transparent_shard::decode_page_row(published.row(
                             entry.shard_id,
                             "pages",
-                            (found.first_page + ordinal) as u64,
+                            u64::from(base) + u64::from(ordinal),
                             transparent_shard::PAGE_ROW_BYTES,
                         ))
                         .unwrap();
                         let fragment = row
                             .into_iter()
-                            .find(|e| e.script == found.script && e.ordinal == ordinal)
+                            .find(|e| e.tag == wanted && e.ordinal == ordinal)
                             .expect("a located row holds the fragment that named it");
                         for event in fragment.events {
-                            events.push((found.script.clone(), event));
+                            events.push((want.as_slice().to_vec(), event));
                         }
                     }
                 }

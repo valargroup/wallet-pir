@@ -260,6 +260,23 @@ impl Coordinator {
                 &packing_budget,
             )?);
         }
+        // A restart must not make publication health "unknown" until the next
+        // block: the newest snapshot file is written atomically at publication,
+        // so its modification time is the last successful advancement.
+        let restored_advancement = store
+            .state()
+            .published
+            .iter()
+            .map(|m| m.generation)
+            .max()
+            .and_then(|generation| {
+                fs::metadata(root.join("snapshots").join(format!("{generation}.json"))).ok()
+            })
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|at| at.as_secs());
+        let mut telemetry = super::telemetry::Publication::default();
+        telemetry.last_advancement_unix_seconds = restored_advancement;
         Ok(Self {
             packing_budget,
             serving,
@@ -277,7 +294,7 @@ impl Coordinator {
                 .map_err(|e| e.to_string())?,
             root: root.into(),
             blocked: Arc::new(Mutex::new(None)),
-            telemetry: Arc::new(Mutex::new(super::telemetry::Publication::default())),
+            telemetry: Arc::new(Mutex::new(telemetry)),
         })
     }
 
@@ -946,14 +963,32 @@ fn public_read(c: &Coordinator) -> ApiResult<tokio::sync::OwnedSemaphorePermit> 
         .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "overloaded".into()))
 }
 
+/// Publication inserts a generation before its packing routers are activated;
+/// init waits out that short window instead of answering a transient 503.
+const INIT_ACTIVATION_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 async fn init(State(c): State<Coordinator>) -> ApiResult<Json<Manifest>> {
     let _read = public_read(&c)?;
-    let manifest = c.manifest().await;
-    if c.serving.as_ref().is_some_and(|s| {
-        manifest
-            .as_ref()
-            .is_none_or(|m| !s.public_ready(m.generation))
-    }) {
+    let deadline = tokio::time::Instant::now() + INIT_ACTIVATION_WAIT;
+    let manifest = loop {
+        let manifest = c.manifest().await;
+        let unready = c.serving.as_ref().is_some_and(|s| {
+            manifest
+                .as_ref()
+                .is_none_or(|m| !s.public_ready(m.generation))
+        });
+        if !unready || manifest.is_none() {
+            break manifest;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "packing routers not activated".into(),
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    };
+    if c.serving.is_some() && manifest.is_none() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             "packing routers not activated".into(),

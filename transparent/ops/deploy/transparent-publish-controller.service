@@ -17,7 +17,7 @@ MemorySwapMax=0
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=/srv/zakura/transparent-event-data /srv/zakura/transparent-publications /opt/transparent-publisher/state
+ReadWritePaths=/srv/zakura/transparent-event-data-v2 /srv/zakura/transparent-publications /opt/transparent-publisher/state
 ReadOnlyPaths=/opt/transparent-publisher/credentials
 
 [Install]

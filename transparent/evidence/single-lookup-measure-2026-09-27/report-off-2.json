@@ -1,0 +1,1268 @@
+{
+  "client": {
+    "label": "loopback, same host",
+    "store": "memory"
+  },
+  "command": [
+    "/root/wallet-pir-single-lookup/target/release/transparent-loadtest",
+    "--shard-url",
+    "http://127.0.0.1:8601",
+    "--sample",
+    "/root/single-lookup-sample-recent.json",
+    "--classes",
+    "restore-6m,multi-script,catch-up-1d,catch-up-7d,catch-up-30d",
+    "--steps",
+    "1,8,32",
+    "--step-duration",
+    "180s",
+    "--min-completed-per-class",
+    "5",
+    "--timeout",
+    "300s",
+    "--run-id",
+    "single-lookup-off-2",
+    "--host-sku",
+    "roman-ipir-bench-8vcpu",
+    "--client-label",
+    "loopback, same host",
+    "--json-out",
+    "/root/sl-measure/report-off-2.json"
+  ],
+  "filter_url": "http://127.0.0.1:8601",
+  "generated_at_unix": 1790517367,
+  "host": {
+    "region": null,
+    "sku": "roman-ipir-bench-8vcpu"
+  },
+  "in_progress": false,
+  "limitations": [
+    "TLS handshake and connection bytes are not measured; byte figures are wallet-level payloads as the wallet charges them",
+    "clients are synthetic groupings of public scripts, not a user population",
+    "a step ends early once every class reached min_completed_per_class; rates are computed over the step's actual duration",
+    "a sync that stopped only for unresolved spends counts as completed: synthetic wallets begin with an empty store inside their history, so older receives are absent by construction; the count is reported per class"
+  ],
+  "run_id": "single-lookup-off-2",
+  "sample": {
+    "clients": 600,
+    "path": "/root/single-lookup-sample-recent.json",
+    "sha256": "be4eb6c2dd7c46bc1d476dc0210258ff0b1f918ac8f406ee8af54a57d1f998e6"
+  },
+  "schema": "transparent-loadtest-v1",
+  "set": {
+    "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "anchor_height": 3473686,
+    "cutoff_height": 3262749,
+    "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "geometries": [
+      "recent-8k"
+    ],
+    "max_queries_per_sync": null,
+    "network": "main",
+    "profile": "zcash-transparent-range-v1",
+    "schema": "transparent-shard-v7",
+    "shards": 14,
+    "start_height": 3262749
+  },
+  "shard_url": "http://127.0.0.1:8601",
+  "source_sha": null,
+  "steps": [
+    {
+      "classes": {
+        "catch-up-1d": {
+          "completed": 5,
+          "events_recovered": 35,
+          "exact": 5,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 4
+          },
+          "mismatched": 0,
+          "n": 5,
+          "requests": 86,
+          "stages": {
+            "filters": {
+              "bytes_down": 665715,
+              "bytes_up": 0,
+              "calls": 10,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.004236
+            },
+            "manifest": {
+              "bytes_down": 12835,
+              "bytes_up": 0,
+              "calls": 10,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.002625
+            },
+            "query_directory": {
+              "bytes_down": 174624,
+              "bytes_up": 4352272,
+              "calls": 34,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.21928
+            },
+            "query_pages": {
+              "bytes_down": 71904,
+              "bytes_up": 1792112,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.089379
+            },
+            "setup_directory": {
+              "bytes_down": 194340,
+              "bytes_up": 0,
+              "calls": 10,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.002251
+            },
+            "setup_pages": {
+              "bytes_down": 155440,
+              "bytes_up": 0,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.002915
+            }
+          },
+          "sync_seconds": {
+            "max": 0.389,
+            "p50": 0.341,
+            "p95": 0.389,
+            "p99": 0.389
+          }
+        },
+        "catch-up-30d": {
+          "completed": 5,
+          "events_recovered": 82,
+          "exact": 5,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 1
+          },
+          "mismatched": 0,
+          "n": 5,
+          "requests": 77,
+          "stages": {
+            "filters": {
+              "bytes_down": 1693555,
+              "bytes_up": 0,
+              "calls": 20,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.007336
+            },
+            "manifest": {
+              "bytes_down": 14150,
+              "bytes_up": 0,
+              "calls": 11,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.002948
+            },
+            "query_directory": {
+              "bytes_down": 133536,
+              "bytes_up": 3328208,
+              "calls": 26,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.162436
+            },
+            "query_pages": {
+              "bytes_down": 25680,
+              "bytes_up": 640040,
+              "calls": 5,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.031035
+            },
+            "setup_directory": {
+              "bytes_down": 213774,
+              "bytes_up": 0,
+              "calls": 11,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.002448
+            },
+            "setup_pages": {
+              "bytes_down": 77720,
+              "bytes_up": 0,
+              "calls": 4,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.001312
+            }
+          },
+          "sync_seconds": {
+            "max": 0.438,
+            "p50": 0.139,
+            "p95": 0.438,
+            "p99": 0.438
+          }
+        },
+        "catch-up-7d": {
+          "completed": 5,
+          "events_recovered": 18,
+          "exact": 5,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 5,
+          "requests": 46,
+          "stages": {
+            "filters": {
+              "bytes_down": 665715,
+              "bytes_up": 0,
+              "calls": 10,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.004277
+            },
+            "manifest": {
+              "bytes_down": 7715,
+              "bytes_up": 0,
+              "calls": 6,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.002152
+            },
+            "query_directory": {
+              "bytes_down": 102720,
+              "bytes_up": 2560160,
+              "calls": 20,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.133097
+            },
+            "query_pages": {
+              "bytes_down": 10272,
+              "bytes_up": 256016,
+              "calls": 2,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.012444
+            },
+            "setup_directory": {
+              "bytes_down": 116604,
+              "bytes_up": 0,
+              "calls": 6,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.00162
+            },
+            "setup_pages": {
+              "bytes_down": 38860,
+              "bytes_up": 0,
+              "calls": 2,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.000651
+            }
+          },
+          "sync_seconds": {
+            "max": 0.16,
+            "p50": 0.133,
+            "p95": 0.16,
+            "p99": 0.16
+          }
+        },
+        "multi-script": {
+          "completed": 5,
+          "events_recovered": 1317,
+          "exact": 5,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 5
+          },
+          "mismatched": 0,
+          "n": 5,
+          "requests": 896,
+          "stages": {
+            "filters": {
+              "bytes_down": 6466845,
+              "bytes_up": 0,
+              "calls": 70,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.025845
+            },
+            "manifest": {
+              "bytes_down": 85834,
+              "bytes_up": 0,
+              "calls": 67,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.014731
+            },
+            "query_directory": {
+              "bytes_down": 2896704,
+              "bytes_up": 72196512,
+              "calls": 564,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 3.462942
+            },
+            "query_pages": {
+              "bytes_down": 416016,
+              "bytes_up": 10368648,
+              "calls": 81,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.492147
+            },
+            "setup_directory": {
+              "bytes_down": 1302029,
+              "bytes_up": 0,
+              "calls": 67,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.015135
+            },
+            "setup_pages": {
+              "bytes_down": 913178,
+              "bytes_up": 0,
+              "calls": 47,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.015647
+            }
+          },
+          "sync_seconds": {
+            "max": 4.543,
+            "p50": 3.937,
+            "p95": 4.543,
+            "p99": 4.543
+          }
+        },
+        "restore-6m": {
+          "completed": 5,
+          "events_recovered": 74,
+          "exact": 5,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 5,
+          "requests": 192,
+          "stages": {
+            "filters": {
+              "bytes_down": 6466845,
+              "bytes_up": 0,
+              "calls": 70,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.021878
+            },
+            "manifest": {
+              "bytes_down": 32091,
+              "bytes_up": 0,
+              "calls": 25,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.006253
+            },
+            "query_directory": {
+              "bytes_down": 328704,
+              "bytes_up": 8192512,
+              "calls": 64,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.403437
+            },
+            "query_pages": {
+              "bytes_down": 20544,
+              "bytes_up": 512032,
+              "calls": 4,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.025677
+            },
+            "setup_directory": {
+              "bytes_down": 485832,
+              "bytes_up": 0,
+              "calls": 25,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.005542
+            },
+            "setup_pages": {
+              "bytes_down": 77718,
+              "bytes_up": 0,
+              "calls": 4,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.001384
+            }
+          },
+          "sync_seconds": {
+            "max": 0.649,
+            "p50": 0.403,
+            "p95": 0.649,
+            "p99": 0.649
+          }
+        }
+      },
+      "completed": 25,
+      "completed_syncs_per_second": 0.9802125084729143,
+      "concurrency": 1,
+      "duration_seconds": 25.504673511,
+      "error_rate": 0.0,
+      "exact": 25,
+      "failed": 0,
+      "http_503_rate": 0.0,
+      "metrics_after": {},
+      "metrics_before": {},
+      "syncs": 25,
+      "worst_p99_sync_seconds": 4.543
+    },
+    {
+      "classes": {
+        "catch-up-1d": {
+          "completed": 10,
+          "events_recovered": 59,
+          "exact": 10,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 5
+          },
+          "mismatched": 0,
+          "n": 10,
+          "requests": 149,
+          "stages": {
+            "filters": {
+              "bytes_down": 1331430,
+              "bytes_up": 0,
+              "calls": 20,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.068857
+            },
+            "manifest": {
+              "bytes_down": 24390,
+              "bytes_up": 0,
+              "calls": 19,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.038386
+            },
+            "query_directory": {
+              "bytes_down": 308160,
+              "bytes_up": 7680480,
+              "calls": 60,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 2.064106
+            },
+            "query_pages": {
+              "bytes_down": 97584,
+              "bytes_up": 2432152,
+              "calls": 19,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.708323
+            },
+            "setup_directory": {
+              "bytes_down": 369246,
+              "bytes_up": 0,
+              "calls": 19,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.025701
+            },
+            "setup_pages": {
+              "bytes_down": 233160,
+              "bytes_up": 0,
+              "calls": 12,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.024279
+            }
+          },
+          "sync_seconds": {
+            "max": 1.053,
+            "p50": 0.613,
+            "p95": 1.053,
+            "p99": 1.053
+          }
+        },
+        "catch-up-30d": {
+          "completed": 9,
+          "events_recovered": 157,
+          "exact": 9,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 3
+          },
+          "mismatched": 0,
+          "n": 9,
+          "requests": 137,
+          "stages": {
+            "filters": {
+              "bytes_down": 3048399,
+              "bytes_up": 0,
+              "calls": 36,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.085612
+            },
+            "manifest": {
+              "bytes_down": 24439,
+              "bytes_up": 0,
+              "calls": 19,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.042813
+            },
+            "query_directory": {
+              "bytes_down": 246528,
+              "bytes_up": 6144384,
+              "calls": 48,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.756988
+            },
+            "query_pages": {
+              "bytes_down": 41088,
+              "bytes_up": 1024064,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.280618
+            },
+            "setup_directory": {
+              "bytes_down": 369246,
+              "bytes_up": 0,
+              "calls": 19,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.037015
+            },
+            "setup_pages": {
+              "bytes_down": 136010,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.010405
+            }
+          },
+          "sync_seconds": {
+            "max": 1.275,
+            "p50": 0.397,
+            "p95": 1.275,
+            "p99": 1.275
+          }
+        },
+        "catch-up-7d": {
+          "completed": 10,
+          "events_recovered": 73,
+          "exact": 10,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 3
+          },
+          "mismatched": 0,
+          "n": 10,
+          "requests": 100,
+          "stages": {
+            "filters": {
+              "bytes_down": 1331430,
+              "bytes_up": 0,
+              "calls": 20,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.071671
+            },
+            "manifest": {
+              "bytes_down": 15430,
+              "bytes_up": 0,
+              "calls": 12,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.023329
+            },
+            "query_directory": {
+              "bytes_down": 225984,
+              "bytes_up": 5632352,
+              "calls": 44,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.60101
+            },
+            "query_pages": {
+              "bytes_down": 35952,
+              "bytes_up": 896056,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.261898
+            },
+            "setup_directory": {
+              "bytes_down": 233208,
+              "bytes_up": 0,
+              "calls": 12,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.022694
+            },
+            "setup_pages": {
+              "bytes_down": 97150,
+              "bytes_up": 0,
+              "calls": 5,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.006702
+            }
+          },
+          "sync_seconds": {
+            "max": 0.894,
+            "p50": 0.437,
+            "p95": 0.894,
+            "p99": 0.894
+          }
+        },
+        "multi-script": {
+          "completed": 9,
+          "events_recovered": 1940,
+          "exact": 9,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 9
+          },
+          "mismatched": 0,
+          "n": 9,
+          "requests": 1534,
+          "stages": {
+            "filters": {
+              "bytes_down": 11640321,
+              "bytes_up": 0,
+              "calls": 126,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.273966
+            },
+            "manifest": {
+              "bytes_down": 149950,
+              "bytes_up": 0,
+              "calls": 117,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.212656
+            },
+            "query_directory": {
+              "bytes_down": 4951104,
+              "bytes_up": 123399712,
+              "calls": 964,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 30.390466
+            },
+            "query_pages": {
+              "bytes_down": 677952,
+              "bytes_up": 16897056,
+              "calls": 132,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 4.349206
+            },
+            "setup_directory": {
+              "bytes_down": 2273691,
+              "bytes_up": 0,
+              "calls": 117,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.138688
+            },
+            "setup_pages": {
+              "bytes_down": 1515485,
+              "bytes_up": 0,
+              "calls": 78,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.18166
+            }
+          },
+          "sync_seconds": {
+            "max": 13.311,
+            "p50": 10.679,
+            "p95": 13.311,
+            "p99": 13.311
+          }
+        },
+        "restore-6m": {
+          "completed": 10,
+          "events_recovered": 125,
+          "exact": 10,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 10,
+          "requests": 362,
+          "stages": {
+            "filters": {
+              "bytes_down": 12933690,
+              "bytes_up": 0,
+              "calls": 140,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.307112
+            },
+            "manifest": {
+              "bytes_down": 61545,
+              "bytes_up": 0,
+              "calls": 48,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.093642
+            },
+            "query_directory": {
+              "bytes_down": 595776,
+              "bytes_up": 14848928,
+              "calls": 116,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 4.138186
+            },
+            "query_pages": {
+              "bytes_down": 25680,
+              "bytes_up": 640040,
+              "calls": 5,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.14875
+            },
+            "setup_directory": {
+              "bytes_down": 932797,
+              "bytes_up": 0,
+              "calls": 48,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.058393
+            },
+            "setup_pages": {
+              "bytes_down": 97147,
+              "bytes_up": 0,
+              "calls": 5,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.006964
+            }
+          },
+          "sync_seconds": {
+            "max": 1.804,
+            "p50": 1.003,
+            "p95": 1.804,
+            "p99": 1.804
+          }
+        }
+      },
+      "completed": 48,
+      "completed_syncs_per_second": 2.7938621765239526,
+      "concurrency": 8,
+      "duration_seconds": 17.18051821,
+      "error_rate": 0.0,
+      "exact": 48,
+      "failed": 0,
+      "http_503_rate": 0.0,
+      "metrics_after": {},
+      "metrics_before": {},
+      "syncs": 48,
+      "worst_p99_sync_seconds": 13.311
+    },
+    {
+      "classes": {
+        "catch-up-1d": {
+          "completed": 32,
+          "events_recovered": 153,
+          "exact": 32,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 17
+          },
+          "mismatched": 0,
+          "n": 32,
+          "requests": 425,
+          "stages": {
+            "filters": {
+              "bytes_down": 4260576,
+              "bytes_up": 0,
+              "calls": 64,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.199098
+            },
+            "manifest": {
+              "bytes_down": 75744,
+              "bytes_up": 0,
+              "calls": 59,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.12661
+            },
+            "query_directory": {
+              "bytes_down": 893664,
+              "bytes_up": 22273392,
+              "calls": 174,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 50.188906
+            },
+            "query_pages": {
+              "bytes_down": 195168,
+              "bytes_up": 4864304,
+              "calls": 38,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 11.081164
+            },
+            "setup_directory": {
+              "bytes_down": 1146606,
+              "bytes_up": 0,
+              "calls": 59,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.073447
+            },
+            "setup_pages": {
+              "bytes_down": 602330,
+              "bytes_up": 0,
+              "calls": 31,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.078418
+            }
+          },
+          "sync_seconds": {
+            "max": 3.441,
+            "p50": 2.247,
+            "p95": 3.427,
+            "p99": 3.441
+          }
+        },
+        "catch-up-30d": {
+          "completed": 32,
+          "events_recovered": 328,
+          "exact": 32,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 9
+          },
+          "mismatched": 0,
+          "n": 32,
+          "requests": 441,
+          "stages": {
+            "filters": {
+              "bytes_down": 10838752,
+              "bytes_up": 0,
+              "calls": 128,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.39046
+            },
+            "manifest": {
+              "bytes_down": 78472,
+              "bytes_up": 0,
+              "calls": 61,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.140473
+            },
+            "query_directory": {
+              "bytes_down": 811488,
+              "bytes_up": 20225264,
+              "calls": 158,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 46.472041
+            },
+            "query_pages": {
+              "bytes_down": 92448,
+              "bytes_up": 2304144,
+              "calls": 18,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 5.430261
+            },
+            "setup_directory": {
+              "bytes_down": 1185474,
+              "bytes_up": 0,
+              "calls": 61,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.096007
+            },
+            "setup_pages": {
+              "bytes_down": 291450,
+              "bytes_up": 0,
+              "calls": 15,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.038175
+            }
+          },
+          "sync_seconds": {
+            "max": 5.003,
+            "p50": 1.484,
+            "p95": 4.887,
+            "p99": 5.003
+          }
+        },
+        "catch-up-7d": {
+          "completed": 33,
+          "events_recovered": 252,
+          "exact": 33,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 7
+          },
+          "mismatched": 0,
+          "n": 33,
+          "requests": 339,
+          "stages": {
+            "filters": {
+              "bytes_down": 4393719,
+              "bytes_up": 0,
+              "calls": 66,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.189326
+            },
+            "manifest": {
+              "bytes_down": 55271,
+              "bytes_up": 0,
+              "calls": 43,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.129165
+            },
+            "query_directory": {
+              "bytes_down": 760128,
+              "bytes_up": 18945184,
+              "calls": 148,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 42.920767
+            },
+            "query_pages": {
+              "bytes_down": 112992,
+              "bytes_up": 2816176,
+              "calls": 22,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 6.509044
+            },
+            "setup_directory": {
+              "bytes_down": 835662,
+              "bytes_up": 0,
+              "calls": 43,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.050076
+            },
+            "setup_pages": {
+              "bytes_down": 330310,
+              "bytes_up": 0,
+              "calls": 17,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.062966
+            }
+          },
+          "sync_seconds": {
+            "max": 3.267,
+            "p50": 1.504,
+            "p95": 2.873,
+            "p99": 3.267
+          }
+        },
+        "multi-script": {
+          "completed": 32,
+          "events_recovered": 68557,
+          "exact": 32,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 32
+          },
+          "mismatched": 0,
+          "n": 32,
+          "requests": 7312,
+          "stages": {
+            "filters": {
+              "bytes_down": 41387808,
+              "bytes_up": 0,
+              "calls": 448,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.283339
+            },
+            "manifest": {
+              "bytes_down": 554792,
+              "bytes_up": 0,
+              "calls": 433,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.817909
+            },
+            "query_directory": {
+              "bytes_down": 18017088,
+              "bytes_up": 449052064,
+              "calls": 3508,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 861.01911
+            },
+            "query_pages": {
+              "bytes_down": 11288928,
+              "bytes_up": 281361584,
+              "calls": 2198,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 171.475276
+            },
+            "setup_directory": {
+              "bytes_down": 8414606,
+              "bytes_up": 0,
+              "calls": 433,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.463845
+            },
+            "setup_pages": {
+              "bytes_down": 5673337,
+              "bytes_up": 0,
+              "calls": 292,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.642756
+            }
+          },
+          "sync_seconds": {
+            "max": 89.983,
+            "p50": 41.791,
+            "p95": 49.535,
+            "p99": 89.983
+          }
+        },
+        "restore-6m": {
+          "completed": 32,
+          "events_recovered": 492,
+          "exact": 32,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 32,
+          "requests": 1180,
+          "stages": {
+            "filters": {
+              "bytes_down": 41387808,
+              "bytes_up": 0,
+              "calls": 448,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.117819
+            },
+            "manifest": {
+              "bytes_down": 198843,
+              "bytes_up": 0,
+              "calls": 155,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.336049
+            },
+            "query_directory": {
+              "bytes_down": 1869504,
+              "bytes_up": 46594912,
+              "calls": 364,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 108.521939
+            },
+            "query_pages": {
+              "bytes_down": 154080,
+              "bytes_up": 3840240,
+              "calls": 30,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 8.963932
+            },
+            "setup_directory": {
+              "bytes_down": 3012154,
+              "bytes_up": 0,
+              "calls": 155,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.183793
+            },
+            "setup_pages": {
+              "bytes_down": 544016,
+              "bytes_up": 0,
+              "calls": 28,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.046091
+            }
+          },
+          "sync_seconds": {
+            "max": 7.027,
+            "p50": 4.119,
+            "p95": 5.987,
+            "p99": 7.027
+          }
+        }
+      },
+      "completed": 161,
+      "completed_syncs_per_second": 1.5253699641486953,
+      "concurrency": 32,
+      "duration_seconds": 105.548164566,
+      "error_rate": 0.0,
+      "exact": 161,
+      "failed": 0,
+      "http_503_rate": 0.0,
+      "metrics_after": {},
+      "metrics_before": {},
+      "syncs": 161,
+      "worst_p99_sync_seconds": 89.983
+    }
+  ],
+  "stop_reason": "throughput fell to 1.53/s from 2.79/s",
+  "stopped_at_concurrency": 32,
+  "total_seconds": 148.261263535
+}

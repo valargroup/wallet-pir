@@ -9,6 +9,7 @@ members = [
     "transparent/crates/transparent-events",
     "transparent/crates/transparent-blocks",
     "transparent/crates/transparent-filter",
+    "transparent/crates/transparent-native",
     "transparent/crates/transparent-shard",
     "transparent/crates/transparent-wallet",
     "transparent/crates/transparent-wallet-store",
@@ -25,7 +26,12 @@ members = [
     "transparent/tools/transparent-regression",
     "transparent/tools/transparent-measure",
 ]
-exclude = ["demos/legacy-spendability", "enhance/crates/transparent-spend-pir"]
+exclude = [
+    "demos/legacy-spendability",
+    "enhance/crates/transparent-spend-pir",
+    # Enables enhance-pir/native-reinspiring; must never unify into this workspace.
+    "transparent/crates/transparent-native/crosscheck",
+]
 
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`
 # computes `zy * cr1 + tmp3 + carry` and relies on it wrapping modulo 2^64. That

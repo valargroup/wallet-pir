@@ -681,6 +681,12 @@ impl Controller {
         self.resolve(body[4..36].try_into().unwrap())
     }
     pub fn activate(&self, g: Generation) -> Result<(), Error> {
+        self.activate_deferring_release(g).map(drop)
+    }
+    /// Activate like [`Self::activate`], but return the generations it evicts
+    /// instead of freeing them under the views lock. Freeing a generation's
+    /// packing material can take long enough to stall every query waiting on it.
+    pub fn activate_deferring_release(&self, g: Generation) -> Result<Vec<Arc<Generation>>, Error> {
         g.manifest.fresh(now_ms())?;
         let mut views = self.views.write().unwrap();
         if g.manifest.generation <= views.active.manifest.generation
@@ -697,12 +703,16 @@ impl Controller {
         // Preserve pins across metadata-only refreshes as well as material
         // changes. `can_prepare` applies backpressure until older pins drain;
         // losing their bookkeeping here would allow unbounded hidden material.
-        views.retained.retain(|old| Arc::strong_count(old) > 1);
+        let (kept, evicted): (Vec<_>, Vec<_>) = views
+            .retained
+            .drain(..)
+            .partition(|old| Arc::strong_count(old) > 1);
+        views.retained = kept;
         // Retain one revoked view as a tombstone so clients receive 410 on
         // epoch changes. `check` rejects it before its material is used.
         views.retained.push(old_active);
         views.active = Arc::new(g);
-        Ok(())
+        Ok(evicted)
     }
     fn check(&self, g: &Generation) -> Result<(), StatusCode> {
         if self.revoked.load(Ordering::SeqCst)
@@ -805,17 +815,24 @@ async fn init(State(s): State<HttpState>) -> Result<Json<Manifest>, StatusCode> 
     s.controller.check(&g)?;
     Ok(Json(g.manifest.clone()))
 }
-async fn session(
-    State(s): State<HttpState>,
-    Path(id): Path<String>,
-) -> Result<Vec<u8>, StatusCode> {
+/// Response body over shared immutable material, without copying it.
+struct SharedBytes(Arc<Vec<u8>>);
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+pub(crate) fn shared_bytes(bytes: Arc<Vec<u8>>) -> Bytes {
+    Bytes::from_owner(SharedBytes(bytes))
+}
+async fn session(State(s): State<HttpState>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
     let id: Hash = hex::decode(id)
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .try_into()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let g = s.controller.resolve(id)?;
     s.controller.check(&g)?;
-    Ok(g.public.as_ref().clone())
+    Ok(shared_bytes(g.public.clone()))
 }
 async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
     if !response.status().is_success() {
@@ -1087,6 +1104,44 @@ mod controller_tests {
         controller.activate(recovered).unwrap();
         let revoked = controller.resolve(third_id).unwrap();
         assert_eq!(controller.check(&revoked), Err(StatusCode::GONE));
+    }
+
+    #[test]
+    fn deferred_activation_hands_back_unpinned_generations_only() {
+        let base = generation();
+        let controller = Controller::new(base.clone());
+        let mut second = base.clone();
+        second.manifest.generation = 2;
+        assert!(controller
+            .activate_deferring_release(second)
+            .unwrap()
+            .is_empty());
+        // Generation 1 is now retained only by the controller, so the next
+        // activation evicts it and returns it to the caller to free.
+        let mut third = base.clone();
+        third.manifest.generation = 3;
+        let evicted = controller.activate_deferring_release(third).unwrap();
+        assert_eq!(
+            evicted
+                .iter()
+                .map(|g| g.manifest.generation)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+        // A generation pinned by an in-flight request is kept, not evicted.
+        let pinned = controller.current();
+        let mut fourth = base.clone();
+        fourth.manifest.generation = 4;
+        assert!(controller
+            .activate_deferring_release(fourth)
+            .unwrap()
+            .iter()
+            .all(|g| g.manifest.generation != 3));
+        let mut fifth = base;
+        fifth.manifest.generation = 5;
+        let evicted = controller.activate_deferring_release(fifth).unwrap();
+        assert!(evicted.iter().all(|g| g.manifest.generation != 3));
+        drop(pinned);
     }
 
     #[test]

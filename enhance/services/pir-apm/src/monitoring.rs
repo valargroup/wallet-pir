@@ -222,6 +222,8 @@ pub struct Policy {
     pub latency_min_samples: f64,
     pub init_latency_seconds: f64,
     pub query_latency_seconds: f64,
+    pub status_init_latency_seconds: f64,
+    pub status_query_latency_seconds: f64,
     pub latency_hold_seconds: u64,
     pub unavailable_seconds: u64,
     pub redundancy_seconds: u64,
@@ -239,6 +241,8 @@ impl Default for Policy {
             latency_min_samples: 20.,
             init_latency_seconds: 2.,
             query_latency_seconds: 5.,
+            status_init_latency_seconds: 2.,
+            status_query_latency_seconds: 5.,
             latency_hold_seconds: 120,
             unavailable_seconds: 30,
             redundancy_seconds: 120,
@@ -262,10 +266,14 @@ impl Policy {
                     p.error_min_requests,
                     p.latency_min_samples,
                     p.init_latency_seconds,
-                    p.query_latency_seconds
+                    p.query_latency_seconds,
+                    p.status_init_latency_seconds,
+                    p.status_query_latency_seconds
                 ]
                 .iter()
                 .all(|v| v.is_finite() && *v > 0.)
+                && p.status_init_latency_seconds <= 5.
+                && p.status_query_latency_seconds <= 5.
                 && p.publication_warning_seconds > 0
                 && p.publication_critical_seconds >= p.publication_warning_seconds
                 && p.publication_warning_blocks > 0
@@ -349,6 +357,65 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             p.latency_hold_seconds,
             sample,
         );
+    }
+    if d.status.configured {
+        for endpoint in ["init", "query"] {
+            let window = d.status.alert_window(endpoint, now);
+            sources.insert(format!("status_{endpoint}"), window.is_some());
+            let sample = epoch(d.status.success);
+            let resource = format!("status_{endpoint}");
+            add(
+                format!("status_{endpoint}_5xx"),
+                resource.clone(),
+                "critical",
+                window.as_ref().map(|w| {
+                    w.completed as f64 >= p.error_min_requests
+                        && w.errors as f64 / (w.completed.max(1) as f64) > p.error_ratio
+                }),
+                window
+                    .as_ref()
+                    .map(|w| format!("{} HTTP 5xx / {} completed requests", w.errors, w.completed))
+                    .unwrap_or_else(|| "unavailable".into()),
+                format!(
+                    "> {}% over 5m; minimum {} completions",
+                    p.error_ratio * 100.,
+                    p.error_min_requests
+                ),
+                0,
+                sample,
+            );
+            let budget = if endpoint == "init" {
+                p.status_init_latency_seconds
+            } else {
+                p.status_query_latency_seconds
+            };
+            add(
+                format!("status_{endpoint}_latency"),
+                resource,
+                "warning",
+                window.as_ref().map(|w| {
+                    w.completed as f64 >= p.latency_min_samples
+                        && w.p99_seconds.is_some_and(|v| v > budget)
+                }),
+                window
+                    .as_ref()
+                    .and_then(|w| w.p99_seconds)
+                    .map(|v| format!("HTTP processing p99 {v:.3}s"))
+                    .unwrap_or_else(|| {
+                        if window.is_some() {
+                            "no completed requests".into()
+                        } else {
+                            "unavailable".into()
+                        }
+                    }),
+                format!(
+                    "p99 > {budget}s, minimum {} completions",
+                    p.latency_min_samples
+                ),
+                p.latency_hold_seconds,
+                sample,
+            );
+        }
     }
     if d.fleet_enabled {
         sources.insert("worker_inventory".into(), d.inventory_error.is_none());
@@ -850,6 +917,90 @@ mod tests {
         d.last_scrape = Some(UNIX_EPOCH + Duration::from_secs(now));
         d.scrape_error = None;
         d
+    }
+    fn status_view(now: u64, errors: u64, slow: bool) -> DashboardData {
+        let mut d = view(now);
+        d.status.configured = true;
+        for (at, count) in [(now - 5, 0), (now, 100)] {
+            let mut buckets = [0u64; 12];
+            buckets[if slow { 11 } else { 2 }] = count;
+            let failures = if count == 0 { 0 } else { errors };
+            let op = serde_json::json!({"arrivals":count,"successes":count-failures,"failures":failures,"server_errors":failures,"buckets":buckets});
+            let sample = serde_json::json!({"http_instances":{"init":"c","query":"r"},"http_operations":{"init":op,"query":op}});
+            let time = UNIX_EPOCH + Duration::from_secs(at);
+            d.status.success = Some(time);
+            d.status.history.push_back((time, sample));
+        }
+        d
+    }
+    #[test]
+    fn status_alerts_fire_hold_and_require_two_fresh_samples_to_recover() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for now in (1000..=1120).step_by(5) {
+            let d = status_view(now, 10, true);
+            let cs: Vec<_> = conditions(&d, now, &Policy::default())
+                .into_iter()
+                .filter(|c| c.key.starts_with("status_"))
+                .collect();
+            assert_eq!(cs.len(), 4);
+            assert!(cs.iter().all(|c| c.firing == Some(true)));
+            store.evaluate(&cs, now, true, "test", "").unwrap();
+            let latency = store
+                .incidents()
+                .unwrap()
+                .into_iter()
+                .find(|i| {
+                    i.condition
+                        .as_ref()
+                        .is_some_and(|c| c.key == "status_query_latency")
+                })
+                .unwrap();
+            assert_eq!(latency.active, now == 1120);
+        }
+        let mut missing = status_view(1125, 0, false);
+        missing.status.error = Some("offline".into());
+        let cs: Vec<_> = conditions(&missing, 1125, &Policy::default())
+            .into_iter()
+            .filter(|c| c.key.starts_with("status_"))
+            .collect();
+        assert!(cs.iter().all(|c| c.firing.is_none()));
+        store.evaluate(&cs, 1125, true, "test", "").unwrap();
+        assert!(store.incidents().unwrap().iter().all(|i| i.active));
+        for now in [1130, 1130, 1135] {
+            let cs: Vec<_> = conditions(&status_view(now, 0, false), now, &Policy::default())
+                .into_iter()
+                .filter(|c| c.key.starts_with("status_"))
+                .collect();
+            store.evaluate(&cs, now, true, "test", "").unwrap();
+            assert!(store
+                .incidents()
+                .unwrap()
+                .iter()
+                .all(|i| i.active == (now != 1135)));
+        }
+    }
+    #[test]
+    fn status_rules_are_opt_in_and_missing_http_metrics_raise_coverage() {
+        assert!(!conditions(&view(100), 100, &Policy::default())
+            .iter()
+            .any(|c| c.key.contains("status_")));
+        let mut d = view(100);
+        d.status.configured = true;
+        let cs = conditions(&d, 100, &Policy::default());
+        assert_eq!(
+            cs.iter()
+                .find(|c| c.key == "status_query_5xx")
+                .unwrap()
+                .firing,
+            None
+        );
+        assert_eq!(
+            cs.iter()
+                .find(|c| c.key == "coverage_status_query_warning")
+                .unwrap()
+                .firing,
+            Some(true)
+        );
     }
     #[test]
     fn ingress_failures_alert_without_coordinator_query_or_bandwidth() {

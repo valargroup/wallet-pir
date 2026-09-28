@@ -42,4 +42,12 @@ they are not current instructions. Follow the [retention rules](../../evidence/R
 
 ## Experiments
 
+The 2026-09-27 six-month architecture review and the entry-layout study that
+followed it are closed. What they produced in source — choice tables, the native
+ReinspiRING profile, schema v9's salted script tags, the v2 filter profile and
+cross-shard request concurrency — is described in [architecture](architecture.md);
+what remains unpublished or unmeasured is tracked in
+[remaining work](remaining-work.md). Their raw measurements keep their own dated
+evidence directories, and the review text itself is in Git history at `b693cfde`.
+
 [Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. The later [production artifact rollout](../evidence/parent-filters-production-2026-09-08/README.md) records HTTPS verification and the bounded production recovery canary.

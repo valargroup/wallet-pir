@@ -21,7 +21,7 @@ on:
       data_dir:
         description: The journal the set was published from, for reconstruction
         required: false
-        default: /srv/zakura/transparent-event-data
+        default: /srv/zakura/transparent-event-data-v2
         type: string
       rebuild:
         description: Shards to rebuild from the journal and compare, sampled by seed; 0 skips reconstruction

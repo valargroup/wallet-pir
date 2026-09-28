@@ -332,7 +332,14 @@ async fn hard_deadline_refusal_and_publication_failure_remain_unsuccessful() {
     let (base, _) = service(dir.path(), Fault::RefuseFilter).await;
     let report = run(dir.path(), &base, "refusal", "wave", 2, 10, false).await;
     assert_eq!(report["summary"]["outcomes"]["failed"], 2);
-    assert_eq!(report["summary"]["stages"]["filters"]["http_503"], 2.0);
+    // At least one refusal per wallet: a bounded filter prefetch may meet the
+    // refusal before the walk's own request does, and stops at the first.
+    assert!(
+        report["summary"]["stages"]["filters"]["http_503"]
+            .as_f64()
+            .unwrap()
+            >= 2.0
+    );
     assert!(
         report["summary"]["stages"]["filters"]["bytes_down"]
             .as_f64()

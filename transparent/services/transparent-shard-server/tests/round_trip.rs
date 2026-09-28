@@ -18,7 +18,7 @@ use transparent_shard::manifest::{
     SCHEMA,
 };
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
-use transparent_shard_server::shardset::{setup_seed, ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
+use transparent_shard_server::shardset::{ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
 
 /// The geometry this fixture publishes at.
 const GEOMETRY: Geometry = RECENT_8K;
@@ -103,6 +103,7 @@ fn publish(dir: &Path) -> ShardMap {
             end_height: end,
             parent_block_hash: hash_at(start - 1).to_display_hex(),
             terminal_block_hash: terminal.to_display_hex(),
+            tag_salt_counter: built.tag_salt_counter,
             parent_manifest_digest: parent_digest.clone(),
             sealed: shard_id + 1 < SHARDS,
             revision: 0,
@@ -149,6 +150,7 @@ fn publish(dir: &Path) -> ShardMap {
                 txids: 0,
                 excluded_scripts: built.excluded_scripts,
             },
+            directory_choice: None,
         };
 
         let digest = manifest.digest();
@@ -279,7 +281,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
         Table::Directory => "directory_scheme",
         Table::Pages => "pages_scheme",
     };
-    let scheme: ipir_sp::YpirSchemeParams =
+    let scheme: transparent_native::NativeScheme =
         serde_json::from_value(published[scheme_key].clone()).unwrap();
 
     let revision = revision_of(f, shard_id);
@@ -301,35 +303,24 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
 
     // Re-derive rather than trust: a client that adopted the server's
     // parameters would decode against whatever geometry the server chose.
-    let (rlwe, expected) = ipir_sp::params_for_simplepir(
+    let profile = transparent_native::TableProfile::new(
+        transparent_shard::manifest::SCHEMA,
+        GEOMETRY.name,
+        table.as_str(),
         table.rows(&GEOMETRY),
-        (table.row_bytes(&GEOMETRY) as u64) * 8,
+        table.row_bytes(&GEOMETRY),
     )
     .unwrap();
     assert_eq!(
-        scheme, expected,
+        scheme, profile.scheme,
         "the served scheme must be the one a client re-derives"
     );
+    assert_eq!(public_params.len(), profile.scheme.public_bytes);
 
-    let mut seed = [0u8; 32];
-    seed[..8].copy_from_slice(&setup_seed(&GEOMETRY, table).to_le_bytes());
-    let client = ipir_sp::IPIRClient::from_profile(
-        table.rows(&GEOMETRY),
-        (table.row_bytes(&GEOMETRY) as u64) * 8,
-        ipir_sp::SimplePirProfile::P14,
-    )
-    .unwrap();
-    let setup_matrix = client.generate_public_query_setup_simplepir_from_seed(seed);
-    let blocks = expected.db_cols / rlwe.d;
-    let published_c1 =
-        ipir_sp::modulus_switch::recover_published_c1(&public_params, rlwe.d, blocks, rlwe.q);
-
-    let (query, packing_keys, query_seed) =
-        client.generate_fresh_query_simplepir(&setup_matrix, row);
+    let (secret, upload) = profile.prepare(row).unwrap();
     let binding = query_binding(&revision, table.as_str());
     let mut body = binding.to_vec();
-    body.extend(ipir_sp::serialize::serialize_packing_keys(&rlwe, &packing_keys).unwrap());
-    body.extend(query.to_switched_bytes(rlwe.q, expected.query_bits));
+    body.extend(upload);
 
     let (status, response) = post(
         &f.state,
@@ -346,12 +337,13 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
     // answer is one body; the multi-segment case has its own test.
     assert_eq!(
         response.len(),
-        16 + ipir_sp::modulus_switch::response_body_len(rlwe.d, expected.q_prime_1) * blocks,
+        16 + profile.scheme.response_bytes,
         "one body per segment"
     );
 
-    let decoded = client.decode_response_simplepir(query_seed, &published_c1, &response[16..]);
-    decoded[..table.row_bytes(&GEOMETRY) as usize].to_vec()
+    profile
+        .decode(&secret, &public_params, &response[16..])
+        .unwrap()
 }
 
 fn raw_row(table_bytes: &[u8], row_bytes: usize, row: usize) -> &[u8] {
@@ -379,15 +371,9 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
 /// A full-length query body for the fixture's geometry, prefixed as `revision`
 /// and `table` require.
 fn padded_body(revision: &str, table: Table) -> Vec<u8> {
-    let (rlwe, scheme) = ipir_sp::params_for_simplepir(
-        table.rows(&GEOMETRY),
-        (table.row_bytes(&GEOMETRY) as u64) * 8,
-    )
-    .unwrap();
     let mut body = query_binding(revision, table.as_str()).to_vec();
     body.resize(
-        8 + ipir_sp::serialize::serialized_packing_keys_len(&rlwe)
-            + (scheme.db_rows * scheme.query_bits).div_ceil(8),
+        8 + transparent_native::request_len(table.rows(&GEOMETRY) as usize),
         0,
     );
     body
@@ -654,6 +640,92 @@ async fn a_full_queue_refuses_retryably_and_a_cancelled_waiter_frees_its_place()
         1
     );
     assert_eq!(depth(), 0);
+}
+
+/// A capacity refusal decided before the body is read still reads the body,
+/// so the connection survives it. A proxy streams the upload while the worker
+/// answers; closing under an unread upload broke the proxy's write, turned
+/// the refusal into a proxy 502 without its delay, and counted against the
+/// worker's health — which on the 2026-09-27 bench fleet ejected every
+/// saturated worker at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_capacity_refusal_reads_the_upload_and_keeps_the_connection() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let dir = tempfile::tempdir().unwrap();
+    publish(dir.path());
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
+    let state = ServiceState::build(
+        set,
+        ServiceConfig {
+            query_slots: 1,
+            max_waiters: 0,
+            ..ServiceConfig::default()
+        },
+    )
+    .expect("state");
+    let revision = state_revision(&state, dir.path(), 0);
+    let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
+    let body = padded_body(&revision, Table::Directory);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+        listener,
+        router(state.clone()),
+    )));
+    // The only slot is busy and there is no waiting place.
+    let _held = state.hold_query_slot().await;
+
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    // Two refused queries and a readiness check, one connection.
+    for _ in 0..2 {
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nhost: worker\r\ncontent-length: {}\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream
+            .write_all(&body)
+            .await
+            .expect("the upload is read in full");
+    }
+    stream
+        .write_all(b"GET /v1/ready HTTP/1.1\r\nhost: worker\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut replies = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        stream.read_to_string(&mut replies),
+    )
+    .await
+    .expect("replies arrive")
+    .unwrap();
+    // Bodies carry no trailing newline, so split on the status lines.
+    let statuses: Vec<&str> = replies
+        .split("HTTP/1.1 ")
+        .skip(1)
+        .map(|reply| reply.lines().next().unwrap())
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            "503 Service Unavailable",
+            "503 Service Unavailable",
+            "200 OK"
+        ],
+        "{replies}"
+    );
+    assert_eq!(replies.matches("retry-after: 1").count(), 2, "{replies}");
+    let metrics = state.metrics();
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.queue_rejections),
+        2
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.refusals_unread),
+        0
+    );
+    server.abort();
 }
 
 /// A request that waits its whole deadline for a slot is refused retryably

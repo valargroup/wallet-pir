@@ -295,13 +295,27 @@ async def main():
     cli.add_argument('--artifacts',type=Path,required=True)
     cli.add_argument('--initial-publication',type=Path,default=Path('/srv/zakura/transparent-shards-v7-full'))
     cli.add_argument('--source-sha',required=True)
+    cli.add_argument('--range-profile',default='zcash-transparent-range-v1',
+                     help='Range-filter profile the controller publishes under (shadow mode); must match the initial publication')
+    cli.add_argument('--recent-geometry',default='recent-8k',
+                     help='Recent geometry the controller publishes (shadow mode); must match the initial publication')
+    cli.add_argument('--data-dir',type=Path,default=Path('/srv/zakura/transparent-event-data-v2'),
+                     help='Event journal the controller publishes from (shadow mode); version 2 since schema v9')
+    cli.add_argument('--directory-choice',choices=['off','sealed','all'],default='off',
+                     help='Which newly built shards publish a directory choice table (shadow mode)')
     args=cli.parse_args()
     if os.geteuid()!=0:
         raise RuntimeError('run on the coordinator as root')
     ROOT.mkdir(exist_ok=True)
     for name in ['credentials','state','rollback']:
         (ROOT/name).mkdir(exist_ok=True,mode=0o700)
+    previous_files={}
     if args.mode=='shadow':
+        # Keep what is running so a failure before any worker changes can put
+        # it back: the credentials the live controller uses and its config.
+        for name in ['credentials/deploy-ssh','credentials/known_hosts','controller.json','fleet.json','roster.json']:
+            if (ROOT/name).exists():
+                previous_files[name]=(ROOT/name).read_bytes()
         # Reuse the environment's existing deployment identity at runtime.
         secret_file(ROOT/'credentials/deploy-ssh',os.environ['WALLET_PIR_DEPLOY_SSH_KEY'])
         secret_file(ROOT/'credentials/known_hosts',os.environ['TRANSPARENT_SSH_KNOWN_HOSTS'])
@@ -310,9 +324,15 @@ async def main():
                           assign_binary='/usr/local/bin/shard-assign',public_host='transparent-pir.valargroup.dev',router_host=os.environ['TRANSPARENT_ROUTER_HOST'],
                           authority_upstream='https://enhance-pir.valargroup.dev',internal_listen=os.environ['TRANSPARENT_ROUTER_HOST']+':8080')
         LIVE.atomic_json(ROOT/'fleet.json',fleet_config)
-        config=dict(data_dir='/srv/zakura/transparent-event-data',publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
-                    recent_from=3262749,recent_geometry='recent-8k',archive_geometry='archive-wide',rpc_url='http://127.0.0.1:8232',rpc_cookie='/root/.cache/zakura/.cookie',
+        config=dict(data_dir=str(args.data_dir),publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
+                    recent_from=3262749,recent_geometry=args.recent_geometry,archive_geometry='archive-wide',rpc_url='http://127.0.0.1:8232',rpc_cookie='/root/.cache/zakura/.cookie',
                     fleet_command=str(ROOT/'transparent-live-fleet.py'),fleet_config=str(ROOT/'fleet.json'),listen='127.0.0.1:8094',source_sha=args.source_sha,shadow=True)
+        # Written only when enabled, so a controller built before the field
+        # (whose config refuses unknown fields) can still read a default config.
+        if args.directory_choice!='off':
+            config['directory_choice']=args.directory_choice
+        if args.range_profile!='zcash-transparent-range-v1':
+            config['range_profile']=args.range_profile
         LIVE.atomic_json(ROOT/'controller.json',config)
     fleet=LIVE.Fleet(json.loads((ROOT/'fleet.json').read_text()))
     saved=ROOT/'rollback'/args.source_sha
@@ -320,9 +340,34 @@ async def main():
         await rollback(fleet,saved)
         return
     if args.mode=='shadow':
+        def restore_previous():
+            for name,data in previous_files.items():
+                atomic_bytes(ROOT/name,data)
+            if (ROOT/'credentials/deploy-ssh').exists():
+                os.chmod(ROOT/'credentials/deploy-ssh',0o600)
+        # Every host must accept the deployment identity before anything
+        # stops: a rotated secret that the fleet does not authorise would
+        # otherwise leave the live controller stopped with credentials that
+        # cannot reach its own workers.
+        hosts=[fleet.c['router_host']]+[w['ssh_host'] for w in fleet.roster]
+        try:
+            for host in hosts:
+                await fleet.ssh(host,'true',multiplex=False)
+        except Exception as error:
+            restore_previous()
+            raise RuntimeError('deployment identity is not accepted by '+host+'; nothing was changed') from error
+        saved.mkdir(parents=True,exist_ok=True)
+        if 'controller.json' in previous_files and not (saved/'controller.previous.json').exists():
+            atomic_bytes(saved/'controller.previous.json',previous_files['controller.json'])
         subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        align_filter_origin(args.initial_publication)
-        await save_baseline(fleet,saved)
+        try:
+            align_filter_origin(args.initial_publication)
+            await save_baseline(fleet,saved)
+        except Exception:
+            # No worker has changed yet: resume the previous controller.
+            restore_previous()
+            subprocess.run(['systemctl','start','transparent-publish-controller'],check=False)
+            raise
         for name in ['transparent-publish-controller','shard-assign']:
             shutil.copy2(args.artifacts/name,'/usr/local/bin/'+name+'.next')
             os.chmod('/usr/local/bin/'+name+'.next',0o755)
@@ -361,7 +406,11 @@ async def main():
         LIVE.atomic_json(ROOT/'controller.json',config)
         route_coordinator()
         execute(['systemctl','restart','transparent-publish-controller'])
-        execute(['systemctl','enable','--now','transparent-replica-reconciler'])
+        execute(['systemctl','enable','transparent-replica-reconciler'])
+        # Restart rather than start: a reconciler that is already running keeps
+        # the fleet code it loaded, and would re-route with the old router
+        # policy after this activation (2026-09-28).
+        execute(['systemctl','restart','transparent-replica-reconciler'])
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
             try:

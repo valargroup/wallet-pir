@@ -22,7 +22,7 @@ on:
       data_dir:
         description: The event journal to publish from
         required: true
-        default: /srv/zakura/transparent-event-data
+        default: /srv/zakura/transparent-event-data-v2
         type: string
       output_dir:
         description: >-
@@ -59,6 +59,15 @@ on:
         required: false
         default: "6"
         type: string
+      format:
+        description: >-
+          Publication format. legacy is the original range profile without
+          directory choice tables; v2 is zcash-transparent-range-v2 with a
+          choice table on every shard. A format change needs a new output_dir.
+        required: false
+        default: legacy
+        type: choice
+        options: [legacy, v2]
       republish:
         description: >-
           Allow output_dir to exist already. Only for republishing a grown tail
@@ -191,6 +200,7 @@ jobs:
           RECENT_FROM: ${{ inputs.recent_from }}
           RECENT: ${{ inputs.recent_geometry }}
           ARCHIVE: ${{ inputs.archive_geometry }}
+          FORMAT: ${{ inputs.format }}
         run: |
           set -euo pipefail
           NICE=(nice -n 19)
@@ -202,6 +212,11 @@ jobs:
           if [[ -n "$RECENT_FROM" ]]; then
             ARGS+=(--archive-geometry "$ARCHIVE" --recent-from "$RECENT_FROM")
           fi
+          case "$FORMAT" in
+            legacy) ;;
+            v2) ARGS+=(--range-profile zcash-transparent-range-v2 --directory-choice all) ;;
+            *) echo "unknown format $FORMAT" >&2; exit 1 ;;
+          esac
           echo "## disk before"; df -h "$(dirname "$OUT")" | tee publication/disk-before.txt
           TIMED=()
           if [[ -x /usr/bin/time ]]; then TIMED=(/usr/bin/time -v -o publication/time.txt); fi

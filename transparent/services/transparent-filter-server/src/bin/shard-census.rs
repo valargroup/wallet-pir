@@ -21,7 +21,9 @@ use transparent_shard::layout::{
     by_name as geometry_by_name, entries_per_row, Geometry, EVENTS_PER_PAGE, PAGE_ROW_BYTES,
     PAGE_ROW_HEADER_BYTES,
 };
-use transparent_shard::seal::{Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer};
+use transparent_shard::seal::{
+    ChoiceMeasure, Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer,
+};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -97,6 +99,20 @@ struct Cli {
     /// and reports how much headroom the fullest row has left.
     #[arg(long)]
     placement: bool,
+    /// Build each shard's single-lookup choice table from its real placement.
+    ///
+    /// Implies `--placement`. Reports the table's encoded size, bits per
+    /// script, seed retries and build time per shard, which is what a wallet
+    /// downloads per matched shard to send one directory query instead of two.
+    #[arg(long)]
+    single_lookup: bool,
+    /// Seal on short histories' packed rows only, as if long histories lived
+    /// in a separate bulk table that does not decide boundaries.
+    ///
+    /// Scores the bulk-isolation design; no builder lays tables out this way.
+    /// Reports the bulk rows each shard would need alongside.
+    #[arg(long, conflicts_with = "unpacked")]
+    bulk_long: bool,
     /// Count how many shards each exact script appears in, spilling sorted runs
     /// under this directory.
     ///
@@ -138,6 +154,14 @@ struct Cli {
     /// answers neither.
     #[arg(long)]
     start_height: Option<u64>,
+    /// Shard id the first sealed shard takes. Defaults to 0.
+    ///
+    /// Placement salts every candidate row with the shard id, so a bounded run
+    /// that should reproduce published shards — the recent tier started from
+    /// its cutoff, say — must number them as the publisher did. Single-tier
+    /// runs only; a two-tier run continues the archive tier's ids.
+    #[arg(long)]
+    first_shard_id: Option<u64>,
     /// Last height to census, inclusive. Defaults to the journal's last.
     ///
     /// Inclusive at both ends, matching the journal's own `covered_through`.
@@ -172,15 +196,16 @@ struct Cli {
 /// Bytes one private row query uploads at this table shape.
 ///
 /// The same formula the server bounds a request with, so a projection here and
-/// a measurement there cannot drift: packing keys, which the row count does not
-/// move, plus a body that it does. Response and published setup follow the row
+/// a measurement there cannot drift: the binding and the native `K_g` packing
+/// key, which the row count does not move, plus a 49-bit selection that it does. Response and published setup follow the row
 /// *width* instead and so are equal across every candidate compared here, which
 /// is why only the query is priced.
 fn query_bytes(rows: u64, row_bytes: usize) -> u64 {
-    let (rlwe, params) = ipir_sp::params_for_simplepir(rows, (row_bytes as u64) * 8)
-        .expect("a validated geometry has parameters");
-    (8 + ipir_sp::serialize::serialized_packing_keys_len(&rlwe)
-        + (params.db_rows * params.query_bits).div_ceil(8)) as u64
+    assert!(
+        row_bytes.is_multiple_of(transparent_native::INSTANCE_BYTES),
+        "a validated geometry has whole instances"
+    );
+    (8 + transparent_native::request_len(rows as usize)) as u64
 }
 
 fn parse_limit(text: &str) -> Result<Limit, BoxError> {
@@ -218,8 +243,9 @@ fn default_policies(geometry: &Geometry) -> Vec<(String, SealPolicy)> {
     let derived = SealPolicy::for_geometry(geometry);
     let capacity = geometry.directory_capacity();
     let mut policies = vec![(format!("{} derived", geometry.name), derived)];
-    // Twenty-eighths of directory capacity: at 114,688 scripts these are
-    // exactly the absolute targets the archived censuses used.
+    // Twenty-eighths of directory capacity: at the v7 layout's 114,688
+    // scripts these were exactly the absolute targets the archived censuses
+    // used (4,096 to 24,576). Later slot counts move them with capacity.
     for numerator in [1u64, 2, 3, 4, 6] {
         let scripts = capacity * numerator / 28;
         if scripts == 0 || scripts >= derived.scripts.target {
@@ -361,6 +387,68 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
         page_pinned as f64 / pinned as f64 * 100.0,
     );
     placement(shards, geometry, dir_segments);
+    single_lookup(shards);
+}
+
+/// What each shard's choice table costs, from its real placement.
+///
+/// Silent unless `--single-lookup` asked for it.
+fn single_lookup(shards: &[SealedShard]) {
+    let measured: Vec<(&SealedShard, &Result<ChoiceMeasure, String>)> = shards
+        .iter()
+        .filter_map(|shard| shard.choice.as_ref().map(|c| (shard, c)))
+        .collect();
+    if measured.is_empty() {
+        return;
+    }
+    println!("  single lookup (choice table built from the real placement)");
+    let mut failed = 0usize;
+    let mut sizes: Vec<u64> = Vec::new();
+    let mut retries = 0u32;
+    let mut slowest = 0u64;
+    for (shard, choice) in &measured {
+        match choice {
+            Ok(choice) => {
+                println!(
+                    "    choice\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}",
+                    shard.shard_id,
+                    if shard.reason.is_some() {
+                        "sealed"
+                    } else {
+                        "tail"
+                    },
+                    choice.keys,
+                    choice.bytes,
+                    choice.bytes as f64 * 8.0 / f64::from(choice.keys.max(1)),
+                    choice.seed,
+                    choice.micros,
+                );
+                sizes.push(choice.bytes);
+                retries += choice.seed;
+                slowest = slowest.max(choice.micros);
+            }
+            Err(error) => {
+                failed += 1;
+                println!("    choice\t{}\tFAILED\t{error}", shard.shard_id);
+            }
+        }
+    }
+    sizes.sort_unstable();
+    let total: u64 = sizes.iter().sum();
+    println!(
+        "    columns      shard_id, kind, scripts, bytes, bits_per_script, seed, build_micros"
+    );
+    println!(
+        "    tables       {} built, {failed} failed, {retries} seed retries, slowest {slowest} us",
+        sizes.len()
+    );
+    if !sizes.is_empty() {
+        println!(
+            "    bytes        total {total}, p50 {}, max {}",
+            percentile(&sizes, 50.0),
+            sizes[sizes.len() - 1]
+        );
+    }
 }
 
 /// What the real two-choice placer does with the same script sets.
@@ -467,6 +555,21 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
             println!("  === Packed rows, carried alongside boundaries chosen by the unpacked");
             println!("      figure. Not a set that could be published: the builder packs, so");
             println!("      these are not boundaries it would produce. ===");
+        }
+        PageBasis::PackedOrdinary => {
+            println!("  === Boundaries chosen by short histories' packed rows alone; long");
+            println!("      histories are counted as a separate bulk table. ===");
+            let mut bulk: Vec<u64> = shards
+                .iter()
+                .map(|s| s.occupancy.demand.long_rows())
+                .collect();
+            let total: u64 = bulk.iter().sum();
+            bulk.sort_unstable();
+            println!(
+                "  bulk_rows  total {total}, p50 {}, max {} per shard",
+                percentile(&bulk, 50.0),
+                bulk.last().copied().unwrap_or(0)
+            );
         }
     }
 
@@ -796,6 +899,9 @@ fn main() -> Result<(), BoxError> {
         (Some(_), None) | (None, Some(_)) => {
             return Err("--archive-geometry and --recent-from go together".into())
         }
+        (Some(_), Some(_)) if cli.first_shard_id.is_some() => {
+            return Err("--first-shard-id is for single-tier runs".into())
+        }
         (Some(archive), Some(recent_from)) => {
             return tiers(&cli, &store, first, covered, archive, recent_from);
         }
@@ -842,6 +948,8 @@ fn main() -> Result<(), BoxError> {
     let page_rows_per_segment = geometry.page_rows;
     let basis = if cli.unpacked {
         PageBasis::Fragments
+    } else if cli.bulk_long {
+        PageBasis::PackedOrdinary
     } else {
         PageBasis::Packed
     };
@@ -939,8 +1047,15 @@ choose parameters for a set that will be published"
         .into_iter()
         .map(|(name, policy)| Run {
             sealer: {
-                let mut sealer = Sealer::with_geometry(policy, first, basis, geometry);
-                sealer.measure_placement(cli.placement);
+                let mut sealer = Sealer::resume(
+                    policy,
+                    first,
+                    basis,
+                    geometry,
+                    cli.first_shard_id.unwrap_or(0),
+                );
+                sealer.measure_placement(cli.placement || cli.single_lookup);
+                sealer.measure_choice(cli.single_lookup);
                 sealer.retain_scripts(spill.is_some());
                 sealer
             },
@@ -1069,7 +1184,8 @@ sweeps do not apply to it"
     }
     let mut matches = spill.map(|dir| MatchCounter::new(dir, "tiers"));
     let mut sealer = Sealer::with_geometry(archive_policy, first, basis, archive);
-    sealer.measure_placement(cli.placement);
+    sealer.measure_placement(cli.placement || cli.single_lookup);
+    sealer.measure_choice(cli.single_lookup);
     sealer.retain_scripts(spill.is_some());
     let mut archive_shards: Vec<SealedShard> = Vec::new();
     let mut recent_shards: Vec<SealedShard> = Vec::new();
@@ -1090,7 +1206,8 @@ sweeps do not apply to it"
             drain_scripts_in_tier(&mut matches, sealed, &mut archive_shards, tier)?;
             let next_shard_id = sealer.next_shard_id();
             sealer = Sealer::resume(recent_policy, height, basis, recent, next_shard_id);
-            sealer.measure_placement(cli.placement);
+            sealer.measure_placement(cli.placement || cli.single_lookup);
+            sealer.measure_choice(cli.single_lookup);
             sealer.retain_scripts(spill.is_some());
             tier = 1;
         }
@@ -1317,14 +1434,20 @@ mod tests {
     use super::*;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 
-    /// At the compiled geometry the sweep must be exactly the absolute targets
-    /// the archived censuses under `transparent/evidence/baselines/` were taken
-    /// at, or every comparison against them is silently rebased.
+    /// At the compiled geometry the sweep is pinned, so a change to it is a
+    /// deliberate edit. The archived censuses under
+    /// `transparent/evidence/baselines/` were taken at the v7 layout's
+    /// 98,304 / 4,096 / 8,192 / 12,288 / 16,384 / 24,576. v8's 16-slot row and
+    /// v9's 21-slot row both move the sweep with directory capacity, so
+    /// comparisons against those archives are rebased and must say so.
     #[test]
     fn the_default_sweep_is_unchanged_at_the_compiled_geometry() {
         let policies = default_policies(&RECENT_8K);
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
-        assert_eq!(scripts, vec![98_304, 4_096, 8_192, 12_288, 16_384, 24_576]);
+        assert_eq!(
+            scripts,
+            vec![147_456, 6_144, 12_288, 18_432, 24_576, 36_864]
+        );
         // Every entry seals pages at the geometry's own limit, so the sweep
         // varies the script limit and nothing else.
         for (name, policy) in &policies {
@@ -1355,7 +1478,7 @@ mod tests {
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
         assert_eq!(
             scripts,
-            vec![393_216, 16_384, 32_768, 49_152, 65_536, 98_304]
+            vec![589_824, 24_576, 49_152, 73_728, 98_304, 147_456]
         );
         for (name, policy) in &policies {
             assert_eq!(policy.page_rows.capacity, 65_536, "{name}");

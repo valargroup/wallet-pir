@@ -1,0 +1,145 @@
+21:17:35.466 worker_health=176ms/ok
+21:18:57.245 worker_health=449ms/ok
+21:18:57.800 worker_health=326ms/ok
+21:22:45.294 worker_health=491ms/ok
+21:22:45.786 router_health=265ms/ok router_query_listener=265ms/400
+21:22:56.478 worker_health=185ms/ok
+21:22:56.663 router_health=653ms/ok router_query_listener=654ms/400
+21:26:44.508 router_health=290ms/ok router_query_listener=289ms/400
+21:30:54.451 router_health=242ms/ok router_query_listener=240ms/400
+21:30:54.899 router_health=564ms/ok router_query_listener=563ms/400
+21:31:48.642 worker_health=227ms/ConnectionResetError
+21:32:46.524 worker_health=2393ms/ok
+21:35:42.424 worker_health=192ms/ok
+21:35:42.617 router_health=183ms/ok router_query_listener=183ms/400
+21:37:45.161 router_health=288ms/ok router_query_listener=287ms/400
+21:40:27.617 worker_health=427ms/ok
+21:40:28.044 router_health=184ms/ok router_query_listener=184ms/400
+21:46:27.734 router_health=474ms/ok router_query_listener=473ms/400
+21:46:55.517 worker_health=171ms/ok
+21:46:55.892 worker_health=170ms/ok
+21:47:00.399 router_health=210ms/ok router_query_listener=209ms/400
+21:47:05.935 router_health=161ms/ok router_query_listener=161ms/400
+21:47:38.274 router_health=262ms/ok router_query_listener=263ms/400
+21:49:47.729 worker_health=769ms/ok
+21:49:48.603 worker_health=444ms/ok
+21:51:57.780 router_health=317ms/ok router_query_listener=317ms/400
+21:52:45.119 worker_health=531ms/ok
+21:52:45.650 router_health=294ms/ok router_query_listener=294ms/400
+21:52:50.957 worker_health=279ms/ok
+21:53:53.908 worker_health=152ms/ok
+21:55:49.851 worker_health=155ms/ok
+--- probe v2 21:56:45
+21:56:45.523 worker_metrics_nolock=155ms/ok
+22:00:30.793 worker_health=184ms/ok worker_metrics_nolock=184ms/ok
+22:01:40.808 worker_health=244ms/ok worker_metrics_nolock=242ms/ok
+22:07:53.804 worker_health=215ms/ok worker_metrics_nolock=214ms/ok
+22:09:38.769 router_health=161ms/ok router_query_listener=161ms/400
+22:10:38.951 worker_health=376ms/ok worker_metrics_nolock=377ms/ok
+22:10:44.409 worker_health=203ms/ok
+22:10:44.614 router_health=284ms/ok router_query_listener=282ms/400
+22:11:58.675 worker_health=258ms/ConnectionResetError worker_metrics_nolock=251ms/ConnectionResetError
+22:12:48.787 router_health=599ms/ok router_query_listener=600ms/400 router_metrics_nolock=600ms/ok
+22:12:59.970 router_health=320ms/ok router_query_listener=315ms/400 router_metrics_nolock=317ms/ok
+22:13:25.816 worker_health=207ms/ok
+22:16:45.095 worker_health=550ms/ok worker_metrics_nolock=551ms/ok
+22:16:45.648 router_health=266ms/ok router_query_listener=263ms/400 router_metrics_nolock=262ms/ok
+--- jemalloc 22:17:33
+22:29:51.724 worker_health=514ms/ok worker_metrics_nolock=512ms/ok
+22:29:52.243 router_health=680ms/ok router_query_listener=678ms/400 router_metrics_nolock=672ms/ok
+22:37:42.834 worker_health=179ms/ok
+22:44:59.171 worker_health=915ms/ok worker_metrics_nolock=914ms/ok
+--- reverted jemalloc 22:48:32
+22:51:49.826 router_health=242ms/ok router_query_listener=241ms/400 router_metrics_nolock=242ms/ok
+--- b7783e9 admission 32/1s 22:52:53
+22:53:43.050 worker_health=206ms/ok worker_metrics_nolock=212ms/ok
+22:56:47.157 worker_health=1218ms/ok worker_metrics_nolock=1217ms/ok
+22:57:01.904 worker_health=634ms/ok worker_metrics_nolock=639ms/ok
+22:57:02.545 router_health=359ms/ok router_query_listener=358ms/400 router_metrics_nolock=358ms/ok
+22:57:03.006 worker_health=1478ms/ok
+22:57:07.793 router_health=210ms/ok router_query_listener=211ms/400 router_metrics_nolock=209ms/ok
+22:57:08.105 worker_health=1025ms/ok worker_metrics_nolock=1022ms/ok
+22:57:09.131 router_health=2222ms/ok router_query_listener=2217ms/400 router_metrics_nolock=2217ms/ok
+22:57:18.189 worker_health=218ms/ok worker_metrics_nolock=215ms/ok
+22:57:18.616 worker_health=162ms/ok worker_metrics_nolock=160ms/ok
+22:58:50.153 router_health=298ms/ok router_query_listener=297ms/400 router_metrics_nolock=292ms/ok
+22:59:46.405 worker_health=156ms/ok worker_metrics_nolock=155ms/ok
+23:00:58.543 worker_metrics_nolock=213ms/ok
+23:02:28.888 worker_health=199ms/ok
+23:03:48.912 worker_health=281ms/ok worker_metrics_nolock=281ms/ok
+23:16:51.799 worker_health=468ms/ok
+23:16:52.268 router_health=166ms/ok router_query_listener=166ms/400
+23:18:12.984 worker_health=211ms/ok worker_metrics_nolock=207ms/ok
+23:22:40.634 worker_health=245ms/ok worker_metrics_nolock=245ms/ok
+23:30:22.163 worker_health=260ms/ok worker_metrics_nolock=260ms/ok
+23:32:56.805 router_health=186ms/ok router_query_listener=187ms/400 router_metrics_nolock=183ms/ok
+23:33:41.321 worker_health=600ms/ok worker_metrics_nolock=596ms/ok
+23:33:41.925 router_health=345ms/ok router_query_listener=344ms/400 router_metrics_nolock=343ms/ok
+23:33:42.371 worker_health=634ms/ok
+23:33:43.007 router_health=465ms/ok router_query_listener=458ms/400
+23:34:53.383 worker_health=263ms/ok worker_metrics_nolock=264ms/ok
+23:38:56.882 worker_health=1214ms/ok
+23:38:58.097 router_health=692ms/ok router_query_listener=690ms/400
+23:38:58.891 worker_health=419ms/ok worker_metrics_nolock=417ms/ok
+23:38:59.311 router_health=315ms/ok router_query_listener=315ms/400 router_metrics_nolock=314ms/ok
+23:40:13.133 worker_health=157ms/ConnectionResetError worker_metrics_nolock=153ms/ConnectionResetError
+--- 04b56da fsync off runtime 23:40:18
+23:40:41.795 worker_health=212ms/ok
+23:40:51.377 worker_health=482ms/ok
+23:40:51.859 router_health=557ms/ok router_query_listener=555ms/400
+23:40:52.520 worker_health=697ms/ok
+23:44:56.291 worker_health=245ms/ok
+23:48:50.978 worker_health=197ms/ok
+23:48:51.176 router_health=199ms/ok router_query_listener=201ms/400
+00:01:18.086 router_health=173ms/ok router_query_listener=172ms/400
+00:03:21.031 worker_health=193ms/ok
+00:04:18.756 worker_health=164ms/ok
+00:04:24.294 worker_health=226ms/ok
+00:04:24.521 router_health=472ms/ok router_query_listener=474ms/400
+00:04:49.827 router_health=216ms/ok router_query_listener=215ms/400
+00:05:16.957 worker_health=181ms/ok
+00:05:17.140 router_health=376ms/ok router_query_listener=375ms/400
+00:05:22.459 worker_health=377ms/ok
+00:06:41.206 router_health=226ms/ok router_query_listener=225ms/400
+00:06:56.391 router_health=212ms/ok router_query_listener=220ms/400
+00:07:18.902 worker_health=206ms/ok
+00:07:19.323 router_health=154ms/ok router_query_listener=151ms/400
+00:07:36.728 router_health=204ms/ok router_query_listener=204ms/400
+00:15:54.243 worker_health=572ms/ok
+00:15:54.818 router_health=294ms/ok router_query_listener=291ms/400
+00:15:55.223 worker_health=695ms/ok
+00:17:16.958 worker_health=185ms/ok
+00:18:46.181 worker_health=267ms/ok
+00:18:46.449 router_health=216ms/ok router_query_listener=217ms/400
+00:22:43.689 router_health=154ms/ok router_query_listener=153ms/400
+00:22:54.792 worker_health=253ms/ok
+00:24:52.581 worker_health=520ms/ok
+00:24:53.104 router_health=596ms/ok router_query_listener=593ms/400
+00:24:53.802 worker_health=733ms/ok
+00:24:54.536 router_health=627ms/ok router_query_listener=626ms/400
+00:25:57.205 worker_health=269ms/ok
+00:25:57.474 router_health=1215ms/ok router_query_listener=1208ms/400
+00:32:34.845 worker_health=631ms/ok
+00:44:57.893 worker_health=701ms/ok
+00:44:58.594 router_health=650ms/ok router_query_listener=648ms/400
+00:49:47.597 router_health=620ms/ok router_query_listener=621ms/400
+00:50:53.213 worker_health=240ms/ok
+00:51:53.975 worker_health=241ms/ConnectionResetError worker_metrics_nolock=241ms/ConnectionResetError
+--- 41795cf 6 prep threads 00:51:59
+00:53:42.165 worker_health=285ms/ok
+00:54:51.528 worker_health=171ms/ok
+00:54:51.703 router_health=336ms/ok router_query_listener=334ms/400
+00:55:40.000 worker_health=1277ms/ok router_health=1121ms/ok router_query_listener=1120ms/400 router_metrics_nolock=1117ms/ok
+01:00:25.650 router_health=205ms/ok router_query_listener=205ms/400
+01:06:20.040 router_health=244ms/ok router_query_listener=266ms/400 router_metrics_nolock=266ms/ok
+01:06:23.945 worker_health=558ms/ok
+01:06:24.504 router_health=701ms/ok router_query_listener=701ms/400
+01:06:25.418 router_health=210ms/ok router_query_listener=207ms/400
+01:06:46.741 worker_health=466ms/ok
+01:06:47.208 router_health=853ms/ok router_query_listener=853ms/400
+01:06:55.506 router_health=822ms/ok router_query_listener=814ms/400
+01:06:56.437 worker_health=1136ms/ok
+01:06:57.573 router_health=378ms/ok router_query_listener=374ms/400
+01:11:04.961 worker_health=538ms/ok
+01:11:05.500 router_health=821ms/ok router_query_listener=819ms/400
+--- 852d6b5 control mutex 01:18:04

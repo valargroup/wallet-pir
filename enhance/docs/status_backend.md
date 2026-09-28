@@ -62,7 +62,8 @@ RAYON_NUM_THREADS=4 LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64 \
 
 Omit `--features cuda` and `--cuda` for a CPU run. CUDA selection fails explicitly
 without a working GPU/runtime. Build with the intended CPU flags; the reference
-P4000 host supports Haswell, not the newer coordinator's AVX-512 target.
+P4000 host supported Haswell, not the newer coordinator's AVX-512 target; the
+CPU Status host uses `x86-64-v3`.
 
 Validation runs encrypted HTTP observations, known/unknown coverage, response
 and request binding rejection, fresh randomness, invalid txid length, absence
@@ -124,25 +125,12 @@ the production retention window or publication cadence.
 
 ## Isolated deployment and probes
 
-Install the checksummed binary as `/opt/status-pir/status-pir`, create
-`/home/paperspace/status-pir-state`, and install the
-[Status service](../ops/deploy/status-pir.service). The service listens only on
-loopback: coordinator/ingress 8380, worker 8381, router 8382. It has a 16 GiB
-process ceiling and no swap allowance. This is not independent per-role resource
-qualification or a production deployment template.
-
-The APM update adds a fourth loopback listener at 8383. Its
-`/internal/status-apm` endpoint reports bounded aggregate request counters,
-histograms, preparation timings, snapshot metadata, and host/GPU resources;
-`/internal/metrics` exposes aggregate Prometheus metrics. A dedicated SSH
-forward connects it to the PIR APM sidecar at loopback port 8384. The public
-dashboard separates Enhance and Status panes and labels the Status source as
-synthetic. Fixture reaffirmation changes observation age but does not count as
-a new generation publication.
-
-```sh
-ssh -N -L 8380:127.0.0.1:8380 status-pir-p4000-ams1
-```
+The synthetic single-process `status-pir serve` deployment and its APM tunnel
+ran on the Paperspace P4000 and were retired with that host on 2026-09-27; see
+[CPU Status host](../evidence/status-cpu-host-2026-09-27/README.md). To repeat
+the fixture experiment, run `status-pir serve --entries 1572864 --state-dir <dir>`
+on an isolated host. It listens only on loopback: coordinator/ingress 8380,
+worker 8381, router 8382, and APM 8383. This is not a production template.
 
 In another terminal, run a backend-only probe:
 

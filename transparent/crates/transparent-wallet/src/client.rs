@@ -4,11 +4,12 @@
 //! that geometry. That reuse is the point of naming geometries from a closed
 //! registry rather than letting each shard choose: the expensive part of a
 //! session — the parameter re-derivation and the public query setup — is done
-//! once per geometry rather than once per shard. A sync spanning an archive
+//! once per geometry rather than once per shard. Both are the native
+//! ReinspiRING two-mask profile of `transparent-native`. A sync spanning an archive
 //! tier and a recent tier pays it twice, not once per shard in either.
 //!
-//! What *is* per segment is the published `c1`, because it is derived from that
-//! segment's own database. So a shard *revision* is "opened" by fetching the
+//! What *is* per segment is the published pair of masks, because it is derived
+//! from that segment's own database. So a shard *revision* is "opened" by fetching the
 //! setup of each of its segments, and those bytes are charged once per segment
 //! per sync. A shard normally has one segment; one whose content did not fit
 //! its geometry has more, and every one of them answers each query, so the
@@ -23,13 +24,11 @@
 //! adopted the server's parameters would decode against whatever geometry the
 //! server chose, including one that leaks the selection.
 
-use crate::transport::{ByteCharges, Overloaded, ShardTransport, StaleRevision};
+use crate::transport::{BoxError, ByteCharges, Overloaded, ShardTransport, StaleRevision};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
-use ipir_sp::serialize::serialize_packing_keys;
-use ipir_sp::{IPIRClient, YpirSchemeParams};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use transparent_native::{NativeScheme, NativeSecret, TableProfile};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -74,64 +73,71 @@ impl Table {
 /// A prepared query and the secret needed to decode its response.
 pub struct PreparedQuery {
     pub body: Vec<u8>,
-    seed: ipir_sp::IPIRSeed,
+    secret: NativeSecret,
 }
 
-/// One segment's published setup for one table.
+/// One segment's published setup for one table: its two rounded masks, as
+/// downloaded, and the epoch they imply.
 struct SegmentSetup {
-    published_c1: Vec<Vec<u64>>,
+    public: Vec<u8>,
     epoch: [u8; 8],
 }
 
 /// A client for one table geometry, across every shard.
 pub struct TableClient {
     table: Table,
-    params: YpirSchemeParams,
-    client: IPIRClient,
-    setup: ipir_sp::PublicQuerySetup,
-    row_bytes: usize,
-    /// Per segment, because the published `c1` comes from each segment's own
+    profile: TableProfile,
+    /// Per segment, because the published masks come from each segment's own
     /// database. Keyed by manifest digest and segment index, so a superseded
     /// revision's setup is never reused for the revision that replaced it.
     segments: HashMap<(String, u32), SegmentSetup>,
+    /// Queries a batch already sent, per revision, in the order the walk will
+    /// ask for their rows. See [`TableClient::stash`].
+    stashed: HashMap<String, VecDeque<Stashed>>,
+}
+
+/// A query sent ahead of the walk, with its outcome.
+struct Stashed {
+    row: usize,
+    query: PreparedQuery,
+    reply: Result<Vec<u8>, BoxError>,
 }
 
 impl TableClient {
-    /// Builds a client for one table, re-deriving the geometry rather than
+    /// Builds a client for one table of `geometry`, re-deriving the native
+    /// parameters — bit widths, query masks and packing setup — rather than
     /// adopting what the service published.
     pub fn new(
         table: Table,
+        geometry: &str,
         rows: u64,
         row_bytes: u32,
-        setup_seed: u64,
-        served: &YpirSchemeParams,
+        served: &NativeScheme,
     ) -> Result<Self, ClientError> {
-        let (_, params) = ipir_sp::params_for_simplepir(rows, (row_bytes as u64) * 8)
-            .map_err(|error| ClientError::Pir(error.to_string()))?;
-        if served != &params {
+        let profile = TableProfile::new(
+            transparent_shard::manifest::SCHEMA,
+            geometry,
+            table.as_str(),
+            rows,
+            row_bytes,
+        )
+        .map_err(ClientError::Pir)?;
+        if served != &profile.scheme {
             return Err(ClientError::Session(format!(
                 "{} scheme does not match the pinned geometry",
                 table.as_str()
             )));
         }
-        let mut seed = [0u8; 32];
-        seed[..8].copy_from_slice(&setup_seed.to_le_bytes());
-        let client =
-            IPIRClient::from_profile(rows, (row_bytes as u64) * 8, ipir_sp::SimplePirProfile::P14)
-                .map_err(|error| ClientError::Pir(error.to_string()))?;
-        let setup = client.generate_public_query_setup_simplepir_from_seed(seed);
         Ok(Self {
             table,
-            params,
-            client,
-            setup,
-            row_bytes: row_bytes as usize,
+            profile,
             segments: HashMap::new(),
+            stashed: HashMap::new(),
         })
     }
 
     pub fn rows(&self) -> usize {
-        self.params.db_rows
+        self.profile.rows
     }
 
     /// Records one segment's published setup after checking it against its
@@ -152,10 +158,7 @@ impl TableClient {
                 "revision {revision} published parameter digest mismatch"
             )));
         }
-        let blocks = self.params.db_cols / self.client.rlwe_params().d;
-        if public_params.len()
-            != blocks * published_c1_len(self.client.rlwe_params().d, self.client.rlwe_params().q)
-        {
+        if public_params.len() != self.profile.scheme.public_bytes {
             return Err(ClientError::Session(format!(
                 "revision {revision} published parameter length mismatch"
             )));
@@ -165,12 +168,7 @@ impl TableClient {
         self.segments.insert(
             (revision.to_string(), segment),
             SegmentSetup {
-                published_c1: recover_published_c1(
-                    &public_params,
-                    self.client.rlwe_params().d,
-                    blocks,
-                    self.client.rlwe_params().q,
-                ),
+                public: public_params,
                 epoch,
             },
         );
@@ -187,21 +185,17 @@ impl TableClient {
     /// re-derives and checks and the response repeats. It is a fixed-width
     /// public value — the revision is already in the request path and in the
     /// published map — so it discloses nothing while making a query answered by
-    /// the wrong runtime fail rather than decode.
+    /// the wrong runtime fail rather than decode. A fresh secret is sampled for
+    /// every query and never leaves the returned value.
     pub fn prepare(&self, revision: &str, row: usize) -> Result<PreparedQuery, ClientError> {
-        if row >= self.params.db_rows {
+        if row >= self.profile.rows {
             return Err(ClientError::Session("row outside table".into()));
         }
-        let (query, packing_keys, seed) =
-            self.client.generate_fresh_query_simplepir(&self.setup, row);
+        let (secret, upload) = self.profile.prepare(row).map_err(ClientError::Pir)?;
         let mut body =
             transparent_shard::manifest::query_binding(revision, self.table.as_str()).to_vec();
-        body.extend(
-            serialize_packing_keys(self.client.rlwe_params(), &packing_keys)
-                .map_err(|error| ClientError::Pir(error.to_string()))?,
-        );
-        body.extend(query.to_switched_bytes(self.client.rlwe_params().q, self.params.query_bits));
-        Ok(PreparedQuery { body, seed })
+        body.extend(upload);
+        Ok(PreparedQuery { body, secret })
     }
 
     /// Decodes one answer: one row per segment, in segment order.
@@ -217,9 +211,7 @@ impl TableClient {
         response: &[u8],
     ) -> Result<Vec<Vec<u8>>, ClientError> {
         let binding = transparent_shard::manifest::query_binding(revision, self.table.as_str());
-        let body_len = (self.params.db_cols / self.client.rlwe_params().d)
-            * response_body_len(self.client.rlwe_params().d, self.params.q_prime_1);
-        let each = 16 + body_len;
+        let each = 16 + self.profile.scheme.response_bytes;
         // A fixed length per segment, and a fixed segment count from the
         // published map: a response of any other size is not this shard's.
         if response.len() != each * segments as usize {
@@ -241,29 +233,58 @@ impl TableClient {
             // named, so an answer produced from another revision's bytes fails
             // here rather than decoding to plausible rows for a range the
             // wallet did not ask about. The epoch does the same for the
-            // segment, since each segment publishes its own `c1`.
+            // segment, since each segment publishes its own masks.
             if part.get(..8) != Some(binding.as_slice()) {
                 return Err(ClientError::Response("revision or table mismatch".into()));
             }
             if part.get(8..16) != Some(setup.epoch.as_slice()) {
                 return Err(ClientError::Response("parameter epoch mismatch".into()));
             }
-            let decoded =
-                self.client
-                    .decode_response_simplepir(query.seed, &setup.published_c1, &part[16..]);
-            rows.push(
-                decoded
-                    .get(..self.row_bytes)
-                    .map(<[u8]>::to_vec)
-                    .ok_or_else(|| ClientError::Response("decoded row is too short".into()))?,
-            );
+            let row = self
+                .profile
+                .decode(&query.secret, &setup.public, &part[16..])
+                .map_err(ClientError::Response)?;
+            if row.len() != self.profile.row_bytes {
+                return Err(ClientError::Response("decoded row is too short".into()));
+            }
+            rows.push(row);
         }
         Ok(rows)
     }
 
+    /// Keeps a query that was sent ahead of the walk, with its outcome, for
+    /// the walk's next [`fetch_row`](Self::fetch_row) of that revision.
+    ///
+    /// Stashed queries are handed out once, in order, and only for the row
+    /// they were prepared for: the first request that does not match drops
+    /// the revision's stash and goes to the network. A stashed refusal or
+    /// failure is returned as if the query had just been sent, and drops the
+    /// rest of the revision's stash, so whatever the walk does next — a
+    /// retry, a refresh — is a fresh request.
+    pub(crate) fn stash(
+        &mut self,
+        revision: &str,
+        row: usize,
+        query: PreparedQuery,
+        reply: Result<Vec<u8>, BoxError>,
+    ) {
+        self.stashed
+            .entry(revision.to_string())
+            .or_default()
+            .push_back(Stashed { row, query, reply });
+    }
+
+    /// Drops every stashed query.
+    pub(crate) fn clear_stash(&mut self) {
+        self.stashed.clear();
+    }
+
     /// Fetches one row from every segment of a shard, charging what it cost.
+    ///
+    /// Uses a query a batch already sent for this row when one is stashed;
+    /// the charge is the same either way.
     pub fn fetch_row(
-        &self,
+        &mut self,
         transport: &mut impl ShardTransport,
         shard_id: u64,
         revision: &str,
@@ -271,6 +292,34 @@ impl TableClient {
         row: usize,
         charges: &mut ByteCharges,
     ) -> Result<Vec<Vec<u8>>, ClientError> {
+        if let Some(queue) = self.stashed.get_mut(revision) {
+            let next = queue.pop_front();
+            if queue.is_empty() {
+                self.stashed.remove(revision);
+            }
+            match next {
+                Some(stashed) if stashed.row == row => {
+                    let response = match stashed.reply {
+                        Ok(response) => response,
+                        Err(error) => {
+                            self.stashed.remove(revision);
+                            return Err(classify_transport(error));
+                        }
+                    };
+                    charges.add_query(
+                        self.table,
+                        stashed.query.body.len() as u64,
+                        response.len() as u64,
+                    );
+                    return self.decode(revision, segments, stashed.query, &response);
+                }
+                // Out of step with the walk: nothing further is trusted to
+                // line up, so the rest of this revision goes to the network.
+                _ => {
+                    self.stashed.remove(revision);
+                }
+            }
+        }
         let query = self.prepare(revision, row)?;
         let uploaded = query.body.len() as u64;
         let response = transport

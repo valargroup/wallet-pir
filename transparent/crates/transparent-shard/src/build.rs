@@ -17,11 +17,12 @@ use crate::layout::{
 };
 use crate::page_row::{encode_page_row, PageEntry};
 use crate::records::{encode_directory_row, DirectoryEntry, RecordError, MAX_SCRIPT_BYTES};
+use crate::tag::{resolve_tag_salt, script_tag};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use transparent_events::TransparentEvent;
 use transparent_filter::{
-    build_range_filter, BlockHash, FilterBytes, FilterError, ScriptBytes, ShardKey,
+    build_range_filter_for, BlockHash, FilterBytes, FilterError, ScriptBytes, ShardKey,
 };
 
 /// Independently salted candidate rows per script.
@@ -90,6 +91,14 @@ pub struct BuiltShard {
     /// for. Not the row count: short histories share rows.
     pub fragments: u64,
     pub events: u64,
+    /// Which candidate row holds each placed script, for a single-lookup
+    /// directory. See [`crate::choice`].
+    ///
+    /// Always built, because it is a function of the placement just made and
+    /// costs a fraction of it; the publisher decides whether to publish it.
+    /// `None` only if no seed peeled, which leaves the shard on two queries
+    /// rather than failing the build.
+    pub choice: Option<crate::choice::ChoiceTable>,
     /// Scripts in the filter but not the directory, because they exceed
     /// [`MAX_SCRIPT_BYTES`].
     ///
@@ -97,6 +106,9 @@ pub struct BuiltShard {
     /// holding such a script is outside coverage and must not read a directory
     /// miss as absence.
     pub excluded_scripts: u64,
+    /// The tag-salt counter this build settled on. Zero unless a collision
+    /// forced a rebuild.
+    pub tag_salt_counter: u32,
 }
 
 impl BuiltShard {
@@ -157,6 +169,37 @@ pub fn candidate_rows(shard_id: u64, script: &[u8], rows: u64) -> [u64; DIRECTOR
     std::array::from_fn(|choice| bucket_for(&bucket_salt(shard_id, choice), script, rows))
 }
 
+/// Where a history of `total_events` falls in the order scripts are placed.
+///
+/// Short paged histories first, in increasing paged length; then long
+/// histories; then histories held entirely inline. Within a rank, scripts
+/// sort by raw bytes. This is the order [`build_shard`] lays entries out in,
+/// because it allocates page rows by class before any directory entry can
+/// name one.
+fn placement_rank(total_events: u32) -> (u8, u32) {
+    match shape_of(total_events) {
+        Shape::Short(p) => (0, p),
+        Shape::Long(_) => (1, 0),
+        Shape::None => (2, 0),
+    }
+}
+
+/// Orders indexable scripts, each with its total event count in the shard,
+/// exactly as the builder places them.
+///
+/// Placement with relocation is order dependent: a script's row depends on
+/// every script placed before it. A census that predicts a shard's placement
+/// must therefore feed [`place_scripts`] this order, not any other sorted
+/// order, or it reports row loads the builder never produces.
+pub fn placement_order<'a>(scripts: impl IntoIterator<Item = (&'a [u8], u32)>) -> Vec<&'a [u8]> {
+    let mut keyed: Vec<((u8, u32), &'a [u8])> = scripts
+        .into_iter()
+        .map(|(script, total)| (placement_rank(total), script))
+        .collect();
+    keyed.sort_unstable();
+    keyed.into_iter().map(|(_, script)| script).collect()
+}
+
 /// Builds one shard from the events of its sealed range.
 ///
 /// `events` need not be sorted; they are ordered here, because the published
@@ -213,7 +256,12 @@ pub fn build_shard(
         end_height,
         terminal_block_hash,
     );
-    let filter = build_range_filter(key, &filter_elements)?;
+    // The profile named in the map and manifest fixes the filter's P and M; a
+    // name this build does not know is refused rather than encoded under
+    // another profile's parameters.
+    let range = transparent_filter::range_profile(profile)
+        .ok_or_else(|| BuildError::Invalid(format!("unknown range profile {profile:?}")))?;
+    let filter = build_range_filter_for(range, key, &filter_elements)?;
 
     // Lay out page rows first: a directory entry has to name where its
     // fragments are. Three passes, because placement is no longer a running
@@ -262,6 +310,15 @@ pub fn build_shard(
         }
     }
 
+    let indexed: Vec<&[u8]> = by_script
+        .keys()
+        .filter(|script| script.len() <= MAX_SCRIPT_BYTES)
+        .map(|script| script.as_slice())
+        .collect();
+    let (tag_salt_counter, salt) =
+        resolve_tag_salt(shard_id, &terminal_block_hash, &indexed, script_tag)
+            .map_err(BuildError::Invalid)?;
+
     // 2. Allocate. Short classes in increasing length, each class filling rows
     //    with whole entries; then long histories, each taking a contiguous run
     //    of its own. A `BTreeMap` keyed by length and a `by_script` iterated in
@@ -273,12 +330,12 @@ pub fn build_shard(
     for (p, class) in &short {
         let per_row = entries_per_row(*p) as usize;
         for chunk in class.chunks(per_row) {
-            let row = rows.len() as u32;
+            let row = rows.len() as u32 + 1;
             let mut entries = Vec::with_capacity(chunk.len());
             for item in chunk {
                 first_page.insert(item.script, row);
                 entries.push(PageEntry::new(
-                    item.script.to_vec(),
+                    script_tag(&salt, item.script),
                     0,
                     1,
                     item.older.clone(),
@@ -288,7 +345,7 @@ pub fn build_shard(
         }
     }
     for item in &long {
-        first_page.insert(item.script, rows.len() as u32);
+        first_page.insert(item.script, rows.len() as u32 + 1);
         let fragments = fragments_for(item.total) as u32;
         for (ordinal, fragment) in item
             .older
@@ -299,7 +356,7 @@ pub fn build_shard(
             // sharing one. Sharing it would make a history's placement depend
             // on unrelated content, for a row saved per long history.
             rows.push(vec![PageEntry::new(
-                item.script.to_vec(),
+                script_tag(&salt, item.script),
                 ordinal as u32,
                 fragments,
                 fragment.to_vec(),
@@ -326,20 +383,20 @@ pub fn build_shard(
         for item in class {
             entries.push(DirectoryEntry {
                 script: item.script.to_vec(),
-                total_events: item.total,
+                tag: script_tag(&salt, item.script),
+                event_count: item.total,
                 inline: item.inline.clone(),
                 first_page: first_page[item.script],
-                page_count: fragments_for(item.total) as u32,
             });
         }
     }
     for item in &long {
         entries.push(DirectoryEntry {
             script: item.script.to_vec(),
-            total_events: item.total,
+            tag: script_tag(&salt, item.script),
+            event_count: item.total,
             inline: item.inline.clone(),
             first_page: first_page[item.script],
-            page_count: fragments_for(item.total) as u32,
         });
     }
     // Histories inside the inline allowance hold no fragment and name no row.
@@ -351,12 +408,19 @@ pub fn build_shard(
         history.sort_by_key(|event| event.sort_key());
         entries.push(DirectoryEntry {
             script: script.clone(),
-            total_events: history.len() as u32,
+            tag: script_tag(&salt, script),
+            event_count: history.len() as u32,
             inline: history,
             first_page: 0,
-            page_count: 0,
         });
     }
+
+    // Pinned rather than implied by the loops above, because the sealer's
+    // census places in this order too. A stable sort of entries already in it
+    // is the identity, so published bytes do not move.
+    entries.sort_by(|a, b| {
+        (placement_rank(a.event_count), &a.script).cmp(&(placement_rank(b.event_count), &b.script))
+    });
 
     let fragments: u64 = by_script
         .iter()
@@ -381,7 +445,7 @@ pub fn build_shard(
         .map(<[u8]>::to_vec)
         .collect();
 
-    let (directory, scripts) = place_directory(shard_id, entries, geometry)?;
+    let (directory, scripts, choice) = place_directory(shard_id, entries, geometry)?;
 
     Ok(BuiltShard {
         shard_id,
@@ -392,10 +456,12 @@ pub fn build_shard(
         directory,
         pages: page_table,
         scripts,
+        choice,
         page_rows,
         fragments,
         events: total_events,
         excluded_scripts,
+        tag_salt_counter,
     })
 }
 
@@ -505,6 +571,45 @@ pub fn place_scripts(
     }
 }
 
+/// The choice table for a placement: which candidate row each script took.
+///
+/// `scripts` and `assignment` are what [`place_scripts`] was given and
+/// returned, and `rows` is the logical row space it settled on. A script whose
+/// two candidates name the same row takes bit 0; either answer names that row.
+pub fn choice_table(
+    shard_id: u64,
+    scripts: &[&[u8]],
+    assignment: &[u32],
+    rows: u64,
+) -> Result<crate::choice::ChoiceTable, crate::choice::ChoiceError> {
+    let entries: Vec<(&[u8], u8)> = scripts
+        .iter()
+        .zip(assignment)
+        .map(|(script, row)| {
+            let [first, _] = candidate_rows(shard_id, script, rows);
+            (*script, u8::from(u64::from(*row) != first))
+        })
+        .collect();
+    crate::choice::ChoiceTable::build(shard_id, &entries)
+}
+
+/// Checks that `table` names the row each script is held in.
+///
+/// `row_of(i)` is the logical row holding `scripts[i]`, over `rows` rows.
+/// Returns the index of the first script it misroutes, or `None` if it routes
+/// every one.
+pub fn verify_choice(
+    shard_id: u64,
+    table: &crate::choice::ChoiceTable,
+    scripts: &[&[u8]],
+    rows: u64,
+    row_of: impl Fn(usize) -> u64,
+) -> Option<usize> {
+    scripts.iter().enumerate().position(|(index, script)| {
+        candidate_rows(shard_id, script, rows)[table.choice(shard_id, script)] != row_of(index)
+    })
+}
+
 /// Rows a relocation search may visit before giving up and taking a segment.
 ///
 /// A bound rather than a budget for the whole shard: the search is per script,
@@ -594,12 +699,69 @@ fn relocate(
 /// segment re-hashes every script rather than spilling the leftovers into a
 /// last segment that would then be the only crowded one.
 ///
-/// Returns one encoded table per segment, and the number of scripts placed.
+/// A placed directory: one encoded table per segment, the number of scripts
+/// placed, and the choice table for the placement.
+type PlacedDirectory = (Vec<Vec<u8>>, u64, Option<crate::choice::ChoiceTable>);
+
+/// Checks the encoded bytes, not the placer's intent.
+///
+/// Rows carry tags, so a server cannot recompute a script's route; this is
+/// the last point where the scripts are known. Every entry's tag must decode
+/// from the row its assignment names, no tag may appear twice in the shard,
+/// and the rows must hold exactly the entries placed. A miss here would reach
+/// a wallet as absence, which it cannot tell from an empty history.
+fn verify_encoded_rows(
+    tables: &[Vec<u8>],
+    entries: &[DirectoryEntry],
+    assignment: &[u32],
+    geometry: &Geometry,
+) -> Result<(), BuildError> {
+    let per_segment = geometry.directory_rows as usize;
+    let row_bytes = geometry.directory_row_bytes;
+    let mut rows: Vec<Vec<[u8; crate::tag::SCRIPT_TAG_BYTES]>> =
+        Vec::with_capacity(per_segment * tables.len());
+    let mut seen = std::collections::HashSet::with_capacity(entries.len());
+    for table in tables {
+        for raw in table.chunks_exact(row_bytes) {
+            let decoded = crate::records::decode_directory_row(raw)?;
+            let tags: Vec<_> = decoded.into_iter().map(|entry| entry.tag).collect();
+            for tag in &tags {
+                if !seen.insert(*tag) {
+                    return Err(BuildError::Invalid(
+                        "a script tag appears twice in the directory".into(),
+                    ));
+                }
+            }
+            rows.push(tags);
+        }
+    }
+    if seen.len() != entries.len() {
+        return Err(BuildError::Invalid(format!(
+            "the directory holds {} entries, {} were placed",
+            seen.len(),
+            entries.len()
+        )));
+    }
+    for (entry, row) in entries.iter().zip(assignment) {
+        let held = rows
+            .get(*row as usize)
+            .is_some_and(|tags| tags.contains(&entry.tag));
+        if !held {
+            return Err(BuildError::Invalid(format!(
+                "script {} is not in its assigned row {row}",
+                hex::encode(&entry.script)
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Returns the encoded directory and its choice table.
 fn place_directory(
     shard_id: u64,
     entries: Vec<DirectoryEntry>,
     geometry: &Geometry,
-) -> Result<(Vec<Vec<u8>>, u64), BuildError> {
+) -> Result<PlacedDirectory, BuildError> {
     let scripts_only: Vec<&[u8]> = entries
         .iter()
         .map(|entry| entry.script.as_slice())
@@ -638,7 +800,22 @@ fn place_directory(
         }
         tables.push(table);
     }
-    Ok((tables, scripts))
+    verify_encoded_rows(&tables, &entries, &assignment, geometry)?;
+    let choice = choice_table(shard_id, &scripts_only, &assignment, rows).ok();
+    if let Some(table) = &choice {
+        // A wrong bit is not an error a wallet can see: it queries the other
+        // row, finds no entry, and reads the script as absent. So every placed
+        // script is checked before the table can be published.
+        if let Some(index) = verify_choice(shard_id, table, &scripts_only, rows, |i| {
+            u64::from(assignment[i])
+        }) {
+            return Err(BuildError::Invalid(format!(
+                "choice table sends script {} to the wrong row",
+                hex::encode(scripts_only[index])
+            )));
+        }
+    }
+    Ok((tables, scripts, choice))
 }
 
 #[cfg(test)]
@@ -648,17 +825,29 @@ mod tests {
     use crate::page_row::{decode_page_row, PageEntry};
     use crate::records::decode_directory_row;
 
-    /// The one entry in `row` belonging to `script`, which is what a wallet
+    /// The one entry in `row` belonging to `tag`, which is what a wallet
     /// does with a packed row: several scripts share it, and the rest are
     /// discarded.
-    fn fragment_of(row: &[u8], script: &[u8], ordinal: u32) -> PageEntry {
+    fn fragment_of(
+        row: &[u8],
+        tag: &[u8; crate::tag::SCRIPT_TAG_BYTES],
+        ordinal: u32,
+    ) -> PageEntry {
         let mut found: Vec<PageEntry> = decode_page_row(row)
             .expect("a located row decodes")
             .into_iter()
-            .filter(|entry| entry.script == script && entry.ordinal == ordinal)
+            .filter(|entry| &entry.tag == tag && entry.ordinal == ordinal)
             .collect();
         assert_eq!(found.len(), 1, "exactly one entry may claim a fragment");
         found.pop().expect("one")
+    }
+
+    fn tag_for(script: &[u8]) -> [u8; crate::tag::SCRIPT_TAG_BYTES] {
+        crate::script_tag(&crate::tag_salt(0, &terminal(), 0), script)
+    }
+
+    fn page_at(entry: &crate::records::DirectoryEntry) -> u64 {
+        u64::from(entry.page_base().expect("a paged entry"))
     }
     use transparent_events::{ReceiveEvent, Txid};
     use transparent_filter::{validate_filter, FilterLimits, RANGE_PROFILE};
@@ -695,6 +884,37 @@ mod tests {
     /// `count` scripts, each with `per` events, all inside the shard's declared
     /// 100-200 range. Heights cycle so a long history stays in range while
     /// still spanning it, which is what makes the paging tests meaningful.
+    /// The builder's last check reads the encoded rows: an entry outside its
+    /// assigned row, a tag held twice, or a missing entry is refused before
+    /// publication, because a wallet would read any of them as absence.
+    #[test]
+    fn encoded_rows_must_hold_every_entry_where_it_was_assigned() {
+        let entry = |byte: u8| DirectoryEntry {
+            script: vec![0x76, byte],
+            tag: [byte; crate::tag::SCRIPT_TAG_BYTES],
+            event_count: 1,
+            inline: vec![event(100, u32::from(byte))],
+            first_page: 0,
+        };
+        let geometry = RECENT_8K;
+        let (a, b) = (entry(1), entry(2));
+        let table = |rows: &[&[DirectoryEntry]]| -> Vec<Vec<u8>> {
+            vec![rows
+                .iter()
+                .flat_map(|row| encode_directory_row(row).unwrap())
+                .collect()]
+        };
+        let entries = [a.clone(), b.clone()];
+        let (one_a, one_b) = (std::slice::from_ref(&a), std::slice::from_ref(&b));
+        let good = table(&[one_a, one_b]);
+        verify_encoded_rows(&good, &entries, &[0, 1], &geometry).unwrap();
+        assert!(verify_encoded_rows(&good, &entries, &[1, 0], &geometry).is_err());
+        let repeated = table(&[one_a, one_a]);
+        assert!(verify_encoded_rows(&repeated, &entries, &[0, 1], &geometry).is_err());
+        let missing = table(&[one_a, &[]]);
+        assert!(verify_encoded_rows(&missing, &entries, &[0, 1], &geometry).is_err());
+    }
+
     fn fixture(count: u32, per: u32) -> Vec<(ScriptBytes, TransparentEvent)> {
         let mut events = Vec::new();
         for tag in 0..count {
@@ -767,14 +987,17 @@ mod tests {
                         decode_directory_row(built.directory_row(*row))
                             .unwrap()
                             .into_iter()
-                            .find(|e| e.script == wanted.as_slice())
+                            .find(|e| e.tag == tag_for(wanted.as_slice()))
                     })
                     .expect("entry");
-                assert_eq!(entry.page_count, 1, "class {p} should be one fragment");
                 let fragment = fragment_of(
-                    built.page_row(entry.first_page as u64),
-                    wanted.as_slice(),
+                    built.page_row(page_at(&entry)),
+                    &tag_for(wanted.as_slice()),
                     0,
+                );
+                assert_eq!(
+                    fragment.fragment_count, 1,
+                    "class {p} should be one fragment"
                 );
                 assert_eq!(fragment.events.len(), p as usize);
             }
@@ -798,22 +1021,20 @@ mod tests {
                     decode_directory_row(built.directory_row(*row))
                         .unwrap()
                         .into_iter()
-                        .find(|e| e.script == wanted.as_slice())
+                        .find(|e| e.tag == tag_for(wanted.as_slice()))
                 })
                 .expect("entry");
-            located.push(entry.first_page);
+            located.push(page_at(&entry));
             let fragment = fragment_of(
-                built.page_row(entry.first_page as u64),
-                wanted.as_slice(),
+                built.page_row(page_at(&entry)),
+                &tag_for(wanted.as_slice()),
                 0,
             );
             assert_eq!(fragment.events.len(), 1);
         }
         assert_eq!(located[0], located[1], "both should name the same row");
         assert_eq!(
-            decode_page_row(built.page_row(located[0] as u64))
-                .unwrap()
-                .len(),
+            decode_page_row(built.page_row(located[0])).unwrap().len(),
             2,
             "the shared row should hold both"
         );
@@ -842,14 +1063,19 @@ mod tests {
                 decode_directory_row(built.directory_row(*row))
                     .unwrap()
                     .into_iter()
-                    .find(|e| e.script == wanted.as_slice())
+                    .find(|e| e.tag == tag_for(wanted.as_slice()))
             })
             .expect("entry");
-        assert_eq!(entry.page_count, 3, "two full fragments and a short one");
-        for ordinal in 0..entry.page_count {
-            let row = decode_page_row(built.page_row((entry.first_page + ordinal) as u64)).unwrap();
+        let base = page_at(&entry);
+        let first = fragment_of(built.page_row(base), &tag_for(wanted.as_slice()), 0);
+        assert_eq!(
+            first.fragment_count, 3,
+            "two full fragments and a short one"
+        );
+        for ordinal in 0..first.fragment_count {
+            let row = decode_page_row(built.page_row(base + u64::from(ordinal))).unwrap();
             assert_eq!(row.len(), 1, "fragment {ordinal} shared its row");
-            assert_eq!(row[0].script, wanted.as_slice());
+            assert_eq!(row[0].tag, tag_for(wanted.as_slice()));
         }
     }
 
@@ -893,19 +1119,19 @@ mod tests {
                     decode_directory_row(built.directory_row(*row))
                         .unwrap()
                         .into_iter()
-                        .find(|entry| entry.script == wanted.as_slice())
+                        .find(|entry| entry.tag == tag_for(wanted.as_slice()))
                 })
                 .unwrap_or_else(|| panic!("script {tag} is in neither candidate row"));
-            assert_eq!(entry.total_events, per);
-            if entry.first_page as usize >= PAGE_ROWS {
+            assert!(entry.first_page >= 1);
+            if page_at(&entry) as usize >= PAGE_ROWS {
                 crossed = true;
             }
             let fragment = fragment_of(
-                built.page_row(entry.first_page as u64),
-                wanted.as_slice(),
+                built.page_row(page_at(&entry)),
+                &tag_for(wanted.as_slice()),
                 0,
             );
-            assert_eq!(fragment.script, wanted.as_slice());
+            assert_eq!(fragment.tag, tag_for(wanted.as_slice()));
         }
         assert!(crossed, "some extent should land past the first segment");
     }
@@ -923,7 +1149,7 @@ mod tests {
                 decode_directory_row(built.directory_row(*row))
                     .unwrap()
                     .iter()
-                    .any(|entry| entry.script == wanted.as_slice())
+                    .any(|entry| entry.tag == tag_for(wanted.as_slice()))
             });
             assert!(found, "script {tag} is in neither candidate row");
         }
@@ -1062,6 +1288,172 @@ mod tests {
         );
     }
 
+    /// Scripts of every shape: inline-only, short paged and long histories,
+    /// interleaved in raw-byte order so that the builder's placement order
+    /// and a lexicographic one differ.
+    fn mixed_fixture(count: u32) -> Vec<(ScriptBytes, TransparentEvent)> {
+        let mut events = Vec::new();
+        for tag in 0..count {
+            let per = [1, 2, 3, 5, 12, 30, 41, 90][(tag % 8) as usize];
+            for i in 0..per {
+                events.push((script(tag), event(100 + i % 101, tag * 100_000 + i)));
+            }
+        }
+        events
+    }
+
+    /// The rows [`place_scripts`] assigns, fed [`placement_order`], must be the
+    /// rows the builder publishes, entry for entry.
+    ///
+    /// Row membership rather than a load summary, because placement is order
+    /// dependent and a census fed another order agrees on segment counts long
+    /// before it agrees on which rows are full.
+    #[test]
+    fn placement_order_reproduces_the_published_rows() {
+        let events = mixed_fixture(6_000);
+        let built = build(&events);
+
+        let mut counts: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
+        for (script, _) in &events {
+            *counts.entry(script.as_slice().to_vec()).or_default() += 1;
+        }
+        let order = placement_order(counts.iter().map(|(s, n)| (s.as_slice(), *n)));
+        let (placement, assignment) = place_scripts(
+            0,
+            &order,
+            RECENT_8K.directory_rows,
+            RECENT_8K.directory_slots(),
+        )
+        .expect("fits");
+        assert_eq!(placement.segments, built.directory_segments());
+
+        let rows = RECENT_8K.directory_rows * placement.segments as u64;
+        let mut predicted: Vec<Vec<&[u8]>> = vec![Vec::new(); rows as usize];
+        for (script, row) in order.iter().zip(&assignment) {
+            predicted[*row as usize].push(script);
+        }
+        for (row, expected) in predicted.iter_mut().enumerate() {
+            expected.sort_unstable();
+            let mut expected_tags: Vec<_> = expected.iter().map(|script| tag_for(script)).collect();
+            expected_tags.sort_unstable();
+            let mut published: Vec<_> = decode_directory_row(built.directory_row(row as u64))
+                .expect("decodes")
+                .into_iter()
+                .map(|entry| entry.tag)
+                .collect();
+            published.sort_unstable();
+            assert_eq!(expected_tags, published, "row {row} differs");
+        }
+
+        // The lexicographic order the census used before is a different
+        // placement on this content, which is why the order is shared.
+        let mut lexicographic = order.clone();
+        lexicographic.sort_unstable();
+        let (_, other) = place_scripts(
+            0,
+            &lexicographic,
+            RECENT_8K.directory_rows,
+            RECENT_8K.directory_slots(),
+        )
+        .expect("fits");
+        let by_script = |order: &[&[u8]], rows: &[u32]| -> BTreeMap<Vec<u8>, u32> {
+            order
+                .iter()
+                .map(|s| s.to_vec())
+                .zip(rows.iter().copied())
+                .collect()
+        };
+        assert_ne!(
+            by_script(&order, &assignment),
+            by_script(&lexicographic, &other)
+        );
+    }
+
+    /// One row, chosen by the published choice bit, holds every placed script:
+    /// the single-lookup property, at the default geometry and at the
+    /// half-height directory, where placement runs near 80% of capacity.
+    #[test]
+    fn the_choice_bit_names_the_one_row_holding_each_script() {
+        let rows = 4_096u64;
+        let slots = crate::records::DIRECTORY_SLOTS as u64;
+        for (count, rows) in [(6_000u32, 8_192u64), (45_454, rows)] {
+            let owned = placement_set(count);
+            let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
+            let (placement, assignment) = place_scripts(11, &refs, rows, slots).expect("fits");
+            // The largest recent shard of the September census fits one
+            // half-height segment under two-choice placement with relocation.
+            assert_eq!(placement.segments, 1, "{count} scripts at {rows} rows");
+            let space = rows * placement.segments as u64;
+            let table = choice_table(11, &refs, &assignment, space).expect("peels");
+            for (script, row) in refs.iter().zip(&assignment) {
+                let chosen = candidate_rows(11, script, space)[table.choice(11, script)];
+                assert_eq!(chosen, u64::from(*row), "{count} scripts at {rows} rows");
+            }
+        }
+    }
+
+    /// Routing holds across segments: a script set too large for one segment
+    /// is placed over the whole logical row space, and the table names rows in
+    /// that space.
+    #[test]
+    fn the_choice_bit_routes_across_segments() {
+        let rows = 2_048u64;
+        let slots = crate::records::DIRECTORY_SLOTS as u64;
+        let owned = placement_set((rows * slots) as u32 + 1_000);
+        let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
+        let (placement, assignment) = place_scripts(5, &refs, rows, slots).expect("fits");
+        assert!(placement.segments > 1);
+        let space = rows * u64::from(placement.segments);
+        let table = choice_table(5, &refs, &assignment, space).expect("peels");
+        assert_eq!(
+            verify_choice(5, &table, &refs, space, |i| u64::from(assignment[i])),
+            None
+        );
+        // And a check against a different placement does catch misrouting.
+        assert!(verify_choice(5, &table, &refs, space, |i| u64::from(assignment[i]) ^ 1).is_some());
+    }
+
+    /// The sealer's measured placement matches the builder's on content of
+    /// mixed shapes, not only on the single-shape fixture above.
+    #[test]
+    fn the_sealer_measures_the_builders_fullest_row_on_mixed_shapes() {
+        use crate::seal::{Limit, PageBasis, SealPolicy, Sealer};
+
+        let events = mixed_fixture(6_000);
+        let policy = SealPolicy {
+            scripts: Limit::new(1_000_000, 2_000_000).expect("valid"),
+            page_rows: Limit::new(1_000_000, 2_000_000).expect("valid"),
+        };
+        let mut sealer = Sealer::with_basis(policy, 100, PageBasis::default());
+        sealer.measure_placement(true);
+        for height in 100..=200u64 {
+            let block: Vec<_> = events
+                .iter()
+                .filter(|(_, event)| u64::from(event.height()) == height)
+                .cloned()
+                .collect();
+            sealer.push_block(height, &block).expect("valid block");
+        }
+        let predicted = sealer
+            .finish()
+            .expect("a tail")
+            .placement
+            .expect("placement was asked for");
+
+        let built = build(&events);
+        let rows = RECENT_8K.directory_rows * built.directory_segments() as u64;
+        let fullest = (0..rows)
+            .map(|row| {
+                decode_directory_row(built.directory_row(row))
+                    .expect("decodes")
+                    .len() as u64
+            })
+            .max()
+            .unwrap_or(0);
+        assert_eq!(predicted.segments, built.directory_segments());
+        assert_eq!(predicted.max_row_load, fullest);
+    }
+
     /// A script's whole history must be reconstructible: the inline events plus
     /// its pages, with nothing lost and nothing duplicated.
     #[test]
@@ -1078,19 +1470,20 @@ mod tests {
                     decode_directory_row(built.directory_row(*row))
                         .unwrap()
                         .into_iter()
-                        .find(|entry| entry.script == wanted.as_slice())
+                        .find(|entry| entry.tag == tag_for(wanted.as_slice()))
                 })
                 .expect("entry");
 
-            assert_eq!(entry.total_events, per);
             let mut recovered = entry.inline.clone();
-            for ordinal in 0..entry.page_count {
+            let base = page_at(&entry);
+            let first = fragment_of(built.page_row(base), &tag_for(wanted.as_slice()), 0);
+            for ordinal in 0..first.fragment_count {
                 let fragment = fragment_of(
-                    built.page_row((entry.first_page + ordinal) as u64),
-                    wanted.as_slice(),
+                    built.page_row(base + u64::from(ordinal)),
+                    &tag_for(wanted.as_slice()),
                     ordinal,
                 );
-                assert_eq!(fragment.fragment_count, entry.page_count);
+                assert_eq!(fragment.fragment_count, first.fragment_count);
                 recovered.extend(fragment.events);
             }
 
@@ -1118,7 +1511,7 @@ mod tests {
                 decode_directory_row(built.directory_row(*row))
                     .unwrap()
                     .into_iter()
-                    .find(|entry| entry.script == wanted.as_slice())
+                    .find(|entry| entry.tag == tag_for(wanted.as_slice()))
             })
             .expect("entry");
         // Compare on the events' own total order rather than on height alone,
@@ -1130,8 +1523,8 @@ mod tests {
             .min()
             .unwrap();
         let fragment = fragment_of(
-            built.page_row(entry.first_page as u64),
-            wanted.as_slice(),
+            built.page_row(page_at(&entry)),
+            &tag_for(wanted.as_slice()),
             0,
         );
         let latest_paged = fragment
@@ -1199,6 +1592,31 @@ mod tests {
         assert_eq!(forward.directory, reversed.directory);
         assert_eq!(forward.pages, reversed.pages);
         assert_eq!(forward.filter, reversed.filter);
+        assert_eq!(forward.tag_salt_counter, 0);
+    }
+
+    /// The salt is a function of the revision. Rebuilding the same revision
+    /// reproduces the bytes; a different terminal block does not.
+    #[test]
+    fn the_tag_salt_is_reproduced_by_a_rebuild_and_moves_with_the_terminal_block() {
+        let events = fixture(4, 2);
+        let once = build(&events);
+        let again = build(&events);
+        assert_eq!(once.tag_salt_counter, 0);
+        assert_eq!(once.directory, again.directory);
+
+        let moved = build_shard(
+            0,
+            100,
+            200,
+            genesis(),
+            BlockHash::from_internal_bytes([0x5b; 32]),
+            RANGE_PROFILE,
+            &RECENT_8K,
+            &events,
+        )
+        .unwrap();
+        assert_ne!(moved.directory, once.directory);
     }
 
     /// A shard's bucket salt includes its id, so the same script sits in

@@ -7,7 +7,8 @@
 //! evaluation is memory-bandwidth-bound, scale horizontally across workers with
 //! independent memory bandwidth" — but nothing here had measured it.
 //!
-//! What it measures is the first-dimension multiply, `multiply_query`, which is
+//! What it measures is the first-dimension multiply, `try_multiply_power_of_two`
+//! modulo the native q = 2^54, which is
 //! the part that streams a shard's whole 32 MiB encoded database per query.
 //! That is where the bandwidth goes; the packing that follows works on a much
 //! smaller intermediate. Each thread gets its **own** server, so this models
@@ -20,10 +21,10 @@
 //! way to buy more of it is more hosts.
 
 use clap::Parser;
-use enhance_pir_server::ipir::RowPlaintextIter;
 use ipir_sp::server::IPIRServer;
 use std::time::{Duration, Instant};
 use transparent_shard::layout::{by_name as geometry_by_name, RECENT_8K};
+use transparent_shard_server::runtime::{reserved_bytes, transport_params};
 use transparent_shard_server::shardset::Table;
 
 #[derive(Parser)]
@@ -61,10 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     if cli.geometry_sweep {
         // Resident cost is db_rows*db_cols*2 for the encoded database plus the
-        // pack matrices, which are poly_len^2 and so do not follow the row
-        // count. If db_cols is constant across candidate row counts, a wider
-        // table is nearly free in memory while halving the shard count -- which
-        // is the opposite of how the geometry notes weigh storage.
+        // native two-mask preprocessing (bounded at eight-byte words), which is
+        // d x d*ell per block and so does not follow the row count. With one
+        // block per row, a taller table is nearly free in memory while halving
+        // the shard count -- which is the opposite of how the geometry notes
+        // weigh storage.
         println!(
             "{:>7} {:>8} {:>8} {:>10} {:>10} {:>10} {:>10}",
             "rows", "db_rows", "db_cols", "db MiB", "pack MiB", "total MiB", "query B"
@@ -72,18 +74,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for rows in [
             2_048u64, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144,
         ] {
-            let (rlwe, sc) = ipir_sp::params_for_simplepir(
-                rows,
-                u64::from(Table::Directory.row_bytes(&RECENT_8K)) * 8,
-            )?;
+            let row_bytes = Table::Directory.row_bytes(&RECENT_8K);
+            let sc = transport_params(rows, row_bytes)?;
             let db = (sc.db_rows * sc.db_cols * 2) as f64 / 1048576.0;
-            let blocks = sc.db_cols / rlwe.d;
-            let pack = (blocks * 3 * rlwe.d * rlwe.d * 8) as f64 / 1048576.0;
-            // What a wallet uploads per query: the shard id, the evaluation
-            // keys, and the first-dimension query, which is the only term that
-            // follows the row count.
-            let keys = ipir_sp::serialize::serialized_packing_keys_len(&rlwe);
-            let query = 8 + keys + (sc.db_rows * sc.query_bits).div_ceil(8);
+            let pack =
+                (reserved_bytes(rows, row_bytes) - rows * u64::from(row_bytes)) as f64 / 1048576.0;
+            // What a wallet uploads per query: the binding, the K_g key, and
+            // the first-dimension query, which is the only term that follows
+            // the row count.
+            let query = 8 + transparent_native::request_len(sc.db_rows);
             println!(
                 "{rows:>7} {:>8} {:>8} {db:>10.1} {pack:>10.1} {:>10.1} {query:>10}",
                 sc.db_rows,
@@ -96,10 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let geometry = geometry_by_name(&cli.geometry)
         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
     let table = Table::parse(&cli.table).ok_or_else(|| format!("unknown table {:?}", cli.table))?;
-    let (rlwe, scheme) = ipir_sp::params_for_simplepir(
-        table.rows(geometry),
-        u64::from(table.row_bytes(geometry)) * 8,
-    )?;
+    let scheme = transport_params(table.rows(geometry), table.row_bytes(geometry))?;
 
     let row_bytes = table.row_bytes(geometry) as usize;
     let mut rows = vec![0u8; table.rows(geometry) as usize * row_bytes];
@@ -107,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         *byte = (index % 251) as u8;
     }
 
-    // Below the modulus, which is all `multiply_query` requires of it. The
+    // Below the modulus, which is all the scan requires of it. The
     // values do not change the work done: every coefficient is touched either
     // way, which is the point of a PIR scan.
     let query = vec![12_345u64; scheme.db_rows];
@@ -136,13 +132,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // construction and every thread count reads the same memory.
     let servers: Vec<IPIRServer<u16>> = (0..max)
         .map(|_| {
-            let coefficients = RowPlaintextIter::new(
-                &rows,
-                row_bytes,
-                scheme.db_rows,
-                scheme.db_cols,
-                scheme.p.trailing_zeros() as usize,
-            );
+            let cols = scheme.db_cols;
+            let rows = &rows;
+            let coefficients = (0..scheme.db_rows * cols).map(move |i| {
+                transparent_native::row_coefficient(rows, row_bytes, i / cols, i % cols)
+            });
             IPIRServer::<u16>::new_auto_kernel(scheme.clone(), coefficients, false, true)
         })
         .collect();
@@ -154,12 +148,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .iter()
                 .map(|server| {
                     let query = &query;
-                    let rlwe = &rlwe;
                     scope.spawn(move || {
                         let started = Instant::now();
                         let mut done = 0u64;
                         while started.elapsed() < budget {
-                            std::hint::black_box(server.multiply_query(rlwe, query));
+                            std::hint::black_box(
+                                server
+                                    .try_multiply_power_of_two(transparent_native::Q, query)
+                                    .expect("scan"),
+                            );
                             done += 1;
                         }
                         done

@@ -1,0 +1,3 @@
+2026-09-27T14:46:29.827536Z  INFO enhance_pir_server::status::distributed: Status role preparation role=Worker fetch_ms=707 prepare_ms=8762 total_ms=9433 source_age_ms=9433
+2026-09-27T14:46:47.081800Z  INFO enhance_pir_server::status::distributed: Status role preparation role=Router fetch_ms=764 prepare_ms=17253 total_ms=17253 source_age_ms=26687
+Error: reqwest::Error { kind: Status(503, None), url: "http://127.0.0.1:35475/control/prepare" }

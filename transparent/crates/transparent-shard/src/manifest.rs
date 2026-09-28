@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v7";
+pub const SCHEMA: &str = "transparent-shard-v9";
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -122,6 +122,12 @@ pub struct ShardManifest {
     pub parent_block_hash: String,
     /// The block at `end_height`, in display hex.
     pub terminal_block_hash: String,
+    /// Counter mixed into the script-tag salt.
+    ///
+    /// Starts at 0. The builder increments it only when a tag collision
+    /// forces a rebuild. Bound by the manifest digest. The wallet recomputes
+    /// the salt from `shard_id`, `terminal_block_hash` and this counter.
+    pub tag_salt_counter: u32,
     /// Digest of the preceding shard's manifest, or empty for shard zero.
     ///
     /// This is what makes the shard set a committed sequence rather than a bag
@@ -160,6 +166,73 @@ pub struct ShardManifest {
     /// into the shard's page space, which a directory extent indexes.
     pub page_segments: Vec<TableGeometry>,
     pub occupancy: ManifestOccupancy,
+    /// The shard's directory choice table, base64 encoded, if it publishes one.
+    ///
+    /// Which of each placed script's two candidate rows holds it (see
+    /// [`crate::choice`]). A wallet that reads it sends one directory query per
+    /// matched script instead of two; the rows themselves are the same
+    /// two-choice rows either way. Absent, it is not serialized, so every
+    /// manifest published before it keeps its bytes and its digest, and a set
+    /// published without tables is served to old and new consumers alike.
+    ///
+    /// Present, it is **not** backward compatible. A consumer built before
+    /// this field parses the manifest, drops the field it does not know, and
+    /// recomputes the digest from what remains, which no longer matches. Such
+    /// a wallet stops with a digest mismatch and such a server refuses to load
+    /// the shard. Every server and wallet must understand this field before any
+    /// publication carries it.
+    ///
+    /// Bound by the manifest digest like everything else here. A consumer that
+    /// reads it must decode it with [`crate::choice::ChoiceTable::decode`],
+    /// check its key count against `occupancy.scripts`, and refuse the shard
+    /// if either fails, rather than fall back to two queries: a table that does
+    /// not decode is a malformed publication, not an absent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_choice: Option<String>,
+}
+
+/// Why a published choice table cannot be used.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum DirectoryChoiceError {
+    #[error("directory choice is not base64: {0}")]
+    Encoding(String),
+    #[error("directory choice: {0}")]
+    Table(#[from] crate::choice::ChoiceError),
+    #[error("directory choice indexes {table} scripts where the shard places {placed}")]
+    Keys { table: u32, placed: u64 },
+}
+
+impl ShardManifest {
+    /// The published choice table, decoded and checked against this manifest.
+    ///
+    /// `Ok(None)` when the shard publishes none, which means two directory
+    /// queries per matched script. Any published table that does not decode,
+    /// or whose key count is not the shard's placed script count, is an error.
+    pub fn directory_choice(
+        &self,
+    ) -> Result<Option<crate::choice::ChoiceTable>, DirectoryChoiceError> {
+        use base64::Engine;
+        let Some(encoded) = &self.directory_choice else {
+            return Ok(None);
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| DirectoryChoiceError::Encoding(error.to_string()))?;
+        let table = crate::choice::ChoiceTable::decode(&bytes)?;
+        if u64::from(table.keys()) != self.occupancy.scripts {
+            return Err(DirectoryChoiceError::Keys {
+                table: table.keys(),
+                placed: self.occupancy.scripts,
+            });
+        }
+        Ok(Some(table))
+    }
+}
+
+/// The manifest field for a choice table.
+pub fn encode_directory_choice(table: &crate::choice::ChoiceTable) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(table.encode())
 }
 
 /// Binds a private query to the revision and table it names.
@@ -259,6 +332,7 @@ mod tests {
             end_height: 3_430_000,
             parent_block_hash: "11".repeat(32),
             terminal_block_hash: "22".repeat(32),
+            tag_salt_counter: 0,
             parent_manifest_digest: "33".repeat(32),
             sealed: true,
             revision: 0,
@@ -272,20 +346,20 @@ mod tests {
             layout: ManifestLayout {
                 max_script_bytes: 40,
                 inline_events: 2,
-                events_per_page: 36,
+                events_per_page: 46,
                 page_row_header_bytes: 4,
-                page_entry_header_bytes: 64,
+                page_entry_header_bytes: 34,
                 directory_choices: 2,
             },
             filter_hash: "44".repeat(32),
             directory_segments: vec![TableGeometry {
                 rows: 2_048,
-                row_bytes: 3_584,
+                row_bytes: 4_096,
                 sha256: "55".repeat(32),
             }],
             page_segments: vec![TableGeometry {
                 rows: 4_096,
-                row_bytes: 3_584,
+                row_bytes: 4_096,
                 sha256: "66".repeat(32),
             }],
             occupancy: ManifestOccupancy {
@@ -297,6 +371,7 @@ mod tests {
                 txids: 10_355,
                 excluded_scripts: 0,
             },
+            directory_choice: None,
         }
     }
 
@@ -314,6 +389,29 @@ mod tests {
     }
 
     /// A first publication supersedes nothing.
+    /// A manifest without a choice table serializes exactly as manifests did
+    /// before the field existed, so no published digest moves; one with a
+    /// table round-trips and is a different shard.
+    #[test]
+    fn an_absent_choice_table_leaves_the_canonical_bytes_unchanged() {
+        let plain = manifest();
+        let bytes = plain.canonical_bytes();
+        assert!(!String::from_utf8_lossy(&bytes).contains("\"directory_choice\""));
+        let parsed: ShardManifest = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.directory_choice, None);
+        assert_eq!(parsed.digest(), plain.digest());
+
+        let mut tabled = plain.clone();
+        tabled.occupancy.scripts = 1;
+        tabled.directory_choice = Some(encode_directory_choice(
+            &crate::choice::ChoiceTable::build(3, &[(&[0x51][..], 1)]).unwrap(),
+        ));
+        let parsed: ShardManifest = serde_json::from_slice(&tabled.canonical_bytes()).unwrap();
+        assert_eq!(parsed, tabled);
+        assert!(parsed.directory_choice().unwrap().is_some());
+        assert_ne!(tabled.digest(), plain.digest());
+    }
+
     #[test]
     fn a_shard_published_for_the_first_time_is_revision_zero() {
         assert_eq!(

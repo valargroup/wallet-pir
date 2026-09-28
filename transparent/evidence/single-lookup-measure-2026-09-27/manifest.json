@@ -1,0 +1,88 @@
+{
+  "run_id": "single-lookup-measure-2026-09-27",
+  "generated_at": "2026-09-27",
+  "kind": "paired local loopback measurement",
+  "source": {
+    "commit": "72c9031d",
+    "branch": "single-lookup-directory",
+    "profile": "release",
+    "binaries_sha256": {
+      "transparent-shard-server": "a59526e28fe6d2375a9b42364ead32519d67fab976a77198c5662049d9a91d2b",
+      "transparent-loadtest": "21b507429c55414d04d2611140bdcee55d947d79d988743ac446fbd18daa72b4",
+      "shard-publish": "b3c0e960fd5e7838ad837906faecf5bb1292558b2fd61f8ee9c7261f693cd24e"
+    }
+  },
+  "host": "roman-ipir-bench-8vcpu (server and client on one host, loopback)",
+  "journal": {
+    "slice": "../single-lookup-census-2026-09-27/journal-slice-SHA256SUMS",
+    "heights": [
+      3262749,
+      3473686
+    ],
+    "events": 4185700,
+    "anchor": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "parent_block_hash": "0000000000b5d4b73a0544dd9d9bab7850e88a8ab5069148c53e6f1899b4176a"
+  },
+  "schema": "transparent-shard-v7",
+  "geometry": {
+    "name": "recent-8k",
+    "directory_rows": 8192,
+    "page_rows": 8192,
+    "row_bytes": 3584,
+    "seal": "98304:114688,7936:8192"
+  },
+  "variants": {
+    "off": {
+      "map_sha256": "0702ebeabc3e0a58f9aac13324bf3e44689d2cbcf506251196998e4f2f5894b3"
+    },
+    "all": {
+      "map_sha256": "6458d6123635a6b77b8be989c8d1d21895b52383e633e747be0306134024e9bd"
+    }
+  },
+  "workload": {
+    "sample": "../workload-sample-2026-09-08/sample.json",
+    "derived_by": "derive-sample.py",
+    "derived_sha256": "be4eb6c2dd7c46bc1d476dc0210258ff0b1f918ac8f406ee8af54a57d1f998e6",
+    "classes": [
+      "restore-6m",
+      "multi-script",
+      "catch-up-1d",
+      "catch-up-7d",
+      "catch-up-30d"
+    ],
+    "seed": 1
+  },
+  "procedure": "run.sh; order off-1, all-1, all-2, off-2; steps 1,8,32; unrecorded warm-up per run",
+  "totals": {
+    "syncs": 939,
+    "exact": 939,
+    "failed": 0,
+    "mismatched": 0,
+    "http_503": 0
+  },
+  "outputs": [
+    "report-off-1.json",
+    "report-all-1.json",
+    "report-all-2.json",
+    "report-off-2.json",
+    "loadtest-*.log",
+    "server-*.log",
+    "summary.tsv",
+    "summary.json",
+    "publication-off.json",
+    "publication-all.json",
+    "shards-off.json",
+    "shards-all.json"
+  ],
+  "measured": [
+    "bytes by stage",
+    "query counts",
+    "sync seconds on loopback",
+    "throughput"
+  ],
+  "not_measured": [
+    "WAN latency",
+    "mobile client CPU",
+    "fleet capacity"
+  ]
+}

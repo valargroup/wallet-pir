@@ -4201,7 +4201,7 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
- "ipir-sp",
+ "libc",
  "prometheus",
  "reqwest",
  "serde",
@@ -4217,6 +4217,7 @@ dependencies = [
  "transparent-blocks",
  "transparent-events",
  "transparent-filter",
+ "transparent-native",
  "transparent-shard",
  "transparent-shard-server",
  "zakura-chain",
@@ -4268,6 +4269,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "transparent-native"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "ipir-sp",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rayon",
+ "reinspiring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "transparent-regression"
 version = "0.1.0"
 dependencies = [
@@ -4292,6 +4308,7 @@ dependencies = [
 name = "transparent-shard"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "hex",
  "serde",
  "serde_json",
@@ -4308,11 +4325,12 @@ dependencies = [
  "axum",
  "base64",
  "clap",
- "enhance-pir-server",
  "hex",
  "http-body",
- "inspiring",
  "ipir-sp",
+ "memmap2",
+ "rayon",
+ "reinspiring",
  "reqwest",
  "rustix 1.1.4",
  "serde",
@@ -4328,10 +4346,10 @@ dependencies = [
  "tracing-subscriber",
  "transparent-events",
  "transparent-filter",
+ "transparent-native",
  "transparent-shard",
  "transparent-wallet",
  "transparent-wallet-store",
- "valar-spiral-rs",
 ]
 
 [[package]]
@@ -4340,7 +4358,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "hex",
- "ipir-sp",
  "reqwest",
  "serde",
  "serde_json",
@@ -4348,6 +4365,7 @@ dependencies = [
  "thiserror 2.0.18",
  "transparent-events",
  "transparent-filter",
+ "transparent-native",
  "transparent-shard",
 ]
 

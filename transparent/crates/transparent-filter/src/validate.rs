@@ -176,6 +176,16 @@ pub fn validate_filter(bytes: &[u8], limits: FilterLimits) -> Result<ValidatedFi
     validate_parameters(bytes, limits, M, P)
 }
 
+/// Validates a range filter under the parameters of the profile it was
+/// published with.
+pub fn validate_range_filter(
+    bytes: &[u8],
+    limits: FilterLimits,
+    profile: &crate::profile::RangeProfile,
+) -> Result<ValidatedFilter, FilterError> {
+    validate_parameters(bytes, limits, profile.m, profile.p)
+}
+
 /// Shared strict decoder; experimental profiles must keep their own parameter identity.
 pub(crate) fn validate_parameters(
     bytes: &[u8],

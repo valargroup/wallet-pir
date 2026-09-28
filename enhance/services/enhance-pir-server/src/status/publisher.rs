@@ -143,6 +143,9 @@ impl Publisher {
             .route("/v1/status/init", get(init))
             .route("/v1/status/session/:id", get(session))
             .route("/v1/status/query", post(forward))
+            .layer(axum::middleware::from_fn(|request, next| {
+                telemetry::observe("coordinator", request, next)
+            }))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
     }
@@ -644,7 +647,7 @@ async fn init(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> 
 async fn session(
     State(s): State<Publisher>,
     Path(id): Path<String>,
-) -> Result<Vec<u8>, StatusCode> {
+) -> Result<axum::body::Bytes, StatusCode> {
     super::session(State(s.http_state()?), Path(id)).await
 }
 async fn forward(
@@ -664,13 +667,16 @@ async fn forward(
 async fn artifact(
     State(s): State<Publisher>,
     Path(id): Path<String>,
-) -> Result<Vec<u8>, StatusCode> {
-    let artifact = s.artifact.read().unwrap();
-    let (digest, bytes) = artifact.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-    if hex::encode(digest) != id {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(bytes.as_ref().clone())
+) -> Result<axum::body::Bytes, StatusCode> {
+    let bytes = {
+        let artifact = s.artifact.read().unwrap();
+        let (digest, bytes) = artifact.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+        if hex::encode(digest) != id {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        bytes.clone()
+    };
+    Ok(super::shared_bytes(bytes))
 }
 
 async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, Failure> {
@@ -688,6 +694,38 @@ mod query_transport_tests {
             "private_listen":"127.0.0.1:8480"
         }))
         .unwrap()
+    }
+    #[tokio::test]
+    async fn publisher_init_rejections_are_observed_as_http_server_errors() {
+        use axum::{
+            body::{to_bytes, Body},
+            http::Request,
+        };
+        use tower::ServiceExt;
+        let publisher = Publisher::new(config()).unwrap();
+        let response = publisher
+            .routes()
+            .oneshot(Request::get("/v1/status/init").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let response = telemetry::routes()
+            .oneshot(
+                Request::get("/internal/status-apm")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let data: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+        assert!(
+            data["operations"]["init"]["server_errors"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
+        assert!(data["operations"]["init"]["arrivals"].as_u64().unwrap() >= 1);
     }
     #[test]
     fn per_client_slots_cap_concurrency_and_evict_idle_keys() {

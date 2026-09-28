@@ -62,11 +62,10 @@ fn once_at(
         .iter()
         .find(|g| g.name == entry.geometry)
         .ok_or("geometry absent")?;
-    let (rows, width, seed, scheme, segments, name) = match table {
+    let (rows, width, scheme, segments, name) = match table {
         Table::Directory => (
             g.directory_rows,
             g.directory_row_bytes,
-            g.directory_setup_seed,
             &g.directory_scheme,
             entry.directory_segments,
             "directory",
@@ -74,7 +73,6 @@ fn once_at(
         Table::Pages => (
             g.page_rows,
             g.page_row_bytes,
-            g.pages_setup_seed,
             &g.pages_scheme,
             entry.page_segments,
             "pages",
@@ -130,7 +128,7 @@ fn once_at(
         file.read_exact(&mut row)?;
         expected.push(row);
     }
-    let mut client = TableClient::new(table, rows, width, seed, scheme)?;
+    let mut client = TableClient::new(table, &g.name, rows, width, scheme)?;
     for segment in 0..segments {
         let (bytes, _) = transport.setup(entry.shard_id, &entry.manifest_digest, table, segment)?;
         let setup: Setup = serde_json::from_slice(&bytes)?;

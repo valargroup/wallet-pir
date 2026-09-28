@@ -1,6 +1,6 @@
 # Transparent PIR status
 
-Updated 2026-09-13. The target remains an opt-in, recovery-only macOS beta on
+Updated 2026-09-27 (release rollout below); milestone text last updated 2026-09-13. The target remains an opt-in, recovery-only macOS beta on
 existing infrastructure. **M0, M1 and M2 are accepted; M3 is partially validated;
 M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
@@ -17,6 +17,88 @@ checklist; [deployment](deployment.md) owns operating targets.
 | M4 — Whole-wallet benefit | [80 exact paired recoveries](../evidence/block-comparison-2026-09-09/README.md) give a derived 99.19% reduction in additional transparent payload | Representation-size comparison is not whole-wallet incremental latency or capacity |
 | M5 — Capacity and recovery | Historical [fleet series](../evidence/runs/fleet-series-2026-09-08-r1/README.md) and M1 observations exist | No accepted sustained beta operating envelope or complete failure-recovery rehearsal |
 | M6 — Release and beta | No acceptance evidence | Review, versioned distribution and tester observation follow M3–M5 |
+
+## Release rollout, 2026-09-27
+
+Observed by the operator (Claude, for Roman) on 2026-09-27; times UTC.
+
+**Public metadata outage, 14:18–18:55.** The Enhance deploy re-rendered the
+coordinator Caddyfile from `ops/deploy/coordinator/Caddyfile`, which lacked the
+continuous-publication route. `/v1/shards`, `/v1/shards/init` and manifests
+returned 404, and `/v1/filters/shards` served the stale static map. The route
+was restored by hand at 18:55 and added to the template in `2c658d43`.
+
+**Worker and publisher release.**
+- Workers were on source `a5f79ed` (binary `200ca850…`, ipir-sp `accc424`).
+- `9d47b05b` passed full CI and was rolled out with `deploy-transparent-publisher.yml`
+  in shadow mode (recent-01, archive-01, archive-02, recent-02..04, 22:26–22:40)
+  and activated at 22:40:42. All six workers now report binary `c735a6b3…` and
+  are warm with every runtime. The publisher serves source `9d47b05b`, with
+  directory choice tables **off**.
+- Before the rollout:
+  - A local test restored a runtime cache written by the `a5f79ed` worker in the
+    `9d47b05b` worker. All 28 runtimes restored, and 52/52 syncs were exact.
+  - A rc.6 client synced against the old fleet with no transport failures.
+- After activation, 17 public syncs completed with no failures. Archive restores
+  were 6/6 exact. The recent mismatches are consistent with activity since the
+  sample's 3,473,686 anchor: 30/120 restore-6m and 32/120 catch-up-30d sample
+  clients have later events.
+
+**Failed first attempt, 22:20–22:25.**
+- The shadow run failed before touching workers. The rotated
+  `WALLET_PIR_DEPLOY_SSH_KEY` (`enhance-pir-deploy`) was not authorized on any
+  transparent host.
+- By then the script had already stopped the controller and overwritten its
+  working credentials, so public metadata returned 502 until the previous
+  controller config was restored by hand.
+- The rotated key's public half was then appended to `authorized_keys` on the
+  router and all six workers; each host keeps an
+  `authorized_keys.before-deploy-key-2026-09-27` backup.
+- The deploy script now:
+  - checks every host accepts the identity before stopping anything;
+  - keeps the previous controller config;
+  - restores the controller if it fails before any worker changes.
+
+Shadow mode itself withdraws public metadata while workers upgrade, here about
+14 minutes, as the maintenance path does.
+
+**Directory choice tables enabled, 22:43.**
+- `directory_choice: "all"` was added to `/opt/transparent-publisher/controller.json`
+  (backup `controller.json.before-directory-choice`) and the controller restarted.
+- The first new tail revision (shard 175, revision 1172, height 3,498,503)
+  carries a 4,321-byte table for 27,989 scripts. Workers loaded it, and loading
+  verifies every entry's route.
+- 25 public syncs against it completed with no failures.
+- Existing sealed shards keep their table-free manifests until a full
+  republication. Wallets built before the field cannot read tabled manifests;
+  none is shipped.
+- To revert: remove the field and restart the controller. The next tail
+  revision is then published without a table.
+
+## Router health and worker drain rollout, 2026-09-28
+
+Times UTC.
+
+- **Rollout.** `3317cd01` (C1 router policy, worker upload drain, A3 client
+  concurrency) went out in shadow mode 10:45–11:00 and was activated at 11:12
+  with `directory_choice: all`. All six workers now report binary `3e9bae97…`,
+  warm with every runtime.
+- **Activation failure.** Activation missed its 180 s deadline. The new router
+  policy used `health_fails` and `handle_errors 502 503 504`, which the router's
+  **Caddy 2.6.2** rejects, so every route attempt failed validation. Public
+  metadata returned 503 from the start of the shadow rollout until 11:16.
+- **Recovery.**
+  - The live `/opt/transparent-publisher/transparent-live-fleet.py` was patched
+    to 2.6-compatible directives (original kept as `…3317cd01-orig`). The
+    controller then routed and served at 11:16.
+  - The long-running replica reconciler still ran the fleet code it had loaded
+    before the upgrade, and re-routed with the old policy at 11:16:18. It was
+    restarted, and the controller's next activation installed the new policy
+    at 11:19:10.
+  - Both renderers were fixed in `24b988db`, with an ops test against newer
+    directives, and activation now restarts the reconciler. On 2.6.2, a bare
+    `respond` inside `handle_errors` keeps the proxy's status (verified 503
+    with `Retry-After`).
 
 ## M1 accepted observation
 
@@ -95,10 +177,11 @@ index completeness. No mnemonic, private ledger or raw wallet log is published.
 
 | Capability | Observed state |
 |---|---|
-| Shard schema | `transparent-shard-v7` in `transparent/crates/transparent-shard/src/manifest.rs` |
+| Shard schema | Source is `transparent-shard-v9` (4,096-byte rows, 21 directory slots, 46 events per page, 14-byte salted tags, 87-byte events). Implemented and unpublished. The live fleet remains the v7 publication described in the rollout above. A version-2 event journal is built only into a new directory; opening the version-1 production journal with this binary returns an error and leaves the files in place. On 2026-09-28 a version-2 journal was derived at `/srv/zakura/transparent-event-data-v2` on the coordinator, through height 3,499,198, and verified ([evidence](../evidence/journal-v2-conversion-2026-09-28/README.md)). Nothing appends to it and nothing publishes from it; the live publisher still writes the version-1 journal |
 | Registry | `recent-8k` 8192/8192; `recent-4k` 4096/4096; `archive-32k` 32768/32768; `archive-wide` 32768/65536 |
-| Desired optional recent pairing | 4096/8192 absent; add a new name, never reinterpret `recent-4k` |
-| Census ranges | `--start-height`, `--end-height`, geometry overrides, `--placement`, `--per-shard`, exact script matches exist in `shard-census.rs` |
+| Optional recent pairing | `recent-4k-8k` 4096/8192 registered; not published. Real shards and a [placement study](../evidence/directory-placement-4k-2026-09-28/README.md) fit it in one segment with no overflow up to 96% load |
+| Single-lookup directory | **Live for new tail and sealed revisions since 2026-09-27 22:43 UTC** (see the release rollout above). Optional manifest `directory_choice`; publisher `--directory-choice off\|sealed\|all` (controller config `directory_choice`, default `off`); the builder verifies every route against the encoded rows, and the server refuses a repeated script tag and checks the entry count (rows carry tags, so it cannot recompute routes); wallet sends one directory query per matched script when present. [Measured locally](../evidence/single-lookup-measure-2026-09-27/README.md): 939/939 exact syncs, directory queries halved, restore-6m payload −24%; a [temporary bench fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) reproduced this at 8 and 32 wallets. wallet-libraries not updated |
+| Census ranges | `--start-height`, `--end-height`, `--first-shard-id`, geometry overrides, `--placement`, `--single-lookup`, `--per-shard`, exact script matches exist in `shard-census.rs` |
 | Two-tier publisher | `--recent-geometry`, `--archive-geometry`, `--recent-from` exist in `shard-publish.rs` |
 | Workflow exposure | `publish-transparent-shards.yml` exposes commit, journal, output directory, anchor, `recent_from` (re-derived and checked) and both geometries; the backfill workflow's `inventory` action records journal identity, cutoff and an independent event spot-check |
 | Loading/cache | `ShardSet::open_with` loads the whole set or an assignment's subset: every shard's manifest and filter, tables only for assigned ids, global ids and manifest chain intact; bounded runtime cache and file-backed plaintext sources |

@@ -15,6 +15,7 @@
 //! [`sync`] for the statement of that leak.
 
 pub mod adapters;
+pub mod backoff;
 pub mod client;
 pub mod facade;
 #[cfg(feature = "reqwest")]
@@ -42,5 +43,6 @@ pub use sync::{
     SyncOutcome, SyncReport, WorkLimits,
 };
 pub use transport::{
-    refusal, ByteCharges, FilterSource, Overloaded, ShardTransport, StaleRevision, TableCharges,
+    refusal, ByteCharges, FilterSource, Overloaded, ShardReply, ShardRequest, ShardTransport,
+    StaleRevision, TableCharges,
 };

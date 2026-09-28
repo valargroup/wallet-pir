@@ -1,0 +1,3 @@
+journal 388103-402087, all archive-wide sealing at SealPolicy { scripts: Limit { target: 449390, capacity: 524288 }, page_rows: Limit { target: 63488, capacity: 65536 } }
+shard   0 388103-402087 (13985 blocks) scripts 149492 pages 56241 events 2151378 segments 1/1 TAIL r0
+published 1 shards covering 388103-402087; filters ~0.37 MB

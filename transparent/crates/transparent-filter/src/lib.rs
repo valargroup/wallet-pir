@@ -27,7 +27,10 @@ pub mod transport;
 pub mod validate;
 pub mod wire;
 
-pub use build_filter::{build_filter, build_range_filter, element_count, FilterBytes};
+pub use build_filter::{
+    build_filter, build_range_filter, build_range_filter_for, build_range_filter_with,
+    element_count, FilterBytes,
+};
 pub use client::{
     check_batch, check_range_batch, sync_range, sync_shards, AcceptedChain, BlockMatch, ChainMap,
     CheckedRecord, CheckedShard, ShardMatch, ShardSyncOutcome, SyncOutcome,
@@ -43,13 +46,16 @@ pub use matching::{
     map_wallet_scripts, map_wallet_scripts_keyed, match_keyed, match_mapped, match_range_scripts,
     match_scripts,
 };
-pub use profile::{MAINNET_GENESIS_DISPLAY, NETWORK, PROFILE, RANGE_PROFILE, START_HEIGHT};
+pub use profile::{
+    range_profile, RangeProfile, MAINNET_GENESIS_DISPLAY, NETWORK, PROFILE, RANGE_PROFILE,
+    RANGE_PROFILES, RANGE_PROFILE_V1, RANGE_PROFILE_V2, START_HEIGHT,
+};
 pub use script::ScriptBytes;
 pub use transport::{
     ByteCharges, FileTransport, FilterTransport, RangeRequest, ShardFilterTransport,
     ShardRangeRequest,
 };
-pub use validate::{validate_filter, FilterLimits, ValidatedFilter};
+pub use validate::{validate_filter, validate_range_filter, FilterLimits, ValidatedFilter};
 pub use wire::{
     ChainEntry, FilterDigestEntry, FilterServiceHealth, FilterServiceInfo, SealParameters,
     ShardMap, ShardMapEntry,

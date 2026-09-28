@@ -21,6 +21,17 @@ The following records establish only their stated revision, workload and coverag
 | [Full-chain census](census-2026-09-08/README.md) | Sizing inputs, not measured wallet capacity |
 | [Publication verification](publication-2026-09-08/README.md) | Independent spot checks and publication provenance |
 | [Frozen workload sample](workload-sample-2026-09-08/README.md) | Still used by the load workflow |
+| [Single-lookup directory census](single-lookup-census-2026-09-27/README.md) | Offline choice-table sizes, 4K placement limit and projected bytes; no wallet measurement |
+| [Single-lookup directory measurement](single-lookup-measure-2026-09-27/README.md) | Paired loopback syncs with and without choice tables on one host; 939/939 exact; not WAN, mobile or fleet |
+| [Single-lookup directory fleet benchmark](single-lookup-fleet-2026-09-27/README.md) | Temporary 4-worker bench fleet, not production; steps 8/32 all exact; 128 unstable in both variants from router health checks |
+| [Range-filter precision sweep](filter-precision-sweep-2026-09-28/README.md) | Exact recent filter sizes for P=8–19; derived false-match cost model; no profile implemented |
+| [Directory placement at 4,096 rows](directory-placement-4k-2026-09-28/README.md) | Model of the two-choice placer; no overflow up to 96% load; corrects the census reading |
+| [Sync latency under emulated delay](single-lookup-latency-2026-09-28/README.md) | Loopback netem 50/100 ms RTT; tables −18% and prefetch −31% on restore-6m p50; not mobile |
+| [Bulk-history isolation census](bulk-isolation-census-2026-09-28/README.md) | Offline boundaries with long histories in bulk storage; restore-6m matched shards −28%, projected bytes −11%; no bulk table implemented |
+| [Cluster qualification baseline](cluster-qualification-2026-09-28/README.md) | Live regression 11/11 cases passed; pinned-anchor load runs, all completed syncs exact; v7 cluster before v8 |
+| [Native correctness on real archive tables](archive-native-certificate-2026-09-28/README.md) | Real v8 archive-wide segments certify 149–170 bits (pages) and 197–211 (directories); 83-bit worst-case exception accepted |
+| [Native two-mask correctness screen](native-certificate-2026-09-28/README.md) | Analytic certificates for v8 shapes; worst-case query term passes 128 bits to 32,768 rows, 83 bits at 65,536; no served snapshot certified |
+| [Version-2 event journal](journal-v2-conversion-2026-09-28/README.md) | Production v1 journal re-encoded into a new directory and extended to 3,499,198; 5 × 5,000-block ranges byte-identical to fresh v9 ingests; spot check 11/11; nothing published |
 | [Initial full-chain publication](continuous-publication-2026-09-08/README.md) | Historical topology and rollout; M1 is the later operational acceptance |
 | [Parent-filter evaluation](parent-filters-2026-09-08/README.md) | Offline sweep and incomplete paired HTTP performance evaluation |
 | [Parent-filter artifact rollout](parent-filters-production-2026-09-08/README.md) | Bounded recovery canary; not heavy-wallet performance acceptance |

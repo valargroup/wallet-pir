@@ -288,6 +288,16 @@ async fn distributed_backend_round_trip(backend: enhance_pir_server::matvec::Mat
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let restored = Coordinator::open(&coordinator_root, groups).unwrap();
     let (origin, server) = serve(restored.router()).await;
+    // Publication health stays observable across a restart, before any new block.
+    let metrics = reqwest::get(format!("{origin}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(metrics
+        .lines()
+        .any(|l| l.starts_with("enhance_publication_last_advancement_unix_seconds ")));
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
     assert_eq!(
         client

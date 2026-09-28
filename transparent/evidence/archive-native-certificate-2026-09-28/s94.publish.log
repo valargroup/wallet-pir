@@ -1,0 +1,3 @@
+journal 578596-596441, all archive-wide sealing at SealPolicy { scripts: Limit { target: 449390, capacity: 524288 }, page_rows: Limit { target: 63488, capacity: 65536 } }
+shard   0 578596-596441 (17846 blocks) scripts 284221 pages 56742 events 2558957 segments 1/1 TAIL r0
+published 1 shards covering 578596-596441; filters ~0.71 MB

@@ -1,0 +1,180 @@
+=== 23:33:41 worker pid 34871 unanswered 314 ms
+  34871 status-pir S futex_wait_queue
+  34874 tokio-rt-worker D jbd2_log_wait_commit jbd2_log_wait_commit <- jbd2_complete_transaction <- ext4_fc_commit <- ext4_sync_file <- vfs_fsync_range <- __x64_sys_fsync
+  34875 tokio-rt-worker S futex_wait_queue
+  34876 tokio-rt-worker S futex_wait_queue
+  34877 tokio-rt-worker S futex_wait_queue
+  34878 tokio-rt-worker S futex_wait_queue
+  34879 tokio-rt-worker S futex_wait_queue
+  34880 tokio-rt-worker S futex_wait_queue
+  34881 tokio-rt-worker S futex_wait_queue
+  34882 status-prepare- S futex_wait_queue
+  34883 status-prepare- S futex_wait_queue
+  34884 status-prepare- S futex_wait_queue
+  34885 status-prepare- S futex_wait_queue
+  34887 tokio-rt-worker S futex_wait_queue
+  34911 tokio-rt-worker S futex_wait_queue
+  34915 tokio-rt-worker S futex_wait_queue
+  34916 tokio-rt-worker S futex_wait_queue
+  34917 tokio-rt-worker S futex_wait_queue
+  34918 tokio-rt-worker S futex_wait_queue
+  34949 tokio-rt-worker S futex_wait_queue
+  35040 tokio-rt-worker S futex_wait_queue
+  35057 tokio-rt-worker S futex_wait_queue
+  35873 tokio-rt-worker S futex_wait_queue
+--- worker answered after 584 ms
+=== 23:34:53 worker pid 34871 unanswered 317 ms
+  34871 status-pir S futex_wait_queue
+  34874 tokio-rt-worker S futex_wait_queue
+  34875 tokio-rt-worker S futex_wait_queue
+  34876 tokio-rt-worker S futex_wait_queue
+  34877 tokio-rt-worker S futex_wait_queue
+  34878 tokio-rt-worker S futex_wait_queue
+  34879 tokio-rt-worker S ep_poll
+  34880 tokio-rt-worker S futex_wait_queue
+  34881 tokio-rt-worker S futex_wait_queue
+  34882 status-prepare- S futex_wait_queue
+  34883 status-prepare- S futex_wait_queue
+  34884 status-prepare- S futex_wait_queue
+  34885 status-prepare- S futex_wait_queue
+  34887 tokio-rt-worker S futex_wait_queue
+  34911 tokio-rt-worker S futex_wait_queue
+  34915 tokio-rt-worker R 0 futex_wait_queue <- __futex_wait <- futex_wait
+  34916 tokio-rt-worker R 0 futex_wait_queue <- __futex_wait <- futex_wait
+  34917 tokio-rt-worker R 0 
+  34918 tokio-rt-worker R 0 futex_wait_queue <- __futex_wait <- futex_wait
+  34949 tokio-rt-worker S futex_wait_queue
+  35040 tokio-rt-worker S futex_wait_queue
+  35057 tokio-rt-worker S futex_wait_queue
+  35873 tokio-rt-worker S futex_wait_queue
+--- worker answered after 322 ms
+=== 23:38:59 worker pid 34871 unanswered 313 ms
+  34871 status-pir S futex_wait_queue
+  34874 tokio-rt-worker D jbd2_log_wait_commit jbd2_log_wait_commit <- jbd2_complete_transaction <- ext4_fc_commit <- ext4_sync_file <- vfs_fsync_range <- __x64_sys_fsync
+  34875 tokio-rt-worker S futex_wait_queue
+  34876 tokio-rt-worker S futex_wait_queue
+  34877 tokio-rt-worker S futex_wait_queue
+  34878 tokio-rt-worker S futex_wait_queue
+  34879 tokio-rt-worker S futex_wait_queue
+  34880 tokio-rt-worker S futex_wait_queue
+  34881 tokio-rt-worker S futex_wait_queue
+  34882 status-prepare- S futex_wait_queue
+  34883 status-prepare- S futex_wait_queue
+  34884 status-prepare- S futex_wait_queue
+  34885 status-prepare- S futex_wait_queue
+  34887 tokio-rt-worker S futex_wait_queue
+  34911 tokio-rt-worker S futex_wait_queue
+  34915 tokio-rt-worker S futex_wait_queue
+  34916 tokio-rt-worker S futex_wait_queue
+  34917 tokio-rt-worker S futex_wait_queue
+  34918 tokio-rt-worker S futex_wait_queue
+  34949 tokio-rt-worker S futex_wait_queue
+  35040 tokio-rt-worker S futex_wait_queue
+  35057 tokio-rt-worker S futex_wait_queue
+  35873 tokio-rt-worker S futex_wait_queue
+--- worker answered after 458 ms
+--- 04b56da fsync off runtime 23:40:18
+=== 23:48:53 worker pid 67876 unanswered 312 ms
+  67876 status-pir S futex_wait_queue
+  67879 tokio-rt-worker S futex_wait_queue
+  67880 tokio-rt-worker S futex_wait_queue
+  67881 tokio-rt-worker S futex_wait_queue
+  67882 tokio-rt-worker S futex_wait_queue
+  67883 tokio-rt-worker S futex_wait_queue
+  67884 tokio-rt-worker S futex_wait_queue
+  67885 tokio-rt-worker S futex_wait_queue
+  67886 tokio-rt-worker S futex_wait_queue
+  67887 status-prepare- S futex_wait_queue
+  67888 status-prepare- S futex_wait_queue
+  67889 status-prepare- S futex_wait_queue
+  67890 status-prepare- S futex_wait_queue
+  67915 tokio-rt-worker S futex_wait_queue
+  67983 tokio-rt-worker R 0 futex_wait_queue <- __futex_wait <- futex_wait <- do_futex <- __x64_sys_futex <- x64_sys_call
+  68140 tokio-rt-worker S futex_wait_queue
+  68141 tokio-rt-worker S futex_wait_queue
+  68142 tokio-rt-worker S futex_wait_queue
+  68143 tokio-rt-worker S futex_wait_queue
+  68158 tokio-rt-worker R 0 futex_wait_queue <- __futex_wait <- futex_wait <- do_futex <- __x64_sys_futex <- x64_sys_call
+  68423 tokio-rt-worker S futex_wait_queue
+  68523 tokio-rt-worker S futex_wait_queue
+  68739 tokio-rt-worker S futex_wait_queue
+=== 23:48:54 router pid 67936 unanswered 313 ms
+  67936 status-pir S futex_wait_queue
+  67938 tokio-rt-worker S futex_wait_queue
+  67939 tokio-rt-worker S futex_wait_queue
+  67940 tokio-rt-worker S futex_wait_queue
+  67941 tokio-rt-worker S futex_wait_queue
+  67942 tokio-rt-worker S futex_wait_queue
+  67943 tokio-rt-worker S futex_wait_queue
+  67944 tokio-rt-worker S ep_poll
+  67945 tokio-rt-worker R 0 futex_wait_queue <- __futex_wait <- futex_wait <- do_futex <- __x64_sys_futex <- x64_sys_call
+  67946 status-prepare- S futex_wait_queue
+  67947 status-prepare- S futex_wait_queue
+  67948 status-prepare- S futex_wait_queue
+  67949 status-prepare- S futex_wait_queue
+  67981 tokio-rt-worker S futex_wait_queue
+  68311 tokio-rt-worker S futex_wait_queue
+  68374 tokio-rt-worker S futex_wait_queue
+  68378 tokio-rt-worker S futex_wait_queue
+  68379 tokio-rt-worker S futex_wait_queue
+  68380 tokio-rt-worker S futex_wait_queue
+  68381 tokio-rt-worker S futex_wait_queue
+  68524 tokio-rt-worker S futex_wait_queue
+  68525 tokio-rt-worker S futex_wait_queue
+  73868 tokio-rt-worker S futex_wait_queue
+--- router answered after 496 ms
+--- worker answered after 903 ms
+=== 00:25:58 router pid 67936 unanswered 479 ms
+  67936 status-pir S futex_wait_queue
+  67938 tokio-rt-worker S futex_wait_queue
+  67939 tokio-rt-worker S futex_wait_queue
+  67940 tokio-rt-worker S futex_wait_queue
+  67941 tokio-rt-worker S futex_wait_queue
+  67942 tokio-rt-worker S futex_wait_queue
+  67943 tokio-rt-worker S ep_poll
+  67944 tokio-rt-worker S futex_wait_queue
+  67945 tokio-rt-worker S futex_wait_queue
+  67946 status-prepare- S futex_wait_queue
+  67947 status-prepare- S futex_wait_queue
+  67948 status-prepare- S futex_wait_queue
+  67949 status-prepare- S futex_wait_queue
+  67981 tokio-rt-worker S futex_wait_queue
+  68311 tokio-rt-worker S futex_wait_queue
+  68374 tokio-rt-worker S futex_wait_queue
+  68378 tokio-rt-worker S futex_wait_queue
+  68379 tokio-rt-worker S futex_wait_queue
+  68380 tokio-rt-worker S futex_wait_queue
+  68381 tokio-rt-worker S futex_wait_queue
+  68524 tokio-rt-worker D jbd2_log_wait_commit jbd2_log_wait_commit <- jbd2_complete_transaction <- ext4_fc_commit <- ext4_sync_file <- vfs_fsync_range <- __x64_sys_fsync
+  68525 tokio-rt-worker S futex_wait_queue
+  73868 tokio-rt-worker S futex_wait_queue
+--- router answered after 483 ms
+--- 41795cf 6 prep threads 00:51:59
+=== 01:06:56 router pid 155774 unanswered 314 ms
+  155774 status-pir S futex_wait_queue
+  155777 tokio-rt-worker S futex_wait_queue
+  155778 tokio-rt-worker S futex_wait_queue
+  155779 tokio-rt-worker S futex_wait_queue
+  155780 tokio-rt-worker S futex_wait_queue
+  155781 tokio-rt-worker R 0 ep_poll <- do_epoll_wait <- __x64_sys_epoll_wait <- x64_sys_call <- do_syscall_64 <- entry_SYSCALL_64_after_hwframe
+  155782 tokio-rt-worker S futex_wait_queue
+  155783 tokio-rt-worker S futex_wait_queue
+  155784 tokio-rt-worker S futex_wait_queue
+  155785 status-prepare- S futex_wait_queue
+  155786 status-prepare- S futex_wait_queue
+  155787 status-prepare- S futex_wait_queue
+  155788 status-prepare- S futex_wait_queue
+  155789 status-prepare- S futex_wait_queue
+  155790 status-prepare- S futex_wait_queue
+  155811 tokio-rt-worker S futex_wait_queue
+  156164 tokio-rt-worker S futex_wait_queue
+  156194 tokio-rt-worker S futex_wait_queue
+  156195 tokio-rt-worker S futex_wait_queue
+  156196 tokio-rt-worker S futex_wait_queue
+  156197 tokio-rt-worker S futex_wait_queue
+  156324 tokio-rt-worker S futex_wait_queue
+  157837 tokio-rt-worker S futex_wait_queue
+  158101 tokio-rt-worker S futex_wait_queue
+  158102 tokio-rt-worker S futex_wait_queue
+--- router answered after 585 ms
+--- 852d6b5 control mutex 01:18:04

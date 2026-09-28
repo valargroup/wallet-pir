@@ -1,12 +1,13 @@
 //! Serving N shard revisions from one process.
 //!
 //! **Parameters are shared per geometry, published data is not.** Every shard
-//! naming one geometry shares one `YpirSchemeParams` per table, because
-//! `params_for_simplepir` is a function of geometry alone. A set mixing archive
-//! and recent shards therefore leaks two parameter sets per geometry rather
-//! than two per shard, and a client validates each once. The published `c1`
-//! does *not* follow, because it is derived from each segment's own database —
-//! so a client validates parameters once and fetches setup per segment.
+//! naming one geometry shares one native parameter set per table — query masks
+//! and packing setup included — because the native profile is a function of
+//! schema, geometry and table alone. A set mixing archive and recent shards
+//! therefore leaks two parameter sets per geometry rather than two per shard,
+//! and a client validates each once. The published masks do *not* follow,
+//! because they are derived from each segment's own database — so a client
+//! validates parameters once and fetches setup per segment.
 //!
 //! **Runtimes are built on demand and bounded.** See [`crate::runtime`]: the
 //! cache reserves before it builds, evicts what nothing is holding, and refuses
@@ -45,7 +46,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use ipir_sp::YpirSchemeParams;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -163,21 +163,22 @@ pub struct ServiceState {
 
 /// One geometry's public parameters, as `GET /v1/shards/init` publishes them.
 ///
-/// The dimensions are published beside the derived scheme, not instead of it.
-/// A client re-derives the scheme from `rows` and `row_bytes` and refuses to
-/// proceed unless it reproduces what the service sent, so the service cannot
-/// choose parameters for it — including parameters that would leak the
-/// selection.
+/// The dimensions are published beside the derived native parameter identity,
+/// not instead of it. A client re-derives the identity — profile, bit widths,
+/// query-mask seed and packing setup — from the schema, geometry, table, `rows`
+/// and `row_bytes`, and refuses to proceed unless it reproduces what the
+/// service sent, so the service cannot choose parameters for it — including
+/// parameters that would leak the selection.
 #[derive(Serialize)]
 pub struct GeometryInit {
     pub name: String,
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
-    pub directory_scheme: YpirSchemeParams,
+    pub directory_scheme: transparent_native::NativeScheme,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
-    pub pages_scheme: YpirSchemeParams,
+    pub pages_scheme: transparent_native::NativeScheme,
     pub pages_setup_seed: u64,
 }
 
@@ -510,6 +511,53 @@ impl ServiceState {
         self.inner.max_query_bytes
     }
 
+    /// Sends a query refusal decided before the body was read, after reading
+    /// and discarding the body.
+    ///
+    /// A proxy streams the upload while the worker answers. Answering and
+    /// closing with the upload unread tears the proxy's upload down mid-body
+    /// ("broken pipe"): the wallet then gets the proxy's 502 rather than this
+    /// refusal and its retry delay, and the proxy counts an error against the
+    /// worker's health. On the 2026-09-27 bench fleet such errors from
+    /// saturated workers ejected the whole pool.
+    ///
+    /// Discarding costs bandwidth, not memory: frames are dropped as they
+    /// arrive, at most [`Self::max_query_bytes`] are accepted, and the wait is
+    /// bounded. A body that is longer, slower or broken is abandoned, and the
+    /// connection closes as it did before.
+    async fn refuse_unread(&self, request: Request, refused: Response) -> Response {
+        use http_body::Body as _;
+        let limit = self.max_query_bytes();
+        let wait = self
+            .inner
+            .admission
+            .config()
+            .upload_deadline
+            .min(std::time::Duration::from_secs(5));
+        let mut body = request.into_body();
+        let drained = tokio::time::timeout(wait, async {
+            let mut seen = 0usize;
+            loop {
+                match std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await
+                {
+                    None => return true,
+                    Some(Ok(frame)) => {
+                        seen += frame.data_ref().map_or(0, |data| data.len());
+                        if seen > limit {
+                            return false;
+                        }
+                    }
+                    Some(Err(_)) => return false,
+                }
+            }
+        })
+        .await;
+        if !matches!(drained, Ok(true)) {
+            Metrics::incr(&self.inner.metrics.refusals_unread);
+        }
+        refused
+    }
+
     pub fn metrics(&self) -> &Arc<Metrics> {
         &self.inner.metrics
     }
@@ -800,6 +848,23 @@ fn binary_digest() -> &'static Option<String> {
 /// a deploy can assert which set and assignment a worker is actually running.
 async fn ready(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
+    // The router checks this route every second and ejects a worker that
+    // does not answer, so nothing here may wait on query work or on the
+    // filesystem. The readiness decision reads only counters; the disk
+    // cache's size is a directory walk, done off the async threads and
+    // reported as unknown if it is slow.
+    let runtime_cache = {
+        let state = state.clone();
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tokio::task::spawn_blocking(move || state.inner.cache.disk_status()),
+        )
+        .await
+        {
+            Ok(Ok(status)) => status,
+            _ => serde_json::json!({"status": "unavailable: the cache directory was slow to list"}),
+        }
+    };
     let warm = inner.warm.count.load(Ordering::Acquire);
     let mut body = serde_json::json!({
         "mode": match inner.warm.mode {
@@ -812,7 +877,7 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         "warm_runtimes": warm,
         "target_runtimes": inner.warm.target,
         "binary_sha256": binary_digest(),
-        "runtime_cache": inner.cache.disk_status(),
+        "runtime_cache": runtime_cache,
         "prewarm_failed": Metrics::get(&inner.metrics.prewarm_failed),
         "prewarm_finished": inner.warm.finished.load(Ordering::Acquire),
         "prewarm_seconds": Metrics::get(&inner.metrics.prewarm_micros) as f64 / 1e6,
@@ -927,11 +992,11 @@ async fn init(State(state): State<ServiceState>) -> Response {
                 name: geometry.name.to_string(),
                 directory_rows: geometry.directory_rows,
                 directory_row_bytes: geometry.directory_row_bytes as u32,
-                directory_scheme: directory.scheme.clone(),
+                directory_scheme: directory.scheme().clone(),
                 directory_setup_seed: directory.setup_seed,
                 page_rows: geometry.page_rows,
                 page_row_bytes: geometry.page_row_bytes as u32,
-                pages_scheme: pages.scheme.clone(),
+                pages_scheme: pages.scheme().clone(),
                 pages_setup_seed: pages.setup_seed,
             }
         })
@@ -1078,12 +1143,16 @@ async fn query_inner(
     let metrics = state.inner.metrics.clone();
     let Some(table) = Table::parse(&table) else {
         Metrics::incr(&metrics.query_errors);
-        return RequestError::Bad("unknown table".into()).into_response(&map_digest);
+        let refused = RequestError::Bad("unknown table".into()).into_response(&map_digest);
+        return state.refuse_unread(request, refused).await;
     };
     let (segments, shared) = {
         let shard = match state.revision(shard_id, &digest) {
             Ok(shard) => shard,
-            Err(error) => return error.into_response(&map_digest),
+            Err(error) => {
+                let refused = error.into_response(&map_digest);
+                return state.refuse_unread(request, refused).await;
+            }
         };
         (shard.segments(table), state.shared(shard, table))
     };
@@ -1104,17 +1173,19 @@ async fn query_inner(
             request.body().size_hint().exact()
         });
     let Some(declared) = declared else {
+        // Not discarded: with no declared length there is no bound to read to.
         Metrics::incr(&metrics.query_length_rejections);
         return RequestError::LengthRequired.into_response(&map_digest);
     };
     if declared != expected as u64 {
         Metrics::incr(&metrics.query_length_rejections);
-        return RequestError::Bad(format!(
+        let refused = RequestError::Bad(format!(
             "a {} query for geometry {} must be exactly {expected} bytes, not {declared}",
             table.as_str(),
             shared.geometry.name
         ))
         .into_response(&map_digest);
+        return state.refuse_unread(request, refused).await;
     }
 
     // Counted, and its bytes budgeted, before the body is read. A worker that
@@ -1124,7 +1195,10 @@ async fn query_inner(
         Ok(pending) => pending,
         Err(error) => {
             Metrics::incr(&metrics.query_errors);
-            return RequestError::from(error).into_response(&map_digest);
+            // The capacity refusal is the one a saturated worker sends most,
+            // and the one whose retry delay matters most to reach the wallet.
+            let refused = RequestError::from(error).into_response(&map_digest);
+            return state.refuse_unread(request, refused).await;
         }
     };
     let upload_deadline = state.inner.admission.config().upload_deadline;
@@ -1252,9 +1326,12 @@ async fn query_inner(
         tracing::debug!(revision = %query_revision, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
         let query_stage = std::time::Instant::now();
         let _timer = evaluation_metrics.evaluation_seconds.timer();
-        let mut answer = Vec::new();
+        // The key and selection are parsed once: every segment shares the
+        // table's packing setup and query masks, so one parse serves them all.
+        let query = shared.parse(binding, &body)?;
+        let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
         for handle in &handles {
-            match handle.get().evaluate(&shared, binding, &body) {
+            match handle.get().answer(binding, &query) {
                 Ok(response) => answer.extend(response),
                 Err(error) => return Err(error),
             }

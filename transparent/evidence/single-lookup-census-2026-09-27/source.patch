@@ -1,0 +1,1041 @@
+diff --git a/transparent/crates/transparent-shard/src/build.rs b/transparent/crates/transparent-shard/src/build.rs
+index bdacbaa9..0a1c6487 100644
+--- a/transparent/crates/transparent-shard/src/build.rs
++++ b/transparent/crates/transparent-shard/src/build.rs
+@@ -157,6 +157,37 @@ pub fn candidate_rows(shard_id: u64, script: &[u8], rows: u64) -> [u64; DIRECTOR
+     std::array::from_fn(|choice| bucket_for(&bucket_salt(shard_id, choice), script, rows))
+ }
+ 
++/// Where a history of `total_events` falls in the order scripts are placed.
++///
++/// Short paged histories first, in increasing paged length; then long
++/// histories; then histories held entirely inline. Within a rank, scripts
++/// sort by raw bytes. This is the order [`build_shard`] lays entries out in,
++/// because it allocates page rows by class before any directory entry can
++/// name one.
++fn placement_rank(total_events: u32) -> (u8, u32) {
++    match shape_of(total_events) {
++        Shape::Short(p) => (0, p),
++        Shape::Long(_) => (1, 0),
++        Shape::None => (2, 0),
++    }
++}
++
++/// Orders indexable scripts, each with its total event count in the shard,
++/// exactly as the builder places them.
++///
++/// Placement with relocation is order dependent: a script's row depends on
++/// every script placed before it. A census that predicts a shard's placement
++/// must therefore feed [`place_scripts`] this order, not any other sorted
++/// order, or it reports row loads the builder never produces.
++pub fn placement_order<'a>(scripts: impl IntoIterator<Item = (&'a [u8], u32)>) -> Vec<&'a [u8]> {
++    let mut keyed: Vec<((u8, u32), &'a [u8])> = scripts
++        .into_iter()
++        .map(|(script, total)| (placement_rank(total), script))
++        .collect();
++    keyed.sort_unstable();
++    keyed.into_iter().map(|(_, script)| script).collect()
++}
++
+ /// Builds one shard from the events of its sealed range.
+ ///
+ /// `events` need not be sorted; they are ordered here, because the published
+@@ -358,6 +389,14 @@ pub fn build_shard(
+         });
+     }
+ 
++    // Pinned rather than implied by the loops above, because the sealer's
++    // census places in this order too. A stable sort of entries already in it
++    // is the identity, so published bytes do not move.
++    entries.sort_by(|a, b| {
++        (placement_rank(a.total_events), &a.script)
++            .cmp(&(placement_rank(b.total_events), &b.script))
++    });
++
+     let fragments: u64 = by_script
+         .iter()
+         .filter(|(script, _)| script.len() <= MAX_SCRIPT_BYTES)
+@@ -505,6 +544,28 @@ pub fn place_scripts(
+     }
+ }
+ 
++/// The choice table for a placement: which candidate row each script took.
++///
++/// `scripts` and `assignment` are what [`place_scripts`] was given and
++/// returned, and `rows` is the logical row space it settled on. A script whose
++/// two candidates name the same row takes bit 0; either answer names that row.
++pub fn choice_table(
++    shard_id: u64,
++    scripts: &[&[u8]],
++    assignment: &[u32],
++    rows: u64,
++) -> Result<crate::choice::ChoiceTable, crate::choice::ChoiceError> {
++    let entries: Vec<(&[u8], u8)> = scripts
++        .iter()
++        .zip(assignment)
++        .map(|(script, row)| {
++            let [first, _] = candidate_rows(shard_id, script, rows);
++            (*script, u8::from(u64::from(*row) != first))
++        })
++        .collect();
++    crate::choice::ChoiceTable::build(shard_id, &entries)
++}
++
+ /// Rows a relocation search may visit before giving up and taking a segment.
+ ///
+ /// A bound rather than a budget for the whole shard: the search is per script,
+@@ -1062,6 +1123,149 @@ mod tests {
+         );
+     }
+ 
++    /// Scripts of every shape: inline-only, short paged and long histories,
++    /// interleaved in raw-byte order so that the builder's placement order
++    /// and a lexicographic one differ.
++    fn mixed_fixture(count: u32) -> Vec<(ScriptBytes, TransparentEvent)> {
++        let mut events = Vec::new();
++        for tag in 0..count {
++            let per = [1, 2, 3, 5, 12, 30, 41, 90][(tag % 8) as usize];
++            for i in 0..per {
++                events.push((script(tag), event(100 + i % 101, tag * 100_000 + i)));
++            }
++        }
++        events
++    }
++
++    /// The rows [`place_scripts`] assigns, fed [`placement_order`], must be the
++    /// rows the builder publishes, entry for entry.
++    ///
++    /// Row membership rather than a load summary, because placement is order
++    /// dependent and a census fed another order agrees on segment counts long
++    /// before it agrees on which rows are full.
++    #[test]
++    fn placement_order_reproduces_the_published_rows() {
++        let events = mixed_fixture(6_000);
++        let built = build(&events);
++
++        let mut counts: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
++        for (script, _) in &events {
++            *counts.entry(script.as_slice().to_vec()).or_default() += 1;
++        }
++        let order = placement_order(counts.iter().map(|(s, n)| (s.as_slice(), *n)));
++        let (placement, assignment) = place_scripts(
++            0,
++            &order,
++            RECENT_8K.directory_rows,
++            RECENT_8K.directory_slots(),
++        )
++        .expect("fits");
++        assert_eq!(placement.segments, built.directory_segments());
++
++        let rows = RECENT_8K.directory_rows * placement.segments as u64;
++        let mut predicted: Vec<Vec<&[u8]>> = vec![Vec::new(); rows as usize];
++        for (script, row) in order.iter().zip(&assignment) {
++            predicted[*row as usize].push(script);
++        }
++        for (row, expected) in predicted.iter_mut().enumerate() {
++            expected.sort_unstable();
++            let published: Vec<Vec<u8>> = decode_directory_row(built.directory_row(row as u64))
++                .expect("decodes")
++                .into_iter()
++                .map(|entry| entry.script)
++                .collect();
++            let published: Vec<&[u8]> = published.iter().map(Vec::as_slice).collect();
++            assert_eq!(*expected, published, "row {row} differs");
++        }
++
++        // The lexicographic order the census used before is a different
++        // placement on this content, which is why the order is shared.
++        let mut lexicographic = order.clone();
++        lexicographic.sort_unstable();
++        let (_, other) = place_scripts(
++            0,
++            &lexicographic,
++            RECENT_8K.directory_rows,
++            RECENT_8K.directory_slots(),
++        )
++        .expect("fits");
++        let by_script = |order: &[&[u8]], rows: &[u32]| -> BTreeMap<Vec<u8>, u32> {
++            order
++                .iter()
++                .map(|s| s.to_vec())
++                .zip(rows.iter().copied())
++                .collect()
++        };
++        assert_ne!(
++            by_script(&order, &assignment),
++            by_script(&lexicographic, &other)
++        );
++    }
++
++    /// One row, chosen by the published choice bit, holds every placed script:
++    /// the single-lookup property, at the default geometry and at the
++    /// half-height directory, where placement runs near 80% of capacity.
++    #[test]
++    fn the_choice_bit_names_the_one_row_holding_each_script() {
++        let rows = 4_096u64;
++        let slots = crate::records::DIRECTORY_SLOTS as u64;
++        for (count, rows) in [(6_000u32, 8_192u64), (45_454, rows)] {
++            let owned = placement_set(count);
++            let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
++            let (placement, assignment) = place_scripts(11, &refs, rows, slots).expect("fits");
++            // The largest recent shard of the September census fits one
++            // half-height segment under two-choice placement with relocation.
++            assert_eq!(placement.segments, 1, "{count} scripts at {rows} rows");
++            let space = rows * placement.segments as u64;
++            let table = choice_table(11, &refs, &assignment, space).expect("peels");
++            for (script, row) in refs.iter().zip(&assignment) {
++                let chosen = candidate_rows(11, script, space)[table.choice(11, script)];
++                assert_eq!(chosen, u64::from(*row), "{count} scripts at {rows} rows");
++            }
++        }
++    }
++
++    /// The sealer's measured placement matches the builder's on content of
++    /// mixed shapes, not only on the single-shape fixture above.
++    #[test]
++    fn the_sealer_measures_the_builders_fullest_row_on_mixed_shapes() {
++        use crate::seal::{Limit, PageBasis, SealPolicy, Sealer};
++
++        let events = mixed_fixture(6_000);
++        let policy = SealPolicy {
++            scripts: Limit::new(1_000_000, 2_000_000).expect("valid"),
++            page_rows: Limit::new(1_000_000, 2_000_000).expect("valid"),
++        };
++        let mut sealer = Sealer::with_basis(policy, 100, PageBasis::default());
++        sealer.measure_placement(true);
++        for height in 100..=200u64 {
++            let block: Vec<_> = events
++                .iter()
++                .filter(|(_, event)| u64::from(event.height()) == height)
++                .cloned()
++                .collect();
++            sealer.push_block(height, &block).expect("valid block");
++        }
++        let predicted = sealer
++            .finish()
++            .expect("a tail")
++            .placement
++            .expect("placement was asked for");
++
++        let built = build(&events);
++        let rows = RECENT_8K.directory_rows * built.directory_segments() as u64;
++        let fullest = (0..rows)
++            .map(|row| {
++                decode_directory_row(built.directory_row(row))
++                    .expect("decodes")
++                    .len() as u64
++            })
++            .max()
++            .unwrap_or(0);
++        assert_eq!(predicted.segments, built.directory_segments());
++        assert_eq!(predicted.max_row_load, fullest);
++    }
++
+     /// A script's whole history must be reconstructible: the inline events plus
+     /// its pages, with nothing lost and nothing duplicated.
+     #[test]
+diff --git a/transparent/crates/transparent-shard/src/choice.rs b/transparent/crates/transparent-shard/src/choice.rs
+new file mode 100644
+index 00000000..b3798f83
+--- /dev/null
++++ b/transparent/crates/transparent-shard/src/choice.rs
+@@ -0,0 +1,402 @@
++//! Which of a script's two candidate directory rows holds it.
++//!
++//! Two-choice placement leaves a script in one of two rows, and without more
++//! information a wallet must query both, because querying one and stopping on a
++//! hit makes the query count a function of where the script landed. A
++//! [`ChoiceTable`] publishes that one bit per placed script as a static function,
++//! so the wallet evaluates it locally and sends exactly one directory query per
++//! matched script, whatever the script.
++//!
++//! The structure is an xor retrieval table: three positions per key, drawn from
++//! three equal segments of a bit array, whose xor is the key's bit. It stores
++//! about 1.23 bits per key and nothing else: no key, no fingerprint, no row. It
++//! is not a membership test. A script that was never placed evaluates to an
++//! arbitrary bit, and the exact script comparison against the returned row is
++//! what settles absence, as it does for the two-query lookup.
++//!
++//! The table is a deterministic function of the shard id and the set of
++//! `(script, bit)` pairs, so two operators with the same journal publish the
++//! same bytes.
++
++use sha2::{Digest, Sha256};
++use std::collections::BTreeMap;
++
++/// Hash domain for choice positions. Distinct from the bucket salt's, so the
++/// positions carry no relation to the candidate rows they select between.
++const DOMAIN: &[u8] = b"zcash-transparent-range-v1/directory-choice\0";
++
++/// The only encoding version this build reads or writes.
++pub const CHOICE_VERSION: u8 = 1;
++
++/// Version, seed, key count and segment length.
++pub const CHOICE_HEADER_BYTES: usize = 1 + 4 + 4 + 4;
++
++/// Seeds tried before construction is called a failure.
++///
++/// Peeling succeeds with high probability at this array size, so a retry is
++/// rare and a run of failures means the input is not a set of distinct keys.
++pub const MAX_SEEDS: u32 = 64;
++
++/// Keys a table may index. Far above any shard; a bound on what a decoder will
++/// allocate for, not a capacity target.
++pub const MAX_KEYS: u32 = 1 << 24;
++
++#[derive(Debug, thiserror::Error, PartialEq, Eq)]
++pub enum ChoiceError {
++    #[error("script {0} appears twice")]
++    Duplicate(String),
++    #[error("{keys} keys exceed the {MAX_KEYS}-key bound")]
++    TooManyKeys { keys: usize },
++    #[error("no seed below {MAX_SEEDS} peels {keys} keys")]
++    Unpeelable { keys: usize },
++    #[error("malformed choice table: {0}")]
++    Malformed(String),
++}
++
++/// A published choice table.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct ChoiceTable {
++    seed: u32,
++    keys: u32,
++    segment: u32,
++    bits: Vec<u8>,
++}
++
++/// Segment length for `keys` keys: three segments over `1.23 * keys + 32`
++/// positions, the xor-filter sizing, and at least one position each so that an
++/// empty table still evaluates.
++pub fn segment_length(keys: u32) -> u32 {
++    let capacity = (u64::from(keys) * 123).div_ceil(100) + 32;
++    capacity.div_ceil(3).max(1) as u32
++}
++
++fn bit_bytes(segment: u32) -> usize {
++    (3 * segment as usize).div_ceil(8)
++}
++
++/// The three positions a script takes under `seed`, one per segment.
++fn positions(shard_id: u64, seed: u32, segment: u32, script: &[u8]) -> [usize; 3] {
++    let mut hasher = Sha256::new();
++    hasher.update(DOMAIN);
++    hasher.update(shard_id.to_le_bytes());
++    hasher.update(seed.to_le_bytes());
++    hasher.update((script.len() as u32).to_le_bytes());
++    hasher.update(script);
++    let digest = hasher.finalize();
++    std::array::from_fn(|i| {
++        let word = u64::from_le_bytes(digest[i * 8..i * 8 + 8].try_into().expect("8 bytes"));
++        i * segment as usize + (word % u64::from(segment)) as usize
++    })
++}
++
++impl ChoiceTable {
++    /// Builds the table for `entries`, each a script and the candidate index
++    /// (0 or 1) that holds it.
++    ///
++    /// Scripts must be distinct. Input order does not matter: entries are
++    /// sorted first, so the peeling order and therefore the bytes depend only
++    /// on the set.
++    pub fn build(shard_id: u64, entries: &[(&[u8], u8)]) -> Result<Self, ChoiceError> {
++        if entries.len() > MAX_KEYS as usize {
++            return Err(ChoiceError::TooManyKeys {
++                keys: entries.len(),
++            });
++        }
++        let mut sorted: BTreeMap<&[u8], u8> = BTreeMap::new();
++        for (script, bit) in entries {
++            if sorted.insert(script, bit & 1).is_some() {
++                return Err(ChoiceError::Duplicate(hex::encode(script)));
++            }
++        }
++        let keys = sorted.len() as u32;
++        let segment = segment_length(keys);
++        let slots = 3 * segment as usize;
++        let sorted: Vec<(&[u8], u8)> = sorted.into_iter().collect();
++
++        for seed in 0..MAX_SEEDS {
++            let hashed: Vec<[usize; 3]> = sorted
++                .iter()
++                .map(|(script, _)| positions(shard_id, seed, segment, script))
++                .collect();
++            let Some(order) = peel(&hashed, slots) else {
++                continue;
++            };
++            // Assign in reverse peeling order: each key's free position is set
++            // last among the keys touching it, so its xor comes out right.
++            let mut array = vec![0u8; slots];
++            for &(key, free) in order.iter().rev() {
++                let [a, b, c] = hashed[key];
++                array[free] = 0;
++                array[free] = sorted[key].1 ^ array[a] ^ array[b] ^ array[c];
++            }
++            let mut bits = vec![0u8; bit_bytes(segment)];
++            for (i, bit) in array.iter().enumerate() {
++                bits[i / 8] |= bit << (i % 8);
++            }
++            return Ok(Self {
++                seed,
++                keys,
++                segment,
++                bits,
++            });
++        }
++        Err(ChoiceError::Unpeelable {
++            keys: keys as usize,
++        })
++    }
++
++    /// The candidate index for `script`: 0 or 1.
++    ///
++    /// Defined for every script. For a script the table was not built over the
++    /// answer is arbitrary but in range, so a caller can always form exactly
++    /// one query.
++    pub fn choice(&self, shard_id: u64, script: &[u8]) -> usize {
++        positions(shard_id, self.seed, self.segment, script)
++            .iter()
++            .fold(0u8, |acc, &at| acc ^ ((self.bits[at / 8] >> (at % 8)) & 1)) as usize
++    }
++
++    /// Keys the table was built over.
++    pub fn keys(&self) -> u32 {
++        self.keys
++    }
++
++    /// The seed construction settled on.
++    pub fn seed(&self) -> u32 {
++        self.seed
++    }
++
++    /// The published bytes.
++    pub fn encode(&self) -> Vec<u8> {
++        let mut out = Vec::with_capacity(CHOICE_HEADER_BYTES + self.bits.len());
++        out.push(CHOICE_VERSION);
++        out.extend_from_slice(&self.seed.to_le_bytes());
++        out.extend_from_slice(&self.keys.to_le_bytes());
++        out.extend_from_slice(&self.segment.to_le_bytes());
++        out.extend_from_slice(&self.bits);
++        out
++    }
++
++    /// Reads published bytes, refusing anything [`encode`](Self::encode) would
++    /// not have produced.
++    ///
++    /// Every field is checked before any position is computed from it: the
++    /// segment length must be the one the key count implies, the length must be
++    /// exact, and padding bits must be zero. Nothing is indexed until this
++    /// returns.
++    pub fn decode(bytes: &[u8]) -> Result<Self, ChoiceError> {
++        let malformed = |why: String| ChoiceError::Malformed(why);
++        if bytes.len() < CHOICE_HEADER_BYTES {
++            return Err(malformed(format!(
++                "{} bytes is shorter than a header",
++                bytes.len()
++            )));
++        }
++        if bytes[0] != CHOICE_VERSION {
++            return Err(malformed(format!("version {}", bytes[0])));
++        }
++        let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("4 bytes"));
++        let (seed, keys, segment) = (word(1), word(5), word(9));
++        if seed >= MAX_SEEDS {
++            return Err(malformed(format!("seed {seed}")));
++        }
++        if keys > MAX_KEYS {
++            return Err(malformed(format!("{keys} keys")));
++        }
++        if segment != segment_length(keys) {
++            return Err(malformed(format!(
++                "segment {segment} where {keys} keys imply {}",
++                segment_length(keys)
++            )));
++        }
++        let expected = CHOICE_HEADER_BYTES + bit_bytes(segment);
++        if bytes.len() != expected {
++            return Err(malformed(format!(
++                "{} bytes where the header implies {expected}",
++                bytes.len()
++            )));
++        }
++        let bits = bytes[CHOICE_HEADER_BYTES..].to_vec();
++        let used = 3 * segment as usize;
++        if !used.is_multiple_of(8) && bits[bits.len() - 1] >> (used % 8) != 0 {
++            return Err(malformed("nonzero padding bits".into()));
++        }
++        Ok(Self {
++            seed,
++            keys,
++            segment,
++            bits,
++        })
++    }
++}
++
++/// Peels the 3-hypergraph of `hashed` over `slots` positions.
++///
++/// Returns each key with the position it was peeled from, in peeling order, or
++/// `None` if a core remains. Deterministic: positions are scanned in index order
++/// and the stack is processed last in, first out.
++fn peel(hashed: &[[usize; 3]], slots: usize) -> Option<Vec<(usize, usize)>> {
++    let mut count = vec![0u32; slots];
++    let mut xor = vec![0usize; slots];
++    for (key, positions) in hashed.iter().enumerate() {
++        for &at in positions {
++            count[at] += 1;
++            xor[at] ^= key;
++        }
++    }
++    let mut stack: Vec<usize> = (0..slots).filter(|&at| count[at] == 1).collect();
++    let mut order = Vec::with_capacity(hashed.len());
++    while let Some(at) = stack.pop() {
++        if count[at] != 1 {
++            continue;
++        }
++        let key = xor[at];
++        order.push((key, at));
++        for &other in &hashed[key] {
++            count[other] -= 1;
++            xor[other] ^= key;
++            if count[other] == 1 {
++                stack.push(other);
++            }
++        }
++    }
++    (order.len() == hashed.len()).then_some(order)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn script(tag: u32) -> Vec<u8> {
++        let mut bytes = vec![0x76, 0xa9, 0x14];
++        bytes.extend_from_slice(&tag.to_le_bytes());
++        bytes.extend_from_slice(&[0u8; 16]);
++        bytes.extend_from_slice(&[0x88, 0xac]);
++        bytes
++    }
++
++    fn bit(tag: u32) -> u8 {
++        (tag.wrapping_mul(2_654_435_761) >> 7) as u8 & 1
++    }
++
++    fn fixture(count: u32) -> Vec<(Vec<u8>, u8)> {
++        (0..count).map(|tag| (script(tag), bit(tag))).collect()
++    }
++
++    fn table(shard_id: u64, fixture: &[(Vec<u8>, u8)]) -> ChoiceTable {
++        let entries: Vec<(&[u8], u8)> = fixture.iter().map(|(s, b)| (s.as_slice(), *b)).collect();
++        ChoiceTable::build(shard_id, &entries).expect("builds")
++    }
++
++    #[test]
++    fn every_indexed_script_returns_its_bit() {
++        for count in [0, 1, 2, 14, 1_000, 45_454] {
++            let fixture = fixture(count);
++            let built = table(7, &fixture);
++            assert_eq!(built.keys(), count);
++            for (script, bit) in &fixture {
++                assert_eq!(built.choice(7, script), *bit as usize, "{count} keys");
++            }
++        }
++    }
++
++    #[test]
++    fn the_bytes_depend_on_the_set_not_the_order() {
++        let fixture = fixture(5_000);
++        let mut reversed = fixture.clone();
++        reversed.reverse();
++        assert_eq!(table(3, &fixture).encode(), table(3, &reversed).encode());
++    }
++
++    #[test]
++    fn the_shard_id_keys_the_positions() {
++        let fixture = fixture(5_000);
++        assert_ne!(table(3, &fixture).encode(), table(4, &fixture).encode());
++    }
++
++    #[test]
++    fn it_costs_about_one_and_a_quarter_bits_per_key() {
++        let built = table(0, &fixture(45_454));
++        let bytes = built.encode().len();
++        // 45,454 keys at 1.23 bits plus the fixed 32 positions and header.
++        assert!(bytes < 7_100, "{bytes} bytes");
++        assert!(bytes > 6_900, "{bytes} bytes");
++    }
++
++    #[test]
++    fn an_unindexed_script_still_names_one_candidate() {
++        let built = table(1, &fixture(1_000));
++        let mut seen = [0usize; 2];
++        for tag in 1_000..3_000 {
++            seen[built.choice(1, &script(tag))] += 1;
++        }
++        // Both answers occur: an absent script is not steered to either row.
++        assert!(seen[0] > 800 && seen[1] > 800, "{seen:?}");
++    }
++
++    #[test]
++    fn duplicates_are_refused() {
++        let a = script(1);
++        let entries: Vec<(&[u8], u8)> = vec![(&a, 0), (&a, 1)];
++        assert!(matches!(
++            ChoiceTable::build(0, &entries),
++            Err(ChoiceError::Duplicate(_))
++        ));
++    }
++
++    #[test]
++    fn encoding_round_trips() {
++        for count in [0, 1, 13, 4_000] {
++            let built = table(9, &fixture(count));
++            assert_eq!(ChoiceTable::decode(&built.encode()), Ok(built));
++        }
++    }
++
++    #[test]
++    fn malformed_bytes_are_refused_before_use() {
++        let good = table(9, &fixture(1_001)).encode();
++        let reject = |bytes: &[u8]| {
++            assert!(
++                matches!(ChoiceTable::decode(bytes), Err(ChoiceError::Malformed(_))),
++                "accepted {} bytes",
++                bytes.len()
++            )
++        };
++        reject(&[]);
++        reject(&good[..CHOICE_HEADER_BYTES - 1]);
++        reject(&good[..good.len() - 1]);
++        let mut long = good.clone();
++        long.push(0);
++        reject(&long);
++
++        let mut version = good.clone();
++        version[0] = 2;
++        reject(&version);
++
++        let mut seed = good.clone();
++        seed[1..5].copy_from_slice(&MAX_SEEDS.to_le_bytes());
++        reject(&seed);
++
++        // A key count the segment does not match, including zero keys over a
++        // nonzero array.
++        let mut keys = good.clone();
++        keys[5..9].copy_from_slice(&0u32.to_le_bytes());
++        reject(&keys);
++
++        let mut huge = good.clone();
++        huge[5..9].copy_from_slice(&(MAX_KEYS + 1).to_le_bytes());
++        reject(&huge);
++
++        let mut segment = good.clone();
++        let wrong = segment_length(1_001) + 1;
++        segment[9..13].copy_from_slice(&wrong.to_le_bytes());
++        reject(&segment);
++
++        // Padding exists only when the array does not end on a byte boundary.
++        let odd = table(9, &fixture(3)).encode();
++        assert!(!(3 * segment_length(3)).is_multiple_of(8));
++        let mut padding = odd.clone();
++        *padding.last_mut().expect("bits") |= 0x80;
++        reject(&padding);
++    }
++}
+diff --git a/transparent/crates/transparent-shard/src/layout.rs b/transparent/crates/transparent-shard/src/layout.rs
+index 1ab1dc90..ee77764b 100644
+--- a/transparent/crates/transparent-shard/src/layout.rs
++++ b/transparent/crates/transparent-shard/src/layout.rs
+@@ -358,6 +358,21 @@ pub const RECENT_4K: Geometry = Geometry {
+     ..RECENT_8K
+ };
+ 
++/// A recent candidate with half the directory rows and all of the page rows.
++///
++/// Not a default. It lowers each directory query's selection upload without
++/// shrinking page capacity, which is what closed every sealed recent shard in
++/// the September census, so it should not add boundaries the way `recent-4k`
++/// does. Its 57,344 directory slots held every recent shard of that census
++/// only on dense arithmetic; two-choice placement at this load must be replayed
++/// before it is promoted. `recent-4k` keeps its own meaning.
++pub const RECENT_4K_8K: Geometry = Geometry {
++    name: "recent-4k-8k",
++    directory_rows: 4_096,
++    page_rows: 8_192,
++    ..RECENT_8K
++};
++
+ /// The square archive candidate, and the fallback if the wider one does not
+ /// validate.
+ pub const ARCHIVE_32K: Geometry = Geometry {
+@@ -386,7 +401,13 @@ pub const ARCHIVE_WIDE: Geometry = Geometry {
+ /// scheme serves, whose parameters a client validates once and reuses for every
+ /// shard of that geometry; an arbitrary shape would cost a parameter set per
+ /// shard and give a wallet nothing to check the server's choice against.
+-pub const PROFILES: &[Geometry] = &[RECENT_8K, RECENT_4K, ARCHIVE_32K, ARCHIVE_WIDE];
++pub const PROFILES: &[Geometry] = &[
++    RECENT_8K,
++    RECENT_4K,
++    RECENT_4K_8K,
++    ARCHIVE_32K,
++    ARCHIVE_WIDE,
++];
+ 
+ /// The registry entry named `name`, or `None` if there is no such geometry.
+ ///
+@@ -623,6 +644,8 @@ mod tests {
+         assert_eq!(ARCHIVE_WIDE.directory_capacity(), 458_752);
+         assert_eq!(ARCHIVE_WIDE.page_rows, 2 * ARCHIVE_WIDE.directory_rows);
+         assert_eq!(RECENT_4K.directory_capacity(), 57_344);
++        assert_eq!(RECENT_4K_8K.directory_capacity(), 57_344);
++        assert_eq!(RECENT_4K_8K.page_rows, RECENT_8K.page_rows);
+         // A narrower directory buys a smaller query; a wider page table buys
+         // rows for old history. The two move independently, which is the point
+         // of having a pair rather than one number.
+diff --git a/transparent/crates/transparent-shard/src/lib.rs b/transparent/crates/transparent-shard/src/lib.rs
+index e2de9bba..328929e9 100644
+--- a/transparent/crates/transparent-shard/src/lib.rs
++++ b/transparent/crates/transparent-shard/src/lib.rs
+@@ -18,18 +18,23 @@
+ //! data and it does not serve queries.
+ 
+ pub mod build;
++pub mod choice;
+ pub mod layout;
+ pub mod manifest;
+ pub mod page_row;
+ pub mod records;
+ pub mod seal;
+ 
+-pub use build::{build_shard, candidate_rows, place_scripts, BuildError, BuiltShard, Placement};
++pub use build::{
++    build_shard, candidate_rows, choice_table, place_scripts, placement_order, BuildError,
++    BuiltShard, Placement,
++};
++pub use choice::{ChoiceError, ChoiceTable};
+ pub use layout::{
+     by_name as geometry_by_name, entries_per_row, entry_bytes, fragments_for, shape_of, Geometry,
+     PackedDemand, Shape, ARCHIVE_32K, ARCHIVE_WIDE, DIRECTORY_ROWS, DIRECTORY_ROW_BYTES,
+     EVENTS_PER_PAGE, INLINE_EVENTS, MAX_ENTRIES_PER_ROW, PAGE_ENTRY_HEADER_BYTES, PAGE_ROWS,
+-    PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES, PROFILES, RECENT_4K, RECENT_8K,
++    PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES, PROFILES, RECENT_4K, RECENT_4K_8K, RECENT_8K,
+ };
+ pub use manifest::{
+     query_binding, ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry,
+@@ -40,4 +45,6 @@ pub use records::{
+     decode_directory_row, encode_directory_row, DirectoryEntry, RecordError, DIRECTORY_ENTRY_BYTES,
+     DIRECTORY_ENTRY_HEADER_BYTES, DIRECTORY_ROW_HEADER_BYTES, DIRECTORY_SLOTS, MAX_SCRIPT_BYTES,
+ };
+-pub use seal::{Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer};
++pub use seal::{
++    ChoiceMeasure, Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer,
++};
+diff --git a/transparent/crates/transparent-shard/src/seal.rs b/transparent/crates/transparent-shard/src/seal.rs
+index 625b3504..ab3a6bbf 100644
+--- a/transparent/crates/transparent-shard/src/seal.rs
++++ b/transparent/crates/transparent-shard/src/seal.rs
+@@ -232,6 +232,24 @@ pub struct SealedShard {
+     /// is holding the journal's whole script set, which over a genesis-to-tip
+     /// journal is not bounded by anything useful.
+     pub scripts: Option<Vec<(Vec<u8>, u32)>>,
++    /// The choice table this shard's placement would publish, if asked for.
++    ///
++    /// `Err` carries why construction failed. `None` unless the sealer was
++    /// asked with [`Sealer::measure_choice`].
++    pub choice: Option<Result<ChoiceMeasure, String>>,
++}
++
++/// What a shard's choice table costs, measured by building it.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct ChoiceMeasure {
++    /// Encoded bytes, header included.
++    pub bytes: u64,
++    /// Scripts indexed.
++    pub keys: u32,
++    /// The seed construction settled on; above zero means retries.
++    pub seed: u32,
++    /// Wall time to build, in microseconds.
++    pub micros: u64,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -273,6 +291,8 @@ pub struct Sealer {
+     geometry: Geometry,
+     /// Whether each closed shard reports its real directory placement.
+     measure_placement: bool,
++    /// Whether each closed shard reports the choice table its placement implies.
++    measure_choice: bool,
+     /// Whether each closed shard carries its script set out with it.
+     retain_scripts: bool,
+     next_shard_id: u64,
+@@ -340,6 +360,7 @@ impl Sealer {
+             basis,
+             geometry,
+             measure_placement: false,
++            measure_choice: false,
+             retain_scripts: false,
+             next_shard_id: 0,
+             scripts: HashMap::new(),
+@@ -365,6 +386,12 @@ impl Sealer {
+         self.measure_placement = on;
+     }
+ 
++    /// Asks each closed shard to build the choice table its placement implies,
++    /// and report its size and construction cost. Implies placement.
++    pub fn measure_choice(&mut self, on: bool) {
++        self.measure_choice = on;
++    }
++
+     /// Asks each closed shard to carry its indexable script set out with it.
+     ///
+     /// For a caller counting how many shards each script appears in, which
+@@ -413,39 +440,56 @@ impl Sealer {
+ 
+     /// Runs the builder's placement rule over the scripts this shard holds.
+     ///
+-    /// Only the scripts a directory entry can hold, in lexicographic raw-byte
++    /// Only the scripts a directory entry can hold, in the builder's placement
+     /// order — the two things the builder does, and both of them matter. A
+     /// script too long to index is filtered publicly but never placed, and
+     /// placement in any other order is a different placement.
+     fn placeable(&self) -> Vec<&[u8]> {
+-        let mut placeable: Vec<&[u8]> = self
+-            .scripts
+-            .keys()
+-            .map(|script| script.as_slice())
+-            .filter(|script| script.len() <= MAX_SCRIPT_BYTES)
+-            .collect();
+-        placeable.sort_unstable();
+-        placeable
++        crate::build::placement_order(
++            self.scripts
++                .iter()
++                .filter(|(script, _)| script.len() <= MAX_SCRIPT_BYTES)
++                .map(|(script, events)| (script.as_slice(), *events)),
++        )
+     }
+ 
+-    fn placement(&self) -> Placement {
++    fn placement(&self) -> (Placement, Option<Result<ChoiceMeasure, String>>) {
+         let placeable = self.placeable();
+-        crate::build::place_scripts(
++        let (placement, assignment) = crate::build::place_scripts(
+             self.next_shard_id,
+             &placeable,
+             self.geometry.directory_rows,
+             self.geometry.directory_slots(),
+         )
+-        .map(|(placement, _)| placement)
+         // The rule adds a segment until everything fits and the cap is a
+         // bug-catcher far above any reachable load, so a census reaching it is
+         // a defect in the rule rather than a property of the journal.
+-        .unwrap_or_else(|script| panic!("placement gave up on script {script}"))
++        .unwrap_or_else(|script| panic!("placement gave up on script {script}"));
++        let choice = self.measure_choice.then(|| {
++            let started = std::time::Instant::now();
++            let rows = self.geometry.directory_rows * u64::from(placement.segments);
++            crate::build::choice_table(self.next_shard_id, &placeable, &assignment, rows)
++                .map(|table| ChoiceMeasure {
++                    bytes: table.encode().len() as u64,
++                    keys: table.keys(),
++                    seed: table.seed(),
++                    micros: started.elapsed().as_micros() as u64,
++                })
++                .map_err(|error| error.to_string())
++        });
++        (placement, choice)
+     }
+ 
+     fn close(&mut self, reason: Option<SealReason>) -> SealedShard {
++        let (placement, choice) = if self.measure_placement || self.measure_choice {
++            let (placement, choice) = self.placement();
++            (Some(placement), choice)
++        } else {
++            (None, None)
++        };
+         let shard = SealedShard {
+-            placement: self.measure_placement.then(|| self.placement()),
++            placement,
++            choice,
+             scripts: self.retain_scripts.then(|| {
+                 self.placeable()
+                     .into_iter()
+@@ -680,6 +724,17 @@ mod tests {
+         assert_eq!(policy.page_rows.target, 7_936);
+     }
+ 
++    /// The seal policy the deployment plan names for `recent-4k-8k`
++    /// (`49152:57344,7936:8192`) is the one the geometry derives.
++    #[test]
++    fn the_recent_4k_8k_policy_is_the_one_deployment_names() {
++        let policy = SealPolicy::for_geometry(&crate::layout::RECENT_4K_8K);
++        assert_eq!(policy.scripts.target, 49_152);
++        assert_eq!(policy.scripts.capacity, 57_344);
++        assert_eq!(policy.page_rows.target, 7_936);
++        assert_eq!(policy.page_rows.capacity, 8_192);
++    }
++
+     /// Every registry entry must imply a policy that is actually sealable:
+     /// positive targets, targets under capacity, and enough headroom that one
+     /// more block cannot jump the gap between them.
+diff --git a/transparent/services/transparent-filter-server/src/bin/shard-census.rs b/transparent/services/transparent-filter-server/src/bin/shard-census.rs
+index 1532bdf4..f075daeb 100644
+--- a/transparent/services/transparent-filter-server/src/bin/shard-census.rs
++++ b/transparent/services/transparent-filter-server/src/bin/shard-census.rs
+@@ -21,7 +21,9 @@ use transparent_shard::layout::{
+     by_name as geometry_by_name, entries_per_row, Geometry, EVENTS_PER_PAGE, PAGE_ROW_BYTES,
+     PAGE_ROW_HEADER_BYTES,
+ };
+-use transparent_shard::seal::{Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer};
++use transparent_shard::seal::{
++    ChoiceMeasure, Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer,
++};
+ 
+ type BoxError = Box<dyn std::error::Error + Send + Sync>;
+ 
+@@ -97,6 +99,13 @@ struct Cli {
+     /// and reports how much headroom the fullest row has left.
+     #[arg(long)]
+     placement: bool,
++    /// Build each shard's single-lookup choice table from its real placement.
++    ///
++    /// Implies `--placement`. Reports the table's encoded size, bits per
++    /// script, seed retries and build time per shard, which is what a wallet
++    /// downloads per matched shard to send one directory query instead of two.
++    #[arg(long)]
++    single_lookup: bool,
+     /// Count how many shards each exact script appears in, spilling sorted runs
+     /// under this directory.
+     ///
+@@ -138,6 +147,14 @@ struct Cli {
+     /// answers neither.
+     #[arg(long)]
+     start_height: Option<u64>,
++    /// Shard id the first sealed shard takes. Defaults to 0.
++    ///
++    /// Placement salts every candidate row with the shard id, so a bounded run
++    /// that should reproduce published shards — the recent tier started from
++    /// its cutoff, say — must number them as the publisher did. Single-tier
++    /// runs only; a two-tier run continues the archive tier's ids.
++    #[arg(long)]
++    first_shard_id: Option<u64>,
+     /// Last height to census, inclusive. Defaults to the journal's last.
+     ///
+     /// Inclusive at both ends, matching the journal's own `covered_through`.
+@@ -361,6 +378,68 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
+         page_pinned as f64 / pinned as f64 * 100.0,
+     );
+     placement(shards, geometry, dir_segments);
++    single_lookup(shards);
++}
++
++/// What each shard's choice table costs, from its real placement.
++///
++/// Silent unless `--single-lookup` asked for it.
++fn single_lookup(shards: &[SealedShard]) {
++    let measured: Vec<(&SealedShard, &Result<ChoiceMeasure, String>)> = shards
++        .iter()
++        .filter_map(|shard| shard.choice.as_ref().map(|c| (shard, c)))
++        .collect();
++    if measured.is_empty() {
++        return;
++    }
++    println!("  single lookup (choice table built from the real placement)");
++    let mut failed = 0usize;
++    let mut sizes: Vec<u64> = Vec::new();
++    let mut retries = 0u32;
++    let mut slowest = 0u64;
++    for (shard, choice) in &measured {
++        match choice {
++            Ok(choice) => {
++                println!(
++                    "    choice\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}",
++                    shard.shard_id,
++                    if shard.reason.is_some() {
++                        "sealed"
++                    } else {
++                        "tail"
++                    },
++                    choice.keys,
++                    choice.bytes,
++                    choice.bytes as f64 * 8.0 / f64::from(choice.keys.max(1)),
++                    choice.seed,
++                    choice.micros,
++                );
++                sizes.push(choice.bytes);
++                retries += choice.seed;
++                slowest = slowest.max(choice.micros);
++            }
++            Err(error) => {
++                failed += 1;
++                println!("    choice\t{}\tFAILED\t{error}", shard.shard_id);
++            }
++        }
++    }
++    sizes.sort_unstable();
++    let total: u64 = sizes.iter().sum();
++    println!(
++        "    columns      shard_id, kind, scripts, bytes, bits_per_script, seed, build_micros"
++    );
++    println!(
++        "    tables       {} built, {failed} failed, {retries} seed retries, slowest {slowest} us",
++        sizes.len()
++    );
++    if !sizes.is_empty() {
++        println!(
++            "    bytes        total {total}, p50 {}, max {}",
++            percentile(&sizes, 50.0),
++            sizes[sizes.len() - 1]
++        );
++    }
+ }
+ 
+ /// What the real two-choice placer does with the same script sets.
+@@ -796,6 +875,9 @@ fn main() -> Result<(), BoxError> {
+         (Some(_), None) | (None, Some(_)) => {
+             return Err("--archive-geometry and --recent-from go together".into())
+         }
++        (Some(_), Some(_)) if cli.first_shard_id.is_some() => {
++            return Err("--first-shard-id is for single-tier runs".into())
++        }
+         (Some(archive), Some(recent_from)) => {
+             return tiers(&cli, &store, first, covered, archive, recent_from);
+         }
+@@ -939,8 +1021,15 @@ choose parameters for a set that will be published"
+         .into_iter()
+         .map(|(name, policy)| Run {
+             sealer: {
+-                let mut sealer = Sealer::with_geometry(policy, first, basis, geometry);
+-                sealer.measure_placement(cli.placement);
++                let mut sealer = Sealer::resume(
++                    policy,
++                    first,
++                    basis,
++                    geometry,
++                    cli.first_shard_id.unwrap_or(0),
++                );
++                sealer.measure_placement(cli.placement || cli.single_lookup);
++                sealer.measure_choice(cli.single_lookup);
+                 sealer.retain_scripts(spill.is_some());
+                 sealer
+             },
+@@ -1069,7 +1158,8 @@ sweeps do not apply to it"
+     }
+     let mut matches = spill.map(|dir| MatchCounter::new(dir, "tiers"));
+     let mut sealer = Sealer::with_geometry(archive_policy, first, basis, archive);
+-    sealer.measure_placement(cli.placement);
++    sealer.measure_placement(cli.placement || cli.single_lookup);
++    sealer.measure_choice(cli.single_lookup);
+     sealer.retain_scripts(spill.is_some());
+     let mut archive_shards: Vec<SealedShard> = Vec::new();
+     let mut recent_shards: Vec<SealedShard> = Vec::new();
+@@ -1090,7 +1180,8 @@ sweeps do not apply to it"
+             drain_scripts_in_tier(&mut matches, sealed, &mut archive_shards, tier)?;
+             let next_shard_id = sealer.next_shard_id();
+             sealer = Sealer::resume(recent_policy, height, basis, recent, next_shard_id);
+-            sealer.measure_placement(cli.placement);
++            sealer.measure_placement(cli.placement || cli.single_lookup);
++            sealer.measure_choice(cli.single_lookup);
+             sealer.retain_scripts(spill.is_some());
+             tier = 1;
+         }

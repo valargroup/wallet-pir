@@ -19,7 +19,7 @@ on:
       data_dir:
         description: The event journal to inventory
         required: false
-        default: /srv/zakura/transparent-event-data
+        default: /srv/zakura/transparent-event-data-v2
         type: string
       anchor_height:
         description: >-
@@ -53,7 +53,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DATA_DIR: /srv/zakura/transparent-event-data
+  DATA_DIR: /srv/zakura/transparent-event-data-v2
 
 jobs:
   inventory:

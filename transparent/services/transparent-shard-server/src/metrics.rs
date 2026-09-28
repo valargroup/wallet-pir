@@ -196,6 +196,9 @@ pub struct Metrics {
     pub body_budget_rejections: AtomicU64,
     /// Queries whose body did not arrive within the upload deadline.
     pub upload_timeouts: AtomicU64,
+    /// Refusals sent before the body was read whose body could not be
+    /// discarded in time; the connection closed under the upload.
+    pub refusals_unread: AtomicU64,
     /// Requests that waited their whole deadline without a slot.
     pub deadline_exceeded: AtomicU64,
     /// Requests dropped by their client before they were answered.
@@ -244,6 +247,7 @@ impl Default for Metrics {
             queue_rejections: AtomicU64::new(0),
             body_budget_rejections: AtomicU64::new(0),
             upload_timeouts: AtomicU64::new(0),
+            refusals_unread: AtomicU64::new(0),
             deadline_exceeded: AtomicU64::new(0),
             queries_cancelled: AtomicU64::new(0),
             query_queue_depth: AtomicU64::new(0),
@@ -499,6 +503,12 @@ impl Metrics {
             "counter",
             "Queries whose body did not arrive within the upload deadline.",
             Self::get(&self.upload_timeouts),
+        );
+        line(
+            "transparent_shard_refusals_unread_total",
+            "counter",
+            "Early refusals whose request body could not be discarded before closing.",
+            Self::get(&self.refusals_unread),
         );
         line(
             "transparent_shard_deadline_exceeded_total",

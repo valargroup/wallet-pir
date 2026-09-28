@@ -23,7 +23,7 @@
 //! A change to an operator payload therefore shows up as a diff in
 //! `transparent/ops/fixtures/`. That is the point: the operator contract should be
 //! something a reviewer sees change. It also catches a rename arriving through
-//! a dependency bump — `YpirSchemeParams` is serialized wholesale into
+//! a dependency bump — the native `NativeScheme` is serialized wholesale into
 //! `geometries[]`, and nothing else in the tree would notice.
 //!
 //! Accept a deliberate change with:
@@ -159,6 +159,7 @@ fn write_shard(
         end_height: end,
         parent_block_hash: hash_at(start - 1).to_display_hex(),
         terminal_block_hash: hash_at(end).to_display_hex(),
+        tag_salt_counter: built.tag_salt_counter,
         parent_manifest_digest: parent_manifest_digest.to_string(),
         sealed,
         revision: 0,
@@ -197,6 +198,7 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        directory_choice: None,
     };
 
     let digest = manifest.digest();

@@ -25,6 +25,131 @@ impl View {
     }
 }
 
+/// Five-minute HTTP completion deltas from one process incarnation. All response
+/// classes contribute latency; only HTTP 5xx contributes server errors.
+#[derive(Debug)]
+pub struct AlertWindow {
+    pub completed: u64,
+    pub errors: u64,
+    pub p99_seconds: Option<f64>,
+}
+#[derive(Clone)]
+struct HttpCounters {
+    instance: String,
+    successes: u64,
+    failures: u64,
+    errors: u64,
+    buckets: [u64; 12],
+}
+impl HttpCounters {
+    fn read(value: &Value, endpoint: &str) -> Option<Self> {
+        let instance = value["http_instances"][endpoint].as_str()?.to_owned();
+        if instance.is_empty() {
+            return None;
+        }
+        let op = &value["http_operations"][endpoint];
+        let successes = op["successes"].as_u64()?;
+        let failures = op["failures"].as_u64()?;
+        let errors = op["server_errors"].as_u64()?;
+        let buckets: Vec<u64> = op["buckets"]
+            .as_array()?
+            .iter()
+            .map(Value::as_u64)
+            .collect::<Option<_>>()?;
+        let buckets: [u64; 12] = buckets.try_into().ok()?;
+        let completed = successes.checked_add(failures)?;
+        if errors > failures
+            || op["arrivals"].as_u64()? < completed
+            || buckets
+                .iter()
+                .try_fold(0u64, |sum, n| sum.checked_add(*n))?
+                != completed
+        {
+            return None;
+        }
+        Some(Self {
+            instance,
+            successes,
+            failures,
+            errors,
+            buckets,
+        })
+    }
+    fn follows(&self, old: &Self) -> bool {
+        self.instance == old.instance
+            && self.successes >= old.successes
+            && self.failures >= old.failures
+            && self.errors >= old.errors
+            && self.errors - old.errors <= self.failures - old.failures
+            && self
+                .buckets
+                .iter()
+                .zip(old.buckets)
+                .all(|(new, old)| *new >= old)
+    }
+}
+impl View {
+    pub fn alert_window(&self, endpoint: &str, now: u64) -> Option<AlertWindow> {
+        if self.error.is_some() {
+            return None;
+        }
+        let (end_time, end) = self.history.back()?;
+        if self.success != Some(*end_time) {
+            return None;
+        }
+        let at = end_time.duration_since(UNIX_EPOCH).ok()?.as_secs();
+        if at > now || now - at > 45 {
+            return None;
+        }
+        let end = HttpCounters::read(end, endpoint)?;
+        let mut start = end.clone();
+        let mut previous_time = *end_time;
+        let mut intervals = 0;
+        for (time, value) in self.history.iter().rev().skip(1) {
+            let age = end_time.duration_since(*time).ok()?.as_secs();
+            let gap = previous_time.duration_since(*time).ok()?.as_secs();
+            if age > 300 || gap > 45 || *time == previous_time {
+                break;
+            }
+            let Some(old) = HttpCounters::read(value, endpoint) else {
+                break;
+            };
+            if !start.follows(&old) {
+                break;
+            }
+            start = old;
+            previous_time = *time;
+            intervals += 1;
+        }
+        if intervals == 0 {
+            return None;
+        }
+        let completed =
+            (end.successes - start.successes).checked_add(end.failures - start.failures)?;
+        let errors = end.errors - start.errors;
+        if errors > end.failures - start.failures {
+            return None;
+        }
+        let target = (completed as f64 * 0.99).ceil() as u64;
+        let mut cumulative = 0;
+        let mut p99_seconds = None;
+        if completed > 0 {
+            for (i, (new, old)) in end.buckets.iter().zip(start.buckets).enumerate() {
+                cumulative += new - old;
+                if cumulative >= target {
+                    p99_seconds = Some(LIMITS_MS[i] / 1000.);
+                    break;
+                }
+            }
+        }
+        Some(AlertWindow {
+            completed,
+            errors,
+            p99_seconds,
+        })
+    }
+}
+
 fn scalar<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     path.iter().try_fold(value, |node, key| {
         if node.is_array() {
@@ -221,6 +346,25 @@ fn merge_roles(
             return Err("Malformed Status role metrics");
         }
     }
+    // Keep real HTTP outcomes separate from admitted-work timing. Never derive
+    // error rates from admission completions or count both router and worker.
+    let mut http_operations = serde_json::Map::new();
+    let mut http_instances = serde_json::Map::new();
+    for (endpoint, source, operation) in [
+        ("init", &coordinator, "init"),
+        ("query", &router, "router_query"),
+    ] {
+        if source["http_observation_version"].as_u64() == Some(1)
+            && source["http_instance"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        {
+            http_operations.insert(endpoint.into(), source["operations"][operation].clone());
+            http_instances.insert(endpoint.into(), source["http_instance"].clone());
+        }
+    }
+    coordinator["http_operations"] = Value::Object(http_operations);
+    coordinator["http_instances"] = Value::Object(http_instances);
     let mut operations = serde_json::Map::new();
     let mut admission = serde_json::Map::new();
     let mut resources = serde_json::Map::new();
@@ -467,9 +611,18 @@ pub fn pane(view: &View) -> String {
     }
     html.push_str("</div>");
     for role in ["coordinator", "router", "worker"] {
-        html.push_str(&format!("<section class=\"card\"><h3>{role} resources</h3><p>Process RSS: {} bytes · host available memory: {} bytes · GPU utilization: {}%</p></section>", display(sample,&["role_resources",role,"process_rss_bytes"]), display(sample,&["role_resources",role,"host_memory_available_bytes"]), display(sample,&["role_resources",role,"gpu_utilization_percent"])));
+        // CPU-only hosts report no GPU reading; omit it rather than show a blank.
+        let gpu = number(sample, &["role_resources", role, "gpu_utilization_percent"])
+            .map(|_| {
+                format!(
+                    " · GPU utilization: {}%",
+                    display(sample, &["role_resources", role, "gpu_utilization_percent"])
+                )
+            })
+            .unwrap_or_default();
+        html.push_str(&format!("<section class=\"card\"><h3>{role} resources</h3><p>Process RSS: {} bytes · host available memory: {} bytes{gpu}</p></section>", display(sample,&["role_resources",role,"process_rss_bytes"]), display(sample,&["role_resources",role,"host_memory_available_bytes"])));
     }
-    html.push_str("<p class=\"intro\">Live publication is read from the coordinator manifest. Router and worker share the P4000 host; their host memory and GPU readings overlap and must not be summed. No client load-test percentile is inferred from these server histograms.</p></section>");
+    html.push_str("<p class=\"intro\">Live publication is read from the coordinator manifest. Router and worker share one host; their host readings overlap and must not be summed. No client load-test percentile is inferred from these server histograms.</p></section>");
     html
 }
 
@@ -483,6 +636,74 @@ pub fn topology(view: &View) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn http_sample(instance: &str, n: u64, errors: u64, bucket: usize) -> Value {
+        let mut buckets = [0u64; 12];
+        buckets[bucket] = n;
+        serde_json::json!({"http_instances":{"query":instance},"http_operations":{"query":{"arrivals":n,"successes":n-errors,"failures":errors,"server_errors":errors,"buckets":buckets}}})
+    }
+    fn append(view: &mut View, at: u64, value: Value) {
+        let time = UNIX_EPOCH + Duration::from_secs(at);
+        view.success = Some(time);
+        view.history.push_back((time, value));
+    }
+    #[test]
+    fn http_windows_validate_idle_overflow_restart_gaps_and_malformed_data() {
+        let mut v = View::default();
+        append(&mut v, 100, http_sample("a", 0, 0, 0));
+        assert!(v.alert_window("query", 100).is_none());
+        append(&mut v, 105, http_sample("a", 0, 0, 0));
+        assert_eq!(v.alert_window("query", 105).unwrap().completed, 0);
+        append(&mut v, 110, http_sample("a", 100, 10, 11));
+        let w = v.alert_window("query", 110).unwrap();
+        assert_eq!((w.completed, w.errors), (100, 10));
+        assert!(w.p99_seconds.unwrap().is_infinite());
+        assert!(v.alert_window("query", 156).is_none());
+        v.error = Some("scrape failed".into());
+        assert!(v.alert_window("query", 110).is_none());
+        v.error = None;
+        // A process restart can surpass previous totals before its first scrape.
+        append(&mut v, 115, http_sample("b", 200, 20, 11));
+        assert!(v.alert_window("query", 115).is_none());
+        append(&mut v, 120, http_sample("b", 220, 20, 11));
+        assert_eq!(v.alert_window("query", 120).unwrap().errors, 0);
+        append(&mut v, 170, http_sample("b", 240, 20, 11));
+        assert!(v.alert_window("query", 170).is_none());
+        append(&mut v, 175, http_sample("b", 0, 0, 0));
+        assert!(v.alert_window("query", 175).is_none());
+        append(&mut v, 180, http_sample("b", 20, 0, 2));
+        assert_eq!(v.alert_window("query", 180).unwrap().completed, 20);
+        for path in ["server_errors", "successes", "buckets"] {
+            let mut bad = v.clone();
+            bad.history.back_mut().unwrap().1["http_operations"]["query"]
+                .as_object_mut()
+                .unwrap()
+                .remove(path);
+            assert!(bad.alert_window("query", 180).is_none());
+        }
+        let mut bad = v.clone();
+        bad.history.back_mut().unwrap().1["http_operations"]["query"]["buckets"][2] = 21.into();
+        assert!(bad.alert_window("query", 180).is_none());
+    }
+    #[test]
+    fn merge_keeps_http_errors_separate_from_admission_and_old_roles_unknown() {
+        let source = |key: &str| serde_json::json!({"operations":{key:{"arrivals":20,"successes":18,"failures":2,"server_errors":1,"buckets":[20,0,0,0,0,0,0,0,0,0,0,0]}},"admission":{},"http_observation_version":1,"http_instance":key});
+        let merged = merge_roles(
+            source("init"),
+            source("router_query"),
+            source("worker_evaluate"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(merged["http_operations"]["query"]["server_errors"], 1);
+        assert_eq!(merged["http_operations"]["init"]["successes"], 18);
+        assert_eq!(merged["http_instances"]["query"], "router_query");
+        let mut old = source("router_query");
+        old.as_object_mut()
+            .unwrap()
+            .remove("http_observation_version");
+        let merged = merge_roles(source("init"), old, source("worker_evaluate"), None).unwrap();
+        assert!(merged["http_operations"]["query"].is_null());
+    }
     #[test]
     fn live_roles_preserve_latency_boundaries_and_readiness() {
         let role = |name: &str, bucket: usize| {
@@ -503,16 +724,18 @@ mod tests {
         assert!(merged["operations"]["query"]["failures"].is_null());
         let view = View {
             configured: true,
-            topology: "Enhance host → P4000 router + worker".into(),
+            topology: "Enhance host → CPU router + worker".into(),
             sample: Some(merged),
             success: Some(SystemTime::now()),
             ..Default::default()
         };
         let html = pane(&view);
-        assert!(html.contains("Enhance host → P4000 router + worker"));
+        assert!(html.contains("Enhance host → CPU router + worker"));
         assert!(html.contains("not end-to-end client p99"));
         assert!(html.contains("twenty-second freshness gate"));
         assert!(!html.contains("Synthetic"));
+        assert!(!html.contains("GPU utilization"));
+        assert!(!html.contains("P4000"));
         let missing = merge_roles(
             role("coordinator", 8),
             role("router", 5),
@@ -530,6 +753,21 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn gpu_reading_is_shown_only_when_reported() {
+        let view = View {
+            configured: true,
+            sample: Some(
+                serde_json::json!({"operations":{},"generation":1,"observed_ms":0,
+                "role_resources":{"worker":{"process_rss_bytes":1,"gpu_utilization_percent":45}}}),
+            ),
+            success: Some(SystemTime::now()),
+            ..Default::default()
+        };
+        let html = pane(&view);
+        assert_eq!(html.matches("GPU utilization").count(), 1);
+        assert!(html.contains("GPU utilization: 45%"));
+    }
+    #[test]
     fn overflow_latency_is_not_reported_as_ten_seconds() {
         let empty = serde_json::json!({"operations":{}});
         let full =
@@ -540,13 +778,13 @@ mod tests {
     fn topology_uses_a_service_name_and_placement_description() {
         let view = View {
             configured: true,
-            topology: "Enhance host → P4000 router + worker".into(),
+            topology: "Enhance host → CPU router + worker".into(),
             success: Some(SystemTime::now()),
             ..Default::default()
         };
         let html = topology(&view);
         assert!(html.contains("<strong>Status PIR</strong>"));
-        assert!(html.contains("Enhance host → P4000 router + worker"));
+        assert!(html.contains("Enhance host → CPU router + worker"));
         assert!(!html.contains("enhance-coordinator-and-p4000"));
     }
     #[test]
@@ -565,7 +803,7 @@ mod tests {
     fn outage_preserves_sample_and_marks_it_stale() {
         let mut view = View {
             configured: true,
-            topology: "Enhance host → P4000 router + worker".into(),
+            topology: "Enhance host → CPU router + worker".into(),
             sample: Some(serde_json::json!({"operations":{},"generation":1,"observed_ms":0})),
             success: Some(SystemTime::now()),
             ..Default::default()

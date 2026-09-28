@@ -120,6 +120,11 @@ pub struct Config {
     pub request_timeout_seconds: u64,
     #[serde(default)]
     pub max_queries: Option<u64>,
+    /// Shard service requests one recovery keeps in flight across matched
+    /// shards; 1 walks every request in sequence. Ignored with `max_queries`,
+    /// which always walks in sequence.
+    #[serde(default = "shard_concurrency")]
+    pub shard_concurrency: usize,
     #[serde(default)]
     pub store: Store,
     #[serde(default)]
@@ -147,6 +152,9 @@ fn gzip() -> String {
 }
 fn preparation_concurrency() -> usize {
     2
+}
+fn shard_concurrency() -> usize {
+    transparent_wallet::http::SHARD_REQUEST_CONCURRENCY
 }
 
 fn one_attempt() -> usize {
@@ -183,6 +191,10 @@ pub enum Store {
 
 impl Config {
     fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            (1..=16).contains(&self.shard_concurrency),
+            "shard_concurrency must be 1..16"
+        );
         if self.backend == Backend::Blocks {
             anyhow::ensure!(
                 (1..=8).contains(&self.block_prefetch),
@@ -585,6 +597,7 @@ fn recover(job: &Job) -> Result<Value> {
     }
     let mut transport = HttpShardTransport::new(&job.config.shard_url, &options)
         .map_err(io_error)?
+        .with_concurrency(job.config.shard_concurrency)
         .with_observer(observer);
     transport = if job.preparing {
         transport.with_retry_attempts(3)
@@ -749,6 +762,26 @@ struct Slot {
     spawned: Instant,
     active: Option<(usize, usize, Instant)>, // run id, sample index, deadline origin
     wave_started: bool,
+    /// Consecutive unsuccessful recoveries, and when the slot may admit again.
+    failures: u32,
+    not_before: Option<Instant>,
+}
+
+impl Slot {
+    /// Records how the slot's recovery ended. In sustained mode a slot whose
+    /// recovery failed, timed out or stopped short waits a jittered
+    /// exponential backoff before admitting the next, as a wallet would;
+    /// immediate resubmission against a refusing service only feeds it.
+    fn finished(&mut self, outcome: &str) {
+        self.active = None;
+        if matches!(outcome, "failed" | "timed_out" | "incomplete") {
+            self.failures += 1;
+            self.not_before = Some(Instant::now() + crate::resubmit_backoff(self.failures));
+        } else {
+            self.failures = 0;
+            self.not_before = None;
+        }
+    }
 }
 enum Message {
     Worker(usize, u64, Value),
@@ -1413,6 +1446,8 @@ fn run(
                     spawned: Instant::now(),
                     active: None,
                     wave_started: false,
+                    failures: 0,
+                    not_before: None,
                 });
             }
         }
@@ -1443,7 +1478,8 @@ fn run(
                                         report.event(&value);
                                     }
                                     if value["type"] == "outcome" {
-                                        slots[slot].active = None;
+                                        slots[slot]
+                                            .finished(value["outcome"].as_str().unwrap_or(""));
                                     }
                                 }
                             }
@@ -1454,7 +1490,8 @@ fn run(
                 Ok(Message::Gone(slot, generation, error))
                     if generation == slots[slot].generation =>
                 {
-                    if let Some((id, _, _)) = slots[slot].active.take() {
+                    if let Some((id, _, _)) = slots[slot].active {
+                        slots[slot].finished("failed");
                         let event = json!({"type":"outcome", "id":id, "at":now(), "outcome":"failed", "error":error});
                         write_line(&mut events, &event)?;
                         report.event(&event);
@@ -1489,7 +1526,7 @@ fn run(
                     {
                         slot.process = None;
                         slot.ready = false;
-                        slot.active = None;
+                        slot.finished(if cancelled { "cancelled" } else { "timed_out" });
                         let error = if cancelled {
                             "Recovery cancelled by operator".to_owned()
                         } else {
@@ -1517,6 +1554,7 @@ fn run(
                 if !admit
                     || slot.active.is_some()
                     || (config.mode == Mode::Wave && slot.wave_started)
+                    || slot.not_before.is_some_and(|at| Instant::now() < at)
                 {
                     continue;
                 }
@@ -1563,7 +1601,7 @@ fn run(
                 if let Err(error) = slot.process.as_mut().unwrap().send(&job) {
                     slot.process = None;
                     slot.ready = false;
-                    slot.active = None;
+                    slot.finished("failed");
                     let value = json!({"type":"outcome","id":id,"at":now(),"outcome":"failed","error":error.to_string()});
                     write_line(&mut events, &value)?;
                     report.event(&value);

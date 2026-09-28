@@ -1,23 +1,47 @@
 //! Local, disposable snapshots of public preprocessing. The format has no
 //! allocator-controlled dimensions: shapes are derived from verified parameters.
-//! Bump FORMAT when dependency layout, NTT representation, or setup derivation
-//! changes. The dependency revisions below are part of the compatibility key.
-use super::{published_c1_rows, RuntimeKey, SharedParams, TableRuntime};
-use inspiring::QueryPackPreprocessed;
+//! Bump FORMAT when dependency layout, preprocessing representation, or setup
+//! derivation changes. The dependency revisions below are part of the
+//! compatibility key.
+//!
+//! # Layout
+//!
+//! ```text
+//! identity (32) | sha256 of everything after this header (32)
+//! database: rows u16 per column, column-major, little-endian
+//! published masks: exactly what clients download
+//! reinspiring::prepared_native (RNMAP002), to the end of the file
+//! ```
+//!
+//! Every section before the preprocessing has a length fixed by the verified
+//! parameters. The preprocessing is variable: its compiled matrix is stored at
+//! four- or eight-byte words, so a valid entry's length lies in a range rather
+//! than at one value. It starts eight-byte aligned and ends the file, so it can
+//! be mapped rather than copied. A mapped entry's inode is immutable: writers
+//! replace paths atomically and collection only unlinks, so a runtime keeps its
+//! mapping valid for as long as it lives.
+//!
+//! On restore the checksum covers every byte, the preprocessing is re-validated
+//! by `prepared_native::read`, and the masks it publishes must equal the stored
+//! bytes — so a restored runtime cannot publish masks its preprocessing does
+//! not answer under.
+use super::{RuntimeKey, SharedParams, TableRuntime};
 use sha2::{Digest, Sha256};
-use spiral_rs::poly::{PolyMatrix, PolyMatrixNTT};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
-// 61dc83e reuses the same fixed public masks; its coefficient-for-coefficient
-// regression tests preserve the 223626f representation and setup derivation.
-// Keep existing public snapshots compatible across that construction change.
-const FORMAT: &[u8] = b"transparent-runtime-v1/ipir-223626f/spiral-6f5b66c";
+// ipir-sp 1f2aec6 is v0.1.0-rc.6, which pins reinspiring 0.1.2.
+const FORMAT: &[u8] = b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
+
+/// Identity and checksum.
+const HEADER_BYTES: u64 = 64;
 
 /// The writer uses a 1 MiB buffer, 8 KiB word staging and small hash/metadata
-/// state. Runtime coefficients remain owned/accounted separately. Keep margin
-/// above those allocations; queued writers also retain this reservation.
+/// state, and `prepared_native::write` converts one compiled matrix at a time.
+/// Runtime coefficients remain owned/accounted separately. Queued writers also
+/// retain this reservation.
 pub(super) const SAVE_SCRATCH_BYTES: u64 = 2 << 20;
 
 #[derive(Clone, Debug)]
@@ -48,7 +72,9 @@ impl DiskCache {
     fn identity(key: &RuntimeKey, shared: &SharedParams, source_sha: &str) -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(FORMAT);
-        // These are trusted, locally derived values, serialized only to form a key.
+        // These are trusted, locally derived values, serialized only to form a
+        // key. The native scheme carries the parameter encoding, every bit
+        // width and both setup seeds.
         hash.update(
             serde_json::to_vec(&(
                 &key.0,
@@ -57,12 +83,8 @@ impl DiskCache {
                 shared.geometry.name,
                 source_sha,
                 shared.setup_seed,
-                &shared.scheme,
-                shared.rlwe.d,
-                shared.rlwe.q,
-                shared.rlwe.p,
-                shared.rlwe.gadget.ell,
-                shared.rlwe.gadget.bits_per,
+                shared.scheme(),
+                &shared.transport,
             ))
             .expect("parameters serialize"),
         );
@@ -78,12 +100,21 @@ impl DiskCache {
         ))
     }
 
-    /// Exact file length derived from the pinned layout, before allocating.
+    /// Bytes before the preprocessing: header, database and published masks.
+    fn fixed_bytes(shared: &SharedParams) -> u64 {
+        HEADER_BYTES + shared.profile.database_bytes() + shared.scheme().public_bytes as u64
+    }
+
+    /// Every length a valid entry can have, derived from the pinned layout
+    /// before anything is allocated.
+    pub fn entry_bytes_range(shared: &SharedParams) -> RangeInclusive<u64> {
+        let fixed = Self::fixed_bytes(shared);
+        fixed + shared.profile.prepared_min_bytes()..=fixed + shared.profile.prepared_max_bytes()
+    }
+
+    /// The largest valid entry, which is what budgets are charged.
     pub fn entry_bytes(shared: &SharedParams) -> u64 {
-        let r = shared.rlwe;
-        let blocks = shared.scheme.db_cols / r.d;
-        let words = blocks * (1 + (r.d - 1) * r.gadget.ell) * r.d * r.spiral.crt_count;
-        64 + 2 * (shared.scheme.db_rows * shared.scheme.db_cols) as u64 + 8 * words as u64
+        *Self::entry_bytes_range(shared).end()
     }
 
     pub fn load(
@@ -93,83 +124,78 @@ impl DiskCache {
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
         let mut file = File::open(self.path(key, shared, source_sha))?;
-        if file.metadata()?.len() != Self::entry_bytes(shared) {
+        let length = file.metadata()?.len();
+        if !Self::entry_bytes_range(shared).contains(&length) {
             return Err(invalid("runtime cache length mismatch"));
         }
-        file.seek(SeekFrom::End(-32))?;
-        let mut expected = [0u8; 32];
-        file.read_exact(&mut expected)?;
-        file.rewind()?;
-        let payload = file.take(Self::entry_bytes(shared) - 32);
-        let mut reader = CheckedReader {
-            input: BufReader::with_capacity(
-                1 << 20,
-                HashReader {
-                    input: payload,
-                    hash: Sha256::new(),
-                },
-            ),
-        };
-        let identity = reader.bytes::<32>()?;
-        if identity != Self::identity(key, shared, source_sha) {
+        let mut header = [0u8; HEADER_BYTES as usize];
+        file.read_exact(&mut header)?;
+        if header[..32] != Self::identity(key, shared, source_sha) {
             return Err(invalid("runtime cache identity mismatch"));
         }
+        let fixed = Self::fixed_bytes(shared);
+        let mut reader = BufReader::with_capacity(
+            1 << 20,
+            HashReader {
+                input: (&file).take(fixed - HEADER_BYTES),
+                hash: Sha256::new(),
+            },
+        );
+        let profile = &shared.profile;
         let mut error = None;
-        let n = shared.scheme.db_rows * shared.scheme.db_cols;
+        let n = profile.rows * profile.cols;
         // The constructor consumes exactly n logical column-major coefficients
         // and recreates padding and the locally selected CPU kernel. I/O failures
         // yield placeholders to satisfy its iterator contract, then fail below.
+        // Every u16 is a canonical plaintext at p = 2^16.
         let mut buffer = [0u8; 8192];
         let coefficients = (0..n).map(|index| {
             let offset = index % (buffer.len() / 2);
             if offset == 0 && error.is_none() {
                 let count = (n - index).min(buffer.len() / 2);
-                if let Err(e) = reader.input.read_exact(&mut buffer[..count * 2]) {
+                if let Err(e) = reader.read_exact(&mut buffer[..count * 2]) {
                     error = Some(e);
                 }
             }
             if error.is_some() {
                 return 0;
             }
-            let value = u16::from_le_bytes([buffer[offset * 2], buffer[offset * 2 + 1]]);
-            if value as u64 >= shared.scheme.p {
-                error = Some(invalid("noncanonical database coefficient"));
-            }
-            value
+            u16::from_le_bytes([buffer[offset * 2], buffer[offset * 2 + 1]])
         });
         let server = super::database_server(shared, coefficients, true);
         if let Some(error) = error {
             return Err(error);
         }
-        let mut preprocessed = Vec::new();
-        for _ in 0..shared.scheme.db_cols / shared.rlwe.d {
-            let collapse_a_final_ntt = reader.matrix(shared, 1, 1)?;
-            let mut digits_ntt = Vec::with_capacity(shared.rlwe.d - 1);
-            for _ in 0..shared.rlwe.d - 1 {
-                digits_ntt.push(reader.matrix(shared, shared.rlwe.gadget.ell, 1)?);
-            }
-            preprocessed.push(QueryPackPreprocessed {
-                params: shared.rlwe,
-                collapse_a_final_ntt,
-                digits_ntt,
-            });
+        let mut public = vec![0u8; shared.scheme().public_bytes];
+        reader.read_exact(&mut public)?;
+        let mut hash = reader.into_inner().hash;
+        // SAFETY: the entry's inode is never modified after its atomic rename;
+        // writers replace paths and collection only unlinks, which leaves an
+        // existing mapping valid. The mapped bytes are checksummed and then
+        // re-validated by `prepared_native::read` before anything uses them.
+        let map = unsafe { memmap2::Mmap::map(&file) }?;
+        if map.len() as u64 != length {
+            return Err(invalid("runtime cache changed while restoring"));
         }
-        let reader = reader.input.into_inner();
-        crate::filecache::consumed(reader.input.get_ref());
-        if reader.hash.finalize().as_slice() != expected {
+        hash.update(&map[fixed as usize..]);
+        if hash.finalize().as_slice() != &header[32..] {
             return Err(invalid("runtime cache checksum mismatch"));
         }
-        let public_params = published_c1_rows(&preprocessed, shared.rlwe.q);
-        let digest = Sha256::digest(&public_params);
-        let mut epoch = [0u8; 8];
-        epoch.copy_from_slice(&digest[..8]);
-        Ok(TableRuntime {
-            server,
-            preprocessed,
-            public_params,
-            public_params_sha256: hex::encode(digest),
-            public_params_epoch: epoch,
-        })
+        let preprocessed = reinspiring::prepared_native::read(
+            map,
+            fixed as usize,
+            &profile.setup,
+            profile.blocks(),
+        )
+        .map_err(|error| invalid(&error.to_string()))?;
+        let runtime = TableRuntime::assemble(server, preprocessed).map_err(|e| invalid(&e))?;
+        if runtime.public_params != public {
+            return Err(invalid("runtime cache public mask binding"));
+        }
+        // Mapped preprocessing pages are not dropped by the advice; the
+        // database and mask pages already copied into owned memory are.
+        crate::filecache::consumed(&file);
+        Ok(runtime)
     }
 
     /// The cross-process lock bounds concurrent writes. No active/rollback entry
@@ -203,6 +229,9 @@ impl DiskCache {
         let temp = path.with_extension("partial");
         let result = (|| {
             let file = File::create(&temp)?;
+            (&file).write_all(&Self::identity(key, shared, source_sha))?;
+            // The checksum is patched in once the body has been hashed.
+            (&file).write_all(&[0u8; 32])?;
             let mut writer = CheckedWriter {
                 output: BufWriter::with_capacity(
                     1 << 20,
@@ -212,27 +241,24 @@ impl DiskCache {
                     },
                 ),
             };
-            writer.bytes(&Self::identity(key, shared, source_sha))?;
-            let rows = shared.scheme.db_rows;
+            let rows = shared.profile.rows;
             let padded = runtime.server.db_rows_padded();
-            for column in 0..shared.scheme.db_cols {
+            for column in 0..shared.profile.cols {
                 writer.words(
                     &runtime.server.db()[column * padded..column * padded + rows],
                     u16::to_le_bytes,
                 )?;
             }
-            for pre in &runtime.preprocessed {
-                writer.matrix(&pre.collapse_a_final_ntt)?;
-                for matrix in &pre.digits_ntt {
-                    writer.matrix(matrix)?;
-                }
-            }
+            writer.bytes(&runtime.public_params)?;
+            reinspiring::prepared_native::write(&mut writer.output, &runtime.preprocessed)?;
             writer.output.flush()?;
             let checksum = writer.output.get_ref().hash.clone().finalize();
-            writer.output.get_mut().output.write_all(&checksum)?;
+            drop(writer);
+            (&file).seek(SeekFrom::Start(32))?;
+            (&file).write_all(&checksum)?;
             file.sync_all()?;
             crate::filecache::consumed(&file);
-            if file.metadata()?.len() != Self::entry_bytes(shared) {
+            if !Self::entry_bytes_range(shared).contains(&file.metadata()?.len()) {
                 return Err(invalid(
                     "runtime export layout changed; bump the cache format",
                 ));
@@ -249,7 +275,8 @@ impl DiskCache {
 
     /// Required additional persistent bytes and one atomic-write temporary.
     /// Source tables have already passed ShardSet verification. Cache contents
-    /// are still checksum-validated on restore; matching length is only sizing.
+    /// are still checksum-validated on restore; a length in range is only sizing.
+    /// Budgets are charged at the largest valid entry.
     pub fn check_set(&self, set: &crate::shardset::ShardSet) -> io::Result<serde_json::Value> {
         let mut params = std::collections::HashMap::new();
         let mut missing = 0u64;
@@ -262,18 +289,18 @@ impl DiskCache {
                     .or_insert_with(|| SharedParams::build(shard.geometry, table));
                 let shared = shared.as_ref().map_err(|e| invalid(e))?;
                 let bytes = Self::entry_bytes(shared);
+                let valid = Self::entry_bytes_range(shared);
                 largest = largest.max(bytes);
                 for segment in 0..shard.segments(table) {
                     total = total.saturating_add(bytes);
                     let source = shard.segment(table, segment).expect("published segment");
                     let key = (shard.digest.clone(), table, segment);
-                    if self
+                    let present = self
                         .path(&key, shared, &source.sha256)
                         .metadata()
                         .map(|m| m.len())
-                        .unwrap_or(0)
-                        != bytes
-                    {
+                        .unwrap_or(0);
+                    if !valid.contains(&present) {
                         missing = missing.saturating_add(bytes);
                     }
                 }
@@ -385,42 +412,6 @@ impl<R: Read> Read for HashReader<R> {
         Ok(n)
     }
 }
-struct CheckedReader<R> {
-    input: R,
-}
-impl<R: Read> CheckedReader<R> {
-    fn bytes<const N: usize>(&mut self) -> io::Result<[u8; N]> {
-        let mut bytes = [0; N];
-        self.input.read_exact(&mut bytes)?;
-        Ok(bytes)
-    }
-    fn matrix(
-        &mut self,
-        shared: &SharedParams,
-        rows: usize,
-        cols: usize,
-    ) -> io::Result<PolyMatrixNTT<'static>> {
-        let mut matrix = PolyMatrixNTT::zero(&shared.rlwe.spiral, rows, cols);
-        self.words(matrix.as_mut_slice(), shared.rlwe.q)?;
-        Ok(matrix)
-    }
-    /// Decode bounded batches in the existing little-endian format. Validate
-    /// every coefficient before exposing the restored runtime to a caller.
-    fn words(&mut self, values: &mut [u64], modulus: u64) -> io::Result<()> {
-        let mut buffer = [0u8; 8192];
-        for chunk in values.chunks_mut(buffer.len() / 8) {
-            let bytes = &mut buffer[..chunk.len() * 8];
-            self.input.read_exact(bytes)?;
-            for (value, input) in chunk.iter_mut().zip(bytes.chunks_exact(8)) {
-                *value = u64::from_le_bytes(input.try_into().expect("eight-byte word"));
-                if *value >= modulus {
-                    return Err(invalid("noncanonical NTT coefficient"));
-                }
-            }
-        }
-        Ok(())
-    }
-}
 /// Limit dirty data produced by this optional snapshot writer before waiting
 /// for writeback. Otherwise an entire runtime can accumulate before its final
 /// fsync and interfere with the small, latency-sensitive publication record.
@@ -481,9 +472,6 @@ impl<W: Write> CheckedWriter<W> {
     fn bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.output.write_all(bytes)
     }
-    fn matrix(&mut self, matrix: &PolyMatrixNTT<'_>) -> io::Result<()> {
-        self.words(matrix.as_slice(), u64::to_le_bytes)
-    }
     /// Batch the same little-endian words into bounded stack storage. This
     /// avoids a buffered I/O call per coefficient without changing the format,
     /// checksum input, atomic rename, or durability barrier.
@@ -524,7 +512,7 @@ pub fn retained_digests(set: &Path) -> io::Result<std::collections::HashSet<Stri
 mod tests {
     use super::*;
     use crate::shardset::Table;
-    use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
+    use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_4K, RECENT_8K};
 
     #[test]
     fn busy_collection_defers_then_prunes_only_unretained_files() {
@@ -624,41 +612,6 @@ mod tests {
     }
 
     #[test]
-    fn batched_reader_checks_boundaries_truncation_and_canonical_words() {
-        for count in [0, 1, 1023, 1024, 1025, 4097] {
-            let expected: Vec<u64> = (0..count).map(|i| i * 97).collect();
-            let bytes: Vec<u8> = expected.iter().flat_map(|v| v.to_le_bytes()).collect();
-            let mut reader = CheckedReader {
-                input: bytes.as_slice(),
-            };
-            let mut actual = vec![0; expected.len()];
-            reader.words(&mut actual, u64::MAX).unwrap();
-            assert_eq!(actual, expected);
-            if !bytes.is_empty() {
-                let mut reader = CheckedReader {
-                    input: &bytes[..bytes.len() - 1],
-                };
-                assert_eq!(
-                    reader.words(&mut actual, u64::MAX).unwrap_err().kind(),
-                    io::ErrorKind::UnexpectedEof
-                );
-            }
-        }
-        for index in [0, 1023, 1024, 1025] {
-            let mut values = vec![0u64; 1026];
-            values[index] = 17;
-            let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-            let mut reader = CheckedReader {
-                input: bytes.as_slice(),
-            };
-            assert_eq!(
-                reader.words(&mut values, 17).unwrap_err().kind(),
-                io::ErrorKind::InvalidData
-            );
-        }
-    }
-
-    #[test]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
         for geometry in [&RECENT_8K, &ARCHIVE_WIDE] {
             for table in [Table::Directory, Table::Pages] {
@@ -675,51 +628,39 @@ mod tests {
                 let cold = TableRuntime::build(&shared, &rows).unwrap();
                 let build_time = start.elapsed();
                 disk.save(&key, &shared, &source_sha, &cold).unwrap();
+                let path = disk.path(&key, &shared, &source_sha);
+                let length = path.metadata().unwrap().len();
+                assert!(DiskCache::entry_bytes_range(&shared).contains(&length));
                 let start = std::time::Instant::now();
                 let restored = disk.load(&key, &shared, &source_sha).unwrap();
                 eprintln!(
-                    "{} {} build={build_time:?} restore={:?} bytes={}",
+                    "{} {} build={build_time:?} restore={:?} bytes={length}",
                     geometry.name,
                     table.as_str(),
                     start.elapsed(),
-                    disk.used_bytes().unwrap()
                 );
                 assert_eq!(cold.public_params, restored.public_params);
+                assert_eq!(cold.public_params.len(), 14_848);
                 assert_eq!(cold.public_params_sha256, restored.public_params_sha256);
                 assert_eq!(cold.public_params_epoch, restored.public_params_epoch);
                 assert_eq!(cold.server.db(), restored.server.db());
-                let client = ipir_sp::IPIRClient::from_profile(
-                    shared.scheme.num_items,
-                    shared.scheme.item_size_bits,
-                    ipir_sp::SimplePirProfile::P14,
-                )
-                .unwrap();
-                let mut seed = [0u8; 32];
-                seed[..8].copy_from_slice(&shared.setup_seed.to_le_bytes());
-                let setup = client.generate_public_query_setup_simplepir_from_seed(seed);
-                let selected = table.rows(geometry) as usize - 1;
-                let (query, keys, query_seed) =
-                    client.generate_fresh_query_simplepir(&setup, selected);
                 let binding = transparent_shard::manifest::query_binding(&key.0, table.as_str());
-                let mut body = binding.to_vec();
-                body.extend(
-                    ipir_sp::serialize::serialize_packing_keys(shared.rlwe, &keys).unwrap(),
-                );
-                body.extend(query.to_switched_bytes(shared.rlwe.q, shared.scheme.query_bits));
-                let answer = restored.evaluate(&shared, binding, &body).unwrap();
-                assert_eq!(answer, cold.evaluate(&shared, binding, &body).unwrap());
-                let c1 = ipir_sp::modulus_switch::recover_published_c1(
-                    &restored.public_params,
-                    shared.rlwe.d,
-                    shared.scheme.db_cols / shared.rlwe.d,
-                    shared.rlwe.q,
-                );
-                let decoded = client.decode_response_simplepir(query_seed, &c1, &answer[16..]);
                 let width = table.row_bytes(geometry) as usize;
-                assert_eq!(
-                    &decoded[..width],
-                    &rows[selected * width..(selected + 1) * width]
-                );
+                for selected in [0, table.rows(geometry) as usize - 1] {
+                    let (secret, upload) = shared.profile.prepare(selected).unwrap();
+                    let mut body = binding.to_vec();
+                    body.extend(upload);
+                    // A snapshot written and restored answers byte-for-byte as
+                    // the runtime it was taken from.
+                    let answer = restored.evaluate(&shared, binding, &body).unwrap();
+                    assert_eq!(answer, cold.evaluate(&shared, binding, &body).unwrap());
+                    assert_eq!(answer.len(), shared.response_bytes());
+                    let decoded = shared
+                        .profile
+                        .decode(&secret, &restored.public_params, &answer[16..])
+                        .unwrap();
+                    assert_eq!(decoded, &rows[selected * width..(selected + 1) * width]);
+                }
                 drop(restored);
                 // A different revision, segment or plaintext identity is a miss.
                 let mut other = key.clone();
@@ -729,7 +670,6 @@ mod tests {
                 other.0 = "cd".repeat(32);
                 assert!(disk.load(&other, &shared, &source_sha).is_err());
                 assert!(disk.load(&key, &shared, "different-source").is_err());
-                let path = disk.path(&key, &shared, &source_sha);
                 let mut file = OpenOptions::new().write(true).open(&path).unwrap();
                 file.seek(SeekFrom::End(-32)).unwrap();
                 file.write_all(&[0; 32]).unwrap();
@@ -740,6 +680,7 @@ mod tests {
                 fs::write(path.with_extension("partial"), b"interrupted").unwrap();
                 disk.save(&key, &shared, &source_sha, &cold).unwrap();
                 assert!(!path.with_extension("partial").exists());
+                assert!(disk.load(&key, &shared, &source_sha).is_ok());
                 let too_small = DiskCache::new(dir.path().into(), 1).unwrap();
                 assert!(too_small.save(&key, &shared, &source_sha, &cold).is_err());
                 assert_eq!(
@@ -750,8 +691,32 @@ mod tests {
             }
         }
     }
-}
 
+    /// A body tampered after the checksum was written is refused even when its
+    /// length stays valid, and so is an entry whose stored masks do not match
+    /// what its preprocessing publishes.
+    #[test]
+    fn a_restored_entry_must_publish_the_masks_it_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = SharedParams::build(&RECENT_4K, Table::Directory).unwrap();
+        let rows = vec![3u8; (RECENT_4K.directory_rows * 4_096) as usize];
+        let key = ("ef".repeat(32), Table::Directory, 0);
+        let disk = DiskCache::new(dir.path().into(), shared.reserved_bytes() * 2).unwrap();
+        let cold = TableRuntime::build(&shared, &rows).unwrap();
+        disk.save(&key, &shared, "source", &cold).unwrap();
+        let path = disk.path(&key, &shared, "source");
+        let mut bytes = fs::read(&path).unwrap();
+        let public_at = (DiskCache::fixed_bytes(&shared) as usize) - 14_848;
+        bytes[public_at] ^= 1;
+        // Recompute the checksum so only the mask binding can catch it.
+        let checksum = Sha256::digest(&bytes[64..]);
+        bytes[32..64].copy_from_slice(&checksum);
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let error = disk.load(&key, &shared, "source").err().unwrap();
+        assert!(error.to_string().contains("public mask binding"), "{error}");
+    }
+}
 #[cfg(test)]
 mod cache_integration_tests {
     use super::*;

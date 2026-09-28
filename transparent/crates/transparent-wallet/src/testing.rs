@@ -119,7 +119,6 @@ pub fn pending(script_tag: u8, revision: &str) -> PendingPages {
         script: script(script_tag),
         first_page: 4,
         page_count: 3,
-        total_events: 9,
         inline: Vec::new(),
         next_ordinal: 0,
         attempts: 0,

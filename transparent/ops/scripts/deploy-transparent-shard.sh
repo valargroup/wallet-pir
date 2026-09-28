@@ -811,9 +811,11 @@ fleet_stage_router() {
     scp "${opts[@]}" "$caddyfile" "$WALLET_PIR_DEPLOY_USER@$TRANSPARENT_ROUTER_HOST:$staged/Caddyfile"
     local publisher=false
     if fleet_has_publisher_control; then publisher=true; fi
-    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "${TRANSPARENT_CANARY_WORKER_IDS:-}" "$publisher" <<'REMOTE'
+    # ssh joins its arguments into one command line, so an empty argument
+    # would vanish and shift the next into its place: "-" means no canary.
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "${TRANSPARENT_CANARY_WORKER_IDS:--}" "$publisher" <<'REMOTE'
 set -euo pipefail
-if [[ -n "$2" || "$3" == true ]]; then
+if [[ "$2" != - || "$3" == true ]]; then
   diff -q <(sudo sed '/^[[:space:]]*#/d' /etc/caddy/Caddyfile) <(sed '/^[[:space:]]*#/d' "$1/Caddyfile") >/dev/null \
     || { echo "canary or publisher-controlled rollout requires unchanged routing" >&2; exit 1; }
 fi
@@ -1005,9 +1007,10 @@ REMOTE
       batch=("${pending[@]:0:limit}")
       run_batch "${batch[@]}"
       pending=("${pending[@]:limit}")
-      # Caddy probes every 5 s and remembers passive failures for 30 s. Allow
-      # both to settle before retiring another pair; also probe its public route.
-      sleep "${TRANSPARENT_ROUTER_SETTLE_SECONDS:-35}"
+      # Caddy probes every 1 s (three failures to leave, one pass to return)
+      # and remembers passive failures for 10 s (`router::HEALTH`). Allow both
+      # to settle before retiring another pair; also probe its public route.
+      sleep "${TRANSPARENT_ROUTER_SETTLE_SECONDS:-15}"
       if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
         curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/init" >/dev/null
       fi
@@ -1068,6 +1071,14 @@ fleet_verify_internal() {
 }
 
 fleet_verify_public() {
+  # A schema cutover replaces the publication authority after the workers:
+  # until the new controller activates, the edge's metadata is withdrawn and
+  # cannot name the new map. The controller's activation verifies both public
+  # origins instead.
+  if [[ "${TRANSPARENT_DEFER_PUBLIC_VERIFY:-false}" == "true" ]]; then
+    echo "== public edge verification deferred to publisher activation"
+    return 0
+  fi
   echo "== verify public edge at $TRANSPARENT_PUBLIC_URL"
   local attempt public
   for attempt in $(seq 1 30); do
@@ -1129,6 +1140,10 @@ fleet_verify_public() {
 
 fleet_prune() {
   local id host
+  if [[ "${TRANSPARENT_SCHEMA_CUTOVER:-false}" == true ]]; then
+    echo "== prune deferred: a schema cutover keeps the previous schema's data for rollback"
+    return 0
+  fi
   for id in $(worker_ids); do
     host="$(worker_field "$id" ssh_host)"
     [[ "$(worker_action "$id")" == restart ]] || continue

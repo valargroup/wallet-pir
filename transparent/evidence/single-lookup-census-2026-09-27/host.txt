@@ -1,0 +1,7 @@
+roman-ipir-bench-8vcpu
+8
+Model name:                              Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
+BIOS Model name:                         pc-i440fx-6.1  CPU @ 2.0GHz
+Mem:            31Gi       1.4Gi       3.2Gi        31Mi        27Gi        29Gi
+Ubuntu 24.04.4 LTS
+rustc 1.89.0 (29483883e 2025-08-04)

@@ -5,6 +5,13 @@ packages: ${packages}
 ssh_authorized_keys:
   - ${jsonencode(deploy_public_key)}
 %{ endif ~}
+write_files:
+  # Unattended upgrades must not restart production services: a libc upgrade
+  # made needrestart restart the Status roles on 2026-09-28. Restart on deploy.
+  - path: /etc/needrestart/conf.d/90-wallet-pir-no-auto-restart.conf
+    permissions: "0644"
+    content: |
+      $nrconf{restart} = 'l';
 runcmd:
   - mkdir -p /srv/enhance-pir/artifacts
   - test -f /swapfile || (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile)

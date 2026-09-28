@@ -41,17 +41,14 @@ pub mod disk;
 
 use crate::metrics::Metrics;
 use crate::shardset::{SegmentSource, Table};
-use enhance_pir_server::ipir::RowPlaintextIter;
-use inspiring::{QueryPackPreprocessed, RlweParams, TopKeyImages};
-use ipir_sp::serialize::serialized_packing_keys_len;
 use ipir_sp::server::IPIRServer;
-use ipir_sp::server::{
-    build_pack_preprocessed_blocks_with_top, pack_intermediate_blocks, published_c1_rows,
-};
-use ipir_sp::{IPIRClient, YpirSchemeParams};
+use ipir_sp::YpirSchemeParams;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use transparent_native::{
+    self as native, NativeKeys, NativePreprocessed, NativeScheme, TableProfile,
+};
 use transparent_shard::layout::Geometry;
 
 /// Explicit build policy for reproducible hardware-path comparisons. The
@@ -63,100 +60,175 @@ pub const KERNEL_POLICY: &str = if cfg!(feature = "portable-kernel") {
     "auto"
 };
 
-fn database_server(
+pub(crate) fn database_server(
     shared: &SharedParams,
     coefficients: impl Iterator<Item = u16>,
     transposed: bool,
 ) -> IPIRServer<u16> {
     #[cfg(feature = "portable-kernel")]
-    let server = IPIRServer::<u16>::new(shared.scheme.clone(), coefficients, transposed, true);
+    let server = IPIRServer::<u16>::new(shared.transport.clone(), coefficients, transposed, true);
     #[cfg(not(feature = "portable-kernel"))]
-    let server =
-        IPIRServer::<u16>::new_auto_kernel(shared.scheme.clone(), coefficients, transposed, true);
+    let server = IPIRServer::<u16>::new_auto_kernel(
+        shared.transport.clone(),
+        coefficients,
+        transposed,
+        true,
+    );
     server
 }
 
-/// Bytes one prepared runtime reserves at these parameters.
+/// The first-dimension scan shape for one table: full 16-bit plaintexts, one
+/// column per coefficient, and the native transport's 49-bit query and 22-bit
+/// response widths. The scan itself runs modulo the native `q` = 2^54.
+pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, String> {
+    let (_, mut params) = ipir_sp::params_for_simplepir_profile(
+        rows,
+        row_bytes as u64 * 8,
+        ipir_sp::SimplePirProfile::P16Q48,
+    )
+    .map_err(|error| error.to_string())?;
+    params.query_bits = native::QUERY_BITS;
+    params.q_prime_1 = 1 << native::RESPONSE_BITS;
+    Ok(params)
+}
+
+/// Bytes one prepared runtime reserves for a `rows` by `row_bytes` segment.
 ///
-/// Two terms, both derived rather than measured:
+/// Three terms, all derived rather than measured:
 ///
-/// - the **encoded database**, `db_rows * db_cols` of `u16`, which is the only
-///   term that follows the row count; and
-/// - the **pack matrices**, three per block of `d x d` 64-bit coefficients,
-///   which follow `db_cols` and the RLWE degree instead. `shard-scaling
-///   --geometry-sweep` prices the same two terms the same way, so a sweep's
-///   projection and a running worker's budget cannot drift apart.
+/// - the **encoded database**, `rows * row_bytes / 2` coefficients of `u16`,
+///   which is the only term that follows the row count;
+/// - the **published masks**, 14,848 bytes per 4,096-byte instance; and
+/// - the **two-mask preprocessing** at its upper bound: per block both masks
+///   and a `d x d*ell` compiled matrix at eight-byte words (64 MiB). The
+///   compiled matrix is stored at four-byte words when every entry fits, so a
+///   real runtime may hold half of that term; the reservation takes the bound
+///   because it is made before the build that decides it.
 ///
-/// At the pinned geometry this is 32 MiB of database and 96 MiB of matrices,
-/// which is what `shard-residency` measured as the 128.5 MiB marginal cost of
-/// one held runtime.
+/// `shard-scaling --geometry-sweep` and the router price the same terms, so a
+/// sweep's projection and a running worker's budget cannot drift apart.
 ///
 /// It is a **reservation**, not a measurement of the process. It excludes
-/// allocator fragmentation, the transient plaintext buffer a build reads, the
-/// shared parameters, and anything a request allocates. A cache budget is
-/// therefore always set below the host's real headroom, and re-checked with
-/// `shard-residency` whenever the scheme moves — an estimate that drifted low
-/// would turn a bounded cache back into an unbounded one.
-pub fn reserved_bytes(rlwe: &RlweParams, scheme: &YpirSchemeParams) -> u64 {
-    let database = scheme.db_rows as u64 * scheme.db_cols as u64 * 2;
-    let blocks = (scheme.db_cols / rlwe.d) as u64;
-    let pack = blocks * 3 * rlwe.d as u64 * rlwe.d as u64 * 8;
-    database + pack
+/// allocator fragmentation, the transient plaintext buffer and hint a build
+/// reads, the shared parameters, and anything a request allocates. A cache
+/// budget is therefore always set below the host's real headroom, and
+/// re-checked with `shard-residency` whenever the scheme moves.
+pub fn reserved_bytes(rows: u64, row_bytes: u32) -> u64 {
+    let blocks = (row_bytes as usize / native::INSTANCE_BYTES) as u64;
+    rows * row_bytes as u64
+        + blocks * native::BLOCK_PUBLIC_BYTES as u64
+        + native::PREPARED_HEADER_BYTES
+        + blocks * native::PREPARED_BLOCK_MAX_BYTES
 }
 
 /// The parameters every shard of one geometry and table shares.
 ///
-/// `params_for_simplepir` is a pure function of `(rows, item_size_bits)`, so
+/// The native profile is a pure function of the schema, geometry and table, so
 /// every shard naming the same geometry shares one of these and a client
-/// validates it once. A set mixing archive and recent shards leaks one per
-/// geometry per table — at most eight for the whole registry — rather than one
-/// per shard, which is what naming geometries rather than choosing them per
-/// shard is for.
+/// validates it once. Query masks and the packing setup are shared too, which
+/// is what lets one query be answered by every segment of a shard. A set mixing
+/// archive and recent shards leaks one per geometry per table rather than one
+/// per shard.
 pub struct SharedParams {
     pub geometry: &'static Geometry,
     pub table: Table,
-    pub rlwe: &'static RlweParams,
-    pub scheme: YpirSchemeParams,
-    pub top_key_images: TopKeyImages<'static>,
+    pub profile: TableProfile,
+    /// The first-dimension scan shape.
+    pub transport: YpirSchemeParams,
     pub setup_seed: u64,
+}
+
+/// A query body parsed once and answered by every segment.
+pub struct ParsedQuery {
+    keys: NativeKeys,
+    query: Vec<u64>,
 }
 
 impl SharedParams {
     pub fn build(geometry: &'static Geometry, table: Table) -> Result<Self, String> {
         let rows = table.rows(geometry);
-        let row_bits = (table.row_bytes(geometry) as u64) * 8;
-        let (rlwe, scheme) =
-            ipir_sp::params_for_simplepir(rows, row_bits).map_err(|error| error.to_string())?;
-        let rlwe: &'static RlweParams = Box::leak(Box::new(rlwe));
-        let top_key_images = TopKeyImages::build(rlwe);
+        let row_bytes = table.row_bytes(geometry);
         Ok(Self {
             geometry,
             table,
-            rlwe,
-            scheme,
-            top_key_images,
+            profile: TableProfile::new(
+                transparent_shard::manifest::SCHEMA,
+                geometry.name,
+                table.as_str(),
+                rows,
+                row_bytes,
+            )?,
+            transport: transport_params(rows, row_bytes)?,
             setup_seed: crate::shardset::setup_seed(geometry, table),
         })
     }
 
-    /// The exact length every query body must have.
+    /// What `/v1/shards/init` publishes for this table.
+    pub fn scheme(&self) -> &NativeScheme {
+        &self.profile.scheme
+    }
+
+    /// The exact length every query body must have: the 8-byte binding, the
+    /// `K_g` packing key and the 49-bit selection.
     ///
     /// Fixed, because a body whose size varied with the selection would leak it
     /// through its length alone.
     pub fn query_bytes(&self) -> usize {
-        8 + serialized_packing_keys_len(self.rlwe)
-            + (self.scheme.db_rows * self.scheme.query_bits).div_ceil(8)
+        8 + self.profile.scheme.request_bytes
+    }
+
+    /// Bytes one segment's answer carries: binding, epoch and body.
+    pub fn response_bytes(&self) -> usize {
+        16 + self.profile.scheme.response_bytes
     }
 
     pub fn reserved_bytes(&self) -> u64 {
-        reserved_bytes(self.rlwe, &self.scheme)
+        reserved_bytes(self.profile.rows as u64, self.profile.row_bytes as u32)
+    }
+
+    /// Checks the binding and length, then parses the key and selection once
+    /// for every segment that will answer them.
+    pub fn parse(&self, binding: [u8; 8], body: &[u8]) -> Result<ParsedQuery, String> {
+        if body.get(..8) != Some(binding.as_slice()) {
+            return Err("query does not name this revision and table".to_string());
+        }
+        // A fixed length for every query: a body that varied with the selection
+        // would leak through its size alone.
+        if body.len() != self.query_bytes() {
+            return Err("query has the wrong fixed length".to_string());
+        }
+        let (keys, query) = self.profile.parse(&body[8..])?;
+        Ok(ParsedQuery { keys, query })
+    }
+}
+
+/// Row-major u16 coefficients of a segment's plaintext, in the order
+/// `IPIRServer` ingests a non-transposed database.
+struct RowCoefficients<'a> {
+    rows: &'a [u8],
+    row_bytes: usize,
+    cols: usize,
+    position: usize,
+    total: usize,
+}
+
+impl Iterator for RowCoefficients<'_> {
+    type Item = u16;
+
+    fn next(&mut self) -> Option<u16> {
+        if self.position >= self.total {
+            return None;
+        }
+        let (row, col) = (self.position / self.cols, self.position % self.cols);
+        self.position += 1;
+        Some(native::row_coefficient(self.rows, self.row_bytes, row, col))
     }
 }
 
 /// One segment of one shard revision's table, prepared to answer queries.
 pub struct TableRuntime {
-    preprocessed: Vec<QueryPackPreprocessed<'static>>,
-    server: IPIRServer<u16>,
+    pub(crate) preprocessed: Vec<NativePreprocessed>,
+    pub(crate) server: IPIRServer<u16>,
     pub public_params: Vec<u8>,
     pub public_params_sha256: String,
     pub public_params_epoch: [u8; 8],
@@ -170,16 +242,19 @@ impl TableRuntime {
     /// plaintext beside it would double the resident cost of every shard for no
     /// benefit.
     pub fn build(shared: &SharedParams, rows: &[u8]) -> Result<Self, String> {
+        let profile = &shared.profile;
         let mut phase = std::time::Instant::now();
-        let coefficients = RowPlaintextIter::new(
-            rows,
-            shared.table.row_bytes(shared.geometry) as usize,
-            shared.scheme.db_rows,
-            shared.scheme.db_cols,
-            shared.scheme.p.trailing_zeros() as usize,
+        let server = database_server(
+            shared,
+            RowCoefficients {
+                rows,
+                row_bytes: profile.row_bytes,
+                cols: profile.cols,
+                position: 0,
+                total: profile.rows * profile.cols,
+            },
+            false,
         );
-        let server = database_server(shared, coefficients, false);
-
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -188,28 +263,14 @@ impl TableRuntime {
             "construction stage"
         );
         phase = std::time::Instant::now();
-        // The setup is derived from a published seed, so a client reproduces it
-        // exactly. It is public: it carries no secret and no selection.
-        let mut seed = [0u8; 32];
-        seed[..8].copy_from_slice(&shared.setup_seed.to_le_bytes());
-        let setup = IPIRClient::from_profile(
-            shared.scheme.num_items,
-            shared.scheme.item_size_bits,
-            ipir_sp::SimplePirProfile::P14,
-        )
-        .map_err(|error| error.to_string())?
-        .generate_public_query_setup_simplepir_from_seed(seed);
-        tracing::debug!(
-            geometry = shared.geometry.name,
-            table = shared.table.as_str(),
-            seconds = phase.elapsed().as_secs_f64(),
-            stage = "public_setup",
-            "construction stage"
-        );
-        phase = std::time::Instant::now();
-        let crs_blocks = server
-            .perform_offline_precomputation_simplepir(shared.rlwe, setup.polys())
-            .crs_blocks;
+        // The query masks are derived from a published seed, so a client
+        // reproduces them exactly. The hint is public: the masks times the
+        // database, exactly lifted.
+        let padded = server.db_rows_padded();
+        let db = server.db();
+        let hint = native::hint(&profile.masks, profile.rows, profile.cols, |col| {
+            &db[col * padded..col * padded + profile.rows]
+        })?;
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -218,12 +279,8 @@ impl TableRuntime {
             "construction stage"
         );
         phase = std::time::Instant::now();
-        let preprocessed = build_pack_preprocessed_blocks_with_top(
-            shared.rlwe,
-            &crs_blocks,
-            &shared.top_key_images,
-        )
-        .map_err(|e| e.to_string())?;
+        let preprocessed = native::preprocess(&profile.setup, &hint)?;
+        drop(hint);
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -231,19 +288,18 @@ impl TableRuntime {
             stage = "pack_preprocessing",
             "construction stage"
         );
-        phase = std::time::Instant::now();
-        let public_params = published_c1_rows(&preprocessed, shared.rlwe.q);
+        Self::assemble(server, preprocessed)
+    }
+
+    /// Publishes the masks of prepared blocks and derives their epoch.
+    pub(crate) fn assemble(
+        server: IPIRServer<u16>,
+        preprocessed: Vec<NativePreprocessed>,
+    ) -> Result<Self, String> {
+        let public_params = native::publish(&preprocessed)?;
         let digest = Sha256::digest(&public_params);
         let mut epoch = [0u8; 8];
         epoch.copy_from_slice(&digest[..8]);
-
-        tracing::debug!(
-            geometry = shared.geometry.name,
-            table = shared.table.as_str(),
-            seconds = phase.elapsed().as_secs_f64(),
-            stage = "publish_parameters",
-            "construction stage"
-        );
         Ok(Self {
             preprocessed,
             server,
@@ -265,40 +321,20 @@ impl TableRuntime {
         binding: [u8; 8],
         body: &[u8],
     ) -> Result<Vec<u8>, String> {
-        if body.get(..8) != Some(binding.as_slice()) {
-            return Err("query does not name this revision and table".to_string());
-        }
-        // A fixed length for every query: a body that varied with the selection
-        // would leak through its size alone.
-        if body.len() != shared.query_bytes() {
-            return Err("query has the wrong fixed length".to_string());
-        }
-        let packing_len = serialized_packing_keys_len(shared.rlwe);
-        let packing_keys =
-            ipir_sp::serialize::deserialize_packing_keys(shared.rlwe, &body[8..8 + packing_len])
-                .map_err(|e| e.to_string())?;
-        let query = enhance_pir_server::ipir::deserialize_first_dim_query(
-            shared.rlwe,
-            &shared.scheme,
-            &body[8 + packing_len..],
-        )
-        .map_err(|e| e.to_string())?;
-        let intermediate = self.server.multiply_query(shared.rlwe, &query);
-        let packed = pack_intermediate_blocks(
-            &intermediate,
-            &packing_keys,
-            &shared.top_key_images,
-            &self.preprocessed,
-        )
-        .map_err(|e| e.to_string())?;
-        let c2 = ipir_sp::modulus_switch::serialize_rlwe_response_bodies(
-            &packed,
-            shared.scheme.q_prime_1,
-        );
-        let mut response = Vec::with_capacity(16 + c2.len());
+        self.answer(binding, &shared.parse(binding, body)?)
+    }
+
+    /// Answers a query already parsed by [`SharedParams::parse`].
+    pub fn answer(&self, binding: [u8; 8], query: &ParsedQuery) -> Result<Vec<u8>, String> {
+        let intermediate = self
+            .server
+            .try_multiply_power_of_two(native::Q, &query.query)
+            .map_err(|error| error.to_string())?;
+        let body = native::pack(&self.preprocessed, &query.keys, &intermediate)?;
+        let mut response = Vec::with_capacity(16 + body.len());
         response.extend_from_slice(&binding);
         response.extend_from_slice(&self.public_params_epoch);
-        response.extend_from_slice(&c2);
+        response.extend_from_slice(&body);
         Ok(response)
     }
 }
@@ -738,9 +774,7 @@ mod tests {
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 
     fn reservation(rows: u64, row_bytes: usize) -> u64 {
-        let (rlwe, scheme) = ipir_sp::params_for_simplepir(rows, row_bytes as u64 * 8)
-            .expect("a registry geometry has parameters");
-        reserved_bytes(&rlwe, &scheme)
+        reserved_bytes(rows, row_bytes as u32)
     }
 
     #[test]
@@ -758,33 +792,60 @@ mod tests {
         ));
     }
 
-    /// The reservation must match what `shard-residency` measured at the pinned
-    /// geometry: a 32 MiB database plus 96 MiB of pack matrices, 128.5 MiB per
-    /// table segment and about 257 MiB per shard.
+    /// The native reservation at the pinned geometry: a 32 MiB database, one
+    /// block of published masks, and the eight-byte-word bound on one block of
+    /// two-mask preprocessing (64 MiB of compiled matrix plus both masks).
     ///
     /// If this fails, the cache budget is being computed against a different
     /// scheme than the one deployed, and every sizing decision downstream of it
     /// is wrong. Re-measure with `shard-residency` rather than adjusting the
     /// formula to match.
     #[test]
-    fn the_reservation_matches_what_residency_measured() {
+    fn the_reservation_is_the_native_upper_bound() {
         assert_eq!(
             reservation(RECENT_8K.directory_rows, RECENT_8K.directory_row_bytes),
-            (32 << 20) + (96 << 20)
+            (32 << 20) + 14_848 + 16 + (32 + 2 * 2_048 * 8 + 8) + (64 << 20)
         );
     }
 
-    /// Only the database term follows the row count: the pack matrices follow
-    /// `db_cols`, which the scheme holds at 2,048 across the registry. That is
-    /// why a wider table is nearly free in memory while it divides the shard
-    /// count, and it is the whole basis of the archive tier.
+    /// Only the database term follows the row count: the published masks and
+    /// preprocessing follow the row width, which the registry holds at one
+    /// instance. That is why a taller table is cheap in memory while it divides
+    /// the shard count, and it is the whole basis of the archive tier.
     #[test]
     fn only_the_database_term_follows_the_row_count() {
         let narrow = reservation(RECENT_8K.page_rows, RECENT_8K.page_row_bytes);
         let wide = reservation(ARCHIVE_WIDE.page_rows, ARCHIVE_WIDE.page_row_bytes);
-        let pack = 96 << 20;
+        let fixed = narrow - RECENT_8K.page_rows * RECENT_8K.page_row_bytes as u64;
         let ratio = ARCHIVE_WIDE.page_rows / RECENT_8K.page_rows;
-        assert_eq!(wide - pack, (narrow - pack) * ratio);
+        assert_eq!(wide - fixed, (narrow - fixed) * ratio);
+    }
+
+    /// The certificate tool rebuilds a segment's masks from its row bytes
+    /// without the scan server. It binds its report to a snapshot by requiring
+    /// those masks to equal the served ones, so the two derivations must agree.
+    #[test]
+    fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
+        let shared =
+            SharedParams::build(&transparent_shard::layout::RECENT_4K, Table::Pages).unwrap();
+        let profile = &shared.profile;
+        let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as u8)
+            .collect();
+        let columns: Vec<Vec<u16>> = (0..profile.cols)
+            .map(|col| {
+                (0..profile.rows)
+                    .map(|row| native::row_coefficient(&rows, profile.row_bytes, row, col))
+                    .collect()
+            })
+            .collect();
+        let hint =
+            native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
+        let rebuilt = native::publish(&native::preprocess(&profile.setup, &hint).unwrap()).unwrap();
+        assert_eq!(
+            rebuilt,
+            TableRuntime::build(&shared, &rows).unwrap().public_params
+        );
     }
 
     /// Every registry geometry must have parameters and a reservation that
@@ -794,17 +855,16 @@ mod tests {
     #[test]
     fn every_registry_geometry_reserves_something_servable() {
         for geometry in transparent_shard::layout::PROFILES {
-            for (rows, row_bytes) in [
-                (geometry.directory_rows, geometry.directory_row_bytes),
-                (geometry.page_rows, geometry.page_row_bytes),
-            ] {
-                let bytes = reservation(rows, row_bytes);
+            for table in [Table::Directory, Table::Pages] {
+                let shared = SharedParams::build(geometry, table).unwrap();
+                let bytes = shared.reserved_bytes();
                 assert!(bytes > 0, "{}", geometry.name);
                 assert!(
                     bytes < (2 << 30),
                     "{} reserves {bytes} bytes for one segment",
                     geometry.name
                 );
+                assert_eq!(shared.profile.blocks(), 1, "{}", geometry.name);
             }
         }
     }

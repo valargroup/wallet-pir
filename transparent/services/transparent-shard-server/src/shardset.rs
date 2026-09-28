@@ -399,6 +399,13 @@ impl LoadedShard {
                 manifest.schema
             )));
         }
+        if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
+            return Err(LoadError::Invalid(format!(
+                "shard declares tag salt counter {}, above {}",
+                manifest.tag_salt_counter,
+                transparent_shard::tag::MAX_TAG_SALT_COUNTER
+            )));
+        }
 
         // A geometry is selected by name, not inferred from the dimensions.
         // An unknown name is refused: this build has no parameters for it, and
@@ -410,6 +417,15 @@ impl LoadedShard {
                 manifest.shard_id, manifest.geometry
             ))
         })?;
+
+        // A published choice table must at least decode and index the shard's
+        // placed scripts. Checked here, where every worker reads every
+        // manifest, so a malformed one is refused before its manifest is
+        // served; whether it routes each script to its row needs the tables,
+        // which `verify_tables` checks where they are held.
+        manifest
+            .directory_choice()
+            .map_err(|error| LoadError::Invalid(format!("shard {}: {error}", manifest.shard_id)))?;
 
         let filter = read(&dir.join("filter.bin"))?;
         if filter_hash(&filter).to_display_hex() != manifest.filter_hash {
@@ -494,6 +510,7 @@ impl LoadedShard {
         let mut tables = tables.into_iter();
         let directory = tables.next().expect("directory segments");
         let pages = tables.next().expect("page segments");
+        verify_choice_routes(&manifest, geometry, &directory)?;
 
         Ok(Self {
             manifest,
@@ -505,6 +522,58 @@ impl LoadedShard {
             pages,
         })
     }
+}
+
+/// Checks that a published choice table names the row holding every entry.
+///
+/// A wrong bit fails silently at the wallet: it queries the other candidate
+/// row, finds no entry, and reads the script as absent. So a shard whose table
+/// misroutes any entry, or indexes a different number of entries than the
+/// directory holds, is refused before it is served.
+fn verify_choice_routes(
+    manifest: &ShardManifest,
+    geometry: &Geometry,
+    directory: &[SegmentSource],
+) -> Result<(), LoadError> {
+    let invalid = |why: String| LoadError::Invalid(format!("shard {}: {why}", manifest.shard_id));
+    let Some(table) = manifest
+        .directory_choice()
+        .map_err(|error| invalid(error.to_string()))?
+    else {
+        return Ok(());
+    };
+    let mut entries = 0u64;
+    let mut tags = std::collections::HashSet::new();
+    for (segment, source) in directory.iter().enumerate() {
+        let bytes = source.load()?;
+        for (within, raw) in bytes.chunks(geometry.directory_row_bytes).enumerate() {
+            let row = segment as u64 * geometry.directory_rows + within as u64;
+            let decoded = transparent_shard::records::decode_directory_row(raw)
+                .map_err(|error| invalid(format!("directory row {row}: {error}")))?;
+            // Rows carry script tags, not raw scripts, so the route each
+            // script took cannot be recomputed here. The builder checks every
+            // route against the encoded rows before publication, while it
+            // still has the scripts. This pass decodes every row, refuses a
+            // tag held twice anywhere in the shard, and counts entries
+            // against the table.
+            for entry in &decoded {
+                if !tags.insert(entry.tag) {
+                    return Err(invalid(format!(
+                        "directory row {row} repeats script tag {}",
+                        hex::encode(entry.tag)
+                    )));
+                }
+            }
+            entries += decoded.len() as u64;
+        }
+    }
+    if entries != u64::from(table.keys()) {
+        return Err(invalid(format!(
+            "directory choice indexes {} scripts, the directory holds {entries}",
+            table.keys()
+        )));
+    }
+    Ok(())
 }
 
 /// A published shard set: the map, the revision it names for each shard, and

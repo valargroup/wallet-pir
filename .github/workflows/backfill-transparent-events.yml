@@ -212,7 +212,7 @@ concurrency:
 
 env:
   UNIT: transparent-event-ingest
-  DATA_DIR: /srv/zakura/transparent-event-data
+  DATA_DIR: /srv/zakura/transparent-event-data-v2
   BIN: /usr/local/bin/transparent-event-ingest
   SHARD_DIR: /srv/zakura/transparent-shards
 

@@ -234,3 +234,20 @@ rollback_fleet
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RouterCaddyCompatibility(unittest.TestCase):
+    """The production router runs Caddy 2.6.2; rendered routers must load there."""
+
+    NEWER_THAN_2_6 = ('health_fails', 'health_passes', 'handle_errors 4', 'handle_errors 5')
+
+    def test_rendered_router_policies_use_caddy_2_6_directives(self):
+        root = Path(__file__).resolve().parents[3]
+        texts = {
+            'live fleet script': (root / 'transparent/ops/scripts/transparent-live-fleet.py').read_text(),
+            'shard-assign renderer': (root / 'transparent/services/transparent-shard-server/src/router.rs').read_text().split('#[cfg(test)]')[0],
+            'router fixture': (root / 'transparent/ops/fixtures/transparent-shard/Caddyfile.router').read_text(),
+        }
+        for name, text in texts.items():
+            for directive in self.NEWER_THAN_2_6:
+                self.assertNotIn(directive, text, f'{name} uses {directive!r}, which Caddy 2.6.2 rejects')

@@ -39,6 +39,12 @@ pub struct Incident {
     pub last_evaluated: u64,
     pub last_reminder: u64,
     pub condition: Option<Condition>,
+    /// Active at promotion but not yet confirmed firing, so not yet sent to Slack.
+    #[serde(default)]
+    pub announce_pending: bool,
+    /// A FIRED for this incident was queued for delivery; its end must be delivered too.
+    #[serde(default)]
+    pub notified: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -49,6 +55,76 @@ pub struct DeliveryHealth {
     pub last_success: Option<u64>,
     pub failure: Option<String>,
     pub worker_at: u64,
+}
+
+const RUNBOOK: &str =
+    "https://github.com/valargroup/wallet-pir/blob/main/enhance/docs/observability-alerting.md";
+
+/// Escape the three characters Slack mrkdwn treats as control sequences.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn duration(seconds: u64) -> String {
+    match seconds {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m {}s", s / 60, s % 60),
+        s => format!("{}h {}m", s / 3600, s % 3600 / 60),
+    }
+}
+
+/// Context line with a Slack date token (viewer's time zone, UTC fallback) and links.
+fn footer(id: &str, now: u64, dashboard: &str) -> String {
+    let utc = chrono::DateTime::from_timestamp(now as i64, 0)
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| now.to_string());
+    let mut links = format!("<{RUNBOOK}|Runbook>");
+    if !dashboard.is_empty() {
+        links = format!("<{dashboard}|Dashboard> · {links}");
+    }
+    format!(
+        "`{}` · <!date^{now}^{{date_short_pretty}} {{time_secs}}|{utc}> · {links}",
+        escape(id)
+    )
+}
+
+/// Slack mrkdwn body for one incident transition; stored verbatim in the outbox.
+fn slack_message(
+    event: &str,
+    c: &Condition,
+    id: &str,
+    now: u64,
+    shadow: bool,
+    environment: &str,
+    dashboard: &str,
+) -> String {
+    let icon = match (event, c.severity.as_str()) {
+        ("RECOVERED", _) => ":large_green_circle:",
+        ("RETIRED", _) => ":white_circle:",
+        ("REMINDER", _) => ":bell:",
+        (_, "critical") => ":red_circle:",
+        _ => ":large_orange_circle:",
+    };
+    // Incident ids end in their firing time.
+    let open_for = id
+        .rsplit_once('-')
+        .and_then(|(_, t)| t.parse::<u64>().ok())
+        .filter(|_| event != "FIRED")
+        .map(|fired| format!(" after {}", duration(now.saturating_sub(fired))))
+        .unwrap_or_default();
+    format!(
+        "{icon} *{}{event}{open_for} · {}* · `{}` on `{}` · {}\n>*Observed:* {}\n>*Threshold:* {}\n{}",
+        if shadow { "SHADOW " } else { "" },
+        escape(&c.severity),
+        escape(&c.key),
+        escape(&c.resource),
+        escape(environment),
+        escape(&c.observed),
+        escape(&c.threshold),
+        footer(id, now, dashboard),
+    )
 }
 
 pub struct Store {
@@ -105,9 +181,17 @@ impl Store {
             i.condition = Some(c.clone());
             let fresh = c.sample > previous_sample;
             i.last_sample = i.last_sample.max(c.sample);
-            // Promotion announces existing active state without clearing an incident
-            // whose current input is unknown or whose recovery is not yet confirmed.
-            let mut event = (promoting && i.active && !c.retired).then_some("FIRED");
+            // Promotion announces existing active state only once its current input
+            // confirms it; an unknown input (e.g. right after a restart) waits rather
+            // than paging "unavailable", and never clears the incident.
+            let mut event = None;
+            if promoting && i.active && !c.retired {
+                if c.firing == Some(true) {
+                    event = Some("FIRED");
+                } else {
+                    i.announce_pending = true;
+                }
+            }
             if c.retired {
                 if i.active {
                     event = Some("RETIRED");
@@ -129,8 +213,12 @@ impl Store {
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
                             event = Some("FIRED");
+                        } else if event.is_none() && i.active && i.announce_pending && !shadow {
+                            i.last_reminder = now;
+                            event = Some("FIRED");
                         } else if event.is_none()
                             && i.active
+                            && !i.announce_pending
                             && c.severity == "critical"
                             && now.saturating_sub(i.last_reminder) >= 1800
                         {
@@ -151,14 +239,29 @@ impl Store {
                 }
             }
             if let Some(event) = event {
-                let body = format!("{}PIR {event} [{}]\nEnvironment: {environment}\nIncident: {}\nResource: {}\nCheck: {}\nObserved: {}\nThreshold: {}\nEvent UTC epoch: {now}\nDashboard: {dashboard}\nRunbook: https://github.com/valargroup/wallet-pir/blob/main/enhance/docs/observability-alerting.md",
-                    if shadow { "SHADOW " } else { "" }, c.severity, i.id, c.resource, c.key, c.observed, c.threshold);
+                let closing = matches!(event, "RECOVERED" | "RETIRED");
+                // Deliver in active mode, except the end of an incident that was never
+                // announced; always deliver the end of one that was announced, even in
+                // shadow, so no Slack incident is left open.
+                let deliver = if closing {
+                    i.notified || (!shadow && !i.announce_pending)
+                } else {
+                    !shadow
+                };
+                if closing {
+                    i.notified = false;
+                    i.announce_pending = false;
+                } else if deliver && event == "FIRED" {
+                    i.notified = true;
+                    i.announce_pending = false;
+                }
+                let body = slack_message(event, c, &i.id, now, !deliver, environment, dashboard);
                 tx.execute("INSERT INTO metadata(key,value) VALUES ('last_event',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [&body])?;
                 tx.execute(
                     "INSERT INTO events(at,shadow,body) VALUES (?,?,?)",
-                    params![now, shadow, body],
+                    params![now, !deliver, body],
                 )?;
-                if !shadow {
+                if deliver {
                     tx.execute(
                         "INSERT INTO outbox(incident,body,created,due) VALUES (?,?,?,?)",
                         params![i.id, body, now, now],
@@ -177,7 +280,11 @@ impl Store {
         let tx = self.db.transaction()?;
         let id = format!("operator-test-{now}");
         for event in ["FIRED", "RECOVERED"] {
-            let body=format!("PIR APM TEST {event} [verification]\nEnvironment: {environment}\nIncident: {id}\nNo service failure: durable delivery verification.\nDashboard: {dashboard}");
+            let body = format!(
+                ":test_tube: *PIR test · {event}* · {}\nNo service failure: durable delivery verification.\n{}",
+                escape(environment),
+                footer(&id, now, dashboard)
+            );
             tx.execute(
                 "INSERT INTO outbox(incident,body,created,due) VALUES (?,?,?,?)",
                 params![id, body, now, now],
@@ -342,6 +449,38 @@ mod tests {
         }
     }
     #[test]
+    fn slack_message_is_escaped_mrkdwn() {
+        let mut c = condition(Some(true), 100);
+        c.observed = "p99 <5s & >2s".into();
+        let fired = slack_message(
+            "FIRED",
+            &c,
+            "query_5xx-100",
+            100,
+            false,
+            "production",
+            "https://x/apm/",
+        );
+        assert!(fired.starts_with(
+            ":red_circle: *FIRED · critical* · `query_5xx` on `query` · production\n"
+        ));
+        assert!(fired.contains(">*Observed:* p99 &lt;5s &amp; &gt;2s\n"));
+        assert!(fired.contains("<!date^100^"));
+        assert!(fired.ends_with("<https://x/apm/|Dashboard> · <https://github.com/valargroup/wallet-pir/blob/main/enhance/docs/observability-alerting.md|Runbook>"));
+        let recovered = slack_message(
+            "RECOVERED",
+            &c,
+            "query_5xx-100",
+            231,
+            true,
+            "production",
+            "",
+        );
+        assert!(recovered
+            .starts_with(":large_green_circle: *SHADOW RECOVERED after 2m 11s · critical*"));
+        assert!(!recovered.contains("Dashboard"));
+    }
+    #[test]
     fn unknown_cannot_recover_and_recovery_needs_distinct_samples() {
         let mut s = Store::open(Path::new(":memory:")).unwrap();
         for t in [100, 110] {
@@ -384,14 +523,65 @@ mod tests {
             .unwrap();
         assert!(s.incidents().unwrap()[0].active);
         assert_eq!(s.incidents().unwrap()[0].id, id);
-        assert_eq!(s.health(true, 120).unwrap().pending, 1);
+        // Unknown input at promotion (e.g. just after restart) is not announced.
+        assert_eq!(s.health(true, 120).unwrap().pending, 0);
         s.evaluate(&[condition(Some(false), 130)], 130, false, "test", "")
             .unwrap();
         assert!(s.incidents().unwrap()[0].active);
         s.evaluate(&[condition(Some(false), 140)], 140, false, "test", "")
             .unwrap();
         assert!(!s.incidents().unwrap()[0].active);
-        assert_eq!(s.health(true, 140).unwrap().pending, 2);
+        // Never announced, so its recovery is recorded but not delivered.
+        assert_eq!(s.health(true, 140).unwrap().pending, 0);
+    }
+    #[test]
+    fn promotion_announces_once_input_confirms_firing() {
+        let mut s = Store::open(Path::new(":memory:")).unwrap();
+        for t in [100, 110] {
+            s.evaluate(&[condition(Some(true), t)], t, true, "test", "")
+                .unwrap();
+        }
+        s.evaluate(&[condition(None, 120)], 120, false, "test", "")
+            .unwrap();
+        assert_eq!(s.health(true, 120).unwrap().pending, 0);
+        s.evaluate(&[condition(Some(true), 130)], 130, false, "test", "")
+            .unwrap();
+        assert_eq!(s.health(true, 130).unwrap().pending, 1);
+        // Announced once, not again on the next firing sample.
+        s.evaluate(&[condition(Some(true), 140)], 140, false, "test", "")
+            .unwrap();
+        assert_eq!(s.health(true, 140).unwrap().pending, 1);
+        for t in [150, 160] {
+            s.evaluate(&[condition(Some(false), t)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(s.health(true, 160).unwrap().pending, 2);
+    }
+    #[test]
+    fn announced_incident_recovery_is_delivered_even_in_shadow() {
+        let mut s = Store::open(Path::new(":memory:")).unwrap();
+        for t in [100, 110] {
+            s.evaluate(&[condition(Some(true), t)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(s.health(true, 110).unwrap().pending, 1);
+        // Demoted to shadow for maintenance; the paged incident recovers there.
+        for t in [120, 130] {
+            s.evaluate(&[condition(Some(false), t)], t, true, "test", "")
+                .unwrap();
+        }
+        assert!(!s.incidents().unwrap()[0].active);
+        assert_eq!(s.health(true, 130).unwrap().pending, 2);
+        // A new incident raised only in shadow is still not delivered.
+        for t in [140, 150] {
+            s.evaluate(&[condition(Some(true), t)], t, true, "test", "")
+                .unwrap();
+        }
+        for t in [160, 170] {
+            s.evaluate(&[condition(Some(false), t)], t, true, "test", "")
+                .unwrap();
+        }
+        assert_eq!(s.health(true, 170).unwrap().pending, 2);
     }
     #[test]
     fn restart_preserves_outbox_and_does_not_refire() {

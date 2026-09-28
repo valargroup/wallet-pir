@@ -17,6 +17,24 @@ on:
         required: true
         default: /srv/zakura/transparent-shards-v7-full
         type: string
+      range_profile:
+        description: Range-filter profile of the initial publication and of new revisions (shadow mode)
+        required: true
+        default: zcash-transparent-range-v1
+        type: choice
+        options: [zcash-transparent-range-v1, zcash-transparent-range-v2]
+      recent_geometry:
+        description: Recent geometry of the initial publication (shadow mode)
+        required: true
+        default: recent-8k
+        type: choice
+        options: [recent-8k, recent-4k-8k]
+      directory_choice:
+        description: Which newly built shards publish a directory choice table (shadow mode)
+        required: true
+        default: 'off'
+        type: choice
+        options: ['off', sealed, all]
 
 concurrency:
   group: wallet-pir-deploy
@@ -83,12 +101,17 @@ jobs:
           MODE: ${{ inputs.mode }}
           SHA: ${{ inputs.ref }}
           INITIAL: ${{ inputs.initial_publication }}
+          DIRECTORY_CHOICE: ${{ inputs.directory_choice }}
+          RANGE_PROFILE: ${{ inputs.range_profile }}
+          RECENT_GEOMETRY: ${{ inputs.recent_geometry }}
         run: |
           set -euo pipefail
           mkdir -p publisher-evidence
           sudo --preserve-env=WALLET_PIR_DEPLOY_SSH_KEY,TRANSPARENT_SSH_KNOWN_HOSTS,TRANSPARENT_FLEET_JSON,TRANSPARENT_ROUTER_HOST \
             python3 transparent/ops/scripts/deploy-transparent-publisher.py "$MODE" \
             --artifacts "$PWD/artifact" --initial-publication "$INITIAL" --source-sha "$SHA" \
+            --directory-choice "$DIRECTORY_CHOICE" --range-profile "$RANGE_PROFILE" \
+            --recent-geometry "$RECENT_GEOMETRY" \
             2>&1 | tee publisher-evidence/deploy.log
 
       - name: Capture nonsecret serving evidence

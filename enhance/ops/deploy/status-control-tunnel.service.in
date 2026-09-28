@@ -1,0 +1,17 @@
+[Unit]
+Description=Authenticated private Status coordinator to Status host link
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -C -N -T -i /etc/status-pir-control/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/status-pir-control/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=2 -o ServerAliveCountMax=4 -L 127.0.0.1:8481:127.0.0.1:8481 -L 127.0.0.1:8482:127.0.0.1:8482 -R 127.0.0.1:8495:127.0.0.1:8480 status-control@@STATUS_HOST@
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

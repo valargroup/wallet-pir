@@ -5,7 +5,7 @@ use std::{
 };
 use transparent_wallet::{
     client::Table,
-    transport::{BoxError, FilterSource, ShardTransport},
+    transport::{BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport},
 };
 /// Bytes and time per stage, as one client saw them.
 #[derive(Default, Clone, serde::Serialize)]
@@ -170,6 +170,34 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         );
         result
     }
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+    fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
+        // Each request that was sent is counted under its own stage, as if it
+        // had been made alone, so calls, bytes and refusals per stage match
+        // the sequential walk; the overlapped wall time is its own stage.
+        let started = Instant::now();
+        let replies = self.inner.batch(requests);
+        let elapsed = started.elapsed();
+        for (request, reply) in requests.iter().zip(&replies) {
+            let Some(reply) = reply else {
+                continue;
+            };
+            self.route(request.stage(), request.route());
+            self.record(
+                request.stage(),
+                request.upload(),
+                sized(reply),
+                Duration::ZERO,
+            );
+        }
+        let mut stages = self.stages.lock().unwrap();
+        let entry = stages.entry("shards_batch").or_default();
+        entry.calls += 1;
+        entry.micros += elapsed.as_micros() as u64;
+        replies
+    }
 }
 
 pub struct CountingFilters<F> {
@@ -191,6 +219,16 @@ impl<F: FilterSource> FilterSource for CountingFilters<F> {
             Err(_) => entry.failures += 1,
         }
         result
+    }
+    fn prefetch(&mut self, shard_ids: &[u64]) {
+        // Bytes are charged when each filter is handed out; the overlapped
+        // wall time is its own stage.
+        let started = Instant::now();
+        self.inner.prefetch(shard_ids);
+        let mut stages = self.stages.lock().unwrap();
+        let entry = stages.entry("filters_prefetch").or_default();
+        entry.calls += 1;
+        entry.micros += started.elapsed().as_micros() as u64;
     }
     fn filter(&mut self, shard_id: u64) -> Result<(Vec<u8>, u64), BoxError> {
         let started = Instant::now();

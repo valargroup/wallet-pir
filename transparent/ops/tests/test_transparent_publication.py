@@ -540,6 +540,35 @@ time.sleep(10)
         self.assertIn('https://filters.example',text)
         self.assertIn('/v1/filters/shards',text)
 
+    async def test_live_router_uses_the_saturation_tolerant_health_policy(self):
+        captured=[]
+        async def ssh(host,command,data=None,timeout=25):
+            captured.append(data.decode())
+            return b''
+        self.fleet.ssh=ssh
+        self.fleet.c['internal_listen']='10.0.0.9:8080'
+        assignment={'workers':[dict(id=w['id'],shards=[0] if w['role']=='archive-owner' else [1,2]) for w in self.roster]}
+        await self.fleet.route(self.roster,assignment)
+        text=captured[0]
+        # Recent pool plus one per archive owner, on both sites.
+        self.assertEqual(text.count(module.ROUTER_HEALTH), 2*3)
+        self.assertEqual(text.count(module.ROUTER_PROXY_ERRORS.strip('\n')), 2)
+        self.assertNotIn('fail_duration 30s', text)
+        # The same policy as shard-assign's golden router: the live publisher
+        # re-renders the production router on every activation.
+        golden=(Path(__file__).parents[1]/'fixtures'/'transparent-shard'/'Caddyfile.router').read_text()
+        self.assertIn(module.ROUTER_HEALTH, golden)
+        self.assertIn(module.ROUTER_PROXY_ERRORS, golden)
+        caddy=shutil.which('caddy')
+        if caddy:
+            path=self.root/'Caddyfile.live'
+            path.write_text(text)
+            result=subprocess.run([caddy,'adapt','--adapter','caddyfile','--config',str(path)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            config=json.loads(result.stdout)
+            routes=json.dumps(config)
+            self.assertIn('"max_fails": 3'.replace(' ',''), routes.replace(' ',''))
+
 
 if __name__=='__main__':
     unittest.main()

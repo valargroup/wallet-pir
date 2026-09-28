@@ -1,0 +1,19 @@
+{
+ "arrivals": 12000,
+ "span_s": 600.0,
+ "offered_qps": 20.0,
+ "results": {
+  "correct": 12000
+ },
+ "errors": {},
+ "p50_ms_all": 48.0,
+ "p99_ms_all": 169.0,
+ "max_ms_all": 380.0,
+ "p50_ms_correct": 48.0,
+ "p99_ms_correct": 169.0,
+ "observation_age_ms_p50": 5661,
+ "observation_age_ms_max": 17316,
+ "max_start_lag_ms": 34,
+ "generations": 115,
+ "gate_pass": true
+}
