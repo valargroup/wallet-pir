@@ -1138,6 +1138,10 @@ fleet_verify_public() {
 
 fleet_prune() {
   local id host
+  if [[ "${TRANSPARENT_SCHEMA_CUTOVER:-false}" == true ]]; then
+    echo "== prune deferred: a schema cutover keeps the previous schema's data for rollback"
+    return 0
+  fi
   for id in $(worker_ids); do
     host="$(worker_field "$id" ssh_host)"
     [[ "$(worker_action "$id")" == restart ]] || continue

@@ -31,6 +31,8 @@ fleet_has_publisher_control() {
 }
 
 fleet_check_publisher_shadow() {
+  # The cutover stops the old publisher before activation instead.
+  [[ "${TRANSPARENT_SCHEMA_CUTOVER:-false}" == true ]] && return 0
   local config="${TRANSPARENT_PUBLISHER_CONFIG:-/opt/transparent-publisher/controller.json}"
   if fleet_has_publisher_control || [[ -e "$config" ]]; then
     if [[ ! -r "$config" ]] || ! jq -e '.shadow == true' "$config" >/dev/null; then
@@ -82,6 +84,11 @@ jq -cn --arg binary "$binary" --arg helper "$helper" --arg unit "$unit" --arg re
 REMOTE
 )"
     control="$(publisher_control_enabled "$(jq -r '.exec_start' <<<"$installed")")"
+    # A schema cutover moves every worker off the publisher's current
+    # publication, which that publisher's binaries cannot serve. Workers get
+    # plain units on the new set; the new publisher's deployment restores
+    # publication control afterwards.
+    if [[ "${TRANSPARENT_SCHEMA_CUTOVER:-false}" == true ]]; then control=false; fi
     extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess --runtime-cache-dir /srv/transparent-pir/runtime-cache --runtime-cache-max-bytes $((cache * 2))"
     if [[ "$control" == true ]]; then
       extra+=" --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
