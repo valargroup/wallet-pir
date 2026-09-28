@@ -1011,8 +1011,11 @@ REMOTE
       # and remembers passive failures for 10 s (`router::HEALTH`). Allow both
       # to settle before retiring another pair; also probe its public route.
       sleep "${TRANSPARENT_ROUTER_SETTLE_SECONDS:-15}"
-      if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
-        curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/init" >/dev/null
+      # Deferred with the public-edge check: during a schema cutover the
+      # edge's metadata is withdrawn until the new publisher activates.
+      if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" && "${TRANSPARENT_DEFER_PUBLIC_VERIFY:-false}" != true ]]; then
+        curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/init" >/dev/null \
+          || fail "the public edge does not answer /v1/shards/init after activating $group"
       fi
     done
   done
