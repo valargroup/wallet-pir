@@ -1,7 +1,9 @@
 # Single-lookup directory census, 2026-09-27
 
-Phase A (offline) evaluation of the single-lookup directory proposed in
-[architecture update §2](../../docs/architecture_update.md#2-single-lookup-directories-for-sealed-shards).
+Phase A (offline) evaluation of the single-lookup directory proposed in §2 of the
+2026-09-27 architecture review (Git history at `b693cfde`,
+`transparent/docs/architecture_update.md`; the implemented result is in
+[architecture](../../docs/architecture.md#directory-placement-and-the-choice-table)).
 The evaluated variant differs from the proposal's MPHF. It publishes a per-shard
 **choice table**, an xor-retrieval static function that stores about 1.23 bits per
 placed script. The table tells the wallet which of its two existing two-choice

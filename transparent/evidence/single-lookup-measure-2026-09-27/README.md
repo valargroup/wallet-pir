@@ -2,7 +2,7 @@
 
 Phase C local measurement of directory choice tables (see the
 [offline census](../single-lookup-census-2026-09-27/README.md) and
-[architecture update §2](../../docs/architecture_update.md#2-single-lookup-directories-for-sealed-shards)).
+[architecture](../../docs/architecture.md#directory-placement-and-the-choice-table)).
 The same journal slice was published twice:
 
 - **off:** no choice tables, two directory queries per matched script;

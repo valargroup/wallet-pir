@@ -1,6 +1,6 @@
 # Remaining work for the transparent PIR recovery beta
 
-Updated 2026-09-14. This owns milestone definitions, execution order and the
+Updated 2026-09-28. This owns milestone definitions, execution order and the
 authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [Status](status.md) summarizes accepted
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate
 numbers are reconciled below rather than retained as a second release checklist.
@@ -177,6 +177,67 @@ recovery failure is explained and reproducibly resolved. Release-affecting fixes
 restart observation. Final acceptance records source, supported workloads,
 capacity, outage limitations, trust assumptions and excluded features.
 
+## Schema v9 republication and cluster rollout
+
+The 2026-09-27 six-month architecture review is closed: its client, native-scheme
+and operations tracks are implemented, and [architecture](architecture.md)
+describes the result. What it leaves open is a format that exists only in source.
+Schema v9, the `zcash-transparent-range-v2` filter profile and the `recent-4k-8k`
+geometry all change every manifest, and runtime cache keys include the revision,
+so they ride one republication and one cold rebuild of every runtime, archive
+included. A v9 publication also breaks any client built before it, including the
+wallet-libraries transparent branches. The
+[cluster qualification baseline](../evidence/cluster-qualification-2026-09-28/README.md)
+is the acceptance gate for each step below.
+
+- [ ] Build a candidate full publication into a new directory on the coordinator:
+  v9 records and tags, the v2 filter profile, `recent-4k-8k` for the recent tier,
+  `--directory-choice all` on every shard, both tiers. Verify with `shard-verify`,
+  real placement and exact replay against the journal, and verify every choice
+  route at load. Decide whether provisional tails carry tables.
+- [ ] Rehearse the cold rebuild on bench copies of one archive owner and one
+  recent replica. Measure rebuild time and peak memory per role; that is what
+  sizes the maintenance window for the rollout.
+- [ ] Deploy the candidate: continuous publisher on the v2 profile, fixed-publication
+  rollout to all workers, rollback set retained. Port the choice-table lookup and
+  the v9 record codec to wallet-libraries before the fleet serves it.
+- [ ] Measure the deployed format against the current state in one paired cluster
+  run: bytes, request counts and p50/p95 for each workload class.
+- [ ] Publish the tail's filter as immutable segments, one per few hundred blocks,
+  so a returning wallet downloads only segments it has not cached instead of the
+  whole tail filter every revision. Private tables are unchanged. Frequent-sync
+  classes should show filter bytes proportional to new blocks, not to tail size.
+- [ ] Keep public metadata available during a shadow deploy, or accept and document
+  the window. Shadow mode withdrew public metadata for about fourteen minutes on
+  2026-09-27; this should be settled before the rollout above.
+
+**Definition of done:** the cluster serves the candidate publication, the
+regression and load clients report exact results against it, the paired
+measurement is published with its workload mix, and the previous set remains
+restorable. Projected savings do not substitute for the measurement.
+
+## Deferred measurement and research
+
+None of these block the recovery beta, and none has an implementation decision.
+
+- [ ] Measure the qualification harness from a remote region and from a
+  constrained mobile-class host: p50 and p95 against the emulated projections,
+  plus client CPU and memory for choice-table evaluation. Emulated round trips and
+  a bench copy are not a WAN measurement.
+- [ ] Run a capacity series from a dedicated load generator against the cluster,
+  before and again after the republication above, for a sustained operating
+  envelope. This is the M5 capacity gate's cluster-side input.
+- [ ] Measure cold archive service on one bench host: restore latency and admission
+  for `archive-wide` tables, concurrent-restore behaviour, and a draft eviction
+  policy. Archive restore latency, admission, eviction and churn are unmeasured,
+  which is what a rolling warm window would depend on.
+- [ ] Decide bulk-history isolation. The
+  [census](../evidence/bulk-isolation-census-2026-09-28/README.md) shows that
+  separating long histories would turn fourteen recent shards into five, but the
+  gain mostly disappears under `recent-4k-8k`, and a public small/bulk table
+  choice reveals a history-size class. It needs that privacy review, bulk geometry
+  sizing and a view on six-week tails before it is built or dropped.
+
 ## Earlier technical gates and deferred work
 
 Inventory/spot-check/cutoff (Gate 0), mixed census and publication (Gates 1–2),
@@ -197,20 +258,6 @@ The following remain separately scoped; they do not block this recovery beta:
 - [ ] Finish the optional parent-filter paired benchmark on the heavy history:
   establish a baseline completion budget, repeat frozen finalists/seeds under
   equal limits and resolve recent-latency/total-byte gates before wider promotion.
-- [ ] Evaluate a new `recent-4k-8k` profile without changing existing registry
-  meanings; require measured byte and tail-latency benefit before promotion.
-  Two-choice placement fits it without overflow (see the
-  [placement study](../evidence/directory-placement-4k-2026-09-28/README.md));
-  adopt it with the next full publication.
-- [ ] Qualify single-lookup directories. The paired
-  [local measurement](../evidence/single-lookup-measure-2026-09-27/README.md)
-  is done. Remaining:
-  - port the choice-table lookup to wallet-libraries;
-  - measure mobile client CPU and WAN latency; the bench-fleet comparison is
-    [done](../evidence/single-lookup-fleet-2026-09-27/README.md);
-  - decide whether tails carry tables;
-  - enable `--directory-choice` on a candidate publication before the fleet
-    serves it.
 - [ ] Track aged recent-shaped shard growth and re-census before expansion.
   Epoch re-cutting needs explicit lineage/cache/replay/migration/rollback design.
 - [ ] Scope archive/router redundancy for general availability, mobile, sending

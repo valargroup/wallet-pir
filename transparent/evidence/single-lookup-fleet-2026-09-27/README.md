@@ -72,8 +72,8 @@ reading its 128 KB body and closed the connection under the upload. The router's
 own 503 carried no `Retry-After`, so wallets treated it as terminal and the load
 client resubmitted at once. The health settings here are the ones `shard-assign`
 rendered; the live publisher renders the production router separately, with
-different settings. Plan item C1 in the
-[architecture update](../../docs/architecture_update.md) addresses each step.
+different settings. The router policy, worker upload drain and client backoff that
+address each step were rolled out on 2026-09-28; see [status](../../docs/status.md).
 
 In the two clean 128 runs, bytes per sync compare as follows:
 
