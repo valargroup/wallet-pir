@@ -2,7 +2,7 @@
   "assigned_shards": 2,
   "assignment_sha256": null,
   "binary_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "map_sha256": "b1ef91893190c00a3833e84e2b9037d4b7b4d2a4ccfec6dcefe122f17ec59ad6",
+  "map_sha256": "86d6f7b1db161080596d564b11f1171801ac6a58ecd1231bac1fc7d3b2d31bec",
   "mode": "loaded-only",
   "prewarm_failed": 0,
   "prewarm_finished": false,

@@ -36,8 +36,8 @@ pub const PAGE_ROW_BYTES: usize = 4_096;
 
 /// Directory rows per segment for the baseline `recent-8k` geometry.
 ///
-/// Named profiles below may use other row counts. At 16 slots per row, this
-/// baseline has capacity for 131,072 script entries before placement slack.
+/// Named profiles below may use other row counts. At 21 slots per row, this
+/// baseline has capacity for 172,032 script entries before placement slack.
 /// Deployment decisions and coverage-matched evidence are maintained in
 /// `transparent/docs/deployment.md` and `transparent/evidence/README.md`.
 pub const DIRECTORY_ROWS: usize = 8_192;
@@ -61,15 +61,16 @@ pub const INLINE_EVENTS: u32 = 2;
 /// Events that fit in one fragment.
 ///
 /// Derived from what a row leaves after its own header and one entry header,
-/// which is the largest a single history's fragment can be. It is 41 at the
-/// v8 layout's 4,096-byte row (36 at the earlier 3,584-byte row), and the
-/// assertion below pins that: the manifest publishes this number and every fixture is written
-/// against it, so a re-derivation that quietly moved it would be a schema
-/// change wearing the clothes of a refactor.
+/// which is the largest a single history's fragment can be. It is 46 at the
+/// v9 layout's 4,096-byte row (41 at the v8 96-byte event, 36 at the earlier
+/// 3,584-byte row), and the assertion below pins that: the manifest publishes
+/// this number and every fixture is written against it, so a re-derivation
+/// that quietly moved it would be a schema change wearing the clothes of a
+/// refactor.
 pub const EVENTS_PER_PAGE: u32 =
     ((PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES - PAGE_ENTRY_HEADER_BYTES) / EVENT_BYTES) as u32;
 
-const _: () = assert!(EVENTS_PER_PAGE == 41);
+const _: () = assert!(EVENTS_PER_PAGE == 46);
 
 /// Fragments a script's history occupies, which is also its page-query count.
 ///
@@ -110,10 +111,10 @@ pub const PAGE_ROW_HEADER_BYTES: usize = 4;
 /// Bytes of header on each entry within a packed page row.
 ///
 /// The v4 layout spent 128 bytes of header per row because a row held one
-/// script. Packing pays this per *entry* instead, so it has to be tight: 2 for
-/// the script length, 40 for the script, 4 each for ordinal, fragment count,
-/// event count and the two height bounds, and 2 reserved.
-pub const PAGE_ENTRY_HEADER_BYTES: usize = 64;
+/// script. Packing pays this per *entry* instead, so it has to be tight: a
+/// 14-byte script tag, then 4 each for ordinal, fragment count, event count
+/// and the two height bounds. Integer fields are packed without alignment.
+pub const PAGE_ENTRY_HEADER_BYTES: usize = 34;
 
 /// Bytes one entry holding `events` events occupies.
 pub const fn entry_bytes(events: u32) -> usize {
@@ -122,11 +123,11 @@ pub const fn entry_bytes(events: u32) -> usize {
 
 /// Entries of a `p`-event history that fit in one packed row.
 ///
-/// The reason packing is worth doing, and the reason it stops paying at 21:
-/// 25 at `p` = 1, 15 at 2, 11 at 3, 9 at 4, 7 at 5, 6 at 6, and 1 from 21
-/// upward, where an entry is more than half a row. The measured distribution is
-/// p50 2 events, p90 5, p95 8, and the newest two stay inline, so the common
-/// paged history lands in the range where this is worth five- to twenty-fold.
+/// The reason packing is worth doing, and the reason it stops paying at 24:
+/// 33 at `p` = 1, 19 at 2, 13 at 3, and 1 from 24 upward, where an entry is
+/// more than half a row. The measured distribution is p50 2 events, p90 5,
+/// p95 8, and the newest two stay inline, so the common paged history lands
+/// in the range where this is worth several-fold.
 pub const fn entries_per_row(p: u32) -> u32 {
     ((PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES) / entry_bytes(p)) as u32
 }
@@ -139,10 +140,11 @@ pub const fn entries_per_row(p: u32) -> u32 {
 pub const MAX_ENTRIES_PER_ROW: usize = entries_per_row(1) as usize;
 
 const _: () = assert!(PAGE_ROW_HEADER_BYTES + entry_bytes(EVENTS_PER_PAGE) <= PAGE_ROW_BYTES);
-const _: () = assert!(entries_per_row(1) == 25);
-const _: () = assert!(entries_per_row(2) == 15);
-const _: () = assert!(entries_per_row(20) == 2);
-const _: () = assert!(entries_per_row(21) == 1);
+const _: () = assert!(entries_per_row(1) == 33);
+const _: () = assert!(entries_per_row(2) == 19);
+const _: () = assert!(entries_per_row(3) == 13);
+const _: () = assert!(entries_per_row(23) == 2);
+const _: () = assert!(entries_per_row(24) == 1);
 const _: () = assert!(entries_per_row(EVENTS_PER_PAGE) == 1);
 
 /// How a script's history occupies the page table.
@@ -447,8 +449,8 @@ impl Geometry {
     /// Bytes of a row a directory's slots cannot reach.
     ///
     /// A row holds whole entries, so whatever is left under one is dead. At the
-    /// compiled geometry that is 124 bytes of every 4,096 — 3.0%, and 124 short
-    /// of a seventeenth slot.
+    /// compiled geometry that is 60 bytes of every 4,096, 132 short of a
+    /// twenty-second slot.
     pub const fn directory_row_slack(&self) -> usize {
         self.directory_row_bytes
             - crate::records::DIRECTORY_ROW_HEADER_BYTES
@@ -527,7 +529,7 @@ impl Geometry {
     /// against the numbers that come out.
     ///
     /// So the registry varies row *counts* only. Widening a row is a codec
-    /// change — it moves `EVENTS_PER_PAGE` off 41 and `DIRECTORY_SLOTS` off 16,
+    /// change — it moves `EVENTS_PER_PAGE` off 46 and `DIRECTORY_SLOTS` off 21,
     /// which is a schema bump and a re-publication, not a new registry entry.
     /// Lifting this means making those quantities functions of the geometry,
     /// carrying them in `ManifestLayout`, and fixing `geometry_costs.rs`, which
@@ -629,22 +631,22 @@ mod tests {
             assert_eq!(geometry.directory_row_bytes, 4_096, "{}", geometry.name);
             assert_eq!(geometry.page_row_bytes, 4_096, "{}", geometry.name);
             assert_eq!(geometry.inline_events, 2, "{}", geometry.name);
-            assert_eq!(geometry.directory_slots(), 16, "{}", geometry.name);
+            assert_eq!(geometry.directory_slots(), 21, "{}", geometry.name);
         }
     }
 
     /// The archive candidates are the ones the deployment plan turns on, so
     /// their capacities are pinned rather than left to be recomputed by hand.
     /// `archive-wide` exists because 284,221 observed scripts per shard fit a
-    /// 32,768-row directory's 524,288 slots with room, so the directory can
+    /// 32,768-row directory's 688,128 slots with room, so the directory can
     /// stay narrow while the page table absorbs dense history.
     #[test]
     fn the_archive_candidates_hold_what_they_claim() {
-        assert_eq!(ARCHIVE_32K.directory_capacity(), 524_288);
-        assert_eq!(ARCHIVE_WIDE.directory_capacity(), 524_288);
+        assert_eq!(ARCHIVE_32K.directory_capacity(), 688_128);
+        assert_eq!(ARCHIVE_WIDE.directory_capacity(), 688_128);
         assert_eq!(ARCHIVE_WIDE.page_rows, 2 * ARCHIVE_WIDE.directory_rows);
-        assert_eq!(RECENT_4K.directory_capacity(), 65_536);
-        assert_eq!(RECENT_4K_8K.directory_capacity(), 65_536);
+        assert_eq!(RECENT_4K.directory_capacity(), 86_016);
+        assert_eq!(RECENT_4K_8K.directory_capacity(), 86_016);
         assert_eq!(RECENT_4K_8K.page_rows, RECENT_8K.page_rows);
         // A narrower directory buys a smaller query; a wider page table buys
         // rows for old history. The two move independently, which is the point
@@ -672,10 +674,10 @@ mod tests {
     #[test]
     fn the_default_geometry_is_the_one_that_ships() {
         let g = Geometry::default();
-        assert_eq!(g.directory_entry_bytes(), 248);
-        assert_eq!(g.directory_slots(), 16);
-        assert_eq!(g.directory_capacity(), 131_072);
-        assert_eq!(g.directory_row_slack(), 124);
+        assert_eq!(g.directory_entry_bytes(), 192);
+        assert_eq!(g.directory_slots(), 21);
+        assert_eq!(g.directory_capacity(), 172_032);
+        assert_eq!(g.directory_row_slack(), 60);
         // Both tables are 8,192 rows: they have to close a shard at about the
         // same occupancy, or the one that does not is padding.
         assert_eq!(g.directory_bytes_per_segment(), 33_554_432);
@@ -690,10 +692,10 @@ mod tests {
     #[test]
     fn the_inline_allowance_is_what_buys_directory_slots() {
         for (inline, slots, capacity) in [
-            (0u32, 73u64, 598_016u64),
-            (1, 26, 212_992),
-            (2, 16, 131_072),
-            (3, 11, 90_112),
+            (0u32, 227u64, 1_859_584u64),
+            (1, 38, 311_296),
+            (2, 21, 172_032),
+            (3, 14, 114_688),
         ] {
             let g = Geometry {
                 inline_events: inline,
@@ -712,7 +714,7 @@ mod tests {
             directory_rows: 4_096,
             ..Default::default()
         };
-        assert_eq!(g.directory_capacity(), 65_536);
+        assert_eq!(g.directory_capacity(), 86_016);
         assert_eq!(g.directory_bytes_per_segment(), 16_777_216);
         g.validate()
             .expect("a multiple of the poly length is servable");
@@ -739,22 +741,22 @@ mod tests {
                 directory_row_bytes: 3_584,
                 ..Default::default()
             },
-            // 43 inline events is 4,184 bytes of entry: wider than the row.
+            // 47 inline events is 4,107 bytes of entry: wider than the row.
             Geometry {
-                inline_events: 43,
+                inline_events: 47,
                 ..Default::default()
             },
         ] {
             assert!(bad.validate().is_err(), "{bad:?} should be refused");
         }
-        // The next legal width up is servable, and it buys 33 slots for a
+        // The next legal width up is servable, and it buys 42 slots for a
         // doubled response and setup.
         let wide = Geometry {
             directory_row_bytes: 8_192,
             ..Default::default()
         };
         wide.validate().expect("two instances is a legal width");
-        assert_eq!(wide.directory_slots(), 33);
+        assert_eq!(wide.directory_slots(), 42);
     }
 
     /// The inline allowance decides whether a history is paged at all, so the
@@ -799,7 +801,7 @@ mod tests {
 
     #[test]
     fn a_fragment_holds_the_events_its_width_allows() {
-        assert_eq!(EVENTS_PER_PAGE, 41);
+        assert_eq!(EVENTS_PER_PAGE, 46);
         assert!(
             PAGE_ROW_HEADER_BYTES
                 + PAGE_ENTRY_HEADER_BYTES
@@ -856,23 +858,24 @@ mod tests {
     }
 
     /// The table the whole optimisation rests on. A one-event history costs a
-    /// row to itself under v4 and a twenty-fifth of one here; from 21 paged
+    /// row to itself under v4 and a thirty-third of one here; from 24 paged
     /// events an entry is more than half a row and packing stops paying.
     #[test]
     fn entries_per_row_is_what_packing_buys() {
         for (p, expected) in [
-            (1, 25),
-            (2, 15),
-            (3, 11),
-            (4, 9),
-            (5, 7),
-            (6, 6),
-            (7, 5),
-            (8, 4),
+            (1, 33),
+            (2, 19),
+            (3, 13),
+            (4, 10),
+            (5, 8),
+            (6, 7),
+            (7, 6),
+            (8, 5),
             (13, 3),
-            (14, 2),
+            (14, 3),
             (20, 2),
-            (21, 1),
+            (23, 2),
+            (24, 1),
             (EVENTS_PER_PAGE, 1),
         ] {
             assert_eq!(entries_per_row(p), expected, "entries_per_row({p})");
@@ -884,7 +887,7 @@ mod tests {
     #[test]
     fn a_full_fragment_fits_its_row() {
         let used = PAGE_ROW_HEADER_BYTES + entry_bytes(EVENTS_PER_PAGE);
-        assert_eq!(used, 4_004);
+        assert_eq!(used, 4_040);
         assert!(used <= PAGE_ROW_BYTES);
     }
 
@@ -1011,12 +1014,12 @@ mod tests {
     #[test]
     fn row_demand_can_fall_as_events_arrive() {
         let mut d = PackedDemand::default();
-        // 26 one-event histories need two rows, since 25 share one.
-        for _ in 0..26 {
+        // 34 one-event histories need two rows, since 33 share one.
+        for _ in 0..34 {
             d.shift(0, INLINE_EVENTS + 1);
         }
-        // 14 two-event histories need one, since 15 share one.
-        for _ in 0..14 {
+        // 18 two-event histories need one, since 19 share one.
+        for _ in 0..18 {
             d.shift(0, INLINE_EVENTS + 2);
         }
         let before = d.rows();
@@ -1024,8 +1027,8 @@ mod tests {
 
         // One more event for one script, and the total *falls*.
         d.shift(INLINE_EVENTS + 1, INLINE_EVENTS + 2);
-        assert_eq!(d.class(1), 25);
-        assert_eq!(d.class(2), 15);
+        assert_eq!(d.class(1), 33);
+        assert_eq!(d.class(2), 19);
         assert_eq!(d.rows(), 2, "row demand should fall from {before}");
     }
 }

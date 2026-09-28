@@ -20,6 +20,14 @@ address text encoding. The indexer must resolve the previous output of every
 non-coinbase input so spends are indexed under the consumed output's script.
 Unsupported script classes must be reported as outside coverage, never as absent.
 
+Schema `transparent-shard-v9` stores a 14-byte salted tag in each private
+directory and page record instead of those script bytes. That is computational
+attribution. It is proposed here and is not an accepted weakening of the
+exact-script requirement above. Placement, the choice table and the public
+filter stay keyed on the raw script. A wallet accepts a record only when its
+tag equals the tag recomputed from the verified manifest's shard id, terminal
+block hash and `tag_salt_counter`.
+
 Preserve the wallet's existing account, derivation-scope, gap-limit, and imported
 key rules. Do not introduce a separate PIR gap limit. A bounded derivation search
 cannot discover arbitrary gaps or unknown imported keys. For fresh restoration,

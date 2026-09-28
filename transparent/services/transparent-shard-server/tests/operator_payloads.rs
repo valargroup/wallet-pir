@@ -159,6 +159,7 @@ fn write_shard(
         end_height: end,
         parent_block_hash: hash_at(start - 1).to_display_hex(),
         terminal_block_hash: hash_at(end).to_display_hex(),
+        tag_salt_counter: built.tag_salt_counter,
         parent_manifest_digest: parent_manifest_digest.to_string(),
         sealed,
         revision: 0,

@@ -3,20 +3,21 @@
 //! A v4 page row belonged to one script. The measured history distribution is
 //! p50 two events, p90 five, p95 eight, and the newest two live inline in the
 //! directory entry, so the common script that needs a page at all needs a
-//! handful of event slots out of thirty-six. A row per script spent the rest on
+//! handful of event slots out of forty-six. A row per script spent the rest on
 //! padding nobody chose.
 //!
 //! Here a row holds a count and then that many variable-length entries, each a
-//! 64-byte header followed by its events. Twenty-two one-event histories fit in
-//! a row; thirteen two-event ones; ten three-event ones. Past seventeen paged
-//! events an entry is more than half a row and packing stops paying, which is
-//! why histories longer than one fragment get a contiguous run of rows to
-//! themselves and share with nothing.
+//! 34-byte header followed by its events. Thirty-three one-event histories fit
+//! in a row; nineteen two-event ones; thirteen three-event ones. Past
+//! twenty-three paged events an entry is more than half a row and packing
+//! stops paying, which is why histories longer than one fragment get a
+//! contiguous run of rows to themselves and share with nothing.
 //!
 //! # What packing does not change
 //!
-//! A directory entry still names `first_page` and `page_count`, and a history
-//! still costs `ceil(p / 41)` page queries. What changed is that a reader
+//! A directory entry still names a 1-based `first_page`, and a history still
+//! costs `ceil(p / 46)` page queries once the first page has reported `K`.
+//! What changed is that a reader
 //! selects an entry *within* the row rather than taking the row whole. Several
 //! scripts naming the same row is expected; a reader must find its own entry and
 //! ignore the rest.
@@ -32,26 +33,25 @@
 //! server. The entry count is bounded before any offset is computed from it,
 //! which is what keeps the arithmetic unreachable by malformed input rather than
 //! merely checked; every read goes through [`take`]; and no two entries in a row
-//! may name the same script, which is what makes "select the one entry matching
-//! my script" a well-defined operation rather than a choice.
+//! may name the same script tag, which is what makes "select the one entry
+//! matching my tag" a well-defined operation rather than a choice.
 
 use crate::layout::{
     entries_per_row, entry_bytes, EVENTS_PER_PAGE, MAX_ENTRIES_PER_ROW, PAGE_ENTRY_HEADER_BYTES,
     PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
-use crate::records::{RecordError, MAX_SCRIPT_BYTES};
+use crate::records::RecordError;
+use crate::tag::SCRIPT_TAG_BYTES;
 use transparent_events::{TransparentEvent, EVENT_BYTES};
 
 // Entry header field offsets, relative to the start of the entry.
-const PE_SCRIPT_LEN: usize = 0;
-const PE_SCRIPT: usize = 2;
-const PE_ORDINAL: usize = PE_SCRIPT + MAX_SCRIPT_BYTES;
+const PE_TAG: usize = 0;
+const PE_ORDINAL: usize = SCRIPT_TAG_BYTES;
 const PE_FRAGMENT_COUNT: usize = PE_ORDINAL + 4;
 const PE_EVENT_COUNT: usize = PE_FRAGMENT_COUNT + 4;
 const PE_MIN_HEIGHT: usize = PE_EVENT_COUNT + 4;
 const PE_MAX_HEIGHT: usize = PE_MIN_HEIGHT + 4;
-const PE_RESERVED: usize = PE_MAX_HEIGHT + 4;
-const PE_END: usize = PE_RESERVED + 2;
+const PE_END: usize = PE_MAX_HEIGHT + 4;
 
 /// The header must be exactly the width the layout reserves for it: the entry
 /// size formula and every capacity derived from it depend on this being true, so
@@ -62,10 +62,10 @@ const _: () = assert!(PAGE_ROW_HEADER_BYTES + entry_bytes(EVENTS_PER_PAGE) <= PA
 /// One fragment of one script's history, as it sits inside a shared row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageEntry {
-    pub script: Vec<u8>,
+    pub tag: [u8; SCRIPT_TAG_BYTES],
     pub ordinal: u32,
-    /// Fragments this script's history occupies in this shard. Equal to the
-    /// directory entry's `page_count`, and checked against it.
+    /// How many page fragments this history occupies. The directory stores
+    /// the first page only; the wallet reads this count from ordinal 0.
     pub fragment_count: u32,
     pub events: Vec<TransparentEvent>,
     /// Bounds over this entry's own events, so a client can navigate to the
@@ -77,14 +77,11 @@ pub struct PageEntry {
 impl PageEntry {
     /// Builds an entry from events, deriving its height bounds from them.
     pub fn new(
-        script: Vec<u8>,
+        tag: [u8; SCRIPT_TAG_BYTES],
         ordinal: u32,
         fragment_count: u32,
         events: Vec<TransparentEvent>,
     ) -> Result<Self, RecordError> {
-        if script.len() > MAX_SCRIPT_BYTES {
-            return Err(RecordError::ScriptTooLong(script.len()));
-        }
         if events.is_empty() {
             return Err(RecordError::Malformed("an entry holds no events".into()));
         }
@@ -99,7 +96,7 @@ impl PageEntry {
         let min_height = events.iter().map(|e| e.height()).min().expect("nonempty");
         let max_height = events.iter().map(|e| e.height()).max().expect("nonempty");
         Ok(Self {
-            script,
+            tag,
             ordinal,
             fragment_count,
             events,
@@ -127,10 +124,6 @@ fn take(row: &[u8], at: usize, len: usize) -> Result<&[u8], RecordError> {
         .ok_or_else(|| RecordError::Malformed("entry runs past the row".into()))
 }
 
-fn u16_at(row: &[u8], at: usize) -> Result<u16, RecordError> {
-    Ok(u16::from_le_bytes(take(row, at, 2)?.try_into().expect("2")))
-}
-
 fn u32_at(row: &[u8], at: usize) -> Result<u32, RecordError> {
     Ok(u32::from_le_bytes(take(row, at, 4)?.try_into().expect("4")))
 }
@@ -146,9 +139,6 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
     }
     let mut used = PAGE_ROW_HEADER_BYTES;
     for entry in entries {
-        if entry.script.len() > MAX_SCRIPT_BYTES {
-            return Err(RecordError::ScriptTooLong(entry.script.len()));
-        }
         if entry.events.is_empty() || entry.events.len() > EVENTS_PER_PAGE as usize {
             return Err(RecordError::TooManyEvents(entry.events.len()));
         }
@@ -161,12 +151,9 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
         )));
     }
     for (index, entry) in entries.iter().enumerate() {
-        if entries[..index]
-            .iter()
-            .any(|other| other.script == entry.script)
-        {
+        if entries[..index].iter().any(|other| other.tag == entry.tag) {
             return Err(RecordError::Malformed(
-                "a page row holds a script twice".into(),
+                "a page row holds a script tag twice".into(),
             ));
         }
     }
@@ -176,15 +163,14 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
     let mut at = PAGE_ROW_HEADER_BYTES;
     for entry in entries {
         let head = &mut row[at..at + PAGE_ENTRY_HEADER_BYTES];
-        head[PE_SCRIPT_LEN..PE_SCRIPT].copy_from_slice(&(entry.script.len() as u16).to_le_bytes());
-        head[PE_SCRIPT..PE_SCRIPT + entry.script.len()].copy_from_slice(&entry.script);
+        head[PE_TAG..PE_ORDINAL].copy_from_slice(&entry.tag);
         head[PE_ORDINAL..PE_FRAGMENT_COUNT].copy_from_slice(&entry.ordinal.to_le_bytes());
         head[PE_FRAGMENT_COUNT..PE_EVENT_COUNT]
             .copy_from_slice(&entry.fragment_count.to_le_bytes());
         head[PE_EVENT_COUNT..PE_MIN_HEIGHT]
             .copy_from_slice(&(entry.events.len() as u32).to_le_bytes());
         head[PE_MIN_HEIGHT..PE_MAX_HEIGHT].copy_from_slice(&entry.min_height.to_le_bytes());
-        head[PE_MAX_HEIGHT..PE_RESERVED].copy_from_slice(&entry.max_height.to_le_bytes());
+        head[PE_MAX_HEIGHT..PE_END].copy_from_slice(&entry.max_height.to_le_bytes());
         at += PAGE_ENTRY_HEADER_BYTES;
         for event in &entry.events {
             row[at..at + EVENT_BYTES].copy_from_slice(&event.to_bytes());
@@ -225,29 +211,9 @@ pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
     let mut entries: Vec<PageEntry> = Vec::with_capacity(count);
     let mut at = PAGE_ROW_HEADER_BYTES;
     for _ in 0..count {
-        let script_len = u16_at(row, at + PE_SCRIPT_LEN)? as usize;
-        if script_len == 0 {
-            return Err(RecordError::Malformed("an entry has no script".into()));
-        }
-        if script_len > MAX_SCRIPT_BYTES {
-            return Err(RecordError::ScriptTooLong(script_len));
-        }
-        // Padding after the script must be zero, or one script would have many
-        // encodings and a row's digest would not be stable.
-        if take(
-            row,
-            at + PE_SCRIPT + script_len,
-            MAX_SCRIPT_BYTES - script_len,
-        )?
-        .iter()
-        .any(|byte| *byte != 0)
-        {
-            return Err(RecordError::Malformed("script padding is not zero".into()));
-        }
-        if take(row, at + PE_RESERVED, 2)?.iter().any(|b| *b != 0) {
-            return Err(RecordError::Reserved);
-        }
-
+        let tag: [u8; SCRIPT_TAG_BYTES] = take(row, at + PE_TAG, SCRIPT_TAG_BYTES)?
+            .try_into()
+            .expect("14 bytes");
         let ordinal = u32_at(row, at + PE_ORDINAL)?;
         let fragment_count = u32_at(row, at + PE_FRAGMENT_COUNT)?;
         let event_count = u32_at(row, at + PE_EVENT_COUNT)? as usize;
@@ -265,7 +231,6 @@ pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
             )));
         }
 
-        let script = take(row, at + PE_SCRIPT, script_len)?.to_vec();
         let mut events = Vec::with_capacity(event_count);
         let body = at + PAGE_ENTRY_HEADER_BYTES;
         for index in 0..event_count {
@@ -294,15 +259,15 @@ pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
         }
         // Two entries for one script would make "the entry matching my script"
         // a choice rather than a selection, for every reader of this row.
-        if entries.iter().any(|other| other.script == script) {
+        if entries.iter().any(|other| other.tag == tag) {
             return Err(RecordError::Malformed(
-                "a page row holds a script twice".into(),
+                "a page row holds a script tag twice".into(),
             ));
         }
 
         at = body + event_count * EVENT_BYTES;
         entries.push(PageEntry {
-            script,
+            tag,
             ordinal,
             fragment_count,
             events,
@@ -330,10 +295,10 @@ mod tests {
     use super::*;
     use transparent_events::{ReceiveEvent, Txid};
 
-    fn script(tag: u8, len: usize) -> Vec<u8> {
-        let mut bytes = vec![tag; len];
-        bytes[0] = 0x76;
-        bytes
+    fn tag_of(n: u8) -> [u8; SCRIPT_TAG_BYTES] {
+        let mut tag = [0u8; SCRIPT_TAG_BYTES];
+        tag[0] = n;
+        tag
     }
 
     fn event(height: u32, nonce: u32) -> TransparentEvent {
@@ -351,7 +316,7 @@ mod tests {
 
     fn entry(tag: u8, events: u32) -> PageEntry {
         PageEntry::new(
-            script(tag, 25),
+            tag_of(tag),
             0,
             1,
             (0..events).map(|i| event(100 + i, i)).collect(),
@@ -401,9 +366,9 @@ mod tests {
     #[test]
     fn a_full_fragment_uses_the_bytes_the_layout_promises() {
         let one = entry(1, EVENTS_PER_PAGE);
-        assert_eq!(one.encoded_len(), 4_000);
+        assert_eq!(one.encoded_len(), 4_036);
         let row = encode_page_row(std::slice::from_ref(&one)).unwrap();
-        assert_eq!(row[4_004..].iter().filter(|b| **b != 0).count(), 0);
+        assert_eq!(row[4_040..].iter().filter(|b| **b != 0).count(), 0);
         assert_eq!(decode_page_row(&row).unwrap(), vec![one]);
     }
 
@@ -446,37 +411,6 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_without_a_script_is_refused() {
-        let mut row = encode_page_row(&[entry(1, 2)]).unwrap();
-        row[4..6].copy_from_slice(&0u16.to_le_bytes());
-        assert!(decode_page_row(&row).is_err());
-    }
-
-    #[test]
-    fn an_over_long_script_is_refused() {
-        let mut row = encode_page_row(&[entry(1, 2)]).unwrap();
-        row[4..6].copy_from_slice(&((MAX_SCRIPT_BYTES + 1) as u16).to_le_bytes());
-        assert!(matches!(
-            decode_page_row(&row),
-            Err(RecordError::ScriptTooLong(_))
-        ));
-    }
-
-    #[test]
-    fn nonzero_script_padding_is_refused() {
-        let mut row = encode_page_row(&[entry(1, 2)]).unwrap();
-        row[PAGE_ROW_HEADER_BYTES + PE_SCRIPT + 30] = 1;
-        assert!(decode_page_row(&row).is_err());
-    }
-
-    #[test]
-    fn nonzero_reserved_bytes_are_refused() {
-        let mut row = encode_page_row(&[entry(1, 2)]).unwrap();
-        row[PAGE_ROW_HEADER_BYTES + PE_RESERVED] = 1;
-        assert!(matches!(decode_page_row(&row), Err(RecordError::Reserved)));
-    }
-
-    #[test]
     fn an_impossible_event_count_is_refused() {
         for claimed in [0u32, EVENTS_PER_PAGE + 1] {
             let mut row = encode_page_row(&[entry(1, 2)]).unwrap();
@@ -492,8 +426,8 @@ mod tests {
         row[PAGE_ROW_HEADER_BYTES + PE_ORDINAL..PAGE_ROW_HEADER_BYTES + PE_ORDINAL + 4]
             .copy_from_slice(&5u32.to_le_bytes());
         assert!(decode_page_row(&row).is_err());
-        assert!(PageEntry::new(script(1, 25), 3, 3, vec![event(1, 0)]).is_err());
-        assert!(PageEntry::new(script(1, 25), 0, 0, vec![event(1, 0)]).is_err());
+        assert!(PageEntry::new(tag_of(1), 3, 3, vec![event(1, 0)]).is_err());
+        assert!(PageEntry::new(tag_of(1), 0, 0, vec![event(1, 0)]).is_err());
     }
 
     #[test]
@@ -532,11 +466,10 @@ mod tests {
         // Built by hand, since the encoder refuses to produce it.
         let mut row = encode_page_row(&[entry(1, 2), entry(2, 2)]).unwrap();
         let second = PAGE_ROW_HEADER_BYTES + entry_bytes(2);
-        let first_script = row[PAGE_ROW_HEADER_BYTES + PE_SCRIPT
-            ..PAGE_ROW_HEADER_BYTES + PE_SCRIPT + MAX_SCRIPT_BYTES]
+        let first_tag = row
+            [PAGE_ROW_HEADER_BYTES + PE_TAG..PAGE_ROW_HEADER_BYTES + PE_TAG + SCRIPT_TAG_BYTES]
             .to_vec();
-        row[second + PE_SCRIPT..second + PE_SCRIPT + MAX_SCRIPT_BYTES]
-            .copy_from_slice(&first_script);
+        row[second + PE_TAG..second + PE_TAG + SCRIPT_TAG_BYTES].copy_from_slice(&first_tag);
         assert!(decode_page_row(&row).is_err());
     }
 
@@ -581,26 +514,26 @@ mod tests {
             (
                 "one class-1 entry",
                 vec![entry(1, 1)],
-                "b952cc26988d65e8f569284e44ef73512927b4ad10986bba4a6932667fb006a4",
+                "1219c8002f86ffc6cc870837bfdbcf9cd3d71107bcba4cdcbc9e2b1a05162b2d",
             ),
             (
                 "a full class-1 row",
                 (0..entries_per_row(1))
                     .map(|i| entry(i as u8 + 1, 1))
                     .collect(),
-                "b07fe8fc377df3e171b6177ffa4780a66ed1352be30f4f6ec68a6451f15d2c9d",
+                "6e92bdab5e5006d66d5c018e580b90e0359fe5af52ad328369b5675e6fdcc83b",
             ),
             (
                 "a full class-2 row",
                 (0..entries_per_row(2))
                     .map(|i| entry(i as u8 + 1, 2))
                     .collect(),
-                "d7b5c3a730fcc4f98e76c699b28e0528a39d74cf8dead1c81da9d1dd43336515",
+                "2c8a27f5f1911b7e1626078aceb2228222eac0241c987cd37b51bf2903766ab4",
             ),
             (
                 "a full fragment",
                 vec![entry(1, EVENTS_PER_PAGE)],
-                "c6e00b793917fd7966b22a79d95c425097bf6d164c1ac6abb3298e689233c901",
+                "5d802ad82f273a22c83b691adf682d28e70322e37dbc91dd7dbc43b6b3316f37",
             ),
         ] {
             let row = encode_page_row(&entries).expect("encodes");

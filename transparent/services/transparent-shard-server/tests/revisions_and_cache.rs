@@ -115,6 +115,7 @@ fn write_revision_geometry(
         end_height: end,
         parent_block_hash: hash_at(FIRST - 1).to_display_hex(),
         terminal_block_hash: hash_at(end).to_display_hex(),
+        tag_salt_counter: built.tag_salt_counter,
         parent_manifest_digest: String::new(),
         // The tail: a revision that supersedes another is by construction not
         // final, and a sealed shard would have nothing to supersede.

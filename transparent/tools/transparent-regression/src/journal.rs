@@ -35,7 +35,7 @@ impl EventStore {
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let meta: Meta = serde_json::from_slice(&std::fs::read(path.join("meta.json"))?)?;
-        if meta.version != 1 {
+        if meta.version != 2 {
             bail!("unsupported journal version");
         }
         let checkpoint = std::fs::read(path.join("checkpoint.bin"))?;
@@ -162,7 +162,7 @@ mod tests {
         std::fs::write(dir.path().join("blocks.bin"), &block).unwrap();
         std::fs::write(
             dir.path().join("meta.json"),
-            r#"{"version":1,"genesis_hash":"test","start_height":0}"#,
+            r#"{"version":2,"genesis_hash":"test","start_height":0}"#,
         )
         .unwrap();
         let mut cp = committed.to_le_bytes().to_vec();

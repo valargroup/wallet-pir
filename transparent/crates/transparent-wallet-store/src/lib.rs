@@ -653,12 +653,13 @@ impl WalletStore for SqliteStore {
             match pending.id {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE pending_work SET next_ordinal = ?2, attempts = ?3, validated_events = ?4 WHERE id = ?1",
+                        "UPDATE pending_work SET next_ordinal = ?2, attempts = ?3, validated_events = ?4, page_count = ?5 WHERE id = ?1",
                         params![
                             id as i64,
                             pending.next_ordinal as i64,
                             pending.attempts as i64,
-                            pending.validated_events as i64
+                            pending.validated_events as i64,
+                            pending.page_count as i64
                         ],
                     )
                     .map_err(io)?;
@@ -673,7 +674,7 @@ impl WalletStore for SqliteStore {
                             pending.script,
                             pending.first_page as i64,
                             pending.page_count as i64,
-                            pending.total_events as i64,
+                            0i64,
                             encode_inline(&pending.inline),
                             pending.next_ordinal as i64,
                             pending.attempts as i64,
@@ -825,7 +826,7 @@ impl WalletStore for SqliteStore {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT id, shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts, validated_events, target_anchor \
+                "SELECT id, shard_id, revision_digest, script, first_page, page_count, inline, next_ordinal, attempts, validated_events, target_anchor \
                  FROM pending_work ORDER BY id",
             )
             .map_err(io)?;
@@ -838,12 +839,11 @@ impl WalletStore for SqliteStore {
                     row.get::<_, Vec<u8>>(3)?,
                     row.get::<_, i64>(4)? as u32,
                     row.get::<_, i64>(5)? as u32,
-                    row.get::<_, i64>(6)? as u32,
-                    row.get::<_, Vec<u8>>(7)?,
+                    row.get::<_, Vec<u8>>(6)?,
+                    row.get::<_, i64>(7)? as u32,
                     row.get::<_, i64>(8)? as u32,
                     row.get::<_, i64>(9)? as u32,
-                    row.get::<_, i64>(10)? as u32,
-                    decode_anchor(row.get(11)?)?,
+                    decode_anchor(row.get(10)?)?,
                 ))
             })
             .map_err(io)?;
@@ -856,7 +856,6 @@ impl WalletStore for SqliteStore {
                 script,
                 first_page,
                 page_count,
-                total_events,
                 inline,
                 next_ordinal,
                 attempts,
@@ -872,7 +871,6 @@ impl WalletStore for SqliteStore {
                 script,
                 first_page,
                 page_count,
-                total_events,
                 inline: decode_inline(&inline)?,
                 next_ordinal,
                 attempts,

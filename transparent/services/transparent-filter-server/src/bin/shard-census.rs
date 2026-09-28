@@ -245,7 +245,7 @@ fn default_policies(geometry: &Geometry) -> Vec<(String, SealPolicy)> {
     let mut policies = vec![(format!("{} derived", geometry.name), derived)];
     // Twenty-eighths of directory capacity: at the v7 layout's 114,688
     // scripts these were exactly the absolute targets the archived censuses
-    // used (4,096 to 24,576). The v8 16-slot row moves them with capacity.
+    // used (4,096 to 24,576). Later slot counts move them with capacity.
     for numerator in [1u64, 2, 3, 4, 6] {
         let scripts = capacity * numerator / 28;
         if scripts == 0 || scripts >= derived.scripts.target {
@@ -1437,14 +1437,17 @@ mod tests {
     /// At the compiled geometry the sweep is pinned, so a change to it is a
     /// deliberate edit. The archived censuses under
     /// `transparent/evidence/baselines/` were taken at the v7 layout's
-    /// 98,304 / 4,096 / 8,192 / 12,288 / 16,384 / 24,576; v8's 16-slot
-    /// directory row rescales every point by 8/7, so comparisons against those
-    /// archives are rebased and must say so.
+    /// 98,304 / 4,096 / 8,192 / 12,288 / 16,384 / 24,576. v8's 16-slot row and
+    /// v9's 21-slot row both move the sweep with directory capacity, so
+    /// comparisons against those archives are rebased and must say so.
     #[test]
     fn the_default_sweep_is_unchanged_at_the_compiled_geometry() {
         let policies = default_policies(&RECENT_8K);
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
-        assert_eq!(scripts, vec![112_348, 4_681, 9_362, 14_043, 18_724, 28_086]);
+        assert_eq!(
+            scripts,
+            vec![147_456, 6_144, 12_288, 18_432, 24_576, 36_864]
+        );
         // Every entry seals pages at the geometry's own limit, so the sweep
         // varies the script limit and nothing else.
         for (name, policy) in &policies {
@@ -1475,7 +1478,7 @@ mod tests {
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
         assert_eq!(
             scripts,
-            vec![449_390, 18_724, 37_449, 56_173, 74_898, 112_347]
+            vec![589_824, 24_576, 49_152, 73_728, 98_304, 147_456]
         );
         for (name, policy) in &policies {
             assert_eq!(policy.page_rows.capacity, 65_536, "{name}");

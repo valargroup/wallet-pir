@@ -6,7 +6,7 @@
 //! against each other at all.
 //!
 //! The numbers pinned below are the native ReinspiRING two-mask m29 profile
-//! (schema `transparent-shard-v8`): a 27,648-byte `K_g` packing key and a
+//! (4,096-byte rows, unchanged by schema `transparent-shard-v9`): a 27,648-byte `K_g` packing key and a
 //! 49-bit selection per query, 14,848 bytes of published masks per segment,
 //! and a 5,632-byte response body per segment behind a 16-byte header. The
 //! earlier SimplePIR P14 figures (96,264 bytes for a 2,048-row query, 14,336

@@ -24,6 +24,7 @@ pub mod manifest;
 pub mod page_row;
 pub mod records;
 pub mod seal;
+pub mod tag;
 
 pub use build::{
     build_shard, candidate_rows, choice_table, place_scripts, placement_order, verify_choice,
@@ -48,3 +49,4 @@ pub use records::{
 pub use seal::{
     ChoiceMeasure, Limit, Occupancy, SealError, SealPolicy, SealReason, SealedShard, Sealer,
 };
+pub use tag::{resolve_tag_salt, script_tag, tag_salt, SCRIPT_TAG_BYTES};

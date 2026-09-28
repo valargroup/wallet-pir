@@ -152,7 +152,7 @@ index completeness. No mnemonic, private ledger or raw wallet log is published.
 
 | Capability | Observed state |
 |---|---|
-| Shard schema | `transparent-shard-v7` in `transparent/crates/transparent-shard/src/manifest.rs` |
+| Shard schema | Source is `transparent-shard-v9` (4,096-byte rows, 21 directory slots, 46 events per page, 14-byte salted tags, 87-byte events). Implemented and unpublished. The live fleet remains the v7 publication described in the rollout above. A version-2 event journal is built only into a new directory; opening the version-1 production journal with this binary returns an error and leaves the files in place |
 | Registry | `recent-8k` 8192/8192; `recent-4k` 4096/4096; `archive-32k` 32768/32768; `archive-wide` 32768/65536 |
 | Optional recent pairing | `recent-4k-8k` 4096/8192 registered; not published. Real shards and a [placement study](../evidence/directory-placement-4k-2026-09-28/README.md) fit it in one segment with no overflow up to 96% load |
 | Single-lookup directory | **Live for new tail and sealed revisions since 2026-09-27 22:43 UTC** (see the release rollout above). Optional manifest `directory_choice`; publisher `--directory-choice off\|sealed\|all` (controller config `directory_choice`, default `off`); builder and server verify routing; wallet sends one directory query per matched script when present. [Measured locally](../evidence/single-lookup-measure-2026-09-27/README.md): 939/939 exact syncs, directory queries halved, restore-6m payload −24%; a [temporary bench fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) reproduced this at 8 and 32 wallets. wallet-libraries not updated |
