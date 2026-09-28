@@ -120,6 +120,11 @@ pub struct Config {
     pub request_timeout_seconds: u64,
     #[serde(default)]
     pub max_queries: Option<u64>,
+    /// Shard service requests one recovery keeps in flight across matched
+    /// shards; 1 walks every request in sequence. Ignored with `max_queries`,
+    /// which always walks in sequence.
+    #[serde(default = "shard_concurrency")]
+    pub shard_concurrency: usize,
     #[serde(default)]
     pub store: Store,
     #[serde(default)]
@@ -147,6 +152,9 @@ fn gzip() -> String {
 }
 fn preparation_concurrency() -> usize {
     2
+}
+fn shard_concurrency() -> usize {
+    transparent_wallet::http::SHARD_REQUEST_CONCURRENCY
 }
 
 fn one_attempt() -> usize {
@@ -183,6 +191,10 @@ pub enum Store {
 
 impl Config {
     fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            (1..=16).contains(&self.shard_concurrency),
+            "shard_concurrency must be 1..16"
+        );
         if self.backend == Backend::Blocks {
             anyhow::ensure!(
                 (1..=8).contains(&self.block_prefetch),
@@ -585,6 +597,7 @@ fn recover(job: &Job) -> Result<Value> {
     }
     let mut transport = HttpShardTransport::new(&job.config.shard_url, &options)
         .map_err(io_error)?
+        .with_concurrency(job.config.shard_concurrency)
         .with_observer(observer);
     transport = if job.preparing {
         transport.with_retry_attempts(3)

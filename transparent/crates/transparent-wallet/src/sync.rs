@@ -61,6 +61,9 @@ use transparent_shard::manifest::ShardManifest;
 use transparent_shard::page_row::decode_page_row;
 use transparent_shard::records::{decode_directory_row, DirectoryEntry};
 
+#[path = "sync_ahead.rs"]
+mod ahead;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
     #[error("client: {0}")]
@@ -751,6 +754,16 @@ pub fn sync_into<S: WalletStore>(
         })?;
     }
 
+    // Replies a lookahead sends early are held here until the walk asks for
+    // them; see `ahead`. With nothing stashed both pass straight through.
+    let transport = &mut ahead::Staged::new(transport);
+    let filters = &mut ahead::StagedFilters::new(filters);
+    // A budgeted sync walks in sequence: whether a later shard's queries are
+    // sent at all depends on page work the walk discovers on the way.
+    let look_ahead = transport.concurrency() > 1
+        && limits.max_queries.is_none()
+        && limits.max_private_bytes.is_none();
+
     // The wallet's script set, with its own required heights.
     store.add_scripts(&scripts.scripts())?;
     let mut scripts_added = 0usize;
@@ -892,6 +905,21 @@ pub fn sync_into<S: WalletStore>(
             filters.prefetch(&uncached);
         }
         let mut index_iter: Vec<usize> = work.keys().copied().collect();
+        if look_ahead && !filters.uses_parents() {
+            ahead::look_ahead(
+                store,
+                &active,
+                genesis,
+                &index_iter,
+                &work,
+                geometry,
+                &mut clients,
+                filters,
+                transport,
+                target_anchor,
+                chain,
+            )?;
+        }
         let mut position = 0usize;
         while position < index_iter.len() {
             let index = index_iter[position];
@@ -943,6 +971,10 @@ pub fn sync_into<S: WalletStore>(
                     // reading it. Refresh the map, check it is the same set
                     // continued, roll this shard's provisional coverage back,
                     // and re-derive from whatever replaced it.
+                    //
+                    // Nothing read ahead survives a refresh: the rest of this
+                    // pass is walked in sequence.
+                    ahead::clear(transport, filters, &mut clients);
                     if refreshes >= MAX_MAP_REFRESHES
                         || (stale.map_sha256.is_some()
                             && stale.map_sha256.as_deref() == held_map_digest.as_deref())
@@ -1014,6 +1046,8 @@ pub fn sync_into<S: WalletStore>(
                 Err(other) => return Err(other),
             }
         }
+        // Anything read ahead and not consumed belongs to this pass only.
+        ahead::clear(transport, filters, &mut clients);
 
         let added = scripts.on_activity(&active_scripts);
         if added.is_empty() {
@@ -1164,14 +1198,7 @@ fn read_shard_into<S: WalletStore>(
     target_anchor: &Anchor,
     chain: &impl ChainView,
 ) -> Result<ShardRead, SyncError> {
-    let endpoint = if entry.end_height > target_anchor.height {
-        target_anchor.clone()
-    } else {
-        Anchor {
-            height: entry.end_height,
-            hash: entry.terminal_block_hash.clone(),
-        }
-    };
+    let endpoint = endpoint_of(entry, target_anchor);
     match chain.is_accepted(endpoint.height, &endpoint.hash) {
         Acceptance::Accepted => {}
         Acceptance::Unknown => {
@@ -1236,24 +1263,7 @@ fn read_shard_into<S: WalletStore>(
             }
         };
         charges.filters_checked += 1;
-        let profile = transparent_filter::range_profile(&map.profile)
-            .ok_or_else(|| SyncError::UnknownProfile(map.profile.clone()))?;
-        let validated =
-            transparent_filter::validate_range_filter(&bytes, FilterLimits::default(), profile)?;
-        let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
-        let key = ShardKey::derive(
-            &map.profile,
-            genesis,
-            entry.shard_id,
-            entry.start_height,
-            entry.end_height,
-            terminal,
-        );
-        let owned: Vec<ScriptBytes> = scripts
-            .iter()
-            .map(|script| ScriptBytes::new(script.clone()))
-            .collect();
-        transparent_filter::match_range_scripts(&validated, key, &owned)?
+        match_filter(map, entry, genesis, scripts, &bytes)?
     };
     if matches.is_empty() {
         // A genuinely empty range for every script here: coverage advances
@@ -1347,6 +1357,49 @@ fn read_shard_into<S: WalletStore>(
             }
         }
     }
+}
+
+/// The block a shard's coverage ends on for this sync: its own terminal
+/// block, or the target when the shard runs past it.
+fn endpoint_of(entry: &transparent_filter::ShardMapEntry, target_anchor: &Anchor) -> Anchor {
+    if entry.end_height > target_anchor.height {
+        target_anchor.clone()
+    } else {
+        Anchor {
+            height: entry.end_height,
+            hash: entry.terminal_block_hash.clone(),
+        }
+    }
+}
+
+/// Which of `scripts` a shard's filter matches, by index.
+fn match_filter(
+    map: &ShardMap,
+    entry: &transparent_filter::ShardMapEntry,
+    genesis: BlockHash,
+    scripts: &[Vec<u8>],
+    bytes: &[u8],
+) -> Result<Vec<usize>, SyncError> {
+    let profile = transparent_filter::range_profile(&map.profile)
+        .ok_or_else(|| SyncError::UnknownProfile(map.profile.clone()))?;
+    let validated =
+        transparent_filter::validate_range_filter(bytes, FilterLimits::default(), profile)?;
+    let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
+    let key = ShardKey::derive(
+        &map.profile,
+        genesis,
+        entry.shard_id,
+        entry.start_height,
+        entry.end_height,
+        terminal,
+    );
+    let owned: Vec<ScriptBytes> = scripts
+        .iter()
+        .map(|script| ScriptBytes::new(script.clone()))
+        .collect();
+    Ok(transparent_filter::match_range_scripts(
+        &validated, key, &owned,
+    )?)
 }
 
 /// Runs `work` against a shard, verifying the manifest first and lifting the

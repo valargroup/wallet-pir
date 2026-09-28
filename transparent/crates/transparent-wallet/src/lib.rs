@@ -43,5 +43,6 @@ pub use sync::{
     SyncOutcome, SyncReport, WorkLimits,
 };
 pub use transport::{
-    refusal, ByteCharges, FilterSource, Overloaded, ShardTransport, StaleRevision, TableCharges,
+    refusal, ByteCharges, FilterSource, Overloaded, ShardReply, ShardRequest, ShardTransport,
+    StaleRevision, TableCharges,
 };

@@ -29,7 +29,9 @@ use transparent_filter::ShardMap;
 use transparent_wallet::client::Table;
 use transparent_wallet::http::{HttpFilterSource, HttpOptions, HttpShardTransport};
 use transparent_wallet::store::{ScriptEntry, ScriptOrigin, WalletStore};
-use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
+use transparent_wallet::transport::{
+    BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
+};
 use transparent_wallet::{
     sync_into, Completion, IncompleteReason, MemoryStore, ServiceGeometry, StaticChain,
     StaticScripts, WorkLimits,
@@ -79,6 +81,11 @@ struct Args {
     /// own policy either way.
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
     http_attempts: u8,
+    /// Shard service requests one sync keeps in flight across matched shards;
+    /// 1 walks every request in sequence. A sync with --max-queries always
+    /// walks in sequence.
+    #[arg(long, default_value_t = transparent_wallet::http::SHARD_REQUEST_CONCURRENCY)]
+    shard_concurrency: usize,
     /// Only these classes, comma separated.
     #[arg(long, value_delimiter = ',')]
     classes: Option<Vec<String>>,
@@ -235,6 +242,33 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         );
         result
     }
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+    fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
+        // Each request that was sent is counted under its own stage, as if it
+        // had been made alone, so calls, bytes and refusals per stage match
+        // the sequential walk; the overlapped wall time is its own stage.
+        let started = Instant::now();
+        let replies = self.inner.batch(requests);
+        let elapsed = started.elapsed();
+        for (request, reply) in requests.iter().zip(&replies) {
+            let Some(reply) = reply else {
+                continue;
+            };
+            self.record(
+                request.stage(),
+                request.upload(),
+                sized(reply),
+                Duration::ZERO,
+            );
+        }
+        let mut stages = self.stages.lock().unwrap();
+        let entry = stages.entry("shards_batch").or_default();
+        entry.calls += 1;
+        entry.micros += elapsed.as_micros() as u64;
+        replies
+    }
 }
 
 struct CountingFilters<F> {
@@ -389,7 +423,8 @@ fn run_client(
         let mut transport = Counting {
             inner: HttpShardTransport::new(&args.shard_url, &options)
                 .map_err(|e| anyhow::anyhow!(e))?
-                .with_transient_retry_attempts(args.http_attempts as usize),
+                .with_transient_retry_attempts(args.http_attempts as usize)
+                .with_concurrency(args.shard_concurrency),
             stages: stages.clone(),
         };
         let mut filters = CountingFilters {

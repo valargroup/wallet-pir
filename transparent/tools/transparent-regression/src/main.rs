@@ -42,6 +42,10 @@ struct Args {
     http_attempts: u8,
     #[arg(long)]
     source_sha: String,
+    /// Shard service requests a sync keeps in flight across matched shards;
+    /// 1 walks every request in sequence.
+    #[arg(long, default_value_t = transparent_wallet::http::SHARD_REQUEST_CONCURRENCY)]
+    shard_concurrency: usize,
     #[arg(long, hide = true)]
     worker_case: Option<String>,
 }
@@ -325,6 +329,7 @@ fn run_case(a: &Args, f: &Fixture, case: &Case, stages: &mut Vec<Value>) -> Resu
             inner: HttpShardTransport::new(&a.shard_url, &options(a))
                 .map_err(anyhow::Error::msg)?
                 .with_retry_attempts(usize::from(a.http_attempts))
+                .with_concurrency(a.shard_concurrency)
                 .with_observer(http_evidence::observer(a)?),
             stages: counts.clone(),
         };
@@ -529,6 +534,8 @@ fn child(a: &Args, id: &str) -> Result<Value> {
         .arg(a.http_attempts.to_string())
         .arg("--request-timeout-secs")
         .arg(a.request_timeout_secs.to_string())
+        .arg("--shard-concurrency")
+        .arg(a.shard_concurrency.to_string())
         .stdout(Stdio::from(std::fs::File::create(
             a.out_dir.join(format!("{id}.stdout")),
         )?))

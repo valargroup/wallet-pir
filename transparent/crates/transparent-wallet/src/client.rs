@@ -23,13 +23,13 @@
 //! adopted the server's parameters would decode against whatever geometry the
 //! server chose, including one that leaks the selection.
 
-use crate::transport::{ByteCharges, Overloaded, ShardTransport, StaleRevision};
+use crate::transport::{BoxError, ByteCharges, Overloaded, ShardTransport, StaleRevision};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ipir_sp::modulus_switch::{published_c1_len, recover_published_c1, response_body_len};
 use ipir_sp::serialize::serialize_packing_keys;
 use ipir_sp::{IPIRClient, YpirSchemeParams};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -94,6 +94,16 @@ pub struct TableClient {
     /// database. Keyed by manifest digest and segment index, so a superseded
     /// revision's setup is never reused for the revision that replaced it.
     segments: HashMap<(String, u32), SegmentSetup>,
+    /// Queries a batch already sent, per revision, in the order the walk will
+    /// ask for their rows. See [`TableClient::stash`].
+    stashed: HashMap<String, VecDeque<Stashed>>,
+}
+
+/// A query sent ahead of the walk, with its outcome.
+struct Stashed {
+    row: usize,
+    query: PreparedQuery,
+    reply: Result<Vec<u8>, BoxError>,
 }
 
 impl TableClient {
@@ -127,6 +137,7 @@ impl TableClient {
             setup,
             row_bytes: row_bytes as usize,
             segments: HashMap::new(),
+            stashed: HashMap::new(),
         })
     }
 
@@ -261,9 +272,39 @@ impl TableClient {
         Ok(rows)
     }
 
+    /// Keeps a query that was sent ahead of the walk, with its outcome, for
+    /// the walk's next [`fetch_row`](Self::fetch_row) of that revision.
+    ///
+    /// Stashed queries are handed out once, in order, and only for the row
+    /// they were prepared for: the first request that does not match drops
+    /// the revision's stash and goes to the network. A stashed refusal or
+    /// failure is returned as if the query had just been sent, and drops the
+    /// rest of the revision's stash, so whatever the walk does next — a
+    /// retry, a refresh — is a fresh request.
+    pub(crate) fn stash(
+        &mut self,
+        revision: &str,
+        row: usize,
+        query: PreparedQuery,
+        reply: Result<Vec<u8>, BoxError>,
+    ) {
+        self.stashed
+            .entry(revision.to_string())
+            .or_default()
+            .push_back(Stashed { row, query, reply });
+    }
+
+    /// Drops every stashed query.
+    pub(crate) fn clear_stash(&mut self) {
+        self.stashed.clear();
+    }
+
     /// Fetches one row from every segment of a shard, charging what it cost.
+    ///
+    /// Uses a query a batch already sent for this row when one is stashed;
+    /// the charge is the same either way.
     pub fn fetch_row(
-        &self,
+        &mut self,
         transport: &mut impl ShardTransport,
         shard_id: u64,
         revision: &str,
@@ -271,6 +312,34 @@ impl TableClient {
         row: usize,
         charges: &mut ByteCharges,
     ) -> Result<Vec<Vec<u8>>, ClientError> {
+        if let Some(queue) = self.stashed.get_mut(revision) {
+            let next = queue.pop_front();
+            if queue.is_empty() {
+                self.stashed.remove(revision);
+            }
+            match next {
+                Some(stashed) if stashed.row == row => {
+                    let response = match stashed.reply {
+                        Ok(response) => response,
+                        Err(error) => {
+                            self.stashed.remove(revision);
+                            return Err(classify_transport(error));
+                        }
+                    };
+                    charges.add_query(
+                        self.table,
+                        stashed.query.body.len() as u64,
+                        response.len() as u64,
+                    );
+                    return self.decode(revision, segments, stashed.query, &response);
+                }
+                // Out of step with the walk: nothing further is trusted to
+                // line up, so the rest of this revision goes to the network.
+                _ => {
+                    self.stashed.remove(revision);
+                }
+            }
+        }
         let query = self.prepare(revision, row)?;
         let uploaded = query.body.len() as u64;
         let response = transport
