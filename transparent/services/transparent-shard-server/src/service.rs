@@ -1,12 +1,13 @@
 //! Serving N shard revisions from one process.
 //!
 //! **Parameters are shared per geometry, published data is not.** Every shard
-//! naming one geometry shares one `YpirSchemeParams` per table, because
-//! `params_for_simplepir` is a function of geometry alone. A set mixing archive
-//! and recent shards therefore leaks two parameter sets per geometry rather
-//! than two per shard, and a client validates each once. The published `c1`
-//! does *not* follow, because it is derived from each segment's own database —
-//! so a client validates parameters once and fetches setup per segment.
+//! naming one geometry shares one native parameter set per table — query masks
+//! and packing setup included — because the native profile is a function of
+//! schema, geometry and table alone. A set mixing archive and recent shards
+//! therefore leaks two parameter sets per geometry rather than two per shard,
+//! and a client validates each once. The published masks do *not* follow,
+//! because they are derived from each segment's own database — so a client
+//! validates parameters once and fetches setup per segment.
 //!
 //! **Runtimes are built on demand and bounded.** See [`crate::runtime`]: the
 //! cache reserves before it builds, evicts what nothing is holding, and refuses
@@ -45,7 +46,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use ipir_sp::YpirSchemeParams;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -163,21 +163,22 @@ pub struct ServiceState {
 
 /// One geometry's public parameters, as `GET /v1/shards/init` publishes them.
 ///
-/// The dimensions are published beside the derived scheme, not instead of it.
-/// A client re-derives the scheme from `rows` and `row_bytes` and refuses to
-/// proceed unless it reproduces what the service sent, so the service cannot
-/// choose parameters for it — including parameters that would leak the
-/// selection.
+/// The dimensions are published beside the derived native parameter identity,
+/// not instead of it. A client re-derives the identity — profile, bit widths,
+/// query-mask seed and packing setup — from the schema, geometry, table, `rows`
+/// and `row_bytes`, and refuses to proceed unless it reproduces what the
+/// service sent, so the service cannot choose parameters for it — including
+/// parameters that would leak the selection.
 #[derive(Serialize)]
 pub struct GeometryInit {
     pub name: String,
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
-    pub directory_scheme: YpirSchemeParams,
+    pub directory_scheme: transparent_native::NativeScheme,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
-    pub pages_scheme: YpirSchemeParams,
+    pub pages_scheme: transparent_native::NativeScheme,
     pub pages_setup_seed: u64,
 }
 
@@ -991,11 +992,11 @@ async fn init(State(state): State<ServiceState>) -> Response {
                 name: geometry.name.to_string(),
                 directory_rows: geometry.directory_rows,
                 directory_row_bytes: geometry.directory_row_bytes as u32,
-                directory_scheme: directory.scheme.clone(),
+                directory_scheme: directory.scheme().clone(),
                 directory_setup_seed: directory.setup_seed,
                 page_rows: geometry.page_rows,
                 page_row_bytes: geometry.page_row_bytes as u32,
-                pages_scheme: pages.scheme.clone(),
+                pages_scheme: pages.scheme().clone(),
                 pages_setup_seed: pages.setup_seed,
             }
         })
@@ -1325,9 +1326,12 @@ async fn query_inner(
         tracing::debug!(revision = %query_revision, table = table.as_str(), seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
         let query_stage = std::time::Instant::now();
         let _timer = evaluation_metrics.evaluation_seconds.timer();
-        let mut answer = Vec::new();
+        // The key and selection are parsed once: every segment shares the
+        // table's packing setup and query masks, so one parse serves them all.
+        let query = shared.parse(binding, &body)?;
+        let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
         for handle in &handles {
-            match handle.get().evaluate(&shared, binding, &body) {
+            match handle.get().answer(binding, &query) {
                 Ok(response) => answer.extend(response),
                 Err(error) => return Err(error),
             }

@@ -34,7 +34,7 @@
 
 use clap::Parser;
 use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
-use transparent_shard_server::runtime::{reserved_bytes, SharedParams, TableRuntime};
+use transparent_shard_server::runtime::{SharedParams, TableRuntime};
 use transparent_shard_server::shardset::Table;
 
 #[derive(Parser)]
@@ -102,14 +102,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let baseline = rss();
     let shared = SharedParams::build(geometry, table)?;
-    println!("scheme  {}", serde_json::to_string(&shared.scheme)?);
+    println!("scheme  {}", serde_json::to_string(shared.scheme())?);
     // What the serving cache reserves for one of these. The measurement below
     // is what decides whether that reservation is honest; a formula that came
     // in under the real slope would turn a bounded cache back into an
     // unbounded one.
     println!(
         "cache reserves {:.2} MiB per runtime",
-        mib(reserved_bytes(shared.rlwe, &shared.scheme))
+        mib(shared.reserved_bytes())
     );
 
     // Held for every build and never rebuilt, so the plaintext is charged once
@@ -164,15 +164,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // look more expensive than it is, which is still a wrong number to size on.
     //
     // The other table is charged at its reservation rather than measured, since
-    // measuring it means a second run. That is honest here because this tool is
-    // what established the reservation is accurate: within 0.3% at 32,768 rows
-    // and 3.4% at 65,536.
+    // measuring it means a second run. Under the SimplePIR P14 runtime this tool
+    // established the reservation within 0.3% at 32,768 rows and 3.4% at
+    // 65,536. The native reservation charges the two-mask preprocessing at its
+    // eight-byte-word bound, so it errs high; re-measure before sizing on it.
     let other = match table {
         Table::Directory => Table::Pages,
         Table::Pages => Table::Directory,
     };
     let other_shared = SharedParams::build(geometry, other)?;
-    let other_reserved = reserved_bytes(other_shared.rlwe, &other_shared.scheme);
+    let other_reserved = other_shared.reserved_bytes();
     let per_shard = mib(marginal as u64) + mib(other_reserved);
     println!(
         "per shard: {:.2} MiB measured {} + {:.2} MiB reserved {} = {per_shard:.2} MiB",
@@ -187,7 +188,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // geometry: 511 is the partial census covering 9.4% of chain height, and
     // the whole chain is 1,091 at this geometry. Extrapolating held memory from
     // it understated the fleet by more than half, which is the opposite of what
-    // a sizing tool is for.
+    // a sizing tool is for. These counts were measured under the v7 14-slot
+    // directory row; v8's 16-slot row has not been re-censused.
     let full_chain = match geometry.name {
         "recent-8k" => 1_091u64,
         "archive-32k" => 314,

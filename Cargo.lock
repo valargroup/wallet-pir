@@ -4273,11 +4273,11 @@ dependencies = [
  "axum",
  "base64",
  "clap",
- "enhance-pir-server",
  "hex",
  "http-body",
- "inspiring",
  "ipir-sp",
+ "memmap2",
+ "reinspiring",
  "reqwest",
  "rustix 1.1.4",
  "serde",
@@ -4293,10 +4293,10 @@ dependencies = [
  "tracing-subscriber",
  "transparent-events",
  "transparent-filter",
+ "transparent-native",
  "transparent-shard",
  "transparent-wallet",
  "transparent-wallet-store",
- "valar-spiral-rs",
 ]
 
 [[package]]

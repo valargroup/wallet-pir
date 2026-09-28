@@ -52,12 +52,8 @@ pub fn shard_reserved_bytes(entry: &ShardMapEntry) -> Result<u64, PlanError> {
         (Table::Directory, entry.directory_segments),
         (Table::Pages, entry.page_segments),
     ] {
-        let (rlwe, scheme) = ipir_sp::params_for_simplepir(
-            table.rows(geometry),
-            table.row_bytes(geometry) as u64 * 8,
-        )
-        .map_err(|error| PlanError::Invalid(error.to_string()))?;
-        total += reserved_bytes(&rlwe, &scheme) * u64::from(segments);
+        total += reserved_bytes(table.rows(geometry), table.row_bytes(geometry))
+            * u64::from(segments);
     }
     Ok(total)
 }
