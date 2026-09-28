@@ -1,0 +1,68 @@
+{
+  "run_id": "journal-v2-conversion-2026-09-28",
+  "generated_at": "2026-09-28T13:25:43Z",
+  "kind": "production journal derivation and verification",
+  "source": {
+    "commit": "b693cfde",
+    "binaries_sha256": {
+      "journal-convert-v1": "3bd7af7a28e73926b6f707028e84b400c17aee841a6c8b225b9589c64dd98f1d",
+      "transparent-event-ingest": "f89fc792b50301a7c881f35477f9973fe9c91a813dc9632f11acff269e6c08c3",
+      "event-spotcheck": "8a9f3012acba332ed4d40ce9d98b090b97103b8d0a56892114a507b7164e7d81",
+      "journal-inventory": "af99294883ff535c77c27286d0cf882d2461b48836426e150d5faf4dd1ab37cc"
+    },
+    "profile": "release",
+    "build_env": "RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq' CXXFLAGS=-mpclmul CFLAGS=-mpclmul"
+  },
+  "host": {
+    "name": "enhance-pir-coordinator-01",
+    "cpu": "INTEL(R) XEON(R) GOLD 6548N, 8 vCPU",
+    "ram_gib": 62,
+    "os": "Ubuntu 24.04.4 LTS, kernel 6.8.0-124-generic",
+    "storage": "ext4 on /dev/vda1, 193G",
+    "sharing": "live coordinator; every step ran as a transient unit with CPUWeight=20 IOWeight=20 Nice=10"
+  },
+  "journals": {
+    "network": "main",
+    "genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "source": "/srv/zakura/transparent-event-data (version 1, read only, no writer lock taken)",
+    "result": "/srv/zakura/transparent-event-data-v2 (version 2, start_height 0)"
+  },
+  "steps": [
+    {
+      "name": "convert",
+      "utc": ["2026-09-28T13:09:50Z", "2026-09-28T13:12:54Z"],
+      "command": "journal-convert-v1 --from /srv/zakura/transparent-event-data --to /srv/zakura/transparent-event-data-v2 --margin 1000",
+      "output": "convert.json"
+    },
+    {
+      "name": "extend from node state",
+      "utc": ["2026-09-28T13:13:07Z", "2026-09-28T13:13:31Z"],
+      "command": "transparent-event-ingest --state-dir /root/.cache/zakura --data-dir /srv/zakura/transparent-event-data-v2 --start-height 0 --workers 4",
+      "result": "3498197..=3498198 appended; state database ends at its finalized height"
+    },
+    {
+      "name": "extend over RPC",
+      "utc": ["2026-09-28T13:13:43Z", "2026-09-28T13:13:52Z"],
+      "command": "transparent-event-ingest --zakura-cookie /root/.cache/zakura/.cookie --data-dir /srv/zakura/transparent-event-data-v2 --start-height 0 --commit-every 100 --log-every 200",
+      "result": "covered_through 3499198, 353790708 events"
+    },
+    {
+      "name": "byte-exact cross-check",
+      "utc": ["2026-09-28T13:14:05Z", "2026-09-28T13:21:01Z"],
+      "command": "for s in 200000 1000000 2000000 3000000 3493000: transparent-event-ingest --state-dir /root/.cache/zakura --data-dir <scratch>/$s --start-height $s --stop-height $s+4999 --workers 4; journal_cmp.py <v2> <scratch>/$s",
+      "output": "xcheck.jsonl",
+      "note": "scratch journals deleted after comparison"
+    },
+    {
+      "name": "inventory",
+      "command": "journal-inventory --data-dir /srv/zakura/transparent-event-data-v2 --zakura-cookie /root/.cache/zakura/.cookie --source-sha b693cfde",
+      "output": "journal.json",
+      "failed_attempt": "the same command with --state-dir failed MissingBlock(3499198): the state database holds finalized blocks only"
+    },
+    {
+      "name": "independent spot check",
+      "command": "event-spotcheck --data-dir /srv/zakura/transparent-event-data-v2 --zakura-cookie /root/.cache/zakura/.cookie --source-sha b693cfde",
+      "output": "spotcheck.json"
+    }
+  ]
+}
