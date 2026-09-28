@@ -73,6 +73,6 @@ only the map binding, accepted headers and source changed
   caches (pruning was deferred).
 - At activation the controller reported one ready recent replica, as under v7
   before the cutover; the reconciler admits the others as they catch up.
-- No load run or paired byte and latency measurement was made against v9.
+- A [pinned-anchor load run](load/README.md) repeated the v7 baseline after the cutover: 45/45 exact. No capacity series has been run against v9.
 - wallet-libraries was ported on `m3/wallet-correctness` (`2be3d343`). It was not
   run against this deployment.
