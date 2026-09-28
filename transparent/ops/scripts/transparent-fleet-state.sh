@@ -58,10 +58,28 @@ classify_worker() {
   fi
 }
 
+# A schema cutover may use a separate cache so the still-running predecessor's
+# collector cannot delete newly prepared runtimes. Later deploys preserve it.
+runtime_cache_directory() {
+  local args=" $1 " directory="${TRANSPARENT_RUNTIME_CACHE_DIR:-}"
+  if [[ -z "$directory" ]]; then
+    if [[ "$args" =~ [[:space:]]--runtime-cache-dir[[:space:]]([^[:space:]]+) ]]; then
+      directory="${BASH_REMATCH[1]}"
+    elif [[ "$args" =~ [[:space:]]--runtime-cache-dir=([^[:space:]]+) ]]; then
+      directory="${BASH_REMATCH[1]}"
+    else
+      directory=/srv/transparent-pir/runtime-cache
+    fi
+  fi
+  [[ "$directory" =~ ^/[A-Za-z0-9._/-]+$ && "$directory" != / ]] \
+    || fail "runtime cache directory must be a plain absolute path"
+  printf '%s\n' "$directory"
+}
+
 fleet_diff() {
   DEPLOY_PLAN="$TRANSPARENT_ARTIFACT_DIR/deploy-plan.json"
   printf '{"workers":{},"publisher_control":false}\n' >"$DEPLOY_PLAN"
-  local id host cache memory slots extra assignment_sha unit ready installed wanted action tools_match binary helper control
+  local id host cache disk_cache memory slots extra assignment_sha unit ready installed wanted action tools_match binary helper control
   assignment_sha="$(assignment_digest)"
   binary="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server" | cut -d' ' -f1)"
   helper="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/shard-prune" | cut -d' ' -f1)"
@@ -89,7 +107,8 @@ REMOTE
     # plain units on the new set; the new publisher's deployment restores
     # publication control afterwards.
     if [[ "${TRANSPARENT_SCHEMA_CUTOVER:-false}" == true ]]; then control=false; fi
-    extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess --runtime-cache-dir /srv/transparent-pir/runtime-cache --runtime-cache-max-bytes $((cache * 2))"
+    disk_cache="$(runtime_cache_directory "$(jq -r '.exec_start' <<<"$installed")")"
+    extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess --runtime-cache-dir $disk_cache --runtime-cache-max-bytes $((cache * 2))"
     if [[ "$control" == true ]]; then
       extra+=" --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
     fi

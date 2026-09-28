@@ -142,6 +142,18 @@ pruning retains all revision directories in the active and rollback sets. When
 both units name the same physical set, plaintext revision pruning is deferred.
 Never delete a rollback set to make a capacity check pass.
 
+For a schema cutover, use a separate static-set parent and set
+`TRANSPARENT_RUNTIME_CACHE_DIR` to a separate cache directory. The fleet deploy
+preserves that explicit cache path on later runs and checks disk headroom on its
+actual filesystem. A live publisher's collector retains only its active,
+prepared and retired runtime digests; sharing a cache with a different schema
+would let either publisher remove the other's prepared or rollback entries.
+After the old controller stops and the fixed fleet switches, move the old
+worker publication roots aside before restoring publication control. Save the
+active and revocation records, and restore paths, records, binaries and routing
+together on rollback. Static cutover pruning being disabled alone does not
+protect data from the live collector.
+
 `assignment_sha256` remains the full assignment-document digest. The additive
 `worker_assignment_sha256` readiness field excludes generation timestamp, source
 SHA and other workers while binding the publication and this worker's assignment.

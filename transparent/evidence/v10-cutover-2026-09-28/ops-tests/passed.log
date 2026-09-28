@@ -1,0 +1,54 @@
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 2.057s
+
+OK
+recent: warm with publication control
+..recent: warm with publication control
+.....recent: warm with publication control
+..
+----------------------------------------------------------------------
+Ran 9 tests in 0.022s
+
+OK
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "activate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "invalidate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "prepare", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+.....{"event": "fleet_command", "tool": "sh", "seconds": 0.501914, "exit_code": 0}
+...{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "activate", "attempt": 1, "error_type": "RuntimeError", "retry": false}
+.{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 723819.745322125}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 1.8040998838841915e-05}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 723819.745353208}
+{"event": "worker_stage", "worker": "a1", "host": "10.0.0.1", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 1.195794902741909e-05}
+{"event": "worker_stage", "worker": "a2", "host": "10.0.0.2", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 723819.745463958}
+{"event": "worker_stage", "worker": "a2", "host": "10.0.0.2", "map_sha256": "new", "phase": "activate", "state": "RuntimeError", "seconds": 1.395796425640583e-05}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 723819.745572958}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 1.0082963854074478e-05}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 723819.745591166}
+{"event": "worker_stage", "worker": "r1", "host": "10.0.1.1", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 9.875046089291573e-06}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "activate", "state": "started", "monotonic": 723819.745697375}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "activate", "state": "completed", "seconds": 9.37492586672306e-06}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "attest", "state": "started", "monotonic": 723819.745714083}
+{"event": "worker_stage", "worker": "r2", "host": "10.0.1.2", "map_sha256": "new", "phase": "attest", "state": "completed", "seconds": 8.833012543618679e-06}
+a2: owner lost during activation
+...{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "RuntimeError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "RuntimeError", "retry": false}
+..{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 1, "error_type": "TimeoutError", "retry": true}
+{"event": "worker_control_transport_failed", "worker": "a1", "operation": "status", "attempt": 2, "error_type": "TimeoutError", "retry": false}
+...........{"event": "control_session_started", "worker": "a1", "pid": 123}
+{"event": "control_session_exited", "worker": "a1", "exit_code": 255}
+{"event": "control_session_started", "worker": "a1", "pid": 123}
+.{"event": "fleet_command", "tool": "sh", "seconds": 1.00279, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.011858, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.041368, "exit_code": 0}
+{"event": "fleet_command", "tool": "sh", "seconds": 0.01927, "exit_code": 0}
+./opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 500: 'RPC error'>
+  _warnings.warn(self.warn_message, ResourceWarning)
+a2: revocation failed
+..
+----------------------------------------------------------------------
+Ran 29 tests in 5.833s
+
+OK

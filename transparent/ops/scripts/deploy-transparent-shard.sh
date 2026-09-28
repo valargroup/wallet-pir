@@ -852,7 +852,9 @@ report="$("$staged/transparent-shard-server" $args --verify-only)"
 echo "$report"
 if jq -e '.runtime_cache != null' <<<"$report" >/dev/null; then
   need="$(jq -r '.runtime_cache | .missing_bytes + .temporary_bytes' <<<"$report")"
-  read -r total available < <(df -PB1 /srv/transparent-pir/runtime-cache | awk 'NR==2 {print $2, $4}')
+  cache_dir="$(sed -n '/^ExecStart=/s/.* --runtime-cache-dir \([^ ]*\).*/\1/p' "$staged/unit.rendered")"
+  [[ -n "$cache_dir" ]] || { echo "verified runtime cache has no directory in the staged unit" >&2; exit 1; }
+  read -r total available < <(df -PB1 "$cache_dir" | awk 'NR==2 {print $2, $4}')
   (( available - need >= total / 5 )) || { echo "runtime cache would violate 20% filesystem headroom" >&2; exit 1; }
 fi
 REMOTE

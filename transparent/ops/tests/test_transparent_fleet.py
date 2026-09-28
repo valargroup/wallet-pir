@@ -20,6 +20,19 @@ def shell(code, **env):
 
 
 class FleetTests(unittest.TestCase):
+    def test_schema_cache_override_and_later_preservation(self):
+        custom = '/srv/transparent-pir/runtime-cache-v10'
+        self.assertEqual(shell('runtime_cache_directory /bin/server'),
+                         '/srv/transparent-pir/runtime-cache')
+        for args in [f'/bin/server --runtime-cache-dir {custom} --query-slots 2',
+                     f'/bin/server --runtime-cache-dir={custom}']:
+            self.assertEqual(shell('runtime_cache_directory "$ARGS"', ARGS=args), custom)
+            self.assertEqual(shell('runtime_cache_directory "$ARGS"', ARGS=args,
+                                   TRANSPARENT_RUNTIME_CACHE_DIR='/srv/cache-v11'), '/srv/cache-v11')
+        for invalid in ['relative', '/', '/srv/cache with spaces', '/srv/cache;echo']:
+            with self.assertRaises(subprocess.CalledProcessError):
+                shell('runtime_cache_directory /bin/server', TRANSPARENT_RUNTIME_CACHE_DIR=invalid)
+
     def test_publisher_control_paths_and_shadow_guard(self):
         args = "/bin/server --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
         self.assertEqual(shell('publisher_control_enabled "$ARGS"', ARGS=args), "true")
@@ -60,7 +73,7 @@ class FleetTests(unittest.TestCase):
             config = root/'controller.json'
             config.write_text('{"shadow":true}')
             installed = dict(binary='old',helper='old',unit='old',recorded_unit='old',drop_ins='',
-                exec_start='/bin/server --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json')
+                exec_start='/bin/server --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json --runtime-cache-dir /srv/transparent-pir/runtime-cache-v10 --runtime-cache-max-bytes 2048')
             code = r'''
 EXPECTED_MAP_SHA256=map
 assignment_digest() { printf '%064d\n' 0; }
@@ -79,7 +92,7 @@ fleet_prune
             unit = (root/'transparent-shard-server.service.owner.rendered').read_text()
             self.assertEqual(unit.count('RuntimeDirectory=transparent-pir\n'), 1)
             self.assertIn('--control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json', unit)
-            self.assertIn('--runtime-cache-dir /srv/transparent-pir/runtime-cache', unit)
+            self.assertIn('--runtime-cache-dir /srv/transparent-pir/runtime-cache-v10 ', unit)
             self.assertTrue(json.loads((root/'deploy-plan.json').read_text())['publisher_control'])
             self.assertEqual((root/'calls').read_text().splitlines(), ['read'])
             with self.assertRaises(subprocess.CalledProcessError):
@@ -232,10 +245,6 @@ rollback_fleet
                 self.assertEqual(json.loads(latest.read_text())["status"], "rolled-back")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RouterCaddyCompatibility(unittest.TestCase):
     """The production router runs Caddy 2.6.2; rendered routers must load there."""
 
@@ -249,5 +258,13 @@ class RouterCaddyCompatibility(unittest.TestCase):
             'router fixture': (root / 'transparent/ops/fixtures/transparent-shard/Caddyfile.router').read_text(),
         }
         for name, text in texts.items():
+            # Comments explain which directives are forbidden; they are not
+            # emitted into the Caddyfile. Keep checking executable strings.
+            text = '\n'.join(line for line in text.splitlines()
+                             if not line.lstrip().startswith(('#', '//')))
             for directive in self.NEWER_THAN_2_6:
                 self.assertNotIn(directive, text, f'{name} uses {directive!r}, which Caddy 2.6.2 rejects')
+
+
+if __name__ == "__main__":
+    unittest.main()
