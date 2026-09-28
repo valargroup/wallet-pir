@@ -77,8 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let row_bytes = Table::Directory.row_bytes(&RECENT_8K);
             let sc = transport_params(rows, row_bytes)?;
             let db = (sc.db_rows * sc.db_cols * 2) as f64 / 1048576.0;
-            let pack = (reserved_bytes(rows, row_bytes) - rows * u64::from(row_bytes)) as f64
-                / 1048576.0;
+            let pack =
+                (reserved_bytes(rows, row_bytes) - rows * u64::from(row_bytes)) as f64 / 1048576.0;
             // What a wallet uploads per query: the binding, the K_g key, and
             // the first-dimension query, which is the only term that follows
             // the row count.

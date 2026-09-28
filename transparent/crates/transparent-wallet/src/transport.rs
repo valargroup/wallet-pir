@@ -221,7 +221,7 @@ fn found_in<E: std::error::Error + 'static>(error: &BoxError) -> Option<&E> {
 pub struct TableCharges {
     /// Published PIR setup, once per segment opened. A shard normally has one
     /// segment per table; one that did not fit the pinned geometry has more,
-    /// and each publishes its own `c1`.
+    /// and each publishes its own masks.
     pub setup_bytes: u64,
     /// Private query uploads.
     pub query_upload: u64,

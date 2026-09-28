@@ -821,6 +821,33 @@ mod tests {
         assert_eq!(wide - fixed, (narrow - fixed) * ratio);
     }
 
+    /// The certificate tool rebuilds a segment's masks from its row bytes
+    /// without the scan server. It binds its report to a snapshot by requiring
+    /// those masks to equal the served ones, so the two derivations must agree.
+    #[test]
+    fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
+        let shared =
+            SharedParams::build(&transparent_shard::layout::RECENT_4K, Table::Pages).unwrap();
+        let profile = &shared.profile;
+        let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as u8)
+            .collect();
+        let columns: Vec<Vec<u16>> = (0..profile.cols)
+            .map(|col| {
+                (0..profile.rows)
+                    .map(|row| native::row_coefficient(&rows, profile.row_bytes, row, col))
+                    .collect()
+            })
+            .collect();
+        let hint =
+            native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
+        let rebuilt = native::publish(&native::preprocess(&profile.setup, &hint).unwrap()).unwrap();
+        assert_eq!(
+            rebuilt,
+            TableRuntime::build(&shared, &rows).unwrap().public_params
+        );
+    }
+
     /// Every registry geometry must have parameters and a reservation that
     /// fits a plausible budget. A geometry whose runtime did not fit one worker
     /// could never be served at all, and finding that out at first query would

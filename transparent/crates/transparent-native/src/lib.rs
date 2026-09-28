@@ -122,7 +122,11 @@ pub fn table_seeds(schema: &str, geometry: &str, table: &str) -> TableSeeds {
 ///
 /// Uses a zero snapshot id so the masks, and therefore every published hint
 /// contribution, stay stable across publications of the same shape.
-pub fn public_query_masks(seed: [u8; 32], rows: usize, cols: usize) -> Result<Vec<Vec<u64>>, String> {
+pub fn public_query_masks(
+    seed: [u8; 32],
+    rows: usize,
+    cols: usize,
+) -> Result<Vec<Vec<u64>>, String> {
     let profile = NativeProfile::new(params(), rows, cols).map_err(|e| e.to_string())?;
     Ok(NativePublicSetup::new(profile, seed, [0; 32])
         .query_masks()
@@ -304,8 +308,7 @@ pub fn hint<'a>(
     cols: usize,
     column: impl Fn(usize) -> &'a [u16] + Sync,
 ) -> Result<Vec<Vec<Vec<u64>>>, String> {
-    if rows == 0 || !rows.is_multiple_of(D) || !cols.is_multiple_of(D) || masks.len() != rows / D
-    {
+    if rows == 0 || !rows.is_multiple_of(D) || !cols.is_multiple_of(D) || masks.len() != rows / D {
         return Err("native hint shape".into());
     }
     let lift = reinspiring::lift_ntt::LiftContext::new(D, Q).map_err(|e| e.to_string())?;
@@ -534,7 +537,9 @@ mod tests {
                 db[c * rows..(c + 1) * rows]
                     .iter()
                     .zip(query)
-                    .fold(0u64, |a, (&x, &q)| a.wrapping_add((x as u64).wrapping_mul(q)))
+                    .fold(0u64, |a, (&x, &q)| {
+                        a.wrapping_add((x as u64).wrapping_mul(q))
+                    })
                     & (Q - 1)
             })
             .collect()
@@ -572,7 +577,10 @@ mod tests {
         let profile = TableProfile::new("test", "g", "directory", 4_096, 4_096).unwrap();
         let (rows, cols) = (profile.rows, profile.cols);
         let db = database(rows, cols, 7);
-        let hint = hint(&profile.masks, rows, cols, |c| &db[c * rows..(c + 1) * rows]).unwrap();
+        let hint = hint(&profile.masks, rows, cols, |c| {
+            &db[c * rows..(c + 1) * rows]
+        })
+        .unwrap();
         let blocks = preprocess(&profile.setup, &hint).unwrap();
         let published = publish(&blocks).unwrap();
         assert_eq!(published.len(), profile.scheme.public_bytes);

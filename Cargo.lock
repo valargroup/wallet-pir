@@ -4277,6 +4277,7 @@ dependencies = [
  "http-body",
  "ipir-sp",
  "memmap2",
+ "rayon",
  "reinspiring",
  "reqwest",
  "rustix 1.1.4",

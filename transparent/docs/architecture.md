@@ -43,11 +43,19 @@ The router, assignment pools, external artifact origin and atomic fleet activati
 
 ## Identity and geometry
 
-The source schema is `transparent-shard-v7`; the optional manifest field `directory_choice` does not change it. A shard declares a named geometry from the compiled registry. A manifest commits layout and table digests; the public map names manifest revisions. Sealed contents remain immutable and manifests chain through parent digests. A tier boundary must be a shard boundary. Profile names must never be reused with different row shapes.
+The source schema is `transparent-shard-v8`; the optional manifest field `directory_choice` does not change it. v8 widened directory and page rows from 3,584 to 4,096 bytes (16 directory slots, 41 events per page fragment) for the native PIR profile below. A shard declares a named geometry from the compiled registry. A manifest commits layout and table digests; the public map names manifest revisions. Sealed contents remain immutable and manifests chain through parent digests. A tier boundary must be a shard boundary. Profile names must never be reused with different row shapes.
 
 Revision identity must be preserved through setup, query, response, runtime cache and wallet coverage. The server verifies manifests when opening a set. The wallet retrieves and verifies revision manifests, their map fields, parent digests and registry geometry before private requests. Hash consistency does not prove completeness or authenticate a malicious publisher's index merely because its terminal block hash is accepted.
 
 The publisher supports recent/archive geometry and a forced `--recent-from` height. Census supports bounded inclusive ranges. A combined mixed-tier cost report must use the same boundaries and aggregate exact scripts across tiers; separate tier percentile summaries cannot be added.
+
+## PIR scheme
+
+Both tables use the native ReinspiRING two-mask m29 profile that Enhance and Status deploy: d = 2,048, q = 2^54, p = 2^16, a two-limb Gaussian `K_g` packing key with 19-bit limbs, and two public masks rounded to 29 bits. One 4,096-byte row is one 2,048-coefficient block. `transparent/crates/transparent-native` holds the shared helpers; it is adapted from `enhance_pir::native` rather than depending on it, because enabling the Enhance crates' `native-reinspiring` feature would switch the q48 Enhance binaries through Cargo feature unification.
+
+Query masks and the packing setup are derived from 32-byte seeds per schema, geometry and table, so one query is answered by every segment of every shard of that geometry. `/v1/shards/init` publishes each table's `NativeScheme` identity (bit widths, parameter encoding, mask seed, setup id and sizes); the wallet re-derives it and refuses any difference. Each segment publishes its own 14,848 bytes of rounded masks. A query is an 8-byte revision binding, the 27,648-byte key and a 49-bit selection (`rows * 49 / 8` bytes): 77,832 bytes at 8,192 rows and 228,360 at 32,768. Each segment answers with the binding, an 8-byte mask epoch and a 5,632-byte body. The server parses a query once, scans each segment modulo 2^54 and packs against that segment's preprocessing.
+
+Correctness certificates for this mode are snapshot-specific. The shard server's `native_certificate` example exports the `certify_native.py` report for a segment; see the [correctness screen](../evidence/native-certificate-2026-09-28/README.md) for the shape-level results and the 65,536-row limit.
 
 ## Serving and publication
 
@@ -65,9 +73,9 @@ increments the cache error counter without invalidating the serving runtime.
 `transparent_shard_disk_save_pending` tracks outstanding writers. Linux workers advise
 the kernel that consumed source/cache files and synced snapshot files can leave
 page cache; this is advisory and never deducted from measured admission usage.
-Non-Linux workers omit the advice. Checksums and snapshot format remain unchanged.
+Non-Linux workers omit the advice. A restored snapshot's two-mask preprocessing stays mapped from its immutable cache file rather than copied, so the advice cannot evict it.
 
-Runtime construction reuses the fixed public mask images already shared by online packing. The pinned library (`61dc83e`) computes the independent left/right reference collapse halves in parallel and preserves their digit order. Database-dependent preprocessing is rebuilt for each changed table; client secrets and uploaded key bodies are never shared. Differential and frozen-vector tests require identical output to the preceding implementation, so existing public runtime snapshots remain compatible. Snapshot reads and writes batch the same little-endian coefficients into 8 KiB buffers and retain their checksum, atomic rename and durability barriers.
+Runtime construction encodes the segment, computes the public hint with exact lifted products against the table's query masks, and builds two-mask preprocessing per block. Database-dependent preprocessing is rebuilt for each changed table; client secrets and uploaded key bodies are never shared. The cache reserves the database, the published masks and the preprocessing at its eight-byte-word bound (64 MiB per block); built preprocessing has so far used four-byte words, so a runtime holds about 32 MiB less than it reserves. Runtime snapshots use format `transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2`: identity, checksum, column-major database, published masks, then `reinspiring::prepared_native` preprocessing, whose length is validated by range. A restore re-derives the masks from the preprocessing and refuses a snapshot whose stored masks differ. Writes keep the checksum, atomic rename and durability barriers.
 
 The target recent pool fully replicates its assigned hot set so the newest shard can use every worker's bandwidth. Archive ownership is disjoint and balanced by prepared bytes. Public routing uses set identity, shard, revision and table; selected script, row and page locator never determine a plaintext route. Public immutable filters/setup belong on an artifact origin; map discovery has refreshable cache semantics.
 

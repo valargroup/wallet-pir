@@ -33,8 +33,7 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 // ipir-sp 1f2aec6 is v0.1.0-rc.6, which pins reinspiring 0.1.2.
-const FORMAT: &[u8] =
-    b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
+const FORMAT: &[u8] = b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
 
 /// Identity and checksum.
 const HEADER_BYTES: u64 = 64;

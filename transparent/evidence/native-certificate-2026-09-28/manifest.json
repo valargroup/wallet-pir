@@ -1,0 +1,43 @@
+{
+  "run_id": "native-certificate-2026-09-28",
+  "utc_date": "2026-09-28",
+  "kind": "analytic correctness screen (no served snapshot)",
+  "source": {
+    "branch": "native-transparent",
+    "parent_commit": "c9d165a1241f4afd8f44a2272e58930bd3d2ebb7",
+    "tool": "transparent/services/transparent-shard-server/examples/native_certificate.rs",
+    "checker": "reinspiring/tools/security/certify_native.py",
+    "checker_source": "https://github.com/valargroup/ipir-sp tag v0.1.0-rc.6 (1f2aec6), reinspiring 0.1.2",
+    "build_profile": "release"
+  },
+  "command": "transparent/evidence/native-certificate-2026-09-28/run.sh <certify_native.py>",
+  "schema": "transparent-shard-v8",
+  "profile": {
+    "name": "reinspiring-two-mask-m29-v1",
+    "d": 2048,
+    "q_bits": 54,
+    "p_bits": 16,
+    "gadget_bits": 19,
+    "ell": 2,
+    "secret": "gaussian",
+    "mask_bits": 29,
+    "query_bits": 49,
+    "response_bits": 22,
+    "row_bytes": 4096
+  },
+  "host": {
+    "cpu": "Apple M4 Max",
+    "ram_bytes": 137438953472,
+    "os": "macOS"
+  },
+  "inputs": {
+    "synthetic": "rows in {2048,4096,8192,32768,65536}; fill random (splitmix64 seed 1) or max (0xffff); setup geometry name certificate-synthetic; worst-case query term",
+    "segment": "archive-wide pages, 65536 x 4096 bytes from python random.Random(1).randbytes, not retained; query term measured"
+  },
+  "results_bits": {
+    "synthetic-random": {"2048": 294, "4096": 280, "8192": 270, "32768": 173, "65536": 83},
+    "synthetic-max": {"2048": 289, "4096": 287, "8192": 259, "32768": 173, "65536": 83},
+    "segment-measured-archive-wide-pages-seed1": 170
+  },
+  "acceptance": "screen only; 65536-row tables need per-snapshot certificates with the measured query term"
+}

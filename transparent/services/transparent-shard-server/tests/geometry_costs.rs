@@ -73,7 +73,10 @@ fn a_narrower_table_buys_a_smaller_query_and_nothing_else() {
             pair[1].query > pair[0].query,
             "a taller table must cost a larger query"
         );
-        assert_eq!(pair[0].setup, pair[1].setup, "setup follows the width alone");
+        assert_eq!(
+            pair[0].setup, pair[1].setup,
+            "setup follows the width alone"
+        );
         assert_eq!(pair[0].response, pair[1].response);
     }
 
@@ -167,7 +170,12 @@ fn the_server_enforces_the_costed_sizes() {
             let shared = SharedParams::build(geometry, server).unwrap();
             assert_eq!(shared.query_bytes(), cost.query, "{}", geometry.name);
             assert_eq!(shared.response_bytes(), cost.response, "{}", geometry.name);
-            assert_eq!(shared.scheme().public_bytes, cost.setup, "{}", geometry.name);
+            assert_eq!(
+                shared.scheme().public_bytes,
+                cost.setup,
+                "{}",
+                geometry.name
+            );
         }
     }
 }
