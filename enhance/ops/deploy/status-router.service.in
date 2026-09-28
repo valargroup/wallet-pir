@@ -9,7 +9,7 @@ ExecStart=@RELEASE@/status-pir role --role router --network-hex @NETWORK@ --list
 Environment=RAYON_NUM_THREADS=4
 # Worker and router prepare serially; one thread let the full-occupancy rebuild
 # outlive the 20-second freshness limit. Preparation threads run at nice 10.
-Environment=STATUS_PREPARATION_THREADS=4
+Environment=STATUS_PREPARATION_THREADS=6
 Environment=RUST_LOG=info
 Restart=on-failure
 RestartSec=3

@@ -105,9 +105,11 @@ fn preparation_pool() -> Result<rayon::ThreadPool, Failure> {
 const PREPARATION_NICE: i32 = 10;
 fn build_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Failure> {
     // Independent of RAYON_NUM_THREADS, the online query CPU budget. Explicitly
-    // bounded to prevent accidental CPU oversubscription from deployment config.
-    if !(1..=4).contains(&threads) {
-        return Err("STATUS_PREPARATION_THREADS must be between 1 and 4".into());
+    // bounded to prevent accidental CPU oversubscription from deployment config;
+    // these threads run below query priority, so up to eight is safe on the
+    // 8-vCPU host, where four let the serial pipeline exceed the freshness limit.
+    if !(1..=8).contains(&threads) {
+        return Err("STATUS_PREPARATION_THREADS must be between 1 and 8".into());
     }
     Ok(rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -1071,7 +1073,7 @@ mod tests {
     #[test]
     fn preparation_rejects_unbounded_threads() {
         assert!(build_preparation_pool(0).is_err());
-        assert!(build_preparation_pool(5).is_err());
+        assert!(build_preparation_pool(9).is_err());
     }
 
     #[cfg(target_os = "linux")]
