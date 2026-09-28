@@ -15,6 +15,7 @@
 //! [`sync`] for the statement of that leak.
 
 pub mod adapters;
+pub mod backoff;
 pub mod client;
 pub mod facade;
 #[cfg(feature = "reqwest")]

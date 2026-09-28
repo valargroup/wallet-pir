@@ -285,23 +285,61 @@ pub fn render_caddyfile_with(
     );
     out.push_str("\trequest_body {\n\t\tmax_size 1MB\n\t}\n\n");
     out.push_str(&render_routes(assignment));
-    out.push_str("\thandle {\n\t\trespond 404\n\t}\n}\n");
+    out.push_str("\thandle {\n\t\trespond 404\n\t}\n");
+    out.push_str(PROXY_ERRORS);
+    out.push_str("}\n");
     if let Some(listen) = internal_listen {
         out.push_str(&format!(
             "\n# Internal plain-HTTP listener, VPC only: the same routes without TLS.\nhttp://{listen} {{\n"
         ));
         out.push_str("\trequest_body {\n\t\tmax_size 1MB\n\t}\n\n");
         out.push_str(&render_routes(assignment));
-        out.push_str("\thandle {\n\t\trespond 404\n\t}\n}\n");
+        out.push_str("\thandle {\n\t\trespond 404\n\t}\n");
+        out.push_str(PROXY_ERRORS);
+        out.push_str("}\n");
     }
     out
 }
+
+/// Health checking for every worker pool the router renders.
+///
+/// The failure this is shaped against is a saturated pool, not a dead one.
+/// On 2026-09-27 a four-worker bench fleet at 128 wallets had every worker
+/// ejected at once while each kept passing its active check: the previous
+/// passive policy (`fail_duration 30s`, Caddy's default `max_fails 1`) took a
+/// worker out of rotation for 30 s on any single proxy error, and a saturated
+/// worker produces a few — a refused upload torn down mid-body, a keep-alive
+/// connection closed under the proxy. The remaining workers took the whole
+/// load, failed the same way, and the router then refused everything.
+///
+/// - Active: `/v1/ready` every second, a worker leaves after three
+///   consecutive failures (about 3 s for a worker that is restarting, warming
+///   or invalidated, all of which answer 503 at once or refuse the
+///   connection) and returns after one pass. The 5 s timeout is far above
+///   what the handler needs, since it answers from counters without waiting
+///   on query work, so only a worker that has stopped answering at all is
+///   timed out.
+/// - Passive: a worker leaves after three proxy errors within 10 s. A
+///   restarting worker refuses every connection and reaches that within
+///   milliseconds under traffic; connection refusals are retried on another
+///   worker within `lb_try_duration`, so no wallet sees them. A worker
+///   answering 503 is not counted at all: that is the worker's own
+///   capacity refusal, and it carries the delay the wallet backs off by.
+pub const HEALTH: &str = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n\t\t\thealth_timeout 5s\n\t\t\thealth_fails 3\n\t\t\tfail_duration 10s\n\t\t\tmax_fails 3\n";
+
+/// Errors the proxy itself produces — no worker available (503), none
+/// reachable (502), none answering in time (504) — carry a retry delay, as
+/// the worker's own capacity refusal does. Without it a wallet reads the
+/// router's 503 as a terminal failure, abandons the sync, and a load client
+/// resubmits at once: the resubmissions are what kept the bench fleet's
+/// router refusing. The status is the proxy's own.
+pub const PROXY_ERRORS: &str = "\n\thandle_errors 502 503 504 {\n\t\theader Retry-After 1\n\t\trespond \"no worker could take the request; retry shortly\"\n\t}\n";
 
 /// The route handlers one site carries, shared by the public and the
 /// internal listener.
 fn render_routes(assignment: &Assignment) -> String {
     let mut out = String::new();
-    let health = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 5s\n\t\t\thealth_timeout 3s\n\t\t\tfail_duration 30s\n";
+    let health = HEALTH;
 
     // Replica groups first, then owners; both keyed by shard id.
     let mut groups: BTreeMap<&str, (Vec<&str>, &[u64])> = BTreeMap::new();
@@ -563,8 +601,37 @@ mod tests {
         assert!(rendered.contains("@owner_archive_1 path_regexp ^/v1/shards/(2|3)/revisions/"));
         assert!(rendered.contains("health_uri /v1/ready"));
         assert!(!rendered.contains("/metrics"));
-        assert!(rendered
-            .trim_end()
-            .ends_with("handle {\n\t\trespond 404\n\t}\n}"));
+        assert!(rendered.ends_with(&format!(
+            "\thandle {{\n\t\trespond 404\n\t}}\n{PROXY_ERRORS}}}\n"
+        )));
+    }
+
+    #[test]
+    fn a_saturated_pool_is_not_ejected_on_a_single_proxy_error() {
+        let map = map(4, 2);
+        let assignment = plan(&map, "ab", &roster(2, 2, 64 << 30), 4, 0.1, generated()).unwrap();
+        let rendered =
+            render_caddyfile_with(&assignment, "transparent.example", Some("10.0.0.5:8080"));
+        // Every pool on both sites, archive owners included, carries the same
+        // policy: one recent group, two owners, four public routes.
+        let pools = rendered.matches("reverse_proxy ").count();
+        assert_eq!(pools, 2 * (1 + 2 + 4));
+        assert_eq!(rendered.matches(HEALTH).count(), pools);
+        // Caddy's default `max_fails` is 1: with it, one proxy error took a
+        // saturated worker out for the whole `fail_duration`.
+        for directive in ["max_fails", "health_fails"] {
+            let count: u32 = HEALTH
+                .lines()
+                .find_map(|line| line.trim().strip_prefix(directive))
+                .unwrap_or_else(|| panic!("{directive} is set"))
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(count > 1, "{directive} {count}");
+        }
+        assert!(!rendered.contains("fail_duration 30s"));
+        // Both sites give the proxy's own refusals a retry delay.
+        assert_eq!(rendered.matches(PROXY_ERRORS).count(), 2);
+        assert!(PROXY_ERRORS.contains("header Retry-After"));
     }
 }

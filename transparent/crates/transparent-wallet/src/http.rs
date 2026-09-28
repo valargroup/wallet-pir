@@ -163,11 +163,11 @@ fn execute(
                     .downcast_ref::<HttpStatusError>()
                     .is_some_and(|e| matches!(e.status, 502 | 504))
             {
-                return Some(Duration::from_secs(attempt as u64 + 1));
+                return Some(transient_backoff(attempt));
             }
             if let Some(overloaded) = crate::transport::Overloaded::found_in(error) {
                 return if retry_overload {
-                    overloaded.retry_after
+                    overloaded.retry_after.map(crate::backoff::jittered)
                 } else {
                     None
                 };
@@ -179,7 +179,7 @@ fn execute(
                         || (retry_overload && error.status == 503)
                 })
             {
-                return Some(Duration::from_secs(attempt as u64 + 1));
+                return Some(transient_backoff(attempt));
             }
             error.downcast_ref::<reqwest::Error>().and_then(|error| {
                 (error.is_timeout()
@@ -196,7 +196,7 @@ fn execute(
                         matches!(s.as_u16(), 408 | 502 | 504)
                             || (retry_overload && s.as_u16() == 503)
                     }))
-                .then_some(Duration::from_secs(attempt as u64 + 1))
+                .then(|| transient_backoff(attempt))
             })
         });
         if attempt + 1 == attempts || delay.is_none() {
@@ -210,6 +210,16 @@ fn execute(
         std::thread::sleep(delay);
     }
     unreachable!("attempts is positive")
+}
+
+/// The wait before retrying a transient failure: one second, doubled per
+/// attempt, jittered so that clients failed together do not retry together.
+fn transient_backoff(attempt: usize) -> Duration {
+    crate::backoff::exponential(
+        Duration::from_secs(1),
+        u32::try_from(attempt + 1).unwrap_or(u32::MAX),
+        Duration::from_secs(8),
+    )
 }
 
 fn response_body(response: reqwest::blocking::Response, stage: &str) -> Result<Vec<u8>, BoxError> {

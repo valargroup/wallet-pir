@@ -20,6 +20,21 @@ import time
 import uuid
 
 
+# Worker-pool health checking, the same text `shard-assign` renders
+# (`router::HEALTH` in transparent-shard-server; the ops tests compare them).
+# One proxy error must not eject a saturated worker: Caddy's default
+# `max_fails` is 1, and on the 2026-09-27 bench fleet a few torn uploads per
+# worker ejected every worker at once. A restarting worker refuses every
+# connection and still leaves within milliseconds under traffic, or after three
+# failed one-second readiness checks without it.
+ROUTER_HEALTH = ('\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n\t\t\thealth_timeout 5s\n'
+                 '\t\t\thealth_fails 3\n\t\t\tfail_duration 10s\n\t\t\tmax_fails 3\n')
+# The proxy's own 502/503/504 carry a retry delay, as a worker's capacity
+# refusal does, so wallets back off instead of abandoning the sync.
+ROUTER_PROXY_ERRORS = ('\n\thandle_errors 502 503 504 {\n\t\theader Retry-After 1\n'
+                       '\t\trespond "no worker could take the request; retry shortly"\n\t}\n')
+
+
 def atomic_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -484,9 +499,10 @@ class Fleet:
                     continue
                 pattern = '|'.join(map(str,ids))
                 body += [f'\t@{name} path_regexp ^/v1/shards/({pattern})/revisions/[0-9a-f]{{64}}/(setup|query)/',
-                         f'\thandle @{name} {{\n\t\treverse_proxy {" ".join(upstreams)} {{\n\t\t\tlb_policy round_robin\n\t\t\tlb_try_duration 2s\n\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n\t\t}}\n\t}}']
+                         f'\thandle @{name} {{\n\t\treverse_proxy {" ".join(upstreams)} {{\n\t\t\tlb_policy round_robin\n\t\t\tlb_try_duration 2s\n{ROUTER_HEALTH}\t\t}}\n\t}}']
             body += ['\t@metadata path /v1/shards /v1/shards/init /v1/filters/shards /v1/filters/shards/* /v1/shards/*/revisions/*/manifest',
-                     f'\thandle @metadata {{\n\t\treverse_proxy {authority} {{\n\t\t\theader_up Host {{upstream_hostport}}\n\t\t}}\n\t}}', '\thandle {\n\t\trespond 404\n\t}']
+                     f'\thandle @metadata {{\n\t\treverse_proxy {authority} {{\n\t\t\theader_up Host {{upstream_hostport}}\n\t\t}}\n\t}}', '\thandle {\n\t\trespond 404\n\t}',
+                     ROUTER_PROXY_ERRORS.rstrip('\n')]
         else:
             body += ['\thandle {\n\t\theader Retry-After 1\n\t\trespond "transparent publication reconciling" 503\n\t}']
         sites = [host]
