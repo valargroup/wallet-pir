@@ -1,0 +1,17 @@
+{
+  "utc": "2026-09-28T22:31:55.569456+00:00",
+  "checks": [
+    {
+      "path": "/v1/health",
+      "status": 404
+    },
+    {
+      "path": "/metrics",
+      "status": 404
+    },
+    {
+      "path": "/v1/ready",
+      "status": 404
+    }
+  ]
+}

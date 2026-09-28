@@ -1,0 +1,185 @@
+{
+  "all_client_validation": {
+    "from_utc": "2026-09-28T22:17:49.862437+00:00",
+    "through_utc": "2026-09-28T22:31:49.547981+00:00",
+    "workers": {
+      "transparent-pir-recent-01": {
+        "samples": 27,
+        "minimum_available_memory_percent": 73.83564238088094,
+        "maximum_memory_current_bytes": 1504841728,
+        "maximum_memory_peak_since_service_start_bytes": 1639682048,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-recent-02": {
+        "samples": 27,
+        "minimum_available_memory_percent": 74.65327394494194,
+        "maximum_memory_current_bytes": 1489879040,
+        "maximum_memory_peak_since_service_start_bytes": 1553387520,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-recent-03": {
+        "samples": 27,
+        "minimum_available_memory_percent": 74.32237468303373,
+        "maximum_memory_current_bytes": 1486790656,
+        "maximum_memory_peak_since_service_start_bytes": 1563615232,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-recent-04": {
+        "samples": 27,
+        "minimum_available_memory_percent": 75.43907975867522,
+        "maximum_memory_current_bytes": 1333882880,
+        "maximum_memory_peak_since_service_start_bytes": 1454047232,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-archive-01": {
+        "samples": 27,
+        "minimum_available_memory_percent": 74.66523190794379,
+        "maximum_memory_current_bytes": 16035065856,
+        "maximum_memory_peak_since_service_start_bytes": 16452608000,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-archive-02": {
+        "samples": 27,
+        "minimum_available_memory_percent": 75.17252703354828,
+        "maximum_memory_current_bytes": 15675498496,
+        "maximum_memory_peak_since_service_start_bytes": 16119189504,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      }
+    },
+    "controller_http_error_samples": 0,
+    "maximum_reported_freshness_seconds": 23.249104026,
+    "public_origins": {
+      "samples": 168,
+      "http_error_samples": 1,
+      "map_digest_skew_samples": 0
+    }
+  },
+  "four_client_load": {
+    "from_utc": "2026-09-28T22:19:59.294162+00:00",
+    "through_utc": "2026-09-28T22:31:49.547981+00:00",
+    "workers": {
+      "transparent-pir-recent-01": {
+        "samples": 23,
+        "minimum_available_memory_percent": 73.83564238088094,
+        "maximum_memory_current_bytes": 1504841728,
+        "maximum_memory_peak_since_service_start_bytes": 1639682048,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-recent-02": {
+        "samples": 23,
+        "minimum_available_memory_percent": 74.65327394494194,
+        "maximum_memory_current_bytes": 1489879040,
+        "maximum_memory_peak_since_service_start_bytes": 1553387520,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-recent-03": {
+        "samples": 23,
+        "minimum_available_memory_percent": 74.32237468303373,
+        "maximum_memory_current_bytes": 1486790656,
+        "maximum_memory_peak_since_service_start_bytes": 1563615232,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-recent-04": {
+        "samples": 23,
+        "minimum_available_memory_percent": 75.43907975867522,
+        "maximum_memory_current_bytes": 1333882880,
+        "maximum_memory_peak_since_service_start_bytes": 1454047232,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-archive-01": {
+        "samples": 23,
+        "minimum_available_memory_percent": 74.66798981324547,
+        "maximum_memory_current_bytes": 16035065856,
+        "maximum_memory_peak_since_service_start_bytes": 16452608000,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      },
+      "transparent-pir-archive-02": {
+        "samples": 23,
+        "minimum_available_memory_percent": 75.22289829379201,
+        "maximum_memory_current_bytes": 15675498496,
+        "maximum_memory_peak_since_service_start_bytes": 16119189504,
+        "max_auto_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "readiness_non_200_samples": 0,
+        "readiness_false_samples": 0,
+        "max_cache_write_failures": 0,
+        "host_capture_errors": 0
+      }
+    },
+    "controller_http_error_samples": 0,
+    "maximum_reported_freshness_seconds": 23.249104026,
+    "public_origins": {
+      "samples": 142,
+      "http_error_samples": 1,
+      "map_digest_skew_samples": 0
+    }
+  },
+  "interpretation": "Host resources sampled about every 30 seconds, controller/worker health every 10 seconds, public origins every 5 seconds. MemoryPeak is cumulative since service start; MemoryCurrent is sampled in this window. These are bounded observations, not sustained capacity or uninterrupted-availability proof."
+}

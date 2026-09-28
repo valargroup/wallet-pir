@@ -19,8 +19,13 @@ Both public origins agreed, all six workers were warm on the expected binary,
 170 sealed public setup digests matched their certificates, and the served hash
 matched the node. The public native regression passed **11 cases / 68 checkpoints**
 with **2,319 HTTP attempts and no failed attempts**. A one-client smoke completed
-**124 exact synthetic range syncs**, zero failures. Subsequent bounded load and
-resource observations are recorded in the
+**124 exact synthetic range syncs**, zero failures. Four-client load finished with
+**47 attempts, 46 exact completions, zero failures and one query-budget incomplete**.
+Minimum sampled available memory was 73.84%,
+maximum reported freshness 23.249 s, and no OOM or automatic restart was observed.
+An independent init probe returned one transient 503 across publication; it
+recovered at the next five-second sample while both maps stayed consistent.
+Raw load and resource observations are recorded in the
 [cutover evidence](../evidence/v10-cutover-2026-09-28/README.md).
 
 The successful maintenance interval was **22:01:18–22:17:04**. An earlier backup

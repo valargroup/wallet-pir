@@ -1,0 +1,44 @@
+{
+  "utc": "2026-09-28T22:33:18.507834+00:00",
+  "services": {
+    "transparent-filter-server": "NRestarts=0\nActiveState=active\nSubState=running\n",
+    "transparent-publish-controller": "NRestarts=0\nActiveState=active\nSubState=running\n",
+    "transparent-replica-reconciler": "NRestarts=0\nActiveState=active\nSubState=running\n",
+    "transparent-control-sessions": "NRestarts=0\nActiveState=active\nSubState=running\n"
+  },
+  "installed_binaries": "f9116fbfcb6f925456b0dcecd22be449597288b81318c7311e4bc215ae77ef2b  /usr/local/bin/transparent-filter-server\n67c22c78bc1a1c7129328ec3f861f822c7c0a9186057d85c08a7d5b47c569508  /usr/local/bin/transparent-publish-controller\n6ecfb809e05a3c5b05c01411cadc9366a75843aee1b95b6d9227f96785ba0e2d  /usr/local/bin/shard-assign\n",
+  "controller_config": {
+    "data_dir": "/srv/zakura/transparent-event-data-v2",
+    "publication_root": "/srv/zakura/transparent-publications",
+    "initial_publication": "/srv/zakura/transparent-publications/initial",
+    "recent_from": 3262749,
+    "recent_geometry": "recent-4k-8k",
+    "archive_geometry": "archive-wide",
+    "rpc_url": "http://127.0.0.1:8232",
+    "fleet_command": "/opt/transparent-publisher/transparent-live-fleet.py",
+    "listen": "127.0.0.1:8094",
+    "source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+    "shadow": false,
+    "directory_choice": "all",
+    "range_profile": "zcash-transparent-range-v2"
+  },
+  "filesystems": {
+    "/srv/transparent-data-v10/publications": {
+      "size_bytes": 206900281344,
+      "available_bytes": 66086518784,
+      "available_percent": 31.941241623602302
+    },
+    "/srv/zakura/transparent-event-data-v2": {
+      "size_bytes": 1098974756864,
+      "available_bytes": 250198859776,
+      "available_percent": 22.766570224957636
+    }
+  },
+  "sealed_hardlink_probe": {
+    "file": "/srv/zakura/transparent-publications/initial/269c09a8a1f0a3df1a97a227edd98b5a269a262276da3909d41879dc4e41268c/directory.0.bin",
+    "links": 5,
+    "inode": 2915597,
+    "bytes": 134217728
+  },
+  "rollback_root_retained": true
+}

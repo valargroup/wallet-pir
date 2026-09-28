@@ -48,7 +48,21 @@
     "exact": 124,
     "failed": 0
   },
-  "four_client_load": "in progress; final report to follow",
+  "four_client_load": {
+    "started_utc": "2026-09-28T22:19:59.294162+00:00",
+    "completed_utc": "2026-09-28T22:31:49.547981+00:00",
+    "concurrency": 4,
+    "dispatch_duration_seconds": 300,
+    "actual_seconds": 710.181912115,
+    "attempts": 47,
+    "completed": 46,
+    "exact": 46,
+    "failed": 0,
+    "query_budget_incomplete": 1,
+    "private_query_limit_per_sync": 6000,
+    "http_deadline_seconds": 600,
+    "http_max_attempts": 3
+  },
   "host_facts": "deployment/host-facts.json",
   "build": "publication/bin/build.json",
   "operator_commands": [
@@ -56,5 +70,10 @@
     "deployment/cutover-commands-2.jsonl"
   ],
   "rollback_rehearsal": "not performed after the successful cutover",
-  "consumer_scope": "wallet-pir reference client and SQLite store; no downstream application qualification"
+  "consumer_scope": "wallet-pir reference client and SQLite store; no downstream application qualification",
+  "resource_observations": "observation-summary.json",
+  "post_load_canonical_height": 3499638,
+  "transient_public_init_probe_503": "2026-09-28T22:28:48.730461+00:00; recovered next 5-second sample; retained transition log",
+  "completion_check": "deployment/completion-status.json",
+  "evidence_checksums": "SHA256SUMS"
 }

@@ -54,7 +54,12 @@ warm workers with binary SHA-256
 canonical public height 3,499,627 against the local node. The two initial tail
 certificates passed during publication; the moving recent tail is covered by the
 geometry's data-independent 128-bit correctness bound. The publisher continued
-advancing after activation.
+advancing after activation. The post-load check repeated these checks at canonical
+height 3,499,638; public operator routes remained 404.
+The [completion check](deployment/completion-status.json) at 22:43:27 UTC found
+all six workers warm, both origins identical and the publisher serving height
+3,499,641. The four coordinator services had no automatic restarts. Temporary
+monitors were stopped and the v9 rollback root remained present.
 
 The [public regression](regression/report.json) passed **11/11 cases and 68/68
 checkpoints**. It issued **2,319 logical HTTP requests and 2,319 attempts**, with
@@ -64,8 +69,13 @@ the bench host; [their checksums and paths](load/sqlite-artifacts.json) are reta
 without committing 464 MiB of largely repeated cached public artifacts.
 
 The [one-client smoke](load/smoke.json) completed **124/124 exact synthetic range
-syncs**, zero failures. The four-client, nine-class bounded run is in progress;
-its final result and resource summary will be appended after completion. The
+syncs**, zero failures. The [four-client, nine-class bounded run](load/README.md) finished with **47 attempts,
+46 completed and exact, zero failed, and one query-budget incomplete**, in
+710.182 s. Eight classes used less logical payload than v9; one-day catch-up
+used 17.96% more. Minimum sampled available memory was 73.84%, maximum reported
+freshness 23.249 s, with no OOM, automatic restarts or cache-write failures. One
+independent init probe saw a transient 503 during publication and recovered at
+the next five-second sample; both map endpoints stayed consistent. The
 harness counts unresolved-spends-only synthetic ranges as covered while the wallet
 still withholds its anchor; the independent regression verifies actual ledger
 and checkpoint expectations.
@@ -77,7 +87,9 @@ The new initial set lives physically at
 `/srv/transparent-data-v10/publications/initial`. The logical publication root
 `/srv/zakura/transparent-publications` points to its parent. An actual systemd
 `ProtectSystem=strict` hard-link probe passed, preserving sealed-byte sharing
-between revisions. Every relocated file was hashed and fsynced first.
+between revisions. Every relocated file was hashed and fsynced first. The final
+sealed-file check found five hard links; publication and journal filesystems
+retained 31.94% and 22.77% available disk space respectively.
 
 V9 is retained at `/srv/zakura/transparent-publications-v9-8e69ea75` and
 `/opt/transparent-publisher/state-v9-8e69ea75`, with coordinator rollback material
@@ -94,3 +106,6 @@ depend on the event mix. Schema v9 clients fail closed on v10. This work qualifi
 the wallet-pir reference client and SQLite store; downstream application upgrade
 and lifecycle qualification are separate. A sustained capacity envelope, a
 controlled paired CPU/latency study and broader recovery exercises remain open.
+
+[SHA256SUMS](SHA256SUMS) covers every retained file in this bundle except itself,
+including the compressed raw observation traces and nested checksum files.
