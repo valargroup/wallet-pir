@@ -47,4 +47,9 @@ review recommendations, projected costs, privacy constraints, and evaluation
 sequence for ordinary wallets waking after up to six months. It is a proposed
 design, not a replacement for accepted deployment settings or measured results.
 
+[Entry layout update](architecture_entry_update.md) records the current v7
+directory and page record layouts and the proposed replacement of exact raw
+scripts with 14-byte salted cryptographic tags. It is an unaccepted schema proposal,
+not an implementation or deployment claim.
+
 [Parent-filter evaluation](parent-filter-evaluation.md) documents the isolated hierarchy benchmark, recent-first selection rule, and explicit opt-in privacy change. The later [production artifact rollout](../evidence/parent-filters-production-2026-09-08/README.md) records HTTPS verification and the bounded production recovery canary.
