@@ -1,0 +1,10 @@
+{
+  "notes": [
+    "anchor 3499341 -> 3499341",
+    "cutoff 3262749 -> 3262749",
+    "map 99706d5afc6090e2... -> 3780f252bde6256f...",
+    "same-anchor schema replacement: case definitions and expectations must be identical"
+  ],
+  "blocking": [],
+  "review": []
+}

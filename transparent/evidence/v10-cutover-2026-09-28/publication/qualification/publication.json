@@ -1,0 +1,33 @@
+{
+  "data_dir": "/srv/zakura/transparent-event-snapshot-v10-8e69ea75",
+  "elapsed_seconds": 4823.019744571,
+  "generated_at": "2026-09-28T21:05:23.358433913+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3499486,
+    "events_stored": 353799194,
+    "start_height": 0
+  },
+  "network": "main",
+  "output": "/srv/zakura/transparent-shards-v10-full",
+  "published": {
+    "anchor_hash": "0000000000941f2c717bea13c62af6ef787e4a5b9e3fd90fd304d746b10d63de",
+    "archive_geometry": "archive-wide",
+    "archive_policy": "SealPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, page_rows: Limit { target: 63488, capacity: 65536 } }",
+    "archive_shards": 77,
+    "map_bytes": 58415,
+    "map_sha256": "8e6560cea576f8ff885e6d14761406ea14cb1d19a9bf7d6108fd916b5d09ea1b",
+    "multi_segment_shards": 0,
+    "recent_from": 3262749,
+    "recent_geometry": "recent-4k-8k",
+    "recent_policy": "SealPolicy { scripts: Limit { target: 203630, capacity: 237568 }, page_rows: Limit { target: 7936, capacity: 8192 } }",
+    "recent_shards": 9,
+    "shards": 86,
+    "start_height": 0,
+    "tail_revision": 0,
+    "through": 3499341
+  },
+  "schema": "transparent-publication-v1",
+  "shard_schema": "transparent-shard-v10",
+  "tool_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82"
+}

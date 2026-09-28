@@ -1,0 +1,173 @@
+{
+  "checks": [
+    {
+      "check": "load",
+      "detail": "86 shards, 86 revisions held, every manifest, table segment and filter verified in 169.1s",
+      "ok": true
+    },
+    {
+      "check": "coverage-contiguous",
+      "detail": "0-3499341 across 86 shards",
+      "ok": true
+    },
+    {
+      "check": "coverage-start",
+      "detail": "map starts at 0, expected 0",
+      "ok": true
+    },
+    {
+      "check": "coverage-through",
+      "detail": "last shard ends at Some(3499341), expected 3499341",
+      "ok": true
+    },
+    {
+      "check": "anchor-hash",
+      "detail": "terminal block Some(\"0000000000941f2c717bea13c62af6ef787e4a5b9e3fd90fd304d746b10d63de\"), expected 0000000000941f2c717bea13c62af6ef787e4a5b9e3fd90fd304d746b10d63de",
+      "ok": true
+    },
+    {
+      "check": "tiers",
+      "detail": "77 archive-wide shards below 3262749, 9 recent-4k-8k shards from it",
+      "ok": true
+    },
+    {
+      "check": "map-sha256",
+      "detail": "shards.json digests to 8e6560cea576f8ff885e6d14761406ea14cb1d19a9bf7d6108fd916b5d09ea1b, expected 8e6560cea576f8ff885e6d14761406ea14cb1d19a9bf7d6108fd916b5d09ea1b",
+      "ok": true
+    },
+    {
+      "check": "rebuild-0",
+      "detail": "0-18158 4439418 events, filter same, directory same, pages same, 8.9s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-15",
+      "detail": "192031-200465 4522953 events, filter same, directory same, pages same, 10.3s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-18",
+      "detail": "218112-226704 4587823 events, filter same, directory same, pages same, 10.4s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-34",
+      "detail": "332464-337026 4111982 events, filter same, directory same, pages same, 9.8s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-38",
+      "detail": "357530-364464 3928601 events, filter same, directory same, pages same, 8.3s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-61",
+      "detail": "1549337-1594370 4306306 events, filter same, directory same, pages same, 11.1s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-84",
+      "detail": "3478774-3494910 643136 events, filter same, directory same, pages same, 1.4s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-85",
+      "detail": "3494911-3499341 115823 events, filter same, directory same, pages same, 0.4s",
+      "ok": true
+    }
+  ],
+  "failures": 0,
+  "generated_at": "2026-09-28T21:09:14.426976761+00:00",
+  "publication": "/opt/transparent-v10-8e69ea75/qualification/publication.json",
+  "schema": "transparent-shard-verify-v1",
+  "set": {
+    "geometries": [
+      "archive-wide",
+      "recent-4k-8k"
+    ],
+    "map_file_sha256": "8e6560cea576f8ff885e6d14761406ea14cb1d19a9bf7d6108fd916b5d09ea1b",
+    "map_served_sha256": "3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f",
+    "multi_segment_shards": [],
+    "rebuilt": [
+      {
+        "directory": true,
+        "events": 4439418,
+        "filter": true,
+        "geometry": "archive-wide",
+        "pages": true,
+        "seconds": 8.862520542,
+        "shard_id": 0
+      },
+      {
+        "directory": true,
+        "events": 4522953,
+        "filter": true,
+        "geometry": "archive-wide",
+        "pages": true,
+        "seconds": 10.281540816,
+        "shard_id": 15
+      },
+      {
+        "directory": true,
+        "events": 4587823,
+        "filter": true,
+        "geometry": "archive-wide",
+        "pages": true,
+        "seconds": 10.43340944,
+        "shard_id": 18
+      },
+      {
+        "directory": true,
+        "events": 4111982,
+        "filter": true,
+        "geometry": "archive-wide",
+        "pages": true,
+        "seconds": 9.776920044,
+        "shard_id": 34
+      },
+      {
+        "directory": true,
+        "events": 3928601,
+        "filter": true,
+        "geometry": "archive-wide",
+        "pages": true,
+        "seconds": 8.270997448,
+        "shard_id": 38
+      },
+      {
+        "directory": true,
+        "events": 4306306,
+        "filter": true,
+        "geometry": "archive-wide",
+        "pages": true,
+        "seconds": 11.111035284,
+        "shard_id": 61
+      },
+      {
+        "directory": true,
+        "events": 643136,
+        "filter": true,
+        "geometry": "recent-4k-8k",
+        "pages": true,
+        "seconds": 1.416615574,
+        "shard_id": 84
+      },
+      {
+        "directory": true,
+        "events": 115823,
+        "filter": true,
+        "geometry": "recent-4k-8k",
+        "pages": true,
+        "seconds": 0.416680392,
+        "shard_id": 85
+      }
+    ],
+    "revisions_held": 86,
+    "shards": 86,
+    "start_height": 0,
+    "terminal_block_hash": "0000000000941f2c717bea13c62af6ef787e4a5b9e3fd90fd304d746b10d63de",
+    "through": 3499341
+  },
+  "shard_dir": "/srv/zakura/transparent-shards-v10-full",
+  "tool_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82"
+}

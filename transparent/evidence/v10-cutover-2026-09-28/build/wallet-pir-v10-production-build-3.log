@@ -1,0 +1,13 @@
+   Compiling libm v0.2.16
+   Compiling crunchy v0.2.4
+   Compiling clang-sys v1.9.1
+error: failed to run custom build command for `clang-sys v1.9.1`
+
+Caused by:
+  process didn't exit successfully: `/tmp/wallet-pir-v10-production-target/release/build/clang-sys-2f9ec1649360549c/build-script-build` (exit status: 101)
+  --- stderr
+
+  thread 'main' (996710) panicked at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.9.1/build/dynamic.rs:229:45:
+  called `Result::unwrap()` on an `Err` value: "couldn't find any valid shared libraries matching: ['libclang.so', 'libclang-*.so'], set the `LIBCLANG_PATH` environment variable to a path where one of these files can be found (invalid: [])"
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+warning: build failed, waiting for other jobs to finish...
