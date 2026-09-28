@@ -260,6 +260,20 @@ when a pending observed block exceeds 30 seconds. Prometheus alert rules are in
 The production deployment key is supplied by the GitHub Environment and stored
 only in the controller's root-readable runtime credential directory.
 
+### Deployment identity and coordinator routing
+
+- **Deploy identity.** The transparent router and every worker must authorise
+  the public half of `WALLET_PIR_DEPLOY_SSH_KEY` before that secret is rotated.
+  Publisher shadow mode now checks every host first and changes nothing if one
+  refuses it. On 2026-09-27 a rotated key was authorised nowhere; append the new
+  key and verify from the coordinator before removing the old one.
+- **Coordinator routing.** Public transparent metadata depends on the
+  continuous-publication route in the coordinator Caddyfile. Enhance deploys
+  render that file from `ops/deploy/coordinator/Caddyfile`, which carries the
+  route; `ops/tests/test_coordinator_caddyfile.py` fails if it is removed. After
+  any coordinator deploy, confirm that
+  `https://transparent-pir.valargroup.dev/v1/shards/init` returns 200.
+
 ## Hardening rollout gate
 
 Continuous-publication recent worker upgrades preserve the 5.5 GiB MemoryHigh
