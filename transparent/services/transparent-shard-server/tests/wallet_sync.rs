@@ -239,6 +239,7 @@ fn publish_profiled(
             end_height: end,
             parent_block_hash: hash_at(start - 1).to_display_hex(),
             terminal_block_hash: hash_at(end).to_display_hex(),
+            tag_salt_counter: built.tag_salt_counter,
             parent_manifest_digest: parent_digest.clone(),
             sealed: shard_id + 1 < SHARDS,
             revision: if shard_id + 1 == SHARDS {
@@ -2161,30 +2162,15 @@ async fn a_choice_table_costs_one_query_per_script_whatever_the_script() {
     }
 }
 
-/// A table that does not route every entry to its row would make a wallet
-/// read a present script as absent, so the server refuses to load it, and
-/// likewise one that does not decode or indexes the wrong number of scripts.
+/// A choice table that does not decode, or that indexes a different number
+/// of scripts than the directory holds, is refused. Rows store tags, so a
+/// flipped bit is not recoverable from the row; the builder checks routes
+/// while it still has the raw scripts.
 #[test]
-fn a_server_refuses_a_choice_table_that_misroutes_or_does_not_match() {
+fn a_server_refuses_a_choice_table_that_does_not_match() {
     use transparent_shard::manifest::encode_directory_choice;
-    use transparent_shard::records::decode_directory_row;
-    use transparent_shard::{candidate_rows, ChoiceTable};
+    use transparent_shard::ChoiceTable;
 
-    // Every entry sent to the candidate it is not in.
-    let misrouting = |id: u64, built: &BuiltShard| {
-        let rows = built.geometry.directory_rows * u64::from(built.directory_segments());
-        let mut entries: Vec<(Vec<u8>, u8)> = Vec::new();
-        for row in 0..rows {
-            for entry in decode_directory_row(built.directory_row(row)).unwrap() {
-                let candidates = candidate_rows(id, &entry.script, rows);
-                entries.push((entry.script, u8::from(candidates[0] == row)));
-            }
-        }
-        let entries: Vec<(&[u8], u8)> = entries.iter().map(|(s, b)| (s.as_slice(), *b)).collect();
-        Some(encode_directory_choice(
-            &ChoiceTable::build(id, &entries).unwrap(),
-        ))
-    };
     let short = |id: u64, _: &BuiltShard| {
         Some(encode_directory_choice(
             &ChoiceTable::build(id, &[(&[0x51][..], 0)]).unwrap(),
@@ -2195,10 +2181,9 @@ fn a_server_refuses_a_choice_table_that_misroutes_or_does_not_match() {
     let per_shard = chain();
     for (name, choose) in [
         (
-            "misrouting",
-            &misrouting as &dyn Fn(u64, &BuiltShard) -> Option<String>,
+            "short",
+            &short as &dyn Fn(u64, &BuiltShard) -> Option<String>,
         ),
-        ("short", &short),
         ("garbage", &garbage),
     ] {
         let dir = tempfile::tempdir().unwrap();

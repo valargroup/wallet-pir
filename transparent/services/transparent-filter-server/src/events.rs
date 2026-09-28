@@ -31,9 +31,14 @@ use std::path::{Path, PathBuf};
 use transparent_events::{EventError, TransparentEvent, EVENT_BYTES};
 use transparent_filter::{BlockHash, ScriptBytes};
 
-/// Bump when the on-disk layout changes. A mismatch sets the directory aside
-/// and re-ingests, as the filter store does.
-const STORE_VERSION: u16 = 1;
+/// Bump when the on-disk layout changes.
+///
+/// Version 2 is the 87-byte event codec. A version-1 journal is refused and
+/// left in place: opening it must not move the production journal aside.
+/// Rebuild into a new directory. A same-version journal whose chain identity
+/// or start height differs is still set aside, because that journal was
+/// written by this codec and can be re-derived.
+const STORE_VERSION: u16 = 2;
 
 const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;
 
@@ -97,9 +102,10 @@ fn truncate(path: &Path, len: u64) -> Result<(), EventStoreError> {
 impl EventStore {
     /// Opens or creates the store, discarding anything past the checkpoint.
     ///
-    /// An existing store whose version, chain identity or start height differs
-    /// is moved aside and a fresh one begun. The archive node can re-derive
-    /// everything, and a restart must not require an operator on the host.
+    /// An existing store whose chain identity or start height differs, at this
+    /// version, is moved aside and a fresh one begun. A different version is
+    /// refused and left untouched: the production journal is too large to
+    /// discard because a newer binary restarted in its directory.
     pub fn open(
         dir: impl AsRef<Path>,
         genesis_hash: &str,
@@ -124,6 +130,14 @@ impl EventStore {
         let meta_path = dir.join("meta.json");
         if meta_path.exists() {
             let found: Result<Meta, _> = serde_json::from_slice(&std::fs::read(&meta_path)?);
+            if let Ok(found) = &found {
+                if found.version != STORE_VERSION {
+                    return Err(EventStoreError::Invariant(format!(
+                        "journal is version {}, this build reads {STORE_VERSION} and will not move it aside; rebuild into a new directory",
+                        found.version
+                    )));
+                }
+            }
             if !matches!(&found, Ok(found) if *found == wanted) {
                 let label = match &found {
                     Ok(found) => format!("v{}", found.version),
@@ -618,7 +632,51 @@ mod tests {
         }
         let fresh = EventStore::open(dir.path(), GENESIS, START + 5).unwrap();
         assert_eq!(fresh.covered_through(), None);
-        assert!(dir.path().join("superseded-v1").join("events.bin").exists());
+        assert!(dir
+            .path()
+            .join(format!("superseded-v{STORE_VERSION}"))
+            .join("events.bin")
+            .exists());
+    }
+
+    /// A version-1 production journal must survive a restart of this binary.
+    /// Setting it aside would stop continuous publication until a full re-ingest.
+    #[test]
+    fn a_version_1_journal_is_refused_and_left_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta = Meta {
+            version: 1,
+            genesis_hash: GENESIS.to_string(),
+            start_height: START,
+        };
+        std::fs::write(
+            dir.path().join("meta.json"),
+            serde_json::to_vec(&meta).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("events.bin"), b"keep").unwrap();
+        std::fs::write(dir.path().join("blocks.bin"), b"keep").unwrap();
+        std::fs::write(dir.path().join("checkpoint.bin"), [0u8; 16]).unwrap();
+        let error = match EventStore::open(dir.path(), GENESIS, START) {
+            Err(error) => error,
+            Ok(_) => panic!("a version-1 journal was opened"),
+        };
+        assert!(
+            error.to_string().contains("will not move it aside"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("events.bin")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("blocks.bin")).unwrap(),
+            b"keep"
+        );
+        assert!(!dir.path().join("superseded-v1").exists());
+        let still: Meta =
+            serde_json::from_slice(&std::fs::read(dir.path().join("meta.json")).unwrap()).unwrap();
+        assert_eq!(still.version, 1);
     }
 
     /// A reader must never disturb the journal it is reading. `open` sets an

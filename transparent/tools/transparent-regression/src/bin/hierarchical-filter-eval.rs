@@ -679,7 +679,7 @@ mod seed_tests {
         fs::write(journal.join("checkpoint.bin"), checkpoint).unwrap();
         write_json(
             journal.join("meta.json"),
-            &json!({"version":1,"genesis_hash":genesis,"start_height":0}),
+            &json!({"version":2,"genesis_hash":genesis,"start_height":0}),
         )
         .unwrap();
         let child = ShardMapEntry {

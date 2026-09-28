@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v8";
+pub const SCHEMA: &str = "transparent-shard-v9";
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -122,6 +122,12 @@ pub struct ShardManifest {
     pub parent_block_hash: String,
     /// The block at `end_height`, in display hex.
     pub terminal_block_hash: String,
+    /// Counter mixed into the script-tag salt.
+    ///
+    /// Starts at 0. The builder increments it only when a tag collision
+    /// forces a rebuild. Bound by the manifest digest. The wallet recomputes
+    /// the salt from `shard_id`, `terminal_block_hash` and this counter.
+    pub tag_salt_counter: u32,
     /// Digest of the preceding shard's manifest, or empty for shard zero.
     ///
     /// This is what makes the shard set a committed sequence rather than a bag
@@ -326,6 +332,7 @@ mod tests {
             end_height: 3_430_000,
             parent_block_hash: "11".repeat(32),
             terminal_block_hash: "22".repeat(32),
+            tag_salt_counter: 0,
             parent_manifest_digest: "33".repeat(32),
             sealed: true,
             revision: 0,
@@ -339,9 +346,9 @@ mod tests {
             layout: ManifestLayout {
                 max_script_bytes: 40,
                 inline_events: 2,
-                events_per_page: 41,
+                events_per_page: 46,
                 page_row_header_bytes: 4,
-                page_entry_header_bytes: 64,
+                page_entry_header_bytes: 34,
                 directory_choices: 2,
             },
             filter_hash: "44".repeat(32),

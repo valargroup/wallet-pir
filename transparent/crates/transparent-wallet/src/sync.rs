@@ -819,11 +819,13 @@ pub fn sync_into<S: WalletStore>(
                 transport,
                 &mut charges,
                 limits,
-                |store, prepared, transport, charges, _| {
+                |store, prepared, transport, charges, manifest| {
+                    let salt = tag_salt_of(manifest)?;
                     finish_pages(
                         store,
                         &entry,
                         &items,
+                        &salt,
                         prepared,
                         transport,
                         charges,
@@ -1315,12 +1317,14 @@ fn read_shard_into<S: WalletStore>(
             // Validated when the manifest was verified; decoded again here
             // rather than carried, since it is a few kilobytes.
             let choice = directory_choice(manifest)?;
+            let salt = tag_salt_of(manifest)?;
             retrieve_shard_into(
                 store,
                 entry,
                 &matched_scripts,
                 &unmatched,
                 choice.as_ref(),
+                &salt,
                 prepared,
                 transport,
                 charges,
@@ -1749,6 +1753,22 @@ fn check_continuation(
     Ok(())
 }
 
+/// Salt the wallet derives from a verified manifest. Records are accepted
+/// only under this salt.
+fn tag_salt_of(manifest: &ShardManifest) -> Result<[u8; 32], SyncError> {
+    let terminal = BlockHash::from_display_hex(&manifest.terminal_block_hash).map_err(|error| {
+        SyncError::Invalid(format!(
+            "shard {} terminal block hash: {error}",
+            manifest.shard_id
+        ))
+    })?;
+    Ok(transparent_shard::tag_salt(
+        manifest.shard_id,
+        &terminal,
+        manifest.tag_salt_counter,
+    ))
+}
+
 /// The directory phase for one shard: both candidate rows for every matched
 /// script, inline events committed, page work recorded; then the pages.
 #[allow(clippy::too_many_arguments)]
@@ -1758,6 +1778,7 @@ fn retrieve_shard_into<S: WalletStore>(
     matched: &[Vec<u8>],
     unmatched: &[Vec<u8>],
     choice: Option<&transparent_shard::ChoiceTable>,
+    salt: &[u8; 32],
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
@@ -1783,6 +1804,7 @@ fn retrieve_shard_into<S: WalletStore>(
             store,
             entry,
             &pending,
+            salt,
             clients,
             transport,
             charges,
@@ -1837,6 +1859,7 @@ fn retrieve_shard_into<S: WalletStore>(
         // script landed, which is a function of the script. Candidates are
         // taken over the shard's whole logical row space; each names one row
         // within a segment, and every segment answers it.
+        let wanted = transparent_shard::script_tag(salt, script);
         let mut found: Option<(u64, DirectoryEntry)> = None;
         let rows = geometry.directory_rows * entry.directory_segments as u64;
         let candidates = candidate_rows(shard_id, script, rows);
@@ -1856,10 +1879,10 @@ fn retrieve_shard_into<S: WalletStore>(
             )?;
             for raw in answers {
                 for candidate in decode_directory_row(&raw)? {
-                    // The row is selected by a hash, and a hash can collide or
-                    // be misplaced; the segment is not named at all. The exact
-                    // script bytes are what settle both.
-                    if candidate.script == *script {
+                    // The row is selected by a hash of the raw script. The tag
+                    // derived from this manifest's salt is what settles a hit.
+                    // A tag from any other salt does not match.
+                    if candidate.tag == wanted {
                         match &found {
                             // The two candidate hashes can name the same row
                             // (one script in 8,192 at recent-8k). The row is
@@ -1869,7 +1892,7 @@ fn retrieve_shard_into<S: WalletStore>(
                             Some((seen_row, _)) if *seen_row == row => {}
                             Some(_) => {
                                 return Err(SyncError::Invalid(format!(
-                                    "shard {shard_id} holds a script twice"
+                                    "shard {shard_id} holds a script tag twice"
                                 )));
                             }
                             None => found = Some((row, candidate)),
@@ -1885,32 +1908,24 @@ fn retrieve_shard_into<S: WalletStore>(
             // wasted work rather than errors; coverage still advances.
             None => covered.push(script.clone()),
             Some(found) => {
-                if found.total_events < found.inline.len() as u32
-                    || (found.page_count == 0 && found.total_events != found.inline.len() as u32)
-                {
-                    return Err(SyncError::Invalid(
-                        "inline directory total disagrees with records".into(),
-                    ));
-                }
                 for event in &found.inline {
                     events.push(StoredEvent {
-                        script: found.script.clone(),
+                        script: script.clone(),
                         event: *event,
                         shard_id,
                         revision_digest: revision.to_string(),
                     });
                 }
-                if found.page_count > 0 {
+                if let Some(base) = found.page_base() {
                     pending_upsert.push(PendingPages {
                         validated_events: found.inline.len() as u32,
                         target_anchor: Some(target_anchor.clone()),
                         id: None,
                         shard_id,
                         revision_digest: revision.to_string(),
-                        script: found.script.clone(),
-                        first_page: found.first_page,
-                        page_count: found.page_count,
-                        total_events: found.total_events,
+                        script: script.clone(),
+                        first_page: base,
+                        page_count: 0,
                         inline: found.inline.clone(),
                         next_ordinal: 0,
                         attempts: 0,
@@ -1962,6 +1977,7 @@ fn retrieve_shard_into<S: WalletStore>(
         store,
         entry,
         &owed,
+        salt,
         clients,
         transport,
         charges,
@@ -1979,6 +1995,7 @@ fn finish_pages<S: WalletStore>(
     store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
     owed: &[PendingPages],
+    salt: &[u8; 32],
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
@@ -2025,13 +2042,19 @@ fn finish_pages<S: WalletStore>(
         charges,
     )?;
     for item in owed {
+        let wanted = transparent_shard::script_tag(salt, &item.script);
         let mut recovered = item.validated_events;
-        if recovered > item.total_events {
-            return Err(SyncError::Invalid(
-                "pending validation count exceeds directory total".into(),
-            ));
-        }
-        for ordinal in item.next_ordinal..item.page_count {
+        let mut ordinal = item.next_ordinal;
+        let mut page_count = item.page_count;
+        loop {
+            if page_count != 0 && ordinal >= page_count {
+                break;
+            }
+            if page_count == 0 && ordinal != 0 {
+                return Err(SyncError::Invalid(format!(
+                    "shard {shard_id} page extent is unknown past its first fragment"
+                )));
+            }
             if let Some(reason) = budget_stopped(charges, limits) {
                 return Ok(Some(Completion::Incomplete {
                     reason,
@@ -2072,17 +2095,18 @@ fn finish_pages<S: WalletStore>(
             let mut fragment = None;
             for raw in answers {
                 for candidate in decode_page_row(&raw)? {
-                    if candidate.script == item.script
-                        && candidate.ordinal == ordinal
-                        && candidate.fragment_count == item.page_count
-                    {
-                        if fragment.is_some() {
-                            return Err(SyncError::Invalid(format!(
-                                "shard {shard_id} holds page {row} twice"
-                            )));
-                        }
-                        fragment = Some(candidate);
+                    if candidate.tag != wanted || candidate.ordinal != ordinal {
+                        continue;
                     }
+                    if page_count != 0 && candidate.fragment_count != page_count {
+                        continue;
+                    }
+                    if fragment.is_some() {
+                        return Err(SyncError::Invalid(format!(
+                            "shard {shard_id} holds page {row} twice"
+                        )));
+                    }
+                    fragment = Some(candidate);
                 }
             }
             let fragment = fragment.ok_or_else(|| {
@@ -2090,14 +2114,24 @@ fn finish_pages<S: WalletStore>(
                     "shard {shard_id} page {row} does not belong to the entry that located it"
                 ))
             })?;
+            if page_count == 0 {
+                if fragment.fragment_count == 0 || ordinal != 0 {
+                    return Err(SyncError::Invalid(format!(
+                        "shard {shard_id} page {row} has no fragment count"
+                    )));
+                }
+                page_count = fragment.fragment_count;
+            }
+            let last = ordinal + 1 == page_count;
+            let full = transparent_shard::EVENTS_PER_PAGE as usize;
+            if !last && fragment.events.len() != full {
+                return Err(SyncError::Invalid(format!(
+                    "shard {shard_id} page {row} is not a full fragment"
+                )));
+            }
             recovered = recovered
                 .checked_add(fragment.events.len() as u32)
                 .ok_or_else(|| SyncError::Invalid("page event count overflow".into()))?;
-            if recovered > item.total_events {
-                return Err(SyncError::Invalid(
-                    "pages exceed the directory event total".into(),
-                ));
-            }
             let events: Vec<StoredEvent> = fragment
                 .events
                 .iter()
@@ -2108,16 +2142,8 @@ fn finish_pages<S: WalletStore>(
                     revision_digest: revision.to_string(),
                 })
                 .collect();
-            let last = ordinal + 1 == item.page_count;
-            // The directory promised a total; the pages must account for it,
-            // or the wallet cannot tell a complete history from a truncated one.
-            if last && recovered != item.total_events {
-                return Err(SyncError::Invalid(format!(
-                    "shard {shard_id} yielded {recovered} events where the directory promised {}",
-                    item.total_events
-                )));
-            }
             let mut progressed = item.clone();
+            progressed.page_count = page_count;
             progressed.next_ordinal = ordinal + 1;
             progressed.validated_events = recovered;
             progressed.attempts += 1;
@@ -2146,6 +2172,10 @@ fn finish_pages<S: WalletStore>(
                     },
                 },
             )?;
+            ordinal += 1;
+            if last {
+                break;
+            }
         }
     }
     Ok(None)
@@ -2478,6 +2508,7 @@ mod tests {
             end_height: entry.end_height,
             parent_block_hash: entry.parent_block_hash.clone(),
             terminal_block_hash: entry.terminal_block_hash.clone(),
+            tag_salt_counter: 0,
             parent_manifest_digest: parent.to_string(),
             sealed: entry.sealed,
             revision: entry.revision,

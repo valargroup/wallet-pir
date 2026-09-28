@@ -14,7 +14,7 @@
 //!
 //! # What is deliberately absent
 //!
-//! There is no block hash in a record. It would cost 32 bytes of every 96, and
+//! There is no block hash in a record. It would cost 32 bytes of every 87, and
 //! it would be worse than useless: a wallet that took an event's block hash
 //! from the server could be handed an event placed on a branch it has not
 //! accepted. The height is in the record, and the wallet resolves height to
@@ -34,36 +34,35 @@ use std::fmt;
 /// fixed row size and a PIR response has fixed geometry, so a variable-width
 /// event would leak the shape of a history through the number of rows needed to
 /// hold it.
-pub const EVENT_BYTES: usize = 96;
+pub const EVENT_BYTES: usize = 87;
 
 const KIND_RECEIVE: u8 = 0;
 const KIND_SPEND: u8 = 1;
 
-const FLAG_COINBASE: u8 = 1 << 0;
-const KNOWN_FLAGS: u8 = FLAG_COINBASE;
+/// Bit 0 of the flags byte. Receive is clear, spend is set.
+const FLAG_SPEND: u8 = 1 << 0;
+/// Bit 1 of the flags byte. Valid only on a receive.
+const FLAG_COINBASE: u8 = 1 << 1;
+const KNOWN_FLAGS: u8 = FLAG_SPEND | FLAG_COINBASE;
 
-// Field offsets within a record.
-const OFF_KIND: usize = 0;
-const OFF_FLAGS: usize = 1;
-const OFF_TX_INDEX: usize = 2;
-const OFF_HEIGHT: usize = 4;
-const OFF_VALUE: usize = 8;
-const OFF_TXID: usize = 16;
-const OFF_INDEX: usize = 48;
-const OFF_SPENT_TXID: usize = 52;
-const OFF_SPENT_INDEX: usize = 84;
-const OFF_RESERVED: usize = 88;
+// Field offsets within a record. Packed, with no alignment padding.
+const OFF_FLAGS: usize = 0;
+const OFF_TX_INDEX: usize = 1;
+const OFF_HEIGHT: usize = 3;
+const OFF_VALUE: usize = 7;
+const OFF_TXID: usize = 15;
+const OFF_INDEX: usize = 47;
+const OFF_SPENT_TXID: usize = 51;
+const OFF_SPENT_INDEX: usize = 83;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EventError {
     #[error("event record is {0} bytes, expected {EVENT_BYTES}")]
     Length(usize),
-    #[error("unknown event kind {0}")]
-    Kind(u8),
     #[error("unknown flag bits set: {0:#04x}")]
     Flags(u8),
-    #[error("reserved bytes are not zero")]
-    Reserved,
+    #[error("an all-zero event record is not a valid event")]
+    Empty,
     #[error("a {kind} event must not set {field}")]
     UnusedField {
         kind: &'static str,
@@ -198,7 +197,6 @@ impl TransparentEvent {
         let mut bytes = [0u8; EVENT_BYTES];
         match self {
             TransparentEvent::Receive(event) => {
-                bytes[OFF_KIND] = KIND_RECEIVE;
                 if event.coinbase {
                     bytes[OFF_FLAGS] = FLAG_COINBASE;
                 }
@@ -210,17 +208,20 @@ impl TransparentEvent {
                 bytes[OFF_INDEX..OFF_SPENT_TXID].copy_from_slice(&event.output_index.to_le_bytes());
             }
             TransparentEvent::Spend(event) => {
-                bytes[OFF_KIND] = KIND_SPEND;
+                bytes[OFF_FLAGS] = FLAG_SPEND;
                 bytes[OFF_TX_INDEX..OFF_HEIGHT]
                     .copy_from_slice(&event.transaction_index.to_le_bytes());
                 bytes[OFF_HEIGHT..OFF_VALUE].copy_from_slice(&event.height.to_le_bytes());
                 bytes[OFF_TXID..OFF_INDEX].copy_from_slice(&event.spending_txid.0);
                 bytes[OFF_INDEX..OFF_SPENT_TXID].copy_from_slice(&event.input_index.to_le_bytes());
                 bytes[OFF_SPENT_TXID..OFF_SPENT_INDEX].copy_from_slice(&event.spent_txid.0);
-                bytes[OFF_SPENT_INDEX..OFF_RESERVED]
-                    .copy_from_slice(&event.spent_output_index.to_le_bytes());
+                bytes[OFF_SPENT_INDEX..].copy_from_slice(&event.spent_output_index.to_le_bytes());
             }
         }
+        debug_assert!(
+            bytes.iter().any(|byte| *byte != 0),
+            "an encoder must not emit the empty sentinel"
+        );
         bytes
     }
 
@@ -235,8 +236,11 @@ impl TransparentEvent {
         if bytes.len() != EVENT_BYTES {
             return Err(EventError::Length(bytes.len()));
         }
-        if bytes[OFF_RESERVED..].iter().any(|byte| *byte != 0) {
-            return Err(EventError::Reserved);
+        // Directory inline slots use this pattern as the empty sentinel. A
+        // non-coinbase receive still has flags 0, so kind-in-flags does not
+        // create the sentinel by itself.
+        if bytes.iter().all(|byte| *byte == 0) {
+            return Err(EventError::Empty);
         }
         let flags = bytes[OFF_FLAGS];
         if flags & !KNOWN_FLAGS != 0 {
@@ -257,52 +261,46 @@ impl TransparentEvent {
                 .try_into()
                 .expect("32 bytes"),
         );
-        let spent_output_index = u32::from_le_bytes(
-            bytes[OFF_SPENT_INDEX..OFF_RESERVED]
-                .try_into()
-                .expect("4 bytes"),
-        );
+        let spent_output_index =
+            u32::from_le_bytes(bytes[OFF_SPENT_INDEX..].try_into().expect("4 bytes"));
+        let spend = flags & FLAG_SPEND != 0;
 
-        match bytes[OFF_KIND] {
-            KIND_RECEIVE => {
-                if spent_txid != Txid([0; 32]) || spent_output_index != 0 {
-                    return Err(EventError::UnusedField {
-                        kind: "receive",
-                        field: "the consumed outpoint",
-                    });
-                }
-                Ok(TransparentEvent::Receive(ReceiveEvent {
-                    height,
-                    txid,
-                    transaction_index,
-                    output_index: index,
-                    value,
-                    coinbase: flags & FLAG_COINBASE != 0,
-                }))
+        if !spend {
+            if spent_txid != Txid([0; 32]) || spent_output_index != 0 {
+                return Err(EventError::UnusedField {
+                    kind: "receive",
+                    field: "the consumed outpoint",
+                });
             }
-            KIND_SPEND => {
-                if value != 0 {
-                    return Err(EventError::UnusedField {
-                        kind: "spend",
-                        field: "a value",
-                    });
-                }
-                if flags != 0 {
-                    return Err(EventError::UnusedField {
-                        kind: "spend",
-                        field: "the coinbase flag",
-                    });
-                }
-                Ok(TransparentEvent::Spend(SpendEvent {
-                    height,
-                    spending_txid: txid,
-                    transaction_index,
-                    input_index: index,
-                    spent_txid,
-                    spent_output_index,
-                }))
+            Ok(TransparentEvent::Receive(ReceiveEvent {
+                height,
+                txid,
+                transaction_index,
+                output_index: index,
+                value,
+                coinbase: flags & FLAG_COINBASE != 0,
+            }))
+        } else {
+            if value != 0 {
+                return Err(EventError::UnusedField {
+                    kind: "spend",
+                    field: "a value",
+                });
             }
-            kind => Err(EventError::Kind(kind)),
+            if flags & FLAG_COINBASE != 0 {
+                return Err(EventError::UnusedField {
+                    kind: "spend",
+                    field: "the coinbase flag",
+                });
+            }
+            Ok(TransparentEvent::Spend(SpendEvent {
+                height,
+                spending_txid: txid,
+                transaction_index,
+                input_index: index,
+                spent_txid,
+                spent_output_index,
+            }))
         }
     }
 }
@@ -371,26 +369,20 @@ mod tests {
     }
 
     #[test]
-    fn unknown_kinds_flags_and_dirty_reserved_bytes_are_refused() {
-        let mut bytes = receive().to_bytes();
-        bytes[OFF_KIND] = 7;
+    fn an_all_zero_record_is_not_an_event() {
         assert_eq!(
-            TransparentEvent::from_bytes(&bytes),
-            Err(EventError::Kind(7))
+            TransparentEvent::from_bytes(&[0u8; EVENT_BYTES]),
+            Err(EventError::Empty)
         );
+    }
 
+    #[test]
+    fn unknown_flags_are_refused() {
         let mut bytes = receive().to_bytes();
         bytes[OFF_FLAGS] = 0x80;
         assert_eq!(
             TransparentEvent::from_bytes(&bytes),
             Err(EventError::Flags(0x80))
-        );
-
-        let mut bytes = receive().to_bytes();
-        bytes[EVENT_BYTES - 1] = 1;
-        assert_eq!(
-            TransparentEvent::from_bytes(&bytes),
-            Err(EventError::Reserved)
         );
     }
 
@@ -417,7 +409,7 @@ mod tests {
         ));
 
         let mut bytes = spend().to_bytes();
-        bytes[OFF_FLAGS] = FLAG_COINBASE;
+        bytes[OFF_FLAGS] |= FLAG_COINBASE;
         assert!(matches!(
             TransparentEvent::from_bytes(&bytes),
             Err(EventError::UnusedField { kind: "spend", .. })

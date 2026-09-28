@@ -163,9 +163,10 @@ pub struct PendingPages {
     pub shard_id: u64,
     pub revision_digest: String,
     pub script: Vec<u8>,
+    /// Zero-based PIR row of the first page fragment.
     pub first_page: u32,
+    /// Fragment count learned from the first page. `0` means it is not known yet.
     pub page_count: u32,
-    pub total_events: u32,
     /// Events already known from the directory entry.
     pub inline: Vec<TransparentEvent>,
     /// The next page ordinal to fetch; pages below it are committed.

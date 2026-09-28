@@ -420,6 +420,7 @@ pub fn publish(
             end_height: shard.end_height,
             parent_block_hash: parent_block_hash.to_display_hex(),
             terminal_block_hash: terminal.to_display_hex(),
+            tag_salt_counter: built.tag_salt_counter,
             parent_manifest_digest: parent_manifest_digest.to_string(),
             sealed: shard.reason.is_some(),
             revision,

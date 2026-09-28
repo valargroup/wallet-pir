@@ -17,6 +17,7 @@ use crate::layout::{
 };
 use crate::page_row::{encode_page_row, PageEntry};
 use crate::records::{encode_directory_row, DirectoryEntry, RecordError, MAX_SCRIPT_BYTES};
+use crate::tag::{resolve_tag_salt, script_tag};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use transparent_events::TransparentEvent;
@@ -105,6 +106,9 @@ pub struct BuiltShard {
     /// holding such a script is outside coverage and must not read a directory
     /// miss as absence.
     pub excluded_scripts: u64,
+    /// The tag-salt counter this build settled on. Zero unless a collision
+    /// forced a rebuild.
+    pub tag_salt_counter: u32,
 }
 
 impl BuiltShard {
@@ -306,6 +310,15 @@ pub fn build_shard(
         }
     }
 
+    let indexed: Vec<&[u8]> = by_script
+        .keys()
+        .filter(|script| script.len() <= MAX_SCRIPT_BYTES)
+        .map(|script| script.as_slice())
+        .collect();
+    let (tag_salt_counter, salt) =
+        resolve_tag_salt(shard_id, &terminal_block_hash, &indexed, script_tag)
+            .map_err(BuildError::Invalid)?;
+
     // 2. Allocate. Short classes in increasing length, each class filling rows
     //    with whole entries; then long histories, each taking a contiguous run
     //    of its own. A `BTreeMap` keyed by length and a `by_script` iterated in
@@ -317,12 +330,12 @@ pub fn build_shard(
     for (p, class) in &short {
         let per_row = entries_per_row(*p) as usize;
         for chunk in class.chunks(per_row) {
-            let row = rows.len() as u32;
+            let row = rows.len() as u32 + 1;
             let mut entries = Vec::with_capacity(chunk.len());
             for item in chunk {
                 first_page.insert(item.script, row);
                 entries.push(PageEntry::new(
-                    item.script.to_vec(),
+                    script_tag(&salt, item.script),
                     0,
                     1,
                     item.older.clone(),
@@ -332,7 +345,7 @@ pub fn build_shard(
         }
     }
     for item in &long {
-        first_page.insert(item.script, rows.len() as u32);
+        first_page.insert(item.script, rows.len() as u32 + 1);
         let fragments = fragments_for(item.total) as u32;
         for (ordinal, fragment) in item
             .older
@@ -343,7 +356,7 @@ pub fn build_shard(
             // sharing one. Sharing it would make a history's placement depend
             // on unrelated content, for a row saved per long history.
             rows.push(vec![PageEntry::new(
-                item.script.to_vec(),
+                script_tag(&salt, item.script),
                 ordinal as u32,
                 fragments,
                 fragment.to_vec(),
@@ -370,20 +383,20 @@ pub fn build_shard(
         for item in class {
             entries.push(DirectoryEntry {
                 script: item.script.to_vec(),
-                total_events: item.total,
+                tag: script_tag(&salt, item.script),
+                event_count: item.total,
                 inline: item.inline.clone(),
                 first_page: first_page[item.script],
-                page_count: fragments_for(item.total) as u32,
             });
         }
     }
     for item in &long {
         entries.push(DirectoryEntry {
             script: item.script.to_vec(),
-            total_events: item.total,
+            tag: script_tag(&salt, item.script),
+            event_count: item.total,
             inline: item.inline.clone(),
             first_page: first_page[item.script],
-            page_count: fragments_for(item.total) as u32,
         });
     }
     // Histories inside the inline allowance hold no fragment and name no row.
@@ -395,10 +408,10 @@ pub fn build_shard(
         history.sort_by_key(|event| event.sort_key());
         entries.push(DirectoryEntry {
             script: script.clone(),
-            total_events: history.len() as u32,
+            tag: script_tag(&salt, script),
+            event_count: history.len() as u32,
             inline: history,
             first_page: 0,
-            page_count: 0,
         });
     }
 
@@ -406,8 +419,7 @@ pub fn build_shard(
     // census places in this order too. A stable sort of entries already in it
     // is the identity, so published bytes do not move.
     entries.sort_by(|a, b| {
-        (placement_rank(a.total_events), &a.script)
-            .cmp(&(placement_rank(b.total_events), &b.script))
+        (placement_rank(a.event_count), &a.script).cmp(&(placement_rank(b.event_count), &b.script))
     });
 
     let fragments: u64 = by_script
@@ -449,6 +461,7 @@ pub fn build_shard(
         fragments,
         events: total_events,
         excluded_scripts,
+        tag_salt_counter,
     })
 }
 
@@ -758,17 +771,29 @@ mod tests {
     use crate::page_row::{decode_page_row, PageEntry};
     use crate::records::decode_directory_row;
 
-    /// The one entry in `row` belonging to `script`, which is what a wallet
+    /// The one entry in `row` belonging to `tag`, which is what a wallet
     /// does with a packed row: several scripts share it, and the rest are
     /// discarded.
-    fn fragment_of(row: &[u8], script: &[u8], ordinal: u32) -> PageEntry {
+    fn fragment_of(
+        row: &[u8],
+        tag: &[u8; crate::tag::SCRIPT_TAG_BYTES],
+        ordinal: u32,
+    ) -> PageEntry {
         let mut found: Vec<PageEntry> = decode_page_row(row)
             .expect("a located row decodes")
             .into_iter()
-            .filter(|entry| entry.script == script && entry.ordinal == ordinal)
+            .filter(|entry| &entry.tag == tag && entry.ordinal == ordinal)
             .collect();
         assert_eq!(found.len(), 1, "exactly one entry may claim a fragment");
         found.pop().expect("one")
+    }
+
+    fn tag_for(script: &[u8]) -> [u8; crate::tag::SCRIPT_TAG_BYTES] {
+        crate::script_tag(&crate::tag_salt(0, &terminal(), 0), script)
+    }
+
+    fn page_at(entry: &crate::records::DirectoryEntry) -> u64 {
+        u64::from(entry.page_base().expect("a paged entry"))
     }
     use transparent_events::{ReceiveEvent, Txid};
     use transparent_filter::{validate_filter, FilterLimits, RANGE_PROFILE};
@@ -877,14 +902,17 @@ mod tests {
                         decode_directory_row(built.directory_row(*row))
                             .unwrap()
                             .into_iter()
-                            .find(|e| e.script == wanted.as_slice())
+                            .find(|e| e.tag == tag_for(wanted.as_slice()))
                     })
                     .expect("entry");
-                assert_eq!(entry.page_count, 1, "class {p} should be one fragment");
                 let fragment = fragment_of(
-                    built.page_row(entry.first_page as u64),
-                    wanted.as_slice(),
+                    built.page_row(page_at(&entry)),
+                    &tag_for(wanted.as_slice()),
                     0,
+                );
+                assert_eq!(
+                    fragment.fragment_count, 1,
+                    "class {p} should be one fragment"
                 );
                 assert_eq!(fragment.events.len(), p as usize);
             }
@@ -908,22 +936,20 @@ mod tests {
                     decode_directory_row(built.directory_row(*row))
                         .unwrap()
                         .into_iter()
-                        .find(|e| e.script == wanted.as_slice())
+                        .find(|e| e.tag == tag_for(wanted.as_slice()))
                 })
                 .expect("entry");
-            located.push(entry.first_page);
+            located.push(page_at(&entry));
             let fragment = fragment_of(
-                built.page_row(entry.first_page as u64),
-                wanted.as_slice(),
+                built.page_row(page_at(&entry)),
+                &tag_for(wanted.as_slice()),
                 0,
             );
             assert_eq!(fragment.events.len(), 1);
         }
         assert_eq!(located[0], located[1], "both should name the same row");
         assert_eq!(
-            decode_page_row(built.page_row(located[0] as u64))
-                .unwrap()
-                .len(),
+            decode_page_row(built.page_row(located[0])).unwrap().len(),
             2,
             "the shared row should hold both"
         );
@@ -952,14 +978,19 @@ mod tests {
                 decode_directory_row(built.directory_row(*row))
                     .unwrap()
                     .into_iter()
-                    .find(|e| e.script == wanted.as_slice())
+                    .find(|e| e.tag == tag_for(wanted.as_slice()))
             })
             .expect("entry");
-        assert_eq!(entry.page_count, 3, "two full fragments and a short one");
-        for ordinal in 0..entry.page_count {
-            let row = decode_page_row(built.page_row((entry.first_page + ordinal) as u64)).unwrap();
+        let base = page_at(&entry);
+        let first = fragment_of(built.page_row(base), &tag_for(wanted.as_slice()), 0);
+        assert_eq!(
+            first.fragment_count, 3,
+            "two full fragments and a short one"
+        );
+        for ordinal in 0..first.fragment_count {
+            let row = decode_page_row(built.page_row(base + u64::from(ordinal))).unwrap();
             assert_eq!(row.len(), 1, "fragment {ordinal} shared its row");
-            assert_eq!(row[0].script, wanted.as_slice());
+            assert_eq!(row[0].tag, tag_for(wanted.as_slice()));
         }
     }
 
@@ -1003,19 +1034,19 @@ mod tests {
                     decode_directory_row(built.directory_row(*row))
                         .unwrap()
                         .into_iter()
-                        .find(|entry| entry.script == wanted.as_slice())
+                        .find(|entry| entry.tag == tag_for(wanted.as_slice()))
                 })
                 .unwrap_or_else(|| panic!("script {tag} is in neither candidate row"));
-            assert_eq!(entry.total_events, per);
-            if entry.first_page as usize >= PAGE_ROWS {
+            assert!(entry.first_page >= 1);
+            if page_at(&entry) as usize >= PAGE_ROWS {
                 crossed = true;
             }
             let fragment = fragment_of(
-                built.page_row(entry.first_page as u64),
-                wanted.as_slice(),
+                built.page_row(page_at(&entry)),
+                &tag_for(wanted.as_slice()),
                 0,
             );
-            assert_eq!(fragment.script, wanted.as_slice());
+            assert_eq!(fragment.tag, tag_for(wanted.as_slice()));
         }
         assert!(crossed, "some extent should land past the first segment");
     }
@@ -1033,7 +1064,7 @@ mod tests {
                 decode_directory_row(built.directory_row(*row))
                     .unwrap()
                     .iter()
-                    .any(|entry| entry.script == wanted.as_slice())
+                    .any(|entry| entry.tag == tag_for(wanted.as_slice()))
             });
             assert!(found, "script {tag} is in neither candidate row");
         }
@@ -1218,13 +1249,15 @@ mod tests {
         }
         for (row, expected) in predicted.iter_mut().enumerate() {
             expected.sort_unstable();
-            let published: Vec<Vec<u8>> = decode_directory_row(built.directory_row(row as u64))
+            let mut expected_tags: Vec<_> = expected.iter().map(|script| tag_for(script)).collect();
+            expected_tags.sort_unstable();
+            let mut published: Vec<_> = decode_directory_row(built.directory_row(row as u64))
                 .expect("decodes")
                 .into_iter()
-                .map(|entry| entry.script)
+                .map(|entry| entry.tag)
                 .collect();
-            let published: Vec<&[u8]> = published.iter().map(Vec::as_slice).collect();
-            assert_eq!(*expected, published, "row {row} differs");
+            published.sort_unstable();
+            assert_eq!(expected_tags, published, "row {row} differs");
         }
 
         // The lexicographic order the census used before is a different
@@ -1352,19 +1385,20 @@ mod tests {
                     decode_directory_row(built.directory_row(*row))
                         .unwrap()
                         .into_iter()
-                        .find(|entry| entry.script == wanted.as_slice())
+                        .find(|entry| entry.tag == tag_for(wanted.as_slice()))
                 })
                 .expect("entry");
 
-            assert_eq!(entry.total_events, per);
             let mut recovered = entry.inline.clone();
-            for ordinal in 0..entry.page_count {
+            let base = page_at(&entry);
+            let first = fragment_of(built.page_row(base), &tag_for(wanted.as_slice()), 0);
+            for ordinal in 0..first.fragment_count {
                 let fragment = fragment_of(
-                    built.page_row((entry.first_page + ordinal) as u64),
-                    wanted.as_slice(),
+                    built.page_row(base + u64::from(ordinal)),
+                    &tag_for(wanted.as_slice()),
                     ordinal,
                 );
-                assert_eq!(fragment.fragment_count, entry.page_count);
+                assert_eq!(fragment.fragment_count, first.fragment_count);
                 recovered.extend(fragment.events);
             }
 
@@ -1392,7 +1426,7 @@ mod tests {
                 decode_directory_row(built.directory_row(*row))
                     .unwrap()
                     .into_iter()
-                    .find(|entry| entry.script == wanted.as_slice())
+                    .find(|entry| entry.tag == tag_for(wanted.as_slice()))
             })
             .expect("entry");
         // Compare on the events' own total order rather than on height alone,
@@ -1404,8 +1438,8 @@ mod tests {
             .min()
             .unwrap();
         let fragment = fragment_of(
-            built.page_row(entry.first_page as u64),
-            wanted.as_slice(),
+            built.page_row(page_at(&entry)),
+            &tag_for(wanted.as_slice()),
             0,
         );
         let latest_paged = fragment
@@ -1473,6 +1507,31 @@ mod tests {
         assert_eq!(forward.directory, reversed.directory);
         assert_eq!(forward.pages, reversed.pages);
         assert_eq!(forward.filter, reversed.filter);
+        assert_eq!(forward.tag_salt_counter, 0);
+    }
+
+    /// The salt is a function of the revision. Rebuilding the same revision
+    /// reproduces the bytes; a different terminal block does not.
+    #[test]
+    fn the_tag_salt_is_reproduced_by_a_rebuild_and_moves_with_the_terminal_block() {
+        let events = fixture(4, 2);
+        let once = build(&events);
+        let again = build(&events);
+        assert_eq!(once.tag_salt_counter, 0);
+        assert_eq!(once.directory, again.directory);
+
+        let moved = build_shard(
+            0,
+            100,
+            200,
+            genesis(),
+            BlockHash::from_internal_bytes([0x5b; 32]),
+            RANGE_PROFILE,
+            &RECENT_8K,
+            &events,
+        )
+        .unwrap();
+        assert_ne!(moved.directory, once.directory);
     }
 
     /// A shard's bucket salt includes its id, so the same script sits in

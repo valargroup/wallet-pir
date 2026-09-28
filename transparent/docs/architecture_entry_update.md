@@ -1,13 +1,37 @@
 # Transparent PIR entry layout update
 
-Date: 2026-09-28. Status: proposed record-format change; not implemented,
-accepted, published or deployed.
+Date: 2026-09-28. Status: implemented in source as `transparent-shard-v9`
+on the current 4,096-byte native rows. Not accepted as a contract change,
+not published, and not deployed. The live fleet and the version-1 production
+journal are unchanged.
 
-This document records the current `transparent-shard-v7` directory and page
-entry layouts, then defines a candidate compact layout. The candidate replaces
-the exact raw script in each private record with a 14-byte salted cryptographic
-script tag. It does not change the PIR construction, row width, table row counts,
-filter profile, directory placement algorithm or choice table.
+This document records the `transparent-shard-v7` directory and page entry
+layouts it was written against, then defines a candidate compact layout. The
+candidate replaces the exact raw script in each private record with a 14-byte
+salted cryptographic script tag. It does not change the PIR construction, row
+width, table row counts, filter profile, directory placement algorithm or
+choice table. The slot and event counts in the body assume 3,584-byte rows.
+The implementation keeps the 4,096-byte row, so those counts do not apply.
+
+## Implementation
+
+`transparent-shard-v9` uses the tag and the 87-byte event defined below, on
+4,096-byte rows:
+
+- directory entry: 192 bytes, 21 slots per row (was 16 under v8);
+- page fragment: 46 events (was 41);
+- shared rows: 33 / 19 / 13 entries at 1 / 2 / 3 paged events (was 25 / 15 / 11);
+- PIR query and response sizes: unchanged at a given row count;
+- journal: version 2, about 7% smaller after a separate re-ingest into a new
+  directory. Opening a version-1 journal returns an error and leaves the files
+  in place.
+
+The builder increments `tag_salt_counter` and recomputes every tag when two
+indexed scripts collide. It does not publish a duplicate and does not drop a
+script. The wallet derives the tag from the verified manifest and accepts only
+that tag. Inline occupancy is a zero-free prefix. For `first_page >= 1` the
+wallet fetches that row, reads `K`, then fetches the rest. Completeness is
+structural: ordinals `0..K-1`, non-final fragments full, canonical order.
 
 The candidate changes deterministic exact-script attribution into computational
 attribution: a 112-bit tag under a per-revision salt that cannot be predicted

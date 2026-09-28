@@ -103,6 +103,7 @@ fn publish(dir: &Path) -> ShardMap {
             end_height: end,
             parent_block_hash: hash_at(start - 1).to_display_hex(),
             terminal_block_hash: terminal.to_display_hex(),
+            tag_salt_counter: built.tag_salt_counter,
             parent_manifest_digest: parent_digest.clone(),
             sealed: shard_id + 1 < SHARDS,
             revision: 0,
