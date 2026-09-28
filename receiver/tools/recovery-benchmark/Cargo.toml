@@ -1,0 +1,58 @@
+[package]
+name = "receiver-recovery-benchmark"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# Isolated integration harness. Wallet and PIR checkouts remain independently versioned.
+[workspace]
+
+[dependencies]
+receiver-directory = { path = "../../crates/receiver-directory" }
+receiver-pir = { path = "../../crates/receiver-pir", features = ["http", "server"] }
+receiver-pir-server = { path = "../../services/receiver-pir-server" }
+enhance-pir = { path = "../../../enhance/crates/enhance-pir", features = ["native-reinspiring"] }
+zakura-swap-receiving = { path = "../../../../wallet-libraries-pir/zakura/swap-receiving" }
+zakura-pir-enhance = { version = "=0.0.1-rc0", features = ["wallet", "native-reinspiring"] }
+zcash_client_backend = { package = "zakura-client-backend", version = "=0.1.0-rc6", features = ["orchard", "test-dependencies", "experimental-swap-receiving"] }
+zcash_client_sqlite = { package = "zakura-client-sqlite", version = "=0.1.0-rc6", features = ["orchard", "test-dependencies", "experimental-swap-receiving"] }
+zcash_primitives = { package = "zakura-primitives", version = "=1.2.0" }
+zcash_keys = { package = "zakura-keys", version = "=1.2.0", features = ["orchard", "sapling"] }
+zcash_protocol = "0.10.4"
+orchard = { package = "zakura-orchard", version = "=1.2.0", features = ["test-dependencies"] }
+zcash_note_encryption = "=0.4.2"
+incrementalmerkletree = "0.8"
+prost = "0.14"
+sha2 = "0.10"
+hex = "0.4"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures = "0.3"
+tempfile = "3"
+log = "0.4"
+rand = "0.8"
+
+[patch.crates-io]
+zakura-client-backend = { path = "../../../../wallet-libraries-pir/librustzcash/zcash_client_backend" }
+zakura-client-sqlite = { path = "../../../../wallet-libraries-pir/librustzcash/zcash_client_sqlite" }
+zakura-pczt = { path = "../../../../wallet-libraries-pir/librustzcash/pczt" }
+zakura-pir-enhance = { path = "../../../../wallet-libraries-pir/zakura/pir-enhance" }
+
+[patch."https://github.com/valargroup/ipir-sp.git"]
+ipir-sp = { path = "../../../../ipir-sp-compat/ipir-sp" }
+reinspiring = { path = "../../../../ipir-sp-compat/reinspiring" }
+inspiring = { path = "../../../../ipir-sp-compat/inspiring" }
+simplepir-kernel = { path = "../../../../ipir-sp-compat/simplepir-kernel" }
+
+[profile.release]
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+[profile.dev]
+opt-level = 3
+debug = "line-tables-only"
+[profile.dev.package.valar-spiral-rs]
+overflow-checks = false
