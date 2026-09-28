@@ -44,7 +44,8 @@ pub fn script_tag(salt: &[u8; 32], script: &[u8]) -> [u8; SCRIPT_TAG_BYTES] {
     let mut hasher = Sha256::new();
     hasher.update(SCRIPT_TAG_DOMAIN);
     hasher.update(salt);
-    hasher.update((script.len() as u16).to_le_bytes());
+    let length = u16::try_from(script.len()).expect("a tagged script is at most MAX_SCRIPT_BYTES");
+    hasher.update(length.to_le_bytes());
     hasher.update(script);
     let digest = hasher.finalize();
     digest[..SCRIPT_TAG_BYTES].try_into().expect("14 bytes")

@@ -703,6 +703,59 @@ fn relocate(
 /// placed, and the choice table for the placement.
 type PlacedDirectory = (Vec<Vec<u8>>, u64, Option<crate::choice::ChoiceTable>);
 
+/// Checks the encoded bytes, not the placer's intent.
+///
+/// Rows carry tags, so a server cannot recompute a script's route; this is
+/// the last point where the scripts are known. Every entry's tag must decode
+/// from the row its assignment names, no tag may appear twice in the shard,
+/// and the rows must hold exactly the entries placed. A miss here would reach
+/// a wallet as absence, which it cannot tell from an empty history.
+fn verify_encoded_rows(
+    tables: &[Vec<u8>],
+    entries: &[DirectoryEntry],
+    assignment: &[u32],
+    geometry: &Geometry,
+) -> Result<(), BuildError> {
+    let per_segment = geometry.directory_rows as usize;
+    let row_bytes = geometry.directory_row_bytes;
+    let mut rows: Vec<Vec<[u8; crate::tag::SCRIPT_TAG_BYTES]>> =
+        Vec::with_capacity(per_segment * tables.len());
+    let mut seen = std::collections::HashSet::with_capacity(entries.len());
+    for table in tables {
+        for raw in table.chunks_exact(row_bytes) {
+            let decoded = crate::records::decode_directory_row(raw)?;
+            let tags: Vec<_> = decoded.into_iter().map(|entry| entry.tag).collect();
+            for tag in &tags {
+                if !seen.insert(*tag) {
+                    return Err(BuildError::Invalid(
+                        "a script tag appears twice in the directory".into(),
+                    ));
+                }
+            }
+            rows.push(tags);
+        }
+    }
+    if seen.len() != entries.len() {
+        return Err(BuildError::Invalid(format!(
+            "the directory holds {} entries, {} were placed",
+            seen.len(),
+            entries.len()
+        )));
+    }
+    for (entry, row) in entries.iter().zip(assignment) {
+        let held = rows
+            .get(*row as usize)
+            .is_some_and(|tags| tags.contains(&entry.tag));
+        if !held {
+            return Err(BuildError::Invalid(format!(
+                "script {} is not in its assigned row {row}",
+                hex::encode(&entry.script)
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Returns the encoded directory and its choice table.
 fn place_directory(
     shard_id: u64,
@@ -747,6 +800,7 @@ fn place_directory(
         }
         tables.push(table);
     }
+    verify_encoded_rows(&tables, &entries, &assignment, geometry)?;
     let choice = choice_table(shard_id, &scripts_only, &assignment, rows).ok();
     if let Some(table) = &choice {
         // A wrong bit is not an error a wallet can see: it queries the other
@@ -830,6 +884,37 @@ mod tests {
     /// `count` scripts, each with `per` events, all inside the shard's declared
     /// 100-200 range. Heights cycle so a long history stays in range while
     /// still spanning it, which is what makes the paging tests meaningful.
+    /// The builder's last check reads the encoded rows: an entry outside its
+    /// assigned row, a tag held twice, or a missing entry is refused before
+    /// publication, because a wallet would read any of them as absence.
+    #[test]
+    fn encoded_rows_must_hold_every_entry_where_it_was_assigned() {
+        let entry = |byte: u8| DirectoryEntry {
+            script: vec![0x76, byte],
+            tag: [byte; crate::tag::SCRIPT_TAG_BYTES],
+            event_count: 1,
+            inline: vec![event(100, u32::from(byte))],
+            first_page: 0,
+        };
+        let geometry = RECENT_8K;
+        let (a, b) = (entry(1), entry(2));
+        let table = |rows: &[&[DirectoryEntry]]| -> Vec<Vec<u8>> {
+            vec![rows
+                .iter()
+                .flat_map(|row| encode_directory_row(row).unwrap())
+                .collect()]
+        };
+        let entries = [a.clone(), b.clone()];
+        let (one_a, one_b) = (std::slice::from_ref(&a), std::slice::from_ref(&b));
+        let good = table(&[one_a, one_b]);
+        verify_encoded_rows(&good, &entries, &[0, 1], &geometry).unwrap();
+        assert!(verify_encoded_rows(&good, &entries, &[1, 0], &geometry).is_err());
+        let repeated = table(&[one_a, one_a]);
+        assert!(verify_encoded_rows(&repeated, &entries, &[0, 1], &geometry).is_err());
+        let missing = table(&[one_a, &[]]);
+        assert!(verify_encoded_rows(&missing, &entries, &[0, 1], &geometry).is_err());
+    }
+
     fn fixture(count: u32, per: u32) -> Vec<(ScriptBytes, TransparentEvent)> {
         let mut events = Vec::new();
         for tag in 0..count {

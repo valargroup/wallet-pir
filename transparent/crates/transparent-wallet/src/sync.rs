@@ -1556,6 +1556,9 @@ fn verify_manifest(
             expected: transparent_shard::SCHEMA,
         });
     }
+    if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
+        return Err(mismatch("tag_salt_counter"));
+    }
     if manifest.network != map.network {
         return Err(mismatch("network"));
     }

@@ -399,6 +399,13 @@ impl LoadedShard {
                 manifest.schema
             )));
         }
+        if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
+            return Err(LoadError::Invalid(format!(
+                "shard declares tag salt counter {}, above {}",
+                manifest.tag_salt_counter,
+                transparent_shard::tag::MAX_TAG_SALT_COUNTER
+            )));
+        }
 
         // A geometry is selected by name, not inferred from the dimensions.
         // An unknown name is refused: this build has no parameters for it, and
@@ -536,6 +543,7 @@ fn verify_choice_routes(
         return Ok(());
     };
     let mut entries = 0u64;
+    let mut tags = std::collections::HashSet::new();
     for (segment, source) in directory.iter().enumerate() {
         let bytes = source.load()?;
         for (within, raw) in bytes.chunks(geometry.directory_row_bytes).enumerate() {
@@ -543,9 +551,19 @@ fn verify_choice_routes(
             let decoded = transparent_shard::records::decode_directory_row(raw)
                 .map_err(|error| invalid(format!("directory row {row}: {error}")))?;
             // Rows carry script tags, not raw scripts, so the route each
-            // script took cannot be recomputed here. The builder checks that
-            // before publication, while it still has the scripts. This pass
-            // still decodes every row and counts entries against the table.
+            // script took cannot be recomputed here. The builder checks every
+            // route against the encoded rows before publication, while it
+            // still has the scripts. This pass decodes every row, refuses a
+            // tag held twice anywhere in the shard, and counts entries
+            // against the table.
+            for entry in &decoded {
+                if !tags.insert(entry.tag) {
+                    return Err(invalid(format!(
+                        "directory row {row} repeats script tag {}",
+                        hex::encode(entry.tag)
+                    )));
+                }
+            }
             entries += decoded.len() as u64;
         }
     }
