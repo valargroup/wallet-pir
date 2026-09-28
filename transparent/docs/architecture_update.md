@@ -71,9 +71,10 @@ seven hosts. The deploy script now:
 Sealed shards published before 22:43 have no table, so wallets still send two
 queries for them until a full republication. **A manifest that carries a table
 is refused by servers and wallets built before the field**, because they
-recompute the digest without it. All workers understand the field. No shipped
-wallet uses transparent PIR: the client exists only on unmerged
-wallet-libraries branches.
+recompute the digest without it. All workers understand the field. Scope from here on is this repository's
+`transparent-wallet`, and the load and regression tools built on it, against
+the deployed cluster. wallet-libraries is out of scope, so its unmerged
+transparent branches are not a compatibility constraint.
 
 ### Measured results
 
@@ -94,19 +95,24 @@ whole-wallet):
 |---|---|---:|---:|
 | Baseline (fleet r3; bench fleet without tables) | Measured | 3.15 MB | 4.40 s |
 | + choice tables | Live for new revisions; measured | 2.39 MB | 3.62 s |
-| + filter prefetch | On `main` in `transparent-wallet`; measured | 2.39 MB | 2.51 s |
+| + filter prefetch | In `transparent-wallet` on `main`; measured on a bench copy | 2.39 MB | 2.51 s |
 | + filter profile P=13 | Projected from the sweep | ~2.02 MB | slightly lower |
 | + recent-4k-8k with tables | Projected from query sizes | ~1.89 MB (−40%) | slightly lower |
 | + cross-shard request concurrency | Projected from request counts | unchanged | ~1.5 s |
 
 ### Open questions
 
-1. **Production wallet.** wallet-libraries has neither the table lookup nor
-   prefetch, so production wallets gain nothing yet.
-2. **Filter profile.** Wallets decode filters with compiled `P`/`M` and select
-   nothing by profile name, so a new profile is a breaking change. Wallets must
-   select parameters by profile and refuse unknown profiles before any
-   publication uses one.
+1. **Cluster qualification of the in-repo client.** The table lookup and filter
+   prefetch are measured on a bench copy and under emulated delay. There is no
+   repeatable qualification against the deployed cluster: the regression
+   fixture's expectations (`mainnet.json`) are missing, and the frozen workload
+   sample's expected digests date from height 3,473,686, while the cluster
+   serves a moving tip.
+2. **Filter profile.** `transparent-wallet` decodes filters with compiled `P`/`M`
+   and selects nothing by profile name, so a new profile is a breaking change
+   for any client built before it. The in-repo wallet and tools must select
+   parameters by profile and refuse unknown profiles before the cluster
+   publishes one.
 3. **Republication cost.** Tables on already-sealed shards, P=13 and
    recent-4k-8k all change every manifest. Runtime cache keys include the
    revision, so every worker rebuilds every runtime, archive included. The cold
@@ -132,41 +138,47 @@ whole-wallet):
 
 ### Plan
 
-The plan has four tracks. Items in different tracks can run in parallel unless
-a dependency is named. Within a track, items run in order.
+The target is the full architecture deployed to the cluster and qualified
+against it with this repository's `transparent-wallet`, `transparent-loadtest`
+and `transparent-regression`. wallet-libraries is out of scope. The plan has
+four tracks. Items in different tracks can run in parallel unless a dependency
+is named; within a track, items run in order.
 
 | Id | Step | Depends on | Output and acceptance |
 |---|---|---|---|
-| **A — Wallet** | | | |
-| A1 | Port the choice-table lookup and filter prefetch to wallet-libraries; refuse malformed tables as `transparent-wallet` does | none | Store/contract suite passes; exact recovery against the live fleet, which now publishes tabled tails |
-| A2 | Filter profile registry in `transparent-filter` and both wallets: P and M selected by profile name, unknown profiles refused | none | Unit tests; an old-profile set still decodes byte-identically |
-| A3 | Cross-shard request concurrency: match every uncached shard first, then fetch manifests, setups and directory queries for matched shards with bounded concurrency, and commit per shard as today | none (after A1 if it should ship in the same wallet release) | Identical request counts and ledgers against the sequential walk; p50 under emulated delay |
-| A4 | Ship the transparent client with A1–A3 | A1, A2; A3 optional | Wallet release; M3/M6 gates in [remaining work](remaining-work.md) |
-| **B — Publication format** | | | |
-| B1 | New range filter profile (e.g. `zcash-transparent-range-v2`, P=13, M=12,288) in the publisher | A2 for consumers | Profile tests; `filter-sweep` sizes reproduced by the builder |
-| B2 | Candidate full publication into a new directory: v2 profile, recent-4k-8k, `--directory-choice all` for every shard | B1 | Offline verification: `shard-verify`, placement, exact replay against the journal |
-| B3 | Cold-rebuild rehearsal: prepare B2 on a bench copy of one archive owner and one recent replica | B2 | Measured rebuild time and peak memory; the input to B4's maintenance window |
-| B4 | Activate B2 through the fixed-publication workflow, with rollback to the current set | B3, A4 (no wallet on the old profile remains) | Fleet serves B2; public regression exact; old set retained for rollback |
+| **A — Client (`transparent-wallet` and tools)** | | | |
+| A1 | Cluster qualification harness. Export a fresh regression fixture and workload sample at a pinned anchor from the coordinator journal (`regression-export`, `script-sample`), restoring the missing `mainnet.json`. Let the load tool qualify against a moving tip by checking digests only up to the pinned anchor | none | `transparent-regression` and `transparent-loadtest` report exact results against the live cluster today; this is the acceptance gate for every later cluster change |
+| A2 | Filter profile registry in `transparent-filter`, used by the wallet, publisher and tools: P and M selected by profile name, unknown profiles refused | none | Unit tests; the current profile still decodes byte-identically; a wallet refuses a set under an unknown profile before matching |
+| A3 | Cross-shard request concurrency: match every uncached shard first, then fetch manifests, setups and directory queries for matched shards with bounded concurrency, and commit per shard as today | none | Identical request counts and ledgers against the sequential walk in the server integration tests; p50 under emulated delay; then A1 against the cluster |
+| **B — Publication format and cluster rollout** | | | |
+| B1 | New range filter profile (e.g. `zcash-transparent-range-v2`, P=13, M=12,288) in the publisher and controller | A2 | Profile tests; `filter-sweep` sizes reproduced by the builder |
+| B2 | Candidate full publication into a new directory on the coordinator: v2 profile, recent-4k-8k, `--directory-choice all` on every shard, both tiers | B1 | `shard-verify`, placement, and exact replay against the journal; choice routes verified at load |
+| B3 | Cold-rebuild rehearsal: prepare B2 on bench copies of one archive owner and one recent replica | B2 | Measured rebuild time and peak memory per role; the maintenance window for B4 |
+| B4 | Deploy B2 to the cluster: continuous publisher on the v2 profile, fixed-publication rollout to all workers, rollback set retained | B3, A2 in the deployed publisher; C1 recommended first | Fleet serves B2; A1 exact against the cluster; old set retained for rollback |
+| B5 | Deploy A3 in the load and regression clients, and measure the full architecture on the cluster | B4, A3 | Paired cluster measurement against the current state (the r3-style baseline and today's tabled tails): bytes, requests, p50/p95 |
 | **C — Operations** | | | |
-| C1 | Router health checks: longer timeout or passive health, and client backoff after 503 / no upstream | none | A 128-wallet bench step without a failure spiral, repeated at least twice per variant |
+| C1 | Router health checks: longer timeout or passive health, and client backoff after 503 or no upstream | none | A 128-wallet bench step without a failure spiral, repeated at least twice per variant; deployed to the cluster router |
 | C2 | Deploy-key rotation procedure covering the transparent hosts; a transparent route check after every Enhance deploy | none | Runbook entry; a deploy that fails fast on a missing route |
-| C3 | Shadow-mode public availability: keep the previous publisher serving metadata while workers upgrade, or document the window | none | Public `init` available throughout a rehearsed shadow deploy, or an accepted window |
+| C3 | Public availability during shadow deploys: keep the previous publisher serving metadata while workers upgrade, or document the window | none | Public `init` available throughout a rehearsed shadow deploy, or an accepted window; needed before B4's rollout |
 | **D — Measurement and research** | | | |
-| D1 | WAN and mobile measurement: the same wallet sample from a remote region and a phone-class client | A1 (or `transparent-loadtest` for the wallet side) | p50 and p95 against today's emulated projections; client CPU and memory for table evaluation |
-| D2 | Capacity at production mix: fleet series r4 on the upgraded fleet | C1 | Sustained operating envelope for M5 |
-| D3 | Cold archive (§5): restore latency and admission for archive-wide tables on one bench host | none | Restore time per table, concurrent-restore behaviour, eviction policy draft |
-| D4 | Bulk isolation (§4) privacy review and bulk geometry | none | Decision to build or drop; if built, it joins a later publication after B4 |
+| D1 | WAN measurement: A1's harness run from a remote region, and from a constrained (mobile-class) host against the cluster | A1 | p50 and p95 against the emulated projections; client CPU and memory for table evaluation |
+| D2 | Capacity: fleet series r4 against the cluster from a dedicated load generator | C1, then again after B4 | A sustained operating envelope before and after the new format |
+| D3 | Cold archive (§5): restore latency and admission for archive-wide tables on one bench host | none | Restore time per table, concurrent-restore behaviour, an eviction policy draft |
+| D4 | Bulk isolation (§4): privacy review and bulk geometry | none | Build or drop; if built, a later publication after B4 |
 
 **Can start now, in parallel:** A1, A2, A3, C1, C2, C3 and D3, with D4's review
-alongside. They touch different components and need no production change,
-except C1–C3, which are operations changes with their own rollout.
+alongside. D1 follows A1.
 
-**Critical path to the projected −40% bytes:** A2 → B1 → B2 → B3 → B4. B4 also
-waits for A4, because the republication breaks any wallet that cannot read the
-new profile.
+**Critical path to the full architecture on the cluster:** A2 → B1 → B2 → B3 →
+B4 → B5. A1 is the acceptance gate for B4 and B5. C1 and C3 should land before
+B4, so the rollout can be qualified at load without the router failure spiral
+and without a long public gap.
 
-**Latency:** A3 alone delivers most of the remaining latency gain. It does not
-depend on the republication.
+Nothing waits on an external wallet release. B4 breaks any client built before
+A2, which is acceptable in this scope.
+
+**Latency:** A3 delivers most of the remaining gain. It can be measured
+against today's cluster through A1 before B4.
 
 ## 1. Baseline and workload interpretation
 
@@ -310,8 +322,8 @@ The source now implements this variant as an optional manifest field, not a
 schema change. Manifests without it keep their bytes and digests. A manifest
 that carries a table is refused by servers and wallets built before the field:
 they drop the unknown field and the recomputed digest no longer matches. So
-every worker and wallet (including wallet-libraries) must be upgraded before
-any publication enables tables. The publisher adds tables only to
+every worker and client must be upgraded before any publication enables
+tables. The publisher adds tables only to
 revisions it builds anew (`--directory-choice`, default `off`). The builder and
 the server verify every entry's route. The wallet sends one query per matched
 script when a table is present. None of this is published or deployed; see
