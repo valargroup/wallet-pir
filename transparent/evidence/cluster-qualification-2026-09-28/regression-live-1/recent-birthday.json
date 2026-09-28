@@ -1,0 +1,527 @@
+{
+  "checkpoints": [
+    {
+      "anchor": {
+        "hash": "0000000000b300ab318a0589588cbfd3fa889c38b3dc68c67519f5d05151e8d9",
+        "height": 3262749
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 176,
+        "tail": {
+          "end_height": 3498936,
+          "manifest_digest": "29ba8c69a4652eb0b1aced4b834ad213aaa559432805bc6aa0a38900641dbc8f",
+          "revision": 1598,
+          "sealed": false,
+          "shard_id": 175
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 1,
+          "down": 88141,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 7114,
+          "routes": [
+            "/v1/filters/shards/160/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1914,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 34821,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.058748019
+    },
+    {
+      "anchor": {
+        "hash": "00000000007d5006e7e3f31268e739c15af6ae09909a252ebab0ab6a9ce6fcd1",
+        "height": 3262750
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 176,
+        "tail": {
+          "end_height": 3498936,
+          "manifest_digest": "29ba8c69a4652eb0b1aced4b834ad213aaa559432805bc6aa0a38900641dbc8f",
+          "revision": 1598,
+          "sealed": false,
+          "shard_id": 175
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1914,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 14879,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.020132589
+    },
+    {
+      "anchor": {
+        "hash": "000000000011c62582e231adc3a5cc0450a3b5b7f3241491955ca3c14c54d8af",
+        "height": 3473685
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 176,
+        "tail": {
+          "end_height": 3498936,
+          "manifest_digest": "29ba8c69a4652eb0b1aced4b834ad213aaa559432805bc6aa0a38900641dbc8f",
+          "revision": 1598,
+          "sealed": false,
+          "shard_id": 175
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 13,
+          "down": 1326561,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 19,
+          "routes": [
+            "/v1/filters/shards/161/filter",
+            "/v1/filters/shards/162/filter",
+            "/v1/filters/shards/163/filter",
+            "/v1/filters/shards/164/filter",
+            "/v1/filters/shards/165/filter",
+            "/v1/filters/shards/166/filter",
+            "/v1/filters/shards/167/filter",
+            "/v1/filters/shards/168/filter",
+            "/v1/filters/shards/169/filter",
+            "/v1/filters/shards/170/filter",
+            "/v1/filters/shards/171/filter",
+            "/v1/filters/shards/172/filter",
+            "/v1/filters/shards/173/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 20891,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1914,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 20227,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 4,
+          "down": 5151,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 18473,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/manifest",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/manifest",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/manifest",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 10,
+          "down": 51360,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 549457,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/query/directory",
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/query/directory",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/query/directory",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/query/directory",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/query/directory"
+          ],
+          "up": 1280080
+        },
+        "query_pages": {
+          "calls": 1,
+          "down": 5136,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 67933,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/query/pages"
+          ],
+          "up": 128008
+        },
+        "setup_directory": {
+          "calls": 4,
+          "down": 77740,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 29554,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/setup/directory/0",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/setup/directory/0",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/setup/directory/0",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 19431,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 6652,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/setup/pages/0"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 1.043681553
+    },
+    {
+      "anchor": {
+        "hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+        "height": 3473686
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 176,
+        "tail": {
+          "end_height": 3498936,
+          "manifest_digest": "29ba8c69a4652eb0b1aced4b834ad213aaa559432805bc6aa0a38900641dbc8f",
+          "revision": 1598,
+          "sealed": false,
+          "shard_id": 175
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1914,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 18878,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.026449661
+    },
+    {
+      "anchor": {
+        "hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+        "height": 3473686
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "repeat",
+      "publication": {
+        "filter_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 176,
+        "tail": {
+          "end_height": 3498936,
+          "manifest_digest": "29ba8c69a4652eb0b1aced4b834ad213aaa559432805bc6aa0a38900641dbc8f",
+          "revision": 1598,
+          "sealed": false,
+          "shard_id": 175
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1914,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 16041,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.019599112
+    },
+    {
+      "anchor": {
+        "hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+        "height": 3473686
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "fresh-final",
+      "publication": {
+        "filter_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "f7a0608af2019257a31df2def0491381da7b6ef6439ec412e5aafefa922ff472",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 176,
+        "tail": {
+          "end_height": 3498936,
+          "manifest_digest": "29ba8c69a4652eb0b1aced4b834ad213aaa559432805bc6aa0a38900641dbc8f",
+          "revision": 1598,
+          "sealed": false,
+          "shard_id": 175
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 14,
+          "down": 1414702,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 19,
+          "routes": [
+            "/v1/filters/shards/160/filter",
+            "/v1/filters/shards/161/filter",
+            "/v1/filters/shards/162/filter",
+            "/v1/filters/shards/163/filter",
+            "/v1/filters/shards/164/filter",
+            "/v1/filters/shards/165/filter",
+            "/v1/filters/shards/166/filter",
+            "/v1/filters/shards/167/filter",
+            "/v1/filters/shards/168/filter",
+            "/v1/filters/shards/169/filter",
+            "/v1/filters/shards/170/filter",
+            "/v1/filters/shards/171/filter",
+            "/v1/filters/shards/172/filter",
+            "/v1/filters/shards/173/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 28042,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 1914,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 14812,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 4,
+          "down": 5151,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 22627,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/manifest",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/manifest",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/manifest",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 10,
+          "down": 51360,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 522349,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/query/directory",
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/query/directory",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/query/directory",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/query/directory",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/query/directory",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/query/directory"
+          ],
+          "up": 1280080
+        },
+        "query_pages": {
+          "calls": 1,
+          "down": 5136,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 45713,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/query/pages"
+          ],
+          "up": 128008
+        },
+        "setup_directory": {
+          "calls": 4,
+          "down": 77740,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 27213,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/setup/directory/0",
+            "/v1/shards/165/revisions/27f56c565263ecffb8c7736d4e811665d81bf4ed71c7978431fcc4f45b645ee1/setup/directory/0",
+            "/v1/shards/167/revisions/16b8227360ce35dd2e111156f5e31fd5eb500ff877879a212fef6cf8471de8a5/setup/directory/0",
+            "/v1/shards/171/revisions/ca7afe810c988a8b4b561668f3456a9f38d1fdbb0776614e07ddfeb1a2132000/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 19431,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 7259,
+          "routes": [
+            "/v1/shards/161/revisions/c907a0aa45b2551520863990845279fd25135889865e088c2dad6ea0d32b8fde/setup/pages/0"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.997750735
+    }
+  ],
+  "error": null,
+  "http": {
+    "attempts": 88,
+    "failed_attempts": 0,
+    "failed_requests": 0,
+    "log": "case-recent-birthday.http.ndjson",
+    "recovered_requests": 0,
+    "requests": 88
+  },
+  "id": "recent-birthday",
+  "passed": true,
+  "profile": "recent-restore"
+}

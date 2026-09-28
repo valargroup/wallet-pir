@@ -1,0 +1,816 @@
+{
+  "client": {
+    "label": null,
+    "store": "memory"
+  },
+  "command": [
+    "/root/sl-target-a2/release/transparent-loadtest",
+    "--shard-url",
+    "https://transparent-pir.valargroup.dev",
+    "--sample",
+    "/root/single-lookup-sample.json",
+    "--steps",
+    "4",
+    "--step-duration",
+    "240s",
+    "--min-completed-per-class",
+    "3",
+    "--max-queries",
+    "6000",
+    "--timeout",
+    "600s",
+    "--run-id",
+    "a1-pinned-live-1",
+    "--json-out",
+    "/root/a1-pinned-live-1.json"
+  ],
+  "filter_url": "https://transparent-pir.valargroup.dev",
+  "generated_at_unix": 1790582920,
+  "host": {
+    "region": null,
+    "sku": null
+  },
+  "in_progress": false,
+  "limitations": [
+    "TLS handshake and connection bytes are not measured; byte figures are wallet-level payloads as the wallet charges them",
+    "clients are synthetic groupings of public scripts, not a user population",
+    "a step ends early once every class reached min_completed_per_class; rates are computed over the step's actual duration",
+    "a sync that stopped only for unresolved spends counts as completed: synthetic wallets begin with an empty store inside their history, so older receives are absent by construction; the count is reported per class"
+  ],
+  "run_id": "a1-pinned-live-1",
+  "sample": {
+    "clients": 1080,
+    "path": "/root/single-lookup-sample.json",
+    "sha256": "55ea216140ac9cefe281940db7d09fe327a58e06cecd305fd504aa4a0a5c8111"
+  },
+  "schema": "transparent-loadtest-v1",
+  "set": {
+    "anchor_hash": "00000000008518328b9aa74886454367ae0c00814da06c21579669785e8a9b3a",
+    "anchor_height": 3498940,
+    "cutoff_height": 3262749,
+    "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "geometries": [
+      "archive-wide",
+      "recent-8k"
+    ],
+    "max_queries_per_sync": 6000,
+    "network": "main",
+    "pinned_to_sample_anchor": true,
+    "profile": "zcash-transparent-range-v1",
+    "schema": "transparent-shard-v7",
+    "shards": 176,
+    "start_height": 0,
+    "target_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "target_height": 3473686
+  },
+  "shard_url": "https://transparent-pir.valargroup.dev",
+  "source_sha": null,
+  "steps": [
+    {
+      "classes": {
+        "catch-up-1d": {
+          "completed": 7,
+          "events_recovered": 30,
+          "exact": 7,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 1,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 7,
+          "requests": 108,
+          "stages": {
+            "filters": {
+              "bytes_down": 1781220,
+              "bytes_up": 0,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 2e-6
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.28437
+            },
+            "manifest": {
+              "bytes_down": 18494,
+              "bytes_up": 0,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.194994
+            },
+            "query_directory": {
+              "bytes_down": 215712,
+              "bytes_up": 5504344,
+              "calls": 43,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 1,
+              "seconds": 2.976615
+            },
+            "query_pages": {
+              "bytes_down": 41088,
+              "bytes_up": 1024064,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.285994
+            },
+            "setup_directory": {
+              "bytes_down": 272090,
+              "bytes_up": 0,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.104196
+            },
+            "setup_pages": {
+              "bytes_down": 155448,
+              "bytes_up": 0,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.064755
+            }
+          },
+          "sync_seconds": {
+            "max": 3.033,
+            "p50": 0.608,
+            "p95": 3.033,
+            "p99": 3.033
+          }
+        },
+        "catch-up-30d": {
+          "completed": 7,
+          "events_recovered": 98,
+          "exact": 7,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 2
+          },
+          "mismatched": 0,
+          "n": 7,
+          "requests": 120,
+          "stages": {
+            "filters": {
+              "bytes_down": 3220301,
+              "bytes_up": 0,
+              "calls": 28,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 4e-6
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.366799
+            },
+            "manifest": {
+              "bytes_down": 19518,
+              "bytes_up": 0,
+              "calls": 15,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.18407
+            },
+            "query_directory": {
+              "bytes_down": 195168,
+              "bytes_up": 4864304,
+              "calls": 38,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.641813
+            },
+            "query_pages": {
+              "bytes_down": 46224,
+              "bytes_up": 1152072,
+              "calls": 9,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.323917
+            },
+            "setup_directory": {
+              "bytes_down": 291525,
+              "bytes_up": 0,
+              "calls": 15,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.104387
+            },
+            "setup_pages": {
+              "bytes_down": 155448,
+              "bytes_up": 0,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.07329
+            }
+          },
+          "sync_seconds": {
+            "max": 1.16,
+            "p50": 0.596,
+            "p95": 1.16,
+            "p99": 1.16
+          }
+        },
+        "catch-up-7d": {
+          "completed": 7,
+          "events_recovered": 57,
+          "exact": 7,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {
+            "unresolved-spends": 3
+          },
+          "mismatched": 0,
+          "n": 7,
+          "requests": 106,
+          "stages": {
+            "filters": {
+              "bytes_down": 1781220,
+              "bytes_up": 0,
+              "calls": 14,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.000015
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.293045
+            },
+            "manifest": {
+              "bytes_down": 15786,
+              "bytes_up": 0,
+              "calls": 12,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.206932
+            },
+            "query_directory": {
+              "bytes_down": 225984,
+              "bytes_up": 5632352,
+              "calls": 44,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.996961
+            },
+            "query_pages": {
+              "bytes_down": 51360,
+              "bytes_up": 1280080,
+              "calls": 10,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.347714
+            },
+            "setup_directory": {
+              "bytes_down": 233220,
+              "bytes_up": 0,
+              "calls": 12,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.117193
+            },
+            "setup_pages": {
+              "bytes_down": 136017,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.039601
+            }
+          },
+          "sync_seconds": {
+            "max": 0.921,
+            "p50": 0.722,
+            "p95": 0.921,
+            "p99": 0.921
+          }
+        },
+        "multi-script": {
+          "completed": 6,
+          "events_recovered": 1017,
+          "exact": 6,
+          "failed": 2,
+          "failures_by_message": {
+            "client: transport: error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/166/revisions/1cd27964911287b2a127c1f8df5e6b0c19f5b4db309391c5adb2db3072bfec6e/query/directory): client error (SendRequest): connection closed before message completed": 1,
+            "client: transport: error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/168/revisions/b16be2933ab920bc4745ea8917e5167a7a685c211e0b4febe88b4d3018f970bc/query/directory): client error (SendRequest): connection closed before message completed": 1
+          },
+          "http_409": 0,
+          "http_503": 2,
+          "incomplete_by_reason": {
+            "unresolved-spends": 6
+          },
+          "mismatched": 0,
+          "n": 8,
+          "requests": 1231,
+          "stages": {
+            "filters": {
+              "bytes_down": 10003131,
+              "bytes_up": 0,
+              "calls": 100,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.000045
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.894139
+            },
+            "manifest": {
+              "bytes_down": 125192,
+              "bytes_up": 0,
+              "calls": 97,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.280618
+            },
+            "query_directory": {
+              "bytes_down": 3852000,
+              "bytes_up": 96390024,
+              "calls": 753,
+              "failures": 2,
+              "http_409": 0,
+              "http_503": 1,
+              "seconds": 38.855878
+            },
+            "query_pages": {
+              "bytes_down": 564960,
+              "bytes_up": 14208888,
+              "calls": 111,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 1,
+              "seconds": 6.296401
+            },
+            "setup_directory": {
+              "bytes_down": 1885195,
+              "bytes_up": 0,
+              "calls": 97,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.790327
+            },
+            "setup_pages": {
+              "bytes_down": 1263015,
+              "bytes_up": 0,
+              "calls": 65,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.543494
+            }
+          },
+          "sync_seconds": {
+            "max": 12.639,
+            "p50": 9.567,
+            "p95": 12.639,
+            "p99": 12.639
+          }
+        },
+        "restore-6m": {
+          "completed": 7,
+          "events_recovered": 113,
+          "exact": 7,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 7,
+          "requests": 255,
+          "stages": {
+            "filters": {
+              "bytes_down": 9902914,
+              "bytes_up": 0,
+              "calls": 98,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.000012
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.604729
+            },
+            "manifest": {
+              "bytes_down": 39990,
+              "bytes_up": 0,
+              "calls": 31,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.46939
+            },
+            "query_directory": {
+              "bytes_down": 390336,
+              "bytes_up": 9728608,
+              "calls": 76,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 4.108562
+            },
+            "query_pages": {
+              "bytes_down": 30816,
+              "bytes_up": 768048,
+              "calls": 6,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.310371
+            },
+            "setup_directory": {
+              "bytes_down": 602485,
+              "bytes_up": 0,
+              "calls": 31,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.288826
+            },
+            "setup_pages": {
+              "bytes_down": 116586,
+              "bytes_up": 0,
+              "calls": 6,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.050131
+            }
+          },
+          "sync_seconds": {
+            "max": 2.503,
+            "p50": 1.148,
+            "p95": 2.503,
+            "p99": 2.503
+          }
+        },
+        "restore-old": {
+          "completed": 6,
+          "events_recovered": 878,
+          "exact": 6,
+          "failed": 1,
+          "failures_by_message": {
+            "client: transport: error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/42/revisions/9e98540ca4012ac09ff8cf04a7022d21a6e8e26b40dc051fe1d005acb829087d/query/directory): client error (SendRequest): connection closed before message completed": 1
+          },
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 7,
+          "requests": 1535,
+          "stages": {
+            "filters": {
+              "bytes_down": 390724046,
+              "bytes_up": 0,
+              "calls": 1087,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.096495
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 6.884284
+            },
+            "manifest": {
+              "bytes_down": 104873,
+              "bytes_up": 0,
+              "calls": 81,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.996492
+            },
+            "query_directory": {
+              "bytes_down": 980976,
+              "bytes_up": 49546752,
+              "calls": 192,
+              "failures": 1,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 5.133754
+            },
+            "query_pages": {
+              "bytes_down": 256800,
+              "bytes_up": 21504400,
+              "calls": 50,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.668539
+            },
+            "setup_directory": {
+              "bytes_down": 1574397,
+              "bytes_up": 0,
+              "calls": 81,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.522792
+            },
+            "setup_pages": {
+              "bytes_down": 719017,
+              "bytes_up": 0,
+              "calls": 37,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.304829
+            }
+          },
+          "sync_seconds": {
+            "max": 11.063,
+            "p50": 2.883,
+            "p95": 11.063,
+            "p99": 11.063
+          }
+        },
+        "reused-tail": {
+          "completed": 4,
+          "events_recovered": 20704,
+          "exact": 4,
+          "failed": 4,
+          "failures_by_message": {
+            "client: transport: error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/156/revisions/25958f0f47418501d1c8dea94f1fb13b0b4b199677866b9f7f7d37481ec92e29/query/pages): client error (SendRequest): connection closed before message completed": 1,
+            "client: transport: error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/158/revisions/653f0210b0699c886c57d09c24485eca5e5dd558013bbaee44e7a2211e99b1db/query/pages): client error (SendRequest): connection closed before message completed": 1,
+            "client: transport: error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/159/revisions/86eb5745a5ba26d85a369bee30821f0a24017759b0d08179985ac3b800420cab/query/pages): client error (SendRequest): connection closed before message completed": 1,
+            "client: transport: error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/35/revisions/bb686c90ed31569c1a1a31b6b251b1575d44811da5a9bc15f22e6178f16ac08b/query/pages): client error (SendRequest): connection closed before message completed": 1
+          },
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 8,
+          "requests": 4848,
+          "stages": {
+            "filters": {
+              "bytes_down": 85642195,
+              "bytes_up": 0,
+              "calls": 247,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.000234
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 3.702873
+            },
+            "manifest": {
+              "bytes_down": 295956,
+              "bytes_up": 0,
+              "calls": 228,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.824791
+            },
+            "query_directory": {
+              "bytes_down": 2342016,
+              "bytes_up": 107269696,
+              "calls": 456,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 10.472699
+            },
+            "query_pages": {
+              "bytes_down": 17719200,
+              "bytes_up": 1404566512,
+              "calls": 3454,
+              "failures": 4,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 88.575945
+            },
+            "setup_directory": {
+              "bytes_down": 4431709,
+              "bytes_up": 0,
+              "calls": 228,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.152626
+            },
+            "setup_pages": {
+              "bytes_down": 4411363,
+              "bytes_up": 0,
+              "calls": 227,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.137297
+            }
+          },
+          "sync_seconds": {
+            "max": 259.327,
+            "p50": 18.783,
+            "p95": 259.327,
+            "p99": 259.327
+          }
+        },
+        "small-active": {
+          "completed": 7,
+          "events_recovered": 18,
+          "exact": 7,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 7,
+          "requests": 93,
+          "stages": {
+            "filters": {
+              "bytes_down": 5442552,
+              "bytes_up": 0,
+              "calls": 48,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 2e-6
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 7,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.438529
+            },
+            "manifest": {
+              "bytes_down": 11603,
+              "bytes_up": 0,
+              "calls": 9,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.163689
+            },
+            "query_directory": {
+              "bytes_down": 92448,
+              "bytes_up": 2564240,
+              "calls": 18,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 1.134347
+            },
+            "query_pages": {
+              "bytes_down": 5136,
+              "bytes_up": 128008,
+              "calls": 1,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.019813
+            },
+            "setup_directory": {
+              "bytes_down": 174918,
+              "bytes_up": 0,
+              "calls": 9,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.075885
+            },
+            "setup_pages": {
+              "bytes_down": 19431,
+              "bytes_up": 0,
+              "calls": 1,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.016627
+            }
+          },
+          "sync_seconds": {
+            "max": 1.003,
+            "p50": 0.274,
+            "p95": 1.003,
+            "p99": 1.003
+          }
+        },
+        "unused": {
+          "completed": 8,
+          "events_recovered": 0,
+          "exact": 8,
+          "failed": 0,
+          "failures_by_message": {},
+          "http_409": 0,
+          "http_503": 0,
+          "incomplete_by_reason": {},
+          "mismatched": 0,
+          "n": 8,
+          "requests": 1400,
+          "stages": {
+            "filters": {
+              "bytes_down": 506665528,
+              "bytes_up": 0,
+              "calls": 1392,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 0.735153
+            },
+            "filters_prefetch": {
+              "bytes_down": 0,
+              "bytes_up": 0,
+              "calls": 8,
+              "failures": 0,
+              "http_409": 0,
+              "http_503": 0,
+              "seconds": 7.207764
+            }
+          },
+          "sync_seconds": {
+            "max": 3.121,
+            "p50": 1.745,
+            "p95": 3.121,
+            "p99": 3.121
+          }
+        }
+      },
+      "completed": 59,
+      "completed_syncs_per_second": 0.2056464793134779,
+      "concurrency": 4,
+      "duration_seconds": 286.900121981,
+      "error_rate": 0.10606060606060606,
+      "exact": 59,
+      "failed": 7,
+      "http_503_rate": 0.0003094059405940594,
+      "metrics_after": {},
+      "metrics_before": {},
+      "syncs": 66,
+      "worst_p99_sync_seconds": 259.327
+    }
+  ],
+  "stop_reason": "error rate 0.106 above 0.05",
+  "stopped_at_concurrency": 4,
+  "total_seconds": 286.905408067
+}
