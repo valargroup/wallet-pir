@@ -8,6 +8,10 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Production soak and fixes](prod-soak-2026-09-27/README.md) —
+  six-hour joint 20 QPS load; 432,000/432,000 Enhance and 0 incorrect Status
+  answers; thirteen findings fixed on `main`, open items listed.
+
 - [Status window raised to 4,096 blocks](status-window-4096-2026-09-27/README.md) —
   live coverage of 4,096 blocks with 32,331 entries (2.1% of admission);
   12,000/12,000 correct at 20 QPS for 10 minutes.

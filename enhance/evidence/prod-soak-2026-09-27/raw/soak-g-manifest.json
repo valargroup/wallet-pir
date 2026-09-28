@@ -1,0 +1,24 @@
+{
+  "commit": "c5a6486476d91c88b692838c3449f4ddb917201c",
+  "started_at": "2026-09-27T19:34:35.008053+00:00",
+  "batches": 36,
+  "batch_seconds": 600,
+  "enhance_qps": 20,
+  "status_qps": 20,
+  "alert_mode": "active",
+  "status_query_origin": "http://127.0.0.1:8492 (router query tunnel to status-pir-01)",
+  "status_window_blocks": 4096,
+  "latency_gate": {
+    "p99_ms": 2000,
+    "p50_ms": 700
+  },
+  "abort_on": [
+    "two consecutive external canary failures",
+    "incorrect answer"
+  ],
+  "record_only": [
+    "HTTP errors",
+    "unstarted arrivals",
+    "latency gate"
+  ]
+}

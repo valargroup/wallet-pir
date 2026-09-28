@@ -1,0 +1,77 @@
+{
+  "run_id": "prod-soak-2026-09-27",
+  "utc": {
+    "soak_g": [
+      "2026-09-27T19:34:34Z",
+      "2026-09-28T01:37:38Z"
+    ],
+    "soak_h_started": "2026-09-28T01:38:12Z"
+  },
+  "workload": {
+    "enhance": "enhance-pir-load-test --server https://enhance-pir.valargroup.dev --oracle public-oracle.json (28 records) --rate 20 --parallelism 10, 600 s batches",
+    "status": "status-pir probe-live-load --origin http://127.0.0.1:8480 --query-origin http://127.0.0.1:8492, 20 QPS, 600 s batches",
+    "client": "coordinator 167.99.42.60"
+  },
+  "totals_soak_g": {
+    "batches": 36,
+    "enhance": {
+      "offered": 432000,
+      "correct": 432000,
+      "incorrect": 0,
+      "errors": 0,
+      "p99_ms_range": [
+        144.9,
+        162.9
+      ]
+    },
+    "status": {
+      "offered": 432000,
+      "correct": 424810,
+      "incorrect": 0,
+      "failed": 6756,
+      "unstarted": 434
+    }
+  },
+  "final_state": {
+    "status_roles": "852d6b5d status-pir on status-pir-01 (s-8vcpu-16gb), 6 preparation threads at nice 10, admission 4/32/1s",
+    "enhance_coordinator": "208c75a9 native build",
+    "pir_apm": "148335c2",
+    "pir_monitor": "148335c2",
+    "status_controller": "cd3e9f02",
+    "tunnels": "ServerAliveCountMax=4; droplet sshd ClientAliveInterval 2 / CountMax 3"
+  },
+  "commits": [
+    "be67316e",
+    "148335c2",
+    "92845ebc",
+    "208c75a9",
+    "ef511fc1",
+    "cd3e9f02",
+    "b7783e94",
+    "04b56da9",
+    "41795cf3",
+    "852d6b5d"
+  ],
+  "freezes": {
+    "before_fsync_fix_47min": {
+      "process_freezes": 23,
+      "lock_stalls": 30
+    },
+    "after_fsync_fix_36min": {
+      "process_freezes": 0,
+      "lock_stalls": 24
+    }
+  },
+  "raw": [
+    "soak-g-batches.jsonl",
+    "soak-g-manifest.json",
+    "soak-driver.py",
+    "stallprobe.log",
+    "freezecap.log",
+    "stallprobe.py",
+    "freezecap.py",
+    "nettrace.py",
+    "coord-sampler.py"
+  ],
+  "coordinator_raw": "/root/prod-soak-20260927{b..g}/, /root/coord-sampler-20260927.jsonl, /root/nettrace-soak-g.log"
+}
