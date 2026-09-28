@@ -20,6 +20,10 @@ write_files:
           AllowTcpForwarding yes
           X11Forwarding no
           PermitTTY no
+          # Drop a dead forwarding session within ~6 s so a restarted tunnel can
+          # re-bind its remote listener (a VM pause otherwise held 8495 for 90 s).
+          ClientAliveInterval 2
+          ClientAliveCountMax 3
 runcmd:
   - [useradd, --system, --no-create-home, --shell, /usr/sbin/nologin, status-pir]
   - [install, -d, -o, status-pir, -g, status-pir, -m, "0700", /var/lib/status-pir-worker-native, /var/lib/status-pir-router-native]

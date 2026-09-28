@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/ssh -N -T -i /etc/status-pir-control/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/status-pir-control/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=2 -o ServerAliveCountMax=2 -L 127.0.0.1:8492:127.0.0.1:8484 status-control@@STATUS_HOST@
+ExecStart=/usr/bin/ssh -N -T -i /etc/status-pir-control/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/status-pir-control/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=2 -o ServerAliveCountMax=4 -L 127.0.0.1:8492:127.0.0.1:8484 status-control@@STATUS_HOST@
 Restart=always
 RestartSec=2
 NoNewPrivileges=true

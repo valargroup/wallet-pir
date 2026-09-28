@@ -81,6 +81,10 @@ pub struct Service {
     dir: PathBuf,
     _lock: Arc<File>,
     state: Arc<Mutex<StateData>>,
+    /// Serializes the control handlers that change the fence or candidate, so
+    /// activation can persist its fence without holding the `state` lock that
+    /// every query takes.
+    control: Arc<Mutex<()>>,
     preparation: Arc<Mutex<()>>,
     // Query packing stays on the global pool; preparation cannot enqueue there.
     preparation_pool: Option<Arc<rayon::ThreadPool>>,
@@ -222,6 +226,7 @@ impl Service {
                 contact: None,
                 poisoned: false,
             })),
+            control: Arc::new(Mutex::new(())),
             preparation: Arc::new(Mutex::new(())),
             preparation_pool: Some(Arc::new(preparation_pool()?)),
             serving_http: serving_http_client()?,
@@ -355,6 +360,7 @@ async fn fence(
     State(s): State<Service>,
     Json(b): Json<Binding>,
 ) -> Result<Json<Binding>, StatusCode> {
+    let _control = s.control.lock().await;
     let mut state = s.state.lock().await;
     if state.poisoned
         || b.incarnation != s.incarnation
@@ -523,6 +529,7 @@ async fn prepare(
         source_age_ms = now_ms().saturating_sub(g.manifest.observed_ms),
         "Status role preparation"
     );
+    let _control = s.control.lock().await;
     let mut state = s.state.lock().await;
     // Cached calculations are never authority. They may survive a fence, but
     // all serving requires a new matching prepare/activation decision.
@@ -556,6 +563,7 @@ async fn prepare_refresh(
         .preparation
         .try_lock()
         .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+    let _control = s.control.lock().await;
     let mut state = s.state.lock().await;
     s.check(&state, &a.binding)?;
     a.manifest
@@ -590,36 +598,54 @@ async fn activate(
     State(s): State<Service>,
     Json(a): Json<Activate>,
 ) -> Result<Json<Ready>, StatusCode> {
-    let mut state = s.state.lock().await;
-    s.check(&state, &a.binding)?;
-    a.manifest
-        .fresh(now_ms())
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    if let Some(c) = &state.controller {
-        if c.current().manifest == a.manifest {
-            return Ok(Json(Ready {
-                binding: a.binding,
-                manifest: a.manifest.clone(),
-                artifact_digest: a.manifest.public_digest,
-            }));
+    // Holding `control` keeps the fence and candidate unchanged while the new
+    // fence is persisted, so queries keep serving the current generation
+    // instead of waiting on the fsync behind the `state` lock.
+    let _control = s.control.lock().await;
+    let next = {
+        let state = s.state.lock().await;
+        s.check(&state, &a.binding)?;
+        a.manifest
+            .fresh(now_ms())
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        if let Some(c) = &state.controller {
+            if c.current().manifest == a.manifest {
+                return Ok(Json(Ready {
+                    binding: a.binding,
+                    manifest: a.manifest.clone(),
+                    artifact_digest: a.manifest.public_digest,
+                }));
+            }
         }
-    }
-    let (candidate, _) = state.candidate.as_ref().ok_or(StatusCode::CONFLICT)?;
-    let mut expected = candidate.manifest.clone();
-    // The worker binds the router's public digest only at the durable activation decision.
-    if s.role == Role::Worker {
-        expected.public_digest = a.manifest.public_digest;
-    }
-    if expected != a.manifest || a.manifest.generation <= state.fence.generation {
-        return Err(StatusCode::CONFLICT);
-    }
-    let mut next = state.fence.clone();
-    next.generation = a.manifest.generation;
-    next.manifest = Some(a.manifest.id());
-    if persist_off_runtime(&s.dir, &next).await.is_err() {
+        let (candidate, _) = state.candidate.as_ref().ok_or(StatusCode::CONFLICT)?;
+        let mut expected = candidate.manifest.clone();
+        // The worker binds the router's public digest only at the durable activation decision.
+        if s.role == Role::Worker {
+            expected.public_digest = a.manifest.public_digest;
+        }
+        if expected != a.manifest || a.manifest.generation <= state.fence.generation {
+            return Err(StatusCode::CONFLICT);
+        }
+        let mut next = state.fence.clone();
+        next.generation = a.manifest.generation;
+        next.manifest = Some(a.manifest.id());
+        next
+    };
+    let persisted = persist_off_runtime(&s.dir, &next).await;
+    let mut state = s.state.lock().await;
+    if persisted.is_err() {
         if let Some(c) = &state.controller {
             c.revoke();
         }
+        state.poisoned = true;
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    // Every handler that changes the fence or candidate holds `control`, so the
+    // state validated above cannot have moved; refuse rather than assume.
+    if state.fence.epoch != next.epoch
+        || state.fence.generation >= next.generation
+        || state.candidate.is_none()
+    {
         state.poisoned = true;
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
