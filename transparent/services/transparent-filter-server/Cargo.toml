@@ -24,6 +24,10 @@ name = "transparent-filter-server"
 path = "src/bin/server.rs"
 
 [[bin]]
+name = "journal-convert-v1"
+path = "src/bin/journal-convert-v1.rs"
+
+[[bin]]
 name = "shard-cutoff"
 path = "src/bin/shard-cutoff.rs"
 
@@ -54,6 +58,7 @@ axum = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+libc = "0.2"
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
