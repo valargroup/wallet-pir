@@ -1,0 +1,33 @@
+# Byte-for-byte cross-check of transparent-native against enhance_pir::native.
+#
+# A separate workspace with its own lockfile and target directory, because it
+# enables `enhance-pir/native-reinspiring`. Inside the root workspace that
+# feature would unify into the q48 Enhance binaries. Run with:
+#
+#   cargo test --manifest-path transparent/crates/transparent-native/crosscheck/Cargo.toml
+[workspace]
+
+[package]
+name = "transparent-native-crosscheck"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+enhance-pir = { path = "../../../../enhance/crates/enhance-pir", features = ["native-reinspiring"] }
+rand = "0.8"
+rand_chacha = "0.3"
+reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
+transparent-native = { path = ".." }
+
+[profile.dev]
+opt-level = 3
+debug = false
+
+[profile.dev.package."*"]
+opt-level = 3
