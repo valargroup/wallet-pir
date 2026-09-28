@@ -1,7 +1,7 @@
 //! Synthetic wallet recovery benchmark. Uses disposable file-backed wallets and loopback PIR.
 mod fixture;
 mod transport;
-use fixture::{Fixture, KEYS, START, Wallet};
+use fixture::{BATCH, Fixture, KEYS, START, Wallet};
 use futures::StreamExt;
 use orchard::tree::{MerkleHashOrchard, MerklePath};
 use receiver_directory::{Payment, Receiver};
@@ -89,7 +89,16 @@ async fn run(
         .unwrap();
     let setup_us = setup.elapsed().as_micros();
     let scan = Instant::now();
-    st.scan_cached_blocks(START.into(), f.blocks.len());
+    // A restored test wallet has no generator-side cached tree state. Supply each
+    // batch's actual preceding frontier, as a wallet does using its tree-state source.
+    for (batch, offset) in (0..f.blocks.len()).step_by(BATCH).enumerate() {
+        st.try_scan_cached_blocks_with_state(
+            (START + offset as u32).into(),
+            &f.batch_states[batch],
+            (f.blocks.len() - offset).min(BATCH),
+        )
+        .unwrap_or_else(|e| panic!("scan batch at {} failed: {e:?}", START + offset as u32));
+    }
     let scan_us = scan.elapsed().as_micros();
     assert_eq!(
         st.wallet()
@@ -340,14 +349,20 @@ impl Drop for Child {
 async fn main() {
     transport::init();
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(
-        args.len(),
-        3,
-        "usage: recovery-benchmark ENHANCE_FIXTURE_BINARY NEW_OUTPUT_DIRECTORY"
+    assert!(
+        (3..=5).contains(&args.len()),
+        "usage: recovery-benchmark ENHANCE_FIXTURE_BINARY NEW_OUTPUT_DIRECTORY [PUBLIC_SHAPE_JSON [CACHED_COMPACT_BLOCKS]]"
     );
     let root = PathBuf::from(&args[2]);
     std::fs::create_dir(&root).unwrap();
-    let f = fixture::generate();
+    let shape: Option<Value> = args
+        .get(3)
+        .map(|p| serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap());
+    let cache = args
+        .get(4)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("compact.bin"));
+    let f = fixture::generate(shape.as_ref(), &cache);
     std::fs::write(
         root.join("enhance.json"),
         serde_json::to_vec(&f.enhance).unwrap(),
@@ -359,6 +374,8 @@ async fn main() {
         "blocks": f.blocks.len(),
         "actions": f.snapshot.manifest.end_position,
         "expected": f.expected,
+        "directory_records": f.records.len(),
+        "witness_bytes": f.proof.len(),
         "scope": "synthetic wallet pipeline, local compact cache and loopback PIR; excludes mainnet download and UI",
     });
     std::fs::write(
