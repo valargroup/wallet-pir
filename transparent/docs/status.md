@@ -75,6 +75,31 @@ Shadow mode itself withdraws public metadata while workers upgrade, here about
 - To revert: remove the field and restart the controller. The next tail
   revision is then published without a table.
 
+## Router health and worker drain rollout, 2026-09-28
+
+Times UTC.
+
+- **Rollout.** `3317cd01` (C1 router policy, worker upload drain, A3 client
+  concurrency) went out in shadow mode 10:45–11:00 and was activated at 11:12
+  with `directory_choice: all`. All six workers now report binary `3e9bae97…`,
+  warm with every runtime.
+- **Activation failure.** Activation missed its 180 s deadline. The new router
+  policy used `health_fails` and `handle_errors 502 503 504`, which the router's
+  **Caddy 2.6.2** rejects, so every route attempt failed validation. Public
+  metadata returned 503 from the start of the shadow rollout until 11:16.
+- **Recovery.**
+  - The live `/opt/transparent-publisher/transparent-live-fleet.py` was patched
+    to 2.6-compatible directives (original kept as `…3317cd01-orig`). The
+    controller then routed and served at 11:16.
+  - The long-running replica reconciler still ran the fleet code it had loaded
+    before the upgrade, and re-routed with the old policy at 11:16:18. It was
+    restarted, and the controller's next activation installed the new policy
+    at 11:19:10.
+  - Both renderers were fixed in `24b988db`, with an ops test against newer
+    directives, and activation now restarts the reconciler. On 2.6.2, a bare
+    `respond` inside `handle_errors` keeps the proxy's status (verified 503
+    with `Retry-After`).
+
 ## M1 accepted observation
 
 The matching loaded canary ran for more than six hours and 300 blocks with
