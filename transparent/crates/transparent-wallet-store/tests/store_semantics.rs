@@ -101,6 +101,7 @@ fn migration_preserves_events_but_invalidates_unbound_legacy_progress() {
         "ALTER TABLE coverage DROP COLUMN source_anchor;
         ALTER TABLE pending_work DROP COLUMN target_anchor;
         ALTER TABLE pending_work DROP COLUMN validated_events;
+         ALTER TABLE pending_work DROP COLUMN page_boundary;
         UPDATE wallet_meta SET value = '1' WHERE key = 'schema_version';",
     )
     .unwrap();
@@ -112,6 +113,70 @@ fn migration_preserves_events_but_invalidates_unbound_legacy_progress() {
     assert!(store.anchor().unwrap().is_none());
     assert!(store.coverage(&script(1)).unwrap().is_empty());
     assert!(store.pending().unwrap().is_empty());
+    drop(store);
+    SqliteStore::open(&path).unwrap();
+}
+
+#[test]
+fn fragment_boundary_survives_update_and_reopen() {
+    use transparent_wallet::store::PageBoundary;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("boundary.sqlite");
+    let mut store = SqliteStore::open(&path).unwrap();
+    store.bind_set(&identity()).unwrap();
+    let mut pending = transparent_wallet::testing::pending(1, "r0");
+    let boundary = PageBoundary {
+        event_bytes: 4029,
+        last_event: receive(1, 0, 12, 10).event,
+    };
+    pending.next_ordinal = 1;
+    pending.boundary = Some(boundary.clone());
+    let mut c = commit(1, "r0", true, (0, 99), vec![], vec![]);
+    c.pending_upsert.push(pending);
+    store.commit_shard(c).unwrap();
+    drop(store);
+    let mut store = SqliteStore::open(&path).unwrap();
+    let mut restored = store.pending().unwrap().remove(0);
+    assert_eq!(restored.boundary, Some(boundary.clone()));
+    restored.next_ordinal = 2;
+    restored.boundary.as_mut().unwrap().event_bytes = 4042;
+    let mut c = commit(1, "r0", true, (0, 99), vec![], vec![]);
+    c.pending_upsert.push(restored.clone());
+    store.commit_shard(c).unwrap();
+    drop(store);
+    assert_eq!(
+        SqliteStore::open(&path).unwrap().pending().unwrap(),
+        vec![restored]
+    );
+}
+
+#[test]
+fn v2_migration_preserves_events_and_adds_empty_boundary_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v2.sqlite");
+    let mut store = SqliteStore::open(&path).unwrap();
+    store.bind_set(&identity()).unwrap();
+    store
+        .commit_shard(commit(
+            0,
+            "r0",
+            true,
+            (0, 99),
+            vec![receive(1, 0, 123, 10)],
+            vec![script(1)],
+        ))
+        .unwrap();
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "ALTER TABLE pending_work DROP COLUMN page_boundary;
+        UPDATE wallet_meta SET value = '2' WHERE key = 'schema_version';",
+    )
+    .unwrap();
+    drop(db);
+    let store = SqliteStore::open(&path).unwrap();
+    assert_eq!(store.events().unwrap().len(), 1);
+    assert_eq!(store.coverage(&script(1)).unwrap().len(), 1);
     drop(store);
     SqliteStore::open(&path).unwrap();
 }

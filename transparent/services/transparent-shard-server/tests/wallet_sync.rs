@@ -815,6 +815,69 @@ async fn a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal()
     );
 }
 
+/// Local outpoints must survive actual PIR, including a shared tail row and
+/// an inline pair. Sharing that row must not suppress the other script's query.
+#[tokio::test(flavor = "multi_thread")]
+async fn compact_local_outpoints_and_shared_tails_recover_over_native_pir() {
+    let mut events = Vec::new();
+    for i in 0..50u64 {
+        let received = txid(10_000 + i);
+        events.push((
+            script(1),
+            TransparentEvent::Receive(ReceiveEvent {
+                height: (FIRST + i) as u32,
+                transaction_index: 0,
+                txid: received,
+                output_index: 3,
+                value: 123,
+                coinbase: false,
+            }),
+        ));
+        events.push((
+            script(1),
+            TransparentEvent::Spend(SpendEvent {
+                height: (FIRST + i) as u32,
+                transaction_index: 1,
+                spending_txid: txid(20_000 + i),
+                input_index: 2,
+                spent_txid: received,
+                spent_output_index: 3,
+            }),
+        ));
+    }
+    for i in 0..3u64 {
+        events.push((
+            script(2),
+            TransparentEvent::Receive(ReceiveEvent {
+                height: (FIRST + i) as u32,
+                transaction_index: 2,
+                txid: txid(30_000 + i),
+                output_index: 0,
+                value: 7,
+                coinbase: false,
+            }),
+        ));
+    }
+    let per_shard = vec![events];
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish(dir.path(), &per_shard);
+    assert_eq!(
+        map.shards[0].page_rows, 2,
+        "short history shares the long tail"
+    );
+    let wallet = vec![script(1), script(2)];
+    let base = serve(dir.path()).await;
+    let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
+    compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
+    assert_eq!(outcome.ledger.spends().len(), 50);
+    assert_eq!(outcome.ledger.confirmed_balance(), 21);
+    assert!(outcome.ledger.unresolved().is_empty());
+    assert_eq!(
+        outcome.charges.pages.queries, 3,
+        "each script fetches its own pages"
+    );
+}
+
 /// A shard whose content does not fit one segment of the pinned geometry.
 ///
 /// Packing makes this harder to provoke than it was, and that is the point: a

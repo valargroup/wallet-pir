@@ -40,6 +40,14 @@ provenance are preserved. Superseded diagnostics and designs are recorded in the
 [cleanup ledger](../../docs/cleanup-2026-09-14.md). Use Git history for those records;
 they are not current instructions. Follow the [retention rules](../../evidence/README.md).
 
+## Compact layout
+
+Schema v10 is implemented in source; the recorded live set remains v9. See the
+[architecture](architecture.md#private-record-layout),
+[storage evidence](../evidence/compact-layout-2026-09-28/README.md) and
+[qualification gates](remaining-work.md#schema-v10-qualification-and-republication).
+The journal remains version 2.
+
 ## Experiments
 
 The 2026-09-27 six-month architecture review and the entry-layout study that

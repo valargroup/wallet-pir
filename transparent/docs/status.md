@@ -6,6 +6,18 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Compact layout source update, 2026-09-28
+
+Schema v10 is implemented in this checkout with 51-byte receives, 79-byte spends,
+43-byte local spends, variable entries in fixed rows, mixed-size page packing,
+and byte-weighted directory placement. The SQLite wallet store migrates to
+schema 3 to persist validation across page boundaries and restarts. This change
+leaves the version-2 journal format unchanged and does not deploy or publish
+v10. The recorded live state below remains v9. Measurement provenance and limits
+are in the [layout evidence](../evidence/compact-layout-2026-09-28/README.md);
+qualification and migration gates are in
+[remaining work](remaining-work.md#schema-v10-qualification-and-republication).
+
 ## Current milestone evidence
 
 | Milestone | Result and evidence | Scope and limits |

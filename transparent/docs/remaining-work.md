@@ -177,6 +177,31 @@ recovery failure is explained and reproducibly resolved. Release-affecting fixes
 restart observation. Final acceptance records source, supported workloads,
 capacity, outage limitations, trust assumptions and excluded features.
 
+## Schema v10 qualification and republication
+
+The compact codec, byte-weighted directory placement, greedy page packing and
+restart-safe fragment validation are implemented in source. The version-2 event
+journal remains compatible. [Layout evidence](../evidence/compact-layout-2026-09-28/README.md)
+separates storage measurements from service qualification. This work does not
+activate v10 or replace the recorded live v9 set.
+
+- [ ] Build a separate v10 candidate publication, verify its emitted tables and
+  full-chain ledger recovery, and retain v9 for rollback. Never extend a v9
+  publication directory with v10 bytes.
+- [ ] Recompute native correctness certificates on the actual compact directory
+  and page tables; denser row bytes can change the database noise term even
+  though the PIR row geometry is unchanged.
+- [ ] Run paired native query/build timing and whole-wallet recovery, interruption,
+  and resumed SQLite-store measurements on the candidate; quantify encoding CPU,
+  transient memory, query counts, and filter/choice/setup/query/response bytes.
+- [ ] Update wallet consumers for schema v10 and the persisted page-boundary field
+  before any coordinated service cutover. Existing v9 clients fail closed on v10;
+  changed seal thresholds also require a new publication lineage, not resuming
+  old pending pages as if their shard identifiers still matched.
+- [ ] Review and explicitly authorize a separate rollout after the candidate and
+  rollback procedure are concrete. Source tests and the storage census are not
+  deployment acceptance.
+
 ## Schema v9 republication and cluster rollout
 
 The 2026-09-27 six-month architecture review is closed: its client, native-scheme

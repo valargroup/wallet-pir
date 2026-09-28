@@ -1,0 +1,9 @@
+   Compiling transparent-shard-server v0.1.0 (/tmp/wallet-pir-v10-validation/transparent/services/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 1m 20s
+     Running tests/wallet_sync.rs (/tmp/wallet-pir-v10-test-target/release/deps/wallet_sync-d7550508f7eaf015)
+
+running 1 test
+test compact_local_outpoints_and_shared_tails_recover_over_native_pir ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 4.51s
+

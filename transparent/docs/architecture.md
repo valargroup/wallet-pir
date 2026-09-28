@@ -4,8 +4,11 @@ This describes the system as it exists in this repository's source. [Status](sta
 records what is published and live, [deployment](deployment.md) owns the accepted
 operating targets, and the [contract](contract.md) defines the completeness, privacy
 and failure requirements all of it serves. Source establishes implementation and
-never establishes a deployment: schema v9, the v2 filter profile and the
-`recent-4k-8k` geometry are implemented and unpublished.
+never establishes a deployment. The compact schema v10 described below is a
+source change; the recorded live publication remains v9. See the
+[compact-layout evidence](../evidence/compact-layout-2026-09-28/README.md) for its
+measurement scope and [remaining work](remaining-work.md#schema-v10-qualification-and-republication)
+for the release gates.
 
 ## Data and recovery
 
@@ -82,9 +85,10 @@ the number of scripts a wallet tests, not against block downloads as in BIP 158.
 
 ## Identity and geometry
 
-The source schema is `transparent-shard-v9`. Both tables use 4,096-byte rows, which is one
-native PIR instance. A directory entry is 192 bytes and a row holds 21 of them; a page
-fragment holds 46 events. v8 and v7 bytes are not reinterpreted.
+The source schema is `transparent-shard-v10`. Both tables retain 4,096-byte rows,
+which is one native PIR instance. Entries and events have variable widths within
+those rows. Earlier shard bytes are refused, not reinterpreted. Schema v10 changes
+neither the logical event model nor the version-2 journal's 87-byte record.
 
 A shard declares a named geometry from the compiled registry: `recent-8k` (8,192 directory
 and page rows), `recent-4k`, `recent-4k-8k`, `archive-32k` and `archive-wide` (32,768
@@ -117,39 +121,78 @@ once it is durable.
 
 ## Private record layout
 
-Every row is fixed width and every field sits at a fixed offset. A PIR response has fixed
-geometry, so a row whose size depended on what it held would leak that through the
-response; padding is the mechanism rather than waste. Unused slots, reserved bits and
-trailing row bytes must all be zero, and a decoder rejects a claimed count above what a row
-can hold before computing any offset from it.
+Every PIR row is exactly 4,096 bytes. Entry offsets inside it depend on preceding
+entry lengths, so decoding scans from the row header. Unknown flags, counts above
+the row's decoder bounds, malformed references and nonzero trailing padding are
+refused. Fixed response width remains unchanged; the number of page queries now
+depends on event kinds and local receive/spend adjacency as well as history length.
+That additional dependence was accepted for this layout.
 
-A directory row is a 4-byte occupied-entry count and 21 entries, leaving 60 bytes no slot
-can reach. An entry is a 14-byte script tag, a 4-byte first-page locator and two 87-byte
-inline event slots. There is no stored total, inline count or fragment count.
+A directory row starts with a 4-byte occupied-entry count, then packed entries.
+Each entry contains a 14-byte script tag, a 4-byte first-page locator, a 1-byte
+inline count and the newest one or two compact events. A paged entry must carry
+two inline events. There is no stored total or fragment count. Entry sizes range
+from 70 to 177 bytes; a linked receive/spend pair takes 113 bytes including its
+header. At most 58 minimum-size entries fit a row. Unused inline slots and their
+sentinel are gone; only the row's unused suffix is zero padding.
 
-An event record carries a flags byte (bit 0 kind, bit 1 coinbase, valid only on a receive),
-transaction index, height, value, txid, output or input index, and the spent outpoint,
-packed without alignment. Unknown flag bits are refused. An all-zero record is not a valid
-event, which is what lets it serve as the empty inline-slot sentinel: occupied slots are the
-zero-free prefix of the two. A record holds no script and no block hash. The script is the
-key its container carries, and the wallet resolves height to hash against its own accepted
-chain rather than taking a branch from the server.
+Compact events use these three canonical encodings, without alignment:
 
-The first-page locator is 1-based, so absence does not collide with row 0: `0` means the
-history is exactly the occupied inline slots, and `r >= 1` names PIR row `r - 1` as the
-start of a contiguous run. The wallet fetches that row, reads the fragment count `K` from
-the entry it matches, then fetches the rest of the run. Completeness is structural —
-ordinals `0..K-1` exactly, one shared `K`, non-final fragments full, canonical order — so a
-paged script's remaining query budget is known after its first page response rather than
-from the directory.
+| Kind | Fields after flags | Bytes |
+|---|---|---:|
+| Receive | transaction index u16, height u32, value u64, txid 32, output index u32 | 51 |
+| Spend | transaction index u16, height u32, spending txid 32, input index u32, spent txid 32, spent output index u32 | 79 |
+| Local spend | transaction index u16, height u32, spending txid 32, input index u32 | 43 |
 
-A page row is a 4-byte entry count and one or more entries under a 34-byte header: the tag,
-fragment ordinal, fragment count, event count and the two height bounds. A fragment holds
-at most 46 events and a full one uses 4,040 bytes of the row. Short histories of equal paged
-length share a row — 33 entries at one paged event, 19 at two, 13 at three, and one from 24
-upward, where an entry exceeds half a row. A long history takes a contiguous run of rows and
-shares its last with nothing. The page tag must equal the tag the wallet derived and the
-directory entry matched.
+All integers are little endian. Flag bit 0 identifies a spend, bit 1 is coinbase
+on receives only, and bit 2 marks a local spend. A local spend reconstructs its
+outpoint from the immediately preceding receive in the same entry, and is
+mandatory when that receive matches. References reset at every directory entry
+and page fragment. An ordinary full outpoint in that situation is noncanonical.
+The all-zero receive remains invalid. No form stores a script or block hash;
+the wallet resolves height against its accepted chain.
+
+The first-page locator is 1-based: `0` means inline-only, and `r >= 1` identifies
+PIR row `r - 1` as the start of a contiguous run. Its first page reports fragment
+count `K`. The wallet checks ordinals `0..K-1`, one shared `K`, canonical event
+order, page-to-inline order, and greedy fragment boundaries. Before accepting
+the next fragment, it verifies that its first event could not fit the preceding
+fragment, including any local-reference saving that would have applied there.
+The preceding event and encoded byte count are committed with pending work, so
+this check also applies after restart. SQLite schema 3 adds that boundary state;
+existing event and coverage rows survive the migration.
+
+A page row starts with a 4-byte entry count. Each entry retains the 34-byte header:
+script tag, fragment ordinal, fragment count, event count and two height bounds.
+The event payload has a 4,058-byte budget. Greedy fragmentation takes the longest
+prefix that fits it: up to 79 receives, 51 ordinary spends or 86 events arranged
+as 43 local receive/spend pairs. The manifest's `events_per_page = 86` is a decoder
+bound, not a fixed fragment length. At most 48 minimum-size page entries fit a row.
+
+Long histories take contiguous runs in raw-script order. Their final rows offer
+spare space to single-fragment histories. Short entries are ordered by decreasing
+encoded byte length, then raw script, and placed in the tightest available row,
+with row index breaking ties. An equal-byte-size grouping is also counted; the
+builder uses it if it needs fewer rows and otherwise uses mixed packing. Neither
+strategy claims optimal bin packing. The builder and sealer share the exact
+byte-demand calculation, and publication verifies that the emitted row count
+matches it. Sharing a row does not let a wallet skip another script's private
+query.
+
+### Sealing and capacity
+
+The sealer projects each whole block against distinct scripts, actual directory
+entry bytes and packed page rows. Directory bytes have a capacity of
+`directory_rows * 4092` and a target reserving one seventh, independently of the
+absolute script-count bound. The page target reserves one thirty-second. The
+byte reserve helps placement but does not prove that every shard fits one
+segment. An indivisible oversized block still receives extra segments.
+
+Compact storage changes shard boundaries and public filters, so adoption requires
+a separate publication and corresponding clients. Per-row native PIR geometry
+is unchanged, but denser bytes can change native noise bounds and table workloads.
+Capacity measurements do not establish throughput, latency or native correctness
+for a new served snapshot; those require qualification on its actual tables.
 
 ### Script tags
 
@@ -180,10 +223,11 @@ or to public address retrieval.
 
 Each script has two candidate directory rows, hashed under independently domain-separated
 per-shard salts, so a row learned in one shard says nothing about the same script's row in
-another. Two choices pack far better than one for one extra query, where four cost two extra
-queries for less improvement. A script that fits in neither candidate is not resolved by a
-public lookup, which would reveal the script; the shard is given another directory segment
-and placement runs again.
+another. Placement processes decreasing entry sizes, then raw script, choosing
+the less occupied candidate by bytes. If neither fits, a bounded deterministic
+relocation search tries moving residents to their alternate candidates. Its
+512-node limit and single-resident moves can miss a feasible packing; failure
+adds a directory segment and retries. A failure never triggers public lookup.
 
 Without a choice table the wallet retrieves both candidates, because querying one and
 stopping on a hit would make the query count a function of where the script landed. A
@@ -200,7 +244,7 @@ bytes and digest. A manifest that carries one is not backward compatible, becaus
 built before the field drop it, recompute a different manifest digest and refuse the shard.
 The publisher adds tables only to revisions it builds anew (`--directory-choice
 off|sealed|all`, default `off`) and verifies that the table routes every script to its row
-while it still has the scripts. A v9 row stores a tag rather than the raw script, so the
+while it still has the scripts. A private row stores a tag rather than the raw script, so the
 route cannot be recomputed at load; the server decodes every directory row and checks that
 the table's key count equals the entry count.
 

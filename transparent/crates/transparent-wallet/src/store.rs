@@ -151,6 +151,13 @@ pub struct StoredEvent {
     pub revision_digest: String,
 }
 
+/// Last committed fragment's boundary, needed to validate greedy packing after resume.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageBoundary {
+    pub event_bytes: u32,
+    pub last_event: TransparentEvent,
+}
+
 /// Page retrieval a wallet still owes for one script in one shard revision.
 ///
 /// The directory has been read and the pages located; some of them have not
@@ -174,6 +181,8 @@ pub struct PendingPages {
     pub attempts: u32,
     /// Number of validated records, including records above the accepted target.
     pub validated_events: u32,
+    /// Required once at least one page was committed; references reset per page.
+    pub boundary: Option<PageBoundary>,
     pub target_anchor: Option<Anchor>,
 }
 

@@ -1,72 +1,21 @@
-//! On-disk record shapes for a shard's private tables.
-//!
-//! Every row is fixed width and every field is at a fixed offset, because a PIR
-//! response has fixed geometry: a row whose size depended on what it held would
-//! leak that through the response, and a table whose rows varied could not be
-//! addressed at all. Padding is therefore not waste, it is the mechanism.
-//!
-//! # What a decoder must not trust
-//!
-//! These bytes arrive from a PIR response, which means they arrive from a
-//! server that chose them. A decoder must treat every field as a claim:
-//!
-//! - the **script tag** in a record is checked against the tag the client
-//!   derived, because the row is selected by a hash of the script and a hash
-//!   can collide, be mis-hashed, or be misplaced by a faulty builder;
-//! - the **page locators** are checked against the page's own header, because a
-//!   directory entry could point anywhere;
-//! - **unused bytes must be zero**, so that a server cannot smuggle data past a
-//!   client that ignores them, and so two implementations cannot disagree about
-//!   a record while both calling it valid.
-
+//! Variable-length entries inside fixed-width schema-v10 directory rows.
+use crate::compact;
 use crate::layout::{DIRECTORY_ROW_BYTES, EVENTS_PER_PAGE, INLINE_EVENTS};
 use crate::tag::SCRIPT_TAG_BYTES;
-use transparent_events::{EventError, TransparentEvent, EVENT_BYTES};
+use transparent_events::{EventError, TransparentEvent};
 
-/// Longest script a private table can hold.
-///
-/// P2PKH is 25 bytes and P2SH is 23, so this covers the profile's supported
-/// classes with room to spare. It is a *coverage* limit, not a filter limit:
-/// the public filter contains every element the block yields, including scripts
-/// too long to index here.
-///
-/// That asymmetry has to be published rather than papered over. A wallet whose
-/// script exceeds this is outside coverage, and must be told so — treating a
-/// directory miss as absence would report "no activity" for a script that has
-/// activity. The shard manifest carries this limit and the count of scripts it
-/// excluded, so the gap is visible and measured instead of silent.
 pub const MAX_SCRIPT_BYTES: usize = 40;
-
-/// Bytes of an entry before its inline events.
-///
-/// Split out from [`DIRECTORY_ENTRY_BYTES`] because the inline allowance is the
-/// only part of an entry a geometry sweep can move, and the rest is what it
-/// cannot: the 14-byte script tag and the 1-based first-page locator. At two
-/// inline events the header is 18 bytes of a 192-byte entry.
-pub const DIRECTORY_ENTRY_HEADER_BYTES: usize = SCRIPT_TAG_BYTES + 4;
-
-/// Bytes in one directory entry.
-pub const DIRECTORY_ENTRY_BYTES: usize =
-    DIRECTORY_ENTRY_HEADER_BYTES + INLINE_EVENTS as usize * EVENT_BYTES;
-
-/// Bytes at the head of a directory row, before its entries.
+pub const DIRECTORY_ENTRY_HEADER_BYTES: usize = SCRIPT_TAG_BYTES + 4 + 1;
 pub const DIRECTORY_ROW_HEADER_BYTES: usize = 4;
-
-/// Entries one directory row holds.
-pub const DIRECTORY_SLOTS: usize =
-    (DIRECTORY_ROW_BYTES - DIRECTORY_ROW_HEADER_BYTES) / DIRECTORY_ENTRY_BYTES;
-
-// Directory entry field offsets. Packed, with no alignment padding.
+pub const MAX_DIRECTORY_ENTRY_BYTES: usize =
+    DIRECTORY_ENTRY_HEADER_BYTES + INLINE_EVENTS as usize * compact::SPEND_BYTES;
+/// Maximum count, attained with one receive per entry. Actual capacity is bytes.
+pub const DIRECTORY_SLOTS: usize = (DIRECTORY_ROW_BYTES - DIRECTORY_ROW_HEADER_BYTES)
+    / (DIRECTORY_ENTRY_HEADER_BYTES + compact::RECEIVE_BYTES);
 const DE_TAG: usize = 0;
 const DE_FIRST_PAGE: usize = SCRIPT_TAG_BYTES;
-const DE_INLINE_EVENTS: usize = DE_FIRST_PAGE + 4;
-
-/// A row must be able to hold the slots it advertises, and a page header must
-/// fit the space reserved for it. These are properties of the constants above,
-/// so a layout change that broke one should fail the build rather than a test.
-const _: () = assert!(
-    DIRECTORY_ROW_HEADER_BYTES + DIRECTORY_SLOTS * DIRECTORY_ENTRY_BYTES <= DIRECTORY_ROW_BYTES
-);
+const DE_INLINE_COUNT: usize = DE_FIRST_PAGE + 4;
+const DE_INLINE_EVENTS: usize = DE_INLINE_COUNT + 1;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RecordError {
@@ -80,154 +29,113 @@ pub enum RecordError {
     Malformed(String),
     #[error("event: {0}")]
     Event(#[from] EventError),
-    #[error("a row holds at most {DIRECTORY_SLOTS} entries, was given {0}")]
+    #[error("too many entries: {0}")]
     TooManyEntries(usize),
     #[error("a fragment holds at most {EVENTS_PER_PAGE} events, was given {0}")]
     TooManyEvents(usize),
 }
 
-/// One script's directory record.
-///
-/// The raw script is what placement and the choice table are keyed on. It is
-/// not stored: a row carries `tag` instead. Decode leaves `script` empty.
-/// `event_count` is builder metadata for placement order and is not stored.
-/// Page extent is the 1-based `first_page` field (`0` means the history is
-/// exactly the inline slots) plus the fragment count on the first page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirectoryEntry {
+    /// Placement key, omitted from the wire. Decoding leaves it empty.
     pub script: Vec<u8>,
     pub tag: [u8; SCRIPT_TAG_BYTES],
-    /// Not encoded. The builder uses it to order placement.
+    /// Builder metadata, omitted from the wire.
     pub event_count: u32,
-    /// The newest events, carried here so a short history needs no page query.
-    ///
-    /// Occupied slots are a zero-free prefix. All-zero event bytes are the
-    /// empty sentinel, not a receive.
     pub inline: Vec<TransparentEvent>,
-    /// 1-based locator. `0` means no page queries. `r >= 1` means the
-    /// contiguous page run starts at PIR row `r - 1`.
+    /// 1-based start of the contiguous page run; zero means inline-only.
     pub first_page: u32,
 }
 
 impl DirectoryEntry {
-    /// Zero-based PIR row of the first page, when this history has pages.
     pub fn page_base(&self) -> Option<u32> {
         self.first_page.checked_sub(1)
     }
-}
+    pub fn encoded_len(&self) -> usize {
+        DIRECTORY_ENTRY_HEADER_BYTES + compact::encoded_len(&self.inline)
+    }
 
-impl DirectoryEntry {
-    pub fn encode(&self) -> Result<[u8; DIRECTORY_ENTRY_BYTES], RecordError> {
+    pub fn encode(&self) -> Result<Vec<u8>, RecordError> {
         if self.script.len() > MAX_SCRIPT_BYTES {
             return Err(RecordError::ScriptTooLong(self.script.len()));
         }
-        if self.inline.len() > INLINE_EVENTS as usize {
-            return Err(RecordError::Malformed(format!(
-                "{} inline events, at most {INLINE_EVENTS} fit",
-                self.inline.len()
-            )));
+        if self.inline.is_empty()
+            || self.inline.len() > INLINE_EVENTS as usize
+            || self.first_page != 0 && self.inline.len() != INLINE_EVENTS as usize
+        {
+            return Err(RecordError::Malformed("invalid inline count".into()));
         }
-        if self.inline.is_empty() {
-            return Err(RecordError::Malformed(
-                "an occupied directory entry has no events".into(),
-            ));
+        if self
+            .inline
+            .windows(2)
+            .any(|w| w[0].sort_key() > w[1].sort_key())
+        {
+            return Err(RecordError::Malformed("inline events out of order".into()));
         }
-        if self.first_page != 0 && self.inline.len() != INLINE_EVENTS as usize {
-            return Err(RecordError::Malformed(
-                "a paged history must fill both inline slots".into(),
-            ));
-        }
-        let mut bytes = [0u8; DIRECTORY_ENTRY_BYTES];
-        bytes[DE_TAG..DE_FIRST_PAGE].copy_from_slice(&self.tag);
-        bytes[DE_FIRST_PAGE..DE_INLINE_EVENTS].copy_from_slice(&self.first_page.to_le_bytes());
-        for (index, event) in self.inline.iter().enumerate() {
-            let at = DE_INLINE_EVENTS + index * EVENT_BYTES;
-            let encoded = event.to_bytes();
-            if encoded.iter().all(|byte| *byte == 0) {
-                return Err(RecordError::Malformed(
-                    "an inline event is the empty sentinel".into(),
-                ));
-            }
-            bytes[at..at + EVENT_BYTES].copy_from_slice(&encoded);
-        }
+        let mut bytes = Vec::with_capacity(self.encoded_len());
+        bytes.extend_from_slice(&self.tag);
+        bytes.extend_from_slice(&self.first_page.to_le_bytes());
+        bytes.push(self.inline.len() as u8);
+        compact::encode(&self.inline, &mut bytes)?;
         Ok(bytes)
     }
 
-    /// Decodes one entry, or `None` for an empty slot.
-    ///
-    /// An empty slot and an occupied one are the same size and are
-    /// indistinguishable in a response; only the decoded content differs. That
-    /// is deliberate — a row whose occupancy showed in its geometry would leak
-    /// how many scripts share a bucket.
-    pub fn decode(bytes: &[u8]) -> Result<Option<Self>, RecordError> {
-        if bytes.len() != DIRECTORY_ENTRY_BYTES {
-            return Err(RecordError::Length {
-                got: bytes.len(),
-                want: DIRECTORY_ENTRY_BYTES,
-            });
-        }
-        if bytes.iter().all(|byte| *byte == 0) {
-            return Ok(None);
+    /// Decode one occupied entry from a row prefix and report its exact length.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, usize), RecordError> {
+        if bytes.len() < DIRECTORY_ENTRY_HEADER_BYTES {
+            return Err(RecordError::Malformed("truncated directory entry".into()));
         }
         let tag = bytes[DE_TAG..DE_FIRST_PAGE].try_into().expect("14 bytes");
         let first_page = u32::from_le_bytes(
-            bytes[DE_FIRST_PAGE..DE_INLINE_EVENTS]
+            bytes[DE_FIRST_PAGE..DE_INLINE_COUNT]
                 .try_into()
                 .expect("4 bytes"),
         );
-        let mut inline = Vec::with_capacity(INLINE_EVENTS as usize);
-        for index in 0..INLINE_EVENTS as usize {
-            let at = DE_INLINE_EVENTS + index * EVENT_BYTES;
-            let slot = &bytes[at..at + EVENT_BYTES];
-            if slot.iter().all(|byte| *byte == 0) {
-                let rest = &bytes[at + EVENT_BYTES..];
-                if rest.iter().any(|byte| *byte != 0) {
-                    return Err(RecordError::Malformed(
-                        "an empty inline slot is followed by an occupied one".into(),
-                    ));
-                }
-                break;
-            }
-            inline.push(TransparentEvent::from_bytes(slot)?);
+        let count = bytes[DE_INLINE_COUNT] as usize;
+        if count == 0
+            || count > INLINE_EVENTS as usize
+            || first_page != 0 && count != INLINE_EVENTS as usize
+        {
+            return Err(RecordError::Malformed("invalid inline count".into()));
         }
-        if inline.is_empty() {
-            return Err(RecordError::Malformed(
-                "an occupied directory entry has no events".into(),
-            ));
+        let (inline, used) = compact::decode(&bytes[DE_INLINE_EVENTS..], count)?;
+        if inline.windows(2).any(|w| w[0].sort_key() > w[1].sort_key()) {
+            return Err(RecordError::Malformed("inline events out of order".into()));
         }
-        if first_page != 0 && inline.len() != INLINE_EVENTS as usize {
-            return Err(RecordError::Malformed(
-                "a paged history must fill both inline slots".into(),
-            ));
-        }
-        Ok(Some(Self {
-            script: Vec::new(),
-            tag,
-            event_count: inline.len() as u32,
-            inline,
-            first_page,
-        }))
+        Ok((
+            Self {
+                script: Vec::new(),
+                tag,
+                event_count: count as u32,
+                inline,
+                first_page,
+            },
+            DE_INLINE_EVENTS + used,
+        ))
     }
 }
 
-/// Packs entries into one fixed-width directory row.
-///
-/// The count in the header is what a decoder reads; the rest of the row is
-/// zero. Every row is the same size whether it holds one entry or all of them.
 pub fn encode_directory_row(entries: &[DirectoryEntry]) -> Result<Vec<u8>, RecordError> {
     if entries.len() > DIRECTORY_SLOTS {
         return Err(RecordError::TooManyEntries(entries.len()));
     }
-    let mut row = vec![0u8; DIRECTORY_ROW_BYTES];
-    row[..4].copy_from_slice(&(entries.len() as u32).to_le_bytes());
-    for (index, entry) in entries.iter().enumerate() {
-        let at = DIRECTORY_ROW_HEADER_BYTES + index * DIRECTORY_ENTRY_BYTES;
-        row[at..at + DIRECTORY_ENTRY_BYTES].copy_from_slice(&entry.encode()?);
+    let mut row = Vec::with_capacity(DIRECTORY_ROW_BYTES);
+    row.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for (i, entry) in entries.iter().enumerate() {
+        if entries[..i].iter().any(|other| other.tag == entry.tag) {
+            return Err(RecordError::Malformed("duplicate directory tag".into()));
+        }
+        row.extend_from_slice(&entry.encode()?);
     }
+    if row.len() > DIRECTORY_ROW_BYTES {
+        return Err(RecordError::Malformed(
+            "directory row byte capacity exceeded".into(),
+        ));
+    }
+    row.resize(DIRECTORY_ROW_BYTES, 0);
     Ok(row)
 }
 
-/// Reads every entry in a decoded directory row.
 pub fn decode_directory_row(row: &[u8]) -> Result<Vec<DirectoryEntry>, RecordError> {
     if row.len() != DIRECTORY_ROW_BYTES {
         return Err(RecordError::Length {
@@ -239,32 +147,18 @@ pub fn decode_directory_row(row: &[u8]) -> Result<Vec<DirectoryEntry>, RecordErr
     if count > DIRECTORY_SLOTS {
         return Err(RecordError::TooManyEntries(count));
     }
-    let mut entries = Vec::with_capacity(count);
-    for index in 0..count {
-        let at = DIRECTORY_ROW_HEADER_BYTES + index * DIRECTORY_ENTRY_BYTES;
-        match DirectoryEntry::decode(&row[at..at + DIRECTORY_ENTRY_BYTES])? {
-            Some(entry) => entries.push(entry),
-            None => {
-                return Err(RecordError::Malformed(format!(
-                    "slot {index} is empty but the row claims {count} entries"
-                )))
-            }
+    let mut entries: Vec<DirectoryEntry> = Vec::with_capacity(count);
+    let mut at = DIRECTORY_ROW_HEADER_BYTES;
+    for _ in 0..count {
+        let (entry, used) = DirectoryEntry::decode(&row[at..])?;
+        if entries.iter().any(|other| other.tag == entry.tag) {
+            return Err(RecordError::Malformed("duplicate directory tag".into()));
         }
+        entries.push(entry);
+        at += used;
     }
-    // Slots past the claimed count must be empty, so the count cannot hide
-    // entries a client would never decode.
-    let used = DIRECTORY_ROW_HEADER_BYTES + count * DIRECTORY_ENTRY_BYTES;
-    if row[used..].iter().any(|byte| *byte != 0) {
-        return Err(RecordError::Malformed(
-            "a directory row has content past its entry count".into(),
-        ));
-    }
-    for (index, entry) in entries.iter().enumerate() {
-        if entries[..index].iter().any(|other| other.tag == entry.tag) {
-            return Err(RecordError::Malformed(
-                "a directory row holds a script tag twice".into(),
-            ));
-        }
+    if row[at..].iter().any(|b| *b != 0) {
+        return Err(RecordError::Reserved);
     }
     Ok(entries)
 }
@@ -317,34 +211,33 @@ mod tests {
     /// deliberate edit here rather than a silent shift in every table.
     #[test]
     fn the_geometry_is_what_the_layout_promises() {
-        assert_eq!(DIRECTORY_ENTRY_BYTES, 192);
-        assert_eq!(DIRECTORY_SLOTS, 21);
-        assert_eq!(
-            DIRECTORY_ROW_HEADER_BYTES + DIRECTORY_SLOTS * DIRECTORY_ENTRY_BYTES,
-            4_036
-        );
+        assert_eq!(MAX_DIRECTORY_ENTRY_BYTES, 177);
+        assert_eq!(DIRECTORY_SLOTS, 58);
+        assert_eq!(entry(1, 1, 0).encoded_len(), 70);
+        assert_eq!(entry(1, 2, 0).encoded_len(), 121);
     }
 
     #[test]
     fn a_directory_entry_round_trips() {
         for e in [entry(1, 2, 0), entry(2, 2, 8), entry(3, 1, 0)] {
             let encoded = e.encode().unwrap();
-            decoded_eq(&DirectoryEntry::decode(&encoded).unwrap().unwrap(), &e);
+            decoded_eq(&DirectoryEntry::decode(&encoded).unwrap().0, &e);
         }
     }
 
     #[test]
     fn an_empty_slot_decodes_as_absent() {
-        let empty = [0u8; DIRECTORY_ENTRY_BYTES];
-        assert_eq!(DirectoryEntry::decode(&empty).unwrap(), None);
+        assert!(decode_directory_row(&[0; DIRECTORY_ROW_BYTES])
+            .unwrap()
+            .is_empty());
     }
 
     /// A slot that hid a payload behind a zero length would be a channel a
     /// server could use and a client would never inspect.
     #[test]
     fn an_empty_slot_carrying_content_is_refused() {
-        let mut empty = [0u8; DIRECTORY_ENTRY_BYTES];
-        empty[DIRECTORY_ENTRY_BYTES - 1] = 1;
+        let mut empty = [0u8; MAX_DIRECTORY_ENTRY_BYTES];
+        empty[MAX_DIRECTORY_ENTRY_BYTES - 1] = 1;
         assert!(DirectoryEntry::decode(&empty).is_err());
     }
 
@@ -354,7 +247,7 @@ mod tests {
     #[test]
     fn every_directory_row_is_the_same_size_however_full() {
         let full: Vec<DirectoryEntry> = (0..DIRECTORY_SLOTS)
-            .map(|i| entry(i as u8 + 1, 2, 0))
+            .map(|i| entry(i as u8 + 1, 1, 0))
             .collect();
         for entries in [vec![], vec![entry(1, 2, 0)], full] {
             assert_eq!(
@@ -367,7 +260,7 @@ mod tests {
     #[test]
     fn a_directory_row_round_trips_and_rejects_overfill() {
         let entries: Vec<DirectoryEntry> = (0..DIRECTORY_SLOTS)
-            .map(|i| entry(i as u8 + 1, 2, 0))
+            .map(|i| entry(i as u8 + 1, 1, 0))
             .collect();
         let row = encode_directory_row(&entries).unwrap();
         let decoded = decode_directory_row(&row).unwrap();
@@ -394,24 +287,23 @@ mod tests {
         assert!(decode_directory_row(&row).is_err());
     }
 
-    /// Inline occupancy is a zero-free prefix, and a page locator requires both
-    /// slots. A gap or a short inline history that also names a page is not a
-    /// history the wallet can finish.
+    /// Inline count is explicit and bounded; a page locator requires two
+    /// inline events so the newest suffix has one canonical representation.
     #[test]
-    fn inline_slots_must_be_a_prefix_and_pages_require_both() {
-        let mut encoded = entry(1, 1, 0).encode().unwrap();
-        let first = encoded[DE_INLINE_EVENTS..DE_INLINE_EVENTS + EVENT_BYTES].to_vec();
-        encoded[DE_INLINE_EVENTS..DE_INLINE_EVENTS + EVENT_BYTES].fill(0);
-        encoded[DE_INLINE_EVENTS + EVENT_BYTES..DE_INLINE_EVENTS + 2 * EVENT_BYTES]
-            .copy_from_slice(&first);
-        assert!(DirectoryEntry::decode(&encoded).is_err());
-
+    fn inline_count_is_bounded_and_paged_entries_require_two() {
+        for count in [0, 3, 255] {
+            let mut encoded = entry(1, 1, 0).encode().unwrap();
+            encoded[DE_INLINE_COUNT] = count;
+            assert!(DirectoryEntry::decode(&encoded).is_err());
+        }
         assert!(entry(1, 1, 4).encode().is_err());
     }
 
     #[test]
     fn a_duplicate_tag_in_a_row_is_refused() {
-        let row = encode_directory_row(&[entry(1, 1, 0), entry(1, 1, 0)]).unwrap();
+        assert!(encode_directory_row(&[entry(1, 1, 0), entry(1, 1, 0)]).is_err());
+        let mut row = encode_directory_row(&[entry(1, 1, 0), entry(2, 1, 0)]).unwrap();
+        row[4 + 70] = 1;
         assert!(decode_directory_row(&row).is_err());
     }
 

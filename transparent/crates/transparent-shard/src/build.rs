@@ -11,14 +11,14 @@
 //! processed in sorted order, events in their own total order, and bucket
 //! placement resolved by a rule rather than by iteration order.
 
-use crate::layout::{
-    entries_per_row, fragments_for, segments_for, shape_of, Geometry, PackedDemand, Shape,
-    INLINE_EVENTS,
-};
+use crate::layout::{segments_for, Geometry, PackedDemand, INLINE_EVENTS};
+use crate::packing::{self, HistoryLayout, ROW_PAYLOAD};
 use crate::page_row::{encode_page_row, PageEntry};
 use crate::records::{encode_directory_row, DirectoryEntry, RecordError, MAX_SCRIPT_BYTES};
 use crate::tag::{resolve_tag_salt, script_tag};
 use sha2::{Digest, Sha256};
+use std::cmp::Reverse;
+use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use transparent_events::TransparentEvent;
 use transparent_filter::{
@@ -169,35 +169,14 @@ pub fn candidate_rows(shard_id: u64, script: &[u8], rows: u64) -> [u64; DIRECTOR
     std::array::from_fn(|choice| bucket_for(&bucket_salt(shard_id, choice), script, rows))
 }
 
-/// Where a history of `total_events` falls in the order scripts are placed.
-///
-/// Short paged histories first, in increasing paged length; then long
-/// histories; then histories held entirely inline. Within a rank, scripts
-/// sort by raw bytes. This is the order [`build_shard`] lays entries out in,
-/// because it allocates page rows by class before any directory entry can
-/// name one.
-fn placement_rank(total_events: u32) -> (u8, u32) {
-    match shape_of(total_events) {
-        Shape::Short(p) => (0, p),
-        Shape::Long(_) => (1, 0),
-        Shape::None => (2, 0),
-    }
-}
-
-/// Orders indexable scripts, each with its total event count in the shard,
-/// exactly as the builder places them.
-///
-/// Placement with relocation is order dependent: a script's row depends on
-/// every script placed before it. A census that predicts a shard's placement
-/// must therefore feed [`place_scripts`] this order, not any other sorted
-/// order, or it reports row loads the builder never produces.
-pub fn placement_order<'a>(scripts: impl IntoIterator<Item = (&'a [u8], u32)>) -> Vec<&'a [u8]> {
-    let mut keyed: Vec<((u8, u32), &'a [u8])> = scripts
-        .into_iter()
-        .map(|(script, total)| (placement_rank(total), script))
-        .collect();
-    keyed.sort_unstable();
-    keyed.into_iter().map(|(_, script)| script).collect()
+/// Descending encoded directory size, with raw script bytes breaking ties.
+/// Both the builder and census feed this order to byte-based placement.
+pub fn placement_order<'a>(
+    scripts: impl IntoIterator<Item = (&'a [u8], usize)>,
+) -> Vec<(&'a [u8], usize)> {
+    let mut entries: Vec<_> = scripts.into_iter().collect();
+    entries.sort_by(|a, b| (Reverse(a.1), a.0).cmp(&(Reverse(b.1), b.0)));
+    entries
 }
 
 /// Builds one shard from the events of its sealed range.
@@ -263,28 +242,11 @@ pub fn build_shard(
         .ok_or_else(|| BuildError::Invalid(format!("unknown range profile {profile:?}")))?;
     let filter = build_range_filter_for(range, key, &filter_elements)?;
 
-    // Lay out page rows first: a directory entry has to name where its
-    // fragments are. Three passes, because placement is no longer a running
-    // counter — a short history's row depends on which other short histories of
-    // the same length exist, so nothing can be assigned until they are all
-    // known.
+    // Summarize histories with exactly the same incremental rule as sealing.
     let mut excluded_scripts = 0u64;
     let mut total_events = 0u64;
-
-    // 1. Classify. Each supported script's history splits into the newest
-    //    events, which live inline and cost no fragment, and the older
-    //    remainder, which is paged in ascending order — the order a replay
-    //    wants them in.
-    struct Classified<'a> {
-        script: &'a [u8],
-        inline: Vec<TransparentEvent>,
-        older: Vec<TransparentEvent>,
-        total: u32,
-    }
-    let mut short: BTreeMap<u32, Vec<Classified>> = BTreeMap::new();
-    let mut long: Vec<Classified> = Vec::new();
     let mut demand = PackedDemand::default();
-
+    let mut histories = BTreeMap::new();
     for (script, history) in &by_script {
         total_events += history.len() as u64;
         if script.len() > MAX_SCRIPT_BYTES {
@@ -292,141 +254,102 @@ pub fn build_shard(
             continue;
         }
         let mut history = history.clone();
-        history.sort_by_key(|event| event.sort_key());
-        let total = history.len() as u32;
-        let inline_from = history.len().saturating_sub(INLINE_EVENTS as usize);
-        let (older, inline) = history.split_at(inline_from);
-        let classified = Classified {
-            script,
-            inline: inline.to_vec(),
-            older: older.to_vec(),
-            total,
-        };
-        demand.shift(0, total);
-        match shape_of(total) {
-            Shape::None => {}
-            Shape::Short(p) => short.entry(p).or_default().push(classified),
-            Shape::Long(_) => long.push(classified),
+        history.sort_by_key(TransparentEvent::sort_key);
+        let mut summary = HistoryLayout::default();
+        for event in &history {
+            summary.push(*event, INLINE_EVENTS);
         }
+        demand.shift(&HistoryLayout::default(), &summary);
+        histories.insert(script.as_slice(), (history, summary));
     }
-
-    let indexed: Vec<&[u8]> = by_script
-        .keys()
-        .filter(|script| script.len() <= MAX_SCRIPT_BYTES)
-        .map(|script| script.as_slice())
-        .collect();
+    let indexed: Vec<&[u8]> = histories.keys().copied().collect();
     let (tag_salt_counter, salt) =
         resolve_tag_salt(shard_id, &terminal_block_hash, &indexed, script_tag)
             .map_err(BuildError::Invalid)?;
-
-    // 2. Allocate. Short classes in increasing length, each class filling rows
-    //    with whole entries; then long histories, each taking a contiguous run
-    //    of its own. A `BTreeMap` keyed by length and a `by_script` iterated in
-    //    script order make the result a function of the content, not of the
-    //    order the events arrived in.
     let mut rows: Vec<Vec<PageEntry>> = Vec::new();
     let mut first_page: HashMap<&[u8], u32> = HashMap::new();
-
-    for (p, class) in &short {
-        let per_row = entries_per_row(*p) as usize;
-        for chunk in class.chunks(per_row) {
-            let row = rows.len() as u32 + 1;
-            let mut entries = Vec::with_capacity(chunk.len());
-            for item in chunk {
-                first_page.insert(item.script, row);
-                entries.push(PageEntry::new(
-                    script_tag(&salt, item.script),
-                    0,
-                    1,
-                    item.older.clone(),
-                )?);
+    let mut short = Vec::new();
+    let mut free: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    let mixed = demand.use_mixed();
+    // Long runs are allocated in script order and remain contiguous. Only their
+    // last row is offered to single-fragment histories.
+    for (&script, (history, summary)) in &histories {
+        let older = &history[..history.len().saturating_sub(INLINE_EVENTS as usize)];
+        let fragments = packing::fragments(older);
+        if fragments.len() == 1 {
+            let entry = PageEntry::new(script_tag(&salt, script), 0, 1, older.to_vec())?;
+            short.push((script, entry));
+        } else if fragments.len() > 1 {
+            first_page.insert(
+                script,
+                u32::try_from(rows.len() + 1)
+                    .map_err(|_| BuildError::Invalid("page locator overflow".into()))?,
+            );
+            for (ordinal, events) in fragments.iter().enumerate() {
+                rows.push(vec![PageEntry::new(
+                    script_tag(&salt, script),
+                    ordinal as u32,
+                    summary.fragments,
+                    events.to_vec(),
+                )?]);
             }
-            rows.push(entries);
+            if mixed {
+                let row = rows.len() - 1;
+                free.entry(ROW_PAYLOAD - rows[row][0].encoded_len())
+                    .or_default()
+                    .insert(row);
+            }
         }
     }
-    for item in &long {
-        first_page.insert(item.script, rows.len() as u32 + 1);
-        let fragments = fragments_for(item.total) as u32;
-        for (ordinal, fragment) in item
-            .older
-            .chunks(crate::layout::EVENTS_PER_PAGE as usize)
-            .enumerate()
-        {
-            // A long history's final fragment keeps a row to itself rather than
-            // sharing one. Sharing it would make a history's placement depend
-            // on unrelated content, for a row saved per long history.
-            rows.push(vec![PageEntry::new(
-                script_tag(&salt, item.script),
-                ordinal as u32,
-                fragments,
-                fragment.to_vec(),
-            )?]);
+    short.sort_by(|a, b| (Reverse(a.1.encoded_len()), a.0).cmp(&(Reverse(b.1.encoded_len()), b.0)));
+    let mut last_size = None;
+    for (script, entry) in short {
+        let size = entry.encoded_len();
+        if !mixed && last_size != Some(size) {
+            free.clear();
         }
+        last_size = Some(size);
+        let (space, row) = if let Some((&space, indices)) = free.range(size..).next() {
+            let row = *indices.first().expect("nonempty bin set");
+            let indices = free.get_mut(&space).expect("existing bin set");
+            indices.remove(&row);
+            if indices.is_empty() {
+                free.remove(&space);
+            }
+            (space, row)
+        } else {
+            rows.push(Vec::new());
+            (ROW_PAYLOAD, rows.len() - 1)
+        };
+        first_page.insert(
+            script,
+            u32::try_from(row + 1)
+                .map_err(|_| BuildError::Invalid("page locator overflow".into()))?,
+        );
+        rows[row].push(entry);
+        free.entry(space - size).or_default().insert(row);
     }
-
-    // The sealer sized this shard's table from the same rule, and the publisher
-    // compares the two. Checking it here as well is what makes a disagreement a
-    // failed build rather than a table sized for less than it holds — which
-    // would come back as extra segments, and every wallet querying this shard
-    // pays for those.
     if rows.len() as u64 != demand.rows() {
         return Err(BuildError::Invalid(format!(
-            "emitted {} page rows where the packing rule demands {}",
+            "emitted {} rows, predicted {}",
             rows.len(),
             demand.rows()
         )));
     }
-
-    // 3. Encode, and build the directory entries that name what was assigned.
-    let mut entries: Vec<DirectoryEntry> = Vec::new();
-    for class in short.values() {
-        for item in class {
-            entries.push(DirectoryEntry {
-                script: item.script.to_vec(),
-                tag: script_tag(&salt, item.script),
-                event_count: item.total,
-                inline: item.inline.clone(),
-                first_page: first_page[item.script],
-            });
-        }
-    }
-    for item in &long {
-        entries.push(DirectoryEntry {
-            script: item.script.to_vec(),
-            tag: script_tag(&salt, item.script),
-            event_count: item.total,
-            inline: item.inline.clone(),
-            first_page: first_page[item.script],
-        });
-    }
-    // Histories inside the inline allowance hold no fragment and name no row.
-    for (script, history) in &by_script {
-        if script.len() > MAX_SCRIPT_BYTES || shape_of(history.len() as u32) != Shape::None {
-            continue;
-        }
-        let mut history = history.clone();
-        history.sort_by_key(|event| event.sort_key());
-        entries.push(DirectoryEntry {
-            script: script.clone(),
-            tag: script_tag(&salt, script),
-            event_count: history.len() as u32,
-            inline: history,
-            first_page: 0,
-        });
-    }
-
-    // Pinned rather than implied by the loops above, because the sealer's
-    // census places in this order too. A stable sort of entries already in it
-    // is the identity, so published bytes do not move.
-    entries.sort_by(|a, b| {
-        (placement_rank(a.event_count), &a.script).cmp(&(placement_rank(b.event_count), &b.script))
-    });
-
-    let fragments: u64 = by_script
+    let mut entries: Vec<_> = histories
         .iter()
-        .filter(|(script, _)| script.len() <= MAX_SCRIPT_BYTES)
-        .map(|(_, history)| fragments_for(history.len() as u32))
-        .sum();
+        .map(|(&script, (_, summary))| DirectoryEntry {
+            script: script.to_vec(),
+            tag: script_tag(&salt, script),
+            event_count: summary.events,
+            inline: summary.inline.clone(),
+            first_page: first_page.get(script).copied().unwrap_or(0),
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        (Reverse(a.encoded_len()), &a.script).cmp(&(Reverse(b.encoded_len()), &b.script))
+    });
+    let fragments = demand.fragments();
 
     // A shard takes as many page segments as its rows need. Failing instead
     // would mean one oversized block could stop publication.
@@ -467,23 +390,16 @@ pub fn build_shard(
 
 /// What two-choice placement costs a script set.
 ///
-/// The census reports this instead of `scripts / slots`, which is the segment
-/// count placement would need if every row filled evenly. It never does: two
-/// choices per script still leave the fullest row well above the mean, and the
-/// difference is not a rounding error but the whole question of how close to a
-/// segment's slot count a seal target may safely sit. A modelled count is a
-/// lower bound; this is the count.
+/// Shared by the builder and census. Byte density alone is a lower bound;
+/// this reports the actual weighted two-choice placement and segment count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     /// Segments the placement rule needed.
     pub segments: u32,
-    /// Entries in the fullest row.
-    ///
-    /// The headroom that matters. A shard whose fullest row sits at the slot
-    /// count placed only because some script happened to have a usable second
-    /// choice, and the next script to arrive is what adds a segment — which
-    /// every wallet querying that shard then pays for.
+    /// Entries in the fullest row, for diagnostics. Bytes constrain capacity.
     pub max_row_load: u64,
+    /// Maximum occupied payload bytes in any row.
+    pub max_row_bytes: u64,
 }
 
 /// Runs the placement rule over a script set without building anything.
@@ -495,79 +411,65 @@ pub struct Placement {
 pub fn place_scripts(
     shard_id: u64,
     scripts: &[&[u8]],
+    sizes: &[usize],
     rows_per_segment: u64,
-    slots: u64,
+    capacity: usize,
 ) -> Result<(Placement, Vec<u32>), String> {
-    let mut segments = 1u32;
+    assert_eq!(scripts.len(), sizes.len());
+    if let Some(i) = sizes.iter().position(|size| *size == 0 || *size > capacity) {
+        return Err(hex::encode(scripts[i]));
+    }
+    let mut segments = 1;
     loop {
-        let rows = (rows_per_segment * segments as u64) as usize;
-        // Occupancy by row, holding the index of each script placed there.
-        // Indices rather than bytes because relocation has to read a resident
-        // entry's *other* candidate, which means re-deriving its hash.
+        let rows = (rows_per_segment * u64::from(segments)) as usize;
         let mut occupants: Vec<Vec<u32>> = vec![Vec::new(); rows];
+        let mut used = vec![0usize; rows];
         let mut assignment = vec![u32::MAX; scripts.len()];
-        let mut overflowed: Option<&[u8]> = None;
-
+        let mut overflowed = None;
         for (index, script) in scripts.iter().enumerate() {
             let candidates = candidate_rows(shard_id, script, rows as u64);
             let [a, b] = [candidates[0] as usize, candidates[1] as usize];
-
-            // The cheap case, and the overwhelming majority: a candidate has
-            // room. Less loaded first, ties to the first candidate, exactly as
-            // the rule read before relocation existed.
-            let direct = if occupants[a].len() <= occupants[b].len() {
-                [a, b]
-            } else {
-                [b, a]
-            };
-            if let Some(&row) = direct
-                .iter()
-                .find(|&&row| occupants[row].len() < slots as usize)
-            {
+            let direct = if used[a] <= used[b] { [a, b] } else { [b, a] };
+            let row = direct
+                .into_iter()
+                .find(|row| used[*row] + sizes[index] <= capacity)
+                .or_else(|| {
+                    relocate(
+                        shard_id,
+                        scripts,
+                        sizes,
+                        &mut occupants,
+                        &mut used,
+                        &mut assignment,
+                        [a, b],
+                        sizes[index],
+                        capacity,
+                    )
+                });
+            if let Some(row) = row {
                 occupants[row].push(index as u32);
+                used[row] += sizes[index];
                 assignment[index] = row as u32;
-                continue;
-            }
-
-            match relocate(
-                shard_id,
-                scripts,
-                &mut occupants,
-                &mut assignment,
-                [a, b],
-                slots,
-            ) {
-                Some(row) => {
-                    occupants[row].push(index as u32);
-                    assignment[index] = row as u32;
-                }
-                None => {
-                    overflowed = Some(script);
-                    break;
-                }
+            } else {
+                overflowed = Some(script);
+                break;
             }
         }
-
         if let Some(script) = overflowed {
             segments += 1;
             if segments > MAX_DIRECTORY_SEGMENTS {
                 return Err(hex::encode(script));
             }
-            continue;
+        } else {
+            return Ok((
+                Placement {
+                    segments,
+                    max_row_load: occupants.iter().map(|r| r.len() as u64).max().unwrap_or(0),
+                    max_row_bytes: used.iter().copied().max().unwrap_or(0) as u64,
+                },
+                assignment,
+            ));
         }
-
-        let max_row_load = occupants
-            .iter()
-            .map(|row| row.len() as u64)
-            .max()
-            .unwrap_or(0);
-        return Ok((
-            Placement {
-                segments,
-                max_row_load,
-            },
-            assignment,
-        ));
     }
 }
 
@@ -614,12 +516,11 @@ pub fn verify_choice(
 ///
 /// A bound rather than a budget for the whole shard: the search is per script,
 /// and the shortest path to a row with space is a handful of hops even at high
-/// load. Reaching this means the two-choice graph is genuinely saturated
-/// around both candidates, which another segment fixes and more searching does
-/// not.
+/// load. The bound and single-resident moves may miss a feasible packing;
+/// retrying with another segment preserves correctness in that case.
 const MAX_RELOCATION_VISITS: usize = 512;
 
-/// Frees a slot in one of `roots` by moving residents to their other candidate.
+/// Frees enough bytes in a root by moving residents to their other candidate.
 ///
 /// Breadth-first, so the path taken is the shortest available and the search
 /// cannot cycle — a depth-first walk with a kick budget can revisit rows
@@ -630,75 +531,93 @@ const MAX_RELOCATION_VISITS: usize = 512;
 /// being comparable, which is the property this whole module exists to keep.
 ///
 /// Returns the row left with space, having applied every move on the path.
+#[allow(clippy::too_many_arguments)]
 fn relocate(
     shard_id: u64,
     scripts: &[&[u8]],
+    sizes: &[usize],
     occupants: &mut [Vec<u32>],
+    used: &mut [usize],
     assignment: &mut [u32],
     roots: [usize; 2],
-    slots: u64,
+    incoming: usize,
+    capacity: usize,
 ) -> Option<usize> {
-    let rows = occupants.len() as u64;
-    // Each visited row remembers how it was reached: the row before it, and
-    // the entry that would move between them. The root rows have no such edge.
-    let mut came_from: std::collections::HashMap<usize, (usize, u32)> = Default::default();
-    let mut queue: std::collections::VecDeque<usize> = Default::default();
-    for root in roots {
-        if came_from.insert(root, (usize::MAX, u32::MAX)).is_none() {
-            queue.push_back(root);
+    // Each edge moves one resident large enough to satisfy its predecessor's
+    // byte deficit. A path may never revisit a row. Failed searches mutate nothing.
+    struct Node {
+        row: usize,
+        need: usize,
+        parent: Option<(usize, u32)>,
+    }
+    let mut nodes = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for row in roots {
+        if seen.insert((row, incoming)) {
+            nodes.push(Node {
+                row,
+                need: incoming,
+                parent: None,
+            });
         }
     }
-
-    let mut visits = 0usize;
-    while let Some(row) = queue.pop_front() {
-        visits += 1;
-        if visits > MAX_RELOCATION_VISITS {
-            return None;
+    let mut cursor = 0;
+    while cursor < nodes.len() && cursor < MAX_RELOCATION_VISITS {
+        let row = nodes[cursor].row;
+        let need = nodes[cursor].need;
+        if used[row] + need <= capacity {
+            let mut at = cursor;
+            while let Some((parent, moved)) = nodes[at].parent {
+                let from = nodes[parent].row;
+                let to = nodes[at].row;
+                let position = occupants[from]
+                    .iter()
+                    .position(|e| *e == moved)
+                    .expect("resident");
+                occupants[from].remove(position);
+                occupants[to].push(moved);
+                used[from] -= sizes[moved as usize];
+                used[to] += sizes[moved as usize];
+                assignment[moved as usize] = to as u32;
+                at = parent;
+            }
+            return Some(nodes[at].row);
         }
-        for &occupant in &occupants[row] {
-            let candidates = candidate_rows(shard_id, scripts[occupant as usize], rows);
-            let alternate = candidates
-                .iter()
-                .map(|alternate| *alternate as usize)
-                .find(|alternate| *alternate != row)
-                // A script whose two candidates collide has no alternate, so it
-                // can never be moved out of the row it is in.
-                .unwrap_or(row);
-            if alternate == row || came_from.contains_key(&alternate) {
+        for &resident in &occupants[row] {
+            let size = sizes[resident as usize];
+            if used[row] - size + need > capacity {
                 continue;
             }
-            came_from.insert(alternate, (row, occupant));
-            if occupants[alternate].len() < slots as usize {
-                // Walk the path back to a root, moving each entry forward as we
-                // go, which leaves exactly one slot free in the root.
-                let mut at = alternate;
-                while let Some(&(previous, moved)) = came_from.get(&at) {
-                    if previous == usize::MAX {
-                        return Some(at);
-                    }
-                    let position = occupants[previous]
-                        .iter()
-                        .position(|entry| *entry == moved)
-                        .expect("the entry was read from that row");
-                    occupants[previous].remove(position);
-                    occupants[at].push(moved);
-                    assignment[moved as usize] = at as u32;
-                    at = previous;
+            let alternate =
+                candidate_rows(shard_id, scripts[resident as usize], occupants.len() as u64)
+                    .into_iter()
+                    .map(|r| r as usize)
+                    .find(|r| *r != row);
+            let Some(alternate) = alternate else {
+                continue;
+            };
+            let mut ancestor = Some(cursor);
+            let mut cyclic = false;
+            while let Some(at) = ancestor {
+                if nodes[at].row == alternate {
+                    cyclic = true;
+                    break;
                 }
-                return Some(at);
+                ancestor = nodes[at].parent.map(|(p, _)| p);
             }
-            queue.push_back(alternate);
+            if !cyclic && seen.insert((alternate, size)) && nodes.len() < MAX_RELOCATION_VISITS {
+                nodes.push(Node {
+                    row: alternate,
+                    need: size,
+                    parent: Some((cursor, resident)),
+                });
+            }
         }
+        cursor += 1;
     }
     None
 }
 
-/// Places every entry, adding a segment whenever placement does not fit.
-///
-/// Rows are addressed over the shard's whole logical row space, so adding a
-/// segment re-hashes every script rather than spilling the leftovers into a
-/// last segment that would then be the only crowded one.
-///
 /// A placed directory: one encoded table per segment, the number of scripts
 /// placed, and the choice table for the placement.
 type PlacedDirectory = (Vec<Vec<u8>>, u64, Option<crate::choice::ChoiceTable>);
@@ -769,8 +688,12 @@ fn place_directory(
     let (placed, assignment) = place_scripts(
         shard_id,
         &scripts_only,
+        &entries
+            .iter()
+            .map(DirectoryEntry::encoded_len)
+            .collect::<Vec<_>>(),
         geometry.directory_rows,
-        geometry.directory_slots(),
+        geometry.directory_row_bytes - crate::records::DIRECTORY_ROW_HEADER_BYTES,
     )
     .map_err(|script| BuildError::DirectoryFull { script })?;
     let segments = placed.segments;
@@ -963,8 +886,8 @@ mod tests {
     /// sampled.
     #[test]
     fn short_histories_of_a_length_share_rows() {
-        for p in 1..=crate::layout::EVENTS_PER_PAGE {
-            let per_row = entries_per_row(p) as usize;
+        for p in 1..=79 {
+            let per_row = 4092 / (34 + p as usize * 51);
             let scripts = per_row as u32 * 2 + 1;
             let built = build(&fixture(scripts, p + INLINE_EVENTS));
 
@@ -1044,12 +967,12 @@ mod tests {
     /// with nothing, including its short final fragment. Sharing that would
     /// make a long history's placement depend on unrelated content.
     #[test]
-    fn a_long_history_keeps_its_run_to_itself() {
+    fn a_long_history_keeps_its_run_and_shares_only_its_tail() {
         let per = crate::layout::EVENTS_PER_PAGE * 2 + 5 + INLINE_EVENTS;
         // One long history and enough one-event ones to fill a row beside it.
         let mut events = fixture(1, per);
         events.extend(
-            fixture(entries_per_row(1), 1 + INLINE_EVENTS)
+            fixture(48, 1 + INLINE_EVENTS)
                 .into_iter()
                 .map(|(s, e)| (ScriptBytes::new([b"short-", s.as_slice()].concat()), e)),
         );
@@ -1074,7 +997,11 @@ mod tests {
         );
         for ordinal in 0..first.fragment_count {
             let row = decode_page_row(built.page_row(base + u64::from(ordinal))).unwrap();
-            assert_eq!(row.len(), 1, "fragment {ordinal} shared its row");
+            if ordinal + 1 == first.fragment_count {
+                assert!(row.len() > 1, "tail was not filled");
+            } else {
+                assert_eq!(row.len(), 1);
+            }
             assert_eq!(row[0].tag, tag_for(wanted.as_slice()));
         }
     }
@@ -1086,7 +1013,7 @@ mod tests {
     fn content_too_large_for_one_segment_takes_another() {
         // Enough distinct histories to overrun the pinned page table, which is
         // what one oversized block looks like to the builder.
-        let per = crate::layout::EVENTS_PER_PAGE + INLINE_EVENTS;
+        let per = 79 + INLINE_EVENTS;
         let scripts = PAGE_ROWS as u32 + 100;
         let built = build(&fixture(scripts, per));
 
@@ -1166,7 +1093,7 @@ mod tests {
     fn place(count: u32, rows: u64, slots: u64) -> Placement {
         let owned = placement_set(count);
         let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
-        place_scripts(0, &refs, rows, slots)
+        place_scripts(0, &refs, &vec![1; refs.len()], rows, slots as usize)
             .expect("placement terminates")
             .0
     }
@@ -1208,8 +1135,10 @@ mod tests {
         let owned = placement_set((rows * slots * 6 / 7) as u32);
         let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
 
-        let first = place_scripts(0, &refs, rows, slots).expect("placement");
-        let again = place_scripts(0, &refs, rows, slots).expect("placement");
+        let first =
+            place_scripts(0, &refs, &vec![1; refs.len()], rows, slots as usize).expect("placement");
+        let again =
+            place_scripts(0, &refs, &vec![1; refs.len()], rows, slots as usize).expect("placement");
         assert_eq!(first.0, again.0);
         assert_eq!(first.1, again.1, "the same input must place identically");
     }
@@ -1225,7 +1154,8 @@ mod tests {
         let owned = placement_set((rows * slots * 6 / 7) as u32);
         let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
 
-        let (placed, assignment) = place_scripts(0, &refs, rows, slots).expect("placement");
+        let (placed, assignment) =
+            place_scripts(0, &refs, &vec![1; refs.len()], rows, slots as usize).expect("placement");
         let span = rows * placed.segments as u64;
         let mut occupied = vec![0u64; span as usize];
         for (script, row) in refs.iter().zip(&assignment) {
@@ -1317,14 +1247,15 @@ mod tests {
         for (script, _) in &events {
             *counts.entry(script.as_slice().to_vec()).or_default() += 1;
         }
-        let order = placement_order(counts.iter().map(|(s, n)| (s.as_slice(), *n)));
-        let (placement, assignment) = place_scripts(
-            0,
-            &order,
-            RECENT_8K.directory_rows,
-            RECENT_8K.directory_slots(),
-        )
-        .expect("fits");
+        let ordered = placement_order(
+            counts
+                .iter()
+                .map(|(s, n)| (s.as_slice(), 19 + (*n).min(2) as usize * 51)),
+        );
+        let order: Vec<_> = ordered.iter().map(|(s, _)| *s).collect();
+        let sizes: Vec<_> = ordered.iter().map(|(_, n)| *n).collect();
+        let (placement, assignment) =
+            place_scripts(0, &order, &sizes, RECENT_8K.directory_rows, 4092).expect("fits");
         assert_eq!(placement.segments, built.directory_segments());
 
         let rows = RECENT_8K.directory_rows * placement.segments as u64;
@@ -1352,8 +1283,12 @@ mod tests {
         let (_, other) = place_scripts(
             0,
             &lexicographic,
+            &lexicographic
+                .iter()
+                .map(|s| 19 + counts[*s].min(2) as usize * 51)
+                .collect::<Vec<_>>(),
             RECENT_8K.directory_rows,
-            RECENT_8K.directory_slots(),
+            4092,
         )
         .expect("fits");
         let by_script = |order: &[&[u8]], rows: &[u32]| -> BTreeMap<Vec<u8>, u32> {
@@ -1379,7 +1314,8 @@ mod tests {
         for (count, rows) in [(6_000u32, 8_192u64), (45_454, rows)] {
             let owned = placement_set(count);
             let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
-            let (placement, assignment) = place_scripts(11, &refs, rows, slots).expect("fits");
+            let (placement, assignment) =
+                place_scripts(11, &refs, &vec![1; refs.len()], rows, slots as usize).expect("fits");
             // The largest recent shard of the September census fits one
             // half-height segment under two-choice placement with relocation.
             assert_eq!(placement.segments, 1, "{count} scripts at {rows} rows");
@@ -1401,7 +1337,8 @@ mod tests {
         let slots = crate::records::DIRECTORY_SLOTS as u64;
         let owned = placement_set((rows * slots) as u32 + 1_000);
         let refs: Vec<&[u8]> = owned.iter().map(|s| s.as_slice()).collect();
-        let (placement, assignment) = place_scripts(5, &refs, rows, slots).expect("fits");
+        let (placement, assignment) =
+            place_scripts(5, &refs, &vec![1; refs.len()], rows, slots as usize).expect("fits");
         assert!(placement.segments > 1);
         let space = rows * u64::from(placement.segments);
         let table = choice_table(5, &refs, &assignment, space).expect("peels");
@@ -1646,5 +1583,35 @@ mod tests {
             ),
             Err(BuildError::Invalid(_))
         ));
+    }
+    #[test]
+    fn mixed_size_directory_placement_preserves_every_byte_budget() {
+        let rows = 256u64;
+        let mut entries = Vec::new();
+        let mut bytes = 0;
+        for i in 0..100_000u32 {
+            let size = [70, 98, 113, 121, 149, 177][i as usize % 6];
+            if bytes + size > rows as usize * 4092 * 6 / 7 {
+                break;
+            }
+            entries.push((script(i).as_slice().to_vec(), size));
+            bytes += size;
+        }
+        let ordered = placement_order(entries.iter().map(|(s, n)| (s.as_slice(), *n)));
+        let scripts: Vec<_> = ordered.iter().map(|(s, _)| *s).collect();
+        let sizes: Vec<_> = ordered.iter().map(|(_, n)| *n).collect();
+        let (placed, assignment) = place_scripts(42, &scripts, &sizes, rows, 4092).unwrap();
+        assert_eq!(placed.segments, 1);
+        let mut used = vec![0usize; rows as usize];
+        for ((script, size), row) in ordered.iter().zip(&assignment) {
+            assert!(candidate_rows(42, script, rows).contains(&u64::from(*row)));
+            used[*row as usize] += size;
+        }
+        assert!(used.iter().all(|bytes| *bytes <= 4092));
+        assert_eq!(used.iter().sum::<usize>(), bytes);
+        assert_eq!(
+            used.iter().max().copied().unwrap() as u64,
+            placed.max_row_bytes
+        );
     }
 }

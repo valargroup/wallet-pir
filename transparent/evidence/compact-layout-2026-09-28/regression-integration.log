@@ -1,0 +1,18 @@
+    Blocking waiting for file lock on build directory
+   Compiling transparent-regression v0.1.0 (/Users/roman/projects/wallet-pir/transparent/tools/transparent-regression)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 22s
+     Running tests/parent_filters.rs (target/debug/deps/parent_filters-a7659052c5755abf)
+
+running 1 test
+test parent_negatives_restart_import_and_corrupt_fallback_recover_exactly ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.99s
+
+     Running tests/runner.rs (target/debug/deps/runner-8f7c36403ed00dae)
+
+running 2 tests
+test executable_checks_frozen_checkpoints_and_reports_publication_drift ... ok
+test frozen_mainnet_fixture_has_exact_prefixes_and_required_wallet_profiles ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 57.27s
+

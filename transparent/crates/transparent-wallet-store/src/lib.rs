@@ -20,13 +20,14 @@ use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid, EVENT
 use transparent_wallet::client::Table;
 use transparent_wallet::ledger::LedgerError;
 use transparent_wallet::store::{
-    merge_coverage, Anchor, CoverageKind, CoverageRange, PendingPages, ScriptEntry, ScriptOrigin,
-    SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent, WalletStore,
+    merge_coverage, Anchor, CoverageKind, CoverageRange, PageBoundary, PendingPages, ScriptEntry,
+    ScriptOrigin, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent,
+    WalletStore,
 };
 
-/// Bumped when the schema changes incompatibly; an older file is refused
-/// rather than misread.
-pub const SCHEMA_VERSION: u32 = 2;
+/// Versioned persistence: known older versions migrate transactionally;
+/// unknown versions are refused rather than misread.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Default bound on pending page retrievals a commit may leave.
 pub const DEFAULT_PENDING_LIMIT: usize = 4_096;
@@ -93,6 +94,7 @@ CREATE TABLE IF NOT EXISTS pending_work (
     inline BLOB NOT NULL,
     next_ordinal INTEGER NOT NULL,
     validated_events INTEGER NOT NULL DEFAULT 0,
+    page_boundary BLOB,
     target_anchor TEXT,
     attempts INTEGER NOT NULL
 );
@@ -122,6 +124,34 @@ pub struct SqliteStore {
     conn: Connection,
     path: Option<PathBuf>,
     pending_limit: usize,
+}
+
+fn encode_boundary(boundary: Option<&PageBoundary>) -> Option<Vec<u8>> {
+    boundary.map(|b| {
+        let mut bytes = b.event_bytes.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&b.last_event.to_bytes());
+        bytes
+    })
+}
+
+fn decode_boundary(bytes: Option<&[u8]>) -> Result<Option<PageBoundary>, StoreError> {
+    bytes
+        .map(|bytes| {
+            if bytes.len() != 4 + EVENT_BYTES {
+                return Err(StoreError::Corrupt("invalid page boundary length".into()));
+            }
+            let event_bytes = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes"));
+            if event_bytes == 0 || event_bytes > 4_058 {
+                return Err(StoreError::Corrupt(
+                    "invalid page boundary byte count".into(),
+                ));
+            }
+            Ok(PageBoundary {
+                event_bytes,
+                last_event: decode_event(&bytes[4..])?,
+            })
+        })
+        .transpose()
 }
 
 fn io(error: rusqlite::Error) -> StoreError {
@@ -172,7 +202,7 @@ impl SqliteStore {
         self.conn.execute_batch(SCHEMA).map_err(io)?;
         match self.meta("schema_version")? {
             None => self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?,
-            Some(found) if found == SCHEMA_VERSION.to_string() => {}
+            Some(found) if found == SCHEMA_VERSION.to_string() || found == "2" => {}
             Some(found) if found == "1" => {
                 let tx = self.conn.transaction().map_err(io)?;
                 tx.execute_batch("ALTER TABLE coverage ADD COLUMN source_anchor TEXT;
@@ -188,6 +218,15 @@ impl SqliteStore {
                     "store schema {found}, this build reads {SCHEMA_VERSION}"
                 )))
             }
+        }
+        if self.meta("schema_version")?.as_deref() == Some("2") {
+            let tx = self.conn.transaction().map_err(io)?;
+            tx.execute_batch(
+                "ALTER TABLE pending_work ADD COLUMN page_boundary BLOB;
+                UPDATE wallet_meta SET value = '3' WHERE key = 'schema_version';",
+            )
+            .map_err(io)?;
+            tx.commit().map_err(io)?;
         }
         Ok(())
     }
@@ -653,21 +692,22 @@ impl WalletStore for SqliteStore {
             match pending.id {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE pending_work SET next_ordinal = ?2, attempts = ?3, validated_events = ?4, page_count = ?5 WHERE id = ?1",
+                        "UPDATE pending_work SET next_ordinal = ?2, attempts = ?3, validated_events = ?4, page_count = ?5, page_boundary = ?6 WHERE id = ?1",
                         params![
                             id as i64,
                             pending.next_ordinal as i64,
                             pending.attempts as i64,
                             pending.validated_events as i64,
-                            pending.page_count as i64
+                            pending.page_count as i64,
+                            encode_boundary(pending.boundary.as_ref())
                         ],
                     )
                     .map_err(io)?;
                 }
                 None => {
                     tx.execute(
-                        "INSERT INTO pending_work (shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts, validated_events, target_anchor) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        "INSERT INTO pending_work (shard_id, revision_digest, script, first_page, page_count, total_events, inline, next_ordinal, attempts, validated_events, target_anchor, page_boundary) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         params![
                             pending.shard_id as i64,
                             pending.revision_digest,
@@ -680,6 +720,7 @@ impl WalletStore for SqliteStore {
                             pending.attempts as i64,
                             pending.validated_events as i64,
                             pending.target_anchor.as_ref().map(|a| serde_json::to_string(a).unwrap()),
+                            encode_boundary(pending.boundary.as_ref()),
                         ],
                     )
                     .map_err(io)?;
@@ -826,7 +867,7 @@ impl WalletStore for SqliteStore {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT id, shard_id, revision_digest, script, first_page, page_count, inline, next_ordinal, attempts, validated_events, target_anchor \
+                "SELECT id, shard_id, revision_digest, script, first_page, page_count, inline, next_ordinal, attempts, validated_events, target_anchor, page_boundary \
                  FROM pending_work ORDER BY id",
             )
             .map_err(io)?;
@@ -844,6 +885,7 @@ impl WalletStore for SqliteStore {
                     row.get::<_, i64>(8)? as u32,
                     row.get::<_, i64>(9)? as u32,
                     decode_anchor(row.get(10)?)?,
+                    row.get::<_, Option<Vec<u8>>>(11)?,
                 ))
             })
             .map_err(io)?;
@@ -861,8 +903,10 @@ impl WalletStore for SqliteStore {
                 attempts,
                 validated_events,
                 target_anchor,
+                boundary,
             ) = row.map_err(io)?;
             pending.push(PendingPages {
+                boundary: decode_boundary(boundary.as_deref())?,
                 validated_events,
                 target_anchor,
                 id: Some(id),

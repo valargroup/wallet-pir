@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v9";
+pub const SCHEMA: &str = "transparent-shard-v10";
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -71,16 +71,27 @@ pub struct ManifestOccupancy {
 pub struct ManifestLayout {
     pub max_script_bytes: u32,
     pub inline_events: u32,
-    /// Events in one fragment, which is the most a single history contributes
-    /// to one row.
+    /// Decoder bound on events in a fragment, not a fixed full-fragment count.
     pub events_per_page: u32,
     /// Bytes at the head of a page row, before its first entry.
     pub page_row_header_bytes: u32,
-    /// Bytes of header on each entry within a page row. With `events_per_page`
-    /// this is the whole packing geometry: a reader can derive how many
-    /// histories of a given length share a row without being told.
+    /// Bytes of header on each entry within a page row. Event widths and the
+    /// greedy fragmentation rule are fixed by the shard schema.
     pub page_entry_header_bytes: u32,
     pub directory_choices: u32,
+}
+
+impl ManifestLayout {
+    pub fn current() -> Self {
+        Self {
+            max_script_bytes: crate::MAX_SCRIPT_BYTES as u32,
+            inline_events: crate::INLINE_EVENTS,
+            events_per_page: crate::EVENTS_PER_PAGE,
+            page_row_header_bytes: crate::PAGE_ROW_HEADER_BYTES as u32,
+            page_entry_header_bytes: crate::PAGE_ENTRY_HEADER_BYTES as u32,
+            directory_choices: crate::build::DIRECTORY_CHOICES as u32,
+        }
+    }
 }
 
 /// Seal parameters, as schema rather than tuning.
@@ -346,7 +357,7 @@ mod tests {
             layout: ManifestLayout {
                 max_script_bytes: 40,
                 inline_events: 2,
-                events_per_page: 46,
+                events_per_page: crate::EVENTS_PER_PAGE,
                 page_row_header_bytes: 4,
                 page_entry_header_bytes: 34,
                 directory_choices: 2,

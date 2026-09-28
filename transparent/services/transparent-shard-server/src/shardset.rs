@@ -399,6 +399,11 @@ impl LoadedShard {
                 manifest.schema
             )));
         }
+        if manifest.layout != transparent_shard::ManifestLayout::current() {
+            return Err(LoadError::Invalid(
+                "manifest layout disagrees with shard schema".into(),
+            ));
+        }
         if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
             return Err(LoadError::Invalid(format!(
                 "shard declares tag salt counter {}, above {}",

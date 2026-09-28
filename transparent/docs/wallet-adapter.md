@@ -81,8 +81,16 @@ reports the same split for the reference adapters.
 
 ## Persistence compatibility
 
-SQLite schema 2 separates source-publication identity from covered endpoints and
-records target-bound pagination validation progress. Migration preserves scripts
-and event records but clears legacy coverage, pending work and completion
-metadata; the next sync must re-establish coverage. A lower target requires an
+SQLite schema 3 retains schema 2's separation of source-publication identity
+from covered endpoints and adds the last committed page's logical event and
+encoded byte count. A custom store must persist this `PendingPages.boundary`
+atomically with events and `next_ordinal`; resumed v10 downloads use it to reject
+underfilled or reordered fragment boundaries. Store the logical event with its
+full outpoint, independently of compact row references.
+
+Migration from schema 2 preserves events, scripts and coverage and adds an empty
+boundary field. Migration from schema 1 still clears unbound legacy coverage,
+pending work and completion metadata. Changing shard schema and seal thresholds
+requires a separate publication lineage and consumer migration; a database
+schema migration does not authorize reuse of old shard identifiers. A lower target requires an
 explicit accepted-anchor rollback. See [testing](testing.md) for regression checks.

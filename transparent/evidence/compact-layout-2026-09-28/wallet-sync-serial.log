@@ -1,0 +1,42 @@
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir/transparent/services/transparent-shard-server)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet-store)
+    Finished `test` profile [optimized + debuginfo] target(s) in 2m 05s
+     Running tests/wallet_sync.rs (target/debug/deps/wallet_sync-bccad81930da1315)
+
+running 32 tests
+test a_503_that_names_no_delay_is_not_retried ... ok
+test a_birthday_that_omits_a_receive_cannot_report_complete ... ok
+test a_choice_table_costs_one_query_per_script_whatever_the_script ... ok
+test a_choice_table_sends_one_directory_query_per_matched_script ... ok
+test a_corrupt_filter_with_an_unchanged_map_is_never_accepted ... ok
+test a_failed_batch_falls_back_to_the_sequential_walk ... ok
+test a_filter_replaced_after_the_map_was_read_refreshes_before_matching ... ok
+test a_genuine_manifest_is_verified_once_per_matched_shard ... ok
+test a_refresh_that_cannot_help_stops_a_concurrent_sync_too ... ok
+test a_refresh_that_cannot_help_stops_the_sync_rather_than_looping ... ok
+test a_replaced_tail_recovers_with_concurrent_requests ... ok
+test a_server_refuses_a_choice_table_that_does_not_match ... ok
+test a_service_serving_another_schema_is_refused ... ok
+test a_set_under_the_v2_range_profile_syncs_exactly_with_smaller_filters ... ok
+test a_shard_naming_an_unknown_geometry_stops_the_sync ... ok
+test a_shard_whose_pages_need_two_segments_syncs_exactly ... ok
+test a_tail_without_a_table_keeps_two_directory_queries ... ok
+test a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_map ... ok
+test a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map ... ok
+test a_wallet_syncs_across_a_geometry_boundary_exactly ... ok
+test a_wallet_syncs_from_its_birthday_and_matches_an_independent_traversal ... ok
+test an_overload_during_concurrent_requests_is_retried_and_reconstructs_exactly ... ok
+test an_overloaded_service_is_retried_and_the_sync_still_reconstructs_exactly ... ok
+test an_unknown_range_profile_stops_the_sync_before_matching ... ok
+test an_unrelenting_overload_stops_a_concurrent_sync_too ... ok
+test an_unrelenting_overload_stops_the_sync_without_advancing_coverage ... ok
+test an_unused_wallet_pays_only_the_public_floor ... ok
+test concurrency_under_emulated_delay ... ignored, timing indication, about a minute
+test concurrent_requests_change_nothing_but_when_they_are_sent ... ok
+test coverage_does_not_advance_when_a_segment_is_missing ... ok
+test init_declares_one_parameter_set_per_geometry ... ok
+test scripts_sharing_a_row_still_cost_a_fetch_each ... ok
+
+test result: ok. 31 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 160.22s
+

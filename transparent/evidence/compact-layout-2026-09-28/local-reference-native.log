@@ -1,0 +1,12 @@
+   Compiling transparent-shard v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-shard)
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir/transparent/services/transparent-shard-server)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet-store)
+    Finished `test` profile [optimized + debuginfo] target(s) in 42.03s
+     Running tests/wallet_sync.rs (target/debug/deps/wallet_sync-bccad81930da1315)
+
+running 1 test
+test compact_local_outpoints_and_shared_tails_recover_over_native_pir ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 1.84s
+
