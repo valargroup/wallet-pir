@@ -4217,6 +4217,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "transparent-native"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "ipir-sp",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rayon",
+ "reinspiring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "transparent-regression"
 version = "0.1.0"
 dependencies = [

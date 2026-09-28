@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn the_geometry_is_what_the_layout_promises() {
         assert_eq!(DIRECTORY_ENTRY_BYTES, 248);
-        assert_eq!(DIRECTORY_SLOTS, 14);
+        assert_eq!(DIRECTORY_SLOTS, 16);
     }
 
     #[test]

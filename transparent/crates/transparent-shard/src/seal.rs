@@ -724,19 +724,20 @@ mod tests {
     #[test]
     fn the_default_geometry_implies_the_policy_the_publisher_used() {
         let policy = SealPolicy::for_geometry(&crate::layout::RECENT_8K);
-        assert_eq!(policy.scripts.capacity, 114_688);
-        assert_eq!(policy.scripts.target, 98_304);
+        assert_eq!(policy.scripts.capacity, 131_072);
+        assert_eq!(policy.scripts.target, 112_348);
         assert_eq!(policy.page_rows.capacity, 8_192);
         assert_eq!(policy.page_rows.target, 7_936);
     }
 
     /// The seal policy the deployment plan names for `recent-4k-8k`
-    /// (`49152:57344,7936:8192`) is the one the geometry derives.
+    /// (`56174:65536,7936:8192` under the v8 16-slot directory row) is the one
+    /// the geometry derives.
     #[test]
     fn the_recent_4k_8k_policy_is_the_one_deployment_names() {
         let policy = SealPolicy::for_geometry(&crate::layout::RECENT_4K_8K);
-        assert_eq!(policy.scripts.target, 49_152);
-        assert_eq!(policy.scripts.capacity, 57_344);
+        assert_eq!(policy.scripts.target, 56_174);
+        assert_eq!(policy.scripts.capacity, 65_536);
         assert_eq!(policy.page_rows.target, 7_936);
         assert_eq!(policy.page_rows.capacity, 8_192);
     }

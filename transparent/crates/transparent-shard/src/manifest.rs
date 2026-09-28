@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v7";
+pub const SCHEMA: &str = "transparent-shard-v8";
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -339,7 +339,7 @@ mod tests {
             layout: ManifestLayout {
                 max_script_bytes: 40,
                 inline_events: 2,
-                events_per_page: 36,
+                events_per_page: 41,
                 page_row_header_bytes: 4,
                 page_entry_header_bytes: 64,
                 directory_choices: 2,
@@ -347,12 +347,12 @@ mod tests {
             filter_hash: "44".repeat(32),
             directory_segments: vec![TableGeometry {
                 rows: 2_048,
-                row_bytes: 3_584,
+                row_bytes: 4_096,
                 sha256: "55".repeat(32),
             }],
             page_segments: vec![TableGeometry {
                 rows: 4_096,
-                row_bytes: 3_584,
+                row_bytes: 4_096,
                 sha256: "66".repeat(32),
             }],
             occupancy: ManifestOccupancy {

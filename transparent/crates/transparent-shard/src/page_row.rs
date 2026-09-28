@@ -16,7 +16,7 @@
 //! # What packing does not change
 //!
 //! A directory entry still names `first_page` and `page_count`, and a history
-//! still costs `ceil(p / 36)` page queries. What changed is that a reader
+//! still costs `ceil(p / 41)` page queries. What changed is that a reader
 //! selects an entry *within* the row rather than taking the row whole. Several
 //! scripts naming the same row is expected; a reader must find its own entry and
 //! ignore the rest.
@@ -401,9 +401,9 @@ mod tests {
     #[test]
     fn a_full_fragment_uses_the_bytes_the_layout_promises() {
         let one = entry(1, EVENTS_PER_PAGE);
-        assert_eq!(one.encoded_len(), 3_520);
+        assert_eq!(one.encoded_len(), 4_000);
         let row = encode_page_row(std::slice::from_ref(&one)).unwrap();
-        assert_eq!(row[3_524..].iter().filter(|b| **b != 0).count(), 0);
+        assert_eq!(row[4_004..].iter().filter(|b| **b != 0).count(), 0);
         assert_eq!(decode_page_row(&row).unwrap(), vec![one]);
     }
 
@@ -576,31 +576,31 @@ mod tests {
             (
                 "empty",
                 vec![],
-                "6cf1b57d59e7111bc218dfb01dda93ac0f776715599a1c69f89035bd20c16a10",
+                "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
             ),
             (
                 "one class-1 entry",
                 vec![entry(1, 1)],
-                "7ad0d18b85db2935646d39492fe2b26f7a82cf9c2e4f793f45729b950f224611",
+                "b952cc26988d65e8f569284e44ef73512927b4ad10986bba4a6932667fb006a4",
             ),
             (
                 "a full class-1 row",
                 (0..entries_per_row(1))
                     .map(|i| entry(i as u8 + 1, 1))
                     .collect(),
-                "0709cf462f4e9a730c1c48914d4fd9aa4fc87423ed4ee765219bd8b45130940a",
+                "b07fe8fc377df3e171b6177ffa4780a66ed1352be30f4f6ec68a6451f15d2c9d",
             ),
             (
                 "a full class-2 row",
                 (0..entries_per_row(2))
                     .map(|i| entry(i as u8 + 1, 2))
                     .collect(),
-                "6289f1ef5650c5e4bfb3901d37b4d644496aa64214f5b97936981d0586fc7ed6",
+                "d7b5c3a730fcc4f98e76c699b28e0528a39d74cf8dead1c81da9d1dd43336515",
             ),
             (
                 "a full fragment",
                 vec![entry(1, EVENTS_PER_PAGE)],
-                "ce259054ffd48aa3624b380bda53722cd68f9880c90e2678dffbd9137ce784e8",
+                "c6e00b793917fd7966b22a79d95c425097bf6d164c1ac6abb3298e689233c901",
             ),
         ] {
             let row = encode_page_row(&entries).expect("encodes");
