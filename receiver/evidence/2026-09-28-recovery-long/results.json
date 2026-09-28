@@ -1,0 +1,1340 @@
+[
+  {
+    "actions": 618015,
+    "apply_us": 5071,
+    "blocks": 68968,
+    "complete": true,
+    "directory_setup_us": 0,
+    "enhance_setup_us": 4978,
+    "enhance_us": 229782,
+    "fixture_sha256": "5025adc705b42b364d5f6a9d3693c2bb0d3150c610efa483fd986d5990e4808f",
+    "http": [
+      {
+        "component": "enhance",
+        "elapsed_us": 465,
+        "kind": "get",
+        "received_bytes": 2305,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 527,
+        "kind": "get",
+        "received_bytes": 119172,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 13786,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15345,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15639,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 13438,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 16807,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      }
+    ],
+    "keys": 25,
+    "lookup_us": 0,
+    "mode": "scan",
+    "notes": [
+      {
+        "action_index": 0,
+        "nullifier": "34a26b7e9e8f2f0135e66cb0928e4d9b54ce972f43fa6c470c7a4a22efb9bd31",
+        "position": 0,
+        "spent": true,
+        "txid": "58a28c18576b71e5e61c32867855a03cd0a8c91e731f9a1c00a6c0870d9d2e40",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "7b87560688e516f776139c853f9f978a8d92df8a20029bcdf113c0a9fe9b480e",
+        "position": 44891,
+        "spent": false,
+        "txid": "9123fa1a5c80ec25580377693c996d59a2f49646254144ef0ef65f6dd8e74b4d",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "5a6c1e6aa3046247314a12f50ded125b039a30f22c1ad22ca0bbd2a03a78363d",
+        "position": 96165,
+        "spent": false,
+        "txid": "d990be555820713b5ddaf6c16f96c99d10a69319ea70b9e46c283c0ddc08c8f5",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "31da3518e6889b37a8bb9f30b84f2585a71dd57a0afca60eab72403dd3912417",
+        "position": 220834,
+        "spent": false,
+        "txid": "09b79e9ac04441104f070cd6c178dfcabc884b1c6182fe258ca7b12ba86c630a",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "2faf55f8c39c41497cd62c2d617b73e6b9538c5f2931e56f139cbc3eaa46e60b",
+        "position": 337799,
+        "spent": false,
+        "txid": "5c91d385c824b319b710c7935de870ad3f06ac57f71ab592da6b2f4f73bf9e7b",
+        "value": 100000
+      }
+    ],
+    "scan_us": 31681239,
+    "setup_us": 292055,
+    "total_us": 32220008,
+    "trial": 0,
+    "witness_download_us": 0
+  },
+  {
+    "actions": 618015,
+    "apply_us": 136873,
+    "blocks": 68968,
+    "complete": true,
+    "directory_setup_us": 847,
+    "enhance_setup_us": 5049,
+    "enhance_us": 229720,
+    "fixture_sha256": "5025adc705b42b364d5f6a9d3693c2bb0d3150c610efa483fd986d5990e4808f",
+    "http": [
+      {
+        "component": "enhance",
+        "elapsed_us": 600,
+        "kind": "get",
+        "received_bytes": 2305,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 508,
+        "kind": "manifest",
+        "ok": "true",
+        "received_bytes": 837,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 170,
+        "kind": "public",
+        "ok": "true",
+        "received_bytes": 14336,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 2012,
+        "kind": "witness",
+        "ok": "true",
+        "received_bytes": 3997558,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3755,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3539,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3632,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3315,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3477,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3632,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3244,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3263,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3439,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3305,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3448,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3407,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3413,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3341,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3420,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3695,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3453,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3309,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3608,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3397,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3383,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3524,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3487,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3282,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3202,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 527,
+        "kind": "get",
+        "received_bytes": 119172,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15661,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 16647,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14125,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15541,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 13270,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      }
+    ],
+    "keys": 25,
+    "lookup_us": 318114,
+    "mode": "pir",
+    "notes": [
+      {
+        "action_index": 0,
+        "nullifier": "34a26b7e9e8f2f0135e66cb0928e4d9b54ce972f43fa6c470c7a4a22efb9bd31",
+        "position": 0,
+        "spent": true,
+        "txid": "58a28c18576b71e5e61c32867855a03cd0a8c91e731f9a1c00a6c0870d9d2e40",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "7b87560688e516f776139c853f9f978a8d92df8a20029bcdf113c0a9fe9b480e",
+        "position": 44891,
+        "spent": false,
+        "txid": "9123fa1a5c80ec25580377693c996d59a2f49646254144ef0ef65f6dd8e74b4d",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "5a6c1e6aa3046247314a12f50ded125b039a30f22c1ad22ca0bbd2a03a78363d",
+        "position": 96165,
+        "spent": false,
+        "txid": "d990be555820713b5ddaf6c16f96c99d10a69319ea70b9e46c283c0ddc08c8f5",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "31da3518e6889b37a8bb9f30b84f2585a71dd57a0afca60eab72403dd3912417",
+        "position": 220834,
+        "spent": false,
+        "txid": "09b79e9ac04441104f070cd6c178dfcabc884b1c6182fe258ca7b12ba86c630a",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "2faf55f8c39c41497cd62c2d617b73e6b9538c5f2931e56f139cbc3eaa46e60b",
+        "position": 337799,
+        "spent": false,
+        "txid": "5c91d385c824b319b710c7935de870ad3f06ac57f71ab592da6b2f4f73bf9e7b",
+        "value": 100000
+      }
+    ],
+    "scan_us": 22930238,
+    "setup_us": 275155,
+    "total_us": 23911822,
+    "trial": 0,
+    "witness_download_us": 9486
+  },
+  {
+    "actions": 618015,
+    "apply_us": 136241,
+    "blocks": 68968,
+    "complete": true,
+    "directory_setup_us": 638,
+    "enhance_setup_us": 5141,
+    "enhance_us": 229934,
+    "fixture_sha256": "5025adc705b42b364d5f6a9d3693c2bb0d3150c610efa483fd986d5990e4808f",
+    "http": [
+      {
+        "component": "enhance",
+        "elapsed_us": 380,
+        "kind": "get",
+        "received_bytes": 2305,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 359,
+        "kind": "manifest",
+        "ok": "true",
+        "received_bytes": 837,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 114,
+        "kind": "public",
+        "ok": "true",
+        "received_bytes": 14336,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 1799,
+        "kind": "witness",
+        "ok": "true",
+        "received_bytes": 3997558,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3769,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3710,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3516,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3510,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3428,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3577,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3487,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3644,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3356,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3515,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3628,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3753,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3417,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3365,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3315,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3528,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3671,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3523,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3499,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3763,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3437,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3256,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3461,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3677,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3619,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 569,
+        "kind": "get",
+        "received_bytes": 119172,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15314,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15167,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 16273,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14480,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14638,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      }
+    ],
+    "keys": 25,
+    "lookup_us": 320766,
+    "mode": "pir",
+    "notes": [
+      {
+        "action_index": 0,
+        "nullifier": "34a26b7e9e8f2f0135e66cb0928e4d9b54ce972f43fa6c470c7a4a22efb9bd31",
+        "position": 0,
+        "spent": true,
+        "txid": "58a28c18576b71e5e61c32867855a03cd0a8c91e731f9a1c00a6c0870d9d2e40",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "7b87560688e516f776139c853f9f978a8d92df8a20029bcdf113c0a9fe9b480e",
+        "position": 44891,
+        "spent": false,
+        "txid": "9123fa1a5c80ec25580377693c996d59a2f49646254144ef0ef65f6dd8e74b4d",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "5a6c1e6aa3046247314a12f50ded125b039a30f22c1ad22ca0bbd2a03a78363d",
+        "position": 96165,
+        "spent": false,
+        "txid": "d990be555820713b5ddaf6c16f96c99d10a69319ea70b9e46c283c0ddc08c8f5",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "31da3518e6889b37a8bb9f30b84f2585a71dd57a0afca60eab72403dd3912417",
+        "position": 220834,
+        "spent": false,
+        "txid": "09b79e9ac04441104f070cd6c178dfcabc884b1c6182fe258ca7b12ba86c630a",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "2faf55f8c39c41497cd62c2d617b73e6b9538c5f2931e56f139cbc3eaa46e60b",
+        "position": 337799,
+        "spent": false,
+        "txid": "5c91d385c824b319b710c7935de870ad3f06ac57f71ab592da6b2f4f73bf9e7b",
+        "value": 100000
+      }
+    ],
+    "scan_us": 23014972,
+    "setup_us": 279764,
+    "total_us": 24002913,
+    "trial": 1,
+    "witness_download_us": 8956
+  },
+  {
+    "actions": 618015,
+    "apply_us": 4999,
+    "blocks": 68968,
+    "complete": true,
+    "directory_setup_us": 0,
+    "enhance_setup_us": 5040,
+    "enhance_us": 226639,
+    "fixture_sha256": "5025adc705b42b364d5f6a9d3693c2bb0d3150c610efa483fd986d5990e4808f",
+    "http": [
+      {
+        "component": "enhance",
+        "elapsed_us": 366,
+        "kind": "get",
+        "received_bytes": 2305,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 477,
+        "kind": "get",
+        "received_bytes": 119172,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14970,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14982,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 12738,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 12765,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14830,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      }
+    ],
+    "keys": 25,
+    "lookup_us": 0,
+    "mode": "scan",
+    "notes": [
+      {
+        "action_index": 0,
+        "nullifier": "34a26b7e9e8f2f0135e66cb0928e4d9b54ce972f43fa6c470c7a4a22efb9bd31",
+        "position": 0,
+        "spent": true,
+        "txid": "58a28c18576b71e5e61c32867855a03cd0a8c91e731f9a1c00a6c0870d9d2e40",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "7b87560688e516f776139c853f9f978a8d92df8a20029bcdf113c0a9fe9b480e",
+        "position": 44891,
+        "spent": false,
+        "txid": "9123fa1a5c80ec25580377693c996d59a2f49646254144ef0ef65f6dd8e74b4d",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "5a6c1e6aa3046247314a12f50ded125b039a30f22c1ad22ca0bbd2a03a78363d",
+        "position": 96165,
+        "spent": false,
+        "txid": "d990be555820713b5ddaf6c16f96c99d10a69319ea70b9e46c283c0ddc08c8f5",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "31da3518e6889b37a8bb9f30b84f2585a71dd57a0afca60eab72403dd3912417",
+        "position": 220834,
+        "spent": false,
+        "txid": "09b79e9ac04441104f070cd6c178dfcabc884b1c6182fe258ca7b12ba86c630a",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "2faf55f8c39c41497cd62c2d617b73e6b9538c5f2931e56f139cbc3eaa46e60b",
+        "position": 337799,
+        "spent": false,
+        "txid": "5c91d385c824b319b710c7935de870ad3f06ac57f71ab592da6b2f4f73bf9e7b",
+        "value": 100000
+      }
+    ],
+    "scan_us": 31918538,
+    "setup_us": 280393,
+    "total_us": 32442736,
+    "trial": 1,
+    "witness_download_us": 0
+  },
+  {
+    "actions": 618015,
+    "apply_us": 5036,
+    "blocks": 68968,
+    "complete": true,
+    "directory_setup_us": 0,
+    "enhance_setup_us": 5007,
+    "enhance_us": 225846,
+    "fixture_sha256": "5025adc705b42b364d5f6a9d3693c2bb0d3150c610efa483fd986d5990e4808f",
+    "http": [
+      {
+        "component": "enhance",
+        "elapsed_us": 474,
+        "kind": "get",
+        "received_bytes": 2305,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 504,
+        "kind": "get",
+        "received_bytes": 119172,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15076,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 13689,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14889,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14803,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 12680,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      }
+    ],
+    "keys": 25,
+    "lookup_us": 0,
+    "mode": "scan",
+    "notes": [
+      {
+        "action_index": 0,
+        "nullifier": "34a26b7e9e8f2f0135e66cb0928e4d9b54ce972f43fa6c470c7a4a22efb9bd31",
+        "position": 0,
+        "spent": true,
+        "txid": "58a28c18576b71e5e61c32867855a03cd0a8c91e731f9a1c00a6c0870d9d2e40",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "7b87560688e516f776139c853f9f978a8d92df8a20029bcdf113c0a9fe9b480e",
+        "position": 44891,
+        "spent": false,
+        "txid": "9123fa1a5c80ec25580377693c996d59a2f49646254144ef0ef65f6dd8e74b4d",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "5a6c1e6aa3046247314a12f50ded125b039a30f22c1ad22ca0bbd2a03a78363d",
+        "position": 96165,
+        "spent": false,
+        "txid": "d990be555820713b5ddaf6c16f96c99d10a69319ea70b9e46c283c0ddc08c8f5",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "31da3518e6889b37a8bb9f30b84f2585a71dd57a0afca60eab72403dd3912417",
+        "position": 220834,
+        "spent": false,
+        "txid": "09b79e9ac04441104f070cd6c178dfcabc884b1c6182fe258ca7b12ba86c630a",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "2faf55f8c39c41497cd62c2d617b73e6b9538c5f2931e56f139cbc3eaa46e60b",
+        "position": 337799,
+        "spent": false,
+        "txid": "5c91d385c824b319b710c7935de870ad3f06ac57f71ab592da6b2f4f73bf9e7b",
+        "value": 100000
+      }
+    ],
+    "scan_us": 31790779,
+    "setup_us": 275507,
+    "total_us": 32309142,
+    "trial": 2,
+    "witness_download_us": 0
+  },
+  {
+    "actions": 618015,
+    "apply_us": 138130,
+    "blocks": 68968,
+    "complete": true,
+    "directory_setup_us": 625,
+    "enhance_setup_us": 4956,
+    "enhance_us": 226800,
+    "fixture_sha256": "5025adc705b42b364d5f6a9d3693c2bb0d3150c610efa483fd986d5990e4808f",
+    "http": [
+      {
+        "component": "enhance",
+        "elapsed_us": 424,
+        "kind": "get",
+        "received_bytes": 2305,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 347,
+        "kind": "manifest",
+        "ok": "true",
+        "received_bytes": 837,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 116,
+        "kind": "public",
+        "ok": "true",
+        "received_bytes": 14336,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 1657,
+        "kind": "witness",
+        "ok": "true",
+        "received_bytes": 3997558,
+        "sent_bytes": 0
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3551,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3707,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3524,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3511,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3707,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3484,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3455,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3467,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3694,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3674,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3514,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3452,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3727,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3286,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3506,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3313,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3628,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3501,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3557,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3564,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3652,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3530,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3437,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3759,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "receiver",
+        "elapsed_us": 3348,
+        "kind": "query",
+        "ok": "true",
+        "received_bytes": 5172,
+        "sent_bytes": 135220
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 483,
+        "kind": "get",
+        "received_bytes": 119172,
+        "sent_bytes": 0
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 13635,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 12930,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15336,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 14230,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      },
+      {
+        "component": "enhance",
+        "elapsed_us": 15968,
+        "kind": "post",
+        "received_bytes": 33908,
+        "sent_bytes": 228468
+      }
+    ],
+    "keys": 25,
+    "lookup_us": 320939,
+    "mode": "pir",
+    "notes": [
+      {
+        "action_index": 0,
+        "nullifier": "34a26b7e9e8f2f0135e66cb0928e4d9b54ce972f43fa6c470c7a4a22efb9bd31",
+        "position": 0,
+        "spent": true,
+        "txid": "58a28c18576b71e5e61c32867855a03cd0a8c91e731f9a1c00a6c0870d9d2e40",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "7b87560688e516f776139c853f9f978a8d92df8a20029bcdf113c0a9fe9b480e",
+        "position": 44891,
+        "spent": false,
+        "txid": "9123fa1a5c80ec25580377693c996d59a2f49646254144ef0ef65f6dd8e74b4d",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "5a6c1e6aa3046247314a12f50ded125b039a30f22c1ad22ca0bbd2a03a78363d",
+        "position": 96165,
+        "spent": false,
+        "txid": "d990be555820713b5ddaf6c16f96c99d10a69319ea70b9e46c283c0ddc08c8f5",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "31da3518e6889b37a8bb9f30b84f2585a71dd57a0afca60eab72403dd3912417",
+        "position": 220834,
+        "spent": false,
+        "txid": "09b79e9ac04441104f070cd6c178dfcabc884b1c6182fe258ca7b12ba86c630a",
+        "value": 100000
+      },
+      {
+        "action_index": 0,
+        "nullifier": "2faf55f8c39c41497cd62c2d617b73e6b9538c5f2931e56f139cbc3eaa46e60b",
+        "position": 337799,
+        "spent": false,
+        "txid": "5c91d385c824b319b710c7935de870ad3f06ac57f71ab592da6b2f4f73bf9e7b",
+        "value": 100000
+      }
+    ],
+    "scan_us": 23020605,
+    "setup_us": 290124,
+    "total_us": 24017675,
+    "trial": 2,
+    "witness_download_us": 9084
+  }
+]

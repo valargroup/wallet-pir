@@ -1,0 +1,58 @@
+{
+  "scan": {
+    "median_us": {
+      "apply_us": 5036,
+      "directory_setup_us": 0,
+      "enhance_setup_us": 5007,
+      "enhance_us": 226639,
+      "lookup_us": 0,
+      "scan_us": 31790779,
+      "setup_us": 280393,
+      "total_us": 32309142,
+      "witness_download_us": 0
+    },
+    "total_us": [
+      32220008,
+      32442736,
+      32309142
+    ],
+    "http": {
+      "receiver": {
+        "sent_bytes": 0,
+        "received_bytes": 0
+      },
+      "enhance": {
+        "sent_bytes": 1142340,
+        "received_bytes": 291017
+      }
+    }
+  },
+  "pir": {
+    "median_us": {
+      "apply_us": 136873,
+      "directory_setup_us": 638,
+      "enhance_setup_us": 5049,
+      "enhance_us": 229720,
+      "lookup_us": 320766,
+      "scan_us": 23014972,
+      "setup_us": 279764,
+      "total_us": 24002913,
+      "witness_download_us": 9084
+    },
+    "total_us": [
+      23911822,
+      24002913,
+      24017675
+    ],
+    "http": {
+      "receiver": {
+        "sent_bytes": 3380500,
+        "received_bytes": 4142031
+      },
+      "enhance": {
+        "sent_bytes": 1142340,
+        "received_bytes": 291017
+      }
+    }
+  }
+}

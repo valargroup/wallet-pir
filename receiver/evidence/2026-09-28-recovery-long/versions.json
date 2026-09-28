@@ -1,0 +1,21 @@
+{
+  "wallet_pir": "645cbdf40cf21e83c669d2425274f703b7fdc1fe",
+  "wallet_libraries": "b392d5874e9a349524360e461b4e01ac66be08b1",
+  "vizor_pin": "aabf93dcd103ef935e57837807ca8d750381e708",
+  "native_adapter": "79ca43b92c71bc33b99ba71a9841cc5da4d5e3b2",
+  "rust": "1.98.0-aarch64-apple-darwin",
+  "machine": "Apple M3 Ultra, 96 GiB RAM, macOS 26.6.2",
+  "client_profile": "dev opt-level=3, line tables, no LTO",
+  "server_profile": "release-fast, native-reinspiring",
+  "shape_sha256": "64028b2880fade70e81c224d083689375da403e6e6467625f218c2a618e0dfe8",
+  "compact_file_sha256": "ee0233c990342708c34eefa747e03d95b81fbd60db2643191f577045cfa7c880",
+  "compact_file_bytes": 105447157,
+  "lockfiles": {
+    "benchmark": "72e2a28b79d7bee0ae57b042a5c483475eda4b2972dc47683ff0ebc63c6574c0",
+    "server": "d81629634c6273f92dc6fb3b6b2dbedc22e05361568b83c49bb4047d212b49fb"
+  },
+  "binaries": {
+    "receiver-recovery-benchmark": "357b4cc5ca19fed7b924427335e908ada11ee0ce327f565a8d6cf8777359b486",
+    "recovery_fixture": "42159cb1938d2c45ab957050ec5066084e2d3d4ee5c0730de6344ebb27db709f"
+  }
+}
