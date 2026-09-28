@@ -53,6 +53,10 @@ struct Cli {
     preparation_cache_dir: Option<PathBuf>,
     #[arg(long)]
     preparation_concurrency: Option<usize>,
+    /// Wallets of one class prepared at once. Defaults to the class's profile
+    /// count, which serializes a class the scenario runs one of.
+    #[arg(long)]
+    preparation_class_concurrency: Option<usize>,
     #[arg(long)]
     measured_http_attempts: Option<usize>,
 }
@@ -102,6 +106,10 @@ pub struct Config {
     pub seed: u64,
     #[serde(default = "preparation_concurrency")]
     pub preparation_concurrency: usize,
+    /// Per-class preparation limit; 0 uses the class's profile count.
+    /// Preparation is not measured, so raising it changes only its duration.
+    #[serde(default)]
+    pub preparation_class_concurrency: usize,
     #[serde(default)]
     pub allow_advancing_publication: bool,
     #[serde(default)]
@@ -869,6 +877,9 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
     if let Some(n) = cli.preparation_concurrency {
         config.preparation_concurrency = n;
     }
+    if let Some(n) = cli.preparation_class_concurrency {
+        config.preparation_class_concurrency = n;
+    }
     if let Some(n) = cli.measured_http_attempts {
         config.measured_http_attempts = n;
     }
@@ -1199,6 +1210,7 @@ fn prepare(
                         .filter(|(_, class)| *class == sample.clients[*i].class)
                         .count()
                         < config.profiles[&sample.clients[*i].class]
+                            .max(config.preparation_class_concurrency)
                 }) else {
                     break;
                 };
