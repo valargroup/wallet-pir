@@ -33,6 +33,42 @@ class FleetTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 shell('runtime_cache_directory /bin/server', TRANSPARENT_RUNTIME_CACHE_DIR=invalid)
 
+    def test_fixed_cleanup_prunes_the_installed_schema_cache(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cache = '/srv/transparent-pir/runtime-cache-v10'
+            unit = root/'worker.service'
+            unit.write_text(f'ExecStart=/bin/server --assignment /assignment.json --runtime-cache-dir {cache} --query-slots 2\n')
+            plan = root/'plan.json'
+            plan.write_text('{"workers":{"owner":{"publisher_control":false}}}')
+            code = r'''
+DEPLOY_PLAN="$PLAN"
+TRANSACTION_ID=synthetic-cache-test
+worker_ids() { echo owner; }
+worker_field() { echo host; }
+worker_action() { echo restart; }
+shard_set_path() { echo /candidate; }
+sudo() {
+  if [[ "$1" == test ]]; then return 1; fi
+  echo "$*" >>"$LOG"
+  if [[ "$1" == */shard-prune ]]; then echo '{"deleted":[],"bytes_freed":0}'; fi
+}
+export -f sudo
+host_ssh() {
+  shift
+  local script
+  script="$(cat)"
+  script="${script//\/etc\/systemd\/system\/transparent-shard-server.service/$UNIT}"
+  "$@" <<<"$script"
+}
+fleet_prune
+'''
+            shell(code, PLAN=str(plan), UNIT=str(unit), LOG=str(root/'calls'),
+                  TRANSPARENT_SCHEMA_CUTOVER='false')
+            calls = (root/'calls').read_text().splitlines()
+            arguments = calls[-1].split()
+            self.assertEqual(arguments[arguments.index('--runtime-cache-dir')+1], cache)
+
     def test_publisher_control_paths_and_shadow_guard(self):
         args = "/bin/server --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
         self.assertEqual(shell('publisher_control_enabled "$ARGS"', ARGS=args), "true")
