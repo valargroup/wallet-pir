@@ -1,0 +1,58 @@
+{
+  "scan": {
+    "median_us": {
+      "apply_us": 5040,
+      "directory_setup_us": 0,
+      "enhance_setup_us": 2838,
+      "enhance_us": 116614,
+      "lookup_us": 0,
+      "scan_us": 168996,
+      "setup_us": 134861,
+      "total_us": 436684,
+      "witness_download_us": 0
+    },
+    "total_us": [
+      445232,
+      427123,
+      436684
+    ],
+    "http": {
+      "receiver": {
+        "sent_bytes": 0,
+        "received_bytes": 0
+      },
+      "enhance": {
+        "sent_bytes": 264260,
+        "received_bytes": 290085
+      }
+    }
+  },
+  "pir": {
+    "median_us": {
+      "apply_us": 63726,
+      "directory_setup_us": 665,
+      "enhance_setup_us": 3037,
+      "enhance_us": 116491,
+      "lookup_us": 328573,
+      "scan_us": 44127,
+      "setup_us": 137238,
+      "total_us": 701138,
+      "witness_download_us": 131
+    },
+    "total_us": [
+      701138,
+      710324,
+      692523
+    ],
+    "http": {
+      "receiver": {
+        "sent_bytes": 3380500,
+        "received_bytes": 146681
+      },
+      "enhance": {
+        "sent_bytes": 264260,
+        "received_bytes": 290085
+      }
+    }
+  }
+}
