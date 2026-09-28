@@ -51,13 +51,15 @@ pub const RANGE_PROFILE_V1: RangeProfile = RangeProfile {
     m: M,
 };
 
-/// Lower precision tuned to the wallet workload: about 28% smaller recent
-/// filters, with a false match per tested absent script of `1/12,288`. See
-/// the filter precision sweep in the transparent evidence.
+/// Lower precision tuned to ordinary wallets testing up to about 100 scripts:
+/// about 45% smaller recent filters, with a false match per tested absent
+/// script of `1/1,024`. A false match costs one extra directory lookup, which
+/// wallets testing many more scripts pay for. See the filter precision sweep
+/// in the transparent evidence.
 pub const RANGE_PROFILE_V2: RangeProfile = RangeProfile {
     name: "zcash-transparent-range-v2",
-    p: 13,
-    m: 12_288,
+    p: 10,
+    m: 1_024,
 };
 
 /// Every range profile this build reads or publishes.

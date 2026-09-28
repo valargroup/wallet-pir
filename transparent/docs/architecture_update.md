@@ -82,7 +82,7 @@ transparent branches are not a compatibility constraint.
 |---|---|---|---|
 | §2 Single-lookup directory | Per-shard xor-retrieval choice table (about 1.23 bits per placed script) in an optional manifest field. Builder and server verify every entry's route; the wallet sends one query per matched script when a table is present | Offline: tables built on all 14 recent shards with no seed retries, 817–7,006 B each. Local (939 syncs) and bench fleet at 8 and 32 wallets (4,578 syncs): all exact, directory queries exactly halved. restore-6m −24% bytes, 40-script −35%, catch-ups −27% to −34%. p50 and p95 35–45% lower; 15–25% more syncs per second | [census](../evidence/single-lookup-census-2026-09-27/README.md), [local](../evidence/single-lookup-measure-2026-09-27/README.md), [fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) |
 | §2 recent-4k-8k | A model of the two-choice placer at 4,096 rows | No overflow from 79% to 96% load, including 40 seeds at the 49,152 seal target. The earlier "14 of 14 is at the edge" reading was wrong. About 21.5 KB less upload per directory query | [placement](../evidence/directory-placement-4k-2026-09-28/README.md) |
-| §3 Filter precision | `filter-sweep` rebuilt the 14 recent filters under P=8–19 | P=19 reproduces the published 1,293,378 bytes. P=13 (M=12,288): −28% bytes, and never more costly than today up to about 2,000 tested scripts, false matches included. P=12: −35%, but worse than P=13 above about 200 scripts. The combined MPHF/fingerprint artifact is larger than P=13 plus a choice table | [sweep](../evidence/filter-precision-sweep-2026-09-28/README.md) |
+| §3 Filter precision | `filter-sweep` rebuilt the 14 recent filters under P=8–19 | P=19 reproduces the published 1,293,378 bytes. P=13 (M=12,288): −28% bytes, and never more costly than today up to about 2,000 tested scripts, false matches included. P=12: −35%, but worse than P=13 above about 200 scripts. The combined MPHF/fingerprint artifact is larger than a GCS filter plus a choice table. **Selected: P=10 (M=1,024)** for wallets testing up to about 100 scripts. That is 711,577 recent filter bytes (−45%); with the planned 87 KB false-match cost, the total is 0.72–0.83 MB from 10 to 100 scripts. Heavier wallets pay more (about 0.95 MB at 200 scripts) | [sweep](../evidence/filter-precision-sweep-2026-09-28/README.md) |
 | §4 Bulk-history isolation | `shard-census --bulk-long`, sealing on short histories' packed rows only | recent-8k: 14 shards become 5. restore-6m matched shards 4.93 → 3.53, pairs 5.93 → 5.45, filter bytes −12%, projected bytes −11%. Needs up to 24,018 bulk rows per shard. The gain mostly disappears at recent-4k-8k | [bulk census](../evidence/bulk-isolation-census-2026-09-28/README.md) |
 | §5 Cold archive | Not investigated, beyond cache behaviour seen during the upgrade | Snapshots restore in about 1 s per recent table and survive the rc.6 upgrade. Archive restore latency, admission and churn are unmeasured | [status](status.md) |
 | §6 Concurrency | `FilterSource::prefetch`; the HTTP source fetches a walk's uncached filters over 8 connections, hands each out once, and stops at the first failure | At an emulated 100 ms round trip, restore-6m p50 is 4.40 s → 3.62 s with tables → 2.51 s with tables plus prefetch, with identical bytes. About 16 sequential manifest, setup, directory and page requests remain | [latency](../evidence/single-lookup-latency-2026-09-28/README.md) |
@@ -96,8 +96,9 @@ whole-wallet):
 | Baseline (fleet r3; bench fleet without tables) | Measured | 3.15 MB | 4.40 s |
 | + choice tables | Live for new revisions; measured | 2.39 MB | 3.62 s |
 | + filter prefetch | In `transparent-wallet` on `main`; measured on a bench copy | 2.39 MB | 2.51 s |
-| + filter profile P=13 | Projected from the sweep | ~2.02 MB | slightly lower |
-| + recent-4k-8k with tables | Projected from query sizes | ~1.89 MB (−40%) | slightly lower |
+| + filter profile v2 (P=10) | Projected from the sweep: 0.71 MB of filters, plus false matches (about 1.4 at 100 scripts) | ~1.86 MB | slightly lower |
+| + recent-4k-8k with tables | Projected from query sizes | ~1.73 MB (−45%) | slightly lower |
+| + native ReinspiRING (v8) | Projected: 52,744 B per 4K directory query instead of 111,640 B | ~1.2–1.3 MB (−60%) | slightly lower |
 | + cross-shard request concurrency | Projected from request counts | unchanged | ~1.5 s |
 
 ### Open questions
@@ -113,7 +114,7 @@ whole-wallet):
    for any client built before it. The in-repo wallet and tools must select
    parameters by profile and refuse unknown profiles before the cluster
    publishes one.
-3. **Republication cost.** Tables on already-sealed shards, P=13 and
+3. **Republication cost.** Tables on already-sealed shards, the v2 filter profile and
    recent-4k-8k all change every manifest. Runtime cache keys include the
    revision, so every worker rebuilds every runtime, archive included. The cold
    rebuild time on the current fleet is unmeasured.
@@ -155,7 +156,7 @@ is named; within a track, items run in order.
 | N2 | Record format v8: 4,096-byte rows (16 directory slots, 41 events per page), schema `transparent-shard-v8`; native server runtime, snapshot format and native identity in `init`; native wallet `TableClient` | N1 | All transparent suites pass. `geometry_costs` pins native sizes: 77,832 B per recent-8k query (P14: 128,008), 52,744 B at 4K rows, 14,848 B setup and 5,648 B response per segment |
 | N3 | Per-geometry correctness certificates (noise reports and `certify_native`) for 2,048–65,536 rows; 65,536 is beyond Enhance's certified range | N2 | Certificates under `transparent/evidence/`, or a geometry change if 65,536 rows does not certify |
 | **B — Publication format and cluster rollout** | | | |
-| B1 | New range filter profile (e.g. `zcash-transparent-range-v2`, P=13, M=12,288) in the publisher and controller | A2 | Profile tests; `filter-sweep` sizes reproduced by the builder |
+| B1 | New range filter profile `zcash-transparent-range-v2`, P=10, M=1,024, in the publisher and controller (done). Chosen for wallets testing up to about 100 scripts; heavier wallets pay extra false-match lookups | A2 | Profile tests; `filter-sweep` sizes reproduced by the builder |
 | B2 | Candidate full publication ("v8") into a new directory on the coordinator: native records and schema v8, v2 filter profile, recent-4k-8k, `--directory-choice all` on every shard, both tiers | B1, N2, N3 | `shard-verify`, placement, and exact replay against the journal; choice routes verified at load |
 | B3 | Cold-rebuild rehearsal: prepare B2 on bench copies of one archive owner and one recent replica | B2 | Measured rebuild time and peak memory per role; the maintenance window for B4 |
 | B4 | Deploy B2 to the cluster: continuous publisher on the v2 profile, fixed-publication rollout to all workers, rollback set retained | B3, A2 in the deployed publisher; C1 recommended first | Fleet serves B2; A1 exact against the cluster; old set retained for rollback |
