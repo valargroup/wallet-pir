@@ -1005,9 +1005,10 @@ REMOTE
       batch=("${pending[@]:0:limit}")
       run_batch "${batch[@]}"
       pending=("${pending[@]:limit}")
-      # Caddy probes every 5 s and remembers passive failures for 30 s. Allow
-      # both to settle before retiring another pair; also probe its public route.
-      sleep "${TRANSPARENT_ROUTER_SETTLE_SECONDS:-35}"
+      # Caddy probes every 1 s (three failures to leave, one pass to return)
+      # and remembers passive failures for 10 s (`router::HEALTH`). Allow both
+      # to settle before retiring another pair; also probe its public route.
+      sleep "${TRANSPARENT_ROUTER_SETTLE_SECONDS:-15}"
       if [[ -n "${TRANSPARENT_ROUTER_HOST:-}" ]]; then
         curl --fail --silent --max-time 15 "$TRANSPARENT_PUBLIC_URL/v1/shards/init" >/dev/null
       fi

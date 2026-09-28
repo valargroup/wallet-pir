@@ -510,6 +510,53 @@ impl ServiceState {
         self.inner.max_query_bytes
     }
 
+    /// Sends a query refusal decided before the body was read, after reading
+    /// and discarding the body.
+    ///
+    /// A proxy streams the upload while the worker answers. Answering and
+    /// closing with the upload unread tears the proxy's upload down mid-body
+    /// ("broken pipe"): the wallet then gets the proxy's 502 rather than this
+    /// refusal and its retry delay, and the proxy counts an error against the
+    /// worker's health. On the 2026-09-27 bench fleet such errors from
+    /// saturated workers ejected the whole pool.
+    ///
+    /// Discarding costs bandwidth, not memory: frames are dropped as they
+    /// arrive, at most [`Self::max_query_bytes`] are accepted, and the wait is
+    /// bounded. A body that is longer, slower or broken is abandoned, and the
+    /// connection closes as it did before.
+    async fn refuse_unread(&self, request: Request, refused: Response) -> Response {
+        use http_body::Body as _;
+        let limit = self.max_query_bytes();
+        let wait = self
+            .inner
+            .admission
+            .config()
+            .upload_deadline
+            .min(std::time::Duration::from_secs(5));
+        let mut body = request.into_body();
+        let drained = tokio::time::timeout(wait, async {
+            let mut seen = 0usize;
+            loop {
+                match std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await
+                {
+                    None => return true,
+                    Some(Ok(frame)) => {
+                        seen += frame.data_ref().map_or(0, |data| data.len());
+                        if seen > limit {
+                            return false;
+                        }
+                    }
+                    Some(Err(_)) => return false,
+                }
+            }
+        })
+        .await;
+        if !matches!(drained, Ok(true)) {
+            Metrics::incr(&self.inner.metrics.refusals_unread);
+        }
+        refused
+    }
+
     pub fn metrics(&self) -> &Arc<Metrics> {
         &self.inner.metrics
     }
@@ -800,6 +847,23 @@ fn binary_digest() -> &'static Option<String> {
 /// a deploy can assert which set and assignment a worker is actually running.
 async fn ready(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
+    // The router checks this route every second and ejects a worker that
+    // does not answer, so nothing here may wait on query work or on the
+    // filesystem. The readiness decision reads only counters; the disk
+    // cache's size is a directory walk, done off the async threads and
+    // reported as unknown if it is slow.
+    let runtime_cache = {
+        let state = state.clone();
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tokio::task::spawn_blocking(move || state.inner.cache.disk_status()),
+        )
+        .await
+        {
+            Ok(Ok(status)) => status,
+            _ => serde_json::json!({"status": "unavailable: the cache directory was slow to list"}),
+        }
+    };
     let warm = inner.warm.count.load(Ordering::Acquire);
     let mut body = serde_json::json!({
         "mode": match inner.warm.mode {
@@ -812,7 +876,7 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         "warm_runtimes": warm,
         "target_runtimes": inner.warm.target,
         "binary_sha256": binary_digest(),
-        "runtime_cache": inner.cache.disk_status(),
+        "runtime_cache": runtime_cache,
         "prewarm_failed": Metrics::get(&inner.metrics.prewarm_failed),
         "prewarm_finished": inner.warm.finished.load(Ordering::Acquire),
         "prewarm_seconds": Metrics::get(&inner.metrics.prewarm_micros) as f64 / 1e6,
@@ -1078,12 +1142,16 @@ async fn query_inner(
     let metrics = state.inner.metrics.clone();
     let Some(table) = Table::parse(&table) else {
         Metrics::incr(&metrics.query_errors);
-        return RequestError::Bad("unknown table".into()).into_response(&map_digest);
+        let refused = RequestError::Bad("unknown table".into()).into_response(&map_digest);
+        return state.refuse_unread(request, refused).await;
     };
     let (segments, shared) = {
         let shard = match state.revision(shard_id, &digest) {
             Ok(shard) => shard,
-            Err(error) => return error.into_response(&map_digest),
+            Err(error) => {
+                let refused = error.into_response(&map_digest);
+                return state.refuse_unread(request, refused).await;
+            }
         };
         (shard.segments(table), state.shared(shard, table))
     };
@@ -1104,17 +1172,19 @@ async fn query_inner(
             request.body().size_hint().exact()
         });
     let Some(declared) = declared else {
+        // Not discarded: with no declared length there is no bound to read to.
         Metrics::incr(&metrics.query_length_rejections);
         return RequestError::LengthRequired.into_response(&map_digest);
     };
     if declared != expected as u64 {
         Metrics::incr(&metrics.query_length_rejections);
-        return RequestError::Bad(format!(
+        let refused = RequestError::Bad(format!(
             "a {} query for geometry {} must be exactly {expected} bytes, not {declared}",
             table.as_str(),
             shared.geometry.name
         ))
         .into_response(&map_digest);
+        return state.refuse_unread(request, refused).await;
     }
 
     // Counted, and its bytes budgeted, before the body is read. A worker that
@@ -1124,7 +1194,10 @@ async fn query_inner(
         Ok(pending) => pending,
         Err(error) => {
             Metrics::incr(&metrics.query_errors);
-            return RequestError::from(error).into_response(&map_digest);
+            // The capacity refusal is the one a saturated worker sends most,
+            // and the one whose retry delay matters most to reach the wallet.
+            let refused = RequestError::from(error).into_response(&map_digest);
+            return state.refuse_unread(request, refused).await;
         }
     };
     let upload_deadline = state.inner.admission.config().upload_deadline;

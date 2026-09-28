@@ -57,11 +57,23 @@ at 8 wallets; 5.26 and 5.34 against 6.38 and 6.10 at 32 wallets.
 | off-2 | 997 | 0 | 5.91 | 5.19/10.57 | 42.1/68.9 |
 
 Both failed runs are router 503s ("no upstreams available", 39,131 log lines).
-Under saturation, Caddy's active health checks, with the 3 s timeout, marked all
-four workers down at once. Failed syncs retried immediately, which kept the router
-refusing. This occurred once in each variant, so it does not distinguish them. The
-production router uses the same health settings, so this is a saturation failure
-mode worth reviewing there.
+Under saturation, the router marked all four workers down at once. Failed syncs
+retried immediately, which kept the router refusing. This occurred once in each
+variant, so it does not distinguish them.
+
+**Correction (2026-09-28).** The first reading blamed the active health checks'
+3 s timeout. The router journal does not support that: during both spirals every
+worker passed every active check (8 "host is up" lines per 10 s, no failed check
+after startup). The ejections were **passive**. `fail_duration 30s` with Caddy's
+default `max_fails 1` takes a worker out for 30 s on any single proxy error. The
+journal shows such errors from saturated workers just before each spiral, e.g.
+"readfrom … write: broken pipe": a worker refused a query with 503 before
+reading its 128 KB body and closed the connection under the upload. The router's
+own 503 carried no `Retry-After`, so wallets treated it as terminal and the load
+client resubmitted at once. The health settings here are the ones `shard-assign`
+rendered; the live publisher renders the production router separately, with
+different settings. Plan item C1 in the
+[architecture update](../../docs/architecture_update.md) addresses each step.
 
 In the two clean 128 runs, bytes per sync compare as follows:
 

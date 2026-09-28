@@ -657,6 +657,92 @@ async fn a_full_queue_refuses_retryably_and_a_cancelled_waiter_frees_its_place()
     assert_eq!(depth(), 0);
 }
 
+/// A capacity refusal decided before the body is read still reads the body,
+/// so the connection survives it. A proxy streams the upload while the worker
+/// answers; closing under an unread upload broke the proxy's write, turned
+/// the refusal into a proxy 502 without its delay, and counted against the
+/// worker's health — which on the 2026-09-27 bench fleet ejected every
+/// saturated worker at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_capacity_refusal_reads_the_upload_and_keeps_the_connection() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let dir = tempfile::tempdir().unwrap();
+    publish(dir.path());
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
+    let state = ServiceState::build(
+        set,
+        ServiceConfig {
+            query_slots: 1,
+            max_waiters: 0,
+            ..ServiceConfig::default()
+        },
+    )
+    .expect("state");
+    let revision = state_revision(&state, dir.path(), 0);
+    let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
+    let body = padded_body(&revision, Table::Directory);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+        listener,
+        router(state.clone()),
+    )));
+    // The only slot is busy and there is no waiting place.
+    let _held = state.hold_query_slot().await;
+
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    // Two refused queries and a readiness check, one connection.
+    for _ in 0..2 {
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nhost: worker\r\ncontent-length: {}\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream
+            .write_all(&body)
+            .await
+            .expect("the upload is read in full");
+    }
+    stream
+        .write_all(b"GET /v1/ready HTTP/1.1\r\nhost: worker\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut replies = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        stream.read_to_string(&mut replies),
+    )
+    .await
+    .expect("replies arrive")
+    .unwrap();
+    // Bodies carry no trailing newline, so split on the status lines.
+    let statuses: Vec<&str> = replies
+        .split("HTTP/1.1 ")
+        .skip(1)
+        .map(|reply| reply.lines().next().unwrap())
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            "503 Service Unavailable",
+            "503 Service Unavailable",
+            "200 OK"
+        ],
+        "{replies}"
+    );
+    assert_eq!(replies.matches("retry-after: 1").count(), 2, "{replies}");
+    let metrics = state.metrics();
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.queue_rejections),
+        2
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.refusals_unread),
+        0
+    );
+    server.abort();
+}
+
 /// A request that waits its whole deadline for a slot is refused retryably
 /// rather than kept waiting.
 #[tokio::test(flavor = "multi_thread")]

@@ -154,8 +154,8 @@ const MAX_OVERLOAD_ATTEMPTS: u32 = 4;
 /// attempt after that.
 const OVERLOAD_BACKOFF: Duration = Duration::from_millis(250);
 
-/// Ceiling on any single wait, so a service asking for an implausible delay
-/// cannot park a sync inside it.
+/// Ceiling on any single wait before jitter, so a service asking for an
+/// implausible delay cannot park a sync inside it.
 const OVERLOAD_BACKOFF_CAP: Duration = Duration::from_secs(2);
 
 /// Passes a sync makes while the wallet's rules keep adding scripts. A
@@ -1571,9 +1571,11 @@ fn directory_choice(
 /// The service's own figure is preferred, because it knows why it refused, but
 /// it is capped: a delay a wallet cannot sanity-check is a delay a
 /// misconfigured or hostile service could use to park a sync inside one call.
+/// Either way the wait is jittered by up to half again, so wallets refused
+/// together do not return together.
 fn overload_backoff(attempt: u32, asked: Option<Duration>) -> Duration {
     let wait = asked.unwrap_or_else(|| OVERLOAD_BACKOFF * 2u32.saturating_pow(attempt - 1));
-    wait.min(OVERLOAD_BACKOFF_CAP)
+    crate::backoff::jittered(wait.min(OVERLOAD_BACKOFF_CAP))
 }
 
 /// Refetches the map after a withdrawn revision, and checks it continues the
@@ -2602,21 +2604,26 @@ mod tests {
 
     #[test]
     fn backoff_prefers_the_services_figure_and_caps_it() {
-        assert_eq!(overload_backoff(1, None), OVERLOAD_BACKOFF);
-        assert_eq!(overload_backoff(2, None), OVERLOAD_BACKOFF * 2);
-        assert_eq!(
-            overload_backoff(1, Some(Duration::from_millis(10))),
-            Duration::from_millis(10),
+        // Each wait is its base jittered by up to half again, never less.
+        let within = |wait: Duration, base: Duration| wait >= base && wait <= base * 3 / 2;
+        assert!(within(overload_backoff(1, None), OVERLOAD_BACKOFF));
+        assert!(within(overload_backoff(2, None), OVERLOAD_BACKOFF * 2));
+        assert!(
+            within(
+                overload_backoff(1, Some(Duration::from_millis(10))),
+                Duration::from_millis(10)
+            ),
             "the service knows why it refused"
         );
-        assert_eq!(
-            overload_backoff(1, Some(Duration::from_secs(3600))),
-            OVERLOAD_BACKOFF_CAP,
+        assert!(
+            within(
+                overload_backoff(1, Some(Duration::from_secs(3600))),
+                OVERLOAD_BACKOFF_CAP
+            ),
             "a delay a wallet cannot sanity-check must not park a sync"
         );
-        assert_eq!(
-            overload_backoff(20, None),
-            OVERLOAD_BACKOFF_CAP,
+        assert!(
+            within(overload_backoff(20, None), OVERLOAD_BACKOFF_CAP),
             "doubling is capped too"
         );
     }

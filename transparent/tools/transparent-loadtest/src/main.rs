@@ -288,6 +288,32 @@ struct Outcome {
     events: u64,
 }
 
+impl Outcome {
+    /// A sync that ended on an error, or stopped short because the service
+    /// stayed overloaded: one a real wallet would retry later.
+    fn refused(&self) -> bool {
+        self.failed.is_some()
+            || self
+                .incomplete
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("overloaded"))
+    }
+}
+
+/// The wait before a client resubmits after `failures` refused syncs in a
+/// row: half a second, doubled per failure up to 16 s, jittered.
+///
+/// Resubmitting at once is what kept the 2026-09-27 bench fleet's router
+/// refusing: 128 clients recorded about 28,000 failed syncs in ten minutes,
+/// each one more request against a pool that had none to spare.
+fn resubmit_backoff(failures: u32) -> Duration {
+    transparent_wallet::backoff::exponential(
+        Duration::from_millis(500),
+        failures,
+        Duration::from_secs(16),
+    )
+}
+
 /// Digest of the events a store holds, matching the sampler's rule.
 fn store_digest<S: WalletStore>(
     store: &S,
@@ -668,6 +694,7 @@ async fn legacy_main() -> anyhow::Result<()> {
         let deadline = Instant::now() + *args.step_duration;
         let stats: Arc<Mutex<BTreeMap<String, ClassStats>>> = Arc::new(Mutex::new(BTreeMap::new()));
         let completed_total = Arc::new(AtomicU64::new(0));
+        let backoff_millis = Arc::new(AtomicU64::new(0));
         let mut workers = Vec::new();
         for worker in 0..concurrency {
             let args = args.clone();
@@ -677,16 +704,19 @@ async fn legacy_main() -> anyhow::Result<()> {
             let next = next.clone();
             let stats = stats.clone();
             let completed_total = completed_total.clone();
+            let backoff_millis = backoff_millis.clone();
             workers.push(tokio::task::spawn_blocking(move || {
                 // Spread the start so the step does not open every connection
                 // in one instant.
                 std::thread::sleep(Duration::from_millis((worker as u64 * 37) % 1_000));
+                let mut failures = 0u32;
                 while Instant::now() < deadline {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let spec = &clients
                         [(index.wrapping_mul(2_654_435_761) ^ args.seed as usize) % clients.len()];
                     let outcome = run_client(&args, spec, &map, map_bytes, &geometry, index);
                     completed_total.fetch_add(1, Ordering::Relaxed);
+                    failures = if outcome.refused() { failures + 1 } else { 0 };
                     stats
                         .lock()
                         .unwrap()
@@ -709,6 +739,13 @@ async fn legacy_main() -> anyhow::Result<()> {
                     };
                     if enough {
                         break;
+                    }
+                    // A wallet whose sync failed comes back later, not at once.
+                    if failures > 0 {
+                        let wait = resubmit_backoff(failures)
+                            .min(deadline.saturating_duration_since(Instant::now()));
+                        backoff_millis.fetch_add(wait.as_millis() as u64, Ordering::Relaxed);
+                        std::thread::sleep(wait);
                     }
                 }
             }));
@@ -765,6 +802,7 @@ async fn legacy_main() -> anyhow::Result<()> {
             "error_rate": error_rate,
             "http_503_rate": rate_503,
             "worst_p99_sync_seconds": worst_p99,
+            "resubmit_backoff_seconds": backoff_millis.load(Ordering::Relaxed) as f64 / 1e3,
             "classes": stats.iter().map(|(class, s)| (class.clone(), s.json())).collect::<serde_json::Map<_, _>>(),
             "metrics_before": metrics_before,
             "metrics_after": metrics_after,
@@ -882,6 +920,7 @@ fn write_report(
             "TLS handshake and connection bytes are not measured; byte figures are wallet-level payloads as the wallet charges them",
             "clients are synthetic groupings of public scripts, not a user population",
             "a step ends early once every class reached min_completed_per_class; rates are computed over the step's actual duration",
+            "a client whose sync failed or stopped overloaded waits a jittered exponential backoff (0.5 s doubling to 16 s) before its next sync; resubmit_backoff_seconds sums those waits per step",
             "a sync that stopped only for unresolved spends counts as completed: synthetic wallets begin with an empty store inside their history, so older receives are absent by construction; the count is reported per class",
         ],
     });
