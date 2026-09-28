@@ -74,6 +74,18 @@ pub fn build_range_filter(
 }
 
 /// The shared GCS encoding. Both profiles differ only in how they key it.
+/// Builds a range filter under a registered profile's parameters.
+///
+/// `shard_key` must have been derived with the same profile name, which is
+/// what binds the bytes to the profile a consumer will select.
+pub fn build_range_filter_for(
+    profile: &crate::profile::RangeProfile,
+    shard_key: ShardKey,
+    elements: &[ScriptBytes],
+) -> Result<FilterBytes, FilterError> {
+    encode_with(shard_key.filter_keys(), elements, profile.m, profile.p)
+}
+
 /// Builds a range filter under explicit Golomb-Rice parameters.
 ///
 /// For evaluating alternative profiles offline. Published filters use

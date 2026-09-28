@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use transparent_events::TransparentEvent;
 use transparent_filter::{
-    build_range_filter, BlockHash, FilterBytes, FilterError, ScriptBytes, ShardKey,
+    build_range_filter_for, BlockHash, FilterBytes, FilterError, ScriptBytes, ShardKey,
 };
 
 /// Independently salted candidate rows per script.
@@ -252,7 +252,12 @@ pub fn build_shard(
         end_height,
         terminal_block_hash,
     );
-    let filter = build_range_filter(key, &filter_elements)?;
+    // The profile named in the map and manifest fixes the filter's P and M; a
+    // name this build does not know is refused rather than encoded under
+    // another profile's parameters.
+    let range = transparent_filter::range_profile(profile)
+        .ok_or_else(|| BuildError::Invalid(format!("unknown range profile {profile:?}")))?;
+    let filter = build_range_filter_for(range, key, &filter_elements)?;
 
     // Lay out page rows first: a directory entry has to name where its
     // fragments are. Three passes, because placement is no longer a running

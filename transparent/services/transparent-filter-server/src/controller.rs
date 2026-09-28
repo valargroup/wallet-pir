@@ -49,6 +49,14 @@ pub struct Config {
     /// `off`, which is what every configuration before this field publishes.
     #[serde(default)]
     pub directory_choice: publication::DirectoryChoice,
+    /// Range-filter profile to publish under. Absent means the original
+    /// profile, which is what every configuration before this field publishes.
+    #[serde(default = "default_range_profile")]
+    pub range_profile: String,
+}
+
+fn default_range_profile() -> String {
+    transparent_filter::RANGE_PROFILE.to_string()
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ActivePublication {
@@ -571,6 +579,7 @@ async fn publish_once(
             record: Some(directory.join("publication.json")),
             source_sha: Some(config.source_sha.clone()),
             directory_choice: config.directory_choice,
+            range_profile: config.range_profile.clone(),
         };
         tokio::task::spawn_blocking(move || {
             publication::publish(&options, &snapshot, BlockHash::from_internal_bytes([0; 32]))
@@ -988,6 +997,7 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
         let hook = root.path().join("fleet.py");
@@ -1022,6 +1032,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             source_sha: "fixture".into(),
             shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
         let authority = Authority(Arc::new(Inner {
             active: RwLock::new(Arc::new(read_public(initial, Vec::new()).unwrap())),

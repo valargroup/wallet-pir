@@ -55,9 +55,7 @@ use crate::transport::{ByteCharges, FilterSource, ShardTransport, StaleRevision}
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
-use transparent_filter::{
-    validate_filter, BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap,
-};
+use transparent_filter::{BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap};
 use transparent_shard::build::candidate_rows;
 use transparent_shard::manifest::ShardManifest;
 use transparent_shard::page_row::decode_page_row;
@@ -99,6 +97,16 @@ pub enum SyncError {
          range"
     )]
     UnknownGeometry(String),
+    /// The map names a range-filter profile this build does not know.
+    ///
+    /// Its filters would be decoded under the wrong Golomb-Rice parameters,
+    /// which neither fails reliably nor matches correctly, so the sync stops
+    /// before matching anything.
+    #[error(
+        "shard set uses range-filter profile {0}, which this build does not know; upgrade \
+         before syncing this range"
+    )]
+    UnknownProfile(String),
     /// A revision this sync needed was withdrawn, and refreshing the map did
     /// not offer one that is served.
     ///
@@ -487,6 +495,9 @@ pub fn sync_into<S: WalletStore>(
     }
     map.check_shape()
         .map_err(|error| SyncError::Invalid(format!("shard map is malformed: {error}")))?;
+    if transparent_filter::range_profile(&map.profile).is_none() {
+        return Err(SyncError::UnknownProfile(map.profile.clone()));
+    }
     let genesis = BlockHash::from_display_hex(&map.genesis_hash)?;
     BlockHash::from_display_hex(&target_anchor.hash)?;
     if target_anchor.height < map.start_height {
@@ -1225,7 +1236,10 @@ fn read_shard_into<S: WalletStore>(
             }
         };
         charges.filters_checked += 1;
-        let validated = validate_filter(&bytes, FilterLimits::default())?;
+        let profile = transparent_filter::range_profile(&map.profile)
+            .ok_or_else(|| SyncError::UnknownProfile(map.profile.clone()))?;
+        let validated =
+            transparent_filter::validate_range_filter(&bytes, FilterLimits::default(), profile)?;
         let terminal = BlockHash::from_display_hex(&entry.terminal_block_hash)?;
         let key = ShardKey::derive(
             &map.profile,

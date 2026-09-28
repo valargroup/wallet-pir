@@ -184,6 +184,27 @@ fn publish_choosing(
     tail_supersedes: &str,
     choice: impl Fn(u64, &BuiltShard) -> Option<String>,
 ) -> ShardMap {
+    publish_profiled(
+        dir,
+        per_shard,
+        geometry_for,
+        tail_revision,
+        tail_supersedes,
+        choice,
+        transparent_filter::RANGE_PROFILE,
+    )
+}
+
+/// As [`publish_choosing`], under the named range-filter profile.
+fn publish_profiled(
+    dir: &Path,
+    per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
+    geometry_for: impl Fn(u64) -> &'static Geometry,
+    tail_revision: u32,
+    tail_supersedes: &str,
+    choice: impl Fn(u64, &BuiltShard) -> Option<String>,
+    profile: &str,
+) -> ShardMap {
     let mut entries = Vec::new();
     let mut parent_digest = String::new();
     for (shard_id, events) in per_shard.iter().enumerate() {
@@ -197,7 +218,7 @@ fn publish_choosing(
             end,
             genesis(),
             hash_at(end),
-            transparent_filter::RANGE_PROFILE,
+            profile,
             geometry,
             events,
         )
@@ -205,7 +226,7 @@ fn publish_choosing(
 
         let manifest = ShardManifest {
             schema: SCHEMA.to_string(),
-            profile: transparent_filter::RANGE_PROFILE.to_string(),
+            profile: profile.to_string(),
             geometry: geometry.name.to_string(),
             network: transparent_filter::NETWORK.to_string(),
             genesis_hash: GENESIS.to_string(),
@@ -306,7 +327,7 @@ fn publish_choosing(
     let map = ShardMap {
         genesis_hash: GENESIS.to_string(),
         network: transparent_filter::NETWORK.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
+        profile: profile.to_string(),
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: entries
@@ -2126,4 +2147,88 @@ fn a_server_refuses_a_choice_table_that_misroutes_or_does_not_match() {
     let dir = tempfile::tempdir().unwrap();
     publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
     ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("a genuine table loads");
+}
+
+/// A set published under the lower-precision range profile syncs exactly, with
+/// the same private work as the original profile, and smaller filters.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_set_under_the_v2_range_profile_syncs_exactly_with_smaller_filters() {
+    let per_shard = chain();
+    let wallet = vec![script(1), script(2), script(3), script(999)];
+
+    let v1 = tempfile::tempdir().unwrap();
+    let v1_map = publish(v1.path(), &per_shard);
+    let v2 = tempfile::tempdir().unwrap();
+    let v2_map = publish_profiled(
+        v2.path(),
+        &per_shard,
+        |_| &RECENT_8K,
+        0,
+        "",
+        tabled,
+        transparent_filter::RANGE_PROFILE_V2.name,
+    );
+    assert_eq!(v2_map.profile, transparent_filter::RANGE_PROFILE_V2.name);
+
+    let v1_base = serve(v1.path()).await;
+    let v2_base = serve(v2.path()).await;
+    let old = run_sync(v1.path(), v1_base, wallet.clone(), FIRST, v1_map).await;
+    let new = run_sync(v2.path(), v2_base, wallet.clone(), FIRST, v2_map).await;
+    compare(&new.ledger, &traverse(&per_shard, &wallet, 0));
+    compare(&new.ledger, &old.ledger);
+    assert!(new.charges.filter_bytes < old.charges.filter_bytes);
+    assert_eq!(new.charges.pages.queries, old.charges.pages.queries);
+}
+
+/// A map naming a range profile this build does not know stops the sync
+/// before any filter is matched.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unknown_range_profile_stops_the_sync_before_matching() {
+    let per_shard = chain();
+    let dir = tempfile::tempdir().unwrap();
+    let mut map = publish(dir.path(), &per_shard);
+    map.profile = "zcash-transparent-range-v99".into();
+    let filters = PublishedFilters::load(
+        dir.path(),
+        &publish(tempfile::tempdir().unwrap().path(), &per_shard),
+    );
+    let base = serve(dir.path()).await;
+    let wallet = vec![script(1)];
+    let error = tokio::task::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut transport = HttpShards {
+            base: base.clone(),
+            client: client.clone(),
+        };
+        let raw = client
+            .get(format!("{base}/v1/shards/init"))
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap();
+        let geometry = parse_init(&raw);
+        let mut filters = filters;
+        sync(
+            &map,
+            0,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
+        )
+        .err()
+        .expect("an unknown profile must be refused")
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(error, transparent_wallet::SyncError::UnknownProfile(ref name) if name == "zcash-transparent-range-v99"),
+        "{error}"
+    );
 }
