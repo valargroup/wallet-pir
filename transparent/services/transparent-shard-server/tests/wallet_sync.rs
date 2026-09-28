@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{
     filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
@@ -22,9 +23,12 @@ use transparent_shard::manifest::{
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_wallet::client::Table;
+use transparent_wallet::http::{HttpOptions, HttpShardTransport};
 use transparent_wallet::ledger::Ledger;
 use transparent_wallet::sync::{sync, GeometryParams, ServiceGeometry};
-use transparent_wallet::transport::{refusal, BoxError, FilterSource, ShardTransport};
+use transparent_wallet::transport::{
+    refusal, BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport,
+};
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
@@ -1444,15 +1448,24 @@ impl FilterSource for TwoSetFilters {
 /// earlier history reproduces the traversal exactly.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_wallet_holding_a_replaced_tail_revision_recovers_by_refreshing_the_map() {
-    replaced_tail_recovers(false).await;
+    replaced_tail_recovers(false, 1).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_filter_replaced_after_the_map_was_read_refreshes_before_matching() {
-    replaced_tail_recovers(true).await;
+    replaced_tail_recovers(true, 1).await;
 }
 
-async fn replaced_tail_recovers(filter_race: bool) {
+/// The same recoveries with requests sent concurrently across shards: the
+/// withdrawn tail's refusal or mismatched filter reaches the walk in its place,
+/// and nothing read ahead survives the refresh.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replaced_tail_recovers_with_concurrent_requests() {
+    replaced_tail_recovers(false, 4).await;
+    replaced_tail_recovers(true, 4).await;
+}
+
+async fn replaced_tail_recovers(filter_race: bool, concurrency: usize) {
     let before_dir = tempfile::tempdir().unwrap();
     let after_dir = tempfile::tempdir().unwrap();
 
@@ -1519,10 +1532,7 @@ async fn replaced_tail_recovers(filter_race: bool) {
     let map_bytes = serde_json::to_vec(&map_before).unwrap().len() as u64;
     let outcome = tokio::task::spawn_blocking(move || {
         let client = reqwest::blocking::Client::new();
-        let mut transport = HttpShards {
-            base: base.clone(),
-            client: client.clone(),
-        };
+        let mut transport = shards_at(&base, &client, concurrency);
         let raw = client
             .get(format!("{base}/v1/shards/init"))
             .send()
@@ -1606,9 +1616,17 @@ struct OverloadedFor {
     inner: HttpShards,
     remaining: u32,
     retry_after: Option<String>,
+    /// Reported to the sync; above 1 it looks ahead and hands this transport
+    /// batches, which the default sends one at a time through `query`, so
+    /// batched queries are refused like any other.
+    concurrency: usize,
 }
 
 impl ShardTransport for OverloadedFor {
+    fn concurrency(&self) -> usize {
+        self.concurrency
+    }
+
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         self.inner.init()
     }
@@ -1658,6 +1676,17 @@ impl ShardTransport for OverloadedFor {
 /// that exists for a different problem.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_overloaded_service_is_retried_and_the_sync_still_reconstructs_exactly() {
+    overloaded_then_recovers(1).await;
+}
+
+/// The same, with the refusals landing on batched queries: a refused batched
+/// query is made again by the walk, which backs off and retries as before.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_overload_during_concurrent_requests_is_retried_and_reconstructs_exactly() {
+    overloaded_then_recovers(4).await;
+}
+
+async fn overloaded_then_recovers(concurrency: usize) {
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -1676,6 +1705,7 @@ async fn an_overloaded_service_is_retried_and_the_sync_still_reconstructs_exactl
             },
             remaining: 2,
             retry_after: Some("0".into()),
+            concurrency,
         };
         let raw = client
             .get(format!("{base}/v1/shards/init"))
@@ -1716,6 +1746,15 @@ async fn an_overloaded_service_is_retried_and_the_sync_still_reconstructs_exactl
 /// where it was rather than skipping the range it could not read.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unrelenting_overload_stops_the_sync_without_advancing_coverage() {
+    unrelenting_overload_stops(1).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unrelenting_overload_stops_a_concurrent_sync_too() {
+    unrelenting_overload_stops(4).await;
+}
+
+async fn unrelenting_overload_stops(concurrency: usize) {
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -1733,6 +1772,7 @@ async fn an_unrelenting_overload_stops_the_sync_without_advancing_coverage() {
             },
             remaining: u32::MAX,
             retry_after: Some("0".into()),
+            concurrency,
         };
         let raw = client
             .get(format!("{base}/v1/shards/init"))
@@ -1793,6 +1833,7 @@ async fn a_503_that_names_no_delay_is_not_retried() {
             },
             remaining: 1,
             retry_after: None,
+            concurrency: 1,
         };
         let raw = client
             .get(format!("{base}/v1/shards/init"))
@@ -1841,15 +1882,42 @@ async fn a_503_that_names_no_delay_is_not_retried() {
 /// not earned.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_that_cannot_help_stops_the_sync_rather_than_looping() {
-    unhelpful_refresh_stops(false).await;
+    unhelpful_refresh_stops(false, 1).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_corrupt_filter_with_an_unchanged_map_is_never_accepted() {
-    unhelpful_refresh_stops(true).await;
+    unhelpful_refresh_stops(true, 1).await;
 }
 
-async fn unhelpful_refresh_stops(corrupt_filter: bool) {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refresh_that_cannot_help_stops_a_concurrent_sync_too() {
+    unhelpful_refresh_stops(false, 4).await;
+    unhelpful_refresh_stops(true, 4).await;
+}
+
+/// The shard service at `concurrency`: the test's own sequential adapter at
+/// 1, the reference HTTP transport otherwise.
+fn shards_at(
+    base: &str,
+    client: &reqwest::blocking::Client,
+    concurrency: usize,
+) -> Box<dyn ShardTransport> {
+    if concurrency == 1 {
+        Box::new(HttpShards {
+            base: base.to_string(),
+            client: client.clone(),
+        })
+    } else {
+        Box::new(
+            HttpShardTransport::new(base, &HttpOptions::default())
+                .unwrap()
+                .with_concurrency(concurrency),
+        )
+    }
+}
+
+async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
     let before_dir = tempfile::tempdir().unwrap();
     let after_dir = tempfile::tempdir().unwrap();
 
@@ -1890,10 +1958,7 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool) {
     let map_bytes = serde_json::to_vec(&map_before).unwrap().len() as u64;
     let error = tokio::task::spawn_blocking(move || {
         let client = reqwest::blocking::Client::new();
-        let mut transport = HttpShards {
-            base: base.clone(),
-            client: client.clone(),
-        };
+        let mut transport = shards_at(&base, &client, concurrency);
         let raw = client
             .get(format!("{base}/v1/shards/init"))
             .send()
@@ -2126,4 +2191,393 @@ fn a_server_refuses_a_choice_table_that_misroutes_or_does_not_match() {
     let dir = tempfile::tempdir().unwrap();
     publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
     ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("a genuine table loads");
+}
+
+/// What a sync asked the shard service for, as the service would see it.
+#[derive(Clone, Debug, Default)]
+struct Log {
+    /// Stage and route of every request that reached the service.
+    requests: Vec<(&'static str, String)>,
+    /// Batches handed to the transport.
+    batches: u64,
+    /// Sequential waits: one per request made alone, and one per wave of a
+    /// batch, a wave being as many requests as the transport keeps in flight.
+    rounds: u64,
+}
+
+/// What [`Recording`] does with a batch.
+#[derive(Clone, Copy, Debug)]
+enum Batches {
+    /// Sends it.
+    Pass,
+    /// Sends none of it.
+    Unsent,
+    /// Refuses its first request as overloaded, without sending it, and sends
+    /// none of the rest.
+    RefuseFirst,
+}
+
+/// Records every request that reaches the service, alone or in a batch, and
+/// optionally stands in for a batch that sends nothing.
+struct Recording<T> {
+    inner: T,
+    log: Arc<Mutex<Log>>,
+    batches: Batches,
+}
+
+impl<T: ShardTransport> Recording<T> {
+    fn single(&self, request: ShardRequest<'_>) {
+        let mut log = self.log.lock().unwrap();
+        log.requests.push((request.stage(), request.route()));
+        log.rounds += 1;
+    }
+}
+
+impl<T: ShardTransport> ShardTransport for Recording<T> {
+    fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        self.inner.init()
+    }
+    fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
+        self.single(ShardRequest::Manifest { shard_id, revision });
+        self.inner.manifest(shard_id, revision)
+    }
+    fn setup(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        segment: u32,
+    ) -> Result<(Vec<u8>, u64), BoxError> {
+        self.single(ShardRequest::Setup {
+            shard_id,
+            revision,
+            table,
+            segment,
+        });
+        self.inner.setup(shard_id, revision, table, segment)
+    }
+    fn query(
+        &mut self,
+        shard_id: u64,
+        revision: &str,
+        table: Table,
+        body: &[u8],
+    ) -> Result<Vec<u8>, BoxError> {
+        self.single(ShardRequest::Query {
+            shard_id,
+            revision,
+            table,
+            body,
+        });
+        self.inner.query(shard_id, revision, table, body)
+    }
+    fn concurrency(&self) -> usize {
+        self.inner.concurrency()
+    }
+    fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
+        self.log.lock().unwrap().batches += 1;
+        match self.batches {
+            Batches::Pass => {}
+            // Nothing reaches the service.
+            Batches::Unsent => return (0..requests.len()).map(|_| None).collect(),
+            // Nothing reaches the service: the first request is refused as an
+            // overloaded service would refuse it, and the rest are never sent.
+            Batches::RefuseFirst => {
+                let body = br#"{"error":"no cache capacity is free","retry":"retry shortly"}"#;
+                return requests
+                    .iter()
+                    .enumerate()
+                    .map(|(i, request)| {
+                        let (shard_id, revision) = match *request {
+                            ShardRequest::Manifest { shard_id, revision }
+                            | ShardRequest::Setup {
+                                shard_id, revision, ..
+                            }
+                            | ShardRequest::Query {
+                                shard_id, revision, ..
+                            } => (shard_id, revision),
+                        };
+                        (i == 0).then(|| {
+                            Err(refusal(503, Some("0"), body, shard_id, revision).unwrap())
+                        })
+                    })
+                    .collect();
+            }
+        }
+        let replies = self.inner.batch(requests);
+        let mut log = self.log.lock().unwrap();
+        let sent = replies.iter().filter(|reply| reply.is_some()).count() as u64;
+        log.rounds += sent.div_ceil(self.inner.concurrency() as u64);
+        for (request, reply) in requests.iter().zip(&replies) {
+            if reply.is_some() {
+                log.requests.push((request.stage(), request.route()));
+            }
+        }
+        replies
+    }
+}
+
+/// One sync through the reference HTTP transport at `concurrency`, recorded.
+async fn run_recorded(
+    dir: &Path,
+    base: String,
+    wallet: Vec<ScriptBytes>,
+    map: ShardMap,
+    concurrency: usize,
+    batches: Batches,
+) -> (transparent_wallet::SyncOutcome, Log) {
+    let filters = PublishedFilters::load(dir, &map);
+    let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
+    let log = Arc::new(Mutex::new(Log::default()));
+    let recorded = log.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let mut transport = Recording {
+            inner: HttpShardTransport::new(&base, &HttpOptions::default())
+                .unwrap()
+                .with_concurrency(concurrency),
+            log: recorded,
+            batches,
+        };
+        let geometry = transport.inner.geometry().unwrap();
+        let mut filters = filters;
+        sync(
+            &map,
+            map_bytes,
+            &geometry,
+            &mut filters,
+            &mut transport,
+            &wallet,
+            FIRST,
+            &transparent_wallet::StaticChain::from_map(&map),
+            &transparent_wallet::Anchor {
+                height: map.shards.last().unwrap().end_height,
+                hash: map.shards.last().unwrap().terminal_block_hash.clone(),
+            },
+        )
+        .expect("sync")
+    })
+    .await
+    .unwrap();
+    let log = log.lock().unwrap().clone();
+    (outcome, log)
+}
+
+fn sorted(requests: &[(&'static str, String)]) -> Vec<(&'static str, String)> {
+    let mut requests = requests.to_vec();
+    requests.sort();
+    requests
+}
+
+/// Requests sent concurrently across matched shards are the sequential
+/// walk's requests, sent sooner: the same ledger, the same charges, and the
+/// same requests per stage and per shard revision, over publications with and
+/// without choice tables, across a geometry boundary, and for wallets matching
+/// one shard or several.
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
+    let per_shard = chain();
+    let wallets: Vec<Vec<ScriptBytes>> = vec![
+        vec![script(1), script(2), script(3), script(999)],
+        vec![script(1)],
+        vec![script(2), script(3)],
+        vec![script(1), script(2), script(100), script(101)],
+    ];
+    let tabled_but_tail =
+        |id: u64, built: &BuiltShard| (id + 1 < SHARDS).then(|| tabled(id, built)).flatten();
+    let two_tiers = |shard_id: u64| {
+        if shard_id < SHARDS / 2 {
+            &RECENT_4K
+        } else {
+            &RECENT_8K
+        }
+    };
+    let mut publications: Vec<(&str, tempfile::TempDir, ShardMap)> = Vec::new();
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish(dir.path(), &per_shard);
+    publications.push(("no tables", dir, map));
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    publications.push(("tables", dir, map));
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish_choosing(
+        dir.path(),
+        &per_shard,
+        |_| &RECENT_8K,
+        0,
+        "",
+        tabled_but_tail,
+    );
+    publications.push(("sealed tables", dir, map));
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish_with(dir.path(), &per_shard, two_tiers, 0, "");
+    publications.push(("two geometries", dir, map));
+
+    for (name, dir, map) in &publications {
+        let base = serve(dir.path()).await;
+        for wallet in &wallets {
+            let (sequential, reference) = run_recorded(
+                dir.path(),
+                base.clone(),
+                wallet.clone(),
+                map.clone(),
+                1,
+                Batches::Pass,
+            )
+            .await;
+            let (concurrent, log) = run_recorded(
+                dir.path(),
+                base.clone(),
+                wallet.clone(),
+                map.clone(),
+                4,
+                Batches::Pass,
+            )
+            .await;
+            compare(&sequential.ledger, &traverse(&per_shard, wallet, 0));
+            compare(&concurrent.ledger, &sequential.ledger);
+            assert_eq!(concurrent.charges, sequential.charges, "{name}");
+            assert_eq!(concurrent.matched_shards, sequential.matched_shards);
+            assert_eq!(
+                concurrent.unproductive_matches,
+                sequential.unproductive_matches
+            );
+            assert_eq!(concurrent.covered_through, sequential.covered_through);
+            assert_eq!(concurrent.provisional, sequential.provisional);
+            assert_eq!(
+                sorted(&log.requests),
+                sorted(&reference.requests),
+                "{name}: the concurrent walk must make exactly the sequential walk's requests"
+            );
+            assert_eq!(reference.batches, 0, "concurrency 1 is the sequential walk");
+            if sequential.matched_shards.len() > 1 {
+                assert!(
+                    log.batches > 0,
+                    "{name}: several matched shards are batched"
+                );
+                assert!(
+                    log.rounds < reference.rounds,
+                    "{name}: {} rounds concurrently, {} in sequence",
+                    log.rounds,
+                    reference.rounds
+                );
+            }
+            eprintln!(
+                "{name}, {} scripts, {} matched shards: {} requests, {} rounds in sequence, {} \
+                 at concurrency 4",
+                wallet.len(),
+                sequential.matched_shards.len(),
+                reference.requests.len(),
+                reference.rounds,
+                log.rounds
+            );
+        }
+    }
+}
+
+/// A batch that sends nothing, or stops at a refused first request, leaves
+/// the rest to the walk, which makes them in sequence with its ordinary
+/// handling: the refusal is waited out where the sequential walk would have
+/// met it, and the result, the charges and what reached the service are the
+/// sequential walk's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_batch_falls_back_to_the_sequential_walk() {
+    let per_shard = chain();
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let base = serve(dir.path()).await;
+    let wallet = vec![script(1), script(2), script(3), script(999)];
+    let (sequential, reference) = run_recorded(
+        dir.path(),
+        base.clone(),
+        wallet.clone(),
+        map.clone(),
+        1,
+        Batches::Pass,
+    )
+    .await;
+    for batches in [Batches::Unsent, Batches::RefuseFirst] {
+        let (fallen_back, log) = run_recorded(
+            dir.path(),
+            base.clone(),
+            wallet.clone(),
+            map.clone(),
+            4,
+            batches,
+        )
+        .await;
+        compare(&fallen_back.ledger, &traverse(&per_shard, &wallet, 0));
+        assert_eq!(fallen_back.charges, sequential.charges, "{batches:?}");
+        assert_eq!(fallen_back.map_refreshes, 0);
+        assert!(log.batches > 0, "{batches:?}: the batch was attempted");
+        assert_eq!(
+            log.requests, reference.requests,
+            "{batches:?}: the walk made every request itself, in the sequential order"
+        );
+    }
+}
+
+/// As [`serve`], with every request held for `delay` before it is answered,
+/// standing in for a network round trip. Requests in flight together wait
+/// together, as they would on a real link.
+async fn serve_delayed(dir: &Path, delay: std::time::Duration) -> String {
+    let set = ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).expect("load");
+    let state = ServiceState::build(set, ServiceConfig::default()).expect("state");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(state).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| async move {
+            tokio::time::sleep(delay).await;
+            next.run(request).await
+        },
+    ));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+/// A local indication of what cross-shard concurrency buys under a round
+/// trip: sync time at several concurrencies with every shard service request
+/// delayed by 100 ms. Filters are local here, so this isolates the shard
+/// service requests. Not a measurement of any deployment.
+///
+/// `cargo test --release -p transparent-shard-server --test wallet_sync
+/// concurrency_under_emulated_delay -- --ignored --nocapture`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "timing indication, about a minute"]
+async fn concurrency_under_emulated_delay() {
+    let per_shard = chain();
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let base = serve_delayed(dir.path(), std::time::Duration::from_millis(100)).await;
+    let wallet = vec![script(1), script(2), script(3), script(100), script(101)];
+    for concurrency in [1usize, 2, 4, 8] {
+        let mut seconds = Vec::new();
+        let mut rounds = 0;
+        let mut requests = 0;
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let (outcome, log) = run_recorded(
+                dir.path(),
+                base.clone(),
+                wallet.clone(),
+                map.clone(),
+                concurrency,
+                Batches::Pass,
+            )
+            .await;
+            seconds.push(started.elapsed().as_secs_f64());
+            compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
+            rounds = log.rounds;
+            requests = log.requests.len();
+        }
+        seconds.sort_by(f64::total_cmp);
+        eprintln!(
+            "concurrency {concurrency}: {requests} requests, {rounds} rounds, p50 {:.2} s (min \
+             {:.2}, max {:.2})",
+            seconds[seconds.len() / 2],
+            seconds[0],
+            seconds[seconds.len() - 1]
+        );
+    }
 }

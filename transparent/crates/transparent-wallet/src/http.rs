@@ -10,7 +10,7 @@
 use crate::client::Table;
 pub use crate::init::parse_init;
 use crate::sync::ServiceGeometry;
-use crate::transport::{refusal, BoxError, FilterSource, ShardTransport};
+use crate::transport::{refusal, BoxError, FilterSource, ShardReply, ShardRequest, ShardTransport};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -360,7 +360,15 @@ pub struct HttpShardTransport {
     client: reqwest::blocking::Client,
     observer: Option<HttpObserver>,
     retry: RetryPolicy,
+    /// Requests a batch keeps in flight.
+    concurrency: usize,
 }
+
+/// Shard service requests a batch keeps in flight by default.
+///
+/// Lower than the filter prefetch's, because each of these requests costs the
+/// service a runtime rather than a file read.
+pub const SHARD_REQUEST_CONCURRENCY: usize = 4;
 
 impl HttpShardTransport {
     pub fn new(base_url: impl Into<String>, options: &HttpOptions) -> Result<Self, BoxError> {
@@ -373,7 +381,15 @@ impl HttpShardTransport {
                 overload: true,
                 timeout: options.timeout,
             },
+            concurrency: SHARD_REQUEST_CONCURRENCY,
         })
+    }
+
+    /// Requests a batch keeps in flight; 1 makes the sync walk every request
+    /// in sequence, which is the reference behaviour.
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency.max(1);
+        self
     }
 
     /// Opt into a bounded number of attempts per HTTP call (1–3). This is
@@ -402,6 +418,37 @@ impl HttpShardTransport {
         let (raw, _) = self.init()?;
         parse_init(&raw)
     }
+
+    /// Sends one request. Shared by the single-request methods and a batch,
+    /// so both take exactly the same path, retries and observation included.
+    fn send(&self, request: &ShardRequest<'_>) -> Result<(Vec<u8>, u64), BoxError> {
+        let url = format!("{}{}", self.base, request.route());
+        let (builder, binding) = match *request {
+            ShardRequest::Manifest { shard_id, revision }
+            | ShardRequest::Setup {
+                shard_id, revision, ..
+            } => (self.client.get(url), (shard_id, revision)),
+            ShardRequest::Query {
+                shard_id,
+                revision,
+                body,
+                ..
+            } => (
+                self.client.post(url).body(body.to_vec()),
+                (shard_id, revision),
+            ),
+        };
+        let bytes = execute(
+            builder,
+            request.stage(),
+            request.upload(),
+            Some(binding),
+            &self.observer,
+            self.retry,
+        )?;
+        let len = bytes.len() as u64;
+        Ok((bytes, len))
+    }
 }
 
 impl ShardTransport for HttpShardTransport {
@@ -419,19 +466,7 @@ impl ShardTransport for HttpShardTransport {
     }
 
     fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
-        let bytes = execute(
-            self.client.get(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/manifest",
-                self.base
-            )),
-            "manifest",
-            0,
-            Some((shard_id, revision)),
-            &self.observer,
-            self.retry,
-        )?;
-        let len = bytes.len() as u64;
-        Ok((bytes, len))
+        self.send(&ShardRequest::Manifest { shard_id, revision })
     }
 
     fn setup(
@@ -441,23 +476,12 @@ impl ShardTransport for HttpShardTransport {
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
-        let bytes = execute(
-            self.client.get(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
-                self.base,
-                table.as_str()
-            )),
-            match table {
-                Table::Directory => "setup_directory",
-                Table::Pages => "setup_pages",
-            },
-            0,
-            Some((shard_id, revision)),
-            &self.observer,
-            self.retry,
-        )?;
-        let len = bytes.len() as u64;
-        Ok((bytes, len))
+        self.send(&ShardRequest::Setup {
+            shard_id,
+            revision,
+            table,
+            segment,
+        })
     }
 
     fn query(
@@ -467,23 +491,51 @@ impl ShardTransport for HttpShardTransport {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError> {
-        execute(
-            self.client
-                .post(format!(
-                    "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
-                    self.base,
-                    table.as_str()
-                ))
-                .body(body.to_vec()),
-            match table {
-                Table::Directory => "query_directory",
-                Table::Pages => "query_pages",
-            },
-            body.len() as u64,
-            Some((shard_id, revision)),
-            &self.observer,
-            self.retry,
-        )
+        self.send(&ShardRequest::Query {
+            shard_id,
+            revision,
+            table,
+            body,
+        })
+        .map(|(bytes, _)| bytes)
+    }
+
+    fn concurrency(&self) -> usize {
+        self.concurrency
+    }
+
+    fn batch(&mut self, requests: &[ShardRequest<'_>]) -> Vec<Option<ShardReply>> {
+        let workers = self.concurrency.min(requests.len());
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let failed = std::sync::atomic::AtomicBool::new(false);
+        let replies = std::sync::Mutex::new(
+            (0..requests.len())
+                .map(|_| None)
+                .collect::<Vec<Option<ShardReply>>>(),
+        );
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| loop {
+                    // Requests are taken in order, so what was sent is always
+                    // a prefix. One failure ends the batch: a refusing or
+                    // unreachable service should not receive a burst, and the
+                    // walk's own requests carry the ordinary handling.
+                    if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(request) = requests.get(at) else {
+                        break;
+                    };
+                    let reply = self.send(request);
+                    if reply.is_err() {
+                        failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    replies.lock().expect("unpoisoned")[at] = Some(reply);
+                });
+            }
+        });
+        replies.into_inner().expect("unpoisoned")
     }
 }
 
@@ -784,6 +836,126 @@ mod observation_tests {
             4,
             "concurrency 1 disables prefetch"
         );
+    }
+
+    /// A batch keeps at most its concurrency in flight, returns replies in
+    /// request order, recognises refusals as the single methods do, and stops
+    /// at the first failure, so what was sent is a prefix.
+    #[test]
+    fn a_batch_overlaps_requests_in_order_and_stops_at_the_first_failure() {
+        use crate::transport::{ShardRequest, StaleRevision};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let most = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        {
+            let (seen, in_flight, most) = (seen.clone(), in_flight.clone(), most.clone());
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = stream.unwrap();
+                    let (seen, in_flight, most) = (seen.clone(), in_flight.clone(), most.clone());
+                    std::thread::spawn(move || {
+                        use std::sync::atomic::Ordering::SeqCst;
+                        let mut headers = Vec::new();
+                        while !headers.ends_with(b"\r\n\r\n") {
+                            let mut byte = [0];
+                            if stream.read_exact(&mut byte).is_err() {
+                                return;
+                            }
+                            headers.push(byte[0]);
+                        }
+                        let now = in_flight.fetch_add(1, SeqCst) + 1;
+                        most.fetch_max(now, SeqCst);
+                        let path = String::from_utf8_lossy(&headers)
+                            .lines()
+                            .next()
+                            .unwrap()
+                            .split(' ')
+                            .nth(1)
+                            .unwrap()
+                            .to_string();
+                        seen.lock().unwrap().push(path.clone());
+                        std::thread::sleep(Duration::from_millis(150));
+                        let (status, body) = if path.contains("/shards/99/") {
+                            ("409 Conflict", br#"{"map_sha256":"beef"}"#.to_vec())
+                        } else {
+                            ("200 OK", path.into_bytes())
+                        };
+                        in_flight.fetch_sub(1, SeqCst);
+                        let _ = stream.write_all(
+                            format!(
+                                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: \
+                                 close\r\n\r\n",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        );
+                        let _ = stream.write_all(&body);
+                    });
+                }
+            });
+        }
+        let options = HttpOptions {
+            timeout: Duration::from_secs(5),
+            user_agent: "batch-test".into(),
+        };
+        let mut transport = HttpShardTransport::new(format!("http://{address}"), &options)
+            .unwrap()
+            .with_concurrency(3);
+        assert_eq!(transport.concurrency(), 3);
+
+        let ids = [0u64, 1, 2, 3, 4, 5];
+        let requests: Vec<ShardRequest<'_>> = ids
+            .iter()
+            .map(|&shard_id| ShardRequest::Manifest {
+                shard_id,
+                revision: "aa",
+            })
+            .collect();
+        let started = Instant::now();
+        let replies = transport.batch(&requests);
+        assert!(
+            started.elapsed() < Duration::from_millis(6 * 150),
+            "requests overlap"
+        );
+        assert!(most.load(std::sync::atomic::Ordering::SeqCst) <= 3);
+        assert!(most.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+        for (request, reply) in requests.iter().zip(&replies) {
+            let (bytes, cost) = reply.as_ref().unwrap().as_ref().unwrap();
+            assert_eq!(bytes, request.route().as_bytes(), "replies are in order");
+            assert_eq!(*cost, bytes.len() as u64);
+        }
+
+        seen.lock().unwrap().clear();
+        let ids = [0u64, 99, 1, 2, 3, 4, 5, 6, 7];
+        let requests: Vec<ShardRequest<'_>> = ids
+            .iter()
+            .map(|&shard_id| ShardRequest::Setup {
+                shard_id,
+                revision: "aa",
+                table: Table::Directory,
+                segment: 0,
+            })
+            .collect();
+        let replies = transport.batch(&requests);
+        assert_eq!(replies.len(), requests.len());
+        let refused = replies[1].as_ref().unwrap().as_ref().unwrap_err();
+        assert!(
+            StaleRevision::found_in(refused).is_some(),
+            "a refusal is recognised in a batch"
+        );
+        let sent = replies.iter().take_while(|reply| reply.is_some()).count();
+        assert!(
+            replies[sent..].iter().all(Option::is_none),
+            "what was sent is a prefix"
+        );
+        assert!(sent < requests.len(), "the batch stopped");
+        assert!(
+            sent <= 2 + 3,
+            "at most the in-flight width after the failure"
+        );
+        assert_eq!(seen.lock().unwrap().len(), sent);
     }
 
     #[test]
