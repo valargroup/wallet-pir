@@ -2,7 +2,7 @@
   "schema": "transparent-scenario-v1",
   "name": "20-user mixed recovery wave",
   "mode": "wave",
-  "sample": "../../../transparent/evidence/v9-cutover-2026-09-28/load/sample-v2codec.json",
+  "sample": "../../../evidence/v9-cutover-2026-09-28/load/sample-v2codec.json",
   "shard_url": "https://transparent-pir.valargroup.dev",
   "profiles": {
     "unused": 2,
