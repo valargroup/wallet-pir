@@ -73,6 +73,12 @@ struct Args {
     /// million events then holds a step for hours.
     #[arg(long)]
     max_queries: Option<u64>,
+    /// Attempts per HTTP call for transient gateway, upload and connection
+    /// failures (1–3), as the wallet's transport offers. One keeps runs
+    /// comparable with earlier evidence; overload refusals keep the wallet's
+    /// own policy either way.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
+    http_attempts: u8,
     /// Only these classes, comma separated.
     #[arg(long, value_delimiter = ',')]
     classes: Option<Vec<String>>,
@@ -321,6 +327,7 @@ fn run_client(
     map: &ShardMap,
     map_bytes: u64,
     geometry: &ServiceGeometry,
+    target: &transparent_wallet::Anchor,
     index: usize,
 ) -> Outcome {
     let started = Instant::now();
@@ -340,7 +347,10 @@ fn run_client(
             required_from: spec.required_from,
         })
         .collect();
-    let chain = StaticChain::from_map(map);
+    let mut chain = StaticChain::from_map(map);
+    // A pinned target below the tip is the sample's anchor, which the sample
+    // names by hash; the wallet must accept it as its own chain view would.
+    chain.hashes.insert(target.height, target.hash.clone());
     let filter_url = args
         .filter_url
         .clone()
@@ -352,15 +362,18 @@ fn run_client(
     let attempt = || -> anyhow::Result<(Option<String>, String, u64)> {
         let mut transport = Counting {
             inner: HttpShardTransport::new(&args.shard_url, &options)
-                .map_err(|e| anyhow::anyhow!(e))?,
+                .map_err(|e| anyhow::anyhow!(e))?
+                .with_transient_retry_attempts(args.http_attempts as usize),
             stages: stages.clone(),
         };
         let mut filters = CountingFilters {
-            inner: HttpFilterSource::new(&filter_url, &options).map_err(|e| anyhow::anyhow!(e))?,
+            inner: HttpFilterSource::new(&filter_url, &options)
+                .map_err(|e| anyhow::anyhow!(e))?
+                .with_transient_retry_attempts(args.http_attempts as usize),
             stages: stages.clone(),
         };
         let mut provider = StaticScripts(scripts.clone());
-        let anchor = map.shards.last().map(|e| e.end_height).unwrap_or(0);
+        let anchor = target.height;
         let report = match &args.store_dir {
             Some(dir) => {
                 let path = dir.join(format!("client-{index}.sqlite"));
@@ -376,10 +389,7 @@ fn run_client(
                     &mut filters,
                     &mut transport,
                     &limits,
-                    &transparent_wallet::Anchor {
-                        height: map.shards.last().unwrap().end_height,
-                        hash: map.shards.last().unwrap().terminal_block_hash.clone(),
-                    },
+                    target,
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 let _ = std::fs::remove_file(&path);
@@ -397,10 +407,7 @@ fn run_client(
                     &mut filters,
                     &mut transport,
                     &limits,
-                    &transparent_wallet::Anchor {
-                        height: map.shards.last().unwrap().end_height,
-                        hash: map.shards.last().unwrap().terminal_block_hash.clone(),
-                    },
+                    target,
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
                 (incomplete_reason(&report.completion), digest, events)
@@ -621,14 +628,21 @@ async fn legacy_main() -> anyhow::Result<()> {
         .last()
         .context("the map names no shards")?
         .clone();
-    // The sample's expectations are about one set: refuse any other.
+    // The sample's expectations are about one chain up to its anchor. A served
+    // set at exactly that anchor is checked as it always was. A continuously
+    // published set whose tip has moved past it is qualified by syncing every
+    // wallet to the sample's anchor instead of the tip: the wallet discards
+    // events above its target, so the sample's digests still apply exactly.
+    // That needs the anchor's hash, and the set's coverage must reach it.
+    let pinned = tip.end_height > sample.anchor_height && sample.anchor_hash.is_some();
     if map.genesis_hash != sample.genesis_hash
         || map.start_height != sample.start_height
-        || tip.end_height != sample.anchor_height
-        || sample
-            .anchor_hash
-            .as_deref()
-            .is_some_and(|h| h != tip.terminal_block_hash)
+        || (tip.end_height != sample.anchor_height && !pinned)
+        || (!pinned
+            && sample
+                .anchor_hash
+                .as_deref()
+                .is_some_and(|h| h != tip.terminal_block_hash))
     {
         bail!(
             "the served set (genesis {}, {}-{}, tip {}) is not the sample's (genesis {}, {}-{}, tip {:?})",
@@ -649,8 +663,29 @@ async fn legacy_main() -> anyhow::Result<()> {
     if clients.is_empty() {
         bail!("no clients selected");
     }
+    let target = if pinned {
+        transparent_wallet::Anchor {
+            height: sample.anchor_height,
+            hash: sample
+                .anchor_hash
+                .clone()
+                .expect("pinned requires the anchor hash"),
+        }
+    } else {
+        transparent_wallet::Anchor {
+            height: tip.end_height,
+            hash: tip.terminal_block_hash.clone(),
+        }
+    };
+    if pinned {
+        eprintln!(
+            "served tip {} is past the sample anchor {}; syncing every wallet to the sample anchor",
+            tip.end_height, sample.anchor_height
+        );
+    }
     let map = Arc::new(map);
     let geometry = Arc::new(geometry);
+    let target = Arc::new(target);
     let args = Arc::new(args);
 
     let mut steps_out = Vec::new();
@@ -673,6 +708,7 @@ async fn legacy_main() -> anyhow::Result<()> {
             let args = args.clone();
             let clients = clients.clone();
             let map = map.clone();
+            let target = target.clone();
             let geometry = geometry.clone();
             let next = next.clone();
             let stats = stats.clone();
@@ -685,7 +721,8 @@ async fn legacy_main() -> anyhow::Result<()> {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let spec = &clients
                         [(index.wrapping_mul(2_654_435_761) ^ args.seed as usize) % clients.len()];
-                    let outcome = run_client(&args, spec, &map, map_bytes, &geometry, index);
+                    let outcome =
+                        run_client(&args, spec, &map, map_bytes, &geometry, &target, index);
                     completed_total.fetch_add(1, Ordering::Relaxed);
                     stats
                         .lock()
@@ -849,6 +886,17 @@ fn write_report(
     started_all: Instant,
     in_progress: bool,
 ) -> anyhow::Result<()> {
+    // The same rule the run used: past the sample's anchor, wallets were
+    // synced to it rather than to the tip.
+    let pinned = tip.end_height > sample.anchor_height && sample.anchor_hash.is_some();
+    let (target_height, target_hash) = if pinned {
+        (
+            sample.anchor_height,
+            sample.anchor_hash.clone().unwrap_or_default(),
+        )
+    } else {
+        (tip.end_height, tip.terminal_block_hash.clone())
+    };
     let report = serde_json::json!({
         "schema": "transparent-loadtest-v1",
         "run_id": args.run_id,
@@ -865,6 +913,9 @@ fn write_report(
             "start_height": map.start_height,
             "anchor_height": tip.end_height,
             "anchor_hash": tip.terminal_block_hash,
+            "target_height": target_height,
+            "target_hash": target_hash,
+            "pinned_to_sample_anchor": pinned,
             "cutoff_height": sample.cutoff_height,
             "max_queries_per_sync": args.max_queries,
             "shards": map.shards.len(),
