@@ -624,16 +624,14 @@ mod tests {
         // fails to load and withdraws routing (2026-09-28).
         assert!(!rendered.contains("health_fails"));
         assert!(!rendered.contains("handle_errors 5"));
-        for directive in ["max_fails"] {
-            let count: u32 = HEALTH
-                .lines()
-                .find_map(|line| line.trim().strip_prefix(directive))
-                .unwrap_or_else(|| panic!("{directive} is set"))
-                .trim()
-                .parse()
-                .unwrap();
-            assert!(count > 1, "{directive} {count}");
-        }
+        let max_fails: u32 = HEALTH
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("max_fails"))
+            .expect("max_fails is set")
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(max_fails > 1, "max_fails {max_fails}");
         assert!(!rendered.contains("fail_duration 30s"));
         // Both sites give the proxy's own refusals a retry delay.
         assert_eq!(rendered.matches(PROXY_ERRORS).count(), 2);
