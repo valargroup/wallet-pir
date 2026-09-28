@@ -19,7 +19,6 @@ transparent.example {
 			health_uri /v1/ready
 			health_interval 1s
 			health_timeout 5s
-			health_fails 3
 			fail_duration 10s
 			max_fails 3
 		}
@@ -31,7 +30,6 @@ transparent.example {
 			health_uri /v1/ready
 			health_interval 1s
 			health_timeout 5s
-			health_fails 3
 			fail_duration 10s
 			max_fails 3
 		}
@@ -43,7 +41,6 @@ transparent.example {
 			health_uri /v1/ready
 			health_interval 1s
 			health_timeout 5s
-			health_fails 3
 			fail_duration 10s
 			max_fails 3
 		}
@@ -56,7 +53,6 @@ transparent.example {
 			health_uri /v1/ready
 			health_interval 1s
 			health_timeout 5s
-			health_fails 3
 			fail_duration 10s
 			max_fails 3
 		}
@@ -68,7 +64,6 @@ transparent.example {
 			health_uri /v1/ready
 			health_interval 1s
 			health_timeout 5s
-			health_fails 3
 			fail_duration 10s
 			max_fails 3
 		}
@@ -80,7 +75,6 @@ transparent.example {
 			health_uri /v1/ready
 			health_interval 1s
 			health_timeout 5s
-			health_fails 3
 			fail_duration 10s
 			max_fails 3
 		}
@@ -92,7 +86,6 @@ transparent.example {
 			health_uri /v1/ready
 			health_interval 1s
 			health_timeout 5s
-			health_fails 3
 			fail_duration 10s
 			max_fails 3
 		}
@@ -102,7 +95,7 @@ transparent.example {
 		respond 404
 	}
 
-	handle_errors 502 503 504 {
+	handle_errors {
 		header Retry-After 1
 		respond "no worker could take the request; retry shortly"
 	}

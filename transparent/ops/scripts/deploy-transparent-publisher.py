@@ -404,7 +404,11 @@ async def main():
         LIVE.atomic_json(ROOT/'controller.json',config)
         route_coordinator()
         execute(['systemctl','restart','transparent-publish-controller'])
-        execute(['systemctl','enable','--now','transparent-replica-reconciler'])
+        execute(['systemctl','enable','transparent-replica-reconciler'])
+        # Restart rather than start: a reconciler that is already running keeps
+        # the fleet code it loaded, and would re-route with the old router
+        # policy after this activation (2026-09-28).
+        execute(['systemctl','restart','transparent-replica-reconciler'])
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
             try:

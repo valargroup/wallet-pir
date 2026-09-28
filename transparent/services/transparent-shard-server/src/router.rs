@@ -321,7 +321,11 @@ pub fn render_caddyfile_with(
 ///   worker within `lb_try_duration`, so no wallet sees them. A worker
 ///   answering 503 is not counted at all: that is the worker's own
 ///   capacity refusal, and it carries the delay the wallet backs off by.
-pub const HEALTH: &str = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n\t\t\thealth_timeout 5s\n\t\t\thealth_fails 3\n\t\t\tfail_duration 10s\n\t\t\tmax_fails 3\n";
+///
+/// Only directives Caddy 2.6.2 accepts: the production router runs that
+/// version, so there is no `health_fails` and an active readiness failure
+/// removes a worker until its next successful check, one second later.
+pub const HEALTH: &str = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n\t\t\thealth_timeout 5s\n\t\t\tfail_duration 10s\n\t\t\tmax_fails 3\n";
 
 /// Errors the proxy itself produces — no worker available (503), none
 /// reachable (502), none answering in time (504) — carry a retry delay, as
@@ -329,7 +333,7 @@ pub const HEALTH: &str = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n
 /// router's 503 as a terminal failure, abandons the sync, and a load client
 /// resubmits at once: the resubmissions are what kept the bench fleet's
 /// router refusing. The status is the proxy's own.
-pub const PROXY_ERRORS: &str = "\n\thandle_errors 502 503 504 {\n\t\theader Retry-After 1\n\t\trespond \"no worker could take the request; retry shortly\"\n\t}\n";
+pub const PROXY_ERRORS: &str = "\n\thandle_errors {\n\t\theader Retry-After 1\n\t\trespond \"no worker could take the request; retry shortly\"\n\t}\n";
 
 /// The route handlers one site carries, shared by the public and the
 /// internal listener.
@@ -615,7 +619,12 @@ mod tests {
         assert_eq!(rendered.matches(HEALTH).count(), pools);
         // Caddy's default `max_fails` is 1: with it, one proxy error took a
         // saturated worker out for the whole `fail_duration`.
-        for directive in ["max_fails", "health_fails"] {
+        // The production router runs Caddy 2.6.2, which has no `health_fails`
+        // and no status list on `handle_errors`; a rendered file using either
+        // fails to load and withdraws routing (2026-09-28).
+        assert!(!rendered.contains("health_fails"));
+        assert!(!rendered.contains("handle_errors 5"));
+        for directive in ["max_fails"] {
             let count: u32 = HEALTH
                 .lines()
                 .find_map(|line| line.trim().strip_prefix(directive))

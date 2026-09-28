@@ -25,13 +25,14 @@ import uuid
 # One proxy error must not eject a saturated worker: Caddy's default
 # `max_fails` is 1, and on the 2026-09-27 bench fleet a few torn uploads per
 # worker ejected every worker at once. A restarting worker refuses every
-# connection and still leaves within milliseconds under traffic, or after three
-# failed one-second readiness checks without it.
+# connection and still leaves within milliseconds under traffic, or at its
+# next failed one-second readiness check without it. Directives must load on
+# the router's Caddy 2.6.2: no `health_fails`, no status list on `handle_errors`.
 ROUTER_HEALTH = ('\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n\t\t\thealth_timeout 5s\n'
-                 '\t\t\thealth_fails 3\n\t\t\tfail_duration 10s\n\t\t\tmax_fails 3\n')
+                 '\t\t\tfail_duration 10s\n\t\t\tmax_fails 3\n')
 # The proxy's own 502/503/504 carry a retry delay, as a worker's capacity
 # refusal does, so wallets back off instead of abandoning the sync.
-ROUTER_PROXY_ERRORS = ('\n\thandle_errors 502 503 504 {\n\t\theader Retry-After 1\n'
+ROUTER_PROXY_ERRORS = ('\n\thandle_errors {\n\t\theader Retry-After 1\n'
                        '\t\trespond "no worker could take the request; retry shortly"\n\t}\n')
 
 
