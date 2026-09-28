@@ -150,9 +150,13 @@ is named; within a track, items run in order.
 | A1 | Cluster qualification harness. Export a fresh regression fixture and workload sample at a pinned anchor from the coordinator journal (`regression-export`, `script-sample`), restoring the missing `mainnet.json`. Let the load tool qualify against a moving tip by checking digests only up to the pinned anchor | none | `transparent-regression` and `transparent-loadtest` report exact results against the live cluster today; this is the acceptance gate for every later cluster change |
 | A2 | Filter profile registry in `transparent-filter`, used by the wallet, publisher and tools: P and M selected by profile name, unknown profiles refused | none | Unit tests; the current profile still decodes byte-identically; a wallet refuses a set under an unknown profile before matching |
 | A3 | Cross-shard request concurrency: match every uncached shard first, then fetch manifests, setups and directory queries for matched shards with bounded concurrency, and commit per shard as today | none | Identical request counts and ledgers against the sequential walk in the server integration tests; p50 under emulated delay; then A1 against the cluster |
+| **N — Native ReinspiRING (the Enhance/Status scheme)** | | | |
+| N1 | Transparent-owned native helper on `ipir-sp` (`native-reinspiring`) and `reinspiring`, modelled on `enhance_pir::native` without enabling Enhance's feature: two-mask, masks rounded to 29 bits, d=2048, q=2^54, p=2^16 | none | Helper tests; the Enhance q48 build is unaffected (feature tree) |
+| N2 | Record format v8: 4,096-byte rows (16 directory slots, 41 events per page), schema `transparent-shard-v8`; native server runtime, snapshot format and native identity in `init`; native wallet `TableClient` | N1 | All transparent suites pass. `geometry_costs` pins native sizes: 77,832 B per recent-8k query (P14: 128,008), 52,744 B at 4K rows, 14,848 B setup and 5,648 B response per segment |
+| N3 | Per-geometry correctness certificates (noise reports and `certify_native`) for 2,048–65,536 rows; 65,536 is beyond Enhance's certified range | N2 | Certificates under `transparent/evidence/`, or a geometry change if 65,536 rows does not certify |
 | **B — Publication format and cluster rollout** | | | |
 | B1 | New range filter profile (e.g. `zcash-transparent-range-v2`, P=13, M=12,288) in the publisher and controller | A2 | Profile tests; `filter-sweep` sizes reproduced by the builder |
-| B2 | Candidate full publication into a new directory on the coordinator: v2 profile, recent-4k-8k, `--directory-choice all` on every shard, both tiers | B1 | `shard-verify`, placement, and exact replay against the journal; choice routes verified at load |
+| B2 | Candidate full publication ("v8") into a new directory on the coordinator: native records and schema v8, v2 filter profile, recent-4k-8k, `--directory-choice all` on every shard, both tiers | B1, N2, N3 | `shard-verify`, placement, and exact replay against the journal; choice routes verified at load |
 | B3 | Cold-rebuild rehearsal: prepare B2 on bench copies of one archive owner and one recent replica | B2 | Measured rebuild time and peak memory per role; the maintenance window for B4 |
 | B4 | Deploy B2 to the cluster: continuous publisher on the v2 profile, fixed-publication rollout to all workers, rollback set retained | B3, A2 in the deployed publisher; C1 recommended first | Fleet serves B2; A1 exact against the cluster; old set retained for rollback |
 | B5 | Deploy A3 in the load and regression clients, and measure the full architecture on the cluster | B4, A3 | Paired cluster measurement against the current state (the r3-style baseline and today's tabled tails): bytes, requests, p50/p95 |
@@ -166,11 +170,27 @@ is named; within a track, items run in order.
 | D3 | Cold archive (§5): restore latency and admission for archive-wide tables on one bench host | none | Restore time per table, concurrent-restore behaviour, an eviction policy draft |
 | D4 | Bulk isolation (§4): privacy review and bulk geometry | none | Build or drop; if built, a later publication after B4 |
 
-**Can start now, in parallel:** A1, A2, A3, C1, C2, C3 and D3, with D4's review
-alongside. D1 follows A1.
+**Can start now, in parallel:** A1, A2, A3, C1, C2, C3, N1 and D3, with D4's
+review alongside. D1 follows A1.
 
-**Critical path to the full architecture on the cluster:** A2 → B1 → B2 → B3 →
-B4 → B5. A1 is the acceptance gate for B4 and B5. C1 and C3 should land before
+**Native ReinspiRING.** The native scheme changes the query format, record
+width and runtime cache, so it rides the same full republication as the v2
+filter profile, recent-4k-8k and tables on every shard. The fleet pays one
+cold rebuild.
+
+| Table | Current P14 query upload | Native query upload |
+|---|---:|---:|
+| recent-8k directory | 128,008 B | 77,832 B |
+| recent-4k-8k directory | 106,504 B | 52,744 B |
+| archive 32K directory | 258,056 B | 228,360 B |
+| archive 64K pages | 430,088 B | 429,064 B |
+
+With choice tables, a six-month restore sends about 6 directory queries, so
+native recent queries save roughly another 0.3–0.45 MB per sync on top of the
+projection table above.
+
+**Critical path to the full architecture on the cluster:** A2 → B1 (done) and
+N1 → N2 → N3, then B2 → B3 → B4 → B5. A1 is the acceptance gate for B4 and B5. C1 and C3 should land before
 B4, so the rollout can be qualified at load without the router failure spiral
 and without a long public gap.
 
