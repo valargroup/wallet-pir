@@ -1069,6 +1069,14 @@ fleet_verify_internal() {
 }
 
 fleet_verify_public() {
+  # A schema cutover replaces the publication authority after the workers:
+  # until the new controller activates, the edge's metadata is withdrawn and
+  # cannot name the new map. The controller's activation verifies both public
+  # origins instead.
+  if [[ "${TRANSPARENT_DEFER_PUBLIC_VERIFY:-false}" == "true" ]]; then
+    echo "== public edge verification deferred to publisher activation"
+    return 0
+  fi
   echo "== verify public edge at $TRANSPARENT_PUBLIC_URL"
   local attempt public
   for attempt in $(seq 1 30); do

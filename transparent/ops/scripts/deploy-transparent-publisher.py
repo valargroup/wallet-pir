@@ -299,6 +299,8 @@ async def main():
                      help='Range-filter profile the controller publishes under (shadow mode); must match the initial publication')
     cli.add_argument('--recent-geometry',default='recent-8k',
                      help='Recent geometry the controller publishes (shadow mode); must match the initial publication')
+    cli.add_argument('--data-dir',type=Path,default=Path('/srv/zakura/transparent-event-data-v2'),
+                     help='Event journal the controller publishes from (shadow mode); version 2 since schema v9')
     cli.add_argument('--directory-choice',choices=['off','sealed','all'],default='off',
                      help='Which newly built shards publish a directory choice table (shadow mode)')
     args=cli.parse_args()
@@ -322,7 +324,7 @@ async def main():
                           assign_binary='/usr/local/bin/shard-assign',public_host='transparent-pir.valargroup.dev',router_host=os.environ['TRANSPARENT_ROUTER_HOST'],
                           authority_upstream='https://enhance-pir.valargroup.dev',internal_listen=os.environ['TRANSPARENT_ROUTER_HOST']+':8080')
         LIVE.atomic_json(ROOT/'fleet.json',fleet_config)
-        config=dict(data_dir='/srv/zakura/transparent-event-data',publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
+        config=dict(data_dir=str(args.data_dir),publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
                     recent_from=3262749,recent_geometry=args.recent_geometry,archive_geometry='archive-wide',rpc_url='http://127.0.0.1:8232',rpc_cookie='/root/.cache/zakura/.cookie',
                     fleet_command=str(ROOT/'transparent-live-fleet.py'),fleet_config=str(ROOT/'fleet.json'),listen='127.0.0.1:8094',source_sha=args.source_sha,shadow=True)
         # Written only when enabled, so a controller built before the field

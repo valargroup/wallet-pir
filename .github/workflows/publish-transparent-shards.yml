@@ -22,7 +22,7 @@ on:
       data_dir:
         description: The event journal to publish from
         required: true
-        default: /srv/zakura/transparent-event-data
+        default: /srv/zakura/transparent-event-data-v2
         type: string
       output_dir:
         description: >-
