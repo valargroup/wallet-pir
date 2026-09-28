@@ -48,8 +48,8 @@ matched their manifest SHA-256. No daemon restart was needed for the update.
 This includes local polling and RPC round trips. It is not actual block-arrival
 latency on the deployed server, nor wallet retry or end-to-end restore time.
 The first local publication took 12.651 seconds in this separate run. Cold-cache
-figures vary with compilation cache state and concurrent host load and should
-not be interpreted as a steady-state speedup.
+figures vary with concurrent host load and should not be interpreted as a
+steady-state speedup.
 
 ## Validation and release boundary
 
