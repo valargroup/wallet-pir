@@ -1,0 +1,71 @@
+{
+  "run_id": "compact-layout-full-journal-2026-09-28",
+  "source_commit": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "source_provenance": "The exact census bundle, per-file hashes and resolved lockfile are retained beside this record. The production shard code is identical modulo comments and formatting; the committed source adds tests.",
+  "command": "/usr/bin/time -v /tmp/wallet-pir-v10-layout-replay-linux /srv/zakura/transparent-event-data-v2 /tmp/served-map.json",
+  "profile": "release, minimal census workspace, rustc 1.89.0, no fat LTO",
+  "binary_sha256": "148892650565afdc0dd8111ab2ebe5b1060cd3a8d997a9bab17f63ee75a2241d",
+  "host": "wallet-pir-coordinator-01, DigitalOcean m-8vcpu-64gb-intel, ams3; see host-skus.json and census-host.txt",
+  "systemd_limits": {
+    "Nice": 10,
+    "CPUWeight": 20,
+    "IOWeight": 20,
+    "MemoryMax": "4G"
+  },
+  "peak_rss_kib": 493540,
+  "network": "main",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal_version": 2,
+  "range_inclusive": [
+    0,
+    3499341
+  ],
+  "anchor_hash": "0000000000941f2c717bea13c62af6ef787e4a5b9e3fd90fd304d746b10d63de",
+  "recent_from": 3262749,
+  "baseline_file": "transparent/evidence/v9-cutover-2026-09-28/served-map.json",
+  "baseline_sha256": "99706d5afc6090e255294ae88049f50e71ae223ebcbab10c34b6fd8a29d52379",
+  "geometries": {
+    "archive-wide": {
+      "directory_rows": 32768,
+      "page_rows": 65536,
+      "row_bytes": 4096
+    },
+    "recent-4k-8k": {
+      "directory_rows": 4096,
+      "page_rows": 8192,
+      "row_bytes": 4096
+    }
+  },
+  "sealing": "Schema v10: directory byte capacity rows*4092 with 1/7 reserve; script ceiling rows*58 with 1/7 reserve; exact packed page rows with 1/32 reserve. Same tier boundary as baseline.",
+  "counts_by_geometry": {
+    "archive-wide": 77,
+    "recent-4k-8k": 9
+  },
+  "measurement": {
+    "capacity_gain_percent": 63.35999999999999,
+    "classification": "coverage-matched read-only census; exact directory placement and shared page-demand calculation; not a publication or throughput benchmark",
+    "elapsed_seconds": 3917.766982209,
+    "end": 3499341,
+    "events": 353795624,
+    "schema": "transparent-shard-v10",
+    "start": 0,
+    "type": "summary",
+    "v10_allocated_plaintext_bytes": 31457280000,
+    "v10_shards": 86,
+    "v9_allocated_plaintext_bytes": 51388612608,
+    "v9_shards": 139
+  },
+  "interpretation": "Same-history allocated plaintext table capacity, not a wallet concurrency, native noise or deployment qualification. No filter, choice, manifest, prepared-runtime, retained-revision or replication overhead included.",
+  "checks": [
+    "journal genesis and range agree with baseline",
+    "every baseline shard terminal hash agrees with the pinned committed journal prefix",
+    "all shard ranges contiguous",
+    "all scripts placed by the real weighted placement rule",
+    "shared exact page demand calculator"
+  ],
+  "failures": 0,
+  "outputs": {
+    "census.jsonl": "1e46db0f9a070c762b3f096a54046ed66faff9437d6bb20a0dea4ac95a3b08cb",
+    "census-time.txt": "3c1ac445bf3e552aedb2ad672d073d923962802921e9b702236ddfe9d42497f8"
+  }
+}
