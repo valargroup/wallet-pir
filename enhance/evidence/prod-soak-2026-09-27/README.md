@@ -19,6 +19,21 @@ deliberate role restarts during deployments and one hypervisor pause (01:11).
 The last batch, with every fix deployed, was 12,000/12,000 at p50 40 ms and
 p99 78 ms. `raw/soak-g-batches.jsonl` has every batch.
 
+## Soak h: all fixes, no changes during the run
+
+Run `h` (2026-09-28 01:38–07:41 UTC, 36 batches) ran with every fix below
+deployed and no deployments during the run.
+
+| | Offered | Correct | Incorrect | Failed | Unstarted |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Enhance | 432,000 | 432,000 | 0 | 0 | 0 |
+| Status | 432,000 | 431,772 | 0 | 228 | 0 |
+
+Per-batch p99 was 129–163 ms for Enhance and 68–100 ms for Status. 35 of 36
+batches were perfect on both products; all 228 Status failures are the
+unattended-upgrade restart in batch 26 (finding 14).
+`raw/soak-h-batches.jsonl` has every batch.
+
 ## Findings and fixes
 
 1. **Status worker OOM on the 4-vCPU host.** The worker exceeded its 6 GiB
