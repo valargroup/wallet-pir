@@ -257,3 +257,34 @@ Its `--refresh-seconds` option maps to `--poll-seconds`. Clients retry stale
 sessions and never treat an HTTP failure as an absent payment. The helper uses
 an explicitly unauthenticated RPC. Public TLS remains the reverse proxy
 operator's responsibility.
+
+## Publication processing
+
+The continuous indexer retains a disposable commitment-tree cache between
+refreshes. Each preparation compares the full stored commitment prefix before
+reusing nodes. Appends and rewinds recompute changed branches, including a
+partially filled rightmost branch. Receiver positions and publication metadata
+are rebuilt every time. Restarting the process rebuilds the cache from the
+public index. Tree nodes use about 64 bytes per indexed commitment, plus spare
+vector capacity and temporary input and publication buffers. It does not change proof bytes or
+replace canonical checks, wallet root validation, or publication fencing.
+
+`receiver stage=... elapsed_us=...` logs separate canonical checks, ingestion,
+directory construction, witness preparation, file writes, PIR preparation and
+activation. `receiver publication ... processing_ms=...` measures processing
+through activation, excluding the poll interval and client retries. The default
+10-second poll can add up to roughly another interval before work starts.
+Neither metric alone is block-to-client availability latency.
+
+For a matched local witness comparison, make an isolated copy of a stopped
+public index (or use SQLite backup for an active index), then run:
+
+```sh
+cargo run --locked --profile release-fast -p receiver-directory --features store \
+  --example witness_refresh -- /path/to/copied-directory.sqlite --isolated-copy
+```
+
+The example rewinds and re-appends the final block in that copy, alternates full
+and cached preparation order, and requires byte-identical proof output. It
+reports cold-cache time separately. It does not measure RPC ingestion, serving
+or wallet restore time. Never use the serving database as its input.

@@ -333,3 +333,89 @@ fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
         .is_err());
     assert_eq!(encoded, restored.encode());
 }
+
+#[cfg(feature = "store")]
+#[test]
+fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
+    use receiver_directory::{
+        store::{Config, IndexedBlock, Store},
+        witness::WitnessCache,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("directory.sqlite");
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 0,
+    };
+    let mut store = Store::open(&path, config.clone()).unwrap();
+    let mut payment = record(0, 1).payment;
+    payment.height = 100;
+    payment.block_hash = [3; 32];
+    payment.position = 2;
+    let mut block = IndexedBlock {
+        height: 100,
+        hash: [3; 32],
+        parent: [2; 32],
+        start_position: 0,
+        end_position: 3,
+        coinbase_actions: 1,
+        payments: vec![(receiver(), payment.clone())],
+        commitments: vec![[1; 32], [2; 32], payment.cmx],
+    };
+    store.append(&block).unwrap();
+    let first = store.snapshot(8).unwrap();
+    let mut cache = WitnessCache::default();
+    let expected = store.witnesses(&first.manifest).unwrap().encode();
+    assert_eq!(
+        store
+            .witnesses_cached(&first.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        expected
+    );
+    block.height = 101;
+    block.hash = [4; 32];
+    block.parent = [3; 32];
+    block.start_position = 3;
+    block.end_position = 5;
+    block.commitments = vec![[3; 32], [4; 32]];
+    block.payments.clear();
+    store.append(&block).unwrap();
+    let second = store.snapshot(8).unwrap();
+    assert_eq!(
+        store
+            .witnesses_cached(&second.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        store.witnesses(&second.manifest).unwrap().encode()
+    );
+    store.rewind(100, [3; 32]).unwrap();
+    assert!(store
+        .witnesses_cached(&second.manifest, &mut cache)
+        .is_err());
+    assert_eq!(
+        store
+            .witnesses_cached(&first.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        expected
+    );
+    drop(store);
+    let mut store = Store::open(&path, config).unwrap();
+    block.hash = [5; 32];
+    block.commitments[0] = [9; 32];
+    store.append(&block).unwrap();
+    let replacement = store.snapshot(8).unwrap();
+    assert_eq!(
+        store
+            .witnesses_cached(&replacement.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        store.witnesses(&replacement.manifest).unwrap().encode()
+    );
+    let mut wrong = replacement.manifest;
+    wrong.end_position -= 1;
+    assert!(store.witnesses_cached(&wrong, &mut cache).is_err());
+}

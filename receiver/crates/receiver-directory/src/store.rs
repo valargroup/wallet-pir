@@ -76,8 +76,30 @@ impl Store {
 
     /// Old indexes without all commitments must be rebuilt before producing proofs.
     pub fn witnesses(&self, manifest: &Manifest) -> Result<crate::witness::WitnessSnapshot, Error> {
+        let (commitments, positions) = self.witness_inputs(manifest)?;
+        crate::witness::WitnessSnapshot::build(manifest, &commitments, &positions)
+    }
+
+    /// Build identical proof bytes while reusing unchanged commitment subtrees.
+    pub fn witnesses_cached(
+        &self,
+        manifest: &Manifest,
+        cache: &mut crate::witness::WitnessCache,
+    ) -> Result<crate::witness::WitnessSnapshot, Error> {
+        let (commitments, positions) = self.witness_inputs(manifest)?;
+        cache.build(manifest, &commitments, &positions)
+    }
+
+    fn witness_inputs(
+        &self,
+        manifest: &Manifest,
+    ) -> Result<(Vec<Hash>, std::collections::BTreeSet<u32>), Error> {
+        // Bind the commitments and payment positions to a single database view.
+        let tx = self.db.unchecked_transaction()?;
+        let checkpoint = self.checkpoint(manifest.end_height)?;
         if self.config.start_position != 0
-            || self.checkpoint(manifest.end_height)?.hash != manifest.end_hash
+            || checkpoint.hash != manifest.end_hash
+            || checkpoint.position != manifest.end_position
         {
             return Err(Error::Coverage);
         }
@@ -100,7 +122,9 @@ impl Store {
         let positions = query
             .query_map([manifest.end_height], |r| r.get::<_, u32>(0))?
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-        crate::witness::WitnessSnapshot::build(manifest, &commitments, &positions)
+        drop(query);
+        tx.commit()?;
+        Ok((commitments, positions))
     }
 
     pub fn tip(&self) -> Result<Checkpoint, Error> {
@@ -151,7 +175,10 @@ impl Store {
                 || p.block_hash != block.hash
                 || p.position < block.start_position
                 || p.position >= block.end_position
-                || block.commitments.get((p.position-block.start_position) as usize) != Some(&p.cmx)
+                || block
+                    .commitments
+                    .get((p.position - block.start_position) as usize)
+                    != Some(&p.cmx)
                 || previous_position.is_some_and(|pos| p.position <= pos)
             {
                 return Err(Error::Malformed);

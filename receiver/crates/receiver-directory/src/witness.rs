@@ -8,6 +8,9 @@ use orchard::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+mod cache;
+pub use cache::WitnessCache;
+
 const HEADER: usize = 152;
 const NODE: usize = 37;
 /// Bound allocations before parsing an untrusted common snapshot.
@@ -30,16 +33,7 @@ impl WitnessSnapshot {
         commitments: &[Hash],
         positions: &BTreeSet<u32>,
     ) -> Result<Self, Error> {
-        manifest.validate()?;
-        if manifest.start_position != 0
-            || manifest.end_position != commitments.len() as u64
-            || commitments.is_empty()
-            || positions
-                .iter()
-                .any(|p| u64::from(*p) >= manifest.end_position)
-        {
-            return Err(Error::Coverage);
-        }
+        validate_inputs(manifest, commitments, positions)?;
         let mut level = commitments
             .iter()
             .map(|cmx| {
@@ -71,13 +65,21 @@ impl WitnessSnapshot {
         if level.len() != 1 {
             return Err(Error::Capacity);
         }
+        Self::from_nodes(manifest, level[0].to_bytes(), nodes)
+    }
+
+    fn from_nodes(
+        manifest: &Manifest,
+        root: Hash,
+        nodes: BTreeMap<(u8, u32), MerkleHashOrchard>,
+    ) -> Result<Self, Error> {
         let snapshot = Self {
             genesis: manifest.genesis,
             directory_revision: manifest.revision()?,
             height: manifest.end_height,
             block_hash: manifest.end_hash,
             tree_size: manifest.end_position,
-            root: level[0].to_bytes(),
+            root,
             nodes,
         };
         if HEADER + NODE * snapshot.nodes.len() > MAX_WITNESS_BYTES {
@@ -133,7 +135,7 @@ impl WitnessSnapshot {
             return Err(Error::Coverage);
         }
         let mut previous = None;
-        for node in bytes[HEADER..].chunks_exact(NODE) {
+        for node in bytes[HEADER..].as_chunks::<NODE>().0 {
             let key = (node[0], u32::from_le_bytes(node[1..5].try_into().unwrap()));
             if key.0 >= 32
                 || (u64::from(key.1) << key.0) >= result.tree_size
@@ -178,4 +180,22 @@ impl WitnessSnapshot {
         }
         Ok(path.map(|h| h.to_bytes()))
     }
+}
+
+fn validate_inputs(
+    manifest: &Manifest,
+    commitments: &[Hash],
+    positions: &BTreeSet<u32>,
+) -> Result<(), Error> {
+    manifest.validate()?;
+    if manifest.start_position != 0
+        || manifest.end_position != commitments.len() as u64
+        || commitments.is_empty()
+        || positions
+            .iter()
+            .any(|p| u64::from(*p) >= manifest.end_position)
+    {
+        return Err(Error::Coverage);
+    }
+    Ok(())
 }

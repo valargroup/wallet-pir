@@ -7,6 +7,7 @@ use enhance_pir_server::{
 use receiver_directory::{
     snapshot::{Snapshot, MAX_ROWS},
     store::{Config, Store},
+    witness::WitnessCache,
     Error,
 };
 use receiver_pir_server::{Publication, Publications};
@@ -79,8 +80,9 @@ async fn main() -> Result<()> {
     if genesis != Network::Mainnet.genesis_hash() {
         return Err("this indexer currently requires mainnet".into());
     }
+    let mut witness_cache = WitnessCache::default();
     if !args.serve {
-        refresh(&args, &rpc, genesis, None).await?;
+        refresh(&args, &rpc, genesis, None, &mut witness_cache).await?;
         return Ok(());
     }
     let publications = Publications::default();
@@ -107,7 +109,15 @@ async fn main() -> Result<()> {
     let refresh_loop = async {
         loop {
             let started = std::time::Instant::now();
-            if let Err(error) = refresh(&args, &rpc, genesis, Some(&publications)).await {
+            if let Err(error) = refresh(
+                &args,
+                &rpc,
+                genesis,
+                Some(&publications),
+                &mut witness_cache,
+            )
+            .await
+            {
                 eprintln!("ingestion/publication deferred: {error}");
             }
             eprintln!(
@@ -163,7 +173,9 @@ async fn refresh(
     rpc: &ZakuraClient,
     genesis: Hash,
     serving: Option<&Publications>,
+    witness_cache: &mut WitnessCache,
 ) -> Result<()> {
+    let refresh_started = std::time::Instant::now();
     if let Some(serving) = serving {
         if let Err(error) = check_serving(serving, rpc).await {
             serving.revoke();
@@ -217,6 +229,7 @@ async fn refresh(
     }
     // Capture the fence after any rewind; a concurrent revocation invalidates preparation below.
     let epoch = serving.map(Publications::epoch);
+    log_stage("canonical_check", refresh_started);
     let started = std::time::Instant::now();
     let resume_height = tip.height;
     eprintln!(
@@ -241,6 +254,8 @@ async fn refresh(
         let rate = f64::from(tip.height - resume_height) / started.elapsed().as_secs_f64();
         eprintln!("height={} target={end} recovered={records} excluded_coinbase_actions={coinbase} blocks_per_second={rate:.2}",tip.height);
     }
+    log_stage("ingestion", started);
+    let started = std::time::Instant::now();
     let records = store.counts()?.0;
     // Start at half occupancy. A crowded bucket grows the entire candidate.
     let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
@@ -254,6 +269,7 @@ async fn refresh(
             Err(e) => return Err(e.into()),
         }
     };
+    log_stage("directory", started);
     if rpc
         .block_hash(u64::from(snapshot.manifest.end_height))
         .await?
@@ -264,7 +280,12 @@ async fn refresh(
         return Err("chain changed before publication; rerun to reconcile".into());
     }
     if args.witnesses {
-        let proof = store.witnesses(&snapshot.manifest)?.encode();
+        let started = std::time::Instant::now();
+        let proof = store
+            .witnesses_cached(&snapshot.manifest, witness_cache)?
+            .encode();
+        log_stage("witness_prepare", started);
+        let started = std::time::Instant::now();
         let dir = args.data_dir.join("publications");
         std::fs::create_dir_all(&dir)?;
         let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
@@ -274,6 +295,7 @@ async fn refresh(
             "{}.witness",
             hex::encode(snapshot.manifest.revision()?)
         )))?;
+        log_stage("witness_write", started);
         eprintln!("witness_bytes={}", proof.len());
     }
     if rpc
@@ -285,13 +307,18 @@ async fn refresh(
     {
         return Err("chain changed while building proofs; rerun to reconcile".into());
     }
+    let started = std::time::Instant::now();
     let revision = publish(&args.data_dir.join("publications"), &snapshot)?;
+    log_stage("directory_write", started);
     if let Some(serving) = serving {
+        let started = std::time::Instant::now();
         let path = args
             .data_dir
             .join("publications")
             .join(format!("{revision}.json"));
         let publication = tokio::task::spawn_blocking(move || Publication::load(&path)).await??;
+        log_stage("pir_prepare", started);
+        let started = std::time::Instant::now();
         if rpc
             .block_hash(u64::from(publication.manifest().end_height))
             .await?
@@ -305,6 +332,12 @@ async fn refresh(
         if !serving.publish(publication, epoch.unwrap()) {
             return Err("publication invalidated during preparation; retrying".into());
         }
+        log_stage("activate", started);
+        eprintln!(
+            "receiver publication height={} processing_ms={}",
+            snapshot.manifest.end_height,
+            refresh_started.elapsed().as_millis()
+        );
         if let Err(error) = serving.prune_files(&args.data_dir.join("publications")) {
             eprintln!("obsolete publication cleanup deferred: {error}");
         }
@@ -321,6 +354,14 @@ async fn refresh(
         "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len()})
     );
     Ok(())
+}
+
+/// Stage processing excludes the poll interval and client retries.
+fn log_stage(stage: &str, started: std::time::Instant) {
+    eprintln!(
+        "receiver stage={stage} elapsed_us={}",
+        started.elapsed().as_micros()
+    );
 }
 
 /// Write revision files before atomically replacing the public manifest pointer.
