@@ -32,7 +32,7 @@ Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure
 
 ## Geometry optimization, not a launch dependency
 
-Add optional `recent-4k-8k` (4096 directory / 8192 page rows), seal policy `49152:57344,7936:8192`. Do not change the meaning of `recent-4k`, which already means 4096/4096. Promote only on same-range census, real placement, and total wallet-byte/latency evidence. Smaller directory upload alone does not establish a smaller sync. Initial full-chain deployment proceeds with `recent-8k`.
+Add optional `recent-4k-8k` (4096 directory / 8192 page rows), seal policy `56174:65536,7936:8192` under schema v8 (`49152:57344,7936:8192` under v7's 14-slot directory rows). Do not change the meaning of `recent-4k`, which already means 4096/4096. Promote only on same-range census, real placement, and total wallet-byte/latency evidence. Smaller directory upload alone does not establish a smaller sync. Initial full-chain deployment proceeds with `recent-8k`.
 
 Do not publish `archive-32k` as the selected target: uniform-chain evidence favors `archive-wide`. Preserve the tested registry entry for compatibility/research. Geometry fallback is an explicit decision with re-census, storage, client and capacity review; never silently rewrite an already published profile.
 
