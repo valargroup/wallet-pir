@@ -18,7 +18,7 @@ use transparent_shard::manifest::{
     SCHEMA,
 };
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
-use transparent_shard_server::shardset::{setup_seed, ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
+use transparent_shard_server::shardset::{ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
 
 /// The geometry this fixture publishes at.
 const GEOMETRY: Geometry = RECENT_8K;
@@ -280,7 +280,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
         Table::Directory => "directory_scheme",
         Table::Pages => "pages_scheme",
     };
-    let scheme: ipir_sp::YpirSchemeParams =
+    let scheme: transparent_native::NativeScheme =
         serde_json::from_value(published[scheme_key].clone()).unwrap();
 
     let revision = revision_of(f, shard_id);
@@ -302,35 +302,24 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
 
     // Re-derive rather than trust: a client that adopted the server's
     // parameters would decode against whatever geometry the server chose.
-    let (rlwe, expected) = ipir_sp::params_for_simplepir(
+    let profile = transparent_native::TableProfile::new(
+        transparent_shard::manifest::SCHEMA,
+        GEOMETRY.name,
+        table.as_str(),
         table.rows(&GEOMETRY),
-        (table.row_bytes(&GEOMETRY) as u64) * 8,
+        table.row_bytes(&GEOMETRY),
     )
     .unwrap();
     assert_eq!(
-        scheme, expected,
+        scheme, profile.scheme,
         "the served scheme must be the one a client re-derives"
     );
+    assert_eq!(public_params.len(), profile.scheme.public_bytes);
 
-    let mut seed = [0u8; 32];
-    seed[..8].copy_from_slice(&setup_seed(&GEOMETRY, table).to_le_bytes());
-    let client = ipir_sp::IPIRClient::from_profile(
-        table.rows(&GEOMETRY),
-        (table.row_bytes(&GEOMETRY) as u64) * 8,
-        ipir_sp::SimplePirProfile::P14,
-    )
-    .unwrap();
-    let setup_matrix = client.generate_public_query_setup_simplepir_from_seed(seed);
-    let blocks = expected.db_cols / rlwe.d;
-    let published_c1 =
-        ipir_sp::modulus_switch::recover_published_c1(&public_params, rlwe.d, blocks, rlwe.q);
-
-    let (query, packing_keys, query_seed) =
-        client.generate_fresh_query_simplepir(&setup_matrix, row);
+    let (secret, upload) = profile.prepare(row).unwrap();
     let binding = query_binding(&revision, table.as_str());
     let mut body = binding.to_vec();
-    body.extend(ipir_sp::serialize::serialize_packing_keys(&rlwe, &packing_keys).unwrap());
-    body.extend(query.to_switched_bytes(rlwe.q, expected.query_bits));
+    body.extend(upload);
 
     let (status, response) = post(
         &f.state,
@@ -347,12 +336,13 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
     // answer is one body; the multi-segment case has its own test.
     assert_eq!(
         response.len(),
-        16 + ipir_sp::modulus_switch::response_body_len(rlwe.d, expected.q_prime_1) * blocks,
+        16 + profile.scheme.response_bytes,
         "one body per segment"
     );
 
-    let decoded = client.decode_response_simplepir(query_seed, &published_c1, &response[16..]);
-    decoded[..table.row_bytes(&GEOMETRY) as usize].to_vec()
+    profile
+        .decode(&secret, &public_params, &response[16..])
+        .unwrap()
 }
 
 fn raw_row(table_bytes: &[u8], row_bytes: usize, row: usize) -> &[u8] {
@@ -380,15 +370,9 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
 /// A full-length query body for the fixture's geometry, prefixed as `revision`
 /// and `table` require.
 fn padded_body(revision: &str, table: Table) -> Vec<u8> {
-    let (rlwe, scheme) = ipir_sp::params_for_simplepir(
-        table.rows(&GEOMETRY),
-        (table.row_bytes(&GEOMETRY) as u64) * 8,
-    )
-    .unwrap();
     let mut body = query_binding(revision, table.as_str()).to_vec();
     body.resize(
-        8 + ipir_sp::serialize::serialized_packing_keys_len(&rlwe)
-            + (scheme.db_rows * scheme.query_bits).div_ceil(8),
+        8 + transparent_native::request_len(table.rows(&GEOMETRY) as usize),
         0,
     );
     body

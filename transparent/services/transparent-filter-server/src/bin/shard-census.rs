@@ -196,15 +196,16 @@ struct Cli {
 /// Bytes one private row query uploads at this table shape.
 ///
 /// The same formula the server bounds a request with, so a projection here and
-/// a measurement there cannot drift: packing keys, which the row count does not
-/// move, plus a body that it does. Response and published setup follow the row
+/// a measurement there cannot drift: the binding and the native `K_g` packing
+/// key, which the row count does not move, plus a 49-bit selection that it does. Response and published setup follow the row
 /// *width* instead and so are equal across every candidate compared here, which
 /// is why only the query is priced.
 fn query_bytes(rows: u64, row_bytes: usize) -> u64 {
-    let (rlwe, params) = ipir_sp::params_for_simplepir(rows, (row_bytes as u64) * 8)
-        .expect("a validated geometry has parameters");
-    (8 + ipir_sp::serialize::serialized_packing_keys_len(&rlwe)
-        + (params.db_rows * params.query_bits).div_ceil(8)) as u64
+    assert!(
+        row_bytes.is_multiple_of(transparent_native::INSTANCE_BYTES),
+        "a validated geometry has whole instances"
+    );
+    (8 + transparent_native::request_len(rows as usize)) as u64
 }
 
 fn parse_limit(text: &str) -> Result<Limit, BoxError> {
@@ -242,8 +243,9 @@ fn default_policies(geometry: &Geometry) -> Vec<(String, SealPolicy)> {
     let derived = SealPolicy::for_geometry(geometry);
     let capacity = geometry.directory_capacity();
     let mut policies = vec![(format!("{} derived", geometry.name), derived)];
-    // Twenty-eighths of directory capacity: at 114,688 scripts these are
-    // exactly the absolute targets the archived censuses used.
+    // Twenty-eighths of directory capacity: at the v7 layout's 114,688
+    // scripts these were exactly the absolute targets the archived censuses
+    // used (4,096 to 24,576). The v8 16-slot row moves them with capacity.
     for numerator in [1u64, 2, 3, 4, 6] {
         let scripts = capacity * numerator / 28;
         if scripts == 0 || scripts >= derived.scripts.target {
@@ -1432,14 +1434,17 @@ mod tests {
     use super::*;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 
-    /// At the compiled geometry the sweep must be exactly the absolute targets
-    /// the archived censuses under `transparent/evidence/baselines/` were taken
-    /// at, or every comparison against them is silently rebased.
+    /// At the compiled geometry the sweep is pinned, so a change to it is a
+    /// deliberate edit. The archived censuses under
+    /// `transparent/evidence/baselines/` were taken at the v7 layout's
+    /// 98,304 / 4,096 / 8,192 / 12,288 / 16,384 / 24,576; v8's 16-slot
+    /// directory row rescales every point by 8/7, so comparisons against those
+    /// archives are rebased and must say so.
     #[test]
     fn the_default_sweep_is_unchanged_at_the_compiled_geometry() {
         let policies = default_policies(&RECENT_8K);
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
-        assert_eq!(scripts, vec![98_304, 4_096, 8_192, 12_288, 16_384, 24_576]);
+        assert_eq!(scripts, vec![112_348, 4_681, 9_362, 14_043, 18_724, 28_086]);
         // Every entry seals pages at the geometry's own limit, so the sweep
         // varies the script limit and nothing else.
         for (name, policy) in &policies {
@@ -1470,7 +1475,7 @@ mod tests {
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
         assert_eq!(
             scripts,
-            vec![393_216, 16_384, 32_768, 49_152, 65_536, 98_304]
+            vec![449_390, 18_724, 37_449, 56_173, 74_898, 112_347]
         );
         for (name, policy) in &policies {
             assert_eq!(policy.page_rows.capacity, 65_536, "{name}");

@@ -50,7 +50,6 @@ path = "src/bin/filter-sweep.rs"
 [dependencies]
 transparent-blocks = { path = "../../crates/transparent-blocks" }
 tempfile = "3"
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
 axum = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -67,6 +66,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-events = { path = "../../crates/transparent-events" }
 transparent-filter = { path = "../../crates/transparent-filter" }
+transparent-native = { path = "../../crates/transparent-native" }
 transparent-shard = { path = "../../crates/transparent-shard" }
 transparent-shard-server = { path = "../transparent-shard-server" }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }

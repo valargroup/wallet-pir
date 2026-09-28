@@ -23,7 +23,7 @@
 //! A change to an operator payload therefore shows up as a diff in
 //! `transparent/ops/fixtures/`. That is the point: the operator contract should be
 //! something a reviewer sees change. It also catches a rename arriving through
-//! a dependency bump — `YpirSchemeParams` is serialized wholesale into
+//! a dependency bump — the native `NativeScheme` is serialized wholesale into
 //! `geometries[]`, and nothing else in the tree would notice.
 //!
 //! Accept a deliberate change with:

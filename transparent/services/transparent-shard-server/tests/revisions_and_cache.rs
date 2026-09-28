@@ -271,12 +271,7 @@ fn state_with(dir: &Path, config: ServiceConfig) -> ServiceState {
 /// One runtime's reservation at the test geometry, so budgets can be expressed
 /// in runtimes rather than in bytes that would drift with the scheme.
 fn one_runtime(table: Table) -> u64 {
-    let (rlwe, scheme) = ipir_sp::params_for_simplepir(
-        table.rows(&GEOMETRY),
-        (table.row_bytes(&GEOMETRY) as u64) * 8,
-    )
-    .unwrap();
-    reserved_bytes(&rlwe, &scheme)
+    reserved_bytes(table.rows(&GEOMETRY), table.row_bytes(&GEOMETRY))
 }
 
 /// A republished tail leaves its predecessor on disk. That is what the

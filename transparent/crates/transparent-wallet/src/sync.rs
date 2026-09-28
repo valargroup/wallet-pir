@@ -184,11 +184,11 @@ pub struct GeometryParams {
     pub name: String,
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
-    pub directory_scheme: ipir_sp::YpirSchemeParams,
+    pub directory_scheme: transparent_native::NativeScheme,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
-    pub pages_scheme: ipir_sp::YpirSchemeParams,
+    pub pages_scheme: transparent_native::NativeScheme,
     pub pages_setup_seed: u64,
 }
 
@@ -261,16 +261,16 @@ impl Clients {
             let clients = GeometryClients {
                 directory: TableClient::new(
                     Table::Directory,
+                    name,
                     geometry.directory_rows,
                     geometry.directory_row_bytes as u32,
-                    params.directory_setup_seed,
                     &params.directory_scheme,
                 )?,
                 pages: TableClient::new(
                     Table::Pages,
+                    name,
                     geometry.page_rows,
                     geometry.page_row_bytes as u32,
-                    params.pages_setup_seed,
                     &params.pages_scheme,
                 )?,
             };

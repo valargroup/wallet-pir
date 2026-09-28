@@ -658,7 +658,7 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
 
     // Three superseded revisions on disk. A byte bound that fits one keeps the
     // newest and reports the two older ones prunable.
-    let one_revision = 2 * (4096 * 3584) + 1024;
+    let one_revision = 2 * (4096 * 4096) + 1024;
     let set = ShardSet::open_with(
         dir.path(),
         &LoadOptions {

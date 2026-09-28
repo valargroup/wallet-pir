@@ -4150,7 +4150,6 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
- "ipir-sp",
  "prometheus",
  "reqwest",
  "serde",
@@ -4166,6 +4165,7 @@ dependencies = [
  "transparent-blocks",
  "transparent-events",
  "transparent-filter",
+ "transparent-native",
  "transparent-shard",
  "transparent-shard-server",
  "zakura-chain",
@@ -4305,7 +4305,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "hex",
- "ipir-sp",
  "reqwest",
  "serde",
  "serde_json",
@@ -4313,6 +4312,7 @@ dependencies = [
  "thiserror 2.0.18",
  "transparent-events",
  "transparent-filter",
+ "transparent-native",
  "transparent-shard",
 ]
 
