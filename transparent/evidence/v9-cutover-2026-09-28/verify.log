@@ -1,0 +1,18 @@
+ok   load: 139 shards, 139 revisions held, every manifest, table segment and filter verified in 269.2s
+ok   coverage-contiguous: 0-3499274 across 139 shards
+ok   coverage-start: map starts at 0, expected 0
+ok   coverage-through: last shard ends at Some(3499274), expected 3499274
+ok   anchor-hash: terminal block Some("00000000004523b8954a8bf7cf3f7c1e35517f86866c910b62c8156579ad31ee"), expected 00000000004523b8954a8bf7cf3f7c1e35517f86866c910b62c8156579ad31ee
+ok   tiers: 126 archive-wide shards below 3262749, 13 recent-4k-8k shards from it
+ok   map-sha256: shards.json digests to dff96d6a69c87ebca98a0b897d2348ba80ab2458f80d73c144278b7c59041756, expected dff96d6a69c87ebca98a0b897d2348ba80ab2458f80d73c144278b7c59041756
+     served map digest (compact serialization): 8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef
+     multi-segment shards: []
+ok   rebuild-0: 0-12849 2760812 events, filter same, directory same, pages same, 6.1s
+ok   rebuild-13: 111756-122215 2726012 events, filter same, directory same, pages same, 5.4s
+ok   rebuild-61: 345875-352843 2674819 events, filter same, directory same, pages same, 6.4s
+ok   rebuild-79: 742212-809357 3023746 events, filter same, directory same, pages same, 7.1s
+ok   rebuild-98: 1445278-1490977 2936909 events, filter same, directory same, pages same, 8.9s
+ok   rebuild-123: 3004518-3137094 3191242 events, filter same, directory same, pages same, 6.4s
+ok   rebuild-124: 3137095-3255804 3192071 events, filter same, directory same, pages same, 6.5s
+ok   rebuild-138: 3494358-3499274 131808 events, filter same, directory same, pages same, 0.5s
+every check passed

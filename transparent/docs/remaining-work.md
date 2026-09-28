@@ -190,15 +190,15 @@ wallet-libraries transparent branches. The
 [cluster qualification baseline](../evidence/cluster-qualification-2026-09-28/README.md)
 is the acceptance gate for each step below.
 
-- [ ] Build a candidate full publication into a new directory on the coordinator:
+- [x] Build a candidate full publication into a new directory on the coordinator:
   v9 records and tags, the v2 filter profile, `recent-4k-8k` for the recent tier,
   `--directory-choice all` on every shard, both tiers. Verify with `shard-verify`,
   real placement and exact replay against the journal, and verify every choice
   route at load. Decide whether provisional tails carry tables.
-- [ ] Rehearse the cold rebuild on bench copies of one archive owner and one
+- [ ] (Skipped on 2026-09-28 at the operator's request; the production rollout measured 866–1,187 s cold per archive owner, see the [cutover evidence](../evidence/v9-cutover-2026-09-28/README.md).) Rehearse the cold rebuild on bench copies of one archive owner and one
   recent replica. Measure rebuild time and peak memory per role; that is what
   sizes the maintenance window for the rollout.
-- [ ] Deploy the candidate: continuous publisher on the v2 profile, fixed-publication
+- [x] Deploy the candidate: continuous publisher on the v2 profile, fixed-publication
   rollout to all workers, rollback set retained. Port the choice-table lookup and
   the v9 record codec to wallet-libraries before the fleet serves it.
 - [ ] Measure the deployed format against the current state in one paired cluster

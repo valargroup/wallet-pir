@@ -25,7 +25,9 @@ scripts; they do not identify actual wallets or establish population weights.
 | recent-birthday | 10 | 4 | 12 |
 | coinbase | 1 | 3 | 1643 |
 
-Event records in `mainnet.json` were rewritten on 2026-09-28 from the 96-byte
+On 2026-09-28 `mainnet.json` was re-exported by `regression-export` from the version-2 journal against the served schema v9 map (139 shards), with the same case specification. Cases, checkpoints and events are byte-identical to the previous fixture; the map binding, accepted headers and source changed ([comparison](../../../evidence/v9-cutover-2026-09-28/fixture-compare.json)). The previous v7-bound fixture is in Git history before this change.
+
+Before that, event records in `mainnet.json` were rewritten on 2026-09-28 from the 96-byte
 codec to the 87-byte codec. Scripts, anchors, balances, UTXOs, spends and
 histories are the same logical records. The production journal was not read
 or rewritten for that step.
