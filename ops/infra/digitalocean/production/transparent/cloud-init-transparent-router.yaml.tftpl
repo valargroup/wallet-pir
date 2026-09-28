@@ -8,6 +8,12 @@ ssh_authorized_keys:
   - ${deploy_public_key}
 %{ endif ~}
 write_files:
+  # Unattended upgrades must not restart production services: a libc upgrade
+  # made needrestart restart the Status roles on 2026-09-28. Restart on deploy.
+  - path: /etc/needrestart/conf.d/90-wallet-pir-no-auto-restart.conf
+    permissions: "0644"
+    content: |
+      $nrconf{restart} = 'l';
   # The daily unattended-upgrade must not bounce the edge; deploys reload it.
   - path: /etc/needrestart/conf.d/transparent-pir.conf
     content: |

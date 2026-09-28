@@ -6,6 +6,12 @@ ssh_authorized_keys:
   - ${jsonencode(deploy_public_key)}
 %{ endif ~}
 write_files:
+  # Unattended upgrades must not restart production services: a libc upgrade
+  # made needrestart restart the Status roles on 2026-09-28. Restart on deploy.
+  - path: /etc/needrestart/conf.d/90-wallet-pir-no-auto-restart.conf
+    permissions: "0644"
+    content: |
+      $nrconf{restart} = 'l';
   # Forwarding only: the coordinator reaches the worker, router control and router
   # query listeners; the worker reaches coordinator artifacts through 8495.
   - path: /etc/ssh/status-control/authorized_keys

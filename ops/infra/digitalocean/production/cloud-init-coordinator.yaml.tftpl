@@ -2,6 +2,12 @@
 package_update: true
 packages: ${packages}
 write_files:
+  # Unattended upgrades must not restart production services: a libc upgrade
+  # made needrestart restart the Status roles on 2026-09-28. Restart on deploy.
+  - path: /etc/needrestart/conf.d/90-wallet-pir-no-auto-restart.conf
+    permissions: "0644"
+    content: |
+      $nrconf{restart} = 'l';
   - path: /usr/local/sbin/mount-zakura-volume
     owner: root:root
     permissions: "0755"

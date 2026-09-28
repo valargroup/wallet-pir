@@ -61,6 +61,14 @@ p99 78 ms. `raw/soak-g-batches.jsonl` has every batch.
     dead session's 8495 listener for 90 s. `status-control` sessions now use
     `ClientAliveInterval 2`/`ClientAliveCountMax 3` and the tunnels tolerate
     8 s (`852d6b5d`).
+14. **Unattended upgrades restarted production services.** In run `h` at
+    06:09:35 on 2026-09-28, `unattended-upgrades` installed `libc6` on the
+    Status droplet and `needrestart` (Ubuntu mode, no restart mode configured,
+    so automatic) restarted both roles, paging `status_init_5xx`. The
+    coordinator, Enhance workers and router, GPU mirror and monitor were due
+    for the same upgrade within 30 minutes. Every production host now has
+    `$nrconf{restart} = 'l'` (list only), and the cloud-init templates install
+    it. Upgrades still apply; services pick them up on their next deploy.
 13. **jemalloc experiment, reverted.** Preloading jemalloc reduced freezes
     but slowed preparation, breached freshness and paged once (22:17). It was
     removed at 22:48.
