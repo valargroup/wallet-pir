@@ -1,8 +1,10 @@
 # Transparent PIR architecture update: six-month wallet catch-up
 
-Date: 2026-09-27. Status: architecture review and proposed design; no implementation,
-deployment, or new performance qualification is claimed. Source was rechecked at
-`2fb119ba`; measurements cited below retain their original dates and provenance.
+Date: 2026-09-27; results updated 2026-09-28. Status: architecture review, with
+follow-up measurements and one deployed change. [Results and plan](#results-and-plan-2026-09-28)
+summarises what was measured, what is live and what comes next. The review
+text in sections 1–9 is kept as written, with dated notes; its source was
+checked at `2fb119ba`. Measurements keep their original dates and provenance.
 
 ## Objective and review outcome
 
@@ -34,44 +36,137 @@ operating targets, [status](status.md) for observed implementation and live stat
 and [remaining work](remaining-work.md) for tracked milestones. The
 [contract](contract.md) continues to govern correctness, coverage, and privacy.
 
-## Investigation results and recommended design (2026-09-28)
+## Results and plan (2026-09-28)
 
-This section records what the follow-up work measured and deployed. The
-sections below keep the original review text, with dated notes. Evidence
-directories hold the raw inputs; [status](status.md) records live state.
+This section records what the follow-up work built, measured and deployed, and
+the plan for the rest. [Status](status.md) records live state.
+[Remaining work](remaining-work.md) tracks milestones. Evidence directories hold
+the raw inputs, commands, provenance and checksums.
 
-| Question | Result | Evidence |
+### Deployed state
+
+| Date (UTC) | Change | Verification |
 |---|---|---|
-| §2 Single-lookup directory | Implemented as a per-shard choice table (about 1.23 bits per script) in an optional manifest field. Measured locally, on a bench fleet and under emulated delay. **Live in production since 2026-09-27 22:43 UTC for new tail and sealed revisions.** | [census](../evidence/single-lookup-census-2026-09-27/README.md), [local](../evidence/single-lookup-measure-2026-09-27/README.md), [fleet](../evidence/single-lookup-fleet-2026-09-27/README.md), [latency](../evidence/single-lookup-latency-2026-09-28/README.md) |
-| §2 recent-4k-8k | Two-choice placement never overflows up to 96% load, so the geometry is feasible without denser placement. It saves about 21.5 KB per directory query. | [placement](../evidence/directory-placement-4k-2026-09-28/README.md) |
-| §3 Lower-precision filters | Exact sizes: P=13 (M=12,288) cuts recent filter bytes by 28% and never costs more than today up to about 2,000 tested scripts. P=12 saves 35% but costs more above about 200 scripts. The combined MPHF/fingerprint artifact is not preferred: P=13 GCS plus a per-matched-shard choice table is smaller. | [sweep](../evidence/filter-precision-sweep-2026-09-28/README.md) |
-| §4 Bulk-history isolation | Recent shards seal on scripts instead of pages: 14 become 5 at recent-8k. restore-6m matched shards fall 28% and projected bytes about 11%. The cost is a new table type, a privacy review of the table choice, and tails that live about 6 weeks. Deferred. | [bulk census](../evidence/bulk-isolation-census-2026-09-28/README.md) |
-| §5 Cold archive service | Not investigated beyond cache behaviour. Runtime snapshots restore in about 1 s per recent table and survive the ipir-sp accc424→rc.6 upgrade. Archive restore latency and on-demand admission remain unmeasured. | [status](status.md) (release rollout) |
-| §6 Bounded concurrency | Filter prefetch implemented in the wallet's HTTP filter source: over 8 connections, one-shot, and stopping on the first failure. Under an emulated 100 ms round trip, restore-6m p50 fell from 3.62 to 2.51 s with tables (4.40 s with neither). About 16 sequential private and setup requests remain. | [latency](../evidence/single-lookup-latency-2026-09-28/README.md) |
+| 2026-09-27 18:55 | Restored the continuous-publication route in the coordinator Caddyfile, and added it to `ops/deploy/coordinator/Caddyfile` (`2c658d43`) | A 14:18 Enhance deploy had rendered the file without the route: public `/v1/shards`, `init` and manifests returned 404 and filters were stale. Both origins serve the live map again |
+| 2026-09-27 22:26–22:40 | Workers and publisher upgraded from `a5f79ed` (ipir-sp `accc424`) to `9d47b05b` (ipir-sp rc.6) through `deploy-transparent-publisher.yml` shadow, then activate | All six workers are ready and warm on binary `c735a6b3…` and serve the publisher's map; the publisher is current with the node |
+| 2026-09-27 22:43 | `directory_choice: "all"` in the controller config | Every new tail revision carries a table, e.g. revision 1180: 4,323 bytes for 28,000 scripts; public syncs complete with no failures |
 
-**Recommended design for ordinary wallets.** It is ordered by benefit per unit
-of risk. The projected figures chain measured per-request sizes; only the first
-row is measured whole-wallet.
+Before the upgrade, a local test had the `9d47b05b` worker restore a runtime
+cache written by the `a5f79ed` worker: all 28 runtimes restored, and 52 of 52
+syncs were exact. A rc.6 client also synced against the old fleet with no
+transport failure. After activation:
+- public syncs completed with no failures;
+- archive restores were exact;
+- the recent mismatches are consistent with activity since the test sample's
+  3,473,686 anchor (30 of 120 restore-6m sample wallets have later events).
 
-| Step | Status | restore-6m bytes | restore-6m p50 at 100 ms RTT |
+A first shadow attempt failed at 22:20 on the rotated `WALLET_PIR_DEPLOY_SSH_KEY`,
+which no transparent host authorised. It stopped the publisher for about 5
+minutes before a manual restore. The rotated key was then authorised on all
+seven hosts. The deploy script now:
+- checks every host accepts the identity before stopping anything;
+- keeps the previous controller config;
+- restores the controller on an early failure.
+
+Sealed shards published before 22:43 have no table, so wallets still send two
+queries for them until a full republication. **A manifest that carries a table
+is refused by servers and wallets built before the field**, because they
+recompute the digest without it. All workers understand the field. No shipped
+wallet uses transparent PIR: the client exists only on unmerged
+wallet-libraries branches.
+
+### Measured results
+
+| Question | What was done | Result | Evidence |
+|---|---|---|---|
+| §2 Single-lookup directory | Per-shard xor-retrieval choice table (about 1.23 bits per placed script) in an optional manifest field. Builder and server verify every entry's route; the wallet sends one query per matched script when a table is present | Offline: tables built on all 14 recent shards with no seed retries, 817–7,006 B each. Local (939 syncs) and bench fleet at 8 and 32 wallets (4,578 syncs): all exact, directory queries exactly halved. restore-6m −24% bytes, 40-script −35%, catch-ups −27% to −34%. p50 and p95 35–45% lower; 15–25% more syncs per second | [census](../evidence/single-lookup-census-2026-09-27/README.md), [local](../evidence/single-lookup-measure-2026-09-27/README.md), [fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) |
+| §2 recent-4k-8k | A model of the two-choice placer at 4,096 rows | No overflow from 79% to 96% load, including 40 seeds at the 49,152 seal target. The earlier "14 of 14 is at the edge" reading was wrong. About 21.5 KB less upload per directory query | [placement](../evidence/directory-placement-4k-2026-09-28/README.md) |
+| §3 Filter precision | `filter-sweep` rebuilt the 14 recent filters under P=8–19 | P=19 reproduces the published 1,293,378 bytes. P=13 (M=12,288): −28% bytes, and never more costly than today up to about 2,000 tested scripts, false matches included. P=12: −35%, but worse than P=13 above about 200 scripts. The combined MPHF/fingerprint artifact is larger than P=13 plus a choice table | [sweep](../evidence/filter-precision-sweep-2026-09-28/README.md) |
+| §4 Bulk-history isolation | `shard-census --bulk-long`, sealing on short histories' packed rows only | recent-8k: 14 shards become 5. restore-6m matched shards 4.93 → 3.53, pairs 5.93 → 5.45, filter bytes −12%, projected bytes −11%. Needs up to 24,018 bulk rows per shard. The gain mostly disappears at recent-4k-8k | [bulk census](../evidence/bulk-isolation-census-2026-09-28/README.md) |
+| §5 Cold archive | Not investigated, beyond cache behaviour seen during the upgrade | Snapshots restore in about 1 s per recent table and survive the rc.6 upgrade. Archive restore latency, admission and churn are unmeasured | [status](status.md) |
+| §6 Concurrency | `FilterSource::prefetch`; the HTTP source fetches a walk's uncached filters over 8 connections, hands each out once, and stops at the first failure | At an emulated 100 ms round trip, restore-6m p50 is 4.40 s → 3.62 s with tables → 2.51 s with tables plus prefetch, with identical bytes. About 16 sequential manifest, setup, directory and page requests remain | [latency](../evidence/single-lookup-latency-2026-09-28/README.md) |
+| Operations | A 128-wallet step on the bench fleet | Router health checks (3 s timeout, the production values) marked all four workers down at saturation. Failed syncs retried immediately. This happened once in each variant | [fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) |
+
+**Projected six-month restore** (only the first three rows are measured
+whole-wallet):
+
+| Step | Status | Bytes | p50 at 100 ms RTT |
 |---|---|---:|---:|
-| Baseline (fleet r3, bench fleet off) | Measured | 3.15 MB | 4.40 s |
-| + choice tables | **Live** for new revisions; measured | 2.39 MB (−24%) | 3.62 s |
-| + filter prefetch | In the wallet on `main`; measured | 2.39 MB | 2.51 s |
-| + filter profile P=13 | Projected | about 2.02 MB | slightly lower |
-| + recent-4k-8k | Projected | about 1.89 MB (−40%) | slightly lower |
-| + cross-shard request concurrency | Projected from request counts | unchanged | about 1.5 s |
+| Baseline (fleet r3; bench fleet without tables) | Measured | 3.15 MB | 4.40 s |
+| + choice tables | Live for new revisions; measured | 2.39 MB | 3.62 s |
+| + filter prefetch | On `main` in `transparent-wallet`; measured | 2.39 MB | 2.51 s |
+| + filter profile P=13 | Projected from the sweep | ~2.02 MB | slightly lower |
+| + recent-4k-8k with tables | Projected from query sizes | ~1.89 MB (−40%) | slightly lower |
+| + cross-shard request concurrency | Projected from request counts | unchanged | ~1.5 s |
 
-The filter profile, recent-4k-8k and tables on already-sealed shards all
-change published bytes. They belong in **one full republication** under a new
-filter profile name, with wallets selecting P and M by profile and refusing
-unknown profiles. Current wallets decode every filter with the compiled
-constants, so the profile change is breaking.
+### Open questions
 
-No shipped wallet uses transparent PIR yet: the client exists only on unmerged
-wallet-libraries branches. So the cheapest time for the republication is
-before the wallet ships. Bulk isolation and cold archive service remain
-separate, later experiments.
+1. **Production wallet.** wallet-libraries has neither the table lookup nor
+   prefetch, so production wallets gain nothing yet.
+2. **Filter profile.** Wallets decode filters with compiled `P`/`M` and select
+   nothing by profile name, so a new profile is a breaking change. Wallets must
+   select parameters by profile and refuse unknown profiles before any
+   publication uses one.
+3. **Republication cost.** Tables on already-sealed shards, P=13 and
+   recent-4k-8k all change every manifest. Runtime cache keys include the
+   revision, so every worker rebuilds every runtime, archive included. The cold
+   rebuild time on the current fleet is unmeasured.
+4. **Router saturation.** With the production health-check settings and
+   immediate retries, all workers can be marked down at once. Unresolved.
+5. **Cold archive (§5).** Archive restore latency, admission, cache eviction
+   and churn behaviour are unmeasured.
+6. **Bulk isolation (§4).** Needs a privacy decision (a public bulk-table
+   choice reveals a long history), bulk geometry sizing, and a view on six-week
+   tails.
+7. **Not yet measured:**
+   - real WAN and mobile latency;
+   - client CPU and memory for table evaluation;
+   - capacity at production load;
+   - more than one clean 128-wallet run per variant.
+8. **Operations.**
+   - Shadow mode withdraws public metadata while workers upgrade (about 14
+     minutes on 2026-09-27).
+   - Enhance deploys rendered from branches older than `2c658d43` can still
+     drop the transparent route.
+   - Deploy-key rotation is not coordinated with the transparent hosts.
+
+### Plan
+
+The plan has four tracks. Items in different tracks can run in parallel unless
+a dependency is named. Within a track, items run in order.
+
+| Id | Step | Depends on | Output and acceptance |
+|---|---|---|---|
+| **A — Wallet** | | | |
+| A1 | Port the choice-table lookup and filter prefetch to wallet-libraries; refuse malformed tables as `transparent-wallet` does | none | Store/contract suite passes; exact recovery against the live fleet, which now publishes tabled tails |
+| A2 | Filter profile registry in `transparent-filter` and both wallets: P and M selected by profile name, unknown profiles refused | none | Unit tests; an old-profile set still decodes byte-identically |
+| A3 | Cross-shard request concurrency: match every uncached shard first, then fetch manifests, setups and directory queries for matched shards with bounded concurrency, and commit per shard as today | none (after A1 if it should ship in the same wallet release) | Identical request counts and ledgers against the sequential walk; p50 under emulated delay |
+| A4 | Ship the transparent client with A1–A3 | A1, A2; A3 optional | Wallet release; M3/M6 gates in [remaining work](remaining-work.md) |
+| **B — Publication format** | | | |
+| B1 | New range filter profile (e.g. `zcash-transparent-range-v2`, P=13, M=12,288) in the publisher | A2 for consumers | Profile tests; `filter-sweep` sizes reproduced by the builder |
+| B2 | Candidate full publication into a new directory: v2 profile, recent-4k-8k, `--directory-choice all` for every shard | B1 | Offline verification: `shard-verify`, placement, exact replay against the journal |
+| B3 | Cold-rebuild rehearsal: prepare B2 on a bench copy of one archive owner and one recent replica | B2 | Measured rebuild time and peak memory; the input to B4's maintenance window |
+| B4 | Activate B2 through the fixed-publication workflow, with rollback to the current set | B3, A4 (no wallet on the old profile remains) | Fleet serves B2; public regression exact; old set retained for rollback |
+| **C — Operations** | | | |
+| C1 | Router health checks: longer timeout or passive health, and client backoff after 503 / no upstream | none | A 128-wallet bench step without a failure spiral, repeated at least twice per variant |
+| C2 | Deploy-key rotation procedure covering the transparent hosts; a transparent route check after every Enhance deploy | none | Runbook entry; a deploy that fails fast on a missing route |
+| C3 | Shadow-mode public availability: keep the previous publisher serving metadata while workers upgrade, or document the window | none | Public `init` available throughout a rehearsed shadow deploy, or an accepted window |
+| **D — Measurement and research** | | | |
+| D1 | WAN and mobile measurement: the same wallet sample from a remote region and a phone-class client | A1 (or `transparent-loadtest` for the wallet side) | p50 and p95 against today's emulated projections; client CPU and memory for table evaluation |
+| D2 | Capacity at production mix: fleet series r4 on the upgraded fleet | C1 | Sustained operating envelope for M5 |
+| D3 | Cold archive (§5): restore latency and admission for archive-wide tables on one bench host | none | Restore time per table, concurrent-restore behaviour, eviction policy draft |
+| D4 | Bulk isolation (§4) privacy review and bulk geometry | none | Decision to build or drop; if built, it joins a later publication after B4 |
+
+**Can start now, in parallel:** A1, A2, A3, C1, C2, C3 and D3, with D4's review
+alongside. They touch different components and need no production change,
+except C1–C3, which are operations changes with their own rollout.
+
+**Critical path to the projected −40% bytes:** A2 → B1 → B2 → B3 → B4. B4 also
+waits for A4, because the republication breaks any wallet that cannot read the
+new profile.
+
+**Latency:** A3 alone delivers most of the remaining latency gain. It does not
+depend on the republication.
 
 ## 1. Baseline and workload interpretation
 
