@@ -283,6 +283,106 @@ async fn a_query_budget_stops_between_pages_and_resumes_exactly() {
     assert!(calls > 1, "the budget was actually hit");
 }
 
+/// The spend cannot reference the receive across a fragment boundary. After
+/// reopening, the wallet still needs that receive to check the greedy split.
+#[tokio::test(flavor = "multi_thread")]
+async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
+    let mut events = Vec::new();
+    for i in 0..79u64 {
+        events.push((
+            script(1),
+            TransparentEvent::Receive(ReceiveEvent {
+                height: (FIRST + i) as u32,
+                transaction_index: 0,
+                txid: txid(10_000 + i),
+                output_index: 3,
+                value: 123,
+                coinbase: false,
+            }),
+        ));
+    }
+    let last_receive = events.last().unwrap().1;
+    events.push((
+        script(1),
+        TransparentEvent::Spend(transparent_events::SpendEvent {
+            height: (FIRST + 79) as u32,
+            transaction_index: 0,
+            spending_txid: txid(20_000),
+            input_index: 2,
+            spent_txid: txid(10_078),
+            spent_output_index: 3,
+        }),
+    ));
+    for i in 80..82u64 {
+        events.push((
+            script(1),
+            TransparentEvent::Receive(ReceiveEvent {
+                height: (FIRST + i) as u32,
+                transaction_index: 0,
+                txid: txid(10_000 + i),
+                output_index: 3,
+                value: 123,
+                coinbase: false,
+            }),
+        ));
+    }
+    let all = vec![events];
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish(dir.path(), &all);
+    assert_eq!(map.shards[0].page_rows, 2);
+    let store_dir = tempfile::tempdir().unwrap();
+    let base = serve(dir.path()).await;
+    let (store, report) = run(
+        fresh_store(store_dir.path()),
+        base.clone(),
+        dir.path(),
+        map.clone(),
+        StaticScripts(vec![entry(1, FIRST)]),
+        StaticChain::from_map(&map),
+        WorkLimits {
+            max_queries: Some(3),
+            max_private_bytes: None,
+        },
+        |t| t,
+    )
+    .await;
+    let report = report.unwrap();
+    assert!(matches!(
+        report.completion,
+        Completion::Incomplete {
+            reason: IncompleteReason::QueryBudget,
+            ..
+        }
+    ));
+    assert_eq!(report.charges.pages.queries, 1);
+    drop(store);
+    let store = fresh_store(store_dir.path());
+    let pending = store.pending().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].next_ordinal, 1);
+    let boundary = pending[0].boundary.as_ref().unwrap();
+    assert_eq!(boundary.event_bytes, 4_029);
+    assert_eq!(boundary.last_event, last_receive);
+    let (store, report) = run(
+        store,
+        base,
+        dir.path(),
+        map.clone(),
+        StaticScripts(vec![entry(1, FIRST)]),
+        StaticChain::from_map(&map),
+        WorkLimits::default(),
+        |t| t,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    assert_eq!(report.charges.directory.queries, 0);
+    assert_eq!(report.charges.pages.queries, 1);
+    assert!(store.pending().unwrap().is_empty());
+    compare(&report.ledger, &traverse(&all, &wallet(&[1]), 0));
+    assert_eq!(report.ledger.confirmed_balance(), 80 * 123);
+}
+
 /// The process forgets everything between syncs; the file does not.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restarted_wallet_resumes_from_its_commits_without_refetching() {
