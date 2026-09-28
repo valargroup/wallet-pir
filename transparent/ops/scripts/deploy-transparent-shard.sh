@@ -811,9 +811,11 @@ fleet_stage_router() {
     scp "${opts[@]}" "$caddyfile" "$WALLET_PIR_DEPLOY_USER@$TRANSPARENT_ROUTER_HOST:$staged/Caddyfile"
     local publisher=false
     if fleet_has_publisher_control; then publisher=true; fi
-    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "${TRANSPARENT_CANARY_WORKER_IDS:-}" "$publisher" <<'REMOTE'
+    # ssh joins its arguments into one command line, so an empty argument
+    # would vanish and shift the next into its place: "-" means no canary.
+    host_ssh "$TRANSPARENT_ROUTER_HOST" bash -s -- "$staged" "${TRANSPARENT_CANARY_WORKER_IDS:--}" "$publisher" <<'REMOTE'
 set -euo pipefail
-if [[ -n "$2" || "$3" == true ]]; then
+if [[ "$2" != - || "$3" == true ]]; then
   diff -q <(sudo sed '/^[[:space:]]*#/d' /etc/caddy/Caddyfile) <(sed '/^[[:space:]]*#/d' "$1/Caddyfile") >/dev/null \
     || { echo "canary or publisher-controlled rollout requires unchanged routing" >&2; exit 1; }
 fi
