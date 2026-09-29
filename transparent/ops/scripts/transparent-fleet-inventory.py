@@ -495,6 +495,13 @@ def probe_standby(config, owner):
         known.write(f"{owner['ssh_host']} {owner['ssh_host_key']}\n")
         known.flush()
         status = worker_status(config, owner, known.name)
+        # The coordinator keeps only recent publications, and a standby warms
+        # for longer than that; its own copy of the map it serves is the record.
+        directory = (status.get('active') or {}).get('directory')
+        if directory:
+            raw = fleet_ssh(config, owner['ssh_host'], 'cat ' + shlex.quote(directory + '/shards.json'),
+                            known_hosts=known.name)
+            status['shards'] = json.loads(raw)['shards']
     return ready, status
 
 
@@ -512,14 +519,20 @@ def archive_manifests(state_dir, digest, last):
 def check_standby(state_dir, owner, last, ready, status):
     """Refuse unless `owner` serves warm on a publication whose archive shards
     0..last are the active publication's. Map digests move every block; the
-    sealed archive shards do not, so the reconciler's next stage hard-links."""
+    sealed archive shards do not, so the reconciler's next stage hard-links.
+    `status['shards']`, when the probe read it, is the served map's shard list."""
     if not ready.get('ready'):
         raise InventoryError(f"{owner['id']} is not ready")
     active = (status.get('active') or {}).get('map_sha256')
     if not active or not status.get('warm') or status.get('invalidated'):
         raise InventoryError(f"{owner['id']} is not warm on a valid publication")
     current = json.loads((Path(state_dir)/'active.json').read_text())['map_sha256']
-    if active != current and archive_manifests(state_dir, active, last) != archive_manifests(state_dir, current, last):
+    if active == current:
+        return
+    # A map the coordinator has pruned is read from the worker's own copy.
+    served = ([s['manifest_digest'] for s in status['shards'][:last + 1]] if status.get('shards')
+              else archive_manifests(state_dir, active, last))
+    if served != archive_manifests(state_dir, current, last):
         raise InventoryError(f"{owner['id']} is warm on {active[:12]}, whose archive shards differ from the active "
                              'publication; rerun the standby tool')
 

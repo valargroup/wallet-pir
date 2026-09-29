@@ -369,6 +369,15 @@ class RepartitionCliTests(unittest.TestCase):
         self.repartition()
         self.assertEqual(self.intents()[NEW_OWNER], 'enrolled')
 
+    def test_a_standby_whose_map_was_pruned_is_checked_against_its_own_copy(self):
+        served = lambda archive: [{'manifest_digest': f'{archive}-{i}'} for i in range(86)]
+        self.status = {'active': {'map_sha256': 'e' * 64}, 'warm': True, 'shards': served('other')}
+        with self.assertRaisesRegex(I.InventoryError, 'archive shards differ'):
+            self.repartition()
+        self.status = {'active': {'map_sha256': 'e' * 64}, 'warm': True, 'shards': served('sealed')}
+        self.repartition()
+        self.assertEqual(self.intents()[NEW_OWNER], 'enrolled')
+
     def test_new_ranges_are_fresh_cover_the_archive_and_have_one_owner_each(self):
         for ranges, message in [('a0:0-76', 'fresh'), ('a2:0-70', 'ends at shard 76'),
                                 ('a2:0-38,a3:39-76', '2 ranges need 2 owners'), ('a2:1-76', 'start at shard 0')]:
