@@ -8,38 +8,27 @@ hold this journal's lock across provider operations and use the apply fence.
 import argparse
 import copy
 import fcntl
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import tempfile
+import sys
 import urllib.request
+
+# The shared primitives live in the same checkout; this script is never shipped alone.
+LIB = str(Path(__file__).resolve().parents[3] / 'ops/lib')
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from wallet_pir_ops import durable  # noqa: E402
 
 PROTOCOL = 'ironwood-enhance-pir-v7'
 
-
-def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+# Byte-compatible with journals, digests and evidence written before the extraction.
+digest = durable.digest
 
 
 def atomic(path, value):
-    descriptor, temporary = tempfile.mkstemp(prefix='.journal-', dir=path.parent)
-    try:
-        with os.fdopen(descriptor, 'w') as handle:
-            json.dump(value, handle, sort_keys=True, indent=2, allow_nan=False)
-            handle.write('\n')
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    durable.atomic_json(path, value, prefix='.journal-')
 
 
 def inventory_count(inventory):

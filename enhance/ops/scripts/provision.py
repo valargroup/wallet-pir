@@ -6,8 +6,6 @@ stdout. This command provisions resources only; it never registers workers.
 """
 import argparse
 import hashlib
-import fcntl
-import stat
 import importlib.util
 import ipaddress
 import json
@@ -15,8 +13,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import urllib.parse
-import urllib.request
+
+# The shared primitives live in the same checkout; this script is never shipped alone.
+LIB = str(Path(__file__).resolve().parents[3] / 'ops/lib')
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from wallet_pir_ops import digitalocean, hostlock, terraform as shared_terraform  # noqa: E402
 
 
 def sibling(name):
@@ -108,122 +112,40 @@ def reconcile_workers(state, droplets, policy, operation, inventory):
     return workers
 
 
-class DigitalOcean:
-    def __init__(self, token):
-        self.token = token
-
-    def get(self, path):
-        url = 'https://api.digitalocean.com' + path
-        request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + self.token})
-        # Do not follow redirects while carrying credentials.
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, *_args, **_kwargs):
-                return None
-        with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
-            data = response.read(16 * 1024 * 1024 + 1)
-        if len(data) > 16 * 1024 * 1024:
-            raise ValueError('oversized provider response')
-        return json.loads(data)
-
-    def droplets(self):
-        result = []
-        path = '/v2/droplets?per_page=200'
-        visited = set()
-        while path:
-            if path in visited or len(visited) >= 100:
-                raise ValueError('invalid provider pagination')
-            visited.add(path)
-            page = self.get(path)
-            result.extend(page['droplets'])
-            following = page.get('links', {}).get('pages', {}).get('next')
-            path = None
-            if following:
-                parsed = urllib.parse.urlsplit(following)
-                if parsed.scheme != 'https' or parsed.netloc != 'api.digitalocean.com' or parsed.path != '/v2/droplets' or parsed.fragment:
-                    raise ValueError('unexpected provider pagination origin')
-                path = parsed.path + '?' + parsed.query
-        if len({d['id'] for d in result}) != len(result):
-            raise ValueError('inconsistent provider pagination')
-        return result
+DigitalOcean = digitalocean.DigitalOcean
 
 
-class StateLock:
+class StateLock(hostlock.PinnedHostLock):
     """Serialize Spaces state writers on one pinned Linux host.
 
-    All manual writers must use the same host and lock. This is an operational
-    single-writer boundary, not a distributed lock or protection from root.
-    Terraform inherits the descriptor so an interrupted controller cannot release
-    the lock while its child is still applying a saved plan.
+    The shared `PinnedHostLock` at this root's own path; `policy['state_lock']`
+    pins the host, or is absent for a natively locking backend.
     """
     PATH = Path('/run/lock/enhance-pir-terraform.lock')
-    MACHINE_ID = Path('/etc/machine-id')
 
     def __init__(self, policy):
-        self.config = policy.get('state_lock')
-        self.fd = None
-
-    def __enter__(self):
-        if self.config is None:
-            return self
-        if (set(self.config) != {'type', 'machine_id'} or self.config['type'] != 'pinned_host'
-                or not re.fullmatch('[0-9a-f]{32}', self.config['machine_id'])
-                or self.MACHINE_ID.read_text().strip() != self.config['machine_id']
-                or os.geteuid() != 0):
-            raise ValueError('state writer must run as root on the pinned host')
-        fd = os.open(self.PATH, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
-                raise ValueError('state lock requires a private root-owned regular file')
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.fd = fd
-            self.verify()
-        except BaseException:
-            self.fd = None
-            os.close(fd)
-            raise
-        return self
-
-    def verify(self):
-        if self.config is not None:
-            if self.fd is None:
-                raise ValueError('pinned-host state lock is not held')
-            opened, current = os.fstat(self.fd), self.PATH.lstat()
-            if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
-                raise ValueError('state lock file was replaced')
-
-    def __exit__(self, *_args):
-        if self.fd is not None:
-            # Do not LOCK_UN: a surviving Terraform child shares this lock.
-            os.close(self.fd)
-            self.fd = None
+        super().__init__(policy.get('state_lock'))
 
 
-class Terraform:
+class Terraform(shared_terraform.Terraform):
     def __init__(self, root, directory, policy, target, token, state_lock=None):
-        self.root = Path(root).resolve()
+        super().__init__(root, env=shared_terraform.clean_environment(TF_VAR_digitalocean_token=token))
         self.directory = directory
         self.policy = policy
         self.target = target
         self.state_lock = state_lock
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith(('TF_', 'DIGITALOCEAN_'))}
-        self.env.update(TF_IN_AUTOMATION='1', TF_INPUT='0', TF_VAR_digitalocean_token=token)
         self.variables = directory / 'terraform-inputs.json'
         journal_module.atomic(self.variables, {key: policy[key] for key in (
             'region', 'project_id', 'vpc_id', 'ssh_key_ids', 'coordinator_private_ipv4', 'operator_ssh_cidrs')})
 
-    def run(self, arguments, timeout=120):
-        descriptors = ()
-        if self.policy.get('state_lock') is not None:
-            if self.state_lock is None or self.state_lock.config != self.policy['state_lock']:
-                raise ValueError('pinned-host state lock is not held')
-            self.state_lock.verify()
-            descriptors = (self.state_lock.fd,)
-        result = subprocess.run(['terraform', f'-chdir={self.root}', *arguments], env=self.env,
-                                capture_output=True, timeout=timeout, pass_fds=descriptors)
-        if result.returncode:
-            raise RuntimeError('Terraform command failed; operation remains fenced')
-        return result.stdout
+    def descriptors(self):
+        # The policy, not the caller, decides whether a pinned lock is required.
+        if self.policy.get('state_lock') is None:
+            return ()
+        if self.state_lock is None or self.state_lock.config != self.policy['state_lock']:
+            raise ValueError('pinned-host state lock is not held')
+        self.state_lock.verify()
+        return (self.state_lock.fd,)
 
     def verify(self):
         if module_digest(self.root) != self.policy['module_sha256']:
@@ -251,23 +173,19 @@ class Terraform:
             raise ValueError('isolated root requires the default workspace')
 
     def state(self):
-        return json.loads(self.run(['state', 'pull']))
+        return self.state_pull()
 
     def plan(self, label):
         self.verify()
         path = self.directory / (label + '.tfplan')
-        self.run(['plan', '-input=false', '-lock-timeout=60s', '-out=' + str(path),
-                  '-var-file=' + str(self.variables), '-var=group_count=' + str(self.target)], timeout=300)
-        os.chmod(path, 0o600)
-        plan = json.loads(self.run(['show', '-json', str(path)]))
+        self.save_plan(path, ['-var-file=' + str(self.variables), '-var=group_count=' + str(self.target)])
+        plan = self.show_json(path)
         journal_module.atomic(self.directory / (label + '.plan.json'), plan)
         return path, plan
 
     def apply(self, path, expected_digest):
         self.verify()
-        if hashlib.sha256(path.read_bytes()).hexdigest() != expected_digest:
-            raise ValueError('saved plan changed before apply')
-        self.run(['apply', '-input=false', '-lock-timeout=60s', str(path)], timeout=900)
+        super().apply(path, expected_digest)
 
 
 def inspect_fleet(terraform, provider, policy, operation, inventory):

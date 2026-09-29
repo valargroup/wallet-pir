@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 
 # Reuse the source/backend/provider binding used by the provisioning adapter.
@@ -22,6 +23,11 @@ provisioning = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(provisioning)
 journal_module = provisioning.journal_module
 installer = provisioning.sibling('bootstrap-worker')
+# The shared primitives live in the same checkout; this script is never shipped alone.
+LIB = str(Path(__file__).resolve().parents[3] / 'ops/lib')
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from wallet_pir_ops import pinned_ssh  # noqa: E402
 
 
 def targets(operation, observed):
@@ -42,37 +48,10 @@ def targets(operation, observed):
     return result
 
 
-class Remote:
+class Remote(pinned_ssh.PinnedSSH):
+    """The shared pinned SSH client, addressed by a target's private IPv4."""
     def __init__(self, target, key, known_hosts, known_hosts_sha256):
-        self.host = str(ipaddress.IPv4Address(target['private_ipv4']))
-        self.key = Path(key).resolve()
-        self.known_hosts = Path(known_hosts).resolve()
-        self.known_hosts_sha256 = known_hosts_sha256
-        if installer.sha256(self.known_hosts.read_bytes()) != known_hosts_sha256:
-            raise ValueError('SSH host-key inventory differs from the verified pin')
-        self.options = ['-F', '/dev/null', '-i', str(self.key), '-o', 'BatchMode=yes',
-                        '-o', 'IdentitiesOnly=yes', '-o', 'ForwardAgent=no', '-o', 'ConnectTimeout=10',
-                        '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(self.known_hosts),
-                        '-o', 'GlobalKnownHostsFile=/dev/null']
-
-    def check_host_keys(self):
-        if installer.sha256(self.known_hosts.read_bytes()) != self.known_hosts_sha256:
-            raise ValueError('SSH host-key inventory changed during bootstrap')
-
-    def command(self, arguments, timeout=120):
-        self.check_host_keys()
-        result = subprocess.run(['ssh', *self.options, 'root@' + self.host, shlex.join(arguments)],
-                                capture_output=True, timeout=timeout)
-        if result.returncode:
-            raise RuntimeError('remote bootstrap command failed')
-        return result.stdout
-
-    def copy(self, paths, destination):
-        self.check_host_keys()
-        result = subprocess.run(['scp', *self.options, *[str(p) for p in paths], 'root@' + self.host + ':' + destination],
-                                capture_output=True, timeout=300)
-        if result.returncode:
-            raise RuntimeError('candidate transfer failed')
+        super().__init__(target['private_ipv4'], key, known_hosts, known_hosts_sha256)
 
     def bootstrap(self, target, bundle, config):
         base = '/opt/enhance-pir/bootstrap/' + config['manifest_sha256']
