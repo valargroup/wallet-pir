@@ -325,6 +325,8 @@ class Collector:
             errors.append(str(error))
         snap['done_decision_ids'] = [d.get('decision_id') for d in inputs.get('done') or []
                                      if isinstance(d.get('decision_id'), str)]
+        snap['refused_decision_ids'] = [d['decision_id'] for d in inputs.get('done') or []
+                                        if isinstance(d.get('decision_id'), str) and d.get('phase') == 'refused']
         snap['publisher'] = self._publisher(now)
 
         # Members: inventory intent joined with membership observation and metrics.

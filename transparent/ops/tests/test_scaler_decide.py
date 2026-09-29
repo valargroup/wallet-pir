@@ -390,6 +390,19 @@ class ScaleInTests(unittest.TestCase):
         self.assertIn('daily destroy budget exhausted', decision['reason'])
         self.assertEqual(new['summary']['budget']['destroys_left'], 0)
 
+    def test_a_refused_request_spends_no_budget(self):
+        # 2026-09-29: a refused replace, retried, was charged twice and left
+        # the destroy budget at -1.
+        state = self.state()
+        state['actions'] = [{'unix': NOW - 100 * i - 4000, 'action': 'replace', 'count': None,
+                             'member': 'x', 'decision_id': str(i), 'destroy': True} for i in range(2)]
+        decision, new = run(snapshot(members=fleet(5), load=load(offered=1.0),
+                                     refused_decision_ids=['0']), fast(), state)
+        # Only the retried request counts, so this scale-in may still destroy.
+        self.assertEqual(decision['action'], 'scale_in')
+        self.assertEqual(new['summary']['budget']['destroys_left'], 0)
+        self.assertEqual(new['summary']['budget']['actions_left'], 4)
+
 
 class ReplaceTests(unittest.TestCase):
     def failing(self, member_id, since=900, members=None):

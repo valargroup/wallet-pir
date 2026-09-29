@@ -165,7 +165,10 @@ def price(policy, size):
 
 
 def budget(state, snapshot, policy, now):
-    recent = [a for a in state['actions'] if now - a['unix'] < DAY]
+    # A request the actuator refused changed nothing, so it spends no budget.
+    refused = set(snapshot.get('refused_decision_ids') or [])
+    recent = [a for a in state['actions']
+              if now - a['unix'] < DAY and a.get('decision_id') not in refused]
     cost, unknown = 0.0, []
     for member_id, member in snapshot.get('members', {}).items():
         if member['role'] != RECENT or member['intent'] == 'retired':

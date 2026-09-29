@@ -68,7 +68,7 @@ def snapshot(members=None, archive_owners=2, **overrides):
         'inventory': {'revision': 3, 'total_members': len(members)},
         'membership': {'age_seconds': 0.5, 'routing_generation': 4, 'active_map_sha256': 'a' * 64},
         'maintenance': False, 'withdrawn': False, 'operation': None, 'journal_ok': True,
-        'done_decision_ids': [],
+        'done_decision_ids': [], 'refused_decision_ids': [],
         'publisher': {'phase': 'serving', 'public_height': 100, 'node_height': 100, 'freshness_seconds': 30.0,
                       'ready_replicas': 2, 'lag_seconds': 0.0, 'age_seconds': 3.0, 'serving': True, 'error': None},
         'members': members, 'load': load(),
