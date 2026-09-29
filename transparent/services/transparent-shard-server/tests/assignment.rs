@@ -248,6 +248,7 @@ fn roster() -> Vec<RosterEntry> {
             ssh_host: format!("10.0.1.{}", i + 1),
             upstream: format!("10.0.1.{}:8093", i + 1),
             cache_bytes: 4 << 30,
+            archive_range: None,
         });
     }
     for i in 0..2 {
@@ -258,6 +259,7 @@ fn roster() -> Vec<RosterEntry> {
             ssh_host: format!("10.0.2.{}", i + 1),
             upstream: format!("10.0.2.{}:8093", i + 1),
             cache_bytes: 4 << 30,
+            archive_range: None,
         });
     }
     roster

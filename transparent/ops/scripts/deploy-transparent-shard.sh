@@ -601,7 +601,13 @@ verify_public() {
 # The single-host modes above are unchanged: this is what the pilot grows into,
 # not a replacement for it.
 
-fleet_json() { printf '%s' "$TRANSPARENT_FLEET_JSON"; }
+fleet_json() {
+  if [[ -n "${TRANSPARENT_ROSTER_FILE:-}" && -f "$TRANSPARENT_ROSTER_FILE" ]]; then
+    cat "$TRANSPARENT_ROSTER_FILE"
+  else
+    printf '%s' "$TRANSPARENT_FLEET_JSON"
+  fi
+}
 
 validate_fleet_inputs() {
   [[ "${TRANSPARENT_REPLICA_ACTIVATION:-paired}" =~ ^(paired|serial)$ ]] || fail "replica activation must be paired or serial"

@@ -31,6 +31,14 @@ pub struct RosterEntry {
     /// How the router reaches the service: `host:port`.
     pub upstream: String,
     pub cache_bytes: u64,
+    /// An archive owner's pinned range, first and last shard id inclusive.
+    ///
+    /// When every owner names one, the planner gives each exactly its range
+    /// instead of re-cutting the archive: adding or removing recent replicas,
+    /// or re-planning after a restart, never moves an archive cut and never
+    /// sends an owner cold tables. Pin all owners or none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_range: Option<[u64; 2]>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -127,11 +135,63 @@ pub fn plan(
 
     let mut workers: Vec<WorkerAssignment> = Vec::new();
 
+    let pinned = owners.iter().filter(|o| o.archive_range.is_some()).count();
+    if pinned != 0 && pinned != owners.len() {
+        return Err(PlanError::Invalid(
+            "pin every archive owner's range or none".into(),
+        ));
+    }
+
     // The archive is cut into contiguous ranges. Contiguity keeps an owner's
     // range legible ("shards 0-80") and a rebuild a single copy; the cut
     // points are chosen so each owner's reserved bytes are as close to the
     // per-owner share as a contiguous split allows.
-    if !archive.is_empty() {
+    if pinned != 0 {
+        let mut ranges: Vec<[u64; 2]> = owners.iter().filter_map(|o| o.archive_range).collect();
+        ranges.sort();
+        let mut next = 0u64;
+        for [first, last] in &ranges {
+            if *first != next || last < first {
+                return Err(PlanError::Invalid(format!(
+                    "pinned archive ranges must be contiguous from shard 0; {first}-{last} \
+                     does not start at {next}"
+                )));
+            }
+            next = last + 1;
+        }
+        if next != recent_from_shard {
+            return Err(PlanError::Invalid(format!(
+                "pinned archive ranges cover shards 0-{}, the archive is 0-{}",
+                next.saturating_sub(1),
+                recent_from_shard.saturating_sub(1)
+            )));
+        }
+        for owner in &owners {
+            let [first, last] = owner.archive_range.expect("every owner is pinned");
+            let range: Vec<u64> = (first..=last).collect();
+            let bytes: u64 = range.iter().map(|id| costs[*id as usize]).sum();
+            if bytes > budget(owner) {
+                return Err(PlanError::Invalid(format!(
+                    "archive owner {} would hold {} bytes of runtimes ({} shards) against a \
+                     budget of {} after {:.0}% headroom; its pinned range needs more memory",
+                    owner.id,
+                    bytes,
+                    range.len(),
+                    budget(owner),
+                    headroom * 100.0
+                )));
+            }
+            workers.push(WorkerAssignment {
+                id: owner.id.clone(),
+                role: WorkerRole::ArchiveOwner,
+                replica_group: None,
+                upstream: owner.upstream.clone(),
+                cache_bytes: owner.cache_bytes,
+                shards: range,
+                estimated_resident_bytes: bytes,
+            });
+        }
+    } else if !archive.is_empty() {
         let share = archive_bytes as f64 / owners.len() as f64;
         let mut ranges: Vec<Vec<u64>> = Vec::new();
         let mut current: Vec<u64> = Vec::new();
@@ -531,6 +591,7 @@ mod tests {
                 ssh_host: format!("10.0.1.{i}"),
                 upstream: format!("10.0.1.{i}:8093"),
                 cache_bytes: cache,
+                archive_range: None,
             });
         }
         for i in 0..replicas {
@@ -541,6 +602,7 @@ mod tests {
                 ssh_host: format!("10.0.2.{i}"),
                 upstream: format!("10.0.2.{i}:8093"),
                 cache_bytes: cache,
+                archive_range: None,
             });
         }
         roster
@@ -552,6 +614,83 @@ mod tests {
             source_sha: None,
             generated_at: "now".into(),
         }
+    }
+
+    fn pin(roster: &mut [RosterEntry], ranges: &[[u64; 2]]) {
+        for (owner, range) in roster
+            .iter_mut()
+            .filter(|e| e.role == WorkerRole::ArchiveOwner)
+            .zip(ranges)
+        {
+            owner.archive_range = Some(*range);
+        }
+    }
+
+    #[test]
+    fn pinned_ranges_reproduce_the_balanced_plan_byte_for_byte() {
+        let map = map(10, 4);
+        let free = plan(&map, "ab", &roster(2, 4, 64 << 30), 10, 0.1, generated()).unwrap();
+        let mut pinned_roster = roster(2, 4, 64 << 30);
+        pin(&mut pinned_roster, &[[0, 4], [5, 9]]);
+        let pinned = plan(&map, "ab", &pinned_roster, 10, 0.1, generated()).unwrap();
+        assert_eq!(pinned.canonical_bytes(), free.canonical_bytes());
+    }
+
+    #[test]
+    fn recent_replicas_come_and_go_without_moving_an_archive_cut() {
+        let map = map(10, 4);
+        let mut pinned_roster = roster(2, 6, 64 << 30);
+        // A deliberately unbalanced cut: pinning keeps it, re-cutting would not.
+        pin(&mut pinned_roster, &[[0, 2], [3, 9]]);
+        let six = plan(&map, "ab", &pinned_roster, 10, 0.1, generated()).unwrap();
+        pinned_roster.truncate(3);
+        let one = plan(&map, "ab", &pinned_roster, 10, 0.1, generated()).unwrap();
+        for id in ["archive-0", "archive-1"] {
+            assert_eq!(
+                six.worker_digest(id).unwrap(),
+                one.worker_digest(id).unwrap()
+            );
+        }
+        assert_eq!(six.worker("archive-0").unwrap().shards, vec![0, 1, 2]);
+        assert_eq!(
+            six.worker("archive-1").unwrap().shards,
+            (3..10).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn pinned_ranges_must_cover_the_archive_exactly_and_all_owners() {
+        let map = map(10, 4);
+        for ranges in [
+            vec![[0, 4], [6, 9]],
+            vec![[0, 5], [5, 9]],
+            vec![[1, 4], [5, 9]],
+            vec![[0, 4], [5, 8]],
+            vec![[0, 4], [5, 10]],
+        ] {
+            let mut roster = roster(2, 1, 64 << 30);
+            pin(&mut roster, &ranges);
+            assert!(
+                plan(&map, "ab", &roster, 10, 0.1, generated()).is_err(),
+                "{ranges:?} must be refused"
+            );
+        }
+        let mut partial = roster(2, 1, 64 << 30);
+        partial[0].archive_range = Some([0, 9]);
+        let error = plan(&map, "ab", &partial, 10, 0.1, generated()).unwrap_err();
+        assert!(error.to_string().contains("pin every archive owner"));
+    }
+
+    #[test]
+    fn a_pinned_owner_over_budget_is_refused() {
+        let map = map(10, 4);
+        let mut roster = roster(2, 1, 64 << 30);
+        roster[0].cache_bytes = 1;
+        pin(&mut roster, &[[0, 4], [5, 9]]);
+        assert!(plan(&map, "ab", &roster, 10, 0.1, generated())
+            .unwrap_err()
+            .to_string()
+            .contains("pinned range"));
     }
 
     #[test]

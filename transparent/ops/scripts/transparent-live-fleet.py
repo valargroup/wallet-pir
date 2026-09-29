@@ -99,7 +99,8 @@ class Fleet:
         self.c = config
         if config.get('status_socket_forwarding') and not config.get('control_sessions'):
             raise ValueError('status socket forwarding requires owned control sessions')
-        self.roster = json.loads(Path(config['roster']).read_text())
+        self.roster, self.roster_mark = [], None
+        self.refresh_roster(strict=True)
         self.root = Path(config['state_dir'])
         self.root.mkdir(parents=True, exist_ok=True)
         control_dir = self.root / 'ssh'
@@ -112,15 +113,39 @@ class Fleet:
         self.failures = {}
         # Latest reconciler observation per worker, published as membership.json.
         self.observations = {}
+        # When each draining member was first seen absent from the router.
+        self.drained_since = {}
         self.rpc_slots = asyncio.Semaphore(8)
         self.direct_ssh_args = ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes',
                          '-o', 'UserKnownHostsFile=' + config['known_hosts'], '-i', config['ssh_key']]
         self.ssh_args = self.direct_ssh_args + ['-oControlMaster=auto', '-oControlPersist=60',
                          '-o', 'ControlPath=' + str(control_dir / '%C')]
-        for worker in self.roster:
-            for field in ['id', 'ssh_host', 'upstream']:
-                if not re.fullmatch(r'[A-Za-z0-9_.:-]+', worker[field]):
-                    raise ValueError(f'invalid roster {field}')
+
+    def refresh_roster(self, strict=False):
+        """Reload the roster the inventory regenerates; True when it changed.
+
+        Daemons call this every second so enrolled members start and retired
+        ones stop without a restart. A roster that cannot be read or validated
+        keeps the last good one; only the first load may fail.
+        """
+        path = Path(self.c['roster'])
+        try:
+            stat = path.stat()
+            mark = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+            if mark == self.roster_mark:
+                return False
+            roster = json.loads(path.read_text())
+            for worker in roster:
+                for field in ['id', 'ssh_host', 'upstream']:
+                    if not re.fullmatch(r'[A-Za-z0-9_.:-]+', worker[field]):
+                        raise ValueError(f'invalid roster {field}')
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            if strict:
+                raise
+            print(json.dumps({'event':'roster_reload_failed', 'error':str(error)}), file=sys.stderr)
+            return False
+        self.roster, self.roster_mark = roster, mark
+        return True
 
     @asynccontextmanager
     async def lock(self, name, wait=True, timeout=None):
@@ -334,8 +359,19 @@ class Fleet:
     async def serve_control_sessions(self):
         async with self.lock('control-sessions', wait=False):
             async with asyncio.TaskGroup() as group:
-                for worker in self.roster:
-                    group.create_task(self.control_session(worker))
+                sessions = {}
+                while True:
+                    # One owned master per roster member, following the
+                    # inventory: an enrolled member gets a session within a
+                    # second and a retired member's master is closed.
+                    self.refresh_roster()
+                    wanted = {w['id']: w for w in self.roster}
+                    for worker_id in [i for i in sessions if i not in wanted]:
+                        sessions.pop(worker_id).cancel()
+                    for worker_id, worker in wanted.items():
+                        if worker_id not in sessions or sessions[worker_id].done():
+                            sessions[worker_id] = group.create_task(self.control_session(worker))
+                    await asyncio.sleep(1)
 
     async def control(self, worker, value):
         command = shlex.join([self.c.get('control_binary', '/usr/local/bin/shard-control'),
@@ -511,6 +547,11 @@ class Fleet:
             raise ValueError('invalid map digest')
         source = Path(req['directory']).resolve(strict=True)
         assignment = self.root / (digest + '.assignment.json')
+        # The roster this publication is planned from, written once: a retry
+        # after an inventory change plans and stages the same members.
+        roster = self.root / (digest + '.roster.json')
+        if not roster.exists():
+            atomic_json(roster, self.roster)
         # Same map retries preserve assignment provenance and its digest. The
         # plan is written once and completely: the controller can kill this
         # adapter mid-plan, and a truncated file must never be reused.
@@ -519,7 +560,7 @@ class Fleet:
         if not assignment.exists():
             partial = assignment.with_name(f'{assignment.name}.{os.getpid()}.partial')
             try:
-                await run([self.c['assign_binary'], 'plan', '--shard-dir', source, '--roster', self.c['roster'],
+                await run([self.c['assign_binary'], 'plan', '--shard-dir', source, '--roster', roster,
                            '--recent-from-height', str(req['recent_from']), '--headroom', '0.05',
                            '--out-assignment', partial, '--source-sha', req['source_sha']])
                 if not self.valid_plan(partial, digest):
@@ -579,6 +620,7 @@ class Fleet:
             raise ValueError('invalid router addresses')
         body = ['\trequest_body {\n\t\tmax_size 1MB\n\t}']
         if workers:
+            workers = self.render_set(workers, assignment)
             groups = []
             recent = [w for w in workers if w['role'] == 'recent-replica']
             by_id = {w['id']:w for w in assignment['workers']}
@@ -627,8 +669,49 @@ class Fleet:
         elif not audit_path.exists():
             atomic_json(audit_path, audit)
         await self.ssh(self.c['router_host'], command, text.encode())
+        atomic_json(self.root/'rendered.json', {'workers': sorted(w['id'] for w in workers) if available else [],
+                                                'unix': time.time()})
         if available and not audit['available']:
             atomic_json(audit_path, {**audit, 'available':True})
+
+    def render_set(self, workers, assignment):
+        """The members the router sends traffic to.
+
+        A member the assignment does not name is never rendered. Draining
+        recent replicas leave the router while an enrolled recent replica
+        serves, and stay only as the last resort.
+        """
+        named = {w['id'] for w in assignment['workers']}
+        kept = []
+        for worker in workers:
+            if worker['id'] in named:
+                kept.append(worker)
+            else:
+                print(json.dumps({'event':'route_skipped_unassigned', 'worker':worker['id']}), file=sys.stderr)
+        if any(w['role'] == 'recent-replica' and w.get('intent', 'enrolled') == 'enrolled' for w in kept):
+            kept = [w for w in kept if not (w['role'] == 'recent-replica' and w.get('intent') == 'draining')]
+        return kept
+
+    def rendered_ids(self):
+        try:
+            return json.loads((self.root/'rendered.json').read_text())['workers']
+        except (FileNotFoundError, ValueError, KeyError):
+            return None
+
+    async def refresh_routing(self):
+        """Re-render after an intent change without waiting for a membership
+        event. Never withdraws: an inventory change is not lost coverage."""
+        async with self.lock('routing'):
+            target = self.reconciliation_target()
+            if target is None:
+                return
+            active = target[0]
+            members = [w for w in self.roster if w['id'] in set(active['workers'])]
+            if not self.quorum({w['id'] for w in members}):
+                return
+            assignment = json.loads(Path(active['assignment']).read_text())
+            if sorted(w['id'] for w in self.render_set(members, assignment)) != self.rendered_ids():
+                await self.route(members, assignment)
 
     async def _activate(self, req):
         digest = req['map_sha256']
@@ -878,7 +961,7 @@ class Fleet:
             state = 'lagging'
         candidate = (status or {}).get('candidate') or {}
         self.observations[worker['id']] = dict(
-            role=worker['role'], state=state, routed=routed,
+            role=worker['role'], intent=worker.get('intent', 'enrolled'), state=state, routed=routed,
             map_sha256=((status or {}).get('active') or {}).get('map_sha256'),
             warm=(status or {}).get('warm'), candidate_map_sha256=candidate.get('map_sha256'),
             preparing=bool((status or {}).get('preparing')),
@@ -891,10 +974,25 @@ class Fleet:
         except (FileNotFoundError, ValueError):
             active = {'map_sha256': None, 'workers': []}
         routed = [w for w in self.roster if w['id'] in active.get('workers', [])]
-        value = dict(schema=1, updated_unix=time.time(), active_map_sha256=active.get('map_sha256'),
-                     routed=sorted(w['id'] for w in routed),
+        rendered = set(self.rendered_ids() or [])
+        now = time.time()
+        members = {}
+        for worker in self.roster:
+            observed = dict(self.observations.get(worker['id']) or dict(
+                role=worker['role'], state='booting', routed=False, observed_unix=None))
+            observed['intent'] = worker.get('intent', 'enrolled')
+            observed['rendered'] = worker['id'] in rendered
+            if observed['intent'] == 'draining' and not observed['rendered']:
+                self.drained_since.setdefault(worker['id'], now)
+            else:
+                self.drained_since.pop(worker['id'], None)
+            observed['drained_since_unix'] = self.drained_since.get(worker['id'])
+            members[worker['id']] = observed
+        value = dict(schema=1, updated_unix=now, active_map_sha256=active.get('map_sha256'),
+                     routed=sorted(w['id'] for w in routed), rendered=sorted(rendered),
                      routed_recent=sum(w['role'] == 'recent-replica' for w in routed),
-                     routing_generation=self.routing_generation(), members=self.observations)
+                     rendered_recent=sum(w['role'] == 'recent-replica' and w['id'] in rendered for w in self.roster),
+                     routing_generation=self.routing_generation(), members=members)
         atomic_json(self.root/'membership.json', value)
 
     async def member_canonical(self, req, fresh=False):
@@ -1078,8 +1176,11 @@ class Fleet:
         if len(managed) != len(self.managed_ids()) or (
                 not manage_all and any(w['role'] != 'recent-replica' for w in managed)):
             raise ValueError('managed preparation requires known recent replicas')
-        async def worker_loop(worker):
+        async def worker_loop(worker_id):
             while True:
+                worker = next((w for w in self.roster if w['id'] == worker_id), None)
+                if worker is None:
+                    return
                 mark = self.desired_mark()
                 try:
                     await self.managed_once(worker)
@@ -1088,8 +1189,13 @@ class Fleet:
                 await self.wait_desired_change(mark)
         async def heartbeat():
             while True:
+                changed = self.refresh_roster()
                 atomic_json(self.root/'reconciler-heartbeat.json', {'monotonic':time.monotonic(), 'workers':sorted(self.managed_ids())})
                 try:
+                    if changed:
+                        # A drain, undrain or quarantine changes what the
+                        # router should render, not who attests.
+                        await self.refresh_routing()
                     self.write_membership()
                 except Exception as exc:
                     print(json.dumps({'event':'membership_write_failed','error':str(exc)}), file=sys.stderr)
@@ -1108,8 +1214,19 @@ class Fleet:
                 # nothing left to do and would only compete for worker locks.
                 if not manage_all:
                     group.create_task(legacy())
-                for worker in managed:
-                    group.create_task(worker_loop(worker))
+                loops = {}
+                while True:
+                    # Follow the inventory: an enrolled member gets its own
+                    # preparation loop within a second; a retired member's
+                    # loop ends and it stops being prepared.
+                    wanted = self.managed_ids()
+                    for worker_id in [i for i in loops if i not in wanted]:
+                        loops.pop(worker_id).cancel()
+                        self.observations.pop(worker_id, None)
+                    for worker_id in wanted:
+                        if worker_id not in loops or loops[worker_id].done():
+                            loops[worker_id] = group.create_task(worker_loop(worker_id))
+                    await asyncio.sleep(1)
 
     async def request(self, req):
         if req['operation']=='prepare':

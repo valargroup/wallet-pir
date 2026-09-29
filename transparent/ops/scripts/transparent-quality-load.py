@@ -62,13 +62,24 @@ def stop(signum,frame):
  if PROC and PROC.poll() is None:PROC.terminate()
 signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
 
+def nodes(roster):
+ return roster+[{'id':'transparent-router','ssh_host':FLEET['router_host'],'service':'caddy'},{'id':'transparent-coordinator','local':True,'service':'transparent-publish-controller'}]
+
+def current_roster(previous):
+ # The inventory adds and retires recent replicas; follow it, keeping the
+ # last readable roster if a rewrite is caught half-way.
+ try:return json.loads(pathlib.Path(FLEET['roster']).read_text())
+ except (OSError,ValueError):return previous
+
 def main():
  global PROC,FLEET,NODES,EXPECTED_BINARIES
  FLEET=json.loads(FLEET_PATH.read_text())
  roster=json.loads(pathlib.Path(FLEET['roster']).read_text())
  EXPECTED_BINARIES=json.loads(EXPECTED_FILE.read_text()) if EXPECTED_FILE else {w['id']:EXPECTED_BINARY for w in roster}
- if set(EXPECTED_BINARIES)!={w['id'] for w in roster} or not all(isinstance(v,str) and re.fullmatch('[0-9a-f]{64}',v) for v in EXPECTED_BINARIES.values()):raise ValueError('qualified binary map must exactly cover the fleet roster')
- NODES=roster+[{'id':'transparent-router','ssh_host':FLEET['router_host'],'service':'caddy'},{'id':'transparent-coordinator','local':True,'service':'transparent-publish-controller'}]
+ if not {w['id'] for w in roster}<=set(EXPECTED_BINARIES) or not all(isinstance(v,str) and re.fullmatch('[0-9a-f]{64}',v) for v in EXPECTED_BINARIES.values()):raise ValueError('qualified binary map must cover the starting fleet roster')
+ # A replica enrolled later runs a release already qualified for another worker.
+ QUALIFIED=set(EXPECTED_BINARIES.values())
+ NODES=nodes(roster)
  (ROOT/'permit').write_text('deny\n')
  if (ROOT/'latched.json').exists():LATCH.append({'event':'health_latch','reason':'persisted critical incident; inspect latched.json'})
  args=[str(ROOT/'rate-query'),'--url','https://transparent-pir.valargroup.dev','--fixture',str(ROOT/'fixture.json'),'--qps','5','--workers','8','--permit',str(ROOT/'permit')]
@@ -79,6 +90,7 @@ def main():
   thread=threading.Thread(target=reader,args=(PROC,),daemon=True);thread.start()
   while not STOP:
    tick=time.monotonic()
+   roster=current_roster(roster);NODES=nodes(roster)
    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
     futures=[pool.submit(worker,w) for w in NODES]
     c=pool.submit(fetch,'http://127.0.0.1:8094/v1/status');public=pool.submit(fetch,'https://transparent-pir.valargroup.dev/v1/shards/init')
@@ -98,9 +110,10 @@ def main():
      elif (name,key) not in baseline:baseline[name,key]=value
      elif value>baseline[name,key]:critical.append(name+': '+key+' increased')
     if body.get('runtime_cache',{}).get('write_failures',0)>0:reasons.append(name+': cache write failures')
-    if name in EXPECTED_BINARIES:
+    if name in EXPECTED_BINARIES or name in {w['id'] for w in roster}:
      if 'binary_sha256' not in body:reasons.append(name+': binary observation unavailable')
-     elif body['binary_sha256']!=EXPECTED_BINARIES[name]:critical.append(name+': worker binary changed from configured qualified source')
+     elif name in EXPECTED_BINARIES and body['binary_sha256']!=EXPECTED_BINARIES[name]:critical.append(name+': worker binary changed from configured qualified source')
+     elif name not in EXPECTED_BINARIES and body['binary_sha256'] not in QUALIFIED:critical.append(name+': enrolled worker runs an unqualified binary')
    c=controller.get('body',{})
    if controller.get('http')!=200 or c.get('phase')!='serving':reasons.append('publisher not serving')
    if c.get('node_height',0)-c.get('public_height',0)>2:reasons.append('publication more than two blocks behind node')

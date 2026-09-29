@@ -21,6 +21,9 @@ SCRIPT = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location('live_fleet', SCRIPT/'transparent-live-fleet.py')
 LIVE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(LIVE)
+INVENTORY_SPEC = importlib.util.spec_from_file_location('fleet_inventory', SCRIPT/'transparent-fleet-inventory.py')
+INVENTORY = importlib.util.module_from_spec(INVENTORY_SPEC)
+INVENTORY_SPEC.loader.exec_module(INVENTORY)
 ROOT = Path('/opt/transparent-publisher')
 
 
@@ -319,7 +322,13 @@ async def main():
         # Reuse the environment's existing deployment identity at runtime.
         secret_file(ROOT/'credentials/deploy-ssh',os.environ['WALLET_PIR_DEPLOY_SSH_KEY'])
         secret_file(ROOT/'credentials/known_hosts',os.environ['TRANSPARENT_SSH_KNOWN_HOSTS'])
-        LIVE.atomic_json(ROOT/'roster.json',json.loads(os.environ['TRANSPARENT_FLEET_JSON']))
+        if (ROOT/'state/inventory.json').exists():
+            # The inventory owns membership once it exists: keep its roster
+            # (elastic replicas, pinned archive ranges) and its host keys.
+            INVENTORY.Inventory(ROOT/'state', ROOT/'roster.json', ROOT/'credentials/known_hosts').project(
+                INVENTORY.Inventory(ROOT/'state').last_good())
+        else:
+            LIVE.atomic_json(ROOT/'roster.json',json.loads(os.environ['TRANSPARENT_FLEET_JSON']))
         fleet_config=dict(roster=str(ROOT/'roster.json'),state_dir=str(ROOT/'state'),ssh_key=str(ROOT/'credentials/deploy-ssh'),known_hosts=str(ROOT/'credentials/known_hosts'),
                           assign_binary='/usr/local/bin/shard-assign',public_host='transparent-pir.valargroup.dev',router_host=os.environ['TRANSPARENT_ROUTER_HOST'],
                           authority_upstream='https://enhance-pir.valargroup.dev',internal_listen=os.environ['TRANSPARENT_ROUTER_HOST']+':8080')
@@ -377,6 +386,7 @@ async def main():
             os.chmod('/usr/local/bin/'+name+'.next',0o755)
             os.replace('/usr/local/bin/'+name+'.next','/usr/local/bin/'+name)
         shutil.copy2(SCRIPT/'transparent-live-fleet.py',ROOT/'transparent-live-fleet.py')
+        shutil.copy2(SCRIPT/'transparent-fleet-inventory.py',ROOT/'transparent-fleet-inventory.py')
         shutil.copy2(SCRIPT.parent/'deploy/transparent-publish-controller.service','/etc/systemd/system/transparent-publish-controller.service')
         shutil.copy2(SCRIPT.parent/'deploy/transparent-replica-reconciler.service','/etc/systemd/system/transparent-replica-reconciler.service')
         shutil.copy2(SCRIPT.parent/'deploy/transparent-control-sessions.service','/etc/systemd/system/transparent-control-sessions.service')

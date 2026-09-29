@@ -243,3 +243,153 @@ class PlanTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DynamicRosterTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.roster_path = self.root/'roster'
+        self.members = [dict(id='owner', role='archive-owner', ssh_host='owner', upstream='owner:8093', intent='enrolled'),
+                        dict(id='r1', role='recent-replica', ssh_host='r1', upstream='r1:8093', intent='enrolled'),
+                        dict(id='r2', role='recent-replica', ssh_host='r2', upstream='r2:8093', intent='enrolled')]
+        self.write_roster()
+        self.f = M.Fleet(dict(roster=str(self.roster_path), state_dir=str(self.root), known_hosts='unused',
+                              ssh_key='unused', manage_all_workers=True, public_host='pir.example',
+                              authority_upstream='https://filters.example', router_host='router'))
+        self.assignment = self.root/'assignment'
+        self.assignment.write_text(json.dumps({'workers': [{'id': w['id'], 'shards': [0] if w['role'] == 'archive-owner' else [1]}
+                                                           for w in self.members]}))
+        req = dict(map_sha256='a'*64, directory=str(self.root), assignment=str(self.assignment))
+        M.atomic_json(self.root/('a'*64+'.request.json'), req)
+        M.atomic_json(self.root/'desired.json', req)
+        M.atomic_json(self.root/'active.json', dict(map_sha256='a'*64, workers=['owner', 'r1', 'r2'], assignment=str(self.assignment)))
+        self.rendered = []
+        async def ssh(host, command, data=None, **kwargs):
+            self.rendered.append(data.decode())
+            return b''
+        self.f.ssh = ssh
+
+    def write_roster(self):
+        M.atomic_json(self.roster_path, self.members)
+        # A same-second rewrite must still register as a change.
+        os.utime(self.roster_path, ns=(time.time_ns(), time.time_ns() + len(self.rendered if hasattr(self, 'rendered') else []) + 1))
+
+    def intent(self, worker_id, intent):
+        next(m for m in self.members if m['id'] == worker_id)['intent'] = intent
+        self.write_roster()
+
+    def test_roster_reloads_on_change_and_keeps_the_last_good_one(self):
+        self.assertFalse(self.f.refresh_roster())
+        self.members.append(dict(id='r3', role='recent-replica', ssh_host='r3', upstream='r3:8093', intent='enrolled'))
+        self.write_roster()
+        self.assertTrue(self.f.refresh_roster())
+        self.assertEqual([w['id'] for w in self.f.roster], ['owner', 'r1', 'r2', 'r3'])
+        self.roster_path.write_text('[{"id": "bad host", "ssh_host')
+        self.assertFalse(self.f.refresh_roster())
+        self.assertEqual(len(self.f.roster), 4)
+
+    def test_draining_replicas_leave_the_router_unless_they_are_the_last(self):
+        assignment = json.loads(self.assignment.read_text())
+        self.intent('r2', 'draining'); self.f.refresh_roster()
+        kept = [w['id'] for w in self.f.render_set(self.f.roster, assignment)]
+        self.assertEqual(kept, ['owner', 'r1'])
+        only_draining = [w for w in self.f.roster if w['id'] != 'r1']
+        self.assertEqual([w['id'] for w in self.f.render_set(only_draining, assignment)], ['owner', 'r2'])
+
+    def test_an_unassigned_member_is_never_rendered(self):
+        assignment = {'workers': [{'id': 'owner', 'shards': [0]}, {'id': 'r1', 'shards': [1]}]}
+        self.assertEqual([w['id'] for w in self.f.render_set(self.f.roster, assignment)], ['owner', 'r1'])
+
+    async def test_an_intent_change_rerenders_without_a_membership_event(self):
+        await self.f.refresh_routing()
+        self.assertEqual(self.f.rendered_ids(), ['owner', 'r1', 'r2'])
+        self.intent('r2', 'draining'); self.f.refresh_roster()
+        await self.f.refresh_routing()
+        self.assertEqual(self.f.rendered_ids(), ['owner', 'r1'])
+        self.assertNotIn('r2:8093', self.rendered[-1])
+        calls = len(self.rendered)
+        await self.f.refresh_routing()
+        self.assertEqual(len(self.rendered), calls, 'an unchanged render is not reapplied')
+
+    async def test_an_inventory_change_never_withdraws(self):
+        self.members = [m for m in self.members if m['role'] != 'recent-replica']
+        self.write_roster(); self.f.refresh_roster()
+        await self.f.refresh_routing()
+        self.assertEqual(self.rendered, [])
+
+    async def test_membership_reports_booting_rendered_and_drained_since(self):
+        self.members.append(dict(id='r3', role='recent-replica', ssh_host='r3', upstream='r3:8093', intent='enrolled'))
+        self.intent('r2', 'draining'); self.f.refresh_roster()
+        await self.f.refresh_routing()
+        self.f.write_membership()
+        value = json.loads((self.root/'membership.json').read_text())
+        self.assertEqual(value['members']['r3']['state'], 'booting')
+        self.assertFalse(value['members']['r2']['rendered'])
+        self.assertIsNotNone(value['members']['r2']['drained_since_unix'])
+        self.assertEqual(value['rendered_recent'], 1)
+        self.intent('r2', 'enrolled'); self.f.refresh_roster()
+        await self.f.refresh_routing()
+        self.f.write_membership()
+        value = json.loads((self.root/'membership.json').read_text())
+        self.assertIsNone(value['members']['r2']['drained_since_unix'])
+
+    async def test_the_reconciler_follows_enrolled_and_retired_members(self):
+        seen = []
+        async def managed_once(worker):
+            seen.append(worker['id'])
+            await asyncio.sleep(0.05)
+        self.f.managed_once = managed_once
+        self.f.refresh_routing = AsyncMock()
+        task = asyncio.create_task(self.f.serve_reconciler())
+        await asyncio.sleep(0.3)
+        self.members.append(dict(id='r3', role='recent-replica', ssh_host='r3', upstream='r3:8093', intent='enrolled'))
+        self.members = [m for m in self.members if m['id'] != 'r1']
+        self.write_roster()
+        await asyncio.sleep(2.5)
+        seen.clear()
+        await asyncio.sleep(1.2)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertIn('r3', seen)
+        self.assertNotIn('r1', seen)
+
+    async def test_control_sessions_follow_the_roster(self):
+        running = set()
+        async def control_session(worker):
+            running.add(worker['id'])
+            try:
+                await asyncio.sleep(3600)
+            finally:
+                running.discard(worker['id'])
+        self.f.control_session = control_session
+        task = asyncio.create_task(self.f.serve_control_sessions())
+        await asyncio.sleep(0.3)
+        self.assertEqual(running, {'owner', 'r1', 'r2'})
+        self.members = [m for m in self.members if m['id'] != 'r2']
+        self.members.append(dict(id='r3', role='recent-replica', ssh_host='r3', upstream='r3:8093', intent='enrolled'))
+        self.write_roster()
+        await asyncio.sleep(1.5)
+        self.assertEqual(running, {'owner', 'r1', 'r3'})
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+    async def test_each_publication_is_planned_from_one_roster_snapshot(self):
+        plans = []
+        async def planner(args, *rest, **kwargs):
+            roster = Path(args[args.index('--roster')+1])
+            plans.append(json.loads(roster.read_text()))
+            out = Path(args[args.index('--out-assignment')+1])
+            out.write_text(json.dumps(dict(schema=M.ASSIGNMENT_SCHEMA, set={'map_sha256': 'c'*64}, workers=[{'id': 'owner'}])))
+            return b''
+        self.f.c.update(assign_binary='shard-assign')
+        self.f.wait_managed = AsyncMock(return_value={'expected': 'a'*64})
+        req = dict(map_sha256='c'*64, directory=str(self.root), recent_from=1, source_sha='s')
+        with patch.object(M, 'run', new=AsyncMock(side_effect=planner)):
+            await self.f.prepare(dict(req))
+        snapshot = json.loads((self.root/('c'*64+'.roster.json')).read_text())
+        self.assertEqual([w['id'] for w in snapshot], ['owner', 'r1', 'r2'])
+        self.assertEqual(plans, [snapshot])
