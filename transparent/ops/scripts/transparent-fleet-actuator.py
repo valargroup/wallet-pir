@@ -488,8 +488,11 @@ class Actuator:
         with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
             json.dump(shown, f)
         try:
+            # The validator checks every create against the whole pinned profile.
             args = [sys.executable, str(SCRIPTS/'transparent-plan.py'), '--plan-json', f.name,
-                    '--size', self.c['size'], '--image', self.c['image'], '--region', self.c['region']]
+                    '--size', self.c['size'], '--image', self.c['image'], '--region', self.c['region'],
+                    '--vpc-uuid', self.c['vpc_uuid'], '--tag', self.c['worker_tag'],
+                    '--project-id', self.c['project_id']]
             for name in create:
                 args += ['--allow-create', name]
             for name in destroy:
