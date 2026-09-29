@@ -77,6 +77,35 @@ installs the forwarding-only `status-control` key with explicit `permitopen`
 (8481, 8482, 8484) and `permitlisten` (8495) restrictions. The CUDA worker
 remains an optional build (`--features cuda`, `--cuda`) and is not deployed.
 
+### Deploy CLI
+
+`ops/scripts/wallet-pir-deploy.py` can deploy Status as the `status` service. It
+has not yet been used against production; until it has, the manual rollout
+remains the procedure and the fallback. Commands, inventory, locking, journal
+and rollback are described in
+[the Enhance deployment guide](deployment.md#deploy-cli).
+
+For Status the tool renders each role's whole unit from its `.service.in`
+template, with `@RELEASE@` set to `/opt/status-pir/releases/<sha256>` and
+`@NETWORK@` taken from the inventory. The rollout order is worker, router, then
+the coordinator's controller. The tunnels are not managed.
+[deploy.toml](../ops/deploy/deploy.toml) records each role's `/control/health`
+or `/internal/health` readiness check. The `status-pir` release kind in
+`tools/ci/release.py` bundles the binary with these templates. It is assembled
+only on request, from a `native-reinspiring` target directory. Full CI does not
+build or upload it yet, so `--binary` is the input until it does.
+
+The templates currently differ from the live units: the worker template has
+`MemoryMax=12G` and the router template `STATUS_PREPARATION_THREADS=6`, while
+the live units recorded on 2026-09-27 had 6G and four threads. The tool compares
+each rendered unit's effective configuration with the live one and refuses any
+difference beyond the binary unless `--allow-unit-drift` is given. The intended
+order is:
+
+1. Run `capture-baseline status` and review the live units.
+2. Reconcile the templates with the live units.
+3. Deploy the running binary with `--sha256`. This must be a no-op.
+
 ## Publication and recovery
 
 Control binds network, recovery epoch, generation, process incarnation and

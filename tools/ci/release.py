@@ -20,6 +20,9 @@ BINARIES = {
     'transparent-filter': ['transparent-filter-server'],
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
+    # Status roles and controller, from the native target like
+    # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
+    'status-pir': ['status-pir'],
 }
 FILES = {
     'enhance-pir': ['enhance/ops/scripts/test-local.py', 'enhance/ops/scripts/bootstrap-worker.py',
@@ -29,8 +32,13 @@ FILES = {
     'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
     'transparent-shard': ['transparent/ops/deploy/transparent-shard-server.service', 'transparent/ops/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
+    'status-pir': ['enhance/ops/deploy/status-worker.service.in', 'enhance/ops/deploy/status-router.service.in',
+                   'enhance/ops/deploy/status-controller-qualification.service.in'],
 }
 FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native-tag-integration.md']
+# Kinds built with their own features and target directory, so only assembled
+# when requested explicitly.
+ON_REQUEST = ('enhance-pir-native', 'status-pir')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
     'enhance-pir': 'ironwood-enhance-pir-v7',
@@ -83,9 +91,7 @@ def assemble(sha, target, output, kind=None):
     check_sha(sha)
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=ROOT))
     output.mkdir(parents=True, exist_ok=False)
-    # The native bundle needs its own feature build and target directory, so it
-    # is only assembled when requested explicitly.
-    selected = {kind: BINARIES[kind]} if kind else {k: v for k, v in BINARIES.items() if k != 'enhance-pir-native'}
+    selected = {kind: BINARIES[kind]} if kind else {k: v for k, v in BINARIES.items() if k not in ON_REQUEST}
     for kind, binaries in selected.items():
         directory = output / kind
         directory.mkdir()

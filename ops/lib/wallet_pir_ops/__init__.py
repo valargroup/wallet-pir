@@ -12,4 +12,6 @@ is installed on hosts by itself.
 - `pinned_ssh`: SSH and SCP against a verified, pinned known-hosts file.
 - `transparent_unit`: rewriting a serving transparent worker's systemd unit for
   a new worker, and the per-role memory limits it carries.
+- `deploy`: the transactional Enhance and Status deploy CLI
+  (`ops/scripts/wallet-pir-deploy.py`).
 """

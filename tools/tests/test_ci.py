@@ -106,16 +106,24 @@ class ReleaseTests(unittest.TestCase):
             for name in set(sum(release.BINARIES.values(), [])):
                 (root / 'target/release' / name).write_bytes(b'fake binary')
             release.assemble(SHA, root / 'target', root / 'bundles')
-            # The native bundle is only assembled on request, from its own target.
-            self.assertFalse((root / 'bundles' / 'enhance-pir-native.tar.gz').exists())
-            release.assemble(SHA, root / 'target', root / 'bundles-native', 'enhance-pir-native')
+            # Native bundles are only assembled on request, from their own target.
+            for kind in release.ON_REQUEST:
+                self.assertFalse((root / 'bundles' / f'{kind}.tar.gz').exists())
+                release.assemble(SHA, root / 'target', root / f'bundles-{kind}', kind)
             for kind in release.BINARIES:
-                bundles = root / ('bundles-native' if kind == 'enhance-pir-native' else 'bundles')
+                bundles = root / (f'bundles-{kind}' if kind in release.ON_REQUEST else 'bundles')
                 release.extract(bundles / f'{kind}.tar.gz', root / kind, SHA, kind)
             native = json.loads((root / 'enhance-pir-native' / 'candidate.json').read_text())
             self.assertEqual(native['protocol_revision'], 'ironwood-enhance-pir-v9-native-two-mask-m29')
             with self.assertRaises(ValueError):
-                release.extract(root / 'bundles-native' / 'enhance-pir-native.tar.gz', root / 'cross', SHA, 'enhance-pir')
+                release.extract(root / 'bundles-enhance-pir-native' / 'enhance-pir-native.tar.gz', root / 'cross', SHA, 'enhance-pir')
+            # The Status bundle carries the unit templates its deploy renders, and no candidate claim.
+            self.assertEqual(sorted(p.name for p in (root / 'status-pir').iterdir()),
+                             ['SHA256SUMS', 'revision', 'status-controller-qualification.service.in',
+                              'status-pir', 'status-router.service.in', 'status-worker.service.in'])
+            self.assertTrue((root / 'status-pir' / 'status-pir').stat().st_mode & 0o111)
+            with self.assertRaises(ValueError):
+                release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', SHA, 'enhance-pir-native')
 
     def test_enhance_candidate_cannot_claim_qualification(self):
         kind = 'enhance-pir'
