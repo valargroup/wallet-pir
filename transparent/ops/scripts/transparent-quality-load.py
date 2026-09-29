@@ -2,7 +2,7 @@
 """Persistent exact-query load with local health gates; never mutates production services."""
 import argparse,collections,concurrent.futures,datetime,gzip,json,os,pathlib,re,signal,subprocess,threading,time,urllib.request,urllib.error
 ROOT=pathlib.Path('/opt/transparent-5qps-20260929')
-FLEET={};NODES=[];EXPECTED_BINARY="";FLEET_PATH=pathlib.Path("/opt/transparent-publisher/fleet.json")
+FLEET={};NODES=[];EXPECTED_BINARY="";EXPECTED_FILE=None;EXPECTED_BINARIES={};FLEET_PATH=pathlib.Path("/opt/transparent-publisher/fleet.json")
 LOCK=threading.Lock();COUNTS=collections.Counter();WINDOW=collections.deque();LATCH=[];PROC=None;STOP=False;LAST_READY=None
 
 def utc():return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -63,9 +63,11 @@ def stop(signum,frame):
 signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
 
 def main():
- global PROC,FLEET,NODES
+ global PROC,FLEET,NODES,EXPECTED_BINARIES
  FLEET=json.loads(FLEET_PATH.read_text())
  roster=json.loads(pathlib.Path(FLEET['roster']).read_text())
+ EXPECTED_BINARIES=json.loads(EXPECTED_FILE.read_text()) if EXPECTED_FILE else {w['id']:EXPECTED_BINARY for w in roster}
+ if set(EXPECTED_BINARIES)!={w['id'] for w in roster} or not all(isinstance(v,str) and re.fullmatch('[0-9a-f]{64}',v) for v in EXPECTED_BINARIES.values()):raise ValueError('qualified binary map must exactly cover the fleet roster')
  NODES=roster+[{'id':'transparent-router','ssh_host':FLEET['router_host'],'service':'caddy'},{'id':'transparent-coordinator','local':True,'service':'transparent-publish-controller'}]
  (ROOT/'permit').write_text('deny\n')
  if (ROOT/'latched.json').exists():LATCH.append({'event':'health_latch','reason':'persisted critical incident; inspect latched.json'})
@@ -96,7 +98,9 @@ def main():
      elif (name,key) not in baseline:baseline[name,key]=value
      elif value>baseline[name,key]:critical.append(name+': '+key+' increased')
     if body.get('runtime_cache',{}).get('write_failures',0)>0:reasons.append(name+': cache write failures')
-    if 'binary_sha256' in body and body['binary_sha256']!=EXPECTED_BINARY:critical.append(name+': worker binary changed from configured qualified source')
+    if name in EXPECTED_BINARIES:
+     if 'binary_sha256' not in body:reasons.append(name+': binary observation unavailable')
+     elif body['binary_sha256']!=EXPECTED_BINARIES[name]:critical.append(name+': worker binary changed from configured qualified source')
    c=controller.get('body',{})
    if controller.get('http')!=200 or c.get('phase')!='serving':reasons.append('publisher not serving')
    if c.get('node_height',0)-c.get('public_height',0)>2:reasons.append('publication more than two blocks behind node')
@@ -137,10 +141,12 @@ if __name__=='__main__':
  parser=argparse.ArgumentParser()
  parser.add_argument('--root',type=pathlib.Path,required=True)
  parser.add_argument('--fleet',type=pathlib.Path,required=True)
- parser.add_argument('--expected-worker-sha256',required=True)
+ group=parser.add_mutually_exclusive_group(required=True)
+ group.add_argument('--expected-worker-sha256')
+ group.add_argument('--expected-worker-sha256-file',type=pathlib.Path)
  args=parser.parse_args()
- if not re.fullmatch('[0-9a-f]{64}',args.expected_worker_sha256):parser.error('expected a qualified binary SHA-256')
- ROOT=args.root;FLEET_PATH=args.fleet;EXPECTED_BINARY=args.expected_worker_sha256
+ if args.expected_worker_sha256 and not re.fullmatch('[0-9a-f]{64}',args.expected_worker_sha256):parser.error('expected a qualified binary SHA-256')
+ ROOT=args.root;FLEET_PATH=args.fleet;EXPECTED_BINARY=args.expected_worker_sha256;EXPECTED_FILE=args.expected_worker_sha256_file
  try:main()
  finally:
   (ROOT/'permit').write_text('deny\n')
