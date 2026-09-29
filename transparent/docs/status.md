@@ -6,6 +6,24 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Elastic recent tier, 2026-09-29
+
+- 13:13 UTC: the fleet inventory owns membership; archive owners are pinned to
+  0–38 and 39–76 and the first inventory plans matched the live worker rows.
+- 13:3x UTC: recent replicas run worker `a704616c`, which builds runtimes in a
+  dedicated low-priority pool. Two recent replicas passed the 20 QPS gate at
+  20.9 QPS (p99 53 ms, 12,519 exact); recent-03 and recent-04 were retired and
+  destroyed through a checked saved plan. The recent tier is two replicas.
+- 13:12–13:24 UTC: the actuator created `transparent-pir-recent-05` from the
+  elastic root, bootstrapped it with the fleet release, routed it, then drained,
+  stopped, retired and destroyed it (droplet 604659753). The continuous 5 QPS
+  load stayed exact throughout; it paused for five minutes while the new
+  replica booted, fixed since.
+- Archive owners still run `0ece0ae1`. The actuator timer is enabled; the
+  scaler policy is in `observe` until the scaler is deployed.
+
+See the [evidence](../evidence/recent-floor-2026-09-29/README.md).
+
 ## Replica membership fix, 2026-09-29
 
 Before 11:20 UTC only one recent replica served each publication: over the two

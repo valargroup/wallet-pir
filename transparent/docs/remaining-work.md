@@ -339,17 +339,17 @@ only on the owner's explicit go-ahead.
   live `ready_replicas`, slot metrics, rolling recent upgrades. Production gate:
   4 of 4 recent replicas routed in at least 99% of blocks over 24 hours (open;
   see [status](status.md)).
-- [ ] **1. Dynamic inventory and pinned placement.** Durable intent inventory with
+- [x] **1. Dynamic inventory and pinned placement.** Live since 2026-09-29 13:13 UTC; the first inventory plans reproduced the live worker rows. Durable intent inventory with
   compare-and-swap writes, the archive partition pinned so adding or removing
   recent members never re-cuts archive ranges, v1 assignments only, deploy and
   publisher scripts reading the inventory. Gate: the planner reproduces the live
   assignment; enroll, drain and retire a recent replica on a bench fleet under
   load.
-- [ ] **1b. Recent tier from four to two.** Drain recent-03 and recent-04, run
+- [x] **1b. Recent tier from four to two.** Done 2026-09-29: two replicas passed at 20.9 QPS (p99 53 ms); recent-03/04 destroyed ([evidence](../evidence/recent-floor-2026-09-29/README.md)). Drain recent-03 and recent-04, run
   20 QPS on the pair (p99 < 2 s, p50 < 700 ms), then retire them and reduce
   `transparent_recent_count`; cancel the drains if the gate fails. Standing gate:
   2 of 2 routed in at least 99% of blocks over 24 hours.
-- [ ] **2. Elastic recent provisioning.** A recent-only isolated Terraform root
+- [x] **2. Elastic recent provisioning.** Validated 2026-09-29: recent-05 created, bootstrapped and routed, then drained and destroyed by the actuator. A recent-only isolated Terraform root
   following the Enhance `enhance-v4` pattern, a journaled actuator and a saved-plan
   validator that refuses archive and production-root addresses.
 - [ ] **3. Automatic recent failure replacement** (make-before-break) and
