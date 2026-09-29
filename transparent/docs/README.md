@@ -17,6 +17,7 @@ Do not infer live state from a plan, source code, a workflow default or an old h
 The contract governs intended behavior; code establishes implementation; deployment governs target configuration; dated operational evidence establishes live state. If these disagree, report the gap and update the owning document with the implementation change. Do not silently weaken the contract.
 
 8. [Regression and conformance tests](testing.md): accepted-anchor recovery, fixed fixtures, and manual release validation.
+9. [Elastic recent replicas](elastic-recent.md): inventory, membership, scaler and actuator formats for the automatically scaled recent tier.
 
 ## Product boundaries
 
