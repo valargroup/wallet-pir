@@ -156,7 +156,7 @@ fn main() -> Result<(), BoxError> {
                     generated_at: chrono_free_now(),
                 },
             )?;
-            std::fs::write(&out_assignment, serde_json::to_vec_pretty(&assignment)?)?;
+            write_atomically(&out_assignment, &serde_json::to_vec_pretty(&assignment)?)?;
             eprintln!(
                 "assignment {} written to {}",
                 assignment.digest(),
@@ -251,4 +251,30 @@ fn chrono_free_now() -> String {
         (rem % 3600) / 60,
         rem % 60
     )
+}
+
+/// Writes `bytes` so that `path` is either absent, its previous content, or
+/// complete: a planner killed mid-write must never leave a truncated plan that
+/// a later retry would take for the publication's assignment.
+fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("assignment path names no file"))?;
+    let partial = path.with_file_name(format!(
+        ".{}.{}.partial",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let mut file = std::fs::File::create(&partial)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&partial, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&partial);
+    })?;
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
 }

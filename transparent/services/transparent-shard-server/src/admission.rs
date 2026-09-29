@@ -122,10 +122,30 @@ pub struct HeldSlot {
     _slot: OwnedSemaphorePermit,
 }
 
+/// An evaluation slot, timed from acquisition to release.
+///
+/// Busy time over wall time and slots is the worker's utilization, the
+/// signal replica scaling reads. It includes everything done while holding
+/// the slot, runtime acquisition as well as evaluation.
+struct Slot {
+    _permit: OwnedSemaphorePermit,
+    acquired: Instant,
+    metrics: Arc<Metrics>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        Metrics::add(
+            &self.metrics.slot_busy_micros,
+            self.acquired.elapsed().as_micros() as u64,
+        );
+    }
+}
+
 /// A request holding an evaluation slot.
 pub struct Admitted {
     pending: Pending,
-    _slot: OwnedSemaphorePermit,
+    _slot: Slot,
 }
 
 impl Admitted {
@@ -140,6 +160,7 @@ impl Admitted {
 
 impl Admission {
     pub fn new(config: AdmissionConfig, metrics: Arc<Metrics>) -> Self {
+        Metrics::set(&metrics.query_slots, config.query_slots.max(1) as u64);
         Self {
             waiters: Arc::new(Semaphore::new(
                 config.query_slots.max(1) + config.max_waiters,
@@ -216,8 +237,12 @@ impl Admission {
             waited.elapsed().as_micros() as u64,
         );
         Ok(Admitted {
+            _slot: Slot {
+                _permit: slot,
+                acquired: Instant::now(),
+                metrics: pending.metrics.clone(),
+            },
             pending,
-            _slot: slot,
         })
     }
 
@@ -274,6 +299,24 @@ mod tests {
             .is_err());
         assert_eq!(admission.metrics.queue_wait_seconds.count(), 1);
         assert_eq!(Metrics::get(&admission.metrics.queries_cancelled), 1);
+    }
+
+    #[tokio::test]
+    async fn slots_and_their_busy_time_are_reported() {
+        let admission = admission(3, 1, 1 << 20);
+        assert_eq!(Metrics::get(&admission.metrics.query_slots), 3);
+        let admitted = admission
+            .wait_slot(admission.try_enter(None).unwrap())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            Metrics::get(&admission.metrics.slot_busy_micros),
+            0,
+            "busy time is counted when the slot is released"
+        );
+        admitted.complete();
+        assert!(Metrics::get(&admission.metrics.slot_busy_micros) >= 20_000);
     }
 
     #[tokio::test]

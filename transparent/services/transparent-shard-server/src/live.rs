@@ -20,6 +20,11 @@ use std::{
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt;
 
+/// Refusal for a prepare that names a publication this worker already holds
+/// under a different row of the assignment.
+pub const ASSIGNMENT_CHANGED: &str =
+    "this publication is already held under a different assignment for this worker";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Publication {
     pub directory: PathBuf,
@@ -198,11 +203,30 @@ impl LiveService {
                 publication,
             } => {
                 let epoch = self.0.epoch.load(std::sync::atomic::Ordering::Acquire);
+                // What this worker's own row of the requested assignment
+                // digests to. A publication already held under another row
+                // must be refused, not reported prepared: the durable active
+                // record names the assignment file, and a restart would load
+                // rows no prepare ever checked.
+                let requested = match (&self.0.options.scope, &publication.assignment) {
+                    (LoadScope::Assigned { worker_id, .. }, Some(path)) => Some(
+                        Assignment::load(path)
+                            .and_then(|assignment| assignment.worker_digest(worker_id))
+                            .map_err(|e| e.to_string())?,
+                    ),
+                    _ => None,
+                };
+                let held_as_requested = |set: &ShardSet| {
+                    set.scope().map(|scope| &scope.worker_assignment_sha256) == requested.as_ref()
+                };
                 let old = {
                     let active = self.0.active.read().unwrap();
                     if active.publication.map_sha256 == publication.map_sha256
                         && active.state.is_warm()
                     {
+                        if !held_as_requested(active.state.set()) {
+                            return Err(ASSIGNMENT_CHANGED.into());
+                        }
                         return Ok(serde_json::json!({"prepared":publication.map_sha256}));
                     }
                     if active.publication.map_sha256 != expected {
@@ -210,11 +234,14 @@ impl LiveService {
                     }
                     active.state.clone()
                 };
-                if self.0.candidate.lock().await.as_ref().is_some_and(|c| {
+                if let Some(candidate) = self.0.candidate.lock().await.as_ref().filter(|c| {
                     c.publication.map_sha256 == publication.map_sha256
                         && c.state.is_warm()
                         && c.epoch == epoch
                 }) {
+                    if !held_as_requested(candidate.state.set()) {
+                        return Err(ASSIGNMENT_CHANGED.into());
+                    }
                     return Ok(serde_json::json!({"prepared":publication.map_sha256}));
                 }
                 *self.0.preparing.write().unwrap() = Some(Preparing {
