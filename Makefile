@@ -26,14 +26,20 @@ check: check-ops check-docs check-reports check-tools
 # through a green `check`: CI exercises the scripts only in `validate` mode,
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
-.PHONY: check-ops-enhance check-ops-shared check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
-check-ops: check-ops-enhance check-ops-shared check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
+.PHONY: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
+check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
 
 check-ops-enhance:
 	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
 
 check-ops-shared:
 	python3 -m unittest discover -s ops/tests -p 'test_*.py'
+
+# The control-session supervisor, its restricted account model and Status
+# config, against a stub ssh. WALLET_PIR_SSHD_PROBE=1 adds a private sshd on
+# 127.0.0.1 that checks the generated account with real OpenSSH.
+check-ops-control-sessions:
+	python3 -m unittest discover -s ops/tests/control_sessions -p 'test_*.py'
 
 # The Enhance and Status deploy CLI (ops/scripts/wallet-pir-deploy.py) against
 # an in-memory fleet, plus its host helper run locally.

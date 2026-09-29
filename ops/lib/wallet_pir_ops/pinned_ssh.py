@@ -16,6 +16,24 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def ssh_options(key, known_hosts, connect_timeout=10):
+    """OpenSSH options for one identity against one pinned known-hosts file.
+
+    No user or system configuration, no agent, no password prompt, and no host
+    key other than those in `known_hosts`. Shared by `PinnedSSH` and the
+    control-session supervisor.
+    """
+    return ['-F', '/dev/null', '-i', str(key), '-o', 'BatchMode=yes',
+            '-o', 'IdentitiesOnly=yes', '-o', 'ForwardAgent=no', '-o', f'ConnectTimeout={connect_timeout}',
+            '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(known_hosts),
+            '-o', 'GlobalKnownHostsFile=/dev/null']
+
+
+def known_hosts_matches(path, expected_sha256):
+    """Whether the known-hosts file at `path` still has the pinned digest."""
+    return sha256(Path(path).read_bytes()) == expected_sha256
+
+
 class PinnedSSH:
     def __init__(self, host, key, known_hosts, known_hosts_sha256, user='root'):
         self.host = str(ipaddress.IPv4Address(host))
@@ -23,12 +41,9 @@ class PinnedSSH:
         self.key = Path(key).resolve()
         self.known_hosts = Path(known_hosts).resolve()
         self.known_hosts_sha256 = known_hosts_sha256
-        if sha256(self.known_hosts.read_bytes()) != known_hosts_sha256:
+        if not known_hosts_matches(self.known_hosts, known_hosts_sha256):
             raise ValueError('SSH host-key inventory differs from the verified pin')
-        self.options = ['-F', '/dev/null', '-i', str(self.key), '-o', 'BatchMode=yes',
-                        '-o', 'IdentitiesOnly=yes', '-o', 'ForwardAgent=no', '-o', 'ConnectTimeout=10',
-                        '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(self.known_hosts),
-                        '-o', 'GlobalKnownHostsFile=/dev/null']
+        self.options = ssh_options(self.key, self.known_hosts)
 
     def check_host_keys(self):
         if sha256(self.known_hosts.read_bytes()) != self.known_hosts_sha256:

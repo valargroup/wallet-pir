@@ -77,6 +77,29 @@ installs the forwarding-only `status-control` key with explicit `permitopen`
 (8481, 8482, 8484) and `permitlisten` (8495) restrictions. The CUDA worker
 remains an optional build (`--features cuda`, `--cuda`) and is not deployed.
 
+### Supervised control sessions (not deployed)
+
+`wallet-pir-control-sessions.service` is the intended replacement for
+`status-control-tunnel` and `status-query-tunnel`. It is
+[the shared control-session supervisor](../../docs/control-sessions.md), and it
+is not installed on the coordinator. `ops/deploy/control-sessions.status.example.json`
+carries the two tunnels' forwards unchanged: 8481, 8482 and 8495 on one master
+with compression, and 8492 to 8484 on another. It keeps the same
+forwarding-only account, key and known-hosts file, and `ServerAliveCountMax 4`.
+The tests compare it with both unit templates.
+
+The swap changes only the transport:
+
+- a supervised master per tunnel, with bounded restart backoff and a status
+  file, instead of systemd restarting bare `ssh`;
+- a known-hosts digest pin;
+- no system SSH configuration.
+
+Before the swap, add `AllowStreamLocalForwarding no` to the host's
+`status-control` Match block: the current key line does not stop the key from
+creating remote Unix-socket listeners. The rollout and rollback steps are in
+[the control-session guide](../../docs/control-sessions.md#rollout-order).
+
 ### Deploy CLI
 
 `ops/scripts/wallet-pir-deploy.py` can deploy Status as the `status` service. It

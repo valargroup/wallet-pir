@@ -1,0 +1,38 @@
+# Supervised restricted SSH control forwards (docs/control-sessions.md).
+# Not installed anywhere yet. Install the script and a copy of its library as
+#   /opt/wallet-pir/control-sessions/wallet-pir-control-sessions.py
+#   /opt/wallet-pir/control-sessions/lib/wallet_pir_ops/{__init__,control_sessions,durable,pinned_ssh}.py
+# and the configuration as /etc/wallet-pir/control-sessions.json. The account
+# owns no files: it reads the SSH identity through its group.
+[Unit]
+Description=Supervised restricted SSH control forwards
+After=network-online.target
+Wants=network-online.target
+# Never stop restarting: a control link that gives up is an outage.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=wallet-pir-control
+Group=wallet-pir-control
+ExecStartPre=/usr/bin/python3 /opt/wallet-pir/control-sessions/wallet-pir-control-sessions.py --config /etc/wallet-pir/control-sessions.json validate
+ExecStart=/usr/bin/python3 /opt/wallet-pir/control-sessions/wallet-pir-control-sessions.py --config /etc/wallet-pir/control-sessions.json run
+Restart=always
+RestartSec=2
+# Control sockets, the supervisor lock and status.json. Removed on stop, so a
+# restart never meets a predecessor's sockets; the default control-group kill
+# mode stops every master with the supervisor.
+RuntimeDirectory=wallet-pir-control-sessions
+RuntimeDirectoryMode=0700
+UMask=0077
+MemoryMax=128M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

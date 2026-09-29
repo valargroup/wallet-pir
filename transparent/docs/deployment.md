@@ -532,6 +532,10 @@ or wait indefinitely for its output descriptors. Bootstrap configurations withou
 the flag retain direct SSH. Preparation always uses direct SSH. Read-only status
 retries one transport failure (1 s then 1.5 s command budgets within the 3 s
 membership timeout).
+The shared supervisor library, `ops/lib/wallet_pir_ops/control_sessions.py`
+([control sessions](../../docs/control-sessions.md)), builds the same socket
+names and SSH arguments; a test holds the two equal. This script stays
+standalone on the coordinator and does not import the library.
 The optional `status_socket_forwarding: true` flag requires `control_sessions`
 and carries status over root-only Unix forwards owned by the same supervisor.
 It is disabled by default; consult [status](status.md) for whether it is deployed.

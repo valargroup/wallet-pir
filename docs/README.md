@@ -4,6 +4,7 @@
 - [Transparent PIR](../transparent/docs/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
 - [Evidence](../evidence/README.md): retained measurements and their provenance.
 - [Serving contract](serving-contract.md): process identity, serving authority and refusal codes across Enhance, Status and Transparent.
+- [Control sessions](control-sessions.md): the shared supervised SSH control transport and the restricted forwarding account (source only; not deployed).
 - [Repository cleanup](cleanup-2026-09-14.md): removed material, retained dependencies and historical source revision.
 - [Repository rename consumers](repository-rename-consumers.md): downstream URLs to update after the `wallet-pir` rename.
 
