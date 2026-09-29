@@ -35,9 +35,13 @@ def membership(fleet):
 
 
 def serving_recent(fleet, value):
+    """Recent replicas the router sends traffic to: serving and rendered.
+    A draining replica still attests but takes no traffic, so it does not
+    count toward the replicas that keep the tier up during a restart."""
     roles = {w['id']: w['role'] for w in fleet.roster}
     return {worker for worker, observed in value['members'].items()
-            if roles.get(worker) == 'recent-replica' and observed['state'] == 'serving'}
+            if roles.get(worker) == 'recent-replica' and observed['state'] == 'serving'
+            and observed.get('rendered', True)}
 
 
 def check_others_serving(fleet, worker_id):

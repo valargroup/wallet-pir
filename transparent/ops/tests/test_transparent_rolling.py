@@ -53,6 +53,16 @@ class RollingTests(unittest.IsolatedAsyncioTestCase):
                 await R.roll(self.args())
             install.assert_not_awaited()
 
+    async def test_a_draining_replica_does_not_count_as_serving(self):
+        self.write()
+        record = json.loads((self.root/'membership.json').read_text())
+        record['members']['r3']['rendered'] = False
+        R.L.atomic_json(self.root/'membership.json', record)
+        with patch.object(R.D, 'install_worker', new=AsyncMock()) as install:
+            with self.assertRaisesRegex(RuntimeError, 'other recent replicas serving'):
+                await R.roll(self.args(['r1']))
+            install.assert_not_awaited()
+
     async def test_refuses_a_stale_membership_record(self):
         self.write(age=60)
         with self.assertRaisesRegex(RuntimeError, 'stale'):
