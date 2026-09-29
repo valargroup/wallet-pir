@@ -149,6 +149,14 @@ which is enough for a no-op check or an already staged release.
 - `--only ROLE[@HOST]` (repeatable) limits a plan, preflight or deploy to those
   targets, so the replicated workers can roll while single-instance roles keep
   running.
+- A worker built from `main` after 2026-09-30 stops gracefully on SIGTERM: it
+  closes its listener, so the packing router retries new evaluations once on
+  the other replica, and it finishes and delivers the evaluations it already
+  accepted. Rolling the workers one at a time with `--only` then loses no
+  admitted query. Earlier worker binaries stop immediately, so replacing one of
+  them fails the few evaluations in flight at that moment. The packing router,
+  query ingress, coordinator and the Status roles are single instances, and
+  restarting any of them interrupts service.
 - In `ssh.mode = "config"`, `ssh.config_file` names an SSH config whose aliases
   may jump through the coordinator to private addresses.
 - A unit whose running executable and effective configuration already match is

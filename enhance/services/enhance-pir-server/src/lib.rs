@@ -32,6 +32,7 @@ pub mod pool;
 pub mod query_ingress;
 mod serving_control;
 mod serving_fence;
+pub mod shutdown;
 
 mod http_metrics;
 
