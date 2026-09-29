@@ -693,6 +693,77 @@ mod tests {
             .contains("pinned range"));
     }
 
+    /// The production cache of an m-8vcpu-64gb archive owner.
+    const OWNER_CACHE: u64 = 51_539_607_552;
+
+    /// The production shape with one archive owner: shards 0-76 archive,
+    /// 77-85 recent, the whole archive pinned to a single owner.
+    fn single_owner_roster(replicas: usize, cache: u64) -> Vec<RosterEntry> {
+        let mut roster = roster(1, replicas, cache);
+        pin(&mut roster, &[[0, 76]]);
+        roster
+    }
+
+    fn archive_bytes(map: &ShardMap, recent_from: u64) -> u64 {
+        map.shards[..recent_from as usize]
+            .iter()
+            .map(|entry| shard_reserved_bytes(entry).unwrap())
+            .sum()
+    }
+
+    #[test]
+    fn a_single_pinned_owner_holds_the_whole_archive() {
+        let map = map(77, 9);
+        let pinned = single_owner_roster(2, OWNER_CACHE);
+        let assignment = plan(&map, "ab", &pinned, 77, 0.05, generated()).unwrap();
+        assignment.check_shape().unwrap();
+        let owners: Vec<&WorkerAssignment> = assignment
+            .workers
+            .iter()
+            .filter(|w| w.role == WorkerRole::ArchiveOwner)
+            .collect();
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].id, "archive-0");
+        assert_eq!(owners[0].shards, (0..77).collect::<Vec<_>>());
+        assert_eq!(owners[0].estimated_resident_bytes, archive_bytes(&map, 77));
+        let replicas: Vec<&WorkerAssignment> = assignment
+            .workers
+            .iter()
+            .filter(|w| w.role == WorkerRole::RecentReplica)
+            .collect();
+        assert_eq!(replicas.len(), 2);
+        for replica in replicas {
+            assert_eq!(replica.shards, (77..86).collect::<Vec<_>>());
+            assert_eq!(replica.replica_group.as_deref(), Some("recent"));
+        }
+        assert!(assignment.unassigned.is_empty());
+        // Pinning the one range and leaving it free cut the same archive.
+        let unpinned = roster(1, 2, OWNER_CACHE);
+        let free = plan(&map, "ab", &unpinned, 77, 0.05, generated()).unwrap();
+        assert_eq!(assignment.canonical_bytes(), free.canonical_bytes());
+    }
+
+    #[test]
+    fn a_single_pinned_owner_is_refused_when_its_headroom_does_not_fit() {
+        let map = map(77, 9);
+        // Scale the cache to the prototype's measurement: 41.35 GiB reserved
+        // against 48 GiB, which fits at 5% headroom and not at 15%.
+        let bytes = archive_bytes(&map, 77);
+        let cache = (bytes as f64 * 48.0 / 41.35) as u64;
+        let mut roster = single_owner_roster(2, OWNER_CACHE);
+        roster[0].cache_bytes = cache;
+        plan(&map, "ab", &roster, 77, 0.05, generated()).unwrap();
+        let error = plan(&map, "ab", &roster, 77, 0.15, generated()).unwrap_err();
+        assert!(error.to_string().contains("pinned range"), "{error}");
+        assert!(error.to_string().contains("archive-0"), "{error}");
+
+        // A single owner cannot fall back on a second owner's memory.
+        let mut small = single_owner_roster(2, OWNER_CACHE);
+        small[0].cache_bytes = bytes;
+        let error = plan(&map, "ab", &small, 77, 0.05, generated()).unwrap_err();
+        assert!(error.to_string().contains("pinned range"), "{error}");
+    }
+
     #[test]
     fn the_archive_is_split_contiguously_and_balanced_by_reserved_bytes() {
         let map = map(10, 4);
