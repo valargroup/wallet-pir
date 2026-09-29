@@ -69,6 +69,7 @@ check-ops-membership:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_reconciler.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_maintenance.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_worker_upgrade.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_rolling.py'
 
 .PHONY: check-reports
 check-reports:
