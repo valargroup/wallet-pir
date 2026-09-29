@@ -71,6 +71,7 @@ check-ops-membership:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_worker_upgrade.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_rolling.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_inventory.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_actuator.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_quality_rollout_load.py'
 	python3 -m unittest discover -s transparent/ops/scripts -p 'test_transparent_quality_load.py'
 
