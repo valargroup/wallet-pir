@@ -26,8 +26,8 @@ check: check-ops check-docs check-reports check-tools
 # through a green `check`: CI exercises the scripts only in `validate` mode,
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
-.PHONY: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-elastic
-check-ops: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic
+.PHONY: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
+check-ops: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
 
 check-ops-enhance:
 	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
@@ -79,6 +79,13 @@ check-ops-membership:
 check-ops-elastic:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_plan.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_elastic_root.py'
+
+# Recent-tier scaler: unit tests of every decision rule, the seeded fleet
+# simulator (test_scaler_sim.py) and the exhaustive membership and actuation
+# model (test_membership_model.py).
+check-ops-scaler:
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_scaler_*.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_membership_model.py'
 
 .PHONY: check-reports
 check-reports:

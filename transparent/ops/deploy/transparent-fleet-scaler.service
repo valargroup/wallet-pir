@@ -1,0 +1,42 @@
+# Recent-tier scaler (transparent/docs/elastic-recent.md). It holds no
+# credentials and reaches no host except worker /metrics and the publisher's
+# /v1/status: it reads the fleet state and writes decisions, status and
+# requests under the scaler directory only. The actuator, a separate unit with
+# credentials, is the only consumer of scaler/request.json.
+#
+# It runs from the current release, laid out as in the repository
+# (scripts/ beside scaler/ under repo/transparent/ops).
+# (the scaler *data* directory is /opt/transparent-publisher/scaler).
+[Unit]
+Description=Transparent PIR recent-tier scaler
+After=network-online.target transparent-replica-reconciler.service transparent-publish-controller.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/transparent-publisher
+ExecStart=/usr/bin/python3 /opt/transparent-publisher/releases/current/repo/transparent/ops/scripts/transparent-fleet-scaler.py --state-dir /opt/transparent-publisher/state --scaler-dir /opt/transparent-publisher/scaler
+Restart=always
+RestartSec=5
+UMask=0077
+MemoryMax=256M
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ReadWritePaths=/opt/transparent-publisher/scaler
+InaccessiblePaths=-/opt/transparent-publisher/credentials
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
