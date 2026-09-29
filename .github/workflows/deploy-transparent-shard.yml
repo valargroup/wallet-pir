@@ -47,9 +47,10 @@ on:
       headroom:
         description: >-
           Fleet modes only. Fraction of each worker's cache kept free of
-          assigned runtimes when planning.
+          assigned runtimes when planning. The default matches the live
+          publication adapter, so CI and the coordinator plan the same map.
         required: false
-        default: "0.15"
+        default: "0.05"
         type: string
       owner_activation:
         description: >-
@@ -160,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RECENT_FROM" =~ ^[0-9]+$ ]] || { echo "recent_from must be the recorded cutoff height"; exit 1; }
-          [[ "$HEADROOM" =~ ^0\.[0-9]+$ ]] || { echo "headroom must be a fraction like 0.15"; exit 1; }
+          [[ "$HEADROOM" =~ ^0\.[0-9]+$ ]] || { echo "headroom must be a fraction like 0.05"; exit 1; }
           # Once the fleet inventory exists it owns membership: elastic recent
           # replicas and pinned archive ranges live there, not in the variable.
           if sudo test -f /opt/transparent-publisher/state/inventory.json; then
