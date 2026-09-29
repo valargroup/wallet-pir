@@ -3,7 +3,7 @@ locals {
   enhance_public_hostname     = "enhance-pir.valargroup.dev"
   # The transparent fleet terminates TLS on the worker rather than behind the
   # Enhance coordinator's Caddy. That Caddyfile is rendered and installed by
-  # deploy-enhance-pir.sh, and a token it does not substitute would fail
+  # Enhance coordinator deploys, and a token they do not substitute would fail
   # `caddy validate` on the next Enhance deploy -- a live service broken by a
   # change with nothing to do with it. When the coordinator daemon lands and
   # there is more than one worker, fronting moves there and this record follows.

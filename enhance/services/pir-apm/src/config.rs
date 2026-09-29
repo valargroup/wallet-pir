@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn production_env_block_parses() {
-        // Mirrors the /etc/default/pir-apm block written by deploy-enhance-pir.sh.
+        // Mirrors the production /etc/default/pir-apm block.
         let config = Config::from_map(&vars(&[
             ("PIR_APM_HEALTH_PATH", "/v1/health"),
             ("PIR_APM_ENDPOINTS", "health,init,query"),

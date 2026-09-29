@@ -5,8 +5,8 @@
 # second occurrence would be rewritten into a sentence that no longer parses.
 #
 # This runs on the worker, not on the Enhance coordinator. The coordinator's
-# Caddyfile is rendered and installed by deploy-enhance-pir.sh, and a token that
-# script does not substitute would fail `caddy validate` on its next deploy —
+# Caddyfile is rendered and installed by Enhance coordinator deploys, and a token
+# that rendering does not substitute would fail `caddy validate` on its next deploy —
 # breaking a live service over a change that has nothing to do with it. Keeping
 # the transparent fleet's edge here means the two never share a file.
 TRANSPARENT_PUBLIC_HOST {
