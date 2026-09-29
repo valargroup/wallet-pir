@@ -176,8 +176,8 @@ no failing build was installed.
 [handoff-check.json](handoff-check.json) records the later enabled/running service
 and outcomes after the frozen snapshot. Two more connections closed before their
 responses completed; the corrected scheduler retried each on the next scheduled
-slot, approximately 200 ms later, and both rows decoded exactly. One delayed
-client-admission slot is also retained. These observations supersede any inference
+slot, approximately 200 ms later, and both rows decoded exactly. Two delayed
+client-admission slots are also retained. These observations supersede any inference
 that the final runner never sees transport interruptions or scheduling jitter;
 they show recovery without exceeding the configured request rate. No health gate
 was active at the handoff check. Automated load and monitoring remain running.
