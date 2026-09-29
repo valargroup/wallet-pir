@@ -4,10 +4,10 @@ mod client;
 pub mod http;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod transport;
 
 pub use client::{Client, Query};
 use ipir_sp::{ProductionSimplePirParams, SimplePirProfile};
-#[cfg(feature = "http")]
 use receiver_directory::Record;
 use receiver_directory::{snapshot, Hash};
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,8 @@ pub enum Error {
     Revision,
     #[error("payment history exceeds the caller's page budget")]
     PageBudget,
+    #[error("receiver transport failed: {0}")]
+    Transport(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[cfg(feature = "http")]
@@ -118,7 +120,6 @@ pub fn response_bytes() -> usize {
 }
 
 /// Reject inconsistent continuation pages before exposing a complete history to a wallet.
-#[cfg(feature = "http")]
 fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
     let a = &previous.payment;
     let b = &next.payment;

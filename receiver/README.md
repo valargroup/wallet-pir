@@ -288,3 +288,13 @@ The example rewinds and re-appends the final block in that copy, alternates full
 and cached preparation order, and requires byte-identical proof output. It
 reports cold-cache time separately. It does not measure RPC ingestion, serving
 or wallet restore time. Never use the serving database as its input.
+
+### Wallet transport
+
+`receiver_pir::transport::DirectoryClient` accepts a host-provided `Transport`.
+Use the wallet's existing route, cancellation and timeout policy for every request,
+including initialization, public setup and the common witness file. The transport
+must enforce response limits while streaming, reject redirects and map HTTP 409
+or 410 to `Error::Revision`. A failed private request never permits a cleartext
+receiver lookup. The optional `http::HttpClient` retains the reqwest adapter for
+command-line clients.

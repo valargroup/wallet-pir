@@ -408,3 +408,47 @@ async fn common_witness_file_uses_the_same_publication() {
     proof.path(0, [1; 32]).unwrap();
     assert!(proof.path(0, [2; 32]).is_err());
 }
+
+#[tokio::test]
+async fn host_transport_handles_setup_queries_and_revision_errors() {
+    use receiver_pir::transport::{DirectoryClient, Transport};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Host {
+        http: reqwest::Client,
+        gets: AtomicUsize,
+        posts: AtomicUsize,
+    }
+    impl Transport for Host {
+        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+            self.gets.fetch_add(1, Ordering::SeqCst);
+            Transport::get(&self.http, url, limit).await
+        }
+        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+            self.posts.fetch_add(1, Ordering::SeqCst);
+            Transport::post(&self.http, url, body, limit).await
+        }
+    }
+    let server = serve(snapshot(2)).await;
+    let host = Host {
+        http: http(),
+        gets: AtomicUsize::new(0),
+        posts: AtomicUsize::new(0),
+    };
+    let client = DirectoryClient::connect(&server.origin, &host, accepted())
+        .await
+        .unwrap();
+    let payments = client
+        .lookup(receiver(), NonZeroU32::new(2).unwrap(), accepted())
+        .await
+        .unwrap();
+    assert_eq!(payments.len(), 2);
+    assert_eq!(host.gets.load(Ordering::SeqCst), 2);
+    assert_eq!(host.posts.load(Ordering::SeqCst), 2);
+    let missing = host
+        .get(
+            &format!("{}/v1/receiver/public/{}", server.origin, "00".repeat(32)),
+            1024,
+        )
+        .await;
+    assert!(matches!(missing, Err(Error::Revision)));
+}
