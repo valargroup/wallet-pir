@@ -55,7 +55,7 @@ output "transparent_fleet_json" {
       memory_max    = var.transparent_recent_memory_max
       build_slots   = 1
     }],
-    [for worker in digitalocean_droplet.transparent_archive : {
+    [for worker in values(digitalocean_droplet.transparent_archive) : {
       id            = worker.name
       role          = "archive-owner"
       replica_group = null

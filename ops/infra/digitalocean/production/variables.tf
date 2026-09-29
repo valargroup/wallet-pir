@@ -112,10 +112,20 @@ variable "transparent_recent_memory_max" {
   default     = "7G"
 }
 
-variable "transparent_archive_count" {
-  description = "Archive-tier owners. Each owns a disjoint contiguous range of archive shards; losing one makes its range unavailable until rebuilt."
-  type        = number
-  default     = 0
+variable "transparent_archive_names" {
+  description = "Archive-tier owner Droplet names. The inventory's partition assigns each live owner one contiguous range of archive shards; losing an owner makes its range unavailable until rebuilt. Remove a name only after the inventory has retired that owner."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for name in var.transparent_archive_names : can(regex("^transparent-pir-archive-[0-9]{2}$", name))])
+    error_message = "Archive owner names must match transparent-pir-archive-NN."
+  }
+
+  validation {
+    condition     = length(distinct(var.transparent_archive_names)) == length(var.transparent_archive_names)
+    error_message = "Archive owner names must be unique."
+  }
 }
 
 variable "transparent_archive_size" {

@@ -68,6 +68,17 @@ The tag resources are the only expected replacements because DigitalOcean tag
 names are immutable. The Zakura volume keeps its historical provider name and
 has `prevent_destroy` because DigitalOcean cannot rename it in place.
 
+Transparent archive owners are listed by name in `transparent_archive_names`
+(for example `["transparent-pir-archive-03"]`), not counted, so an owner can be
+added or removed without renumbering the others. The `moved` blocks in
+`shared.tf` carry the two owners created under `count` to their names; the first
+plan after that change must show only moves. Add a name before the inventory's
+`repartition` enrolls the host, and remove one only after the inventory has
+retired it and the operator has stopped it; the saved plan must then show
+exactly one destroy per removed name and one in-place project change. The
+[deployment target](../../../../transparent/docs/deployment.md) has the full
+procedure.
+
 ## Capacity
 
 Each ordered shard group owns three shards and has two active-active replicas.
