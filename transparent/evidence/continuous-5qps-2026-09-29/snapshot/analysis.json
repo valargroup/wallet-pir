@@ -1,0 +1,234 @@
+{
+  "ongoing": true,
+  "events": {
+    "ready": 4,
+    "paused": 25,
+    "query": 6248,
+    "error": 4,
+    "cancelled_slot": 6
+  },
+  "errors": [
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/80/revisions/3a15477be6135e2750fda5156952c7c582bc295a767451e146e82df759a87567/query/directory)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.014244958,
+      "sequence": 1303,
+      "shard": 80,
+      "table": "directory",
+      "unix": 1790653975.207106
+    },
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/78/revisions/ff59aaeed78438ee54a4d5d7d2cbb39186798d746f238ee1f859fc65efbc5462/query/pages)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.000698563,
+      "sequence": 1865,
+      "shard": 78,
+      "table": "pages",
+      "unix": 1790654087.8170328
+    },
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/82/revisions/ce060dd943645cd904b5fab1f05c30e072509b97c86dda1f54296ff3b9f2e8c0/query/directory)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.011546457,
+      "sequence": 1891,
+      "shard": 82,
+      "table": "directory",
+      "unix": 1790654093.0254335
+    },
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/83/revisions/1c8425c5bd6a0204599ec6b07be183ee8d87151cfef39be5cba8dcc654f4631a/query/pages)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.010434666,
+      "sequence": 1896,
+      "shard": 83,
+      "table": "pages",
+      "unix": 1790654094.0257792
+    }
+  ],
+  "totals": {
+    "queries": 6248,
+    "exact": 6248,
+    "covered_shards": 85
+  },
+  "runs": [
+    {
+      "queries": 723,
+      "exact": 723,
+      "nonempty_exact": 715,
+      "start_unix": 1790653376.8986819,
+      "last_start_unix": 1790653521.568683,
+      "start_rate_qps": 4.990668382247667,
+      "minimum_start_spacing_seconds": 0.19999337196350098,
+      "http_p50_seconds": 0.015782447,
+      "http_p95_seconds": 0.036563576,
+      "http_p99_seconds": 0.573810236,
+      "http_max_seconds": 1.873074559,
+      "shards_queried": 80,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 291,
+        "recent-4k-8k/pages": 288,
+        "archive-wide/directory": 72,
+        "archive-wide/pages": 72
+      },
+      "max_schedule_lag_seconds": 0.270088552
+    },
+    {
+      "queries": 763,
+      "exact": 763,
+      "nonempty_exact": 755,
+      "start_unix": 1790653539.1402617,
+      "last_start_unix": 1790653691.8631015,
+      "start_rate_qps": 4.989430532045488,
+      "minimum_start_spacing_seconds": 0.19727826118469238,
+      "http_p50_seconds": 0.016522908,
+      "http_p95_seconds": 0.036274553,
+      "http_p99_seconds": 0.172178312,
+      "http_max_seconds": 1.353534019,
+      "shards_queried": 84,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 307,
+        "recent-4k-8k/pages": 304,
+        "archive-wide/directory": 76,
+        "archive-wide/pages": 76
+      },
+      "max_schedule_lag_seconds": 0.322931194
+    },
+    {
+      "queries": 2718,
+      "exact": 2718,
+      "nonempty_exact": 2685,
+      "start_unix": 1790653713.9979908,
+      "last_start_unix": 1790654319.7022963,
+      "start_rate_qps": 4.485687117840677,
+      "minimum_start_spacing_seconds": 0.19985699653625488,
+      "http_p50_seconds": 0.016114485,
+      "http_p95_seconds": 0.037898969,
+      "http_p99_seconds": 0.512052511,
+      "http_max_seconds": 2.054113607,
+      "shards_queried": 85,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 1087,
+        "recent-4k-8k/pages": 1087,
+        "archive-wide/directory": 272,
+        "archive-wide/pages": 272
+      },
+      "max_schedule_lag_seconds": 1.346807689
+    },
+    {
+      "queries": 2044,
+      "exact": 2044,
+      "nonempty_exact": 2020,
+      "start_unix": 1790654336.8550255,
+      "last_start_unix": 1790654746.32114,
+      "start_rate_qps": 4.9894238559637625,
+      "minimum_start_spacing_seconds": 0.19976520538330078,
+      "http_p50_seconds": 0.017429822,
+      "http_p95_seconds": 0.037934993,
+      "http_p99_seconds": 0.374990682,
+      "http_max_seconds": 2.4492300289999998,
+      "shards_queried": 85,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 820,
+        "recent-4k-8k/pages": 816,
+        "archive-wide/directory": 204,
+        "archive-wide/pages": 204
+      },
+      "max_schedule_lag_seconds": 1.400328925
+    }
+  ],
+  "health": {
+    "samples": 98,
+    "first_utc": "2026-09-29T03:42:42.821272+00:00",
+    "last_utc": "2026-09-29T04:05:38.951242+00:00",
+    "public_height_range": [
+      3499875,
+      3499894
+    ],
+    "maximum_reported_cycle_seconds": 15.165848397,
+    "maximum_reported_freshness_seconds": 21.694367038,
+    "public_init_error_samples": 1,
+    "nodes": {
+      "transparent-pir-recent-01": {
+        "samples": 98,
+        "minimum_available_memory_percent": 71.78177471599084,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-recent-02": {
+        "samples": 98,
+        "minimum_available_memory_percent": 72.80359281731675,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-recent-03": {
+        "samples": 98,
+        "minimum_available_memory_percent": 73.2514160491307,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-recent-04": {
+        "samples": 98,
+        "minimum_available_memory_percent": 72.77688279810816,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-archive-01": {
+        "samples": 98,
+        "minimum_available_memory_percent": 74.65579185323278,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-archive-02": {
+        "samples": 98,
+        "minimum_available_memory_percent": 75.14177092035315,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-router": {
+        "samples": 98,
+        "minimum_available_memory_percent": 84.48765344660069,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 1
+      },
+      "transparent-coordinator": {
+        "samples": 98,
+        "minimum_available_memory_percent": 85.6538886368909,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      }
+    }
+  },
+  "limits": "Frozen initial observation prefix; load continues. Separate process runs include intentional operator restarts to install/test the watchdog. Rates exclude those control gaps and preparation. Every logged POST uses a fresh key. The initial runner did not retry; the final runner schedules up to three attempts for a transport interruption, all within the existing 5 QPS budget. Raw failures are retained. Sealed rows only, 80% recent / 20% archive; not whole-wallet recovery or WAN-client latency. Client runs on coordinator under a 2-core quota and Nice=10."
+}

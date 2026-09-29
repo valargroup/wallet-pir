@@ -1,0 +1,292 @@
+{
+  "ongoing": true,
+  "events": {
+    "ready": 5,
+    "paused": 29,
+    "query": 9375,
+    "error": 6,
+    "cancelled_slot": 6
+  },
+  "errors": [
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/80/revisions/3a15477be6135e2750fda5156952c7c582bc295a767451e146e82df759a87567/query/directory)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.014244958,
+      "sequence": 1303,
+      "shard": 80,
+      "table": "directory",
+      "unix": 1790653975.207106
+    },
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/78/revisions/ff59aaeed78438ee54a4d5d7d2cbb39186798d746f238ee1f859fc65efbc5462/query/pages)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.000698563,
+      "sequence": 1865,
+      "shard": 78,
+      "table": "pages",
+      "unix": 1790654087.8170328
+    },
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/82/revisions/ce060dd943645cd904b5fab1f05c30e072509b97c86dda1f54296ff3b9f2e8c0/query/directory)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.011546457,
+      "sequence": 1891,
+      "shard": 82,
+      "table": "directory",
+      "unix": 1790654093.0254335
+    },
+    {
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/83/revisions/1c8425c5bd6a0204599ec6b07be183ee8d87151cfef39be5cba8dcc654f4631a/query/pages)",
+      "event": "error",
+      "kind": "query_or_decode",
+      "seconds": 0.010434666,
+      "sequence": 1896,
+      "shard": 83,
+      "table": "pages",
+      "unix": 1790654094.0257792
+    },
+    {
+      "attempt": 1,
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/70/revisions/cb058220bbef3259edd2d32db7a3c1231528527d31c6e08aeea4d4604d62440a/query/directory)",
+      "error_chain": [
+        "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/70/revisions/cb058220bbef3259edd2d32db7a3c1231528527d31c6e08aeea4d4604d62440a/query/directory)",
+        "client error (SendRequest)",
+        "connection closed before message completed"
+      ],
+      "event": "error",
+      "kind": "query_or_decode",
+      "logical_id": 3018,
+      "retry_scheduled": true,
+      "seconds": 0.012575138,
+      "sequence": 3018,
+      "shard": 70,
+      "table": "directory",
+      "unix": 1790654941.7203257
+    },
+    {
+      "attempt": 1,
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/67/revisions/4216b252f7412fd9caf80dd8bcad540d7667971327e2a8e596cd61af649c01f4/query/directory)",
+      "error_chain": [
+        "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/67/revisions/4216b252f7412fd9caf80dd8bcad540d7667971327e2a8e596cd61af649c01f4/query/directory)",
+        "client error (SendRequest)",
+        "connection closed before message completed"
+      ],
+      "event": "error",
+      "kind": "query_or_decode",
+      "logical_id": 3759,
+      "retry_scheduled": true,
+      "seconds": 0.002419119,
+      "sequence": 3759,
+      "shard": 67,
+      "table": "directory",
+      "unix": 1790655090.2336726
+    }
+  ],
+  "totals": {
+    "queries": 9375,
+    "exact": 9375,
+    "covered_shards": 85
+  },
+  "runs": [
+    {
+      "queries": 723,
+      "exact": 723,
+      "nonempty_exact": 715,
+      "start_unix": 1790653376.8986819,
+      "last_start_unix": 1790653521.568683,
+      "start_rate_qps": 4.990668382247667,
+      "minimum_start_spacing_seconds": 0.19999337196350098,
+      "http_p50_seconds": 0.015782447,
+      "http_p95_seconds": 0.036563576,
+      "http_p99_seconds": 0.573810236,
+      "http_max_seconds": 1.873074559,
+      "shards_queried": 80,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 291,
+        "recent-4k-8k/pages": 288,
+        "archive-wide/directory": 72,
+        "archive-wide/pages": 72
+      },
+      "max_schedule_lag_seconds": 0.270088552
+    },
+    {
+      "queries": 763,
+      "exact": 763,
+      "nonempty_exact": 755,
+      "start_unix": 1790653539.1402617,
+      "last_start_unix": 1790653691.8631015,
+      "start_rate_qps": 4.989430532045488,
+      "minimum_start_spacing_seconds": 0.19727826118469238,
+      "http_p50_seconds": 0.016522908,
+      "http_p95_seconds": 0.036274553,
+      "http_p99_seconds": 0.172178312,
+      "http_max_seconds": 1.353534019,
+      "shards_queried": 84,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 307,
+        "recent-4k-8k/pages": 304,
+        "archive-wide/directory": 76,
+        "archive-wide/pages": 76
+      },
+      "max_schedule_lag_seconds": 0.322931194
+    },
+    {
+      "queries": 2718,
+      "exact": 2718,
+      "nonempty_exact": 2685,
+      "start_unix": 1790653713.9979908,
+      "last_start_unix": 1790654319.7022963,
+      "start_rate_qps": 4.485687117840677,
+      "minimum_start_spacing_seconds": 0.19985699653625488,
+      "http_p50_seconds": 0.016114485,
+      "http_p95_seconds": 0.037898969,
+      "http_p99_seconds": 0.512052511,
+      "http_max_seconds": 2.054113607,
+      "shards_queried": 85,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 1087,
+        "recent-4k-8k/pages": 1087,
+        "archive-wide/directory": 272,
+        "archive-wide/pages": 272
+      },
+      "max_schedule_lag_seconds": 1.346807689
+    },
+    {
+      "queries": 4178,
+      "exact": 4178,
+      "nonempty_exact": 4128,
+      "start_unix": 1790654336.8550255,
+      "last_start_unix": 1790655174.4455702,
+      "start_rate_qps": 4.9869235349271674,
+      "minimum_start_spacing_seconds": 0.19781184196472168,
+      "http_p50_seconds": 0.017039757,
+      "http_p95_seconds": 0.037454089,
+      "http_p99_seconds": 0.414078664,
+      "http_max_seconds": 2.4492300289999998,
+      "shards_queried": 85,
+      "recovered_queries": 2,
+      "class_counts": {
+        "recent-4k-8k/directory": 1672,
+        "recent-4k-8k/pages": 1672,
+        "archive-wide/directory": 417,
+        "archive-wide/pages": 417
+      },
+      "max_schedule_lag_seconds": 2.601376561
+    },
+    {
+      "queries": 993,
+      "exact": 993,
+      "nonempty_exact": 985,
+      "start_unix": 1790655196.426381,
+      "last_start_unix": 1790655395.5348003,
+      "start_rate_qps": 4.982210215348146,
+      "minimum_start_spacing_seconds": 0.20003700256347656,
+      "http_p50_seconds": 0.017457717,
+      "http_p95_seconds": 0.039723538,
+      "http_p99_seconds": 0.39608314,
+      "http_max_seconds": 1.232773256,
+      "shards_queried": 85,
+      "recovered_queries": 0,
+      "class_counts": {
+        "recent-4k-8k/directory": 399,
+        "recent-4k-8k/pages": 396,
+        "archive-wide/directory": 99,
+        "archive-wide/pages": 99
+      },
+      "max_schedule_lag_seconds": 0.16536556
+    }
+  ],
+  "health": {
+    "samples": 144,
+    "first_utc": "2026-09-29T03:42:42.821272+00:00",
+    "last_utc": "2026-09-29T04:16:32.904039+00:00",
+    "public_height_range": [
+      3499875,
+      3499902
+    ],
+    "maximum_reported_cycle_seconds": 15.311118696,
+    "maximum_reported_freshness_seconds": 21.694367038,
+    "public_init_error_samples": 1,
+    "nodes": {
+      "transparent-pir-recent-01": {
+        "samples": 144,
+        "minimum_available_memory_percent": 71.78177471599084,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-recent-02": {
+        "samples": 144,
+        "minimum_available_memory_percent": 72.74500785805813,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-recent-03": {
+        "samples": 144,
+        "minimum_available_memory_percent": 73.2514160491307,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-recent-04": {
+        "samples": 144,
+        "minimum_available_memory_percent": 72.77688279810816,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-archive-01": {
+        "samples": 144,
+        "minimum_available_memory_percent": 74.63700893871126,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-pir-archive-02": {
+        "samples": 144,
+        "minimum_available_memory_percent": 75.14177092035315,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      },
+      "transparent-router": {
+        "samples": 144,
+        "minimum_available_memory_percent": 84.48765344660069,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 1
+      },
+      "transparent-coordinator": {
+        "samples": 144,
+        "minimum_available_memory_percent": 85.6538886368909,
+        "max_restarts": 0,
+        "max_oom": 0,
+        "max_oom_kill": 0,
+        "unavailable_resource_samples": 0,
+        "not_ready_samples": 0
+      }
+    }
+  },
+  "limits": "Frozen initial observation prefix; load continues. Separate process runs include intentional operator restarts to install/test the watchdog. Rates exclude those control gaps and preparation. Every logged POST uses a fresh key. The initial runner did not retry; the final runner schedules up to three attempts for a transport interruption, all within the existing 5 QPS budget. Raw failures are retained. Sealed rows only, 80% recent / 20% archive; not whole-wallet recovery or WAN-client latency. Client runs on coordinator under a 2-core quota and Nice=10."
+}

@@ -1,10 +1,27 @@
 # Transparent PIR status
 
-Updated 2026-09-28 UTC (v10 rollout below); milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
+Updated 2026-09-29 UTC (v10 rollout and continuous load below); milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
 existing infrastructure. **M0, M1 and M2 are accepted; M3 is partially validated;
 M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
+
+## Continuous query load, 2026-09-29
+
+At the user's request, `transparent-5qps-continuous.service` was enabled on the
+coordinator. It targets five fresh encrypted PIR queries per second through the
+public origin, split 80% recent / 20% archive and equally between directory/page
+tables. Each decoded row is checked against an independent published-plaintext
+hash. The workload rotates across all 85 sealed shards; the moving tail is
+monitored separately. This is a query-serving workload, not five wallet syncs/s.
+
+The service retains query and health logs and samples workers, router, coordinator
+and publication state about every 15 seconds. Its watchdog pauses admission on
+sustained failures, and critical incidents remain latched for investigation.
+The [initial evidence](../evidence/continuous-5qps-2026-09-29/README.md) records
+observed rates, correctness and resources; the process continues beyond that
+snapshot. It does not establish a sustained-capacity milestone or guarantee
+future health. Production service binaries remain at `8e69ea75`.
 
 ## Compact layout production cutover, 2026-09-28
 
