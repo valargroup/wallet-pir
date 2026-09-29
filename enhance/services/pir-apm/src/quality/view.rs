@@ -149,6 +149,16 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
     let window = source.window(now);
     let fresh = source.fresh(now);
     let mut out=format!("<section class=\"card\"><h2><a href=\"/apm/transparent/workers/{}/?service={}\">{}</a></h2><p class=\"{}\">{} · {} · sample age {}s{}</p>",escape(name),escape(&source.service),escape(name),if fresh{"ok"}else{"warn"},escape(&source.role),if fresh{"Fresh"}else{"Unavailable / stale"},now.saturating_sub(source.sampled_at),source.ready.map(|r|if r{" · ready"}else{" · not ready"}).unwrap_or(""));
+    if source.role == "independent-probe" {
+        let result = if !fresh {
+            "Unavailable"
+        } else if source.current.gauges.get("probe_passed") == Some(&1.) {
+            "Passed"
+        } else {
+            "Failed"
+        };
+        out.push_str(&format!("<p><strong>{result}</strong> · last probe {} seconds · {} successes / {} failures since monitor start</p>",number(source.current.gauges.get("probe_duration_seconds").copied()),number(source.current.gauges.get("probe_successes").copied()),number(source.current.gauges.get("probe_failures").copied())));
+    }
     if !fresh {
         out.push_str(
             "<p>Retained values below are stale. They do not establish current health.</p>",
@@ -180,7 +190,7 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
         .flat_map(|p| p.values.histograms.keys().cloned())
         .collect::<std::collections::BTreeSet<_>>();
     for key in hist_names.iter().take(8) {
-        out.push_str(&chart(points, key, "p99 seconds", |p| {
+        out.push_str(&chart(points, key, "p99 seconds", false, |p| {
             p.values.histograms.get(key).and_then(|h| h.quantile(0.99))
         }));
     }
@@ -193,7 +203,7 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
             .iter()
             .any(|p| p.values.counters.keys().any(|k| k.starts_with(key)))
         {
-            out.push_str(&chart(points, key, "requests / second", |p| {
+            out.push_str(&chart(points, key, "requests / second", false, |p| {
                 Some(
                     p.values
                         .counters
@@ -213,7 +223,7 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
         "probe_duration_seconds",
     ] {
         if points.iter().any(|p| p.values.gauges.contains_key(key)) {
-            out.push_str(&chart(points, key, "latest value", |p| {
+            out.push_str(&chart(points, key, "latest value", true, |p| {
                 p.values.gauges.get(key).copied()
             }));
         }
@@ -235,6 +245,7 @@ fn chart(
     points: &[Point],
     name: &str,
     unit: &str,
+    gauge: bool,
     value: impl Fn(&Point) -> Option<f64>,
 ) -> String {
     let start = points.first().map(|p| p.at).unwrap_or(0);
@@ -246,7 +257,9 @@ fn chart(
     let values = points
         .iter()
         .map(|p| {
-            if p.discontinuities == 0 && p.observed_seconds > 0 {
+            if (gauge && !p.values.gauges.is_empty())
+                || (p.discontinuities == 0 && p.observed_seconds > 0)
+            {
                 value(p)
             } else {
                 None
