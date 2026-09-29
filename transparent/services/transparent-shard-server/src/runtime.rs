@@ -234,6 +234,51 @@ pub struct TableRuntime {
     pub public_params_epoch: [u8; 8],
 }
 
+/// Scheduling priority of runtime construction threads (a nice value).
+#[cfg(target_os = "linux")]
+const BUILD_NICE: i32 = 10;
+
+/// Runtime construction runs here, never in the global rayon pool that query
+/// evaluation uses.
+///
+/// Every recent replica rebuilds its tail runtimes at every publication. In
+/// the global pool that build took all of a 4-vCPU host's cores for seconds,
+/// queries queued behind its parallel work items, and p99 reached 2.5 s at
+/// 20 QPS on two replicas. Half the cores at lower priority keep builds
+/// progressing while query evaluation wins under contention.
+/// `TRANSPARENT_BUILD_THREADS` overrides the thread count.
+pub fn build_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::env::var("TRANSPARENT_BUILD_THREADS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|threads| *threads > 0)
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism().map_or(1, |cores| (cores.get() / 2).max(1))
+            });
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|index| format!("runtime-build-{index}"))
+            .start_handler(|_| lower_priority())
+            .build()
+            .expect("runtime build pool")
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn lower_priority() {
+    // On Linux, PRIO_PROCESS with a thread id changes only that thread.
+    if let Err(error) =
+        rustix::process::setpriority_process(Some(rustix::thread::gettid()), BUILD_NICE)
+    {
+        tracing::warn!(%error, "could not lower runtime build thread priority");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn lower_priority() {}
+
 impl TableRuntime {
     /// Builds the runtime for one segment.
     ///
@@ -618,7 +663,9 @@ impl RuntimeCache {
                 .map_err(|error| CacheError::Failed(error.to_string()))?;
             tracing::debug!(key = ?key, seconds = started.elapsed().as_secs_f64(), stage = "source_load", "runtime stage");
             let compute_started = std::time::Instant::now();
-            let runtime = TableRuntime::build(&shared, &bytes).map_err(CacheError::Failed)?;
+            let runtime = build_pool()
+                .install(|| TableRuntime::build(&shared, &bytes))
+                .map_err(CacheError::Failed)?;
             tracing::debug!(key = ?key, seconds = compute_started.elapsed().as_secs_f64(), stage = "runtime_build", "runtime stage");
             drop(bytes);
             // The optional cache must not delay serving this verified runtime.
@@ -770,6 +817,28 @@ impl RuntimeCache {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn runtime_builds_run_in_their_own_smaller_pool() {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let (index, threads) =
+            build_pool().install(|| (rayon::current_thread_index(), rayon::current_num_threads()));
+        assert!(index.is_some(), "the closure runs on a build pool thread");
+        assert!(threads <= cores.max(1));
+        assert!(
+            rayon::current_thread_index().is_none(),
+            "the caller is not a pool thread"
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            build_pool().install(|| rustix::process::getpriority_process(Some(
+                rustix::thread::gettid()
+            ))
+            .unwrap()),
+            BUILD_NICE
+        );
+    }
+
     use super::*;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 

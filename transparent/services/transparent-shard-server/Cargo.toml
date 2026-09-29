@@ -26,6 +26,7 @@ portable-kernel = []
 [dependencies]
 pir-observability = { path = "../../../shared/pir-observability" }
 axum = "0.7"
+rayon = "1"
 http-body = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
@@ -51,7 +52,7 @@ transparent-native = { path = "../../crates/transparent-native" }
 transparent-shard = { path = "../../crates/transparent-shard" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1", features = ["fs"] }
+rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 
 [dev-dependencies]
 rayon = "1"
