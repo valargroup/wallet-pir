@@ -144,7 +144,10 @@ class Actuator:
             count = op.get('count', 1)
             if not 1 <= count <= policy.get('max_step', 3):
                 raise ActuatorError('scale-out count outside 1..max_step')
-            if len(live_recent) + count > policy.get('max_recent', 6):
+            # A replacement keeps the group's size: the member it replaces
+            # leaves once the new one serves.
+            staying = [m for m in live_recent if not (op['kind'] == 'replace' and m['id'] == op.get('member'))]
+            if len(staying) + count > policy.get('max_recent', 6):
                 raise ActuatorError('scale-out would exceed max_recent')
             if sum(1 for m in inv['members'] if m['intent'] != 'retired') + count > 32:
                 raise ActuatorError('the fleet is capped at 32 members')

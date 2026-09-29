@@ -266,6 +266,13 @@ class ActuatorTests(unittest.TestCase):
         self.policy(mode='act')
         self.assertIsNone(self.actuator.run_once(), 'a consumed decision is never acted on twice')
 
+    def test_a_replacement_at_max_recent_is_allowed(self):
+        failed = self.elastic_member()
+        self.policy(mode='act', max_recent=3)
+        with self.assertRaisesRegex(A.ActuatorError, 'max_recent'):
+            self.actuator.start('scale_out', count=1)
+        self.actuator.start('replace', member=failed, count=1)
+
     def test_scale_out_respects_max_recent(self):
         self.policy(mode='act', max_recent=2)
         with self.assertRaisesRegex(A.ActuatorError, 'max_recent'):
