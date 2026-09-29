@@ -1,0 +1,40 @@
+# HELP enhance_http_arrivals_total Public requests arriving, including incomplete and rejected requests
+# TYPE enhance_http_arrivals_total counter
+enhance_http_arrivals_total{endpoint="query"} 2886479
+# HELP enhance_http_request_body_bytes_total Consumed public request payload bytes
+# TYPE enhance_http_request_body_bytes_total counter
+enhance_http_request_body_bytes_total{endpoint="query"} 659468084172
+# HELP enhance_http_request_processing_duration_seconds Time from complete request body to response ready
+# TYPE enhance_http_request_processing_duration_seconds histogram
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0001"} 12082
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0005"} 15242
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.001"} 15264
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.0025"} 15315
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.005"} 15371
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.01"} 15447
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.025"} 15452
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.05"} 2776922
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.1"} 2869460
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.25"} 2883454
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="0.5"} 2885355
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="1"} 2886031
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="2.5"} 2886415
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="5"} 2886475
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="10"} 2886475
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="30"} 2886477
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="60"} 2886477
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="120"} 2886477
+enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="+Inf"} 2886477
+enhance_http_request_processing_duration_seconds_sum{endpoint="query"} 108380.01926203158
+enhance_http_request_processing_duration_seconds_count{endpoint="query"} 2886477
+# HELP enhance_http_requests_total Responses by public entrypoint and status
+# TYPE enhance_http_requests_total counter
+enhance_http_requests_total{endpoint="query",status="200"} 2871024
+enhance_http_requests_total{endpoint="query",status="409"} 15451
+enhance_http_requests_total{endpoint="query",status="429"} 2
+# HELP enhance_http_response_body_bytes_total Emitted public response payload bytes
+# TYPE enhance_http_response_body_bytes_total counter
+enhance_http_response_body_bytes_total{endpoint="query"} 97351454444
+
+process_start_time_seconds 1790453197.1116636
+enhance_http_arrivals_last_10_seconds{endpoint="query"} 106

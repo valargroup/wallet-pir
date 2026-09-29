@@ -149,6 +149,7 @@ impl Histogram {
 /// self-consistent would be spending latency on a report.
 #[derive(Debug)]
 pub struct Metrics {
+    pub http: pir_observability::HttpMetrics,
     pub query_seconds: [Histogram; 3],
     pub queue_wait_seconds: Histogram,
     pub evaluation_seconds: Histogram,
@@ -217,6 +218,7 @@ pub struct Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
+            http: pir_observability::HttpMetrics::default(),
             query_seconds: std::array::from_fn(|_| Histogram::new(&REQUEST_BUCKETS)),
             queue_wait_seconds: Histogram::new(&REQUEST_BUCKETS),
             evaluation_seconds: Histogram::new(&REQUEST_BUCKETS),
@@ -312,7 +314,7 @@ impl Metrics {
         } else {
             format!("{{{labels}}}")
         };
-        let mut out = String::new();
+        let mut out = self.http.render();
         let mut line = |name: &str, kind: &str, help: &str, value: u64| {
             out.push_str(&format!(
                 "# HELP {name} {help}\n# TYPE {name} {kind}\n{name}{braces} {value}\n"

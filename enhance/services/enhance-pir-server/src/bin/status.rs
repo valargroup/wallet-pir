@@ -709,6 +709,12 @@ async fn probe_live(
                 })
             })
             .await?;
+        let current_anchor: zakura_chain::block::Hash =
+            rpc.block_hash(u64::from(block.height)).await?.parse()?;
+        require(
+            current_anchor == anchor,
+            "live probe oracle is not canonical after query",
+        )?;
         require(
             answer == Observation::Mined(block.height),
             "live encrypted answer differs from canonical block oracle",

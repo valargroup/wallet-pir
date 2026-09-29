@@ -131,6 +131,13 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
         }
     }
     let store = Store::open(&path)?;
+    let mut quality_store = Store::open(&path)?.with_family("quality");
+    let quality_mode =
+        std::env::var("PIR_APM_QUALITY_ALERT_MODE").unwrap_or_else(|_| "shadow".into());
+    anyhow::ensure!(
+        matches!(quality_mode.as_str(), "shadow" | "active"),
+        "PIR_APM_QUALITY_ALERT_MODE must be shadow or active"
+    );
     let policy = Policy::load()?;
     let url = std::env::var("PIR_APM_PUBLIC_URL")
         .unwrap_or_else(|_| "https://enhance-pir.valargroup.dev/apm/".into());
@@ -188,6 +195,33 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             }
             let result = (|| -> Result<(Vec<Incident>, DeliveryHealth)> {
                 store.evaluate(&conditions, now, shadow, &config.environment, &url)?;
+                let mut quality_conditions = crate::quality::conditions(&snapshot.quality, now);
+                if snapshot.quality.enabled
+                    && !snapshot.quality.inventory_error
+                    && now.saturating_sub(snapshot.quality.collected_at) <= 45
+                {
+                    for incident in &snapshot.monitoring.incidents {
+                        if let Some(c) = &incident.condition {
+                            if c.key.starts_with("quality_")
+                                && c.resource != "history"
+                                && c.resource != "transparent"
+                                && !snapshot.quality.sources.contains_key(&c.resource)
+                            {
+                                let mut retired = c.clone();
+                                retired.retired = true;
+                                retired.sample = now;
+                                quality_conditions.push(retired);
+                            }
+                        }
+                    }
+                }
+                quality_store.evaluate(
+                    &quality_conditions,
+                    now,
+                    quality_mode != "active",
+                    &config.environment,
+                    &format!("{}transparent/", url.trim_end_matches('/').to_owned() + "/"),
+                )?;
                 Ok((store.incidents()?, store.health(configured, now)?))
             })();
             let mut view = eval_dashboard.write().await;
@@ -824,6 +858,10 @@ fn progress_ok(d: &DashboardData, now: u64) -> bool {
         required.push("routers");
     }
     fresh(d.monitoring.evaluated_at, now)
+        && (!d.quality.enabled
+            || (fresh(d.quality.collected_at, now)
+                && fresh(d.quality.persisted_at, now)
+                && !d.quality.storage_error))
         && fresh(d.monitoring.delivery.worker_at, now)
         && !d.monitoring.storage_error
         && required.iter().all(|name| {
@@ -838,7 +876,7 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
     let now = incidents::unix_time();
     let progress = progress_ok(&d, now);
     Json(
-        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication}),
+        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
     )
 }
 pub async fn readyz(State(d): State<SharedDashboard>) -> (StatusCode, Json<serde_json::Value>) {

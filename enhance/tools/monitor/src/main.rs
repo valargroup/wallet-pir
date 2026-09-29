@@ -1,4 +1,5 @@
 //! Independent, low-rate public PIR correctness and monitoring-progress checker.
+mod service_probes;
 use anyhow::{Context, Result};
 use axum::{extract::State, routing::get, Json, Router};
 use enhance_pir::client::EnhancePirClient;
@@ -27,6 +28,7 @@ struct Record {
 }
 #[derive(Clone, Default, Serialize)]
 struct View {
+    services: std::collections::BTreeMap<String, service_probes::Probe>,
     evaluated_at: u64,
     canary_at: u64,
     canary_ok: bool,
@@ -118,6 +120,14 @@ async fn main() -> Result<()> {
     let shadow = mode == "shadow";
     let listen = std::env::var("PIR_MONITOR_LISTEN").unwrap_or_else(|_| "127.0.0.1:3003".into());
     let mut store = Store::open(&path)?;
+    let mut service_store = Store::open(&path)?.with_family("service-quality");
+    let service_mode =
+        std::env::var("PIR_MONITOR_SERVICE_ALERT_MODE").unwrap_or_else(|_| "shadow".into());
+    anyhow::ensure!(
+        matches!(service_mode.as_str(), "shadow" | "active"),
+        "invalid service alert mode"
+    );
+    let probes = service_probes::start()?;
     tokio::spawn(async move {
         if incidents::deliver(path, webhook).await.is_err() {
             eprintln!("notification worker stopped");
@@ -316,7 +326,15 @@ async fn main() -> Result<()> {
                     "APM Slack delivery health".into(),
                 ));
             }
+            let probe_snapshot = probes.read().await.clone();
             let result = (|| -> Result<_> {
+                service_store.evaluate(
+                    &service_probes::conditions(&probe_snapshot, now),
+                    now,
+                    service_mode != "active",
+                    "production",
+                    &format!("{origin}/apm/transparent/"),
+                )?;
                 store.evaluate(
                     &checks,
                     now,
@@ -327,6 +345,7 @@ async fn main() -> Result<()> {
                 Ok((store.incidents()?, store.health(configured, now)?))
             })();
             let mut v = eval.write().await;
+            v.services = probe_snapshot;
             v.evaluated_at = now;
             v.storage_error = result.is_err();
             if let Ok((incidents, delivery)) = result {

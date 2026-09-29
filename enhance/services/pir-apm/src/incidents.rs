@@ -129,6 +129,7 @@ fn slack_message(
 
 pub struct Store {
     db: Connection,
+    mode_key: String,
 }
 
 impl Store {
@@ -142,7 +143,16 @@ impl Store {
                 created INTEGER NOT NULL, due INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, shadow INTEGER NOT NULL, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            mode_key: "mode".into(),
+        })
+    }
+
+    /// Independent rollout mode, sharing the same durable incidents and delivery worker.
+    pub fn with_family(mut self, family: &str) -> Self {
+        self.mode_key = format!("mode:{family}");
+        self
     }
 
     /// Commit incident transitions and their delivery records in one transaction.
@@ -157,9 +167,11 @@ impl Store {
     ) -> Result<()> {
         let tx = self.db.transaction()?;
         let previous_mode: Option<String> = tx
-            .query_row("SELECT value FROM metadata WHERE key='mode'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT value FROM metadata WHERE key=?",
+                [&self.mode_key],
+                |r| r.get(0),
+            )
             .optional()?;
         let promoting = !shadow && previous_mode.as_deref() == Some("shadow");
         for c in conditions {
@@ -270,7 +282,7 @@ impl Store {
             }
             tx.execute("INSERT INTO incidents(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![c.key,serde_json::to_string(&i)?])?;
         }
-        tx.execute("INSERT INTO metadata(key,value) VALUES ('mode',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[if shadow {"shadow"} else {"active"}])?;
+        tx.execute("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[self.mode_key.as_str(),if shadow {"shadow"} else {"active"}])?;
         tx.commit()?;
         Ok(())
     }
@@ -582,6 +594,32 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(s.health(true, 170).unwrap().pending, 2);
+    }
+    #[test]
+    fn independent_family_promotion_does_not_change_existing_mode() {
+        let path =
+            std::env::temp_dir().join(format!("pir-family-{}.sqlite", rand::random::<u64>()));
+        let mut existing = Store::open(&path).unwrap();
+        let mut quality = Store::open(&path).unwrap().with_family("quality");
+        for t in [100, 110] {
+            existing
+                .evaluate(&[condition(Some(true), t)], t, false, "test", "")
+                .unwrap();
+            let mut c = condition(Some(true), t);
+            c.key = "quality_test".into();
+            quality.evaluate(&[c], t, true, "test", "").unwrap();
+        }
+        assert_eq!(existing.health(true, 110).unwrap().pending, 1);
+        let mut c = condition(Some(true), 120);
+        c.key = "quality_test".into();
+        quality.evaluate(&[c], 120, false, "test", "").unwrap();
+        existing
+            .evaluate(&[condition(Some(true), 120)], 120, false, "test", "")
+            .unwrap();
+        assert_eq!(existing.health(true, 120).unwrap().pending, 2);
+        drop(existing);
+        drop(quality);
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn restart_preserves_outbox_and_does_not_refire() {

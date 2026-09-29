@@ -1,0 +1,254 @@
+# HELP transparent_shard_shards Shards the served map names.
+# TYPE transparent_shard_shards gauge
+transparent_shard_shards{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 86
+# HELP transparent_shard_assigned_shards Shards this worker holds tables for.
+# TYPE transparent_shard_assigned_shards gauge
+transparent_shard_assigned_shards{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 9
+# HELP transparent_shard_revisions_held Shard revisions loaded, current and superseded.
+# TYPE transparent_shard_revisions_held gauge
+transparent_shard_revisions_held{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 12
+# HELP transparent_shard_prunable_revisions Superseded revisions on disk past the retention bound.
+# TYPE transparent_shard_prunable_revisions gauge
+transparent_shard_prunable_revisions{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_cache_budget_bytes Byte budget for prepared runtimes.
+# TYPE transparent_shard_cache_budget_bytes gauge
+transparent_shard_cache_budget_bytes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 5368709120
+# HELP transparent_shard_cache_resident_bytes Bytes the runtime cache has reserved.
+# TYPE transparent_shard_cache_resident_bytes gauge
+transparent_shard_cache_resident_bytes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 1846447200
+# HELP transparent_shard_cache_entries Prepared runtimes held.
+# TYPE transparent_shard_cache_entries gauge
+transparent_shard_cache_entries{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 20
+# HELP transparent_shard_disk_hits_total Runtimes restored from disk.
+# TYPE transparent_shard_disk_hits_total counter
+transparent_shard_disk_hits_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 42
+# HELP transparent_shard_disk_misses_total Absent or rejected disk runtime entries.
+# TYPE transparent_shard_disk_misses_total counter
+transparent_shard_disk_misses_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 786
+# HELP transparent_shard_disk_load_micros_total Microseconds spent restoring runtimes.
+# TYPE transparent_shard_disk_load_micros_total counter
+transparent_shard_disk_load_micros_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 31079738
+# HELP transparent_shard_disk_save_pending Owned runtime snapshots queued or being persisted.
+# TYPE transparent_shard_disk_save_pending gauge
+transparent_shard_disk_save_pending{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_disk_write_failures_total Runtime cache writes that failed.
+# TYPE transparent_shard_disk_write_failures_total counter
+transparent_shard_disk_write_failures_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_cache_hits_total Runtime lookups served from the cache.
+# TYPE transparent_shard_cache_hits_total counter
+transparent_shard_cache_hits_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 15990
+# HELP transparent_shard_cache_misses_total Runtime lookups that had to build.
+# TYPE transparent_shard_cache_misses_total counter
+transparent_shard_cache_misses_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 828
+# HELP transparent_shard_evictions_total Runtimes evicted to stay inside the budget.
+# TYPE transparent_shard_evictions_total counter
+transparent_shard_evictions_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 808
+# HELP transparent_shard_builds_total Runtimes built.
+# TYPE transparent_shard_builds_total counter
+transparent_shard_builds_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 786
+# HELP transparent_shard_build_failures_total Runtime builds that failed.
+# TYPE transparent_shard_build_failures_total counter
+transparent_shard_build_failures_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_build_microseconds_total Time spent building runtimes.
+# TYPE transparent_shard_build_microseconds_total counter
+transparent_shard_build_microseconds_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 3073608607
+# HELP transparent_shard_build_coalesced_total Requests that waited on an in-flight build instead of starting one.
+# TYPE transparent_shard_build_coalesced_total counter
+transparent_shard_build_coalesced_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_queries_total Private queries answered.
+# TYPE transparent_shard_queries_total counter
+transparent_shard_queries_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 9426
+# HELP transparent_shard_query_errors_total Private queries rejected.
+# TYPE transparent_shard_query_errors_total counter
+transparent_shard_query_errors_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_overloads_total Requests refused because the cache could free no room.
+# TYPE transparent_shard_overloads_total counter
+transparent_shard_overloads_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_stale_revisions_total Requests naming a revision this worker no longer holds.
+# TYPE transparent_shard_stale_revisions_total counter
+transparent_shard_stale_revisions_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_unassigned_refusals_total Requests for a shard this worker is not assigned.
+# TYPE transparent_shard_unassigned_refusals_total counter
+transparent_shard_unassigned_refusals_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_setups_total Published setups served.
+# TYPE transparent_shard_setups_total counter
+transparent_shard_setups_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 84
+# HELP transparent_shard_query_queue_microseconds_total Time queries spent waiting for an evaluation slot.
+# TYPE transparent_shard_query_queue_microseconds_total counter
+transparent_shard_query_queue_microseconds_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 17186
+# HELP transparent_shard_manifests_total Manifests served.
+# TYPE transparent_shard_manifests_total counter
+transparent_shard_manifests_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_query_length_rejections_total Queries refused before any work for declaring the wrong length.
+# TYPE transparent_shard_query_length_rejections_total counter
+transparent_shard_query_length_rejections_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_queue_rejections_total Requests refused because every waiting place was taken.
+# TYPE transparent_shard_queue_rejections_total counter
+transparent_shard_queue_rejections_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_body_budget_rejections_total Queries refused because the body budget could not hold them.
+# TYPE transparent_shard_body_budget_rejections_total counter
+transparent_shard_body_budget_rejections_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_upload_timeouts_total Queries whose body did not arrive within the upload deadline.
+# TYPE transparent_shard_upload_timeouts_total counter
+transparent_shard_upload_timeouts_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_refusals_unread_total Early refusals whose request body could not be discarded before closing.
+# TYPE transparent_shard_refusals_unread_total counter
+transparent_shard_refusals_unread_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_deadline_exceeded_total Requests that waited their whole deadline without a slot.
+# TYPE transparent_shard_deadline_exceeded_total counter
+transparent_shard_deadline_exceeded_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_queries_cancelled_total Requests dropped by their client before they were answered.
+# TYPE transparent_shard_queries_cancelled_total counter
+transparent_shard_queries_cancelled_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_query_queue_depth Requests currently waiting or running.
+# TYPE transparent_shard_query_queue_depth gauge
+transparent_shard_query_queue_depth{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_body_bytes_in_flight Query body bytes currently buffered.
+# TYPE transparent_shard_body_bytes_in_flight gauge
+transparent_shard_body_bytes_in_flight{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_prewarm_operations_total Runtimes the prewarm has built or found resident.
+# TYPE transparent_shard_prewarm_operations_total counter
+transparent_shard_prewarm_operations_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 7308
+# HELP transparent_shard_target_runtimes Runtimes the prewarm aims to hold.
+# TYPE transparent_shard_target_runtimes gauge
+transparent_shard_target_runtimes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 18
+# HELP transparent_shard_prewarm_failed_total Runtimes the prewarm could not build.
+# TYPE transparent_shard_prewarm_failed_total counter
+transparent_shard_prewarm_failed_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_prewarm_microseconds_total Time the prewarm spent building.
+# TYPE transparent_shard_prewarm_microseconds_total counter
+transparent_shard_prewarm_microseconds_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 8017538
+# HELP transparent_shard_process_rss_bytes Resident set size of the process.
+# TYPE transparent_shard_process_rss_bytes gauge
+transparent_shard_process_rss_bytes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 1915699200
+# HELP transparent_shard_warm_runtimes Current publication runtimes warmed.
+# TYPE transparent_shard_warm_runtimes gauge
+transparent_shard_warm_runtimes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 18
+# HELP transparent_shard_work_memory_reserved_bytes Reservations held by build, restore and query work.
+# TYPE transparent_shard_work_memory_reserved_bytes gauge
+transparent_shard_work_memory_reserved_bytes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+# HELP transparent_shard_cgroup_memory_current_bytes Memory charged to the process's cgroup.
+# TYPE transparent_shard_cgroup_memory_current_bytes gauge
+transparent_shard_cgroup_memory_current_bytes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 1379926016
+# HELP transparent_shard_cgroup_memory_max_bytes The cgroup's memory limit.
+# TYPE transparent_shard_cgroup_memory_max_bytes gauge
+transparent_shard_cgroup_memory_max_bytes{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 7516192768
+# TYPE transparent_shard_process_cpu_seconds_total counter
+transparent_shard_process_cpu_seconds_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 8567.03
+# TYPE transparent_shard_process_start_time_seconds gauge
+transparent_shard_process_start_time_seconds{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 1790633244
+# HELP transparent_shard_query_seconds Handler entry through response construction; excludes response transmission.
+# TYPE transparent_shard_query_seconds histogram
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.001"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.005"} 252
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.01"} 6253
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.025"} 9046
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.05"} 9216
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.1"} 9234
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.25"} 9274
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="0.5"} 9320
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="1"} 9395
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="2"} 9425
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="5"} 9426
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="10"} 9426
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="30"} 9426
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="60"} 9426
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="120"} 9426
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="600"} 9426
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success",le="+Inf"} 9426
+transparent_shard_query_seconds_sum{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success"} 204.876435
+transparent_shard_query_seconds_count{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="success"} 9426
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.001"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.005"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.01"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.025"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.05"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.1"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.25"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="0.5"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="1"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="2"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="5"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="10"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="30"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="60"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="120"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="600"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error",le="+Inf"} 0
+transparent_shard_query_seconds_sum{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error"} 0
+transparent_shard_query_seconds_count{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="error"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.001"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.005"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.01"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.025"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.05"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.1"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.25"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="0.5"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="1"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="2"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="5"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="10"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="30"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="60"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="120"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="600"} 0
+transparent_shard_query_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled",le="+Inf"} 0
+transparent_shard_query_seconds_sum{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled"} 0
+transparent_shard_query_seconds_count{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",outcome="cancelled"} 0
+# HELP transparent_shard_queue_wait_seconds Evaluation semaphore wait, including failed and cancelled waits.
+# TYPE transparent_shard_queue_wait_seconds histogram
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.001"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.005"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.01"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.025"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.05"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.1"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.25"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.5"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="1"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="2"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="5"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="10"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="30"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="60"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="120"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="600"} 9426
+transparent_shard_queue_wait_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="+Inf"} 9426
+transparent_shard_queue_wait_seconds_sum{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0.023182
+transparent_shard_queue_wait_seconds_count{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 9426
+# HELP transparent_shard_evaluation_seconds All-segment evaluation inside the blocking task; excludes runtime acquisition.
+# TYPE transparent_shard_evaluation_seconds histogram
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.001"} 0
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.005"} 3211
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.01"} 8163
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.025"} 9162
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.05"} 9223
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.1"} 9238
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.25"} 9274
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.5"} 9320
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="1"} 9396
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="2"} 9425
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="5"} 9426
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="10"} 9426
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="30"} 9426
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="60"} 9426
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="120"} 9426
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="600"} 9426
+transparent_shard_evaluation_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="+Inf"} 9426
+transparent_shard_evaluation_seconds_sum{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 174.944048
+transparent_shard_evaluation_seconds_count{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 9426
+# HELP transparent_shard_build_seconds Cold runtime build latency.
+# TYPE transparent_shard_build_seconds histogram
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.25"} 0
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="0.5"} 0
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="1"} 0
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="2"} 0
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="4"} 395
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="8"} 785
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="16"} 786
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="32"} 786
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="64"} 786
+transparent_shard_build_seconds_bucket{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",le="+Inf"} 786
+transparent_shard_build_seconds_sum{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 3073.608749
+transparent_shard_build_seconds_count{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 786

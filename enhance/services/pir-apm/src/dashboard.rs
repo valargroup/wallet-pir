@@ -40,6 +40,7 @@ pub struct EntrypointData {
 
 #[derive(Clone, Debug)]
 pub struct DashboardData {
+    pub quality: crate::quality::View,
     pub monitoring: crate::monitoring::View,
     pub domain_ready_replicas: BTreeMap<u64, f64>,
     pub status: crate::status_apm::View,
@@ -85,6 +86,7 @@ impl DashboardData {
         host: HostHealth,
     ) -> Self {
         Self {
+            quality: Default::default(),
             monitoring: Default::default(),
             domain_ready_replicas: BTreeMap::new(),
             status: crate::status_apm::View::default(),
@@ -143,7 +145,7 @@ pub async fn healthz() -> &'static str {
     "ok\n"
 }
 
-const STYLE: &str = r#"
+pub(crate) const STYLE: &str = r#"
 .mini-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px;text-align:left;font-family:var(--sans);white-space:normal;margin:10px 0 20px}
 .mini-charts svg{display:block;width:100%;max-height:180px;color:var(--p62)}
 .chart-hit{cursor:crosshair}.chart-hit line{visibility:hidden;pointer-events:none}.chart-hit:hover line,.chart-hit:focus-within line{visibility:visible}
@@ -1559,7 +1561,7 @@ fn relative_time(value: SystemTime) -> String {
     }
 }
 
-fn escape(input: &str) -> String {
+pub(crate) fn escape(input: &str) -> String {
     input
         .replace('&', "&amp;")
         .replace('<', "&lt;")

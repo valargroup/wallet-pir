@@ -1,0 +1,17 @@
+[Unit]
+Description=Read-only PIR host resource sampler
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/pir-quality/current/quality-host-sampler.py --config /etc/pir-quality/hosts.json
+Restart=on-failure
+RestartSec=5
+User=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pir-apm
+
+[Install]
+WantedBy=multi-user.target
