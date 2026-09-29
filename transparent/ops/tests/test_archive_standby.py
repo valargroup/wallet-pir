@@ -16,6 +16,7 @@ SPEC.loader.exec_module(S)
 I = S.INVENTORY
 
 HOST, NEW = '10.142.1.3', 'transparent-pir-archive-03'
+ROUTER = '10.142.0.11'
 ACTIVE = 'a' * 64
 PEER_UNIT = ('[Unit]\nDescription=w\n\n[Service]\nMemoryHigh=51539607552\nRuntimeDirectory=transparent-pir\n'
              'ExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 --shard-dir /p/old '
@@ -76,9 +77,15 @@ class FakeHost:
 
 class FakePeers:
     def __init__(self):
-        self.reads = []
+        self.reads, self.dials, self.unreachable = [], [], 0
 
     def run(self, host, command, data=None, timeout=120):
+        if command.startswith('curl '):
+            self.dials.append((host, command.split()[-1]))
+            if self.unreachable:
+                self.unreachable -= 1
+                raise S.ACTUATOR.ActuatorError(f'{host}: ssh failed: curl: (28) timed out')
+            return ''
         self.reads.append(host)
         assert command == 'cat ' + S.UNIT_PATH
         return PEER_UNIT
@@ -114,7 +121,7 @@ class StandbyTests(unittest.TestCase):
         (release/'SHA256SUMS').write_text('\n'.join(sums) + '\n')
         self.binary = hashlib.sha256(b'transparent-shard-server').hexdigest()
         self.fleet = dict(state_dir=str(self.state), roster=str(root/'roster.json'), known_hosts=str(root/'fleet_known'),
-                          ssh_key=str(root/'id'), assign_binary='shard-assign')
+                          ssh_key=str(root/'id'), assign_binary='shard-assign', router_host=ROUTER)
         (root/'pinned').write_text(f'{HOST} ssh-ed25519 AAAAarchive3\n')
         self.host, self.peers = FakeHost(), FakePeers()
         self.plans, self.freshness, self.sleeps = [], [], 0
@@ -209,6 +216,15 @@ class StandbyTests(unittest.TestCase):
         record = json.loads(self.host.files['/opt/transparent-publisher/active.json'])
         self.assertEqual(record, {'directory': publication, 'assignment': publication + '/assignment.json',
                                   'map_sha256': ACTIVE})
+
+    def test_the_router_must_reach_the_warm_host(self):
+        self.peers.unreachable = 2
+        summary = self.standby().run()
+        self.assertEqual(summary['router_reaches'], ROUTER)
+        self.assertEqual(self.peers.dials, [(ROUTER, f'http://{HOST}:8093/v1/ready')] * 3)
+        self.peers.unreachable = 10**6
+        with self.assertRaisesRegex(S.StandbyError, 'cannot reach'):
+            self.standby().run()
 
     def test_a_rerun_on_a_warm_host_changes_nothing(self):
         self.standby().run()

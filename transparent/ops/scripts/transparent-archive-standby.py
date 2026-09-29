@@ -15,8 +15,9 @@ a plan of the active publication with the enrolled recent replicas and this
 host pinned to the whole archive; its files, hard-linked from any earlier
 standby publication and otherwise copied at a bounded rate, paused while
 publication is late; the assignment, written once; the unit, a serving
-archive owner's unit with this host's identity and budgets; and the wait until
-the worker attests that publication warm. Prints a JSON summary.
+archive owner's unit with this host's identity and budgets; the wait until
+the worker attests that publication warm; and a dial from the router to the
+host, so the path the cutover uses is proven first. Prints a JSON summary.
 """
 import argparse
 import hashlib
@@ -112,6 +113,7 @@ class Standby:
         warm = self.already_warm(binaries)
         if warm:
             self.summary.update(map_sha256=warm, warm_seconds=0, started='already')
+            self.check_router()
             return self.summary
         digest, request = self.active()
         self.summary['map_sha256'] = digest
@@ -121,6 +123,7 @@ class Standby:
         self.write_assignment(assignment, publication)
         started = self.start(self.render(publication), publication, digest)
         self.summary['warm_seconds'] = round(self.wait_warm(digest, binaries, started), 1)
+        self.check_router()
         return self.summary
 
     # -- checks ----------------------------------------------------------
@@ -358,6 +361,29 @@ class Standby:
                 pass
             self.sleep(5)
         raise StandbyError(f'{self.a.id} did not attest {digest[:12]} warm within {self.a.warm_timeout} s')
+
+    def check_router(self):
+        """Return once the router itself reaches this host's /v1/ready.
+
+        The router first dials an owner when the repartition's publication is
+        routed. A VPC address reused from a destroyed droplet can sit in the
+        router's neighbour table with the old MAC, and on 2026-09-29 the first
+        dials to archive-03 timed out for eight seconds after that switch.
+        Dialling from the router now refreshes the entry, and proves the path."""
+        router = self.fleet.get('router_host')
+        if not router:
+            raise StandbyError('the fleet config names no router_host to check the path from')
+        command = f'curl -fsS --max-time 3 -o /dev/null http://{self.host}:8093/v1/ready'
+        deadline = self.clock() + 60
+        while True:
+            try:
+                self.fleet_remote.run(router, command, timeout=10)
+                self.summary['router_reaches'] = router
+                return
+            except (ACTUATOR.ActuatorError, subprocess.TimeoutExpired) as error:
+                if self.clock() > deadline:
+                    raise StandbyError(f'the router {router} cannot reach {self.host}:8093: {error}') from None
+            self.sleep(2)
 
     def status(self, config, member):
         return INVENTORY.worker_status(config, member, config['known_hosts'])
