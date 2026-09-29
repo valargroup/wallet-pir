@@ -1,0 +1,8 @@
+{
+  "utc": "2026-09-29T07:26:27.336200+00:00",
+  "event": "result",
+  "passed": false,
+  "seconds": 1.4789766403846443,
+  "blocks": 0,
+  "error": "a sustained private-query process exited before the gate finished"
+}

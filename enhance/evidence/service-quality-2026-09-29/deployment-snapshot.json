@@ -1,0 +1,673 @@
+{
+  "captured_utc": "2026-09-29T07:40:15.312426+00:00",
+  "apm_sha256": "64d9384cec5d0d0bd436471f2f6eafb30def14000cbd12f5d7248ab5a9c47f2c",
+  "publisher_sha256": "e377684e032586c3d5bbd424854a52cc545efa9bd66f039c01e7ab6ab75b9533",
+  "workers": {
+    "transparent-pir-recent-01": {
+      "binary_sha256": "4c319de1261ae65081e423b06c9869d34a0b60b3df5749802109f1c5748cbbb7",
+      "map_sha256": "a2dfa866f117412844b5bac4e473559af92b3cc0c4e1763fb14d10bbb3dfcfe1",
+      "mode": "warm",
+      "ready": true
+    },
+    "transparent-pir-recent-02": {
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "45d849576a6209b09e1a340b38729e62b87c8de05e0466c484234e75c34ae60e",
+      "mode": "warm",
+      "ready": true
+    },
+    "transparent-pir-recent-03": {
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "f519d6313231027305acad9463ce85359d77b7ed756806093e9be8e14f94c873",
+      "mode": "warm",
+      "ready": true
+    },
+    "transparent-pir-recent-04": {
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "a2dfa866f117412844b5bac4e473559af92b3cc0c4e1763fb14d10bbb3dfcfe1",
+      "mode": "warm",
+      "ready": true
+    },
+    "transparent-pir-archive-01": {
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "a2dfa866f117412844b5bac4e473559af92b3cc0c4e1763fb14d10bbb3dfcfe1",
+      "mode": "warm",
+      "ready": true
+    },
+    "transparent-pir-archive-02": {
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "a2dfa866f117412844b5bac4e473559af92b3cc0c4e1763fb14d10bbb3dfcfe1",
+      "mode": "warm",
+      "ready": true
+    }
+  },
+  "quality": {
+    "enhance": {
+      "collected_at": 1790667612,
+      "persisted_at": 1790667607,
+      "storage_error": false,
+      "sources": {
+        "enhance-init": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 1,
+          "http_observation_version": null
+        },
+        "enhance-pir-gpu-01": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 1,
+          "http_observation_version": null
+        },
+        "enhance-pir-packing-01": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 3,
+          "http_observation_version": null
+        },
+        "enhance-pir-worker-01": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 1,
+          "http_observation_version": null
+        },
+        "enhance-pir-worker-02": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 1,
+          "http_observation_version": null
+        },
+        "enhance-query-0": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 1,
+          "http_observation_version": null
+        }
+      }
+    },
+    "status": {
+      "collected_at": 1790667612,
+      "persisted_at": 1790667607,
+      "storage_error": false,
+      "sources": {
+        "status-independent-probe": {
+          "sampled_at": 1790667541,
+          "error": null,
+          "histograms": 0,
+          "http_observation_version": null
+        },
+        "status-init": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 1,
+          "http_observation_version": null
+        },
+        "status-query": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 1,
+          "http_observation_version": null
+        }
+      }
+    },
+    "transparent": {
+      "collected_at": 1790667612,
+      "persisted_at": 1790667607,
+      "storage_error": false,
+      "sources": {
+        "transparent-edge": {
+          "sampled_at": 1790667599,
+          "error": null,
+          "histograms": 8,
+          "http_observation_version": null
+        },
+        "transparent-independent-probe": {
+          "sampled_at": 1790667541,
+          "error": null,
+          "histograms": 0,
+          "http_observation_version": null
+        },
+        "transparent-pir-archive-01": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 6,
+          "http_observation_version": null
+        },
+        "transparent-pir-archive-02": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 6,
+          "http_observation_version": null
+        },
+        "transparent-pir-recent-01": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 14,
+          "http_observation_version": 1.0
+        },
+        "transparent-pir-recent-02": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 6,
+          "http_observation_version": null
+        },
+        "transparent-pir-recent-03": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 6,
+          "http_observation_version": null
+        },
+        "transparent-pir-recent-04": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 6,
+          "http_observation_version": null
+        },
+        "transparent-publisher": {
+          "sampled_at": 1790667612,
+          "error": null,
+          "histograms": 6,
+          "http_observation_version": 1.0
+        }
+      },
+      "publication": {
+        "canonical": true,
+        "lag_blocks": 0,
+        "map_sha256": "a2dfa866f117412844b5bac4e473559af92b3cc0c4e1763fb14d10bbb3dfcfe1",
+        "origins_agree": true,
+        "public_height": 3500066,
+        "sampled_at": 1790667612
+      },
+      "synthetic": {
+        "counts": {
+          "http_attempts": 3983.0,
+          "missed_slot": 7.0,
+          "paused": 3.0,
+          "query": 3983.0
+        },
+        "fresh": true,
+        "mode": "running",
+        "started_unix": 1790666785.819312,
+        "trailing_60s": {
+          "completed_qps": 4.983333333333333,
+          "errors": 0.0,
+          "exact": 299.0,
+          "http_p50_seconds": 0.017785476,
+          "http_p95_seconds": 0.036512982,
+          "http_p99_seconds": 0.058159995,
+          "max_schedule_lag_seconds": 0.02950699,
+          "missed_slots": 0.0
+        },
+        "utc": "2026-09-29T07:40:03.052526+00:00"
+      }
+    }
+  },
+  "monitor": {
+    "canary_at": 1790667601,
+    "canary_duration_seconds": 1.251343082,
+    "canary_ok": true,
+    "delivery": {
+      "configured": true,
+      "failure": null,
+      "last_success": 1790533118,
+      "oldest_pending_age": 0,
+      "pending": 0,
+      "worker_at": 1790667615
+    },
+    "evaluated_at": 1790667615,
+    "failure_category": "",
+    "incidents": [
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "apm_delivery_critical",
+          "observed": "APM Slack delivery health",
+          "resource": "apm",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "critical",
+          "threshold": "Slack unconfigured or oldest pending event >=300 seconds"
+        },
+        "healthy_samples": 255,
+        "id": "apm_delivery_critical-1790533087",
+        "last_evaluated": 1790667615,
+        "last_reminder": 1790533087,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "apm_delivery_warning",
+          "observed": "APM Slack delivery health",
+          "resource": "apm",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "warning",
+          "threshold": "Slack unconfigured or oldest pending event >=60 seconds"
+        },
+        "healthy_samples": 255,
+        "id": "apm_delivery_warning-1790533087",
+        "last_evaluated": 1790667615,
+        "last_reminder": 1790533087,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 60,
+          "key": "apm_progress",
+          "observed": "APM collector/evaluator/delivery progress",
+          "resource": "apm",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "critical",
+          "threshold": "APM progress unavailable for 60 seconds"
+        },
+        "healthy_samples": 5,
+        "id": "apm_progress-1790503534",
+        "last_evaluated": 1790667615,
+        "last_reminder": 1790503534,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "canary_correctness",
+          "observed": "decrypted bytes compared with pinned oracle",
+          "resource": "public_pir",
+          "retired": false,
+          "sample": 1790667601,
+          "severity": "critical",
+          "threshold": "decrypted bytes must match the validated oracle"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667601,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "canary_failures",
+          "observed": "0 consecutive failures; ",
+          "resource": "public_pir",
+          "retired": false,
+          "sample": 1790667601,
+          "severity": "critical",
+          "threshold": "three consecutive failed one-minute probes"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667601,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "canary_latency",
+          "observed": "0 consecutive samples above 10s",
+          "resource": "public_pir",
+          "retired": false,
+          "sample": 1790667601,
+          "severity": "warning",
+          "threshold": "five consecutive successful probes above 10 seconds"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667601,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 60,
+          "key": "canary_progress",
+          "observed": "canary task progress",
+          "resource": "public_pir",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "critical",
+          "threshold": "canary sample older than 90 seconds for 60 seconds"
+        },
+        "healthy_samples": 93,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 60,
+          "key": "oracle_monitoring",
+          "observed": "oracle reference unavailable",
+          "resource": "apm",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "warning",
+          "threshold": "oracle reference unavailable for 60 seconds"
+        },
+        "healthy_samples": 255,
+        "id": "oracle_monitoring-1790503534",
+        "last_evaluated": 1790667615,
+        "last_reminder": 1790503534,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "oracle_validity",
+          "observed": "canonical oracle anchor validation",
+          "resource": "apm",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "warning",
+          "threshold": "pinned oracle block must remain canonical"
+        },
+        "healthy_samples": 255,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_status_availability",
+          "observed": "0 consecutive failures; exact",
+          "resource": "status",
+          "retired": false,
+          "sample": 1790667602,
+          "severity": "critical",
+          "threshold": "three consecutive failed probes"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667602,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_status_correctness",
+          "observed": "0 consecutive failures; exact",
+          "resource": "status",
+          "retired": false,
+          "sample": 1790667602,
+          "severity": "critical",
+          "threshold": "decoded answer must match independent oracle"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667602,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_status_latency",
+          "observed": "0 consecutive failures; exact",
+          "resource": "status",
+          "retired": false,
+          "sample": 1790667602,
+          "severity": "warning",
+          "threshold": "five consecutive successful probes above 5 seconds"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667602,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_status_oracle",
+          "observed": "0 consecutive failures; exact",
+          "resource": "status",
+          "retired": false,
+          "sample": 1790667602,
+          "severity": "warning",
+          "threshold": "oracle must remain canonical"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667602,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 60,
+          "key": "service_canary_status_progress",
+          "observed": "0 consecutive failures; exact",
+          "resource": "status",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "critical",
+          "threshold": "probe sample unavailable for 90s, held 60s"
+        },
+        "healthy_samples": 93,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_transparent_availability",
+          "observed": "0 consecutive failures; exact",
+          "resource": "transparent",
+          "retired": false,
+          "sample": 1790667601,
+          "severity": "critical",
+          "threshold": "three consecutive failed probes"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667601,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_transparent_correctness",
+          "observed": "0 consecutive failures; exact",
+          "resource": "transparent",
+          "retired": false,
+          "sample": 1790667601,
+          "severity": "critical",
+          "threshold": "decoded answer must match independent oracle"
+        },
+        "healthy_samples": 14,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667601,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_transparent_latency",
+          "observed": "0 consecutive failures; exact",
+          "resource": "transparent",
+          "retired": false,
+          "sample": 1790667601,
+          "severity": "warning",
+          "threshold": "five consecutive successful probes above 5 seconds"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667601,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 0,
+          "key": "service_canary_transparent_oracle",
+          "observed": "0 consecutive failures; exact",
+          "resource": "transparent",
+          "retired": false,
+          "sample": 1790667601,
+          "severity": "warning",
+          "threshold": "oracle must remain canonical"
+        },
+        "healthy_samples": 24,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667601,
+        "notified": false,
+        "since": null
+      },
+      {
+        "active": false,
+        "announce_pending": false,
+        "condition": {
+          "firing": false,
+          "hold_seconds": 60,
+          "key": "service_canary_transparent_progress",
+          "observed": "0 consecutive failures; exact",
+          "resource": "transparent",
+          "retired": false,
+          "sample": 1790667615,
+          "severity": "critical",
+          "threshold": "probe sample unavailable for 90s, held 60s"
+        },
+        "healthy_samples": 93,
+        "id": "",
+        "last_evaluated": 1790667615,
+        "last_reminder": 0,
+        "last_sample": 1790667615,
+        "notified": false,
+        "since": null
+      }
+    ],
+    "progress_ok": true,
+    "services": {
+      "status": {
+        "category": "",
+        "consecutive_failures": 0,
+        "consecutive_slow": 0,
+        "duration_seconds": 2.093351768,
+        "failures": 0,
+        "sampled_at": 1790667602,
+        "successes": 24
+      },
+      "transparent": {
+        "category": "",
+        "consecutive_failures": 0,
+        "consecutive_slow": 0,
+        "duration_seconds": 1.270790877,
+        "failures": 1,
+        "sampled_at": 1790667601,
+        "successes": 23
+      }
+    },
+    "shadow": false,
+    "storage_error": false
+  },
+  "rollout": {
+    "phase": "canary_observation",
+    "binary_sha256": "4c319de1261ae65081e423b06c9869d34a0b60b3df5749802109f1c5748cbbb7",
+    "source_sha": "5957f378161c16888d9c0fd81e4f4b51dbf7a733"
+  },
+  "history_quick_check": "ok",
+  "history_rows": 819,
+  "new_alert_modes": {
+    "apm_quality": "shadow",
+    "monitor_services": "shadow"
+  }
+}

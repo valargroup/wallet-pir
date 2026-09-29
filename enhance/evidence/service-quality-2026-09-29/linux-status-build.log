@@ -1,0 +1,5 @@
+    Blocking waiting for file lock on build directory
+   Compiling chrono v0.4.45
+   Compiling zakura-chain v6.0.0 (https://github.com/zakura-core/zakura.git?rev=1faf150fc3648aae22c55a6b30f8f5a9b9ce934e#1faf150f)
+   Compiling enhance-pir-server v0.0.1 (/opt/pir-quality-build/enhance/services/enhance-pir-server)
+    Finished `release` profile [optimized] target(s) in 10m 05s

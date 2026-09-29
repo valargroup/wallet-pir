@@ -6,6 +6,29 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Service-quality rollout, 2026-09-29
+
+The separate [Transparent APM page](https://enhance-pir.valargroup.dev/apm/transparent/)
+is live, with seven-day aggregate history shared with Enhance and Status quality
+views. The dedicated monitor now runs native Status and Transparent exact-query
+checks; initial positive checks and wrong-pin/wrong-answer negative controls
+passed. This does not establish whole-wallet availability or a capacity milestone.
+
+The publisher and `transparent-pir-recent-01` have the new HTTP instrumentation.
+The remaining five workers are still predecessors while a fresh six-hour / 300-block
+canary gate runs. The supervised rollout may advance only after that gate, then
+observes the full fleet for 24 hours. Continuous 5 QPS load pauses during upgrades
+and resumes only after exact-query verification and per-worker identity checks.
+A critical load latch prevents progression and is never cleared automatically.
+
+The first observer attempt failed because its historical default shard no longer
+exists in v10. The observer now selects from the current worker assignment; the
+replacement observation starts fresh and does not reuse that failed interval.
+Existing alerts remain active. New quality/probe alert families remain in shadow;
+24-hour shadow review, notification-path validation, activation and 24-hour active
+observation are still outstanding. See the [rollout evidence](../../enhance/evidence/service-quality-2026-09-29/README.md)
+and [operations guide](../../enhance/docs/observability-alerting.md).
+
 ## Continuous query load, 2026-09-29
 
 At the user's request, `transparent-5qps-continuous.service` was enabled on the
@@ -21,7 +44,7 @@ sustained failures, and critical incidents remain latched for investigation.
 The [initial evidence](../evidence/continuous-5qps-2026-09-29/README.md) records
 observed rates, correctness and resources; the process continues beyond that
 snapshot. It does not establish a sustained-capacity milestone or guarantee
-future health. Production service binaries remain at `8e69ea75`.
+future health. At that initial snapshot, production service binaries were at `8e69ea75`; the later telemetry rollout is described above.
 
 ## Compact layout production cutover, 2026-09-28
 

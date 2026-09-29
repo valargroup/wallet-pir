@@ -521,3 +521,21 @@ recovery-only beta. Existing hardening/publication gates above still apply.
 These are release-test criteria, not automatic deployment, fault-injection or
 infrastructure-provisioning actions. Any revised target needs an explicit recorded
 change before retesting, with the previous failed result retained.
+
+
+## Service-quality monitoring
+
+The dedicated page is `/apm/transparent/` on the Enhance APM origin. The shared
+[observability guide](../../enhance/docs/observability-alerting.md) owns collector,
+history, guardrail and independent-canary configuration. Metrics stay on private
+service endpoints or loopback Caddy admin; no public metrics route is introduced.
+
+For telemetry worker upgrades, the existing supervised hardening rollout accepts
+`--production-lock`, `--load-service`, `--load-root`, and `--load-identity-file`.
+The three load options must be supplied together. The identity JSON must cover
+exactly the current roster. The runner checks predecessors, pauses continuous
+load for each upgrade, verifies the expected post-upgrade identities, writes new
+pins atomically, then resumes load. Failures leave load stopped for investigation.
+An existing correctness/resource latch blocks mutation. The observer chooses a
+query shard from the selected worker's current assignment unless explicitly pinned.
+The existing six-hour / 300-block and full-fleet observation gates are unchanged.

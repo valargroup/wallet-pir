@@ -1,0 +1,7 @@
+{
+  "service_alert_mode": "shadow",
+  "existing_alert_mode": "active",
+  "monitor_sha256": "2f0a24231d333abeccf203b66167a5f9824dffd63102dcf410fa9a43932cb438",
+  "status_probe_sha256": "1df52ea5c628ba5574458fecd3cf11bd1d86f2aa3b671f1e10bc4d936f5877c7",
+  "transparent_probe_sha256": "90854c9257be42577db22181eb17e24e55af31f5253f0f9244a51ceb9655e532"
+}

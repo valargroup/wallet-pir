@@ -314,3 +314,13 @@ sanitized evidence; never commit wallet secrets or private histories. Code chang
 run repository-required checks. Wallet changes additionally run native tests,
 generated-binding checks, Flutter tests and a macOS release build. Documentation
 changes run `make check-docs`.
+
+
+## Service-quality rollout follow-up (2026-09-29)
+
+- [ ] Accept the fresh six-hour / 300-block telemetry canary and gated five-worker rollout.
+- [ ] Complete full-fleet observation; retain failures and exact-query/configuration provenance.
+- [ ] Review 24 hours of complete shadow coverage and exercise firing/recovery through the existing notification outbox.
+- [ ] Activate only the new APM quality and independent service-probe families, then observe 24 active hours.
+
+The live dashboard and initial passing probes do not close these elapsed-time gates.
