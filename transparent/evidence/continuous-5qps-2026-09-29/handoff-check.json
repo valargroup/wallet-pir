@@ -1,0 +1,227 @@
+{
+  "utc": "2026-09-29T04:20:10.327405+00:00",
+  "ongoing": true,
+  "active": "active",
+  "enabled": "enabled",
+  "binary_sha256": "255db36a6b6af777b6d322a42773f832e325c40f557c932fb011c485c9e1e189",
+  "status": {
+    "utc": "2026-09-29T04:19:57.038993+00:00",
+    "started_unix": 1790655175.1952083,
+    "mode": "running",
+    "target_query_qps": 5,
+    "client_location": "coordinator; shares host with ingest/publication; Nice=10 CPUQuota=200%",
+    "workload": "80% recent, 20% archive; directory/pages equally split; sealed revisions; fresh keys; exact row hashes; separate moving-tail health probes",
+    "ready": {
+      "event": "ready",
+      "fixture_sha256": "1316d72b0d72ad1aaf58b2d7ab2a4e8c6953c249767ff2fd8b824c68be6094bb",
+      "http_attempts_per_call": 1,
+      "maximum_attempts_per_logical_query": 3,
+      "mix": "40% recent directory, 40% recent pages, 10% archive directory, 10% archive pages",
+      "qps": 5,
+      "retry_budget": "retries consume scheduled slots; every attempt has a fresh key",
+      "targets": [
+        8,
+        8,
+        77,
+        77
+      ],
+      "unix": 1790655176.2232246,
+      "workers": 8
+    },
+    "counts": {
+      "ready": 1,
+      "paused": 4,
+      "query": 1994,
+      "missed_slot": 1,
+      "error": 2
+    },
+    "trailing_60s": {
+      "exact": 299,
+      "errors": 0,
+      "missed_slots": 0,
+      "completed_qps": 4.983333333333333,
+      "http_p50_seconds": 0.015578701,
+      "http_p95_seconds": 0.032785799,
+      "http_p99_seconds": 0.04327259,
+      "max_schedule_lag_seconds": 0.102931557
+    },
+    "reasons": [],
+    "incidents": 0,
+    "publisher": {
+      "candidate_height": 3499906,
+      "cycle_seconds": 12.017112946,
+      "freshness_seconds": 14.635798834,
+      "journal_height": 3499906,
+      "map_sha256": "30b08895790ae4f8c966d7ea9372c4fadd87531587dfd1e1f659f0301e81d4ac",
+      "node_hash": "00000000001a3c3cd6debc29f3735ae585dca82e204257925d26e031575b9aa3",
+      "node_height": 3499906,
+      "phase": "serving",
+      "public_hash": "00000000001a3c3cd6debc29f3735ae585dca82e204257925d26e031575b9aa3",
+      "public_height": 3499906,
+      "ready_replicas": 1,
+      "reorg_depth": 1
+    },
+    "workers": [
+      {
+        "id": "transparent-pir-recent-01",
+        "available_memory_percent": 75.51488112073864,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 6120493286000,
+        "ready": true
+      },
+      {
+        "id": "transparent-pir-recent-02",
+        "available_memory_percent": 75.53947598188834,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 6194192899000,
+        "ready": true
+      },
+      {
+        "id": "transparent-pir-recent-03",
+        "available_memory_percent": 76.24643067077565,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 6343498900000,
+        "ready": true
+      },
+      {
+        "id": "transparent-pir-recent-04",
+        "available_memory_percent": 75.87352338602372,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 5032527888000,
+        "ready": true
+      },
+      {
+        "id": "transparent-pir-archive-01",
+        "available_memory_percent": 74.7176867808071,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 587814691000,
+        "ready": true
+      },
+      {
+        "id": "transparent-pir-archive-02",
+        "available_memory_percent": 75.22283147229386,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 1351717261000,
+        "ready": true
+      },
+      {
+        "id": "transparent-router",
+        "available_memory_percent": 85.64988737772653,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 21134038948000,
+        "ready": true
+      },
+      {
+        "id": "transparent-coordinator",
+        "available_memory_percent": 86.62434922706676,
+        "restarts": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "cpu_ns": 1512335075000,
+        "ready": true
+      }
+    ]
+  },
+  "events_after_frozen_snapshot": [
+    {
+      "event": "missed_slot",
+      "reason": "client admission delayed beyond one interval",
+      "sequence": 1340,
+      "unix": 1790655465.24311
+    },
+    {
+      "attempt": 1,
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/78/revisions/ff59aaeed78438ee54a4d5d7d2cbb39186798d746f238ee1f859fc65efbc5462/query/pages)",
+      "error_chain": [
+        "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/78/revisions/ff59aaeed78438ee54a4d5d7d2cbb39186798d746f238ee1f859fc65efbc5462/query/pages)",
+        "client error (SendRequest)",
+        "connection closed before message completed"
+      ],
+      "event": "error",
+      "kind": "query_or_decode",
+      "logical_id": 1465,
+      "retry_scheduled": true,
+      "seconds": 0.012907923,
+      "sequence": 1465,
+      "shard": 78,
+      "table": "pages",
+      "unix": 1790655490.5278144
+    },
+    {
+      "attempt": 2,
+      "down": 5648,
+      "event": "query",
+      "exact": true,
+      "geometry": "recent-4k-8k",
+      "http_seconds": 0.018148434,
+      "logical_id": 1465,
+      "nonempty": true,
+      "prepare_seconds": 0.012586969,
+      "recovered": true,
+      "schedule_lag_seconds": 9.119e-05,
+      "sequence": 1466,
+      "shard": 78,
+      "table": "pages",
+      "total_seconds": 0.020345566,
+      "unix": 1790655490.7279055,
+      "up": 77832
+    },
+    {
+      "attempt": 1,
+      "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/81/revisions/5b10d0fde6bab5ac6fce2466e80f791cc53909871db54a6c7512b2fe5b091687/query/directory)",
+      "error_chain": [
+        "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/81/revisions/5b10d0fde6bab5ac6fce2466e80f791cc53909871db54a6c7512b2fe5b091687/query/directory)",
+        "client error (SendRequest)",
+        "connection closed before message completed"
+      ],
+      "event": "error",
+      "kind": "query_or_decode",
+      "logical_id": 1611,
+      "retry_scheduled": true,
+      "seconds": 0.003456803,
+      "sequence": 1611,
+      "shard": 81,
+      "table": "directory",
+      "unix": 1790655519.859959
+    },
+    {
+      "attempt": 2,
+      "down": 5648,
+      "event": "query",
+      "exact": true,
+      "geometry": "recent-4k-8k",
+      "http_seconds": 0.025123222,
+      "logical_id": 1611,
+      "nonempty": true,
+      "prepare_seconds": 0.014687311,
+      "recovered": true,
+      "schedule_lag_seconds": 0.001007492,
+      "sequence": 1612,
+      "shard": 81,
+      "table": "directory",
+      "total_seconds": 0.027674815,
+      "unix": 1790655520.0609665,
+      "up": 52744
+    },
+    {
+      "event": "missed_slot",
+      "reason": "client admission delayed beyond one interval",
+      "sequence": 2062,
+      "unix": 1790655610.2677214
+    }
+  ]
+}
