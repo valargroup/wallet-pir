@@ -95,6 +95,23 @@ jobs:
           terraform validate -no-color
           terraform test -no-color
 
+  validate-transparent-elastic-infra:
+    name: Validate transparent elastic infrastructure
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.8
+          terraform_wrapper: false
+      - name: Validate provider schema and mock member plans
+        working-directory: ops/infra/digitalocean/transparent-elastic
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate -no-color
+          terraform test -no-color
+
   validate-ops:
     name: Validate Enhance operations
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
