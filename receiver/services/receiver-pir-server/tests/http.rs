@@ -3,7 +3,7 @@ use receiver_directory::{
     snapshot::{Manifest, Snapshot, PROFILE},
     Payment, Receiver, Record,
 };
-use receiver_pir::{http::HttpClient, server::Server, AcceptedCoverage, Error, ROWS};
+use receiver_pir::{http::HttpClient, server::Server, AcceptedCoverage, Error, MIN_ROWS};
 use std::{num::NonZeroU32, time::Duration};
 
 fn fixture() -> Action {
@@ -38,6 +38,9 @@ fn accepted() -> AcceptedCoverage {
     }
 }
 fn snapshot(count: u32) -> Snapshot {
+    snapshot_rows(count, MIN_ROWS)
+}
+fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
     let manifest = Manifest {
         profile: PROFILE.into(),
         genesis: [1; 32],
@@ -47,7 +50,7 @@ fn snapshot(count: u32) -> Snapshot {
         end_height: 101,
         end_hash: [3; 32],
         end_position: 300,
-        rows: ROWS as u32,
+        rows,
         salt: [4; 32],
         records: 0,
         data_sha256: [0; 32],
@@ -109,7 +112,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         .await
         .unwrap();
     let old_id = hex::encode(old.manifest().id().unwrap());
-    let mut next = snapshot(2);
+    let mut next = snapshot_rows(2, MIN_ROWS * 2);
     next.manifest.end_height = 102;
     next.manifest.end_hash = [9; 32];
     // Empty canonical extension: old payments remain unchanged.
@@ -146,6 +149,22 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         .unwrap();
     assert_eq!(
         new.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let file = receiver_pir::transport::DirectoryClient::connect_for_work(
+        &server.origin,
+        http(),
+        anchor,
+        10_000,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        file.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
             .await
             .unwrap()
             .len(),
@@ -235,7 +254,12 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .is_err());
     let oversized = http()
         .post(format!("{}/v1/receiver/query", server.origin))
-        .body(vec![0; receiver_pir::query_bytes() + 1])
+        .body(vec![
+            0;
+            receiver_pir::query_bytes(receiver_pir::MAX_ROWS)
+                .unwrap()
+                + 1
+        ])
         .send()
         .await
         .unwrap();
@@ -451,4 +475,138 @@ async fn host_transport_handles_setup_queries_and_revision_errors() {
         )
         .await;
     assert!(matches!(missing, Err(Error::Revision)));
+}
+
+#[tokio::test]
+async fn adaptive_discovery_uses_remaining_work_and_reuses_verified_file() {
+    use receiver_pir::transport::{prefer_directory_file, DirectoryClient, Transport};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Counted {
+        http: reqwest::Client,
+        up: AtomicUsize,
+        down: AtomicUsize,
+        posts: AtomicUsize,
+        gets: AtomicUsize,
+    }
+    impl Transport for Counted {
+        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+            self.gets.fetch_add(1, Ordering::Relaxed);
+            let data = Transport::get(&self.http, url, limit).await?;
+            self.down.fetch_add(data.len(), Ordering::Relaxed);
+            Ok(data)
+        }
+        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+            self.posts.fetch_add(1, Ordering::Relaxed);
+            self.up.fetch_add(body.len(), Ordering::Relaxed);
+            let data = Transport::post(&self.http, url, body, limit).await?;
+            self.down.fetch_add(data.len(), Ordering::Relaxed);
+            Ok(data)
+        }
+    }
+    let server = serve(snapshot(1)).await;
+    for count in [50, 250, 10_000] {
+        let host = Counted {
+            http: http(),
+            up: AtomicUsize::new(0),
+            down: AtomicUsize::new(0),
+            posts: AtomicUsize::new(0),
+            gets: AtomicUsize::new(0),
+        };
+        let mut client =
+            DirectoryClient::connect_for_work(&server.origin, &host, accepted(), count)
+                .await
+                .unwrap();
+        assert_eq!(
+            prefer_directory_file(client.manifest(), count).unwrap(),
+            count >= 250
+        );
+        for _ in 0..count {
+            assert_eq!(
+                client
+                    .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
+                    .await
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        assert_eq!(
+            host.posts.load(Ordering::Relaxed),
+            if count == 50 { 50 } else { 0 }
+        );
+        assert_eq!(host.gets.load(Ordering::Relaxed), 2);
+        println!(
+            "receivers={count} upload={} download={} requests={} (HTTP bodies, includes setup)",
+            host.up.load(Ordering::Relaxed),
+            host.down.load(Ordering::Relaxed),
+            host.gets.load(Ordering::Relaxed) + host.posts.load(Ordering::Relaxed)
+        );
+        client.use_file_for_work(10_000).await.unwrap();
+        let requests = host.gets.load(Ordering::Relaxed);
+        client.use_file_for_work(10_000).await.unwrap();
+        client
+            .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
+            .await
+            .unwrap();
+        assert_eq!(host.gets.load(Ordering::Relaxed), requests);
+        assert_eq!(requests, if count == 50 { 3 } else { 2 });
+    }
+}
+
+#[tokio::test]
+async fn directory_file_rejects_bad_digest_length_and_pagination() {
+    use receiver_pir::transport::{DirectoryClient, Transport};
+    struct Corrupt {
+        http: reqwest::Client,
+        truncate: bool,
+    }
+    impl Transport for Corrupt {
+        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+            let mut bytes = Transport::get(&self.http, url, limit).await?;
+            if url.contains("/rows/") {
+                if self.truncate {
+                    bytes.pop();
+                } else {
+                    bytes[0] ^= 1;
+                }
+            }
+            Ok(bytes)
+        }
+        async fn post(&self, _: &str, _: Vec<u8>, _: usize) -> Result<Vec<u8>, Error> {
+            panic!("file mode never posts")
+        }
+    }
+    let server = serve(snapshot(2)).await;
+    for truncate in [false, true] {
+        assert!(matches!(
+            DirectoryClient::connect_for_work(
+                &server.origin,
+                Corrupt {
+                    http: http(),
+                    truncate
+                },
+                accepted(),
+                250
+            )
+            .await,
+            Err(Error::Malformed)
+        ));
+    }
+    let client = DirectoryClient::connect_for_work(&server.origin, http(), accepted(), 250)
+        .await
+        .unwrap();
+    assert!(matches!(
+        client
+            .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
+            .await,
+        Err(Error::PageBudget)
+    ));
+    assert_eq!(
+        client
+            .lookup(receiver(), NonZeroU32::new(2).unwrap(), accepted())
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
 }

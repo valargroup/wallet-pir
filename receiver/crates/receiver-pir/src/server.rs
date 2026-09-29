@@ -1,7 +1,5 @@
 //! Immutable CPU evaluator. HTTP admission and concurrency limits belong to the service.
-use crate::{
-    profile, query_bytes, setup_seed, Error, Manifest, HEADER_BYTES, MAGIC, PROTOCOL, ROWS,
-};
+use crate::{profile, query_bytes, setup_seed, Error, Manifest, HEADER_BYTES, MAGIC, PROTOCOL};
 use inspiring::{QueryPackPreprocessed, TopKeyImages};
 use ipir_sp::{
     server::{IPIRServer, MatvecBackend},
@@ -17,6 +15,7 @@ pub struct Server {
     manifest: Manifest,
     id: Hash,
     public: Vec<u8>,
+    rows: std::sync::Arc<[u8]>,
     server: IPIRServer<u16>,
     top: TopKeyImages<'static>,
     preprocessed: Vec<QueryPackPreprocessed<'static>>,
@@ -26,15 +25,12 @@ impl Server {
     /// Verify the entire publication before preparing its PIR data. No chain trust is implied.
     pub fn new(snapshot: Snapshot) -> Result<Self, Error> {
         snapshot.manifest.validate()?;
-        if snapshot.manifest.rows != ROWS as u32 {
-            return Err(Error::Unsupported);
-        }
-        if snapshot.data.len() != ROWS * ROW_BYTES
+        let p = profile(snapshot.manifest.rows)?;
+        if snapshot.data.len() != snapshot.manifest.rows as usize * ROW_BYTES
             || Hash::from(Sha256::digest(&snapshot.data)) != snapshot.manifest.data_sha256
         {
             return Err(Error::Malformed);
         }
-        let p = profile();
         let client = IPIRClient::new(p);
         let setup =
             client.generate_public_query_setup_simplepir_from_seed(setup_seed(&snapshot.manifest)?);
@@ -71,6 +67,7 @@ impl Server {
             manifest,
             id,
             public,
+            rows: snapshot.data.into(),
             server,
             top,
             preprocessed,
@@ -84,24 +81,27 @@ impl Server {
         &self.public
     }
 
+    /// Identical immutable directory bytes for every caller, already digest-checked.
+    pub fn rows(&self) -> std::sync::Arc<[u8]> {
+        self.rows.clone()
+    }
+
     pub fn respond(&self, body: &[u8]) -> Result<Vec<u8>, Error> {
-        if body.len() != query_bytes() || &body[..4] != MAGIC {
+        if body.len() != query_bytes(self.manifest.directory.rows)? || &body[..4] != MAGIC {
             return Err(Error::Malformed);
         }
         if body[4..36] != self.id {
             return Err(Error::Revision);
         }
-        let key_end =
-            HEADER_BYTES + ipir_sp::serialize::serialized_packing_keys_len(profile().rlwe());
-        let keys = ipir_sp::serialize::deserialize_packing_keys(
-            profile().rlwe(),
-            &body[HEADER_BYTES..key_end],
-        )
-        .map_err(|_| Error::Malformed)?;
+        let p = profile(self.manifest.directory.rows)?;
+        let key_end = HEADER_BYTES + ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());
+        let keys =
+            ipir_sp::serialize::deserialize_packing_keys(p.rlwe(), &body[HEADER_BYTES..key_end])
+                .map_err(|_| Error::Malformed)?;
         let (result, _) = self
             .server
             .perform_full_online_computation_simplepir_measured(
-                profile().rlwe(),
+                p.rlwe(),
                 &body[key_end..],
                 &keys,
                 &self.top,

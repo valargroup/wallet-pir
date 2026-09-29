@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Share the 8192–65536 row geometry contract across publication, PIR serving and
+  clients. Grow publications without changing protocols, retain exact per-session
+  message bounds, and calculate file crossover costs for the advertised size.
+
+
+- Add an immutable common row-file endpoint and adaptive client discovery.
+  Remaining uncached PIR bytes select the transport. File length and SHA-256
+  are checked before the existing row decoder is used, with shared sessions
+  and witness data across bounded wallet batches.
+
 - Add common inclusion-proof snapshots, bounded HTTP retrieval and a local refresh
   helper. Commitment indexing preserves coinbase positions and rewind semantics.
   Continuous publication reuses unchanged commitment subtrees in a disposable

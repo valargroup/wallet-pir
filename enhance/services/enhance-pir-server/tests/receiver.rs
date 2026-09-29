@@ -273,8 +273,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                     &url,
                     "--no-auth",
                     "--serve",
-                    "--min-rows",
-                    "8192",
                     "--poll-seconds",
                     "1",
                     "--bind",
@@ -467,5 +465,27 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
             }
         }
         task.abort();
+    }
+}
+
+#[test]
+fn cli_rejects_unservable_geometry_before_contacting_the_node() {
+    for rows in ["1", "4096", "8193", "131072"] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+            .args([
+                "--data-dir",
+                dir.path().to_str().unwrap(),
+                "--rpc-url",
+                "http://127.0.0.1:1",
+                "--no-auth",
+                "--min-rows",
+                rows,
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Unsupported"));
+        assert!(!dir.path().join("publications/current.json").exists());
     }
 }

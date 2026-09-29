@@ -9,7 +9,7 @@ use axum::{
     Json, Router,
 };
 pub use publication::{Publication, Publications};
-use receiver_pir::{query_bytes, server::Server, Error};
+use receiver_pir::{query_bytes, server::Server, Error, HEADER_BYTES, MAX_ROWS};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
@@ -56,40 +56,62 @@ pub fn router_with_publications(publications: Publications) -> Router {
         )
         .route(
             "/v1/receiver/public",
-            get(|State(s): State<Service>| async move { material(&s, None, false) }),
+            get(|State(s): State<Service>| async move { material(&s, None, Material::Public) }),
         )
         .route(
             "/v1/receiver/public/:session",
             get(
                 |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, Some(&id), false)
+                    material(&s, Some(&id), Material::Public)
                 },
             ),
         )
         .route("/v1/receiver/query", post(query))
         .route(
+            "/v1/receiver/rows/:session",
+            get(
+                |State(s): State<Service>, Path(id): Path<String>| async move {
+                    material(&s, Some(&id), Material::Rows)
+                },
+            ),
+        )
+        .route(
             "/v1/receiver/witness",
-            get(|State(s): State<Service>| async move { material(&s, None, true) }),
+            get(|State(s): State<Service>| async move { material(&s, None, Material::Witness) }),
         )
         .route(
             "/v1/receiver/witness/:session",
             get(
                 |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, Some(&id), true)
+                    material(&s, Some(&id), Material::Witness)
                 },
             ),
         )
         .with_state(service)
 }
 
-fn material(s: &Service, id: Option<&str>, witness: bool) -> Response {
+enum Material {
+    Public,
+    Witness,
+    Rows,
+}
+
+fn material(s: &Service, id: Option<&str>, material: Material) -> Response {
     let id = match id.map(|id| hex::decode(id).ok().and_then(|v| v.try_into().ok())) {
         Some(Some(id)) => Some(id),
         Some(None) => return StatusCode::BAD_REQUEST.into_response(),
         None => None,
     };
     match s.publications.select(id) {
-        Ok((p, _)) if witness => match &p.witnesses {
+        Ok((p, _)) if matches!(material, Material::Rows) => (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            axum::body::Bytes::from_owner(p.server.rows()),
+        )
+            .into_response(),
+        Ok((p, _)) if matches!(material, Material::Witness) => match &p.witnesses {
             Some(bytes) => (
                 [
                     (header::CONTENT_TYPE, "application/octet-stream"),
@@ -122,7 +144,10 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     };
     let body = match tokio::time::timeout(
         Duration::from_secs(15),
-        to_bytes(request.into_body(), query_bytes()),
+        to_bytes(
+            request.into_body(),
+            query_bytes(MAX_ROWS).expect("supported maximum"),
+        ),
     )
     .await
     {
@@ -130,7 +155,7 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
-    if body.len() != query_bytes() || &body[..4] != b"RPQ1" {
+    if body.len() < HEADER_BYTES || &body[..4] != b"RPQ1" {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let (publication, epoch) = match s.publications.select(Some(body[4..36].try_into().unwrap())) {

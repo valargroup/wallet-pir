@@ -24,8 +24,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 struct Args {
     #[arg(long)]
     data_dir: PathBuf,
-    /// Minimum power-of-two row count. Use 8192 for the current receiver PIR profile.
-    #[arg(long, default_value_t = 1)]
+    /// Minimum served row count. Grows by powers of two up to 65536.
+    #[arg(long, default_value_t = receiver_pir::MIN_ROWS)]
     min_rows: u32,
     /// Publish common witness data. Requires commitment history from position zero.
     #[arg(long)]
@@ -61,9 +61,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    if !args.min_rows.is_power_of_two() || args.min_rows > MAX_ROWS {
-        return Err("invalid minimum row count".into());
-    }
+    receiver_pir::validate_rows(args.min_rows)?;
     if u64::from(args.start_height) < enhance_pir::ACTIVATION_HEIGHT {
         return Err("start must be at or after Ironwood activation".into());
     }

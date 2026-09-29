@@ -4,7 +4,7 @@ use receiver_directory::{
     snapshot::{Manifest, Snapshot, ROW_BYTES},
     Hash,
 };
-use receiver_pir::{server::Server, ROWS};
+use receiver_pir::{server::Server, validate_rows};
 use std::{
     collections::VecDeque,
     fs::File,
@@ -41,13 +41,11 @@ impl Publication {
         let bytes = bounded(path, 16384)?;
         let manifest: Manifest = serde_json::from_slice(&bytes)?;
         manifest.validate()?;
-        if manifest.rows != ROWS as u32 {
-            return Err("publication needs 8192 rows".into());
-        }
+        validate_rows(manifest.rows)?;
         let revision = hex::encode(manifest.revision()?);
         let data = bounded(
             &path.with_file_name(format!("{revision}.rows")),
-            ROWS * ROW_BYTES,
+            manifest.rows as usize * ROW_BYTES,
         )?;
         let proof_path = path.with_file_name(format!("{revision}.witness"));
         let proof = if proof_path.exists() {

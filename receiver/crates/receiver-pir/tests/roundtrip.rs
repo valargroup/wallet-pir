@@ -4,7 +4,7 @@ use receiver_directory::{
     snapshot::{Manifest, Snapshot, PROFILE},
     Payment, Receiver, Record,
 };
-use receiver_pir::{server::Server, AcceptedCoverage, Client, Error, ROWS};
+use receiver_pir::{server::Server, AcceptedCoverage, Client, Error, MIN_ROWS};
 
 fn receiver() -> Receiver {
     let v: serde_json::Value = serde_json::from_str(include_str!(
@@ -39,7 +39,7 @@ fn manifest() -> Manifest {
         end_height: 101,
         end_hash: [3; 32],
         end_position: 300,
-        rows: ROWS as u32,
+        rows: MIN_ROWS,
         salt: [4; 32],
         records: 0,
         data_sha256: [0; 32],
@@ -85,9 +85,15 @@ fn encrypted_publication_roundtrip_and_fail_closed() {
         second.body(),
         "fresh encryption even for the same receiver"
     );
-    assert_eq!(first.body().len(), receiver_pir::query_bytes());
+    assert_eq!(
+        first.body().len(),
+        receiver_pir::query_bytes(MIN_ROWS).unwrap()
+    );
     let answer = server.respond(first.body()).unwrap();
-    assert_eq!(answer.len(), receiver_pir::response_bytes());
+    assert_eq!(
+        answer.len(),
+        receiver_pir::response_bytes(MIN_ROWS).unwrap()
+    );
     assert!(
         client.decode(second, &answer).is_err(),
         "reject another request's answer"
@@ -127,8 +133,8 @@ fn encrypted_publication_roundtrip_and_fail_closed() {
     println!(
         "public_bytes={} query_bytes={} response_bytes={}",
         server.public().len(),
-        receiver_pir::query_bytes(),
-        receiver_pir::response_bytes()
+        receiver_pir::query_bytes(MIN_ROWS).unwrap(),
+        receiver_pir::response_bytes(MIN_ROWS).unwrap()
     );
 }
 
@@ -143,4 +149,58 @@ fn reject_corrupt_rows_before_preprocessing() {
         Server::new(Snapshot::build(m, &[]).unwrap()),
         Err(Error::Unsupported)
     ));
+}
+
+#[test]
+fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
+    for rows in [16_384, 32_768, receiver_pir::MAX_ROWS] {
+        let mut m = manifest();
+        m.rows = rows;
+        // Select the upper half so truncating to the previous geometry cannot pass.
+        while receiver_directory::snapshot::row_for(&m, &receiver(), 0).unwrap() < rows as usize / 2
+        {
+            m.salt[0] = m.salt[0].wrapping_add(1);
+        }
+        let records = [record(0), record(1)];
+        let server = Server::new(Snapshot::build(m, &records).unwrap()).unwrap();
+        let client = Client::new(server.manifest().clone(), server.public(), accepted()).unwrap();
+        assert_eq!(
+            server.public().len(),
+            receiver_pir::public_bytes(rows).unwrap()
+        );
+        for record in records {
+            let q = client.prepare(receiver(), record.page).unwrap();
+            assert_eq!(q.body().len(), receiver_pir::query_bytes(rows).unwrap());
+            let answer = server.respond(q.body()).unwrap();
+            assert_eq!(answer.len(), receiver_pir::response_bytes(rows).unwrap());
+            assert_eq!(client.decode(q, &answer).unwrap(), Some(record));
+        }
+        let mut wrong_size = client.prepare(receiver(), 0).unwrap().body().to_vec();
+        wrong_size.truncate(receiver_pir::query_bytes(MIN_ROWS).unwrap());
+        assert!(matches!(server.respond(&wrong_size), Err(Error::Malformed)));
+    }
+}
+
+#[test]
+fn geometry_contract_and_transport_cost_use_the_same_bounds() {
+    for rows in [0, 1, 4096, 8193, 131072, u32::MAX] {
+        assert!(receiver_pir::validate_rows(rows).is_err());
+        assert!(receiver_pir::query_bytes(rows).is_err());
+    }
+    for rows in [MIN_ROWS, 16_384, 32_768, receiver_pir::MAX_ROWS] {
+        let mut directory = manifest();
+        directory.rows = rows;
+        let m = receiver_pir::Manifest {
+            protocol: receiver_pir::PROTOCOL.into(),
+            directory,
+            public_digest: [0; 32],
+        };
+        m.validate().unwrap();
+        let per_lookup =
+            receiver_pir::query_bytes(rows).unwrap() + receiver_pir::response_bytes(rows).unwrap();
+        let crossover =
+            (rows as usize * receiver_directory::snapshot::ROW_BYTES).div_ceil(per_lookup);
+        assert!(!receiver_pir::transport::prefer_directory_file(&m, crossover - 1).unwrap());
+        assert!(receiver_pir::transport::prefer_directory_file(&m, crossover).unwrap());
+    }
 }

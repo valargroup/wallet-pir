@@ -108,8 +108,15 @@ not consensus validation.
 `receiver-pir` provides a transport-independent client, an optional `http` client,
 and an optional `server` evaluator. The initial profile is
 `ironwood-receiver-pir-v1-q48`, using the existing ipir-sp P16Q48 implementation
-with 8192 rows of 4096 bytes. Other row counts fail explicitly. Qualify another
-profile before a larger publication is served.
+with 4096-byte rows and supported row counts of 8192, 16384, 32768 and 65536.
+The publisher starts at 8192 rows by default and doubles on bucket overflow.
+Server and client use the manifest's row count for PIR parameters, exact message
+lengths and the file-download crossover. The session ID binds that geometry, so
+an older session can finish while a larger publication becomes current.
+Unsupported sizes fail before publication preparation or network lookup. At the
+65536-row ceiling, capacity exhaustion fails the candidate without dropping
+records or claiming newer coverage. Increasing that ceiling needs a new qualified
+geometry contract.
 
 A session manifest contains the directory manifest, the PIR protocol identifier,
 and a SHA-256 digest of the public PIR setup. A domain-separated digest of this
@@ -298,3 +305,25 @@ must enforce response limits while streaming, reject redirects and map HTTP 409
 or 410 to `Error::Revision`. A failed private request never permits a cleartext
 receiver lookup. The optional `http::HttpClient` retains the reqwest adapter for
 command-line clients.
+
+## Adaptive client discovery
+
+Use `DirectoryClient::connect_manifest` with the exact manifest whose chain anchor
+was independently accepted and the entire job's remaining uncached lookup count.
+Small jobs use PIR. Large jobs fetch `/v1/receiver/rows/:session` once. This immutable
+endpoint follows the same revision selection and revocation rules as setup and
+witness files. Clients validate exact length and SHA-256 before local lookups.
+Both modes use identical receiver pagination and payment validation.
+
+Reuse the client across batches. `use_file_for_work` can switch to the common file
+when newly discovered remaining work warrants it. A loaded file is reused without
+another request. Failed downloads are errors, never targeted public row requests.
+Callers retain durable work and revalidate accepted chain anchors before applying
+results. File-versus-PIR mode is visible to the server, receiver selection is not.
+
+At 8,192 rows of 4,096 bytes the file is 32 MiB. The current byte-cost crossover is
+about 240 uncached one-page lookups. A loopback test measured 7,034,703 HTTP body
+bytes for 50 PIR lookups including setup, and 33,555,199 bytes for either 250 or
+10,000 local file lookups. These are discovery-body measurements, excluding HTTP
+headers, TLS, common witnesses and note enhancement. Repeated lookups reuse the
+verified file with no additional network traffic.

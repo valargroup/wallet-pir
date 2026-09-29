@@ -37,16 +37,16 @@ impl Client {
     ) -> Result<Self, Error> {
         manifest.validate()?;
         accepted.check(&manifest.directory)?;
-        if public.len() != public_bytes()
+        if public.len() != public_bytes(manifest.directory.rows)?
             || Hash::from(Sha256::digest(public)) != manifest.public_digest
         {
             return Err(Error::Malformed);
         }
         let id = manifest.id()?;
-        let client = IPIRClient::new(profile());
+        let p = profile(manifest.directory.rows)?;
+        let client = IPIRClient::new(p);
         let setup = client
             .generate_public_query_setup_simplepir_from_seed(setup_seed(&manifest.directory)?);
-        let p = profile();
         let public = ipir_sp::modulus_switch::recover_published_c1(
             public,
             p.rlwe().d,
@@ -73,11 +73,11 @@ impl Client {
         let mut body = MAGIC.to_vec();
         body.extend(self.id);
         body.extend(OsRng.gen::<[u8; 16]>());
+        let p = profile(self.manifest.directory.rows)?;
         body.extend(
-            ipir_sp::serialize::serialize_packing_keys(profile().rlwe(), &keys)
-                .map_err(|_| Error::Pir)?,
+            ipir_sp::serialize::serialize_packing_keys(p.rlwe(), &keys).map_err(|_| Error::Pir)?,
         );
-        body.extend(query.to_switched_bytes(profile().rlwe().q, 48));
+        body.extend(query.to_switched_bytes(p.rlwe().q, p.ypir().query_bits));
         Ok(Query {
             body,
             seed,
@@ -90,7 +90,7 @@ impl Client {
         if query.body[4..36] != self.id {
             return Err(Error::Revision);
         }
-        if response.len() != response_bytes()
+        if response.len() != response_bytes(self.manifest.directory.rows)?
             || response[..HEADER_BYTES] != query.body[..HEADER_BYTES]
         {
             return Err(Error::Malformed);

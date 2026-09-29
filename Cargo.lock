@@ -1066,6 +1066,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "receiver-directory",
+ "receiver-pir",
  "receiver-pir-server",
  "reinspiring",
  "reqwest",

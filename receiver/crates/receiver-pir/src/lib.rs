@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
 pub const PROTOCOL: &str = "ironwood-receiver-pir-v1-q48";
-pub const ROWS: usize = 8192;
+/// Smallest served directory. Publications grow by powers of two up to `MAX_ROWS`.
+pub const MIN_ROWS: u32 = 8192;
+pub use receiver_directory::snapshot::MAX_ROWS;
 pub const HEADER_BYTES: usize = 52;
 const MAGIC: &[u8; 4] = b"RPQ1";
 
@@ -53,10 +55,10 @@ pub struct Manifest {
 impl Manifest {
     pub fn validate(&self) -> Result<(), Error> {
         self.directory.validate()?;
-        if self.protocol != PROTOCOL || self.directory.rows != ROWS as u32 {
+        if self.protocol != PROTOCOL {
             return Err(Error::Unsupported);
         }
-        Ok(())
+        validate_rows(self.directory.rows)
     }
 
     pub fn id(&self) -> Result<Hash, Error> {
@@ -83,16 +85,33 @@ impl AcceptedCoverage {
     }
 }
 
-fn profile() -> &'static ProductionSimplePirParams {
-    static PROFILE: OnceLock<ProductionSimplePirParams> = OnceLock::new();
-    PROFILE.get_or_init(|| {
+/// Validate the common publisher, server and client geometry contract.
+pub fn validate_rows(rows: u32) -> Result<(), Error> {
+    if !rows.is_power_of_two() || !(MIN_ROWS..=MAX_ROWS).contains(&rows) {
+        return Err(Error::Unsupported);
+    }
+    Ok(())
+}
+
+fn profile(rows: u32) -> Result<&'static ProductionSimplePirParams, Error> {
+    validate_rows(rows)?;
+    const COUNT: usize = (MAX_ROWS / MIN_ROWS).ilog2() as usize + 1;
+    static PROFILES: [OnceLock<ProductionSimplePirParams>; COUNT] =
+        [const { OnceLock::new() }; COUNT];
+    let p = PROFILES[(rows / MIN_ROWS).ilog2() as usize].get_or_init(|| {
         ProductionSimplePirParams::new(
-            ROWS as u64,
+            u64::from(rows),
             (snapshot::ROW_BYTES * 8) as u64,
             SimplePirProfile::P16Q48,
         )
-        .expect("fixed receiver PIR profile")
-    })
+        .expect("supported receiver PIR profile")
+    });
+    // The protocol fixes the query encoding. Never silently use fewer bits than
+    // the underlying profile requires when adding another directory size.
+    if p.ypir().query_bits != 48 {
+        return Err(Error::Unsupported);
+    }
+    Ok(p)
 }
 
 fn setup_seed(m: &snapshot::Manifest) -> Result<Hash, Error> {
@@ -102,21 +121,27 @@ fn setup_seed(m: &snapshot::Manifest) -> Result<Hash, Error> {
     Ok(h.finalize().into())
 }
 
-pub fn public_bytes() -> usize {
-    let p = profile();
-    p.ypir().db_cols / p.rlwe().d
-        * ipir_sp::modulus_switch::published_c1_len(p.rlwe().d, p.rlwe().q)
+/// Exact public setup length for a supported publication.
+pub fn public_bytes(rows: u32) -> Result<usize, Error> {
+    let p = profile(rows)?;
+    Ok(p.ypir().db_cols / p.rlwe().d
+        * ipir_sp::modulus_switch::published_c1_len(p.rlwe().d, p.rlwe().q))
 }
 
-pub fn query_bytes() -> usize {
-    HEADER_BYTES + ipir_sp::serialize::serialized_packing_keys_len(profile().rlwe()) + ROWS * 6
+/// Exact request length, including the session header and packing keys.
+pub fn query_bytes(rows: u32) -> Result<usize, Error> {
+    let p = profile(rows)?;
+    Ok(HEADER_BYTES
+        + ipir_sp::serialize::serialized_packing_keys_len(p.rlwe())
+        + (p.ypir().db_rows * p.ypir().query_bits).div_ceil(8))
 }
 
-pub fn response_bytes() -> usize {
-    let p = profile();
-    HEADER_BYTES
+/// Exact response length for a supported publication.
+pub fn response_bytes(rows: u32) -> Result<usize, Error> {
+    let p = profile(rows)?;
+    Ok(HEADER_BYTES
         + p.ypir().db_cols / p.rlwe().d
-            * ipir_sp::modulus_switch::response_body_len(p.rlwe().d, p.ypir().q_prime_1)
+            * ipir_sp::modulus_switch::response_body_len(p.rlwe().d, p.ypir().q_prime_1))
 }
 
 /// Reject inconsistent continuation pages before exposing a complete history to a wallet.

@@ -1,6 +1,10 @@
 //! Receiver discovery over a caller-supplied, bounded transport.
 use crate::{check_next, public_bytes, response_bytes, AcceptedCoverage, Client, Error, Manifest};
-use receiver_directory::{Payment, Receiver};
+use receiver_directory::{
+    snapshot::{lookup_row, row_for, Snapshot, ROW_BYTES},
+    Payment, Receiver,
+};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, num::NonZeroU32};
 
 /// Hosts supply their route policy, cancellation, and timeout for every request.
@@ -25,33 +29,91 @@ impl<T: Transport> Transport for &T {
 pub struct DirectoryClient<T> {
     origin: String,
     http: T,
-    session: Client,
+    session: DiscoverySession,
+}
+
+enum DiscoverySession {
+    Pir(Client),
+    File {
+        manifest: Manifest,
+        snapshot: Snapshot,
+    },
+}
+
+/// Compares remaining uncached discovery traffic, including PIR uploads. Note
+/// retrieval is separate. Historical swap count and sunk traffic are irrelevant.
+pub fn prefer_directory_file(manifest: &Manifest, remaining_lookups: usize) -> Result<bool, Error> {
+    manifest.validate()?;
+    let file_bytes = u64::from(manifest.directory.rows) * ROW_BYTES as u64;
+    let pir_bytes = (remaining_lookups as u64).saturating_mul(
+        (crate::query_bytes(manifest.directory.rows)? + response_bytes(manifest.directory.rows)?)
+            as u64,
+    );
+    Ok(pir_bytes >= file_bytes)
 }
 
 impl<T: Transport> DirectoryClient<T> {
     /// Initialize against an independently accepted terminal anchor. Reconnect for a new revision.
     pub async fn connect(origin: &str, http: T, accepted: AcceptedCoverage) -> Result<Self, Error> {
+        Self::connect_for_work(origin, http, accepted, 0).await
+    }
+
+    /// Select a transport for the whole remaining job and reuse it across batches.
+    /// A file failure is an error, never a receiver-dependent public request.
+    pub async fn connect_for_work(
+        origin: &str,
+        http: T,
+        accepted: AcceptedCoverage,
+        remaining_lookups: usize,
+    ) -> Result<Self, Error> {
+        let manifest = Self::fetch_manifest(origin, &http).await?;
+        Self::connect_manifest(origin, http, accepted, manifest, remaining_lookups).await
+    }
+
+    /// Use the exact advertised revision whose anchor the caller independently checked.
+    pub async fn connect_manifest(
+        origin: &str,
+        http: T,
+        accepted: AcceptedCoverage,
+        manifest: Manifest,
+        remaining_lookups: usize,
+    ) -> Result<Self, Error> {
         let origin = origin.trim_end_matches('/').to_owned();
-        let manifest = Self::fetch_manifest(&origin, &http).await?;
         accepted.check(&manifest.directory)?;
-        let public = http
-            .get(
-                &format!(
-                    "{origin}/v1/receiver/public/{}",
-                    hex::encode(manifest.id()?)
-                ),
-                public_bytes(),
-            )
-            .await?;
-        if public.len() > public_bytes() {
-            return Err(Error::Malformed);
-        }
-        let session = Client::new(manifest, &public, accepted)?;
+        let id = hex::encode(manifest.id()?);
+        let session = if prefer_directory_file(&manifest, remaining_lookups)? {
+            let snapshot = download_rows(&http, &origin, &manifest).await?;
+            DiscoverySession::File { manifest, snapshot }
+        } else {
+            let public = http
+                .get(
+                    &format!("{origin}/v1/receiver/public/{id}"),
+                    public_bytes(manifest.directory.rows)?,
+                )
+                .await?;
+            if public.len() > public_bytes(manifest.directory.rows)? {
+                return Err(Error::Malformed);
+            }
+            DiscoverySession::Pir(Client::new(manifest, &public, accepted)?)
+        };
         Ok(Self {
             origin,
             http,
             session,
         })
+    }
+
+    /// Re-evaluate newly discovered work without discarding setup or a verified file.
+    pub async fn use_file_for_work(&mut self, remaining_lookups: usize) -> Result<(), Error> {
+        if matches!(self.session, DiscoverySession::File { .. })
+            || !prefer_directory_file(self.manifest(), remaining_lookups)?
+        {
+            return Ok(());
+        }
+        let manifest = self.manifest().clone();
+        let snapshot = download_rows(&self.http, &self.origin, &manifest).await?;
+        self.session = DiscoverySession::File { manifest, snapshot };
+        Ok(())
     }
 
     /// Fetch bounded public metadata before selecting the corresponding local chain anchor.
@@ -71,7 +133,10 @@ impl<T: Transport> DirectoryClient<T> {
     }
 
     pub fn manifest(&self) -> &Manifest {
-        self.session.manifest()
+        match &self.session {
+            DiscoverySession::Pir(client) => client.manifest(),
+            DiscoverySession::File { manifest, .. } => manifest,
+        }
     }
 
     /// Download identical proof bytes for all wallets. This never contains a receiver in the request.
@@ -105,25 +170,34 @@ impl<T: Transport> DirectoryClient<T> {
         let mut records = Vec::new();
         let mut outputs = BTreeSet::new();
         for page in 0..max_pages.get() {
-            // Each attempt, including caller retries, uses fresh encryption.
-            let query = self.session.prepare(receiver, page)?;
-            let started = std::time::Instant::now();
-            let body = self
-                .http
-                .post(
-                    &format!("{}/v1/receiver/query", self.origin),
-                    query.body().to_vec(),
-                    response_bytes(),
-                )
-                .await?;
-            if body.len() > response_bytes() {
-                return Err(Error::Malformed);
-            }
-            log::info!(
-                "pir_metric component=receiver stage=lookup_page elapsed_us={}",
-                started.elapsed().as_micros()
-            );
-            let Some(record) = self.session.decode(query, &body)? else {
+            let record = match &self.session {
+                DiscoverySession::File { snapshot, .. } => {
+                    let row = row_for(&snapshot.manifest, &receiver, page)?;
+                    lookup_row(
+                        &snapshot.manifest,
+                        &receiver,
+                        page,
+                        &snapshot.data[row * ROW_BYTES..(row + 1) * ROW_BYTES],
+                    )?
+                }
+                DiscoverySession::Pir(client) => {
+                    // Every retry uses fresh encryption.
+                    let query = client.prepare(receiver, page)?;
+                    let body = self
+                        .http
+                        .post(
+                            &format!("{}/v1/receiver/query", self.origin),
+                            query.body().to_vec(),
+                            response_bytes(client.manifest().directory.rows)?,
+                        )
+                        .await?;
+                    if body.len() > response_bytes(client.manifest().directory.rows)? {
+                        return Err(Error::Malformed);
+                    }
+                    client.decode(query, &body)?
+                }
+            };
+            let Some(record) = record else {
                 // The row decoder permits absence only on page zero.
                 return Ok(Vec::new());
             };
@@ -144,4 +218,26 @@ impl<T: Transport> DirectoryClient<T> {
         }
         Err(Error::PageBudget)
     }
+}
+
+// Every file entry point uses the same bound and digest check before decoding rows.
+async fn download_rows(
+    http: &impl Transport,
+    origin: &str,
+    manifest: &Manifest,
+) -> Result<Snapshot, Error> {
+    let id = hex::encode(manifest.id()?);
+    let limit = manifest.directory.rows as usize * ROW_BYTES;
+    let data = http
+        .get(&format!("{origin}/v1/receiver/rows/{id}"), limit)
+        .await?;
+    if data.len() != limit
+        || <[u8; 32]>::from(Sha256::digest(&data)) != manifest.directory.data_sha256
+    {
+        return Err(Error::Malformed);
+    }
+    Ok(Snapshot {
+        manifest: manifest.directory.clone(),
+        data,
+    })
 }

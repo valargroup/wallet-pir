@@ -27,6 +27,7 @@ cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 [dependencies]
 rayon="1"
 receiver-directory = { path = "../../../receiver/crates/receiver-directory", features = ["store"] }
+receiver-pir = { path = "../../../receiver/crates/receiver-pir" }
 receiver-pir-server = { path = "../../../receiver/services/receiver-pir-server" }
 tempfile = "3"
 reinspiring = {git="https://github.com/valargroup/ipir-sp.git",tag = "v0.1.0-rc.6", optional=true}
