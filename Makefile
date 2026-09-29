@@ -16,7 +16,7 @@ TRANSPARENT_LOAD_JSON ?= transparent-load-report.json
 build:
 	cargo build --release --workspace --bins --features enhance-pir/cli
 
-check: check-ops check-docs check-reports check-tools check-native-crosscheck
+check: check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --release
@@ -88,12 +88,6 @@ check-ops-elastic:
 check-ops-scaler:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_scaler_*.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_membership_model.py'
-
-# The Transparent native helpers are a copy of Enhance's; this separate
-# workspace compares them byte for byte without unifying Enhance's features.
-.PHONY: check-native-crosscheck
-check-native-crosscheck:
-	cargo test --locked --manifest-path transparent/crates/transparent-native/crosscheck/Cargo.toml
 
 .PHONY: check-reports
 check-reports:

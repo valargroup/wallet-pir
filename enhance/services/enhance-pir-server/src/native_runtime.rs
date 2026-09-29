@@ -1,12 +1,8 @@
 //! Native packing behind the existing coordinator/router publication protocol.
-use crate::{
-    packing_budget::{Charge, PackingBudget},
-    runtime::rlwe,
-};
+use crate::packing_budget::{Charge, PackingBudget};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use enhance_pir::{native as n, protocol::*};
 use ipir_sp::{server::CrsBlock, YpirSchemeParams};
-use rayon::prelude::*;
 use reinspiring::native::NativePreprocessed;
 use sha2::{Digest, Sha256};
 
@@ -127,26 +123,11 @@ pub fn hint(
 ) -> Result<Vec<CrsBlock>, String> {
     let rows = server.params().db_rows;
     let cols = server.params().db_cols;
-    if setup.len() != rows / rlwe().d {
-        return Err("native hint query-mask shape".into());
-    }
-    let lift = reinspiring::lift_ntt::LiftContext::new(n::D, n::Q).map_err(|e| e.to_string())?;
-    let public = lift
-        .prepare_public_dot(setup, 65535)
-        .map_err(|e| e.to_string())?;
-    let mut blocks = Vec::with_capacity(cols / n::D);
-    for start in (0..cols).step_by(n::D) {
-        let masks = (start..start + n::D)
-            .into_par_iter()
-            .map(|col| {
-                let polys = server.db()[col * rows..(col + 1) * rows]
-                    .chunks_exact(n::D)
-                    .map(|p| p.iter().map(|&x| x as u64).collect::<Vec<_>>())
-                    .collect::<Vec<_>>();
-                lift.public_dot(&public, &polys).map_err(|e| e.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        blocks.push(CrsBlock { rows: masks });
-    }
-    Ok(blocks)
+    let db = server.db();
+    Ok(
+        pir_native::hint(setup, rows, cols, |col| &db[col * rows..(col + 1) * rows])?
+            .into_iter()
+            .map(|rows| CrsBlock { rows })
+            .collect(),
+    )
 }

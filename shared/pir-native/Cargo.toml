@@ -1,0 +1,25 @@
+[package]
+name = "pir-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The native ReinspiRING two-mask m29 PIR helpers Enhance, Status and Transparent share"
+
+[lib]
+name = "pir_native"
+path = "src/lib.rs"
+
+[dependencies]
+# `native-reinspiring` only exposes `ipir_sp::native`; it changes no existing
+# ipir-sp behaviour. This crate has no features of its own, so depending on it
+# never switches the q48 Enhance binaries: only `enhance-pir/native-reinspiring`
+# does that, and nothing here enables it.
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", features = ["native-reinspiring"] }
+rand = "0.8"
+rand_chacha = "0.3"
+rayon = "1"
+reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
+
+[dev-dependencies]
+hex = "0.4"
+sha2 = "0.10"

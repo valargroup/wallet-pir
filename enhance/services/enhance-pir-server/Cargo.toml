@@ -17,12 +17,13 @@ path = "src/bin/status.rs"
 
 [features]
 default = []
-native-reinspiring = ["enhance-pir/native-reinspiring", "dep:reinspiring", "ipir-sp/native-reinspiring", "zakura-pir-enhance/native-reinspiring"]
+native-reinspiring = ["enhance-pir/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring", "zakura-pir-enhance/native-reinspiring"]
 cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 
 [dependencies]
 rayon="1"
 reinspiring = {git="https://github.com/valargroup/ipir-sp.git",tag = "v0.1.0-rc.6", optional=true}
+pir-native = { path = "../../../shared/pir-native", optional = true }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", optional = true, features = ["cuda"] }
 axum = "0.7"
 base64 = "0.22"

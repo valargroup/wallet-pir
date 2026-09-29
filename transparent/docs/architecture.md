@@ -60,7 +60,7 @@ target; the publisher's own origins serve the public map, filters and setup toda
 | Events | `transparent/crates/transparent-events` | Canonical 87-byte chain event record |
 | Filters | `transparent/crates/transparent-filter` | Range filter profiles, keying, encoding and validation |
 | Shard protocol | `transparent/crates/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
-| Native PIR profile | `transparent/crates/transparent-native` | The two-mask ReinspiRING helpers the server and wallet share |
+| Native PIR profile | `transparent/crates/transparent-native` over `shared/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `transparent/services/transparent-filter-server` | Resolve events, persist journal, seal and build shards, serve filters |
 | Retrieval service | `transparent/services/transparent-shard-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
 | Wallet | `transparent/crates/transparent-wallet` | Local matching, private retrieval, validation, ledger replay |
@@ -254,10 +254,11 @@ the table's key count equals the entry count.
 Both tables use the native ReinspiRING two-mask m29 profile that Enhance and Status deploy:
 d = 2,048, q = 2^54, p = 2^16, a two-limb Gaussian `K_g` packing key with 19-bit limbs, and
 two public masks rounded to 29 bits. One 4,096-byte row is one 2,048-coefficient block.
-`transparent/crates/transparent-native` holds the shared helpers; it is adapted from
-`enhance_pir::native` rather than depending on it, because enabling the Enhance crates'
-`native-reinspiring` feature would switch the q48 Enhance binaries through Cargo feature
-unification.
+The helpers are the root `shared/pir-native` crate, which Enhance and Status use too; its
+golden test pins their bytes. It has no Cargo features, so depending on it cannot switch the
+q48 Enhance binaries, which only `enhance-pir/native-reinspiring` does.
+`transparent/crates/transparent-native` re-exports it and adds Transparent's per-geometry
+seeds, `NativeScheme` and `TableProfile`.
 
 Query masks and the packing setup are derived from 32-byte seeds per schema, geometry and
 table, so one query is answered by every segment of every shard of that geometry.
