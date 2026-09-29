@@ -13,8 +13,8 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | V10 seal target:capacity (directory bytes) | `14366428:16760832` | `114931420:134086656` |
 | V10 absolute script target:capacity | `203630:237568` | `1629038:1900544` |
 | Page-row target:capacity | `7936:8192` | `63488:65536` |
-| Workers | 2 full recent replicas, plus elastic copies under load (up to `max_recent`) | 2 disjoint archive assignments, static |
-| Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized |
+| Workers | 2 full recent replicas, plus elastic copies under load (up to `max_recent`) | 1 static owner holding every archive shard (0–76) |
+| Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized (`m-8vcpu-64gb`) |
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
 | Process MemoryMax | 7 GiB | 56 GiB |
@@ -57,6 +57,9 @@ Operator commands on the coordinator:
   Terraform state and DigitalOcean are reconciled by hand.
 - Pause the scaler (`mode: observe`) during a canary soak or full-fleet upgrade:
   the canary gate binds the whole roster.
+- `transparent-archive-standby.py`, then `transparent-fleet-inventory.py --archive
+  repartition|restore`: replace archive owners; see
+  [archive owner changes](#archive-owner-changes).
 
 ## Geometry and schema cutovers
 
@@ -93,11 +96,52 @@ Do not publish `archive-32k` as the selected target: uniform-chain evidence favo
 
 ## Sizing and availability
 
-Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. Two 48 GiB cache reservations can hold the approximate halves at 576 MiB reserved per shard, but actual RSS, retained revisions and assignment imbalance must pass validation.
+Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. The mixed-tier archive is 77 shards (0–76). A single-owner prototype on 2026-09-29 reserved 41.35 GiB of its 48 GiB cache for all of them at planning headroom 0.05 (the live adapter's; 0.15 refuses it), with about 36 GiB resident. One owner therefore holds the whole archive: 48 GiB runtime cache in RAM, 96 GiB on disk, `MemoryMax` 56G, `MemoryHigh` 48 GiB, one build slot. Production figures for that owner: (measurement pending).
 
 Retain space for the current assignment, candidate publication and rollback artifacts plus at least 20% disk headroom. The publisher needs independent peak-RSS and temporary-disk measurements; census RSS is not publisher RSS. Do not duplicate immutable sealed bytes per tail revision unnecessarily.
 
-Losing an archive host makes its range unavailable until recovery. Recent replication does not make archive or router highly available. The initial target accepts that explicit interruption. If archive availability requirements change, evaluate two 128 GiB hosts with complete archive copies, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
+There is one copy of the archive. Losing or restarting its owner makes every archive shard unavailable until it is warm again: about 100 s from a warm disk runtime cache, about 16 minutes cold. With two owners the same event took out half. This is an accepted risk (2026-09-29). Recent replication does not make archive or router highly available. If archive availability requirements rise, the path is two 128 GiB hosts each holding a complete archive copy, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
+
+### Archive owner changes
+
+Archive owners are static and changed only by an operator, under the production
+lock, with the scaler out of `act` mode (`scaler/policy.json` `mode: observe`).
+The planner cannot mix old and new owners of overlapping ranges, so owners
+switch at one publication boundary: the old ones keep serving the previous
+publication until the new ones activate.
+
+1. **Host.** Add the name to `transparent_archive_names` in the coordinator's
+   production tfvars and apply a saved plan reviewed as one droplet create and
+   one in-place project change. The first plan after the `count` to `for_each`
+   change must show only moves.
+2. **Standby.** Pin the new host's key (verified out of band) in a known_hosts
+   file and run, from `/opt/transparent-publisher/releases/current/repo`:
+   `transparent/ops/scripts/transparent-archive-standby.py --id transparent-pir-archive-NN --host <vpc ip> --droplet-id <id> --known-hosts <file> --release <sha>`.
+   It checks the droplet id and x86-64-v3, installs the release against its
+   SHA256SUMS, plans the active publication with the new host pinned to the
+   whole archive, copies at `--bwlimit-kbps` (pausing while freshness is over
+   20 s), starts the archive unit and waits (40 minutes by default) until the
+   host attests the publication warm. Rerunning is safe. Qualify it with
+   low-rate exact queries to its private `:8093` and record memory and warm
+   time. Standby warm time: (measurement pending).
+3. **Cutover.** `transparent-fleet-inventory.py --archive repartition --ranges a2:0-76 --owner transparent-pir-archive-NN=<ssh_host>,<ssh_host>:8093,<host key or file>,51539607552,56G,1`.
+   It refuses unless the new owner is ready and warm on the active archive
+   shards. The next publication plans the new owner; the reconciler stages it
+   by hard links, prepares and activates it, and the router switches owners at
+   that activation. Watch freshness (at most 20 s), router 5xx and the
+   continuous-load supervisor.
+4. **Rollback.** If the new owner is not prepared within two publications, a
+   wrong row appears or freshness exceeds 60 s:
+   `transparent-fleet-inventory.py --archive restore --revision <repartition.from_revision>`.
+   It is refused once an old owner is stopped or unreachable, and after any
+   later archive change.
+5. **Removal.** Only after the measurement gates pass and the change is
+   confirmed: stop the old owners (`systemctl disable --now transparent-shard-server`),
+   remove their names from `transparent_archive_names` and apply a saved plan
+   reviewed as exactly one destroy per name and one project change. After that
+   `restore` is no longer possible.
+
+Combined 20 QPS results for the two-owner and one-owner topologies: (measurement pending).
 
 ## Proposed wallet objectives from the 2026-09-08 fleet series
 
@@ -134,7 +178,7 @@ third owner, is the lever if archive-02's queue grows at higher load.
 
 ## Budget baseline
 
-Public DigitalOcean list prices checked 2026-09-07: four regular Basic 8 GiB/4 vCPU hosts at $48, two regular memory-optimized 64 GiB/8 vCPU hosts at $336, one Basic 4 GiB router at $24: **$888/month compute**. [Provider pricing](https://www.digitalocean.com/pricing/droplets).
+Public DigitalOcean list prices checked 2026-09-07: four regular Basic 8 GiB/4 vCPU hosts at $48, two regular memory-optimized 64 GiB/8 vCPU hosts at $336, one Basic 4 GiB router at $24: **$888/month compute**. [Provider pricing](https://www.digitalocean.com/pricing/droplets). At the same prices the current floor, two recent replicas, one archive owner and the router, is $456/month before elastic copies.
 
 This excludes existing node/indexer/publisher, CDN/object storage, backups, taxes and transfer overages. Basic shared workers are a cost baseline, not guaranteed sustained bandwidth. Recheck SKU/region availability and benchmark both shared and dedicated alternatives before provisioning. Additional vCPUs do not imply independent memory bandwidth. Two full-copy 128 GiB archive hosts alone would cost $1344/month at the same listed family.
 

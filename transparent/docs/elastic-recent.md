@@ -2,8 +2,8 @@
 
 Track A of [remaining work](remaining-work.md#track-a-elastic-recent-replicas-approved-2026-09-29):
 the recent tier is replicated, grows and shrinks automatically, and replaces
-failed replicas; the archive stays two static owners with one host per range,
-changed only by operators. This document describes the source: the files each
+failed replicas; the archive stays static, one host per range (one owner
+holding 0–76 after the 2026-09-29 consolidation), changed only by operators. This document describes the source: the files each
 process owns, their formats and the invariants every change must keep.
 [Deployment](deployment.md) owns operating targets; [status](status.md) owns
 what is live.
@@ -28,6 +28,10 @@ what is live.
 8. Enhance is unchanged: its production Terraform root, wrapper, CLIs and tests.
 9. The scaler and actuator never change archive members, their ranges, the
    archive partition or `recent_from`, and never touch archive droplets.
+10. Every current archive range has exactly one live owner. The partition
+    changes only through the operator's `repartition`, which swaps partition
+    and owners in one revision; the previous owners keep running until an
+    operator stops them, so `restore` can put them back.
 
 ## Processes and files
 
@@ -36,6 +40,7 @@ All paths are on the coordinator.
 | Process | Writes | Reads |
 |---|---|---|
 | Operator CLI `transparent-fleet-inventory.py` | inventory (any member, archive only with `--archive` and never in `act` mode) | – |
+| Operator `transparent-archive-standby.py` (root) | a host not yet in the inventory; `state/standby/<id>/` plans | inventory, `roster.json`, `state/active.json`, publisher `/v1/status` |
 | Actuator `transparent-fleet-actuator.py` (root, credentials) | inventory (elastic recent members only), `scaler/journal/`, elastic Terraform state, `credentials/known_hosts` entries of elastic members | `scaler/request.json`, `scaler/policy.json`, membership |
 | Reconciler (`transparent-live-fleet.py --reconcile`) | `state/membership.json`, `state/active.json`, per-publication plans | inventory projection (`roster.json`) |
 | Scaler `transparent-fleet-scaler.py` (no credentials) | `scaler/state.json`, `scaler/status.json`, `scaler/decisions.jsonl`, `scaler/request.json` | membership, worker `/metrics`, publisher `/v1/status`, `scaler/policy.json` |
@@ -46,13 +51,19 @@ All paths are on the coordinator.
 ```json
 {"schema": "transparent-fleet-inventory-v1", "revision": 12,
  "updated_by": "operator:roman", "updated_unix": 1790680000.0,
- "partition": {"ranges": [{"id": "a0", "first": 0, "last": 38},
-                          {"id": "a1", "first": 39, "last": 76}]},
+ "partition": {"ranges": [{"id": "a2", "first": 0, "last": 76}]},
+ "partition_history": [{"id": "a0", "first": 0, "last": 38},
+                       {"id": "a1", "first": 39, "last": 76}],
+ "repartition": {"from_revision": 11, "revision": 12, "unix": 1790680000.0},
  "members": [
   {"id": "transparent-pir-archive-01", "role": "archive-owner", "group": "a0",
-   "origin": "static", "intent": "enrolled", "ssh_host": "10.142.0.6",
-   "upstream": "10.142.0.6:8093", "cache_bytes": 51539607552, "memory_max": "56G",
-   "build_slots": 1},
+   "origin": "static", "intent": "retired", "retired_reason": "repartition",
+   "ssh_host": "10.142.0.6", "upstream": "10.142.0.6:8093",
+   "cache_bytes": 51539607552, "memory_max": "56G", "build_slots": 1},
+  {"id": "transparent-pir-archive-03", "role": "archive-owner", "group": "a2",
+   "origin": "static", "intent": "enrolled", "ssh_host": "10.142.0.9",
+   "upstream": "10.142.0.9:8093", "cache_bytes": 51539607552, "memory_max": "56G",
+   "build_slots": 1, "ssh_host_key": "ssh-ed25519 AAAA…"},
   {"id": "transparent-pir-recent-05", "role": "recent-replica", "group": "recent",
    "origin": "elastic", "intent": "enrolled", "ssh_host": "10.142.0.20",
    "upstream": "10.142.0.20:8093", "cache_bytes": 5368709120, "memory_max": "7G",
@@ -64,8 +75,28 @@ All paths are on the coordinator.
   atomically, append the change to `state/inventory.log.jsonl` and keep the
   revision as `state/inventory.d/<revision>.json`.
 - Intents: `enrolled`, `draining`, `retired`, `quarantined`. `retired` is
-  terminal and kept so ids are never reused. `draining → enrolled` cancels a
-  drain. Host facts never change after enrollment.
+  terminal and kept so ids are never reused, except that `restore` returns the
+  owners the last repartition retired. `draining → enrolled` cancels a drain.
+  Host facts never change after enrollment.
+- `partition.ranges` is contiguous from shard 0. `partition_history` keeps the
+  ranges a repartition replaced; their ids are never reused, and only a
+  retired archive owner may name one. Live and quarantined owners name a
+  current range.
+- `repartition --ranges ID:FIRST-LAST,… --owner ID=…` (with `--archive`, never
+  in `act` mode) probes each new owner (`/v1/ready`, and a control-socket
+  status warm on a publication whose archive shards are the active one's),
+  then in one compare-and-swap revision sets the new partition, enrolls one
+  static owner per range, retires every other archive owner with
+  `retired_reason: repartition`, and records `repartition.from_revision`.
+  The archive's last shard cannot move.
+- `restore --revision N` accepts only that `from_revision`, only while no later
+  revision changed archive state, and only while every old owner still runs
+  (not `unreachable` in `membership.json`, service active over SSH, `/v1/ready`
+  ready; `--force` skips this). It writes a new revision with N's partition and
+  archive owners, retires the owners the repartition added, keeps their ranges
+  in history and keeps later recent-tier changes.
+- The fleet `known_hosts` carries the pinned key of every live member that has
+  `ssh_host_key`: elastic replicas and archive owners a repartition enrolled.
 - The inventory regenerates `roster.json`: every `enrolled` or `draining`
   member, archive owners with `archive_range: [first, last]` from their group.
   `shard-assign plan` gives pinned owners exactly those ranges, so adding or
