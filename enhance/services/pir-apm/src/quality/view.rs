@@ -170,6 +170,13 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
     ));
     out.push_str("<div class=\"table-wrap\"><table><thead><tr><th>Latency scope</th><th>Samples</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th></tr></thead><tbody>");
     for (name, h) in &window.values.histograms {
+        if !name
+            .split('|')
+            .next()
+            .is_some_and(|n| n.ends_with("_seconds"))
+        {
+            continue;
+        }
         if h.counts.last().is_none_or(|n| *n == 0.) {
             continue;
         }
@@ -188,6 +195,7 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
     let hist_names = points
         .iter()
         .flat_map(|p| p.values.histograms.keys().cloned())
+        .filter(|k| k.split('|').next().is_some_and(|n| n.ends_with("_seconds")))
         .collect::<std::collections::BTreeSet<_>>();
     for key in hist_names.iter().take(8) {
         out.push_str(&chart(points, key, "p99 seconds", false, |p| {

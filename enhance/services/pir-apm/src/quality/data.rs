@@ -266,9 +266,10 @@ pub fn parse(text: &str, at: u64) -> Result<Reading, &'static str> {
             }
             result.at = s.value as u64;
         }
-        // Caddy instruments nested handlers. Exactly one reverse_proxy boundary is used.
+        // The deployed Caddy 2.6 route exports one top-level subroute boundary.
+        // Never add another handler scope to the same request totals.
         if s.name.starts_with("caddy_http_")
-            && s.labels.get("handler").map(String::as_str) != Some("reverse_proxy")
+            && s.labels.get("handler").map(String::as_str) != Some("subroute")
         {
             continue;
         }
@@ -360,6 +361,7 @@ mod tests {
     #[test]
     fn real_serving_metrics_are_accepted_without_unbounded_labels() {
         for (name, text) in [
+            ("edge", include_str!("../../fixtures/quality/caddy.txt")),
             (
                 "worker",
                 include_str!("../../fixtures/quality/transparent-pir-recent-01.txt"),
@@ -377,7 +379,17 @@ mod tests {
                 include_str!("../../fixtures/quality/enhance-pir-packing-01.txt"),
             ),
         ] {
-            let parsed = parse(text, 1790669000).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let at = text
+                .lines()
+                .find_map(|l| {
+                    l.strip_prefix("pir_observation_timestamp_seconds ")
+                        .and_then(|s| s.parse().ok())
+                })
+                .unwrap_or(1790669000);
+            let parsed = parse(text, at).unwrap_or_else(|e| panic!("{name}: {e}"));
+            if name == "edge" {
+                assert!(!parsed.values.histograms.is_empty());
+            }
             assert!(!serde_json::to_string(&parsed.values)
                 .unwrap()
                 .contains("assignment_sha256"));

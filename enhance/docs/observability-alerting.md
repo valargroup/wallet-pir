@@ -272,8 +272,8 @@ The existing fleet roster is authoritative. No public metrics route is added.
 The host sampler uses explicitly configured private SSH targets and loopback
 Caddy metrics. Its output contains resource numbers and fixed source names.
 Caddy 2.6 metrics must be enabled in the generated router configuration. Only
-its `reverse_proxy` handler boundary is counted; nested handler totals must not
-be added. This boundary excludes direct file-server responses. Caddy size
+the deployed top-level `subroute` handler boundary is counted; nested handler
+totals must not be added. This includes responses and refusals at that route. Caddy size
 estimates and service payload byte counters have different semantics.
 
 Transparent HTTP instrumentation measures arrivals, cancellations, status
