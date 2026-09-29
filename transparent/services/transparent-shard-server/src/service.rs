@@ -240,7 +240,7 @@ impl ServiceState {
         disk: Option<crate::runtime::disk::DiskCache>,
         previous: Option<&Self>,
     ) -> Result<Self, String> {
-        let _ = binary_digest();
+        let _ = pir_control::Identity::process();
         let metrics = previous
             .map(|s| s.inner.metrics.clone())
             .unwrap_or_else(|| Arc::new(Metrics::default()));
@@ -820,6 +820,9 @@ async fn health(State(state): State<ServiceState>) -> Response {
         "prewarm_operations_total": Metrics::get(&inner.metrics.warm_runtimes),
         "work_memory_reserved_bytes": inner.cache.work_memory.reserved_bytes(),
         "target_runtimes": inner.warm.target,
+        "binary_sha256": pir_control::binary_sha256(),
+        "incarnation": pir_control::Identity::process().incarnation,
+        "started_unix": pir_control::Identity::process().started_unix,
     });
     if let (Some(body), Some(identity)) = (body.as_object_mut(), state.identity().as_object()) {
         for (key, value) in identity {
@@ -827,28 +830,6 @@ async fn health(State(state): State<ServiceState>) -> Response {
         }
     }
     json(StatusCode::OK, body)
-}
-
-fn binary_digest() -> &'static Option<String> {
-    static DIGEST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    DIGEST.get_or_init(|| {
-        use sha2::{Digest, Sha256};
-        use std::io::Read;
-        #[cfg(target_os = "linux")]
-        let mut file = std::fs::File::open("/proc/self/exe").ok()?;
-        #[cfg(not(target_os = "linux"))]
-        let mut file = std::fs::File::open(std::env::current_exe().ok()?).ok()?;
-        let mut hash = Sha256::new();
-        let mut bytes = [0u8; 65536];
-        loop {
-            let n = file.read(&mut bytes).ok()?;
-            if n == 0 {
-                break;
-            }
-            hash.update(&bytes[..n]);
-        }
-        Some(hex::encode(hash.finalize()))
-    })
 }
 
 /// What readiness attests depends on the mode.
@@ -891,7 +872,9 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         "assigned_shards": inner.set.assigned_len(),
         "warm_runtimes": warm,
         "target_runtimes": inner.warm.target,
-        "binary_sha256": binary_digest(),
+        "binary_sha256": pir_control::binary_sha256(),
+        "incarnation": pir_control::Identity::process().incarnation,
+        "started_unix": pir_control::Identity::process().started_unix,
         "runtime_cache": runtime_cache,
         "prewarm_failed": Metrics::get(&inner.metrics.prewarm_failed),
         "prewarm_finished": inner.warm.finished.load(Ordering::Acquire),

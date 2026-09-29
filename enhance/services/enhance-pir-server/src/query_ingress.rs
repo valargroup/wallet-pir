@@ -17,7 +17,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::sync::Semaphore;
 
@@ -45,7 +45,7 @@ struct Inner {
     candidate: Option<Arc<Loaded>>,
     epoch: u64,
     fence: Revocation,
-    refreshed: Option<Instant>,
+    refreshed: pir_control::Watchdog,
     cursor: usize,
 }
 #[derive(Clone)]
@@ -96,7 +96,7 @@ impl QueryIngress {
                 candidate: None,
                 epoch,
                 fence,
-                refreshed: None,
+                refreshed: pir_control::Watchdog::default(),
                 cursor: 0,
             })),
             root: root.into(),
@@ -133,18 +133,10 @@ impl QueryIngress {
             .with_state(self.clone())
     }
     fn fence(&self, i: &mut Inner, epoch: u64, fence: Revocation) -> Result<(), String> {
-        if epoch < i.epoch
-            || fence.recovery_epoch < i.fence.recovery_epoch
-            || !i.fence.sessions.is_subset(&fence.sessions)
-            || fence.sessions.iter().any(|s| !canonical_hash(s))
-        {
-            return Err("nonmonotonic ingress fence".into());
-        }
-        if epoch == i.epoch
-            && fence.sessions == i.fence.sessions
-            && fence.recovery_epoch == i.fence.recovery_epoch
-        {
-            return Ok(());
+        match crate::serving_fence::advance(i.epoch, &i.fence, epoch, &fence) {
+            Err(()) => return Err("nonmonotonic ingress fence".into()),
+            Ok(crate::serving_fence::Advance::Unchanged) => return Ok(()),
+            Ok(crate::serving_fence::Advance::Newer) => {}
         }
         crate::artifact::write_atomic(&self.root, "fence.json", |f| {
             serde_json::to_writer(f, &(epoch, &fence)).map_err(std::io::Error::other)
@@ -152,7 +144,7 @@ impl QueryIngress {
         .map_err(|e| e.to_string())?;
         i.epoch = epoch;
         i.fence = fence;
-        i.refreshed = None;
+        i.refreshed.clear();
         Ok(())
     }
     fn client_slot(&self, client: String) -> Option<ClientSlot> {
@@ -172,10 +164,7 @@ impl QueryIngress {
         if i.fence.sessions.contains(session) {
             return Err("noncanonical_session".into());
         }
-        if i.epoch != epoch
-            || i.refreshed
-                .is_none_or(|t| t.elapsed() > Duration::from_secs(5))
-        {
+        if i.epoch != epoch || !i.refreshed.live() {
             return Err("ingress serving authority unavailable".into());
         }
         Ok(())
@@ -234,7 +223,8 @@ async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {
     let i = r.inner.lock().unwrap();
     Json(
         serde_json::json!({"incarnation":r.incarnation,"control_version":CONTROL_VERSION,
-        "active_digest":i.active.as_ref().map(|v|&v.digest),"ready":i.refreshed.is_some_and(|t|t.elapsed()<=Duration::from_secs(5))}),
+        "active_digest":i.active.as_ref().map(|v|&v.digest),"ready":i.refreshed.live(),
+        "binary_sha256":pir_control::binary_sha256()}),
     )
 }
 async fn prepare(
@@ -272,11 +262,15 @@ async fn prepare(
     Ok(Json(ack))
 }
 fn matches(r: &QueryIngress, i: &Inner, a: &Activation, v: &Loaded) -> bool {
-    a.incarnation == r.incarnation
-        && a.controller_epoch == i.epoch
-        && a.controller_epoch == v.view.controller_epoch
-        && a.digest == v.digest
-        && i.fence.sessions.is_subset(&v.view.revocation.sessions)
+    crate::serving_fence::activation_matches(
+        &r.incarnation,
+        i.epoch,
+        &i.fence,
+        a,
+        v.view.controller_epoch,
+        &v.view.revocation,
+        &v.digest,
+    )
 }
 async fn activate(
     State(r): State<QueryIngress>,
@@ -288,7 +282,7 @@ async fn activate(
     } else if !i.active.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
         return Err(fail("ingress activation not prepared"));
     }
-    i.refreshed = Some(Instant::now());
+    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn refresh(
@@ -299,7 +293,7 @@ async fn refresh(
     if !i.active.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
         return Err(fail("ingress refresh stale"));
     }
-    i.refreshed = Some(Instant::now());
+    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn revoke(
@@ -357,9 +351,7 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
         if i.fence.sessions.contains(&session) {
             return Err((StatusCode::GONE, "noncanonical_session".into()));
         }
-        if i.refreshed
-            .is_none_or(|t| t.elapsed() > Duration::from_secs(5))
-        {
+        if !i.refreshed.live() {
             return Err(fail("ingress control stale"));
         }
         let active = i

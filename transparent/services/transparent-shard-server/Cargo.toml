@@ -24,6 +24,7 @@ path = "src/bin/shard-residency.rs"
 portable-kernel = []
 
 [dependencies]
+pir-control = { path = "../../../shared/pir-control" }
 pir-observability = { path = "../../../shared/pir-observability" }
 axum = "0.7"
 rayon = "1"

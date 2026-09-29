@@ -702,7 +702,7 @@ async fn metrics(
 async fn health(State(w): State<Worker>) -> Json<serde_json::Value> {
     let inner = w.inner.lock().unwrap();
     Json(
-        serde_json::json!({"matvec": w.backend, "protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
+        serde_json::json!({"matvec": w.backend, "protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"binary_sha256":pir_control::binary_sha256(),"epoch":inner.disk.epoch,"revision":inner.disk.revision,
         "resident_database_bytes":inner.engine.try_lock().ok().map(|e| e.live_bytes()),"published":inner.disk.published.keys().collect::<Vec<_>>(),
         "published_manifest_digests":inner.disk.published.iter().map(|(g,(m,_))| (g.to_string(), digest(m))).collect::<BTreeMap<_,_>>(),
         "candidate":inner.disk.candidate}),

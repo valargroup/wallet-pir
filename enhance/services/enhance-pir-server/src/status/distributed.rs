@@ -11,7 +11,7 @@ use std::{
 use tokio::sync::Mutex;
 
 pub type Failure = Box<dyn std::error::Error + Send + Sync>;
-const WATCHDOG: Duration = Duration::from_secs(5);
+use pir_control::Watchdog;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -70,7 +70,7 @@ struct StateData {
     candidate_artifact: Option<Arc<Vec<u8>>>,
     preparation_cache: Option<Arc<Generation>>,
     controller: Option<Controller>,
-    contact: Option<Instant>,
+    contact: Watchdog,
     poisoned: bool,
 }
 #[derive(Clone)]
@@ -223,7 +223,7 @@ impl Service {
                 candidate_artifact: None,
                 preparation_cache: None,
                 controller: None,
-                contact: None,
+                contact: Watchdog::default(),
                 poisoned: false,
             })),
             control: Arc::new(Mutex::new(())),
@@ -263,7 +263,7 @@ impl Service {
             telemetry::admission_rejected(role, "poisoned");
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-        if state.contact.is_none_or(|t| t.elapsed() > WATCHDOG) {
+        if !state.contact.live() {
             telemetry::admission_rejected(role, "watchdog_expired");
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
@@ -277,6 +277,7 @@ impl Service {
     pub fn control_routes(&self) -> Router {
         Router::new()
             .route("/control/health", get(health))
+            .route("/control/identity", get(identity))
             .route("/control/fence", post(fence))
             .route("/control/prepare", post(prepare))
             .route("/control/prepare-refresh", post(prepare_refresh))
@@ -338,6 +339,18 @@ impl Service {
         Ok(())
     }
 }
+/// The executable this process runs and its incarnation. Kept off
+/// [`Health`], which refuses unknown fields, so an older controller can still
+/// read a newer role's health during a rolling deploy.
+async fn identity(State(s): State<Service>) -> Json<serde_json::Value> {
+    let state = s.state.lock().await;
+    let process = pir_control::Identity::process();
+    Json(serde_json::json!({
+        "binary_sha256": process.binary_sha256,
+        "incarnation": s.binding(&state).incarnation,
+        "started_unix": process.started_unix,
+    }))
+}
 async fn health(State(s): State<Service>) -> Json<Health> {
     let state = s.state.lock().await;
     Json(Health {
@@ -349,7 +362,7 @@ async fn health(State(s): State<Service>) -> Json<Health> {
             .map(|g| g.manifest.rows_digest),
         active: state.controller.as_ref().map(|c| c.current().manifest.id()),
         ready: !state.poisoned
-            && state.contact.is_some_and(|t| t.elapsed() <= WATCHDOG)
+            && state.contact.live()
             && state
                 .controller
                 .as_ref()
@@ -376,7 +389,7 @@ async fn fence(
         state.controller = None;
         state.candidate = None;
         state.candidate_artifact = None;
-        state.contact = None;
+        state.contact.clear();
         state.fence.epoch = b.epoch;
         state.fence.manifest = None;
         if persist_off_runtime(&s.dir, &state.fence).await.is_err() {
@@ -663,7 +676,7 @@ async fn activate(
     }
     state.fence = next;
     state.poisoned = false;
-    state.contact = Some(Instant::now());
+    state.contact.renew();
     Ok(Json(Ready {
         binding: a.binding,
         manifest: a.manifest.clone(),
@@ -688,7 +701,7 @@ async fn heartbeat(
     {
         return Err(StatusCode::CONFLICT);
     }
-    state.contact = Some(Instant::now());
+    state.contact.renew();
     Ok(Json(a.binding))
 }
 async fn artifact(State(s): State<Service>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
@@ -1007,7 +1020,9 @@ mod tests {
         };
         s.state.lock().await.candidate = Some((g, [6; 32]));
         let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
-        s.state.lock().await.contact = Some(Instant::now() - WATCHDOG - Duration::from_secs(1));
+        s.state.lock().await.contact = Watchdog::renewed_at(
+            Instant::now() - pir_control::CONTROL_WATCHDOG - Duration::from_secs(1),
+        );
         assert!(s.serving().await.is_err());
         let _ = heartbeat(State(s.clone()), Json(a.clone())).await.unwrap();
         assert_eq!(

@@ -31,7 +31,7 @@ pub const CONTROL_VERSION: u16 = 2;
 pub const CONTROL_VERSION: u16 = 4;
 const BODY_LIMIT: usize = 512 * 1024;
 // A liveness watchdog, not permission to complete recovery without a fence ACK.
-const CONTROL_WATCHDOG: Duration = Duration::from_secs(5);
+use pir_control::Watchdog;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -93,7 +93,7 @@ struct Inner {
     active: Option<Arc<Loaded>>,
     candidate: Option<Arc<Loaded>>,
     material: BTreeMap<String, Weak<Packing>>,
-    refreshed: Option<Instant>,
+    refreshed: Watchdog,
     outstanding: BTreeMap<String, usize>,
     cursor: usize,
     worker_health: BTreeMap<String, WorkerHealth>,
@@ -210,7 +210,7 @@ impl PackingRouter {
                 active: None,
                 candidate: None,
                 material: BTreeMap::new(),
-                refreshed: None,
+                refreshed: Watchdog::default(),
                 outstanding: BTreeMap::new(),
                 cursor: 0,
                 worker_health: BTreeMap::new(),
@@ -346,22 +346,15 @@ impl PackingRouter {
         epoch: u64,
         revocation: Revocation,
     ) -> Result<(), String> {
-        if epoch < inner.fence.controller_epoch
-            || revocation.recovery_epoch < inner.fence.revocation.recovery_epoch
-            || !inner
-                .fence
-                .revocation
-                .sessions
-                .is_subset(&revocation.sessions)
-            || revocation.sessions.iter().any(|id| !canonical_hash(id))
-        {
-            return Err("stale or nonmonotonic serving fence".into());
-        }
-        if epoch == inner.fence.controller_epoch
-            && revocation.recovery_epoch == inner.fence.revocation.recovery_epoch
-            && revocation.sessions == inner.fence.revocation.sessions
-        {
-            return Ok(());
+        match crate::serving_fence::advance(
+            inner.fence.controller_epoch,
+            &inner.fence.revocation,
+            epoch,
+            &revocation,
+        ) {
+            Err(()) => return Err("stale or nonmonotonic serving fence".into()),
+            Ok(crate::serving_fence::Advance::Unchanged) => return Ok(()),
+            Ok(crate::serving_fence::Advance::Newer) => {}
         }
         let fence = DurableFence {
             controller_epoch: epoch,
@@ -373,7 +366,7 @@ impl PackingRouter {
         .map_err(|e| e.to_string())?;
         inner.fence = fence;
         // A new controller must explicitly activate after reconciliation.
-        inner.refreshed = None;
+        inner.refreshed.clear();
         Ok(())
     }
 
@@ -382,11 +375,7 @@ impl PackingRouter {
         if inner.fence.revocation.sessions.contains(session) {
             return Err("noncanonical_session".into());
         }
-        if inner.fence.controller_epoch != epoch
-            || inner
-                .refreshed
-                .is_none_or(|t| t.elapsed() > CONTROL_WATCHDOG)
-        {
+        if inner.fence.controller_epoch != epoch || !inner.refreshed.live() {
             return Err("serving authority unavailable".into());
         }
         Ok(())
@@ -422,7 +411,8 @@ async fn health(State(r): State<PackingRouter>) -> Json<serde_json::Value> {
         serde_json::json!({"domain_eligible_workers":domain_eligible,"protocol":PROTOCOL_REVISION,"control_version":CONTROL_VERSION,
         "incarnation":r.incarnation,"controller_epoch":i.fence.controller_epoch,
         "active_digest":i.active.as_ref().map(|s| &s.digest),
-        "ready":i.refreshed.is_some_and(|t| t.elapsed() <= CONTROL_WATCHDOG),
+        "ready":i.refreshed.live(),
+        "binary_sha256":pir_control::binary_sha256(),
         "resident_objects":i.material.values().filter(|v| v.strong_count()>0).count(),
         "packing_charged_bytes":r.packing_budget.charged_bytes(),
         "available_requests":r.admission.available_permits(),"outstanding":i.outstanding,
@@ -733,14 +723,15 @@ async fn prepare(
 }
 
 fn matches(r: &PackingRouter, i: &Inner, a: &Activation, v: &Loaded) -> bool {
-    a.incarnation == r.incarnation
-        && a.controller_epoch == i.fence.controller_epoch
-        && a.controller_epoch == v.view.controller_epoch
-        && a.digest == v.digest
-        && i.fence
-            .revocation
-            .sessions
-            .is_subset(&v.view.revocation.sessions)
+    crate::serving_fence::activation_matches(
+        &r.incarnation,
+        i.fence.controller_epoch,
+        &i.fence.revocation,
+        a,
+        v.view.controller_epoch,
+        &v.view.revocation,
+        &v.digest,
+    )
 }
 async fn activate(
     State(r): State<PackingRouter>,
@@ -754,7 +745,7 @@ async fn activate(
             "activation was not prepared by this incarnation",
         ));
     }
-    i.refreshed = Some(Instant::now());
+    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn refresh(
@@ -765,7 +756,7 @@ async fn refresh(
     if !i.active.as_ref().is_some_and(|v| matches(&r, &i, &a, v)) {
         return Err(unavailable("refresh requires current activated view"));
     }
-    i.refreshed = Some(Instant::now());
+    i.refreshed.renew();
     Ok(StatusCode::NO_CONTENT)
 }
 async fn revoke(
@@ -779,7 +770,7 @@ async fn revoke(
 }
 async fn drain(State(r): State<PackingRouter>) -> StatusCode {
     let mut i = r.inner.lock().unwrap();
-    i.refreshed = None;
+    i.refreshed.clear();
     i.active = None;
     i.candidate = None;
     StatusCode::NO_CONTENT
@@ -908,7 +899,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
         if i.fence.revocation.sessions.contains(&session) {
             return Err((StatusCode::GONE, "noncanonical_session".into()));
         }
-        if i.refreshed.is_none_or(|t| t.elapsed() > CONTROL_WATCHDOG) {
+        if !i.refreshed.live() {
             return Err(unavailable("control connection stale"));
         }
         let loaded = i
@@ -1186,7 +1177,8 @@ mod tests {
         )
         .await
         .unwrap();
-        r.inner.lock().unwrap().refreshed = Some(Instant::now() - Duration::from_secs(6));
+        r.inner.lock().unwrap().refreshed =
+            Watchdog::renewed_at(Instant::now() - Duration::from_secs(6));
         assert!(r.response_allowed(&"bb".repeat(32), 1).is_err());
         assert!(r.inner.lock().unwrap().fence.revocation.sessions.is_empty());
     }

@@ -30,6 +30,7 @@ pub mod packing_router;
 pub mod pool;
 pub mod query_ingress;
 mod serving_control;
+mod serving_fence;
 
 mod http_metrics;
 

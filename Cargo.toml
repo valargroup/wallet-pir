@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "shared/pir-observability",
     "shared/pir-native",
+    "shared/pir-control",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "transparent/crates/transparent-events",

@@ -1062,6 +1062,7 @@ dependencies = [
  "ipir-sp",
  "libc",
  "memmap2",
+ "pir-control",
  "pir-native",
  "prometheus",
  "rand 0.8.5",
@@ -2573,6 +2574,16 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "tokio",
+]
+
+[[package]]
+name = "pir-control"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rand 0.8.5",
+ "serde",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4303,6 +4314,7 @@ dependencies = [
  "http-body",
  "ipir-sp",
  "memmap2",
+ "pir-control",
  "pir-observability",
  "rayon",
  "reinspiring",
