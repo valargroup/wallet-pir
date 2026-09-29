@@ -2,11 +2,11 @@
 //! Control endpoints must only be reachable by the coordinator. Artifact origins
 //! are configured locally, never supplied by a wallet or placement message.
 use crate::{
+    admission::{read_body, BodyError, Queue, Refusal},
     runtime::Packing,
     worker::{Evaluate, Revocation},
 };
 use axum::{
-    body::to_bytes,
     extract::{Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -874,24 +874,27 @@ async fn query(State(r): State<PackingRouter>, request: Request) -> Response {
 async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
     // Read the bounded body before any queue or admission permit is charged.
     let body_started = Instant::now();
-    let bytes = tokio::time::timeout(
-        Duration::from_secs(30),
-        to_bytes(request.into_body(), BODY_LIMIT),
-    )
-    .await
-    .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
-    .map_err(|e| (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
-    let body_read = body_started.elapsed();
-    let waiting = r
-        .waiters
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "query queue full".into()))?;
-    let permit = tokio::time::timeout(Duration::from_secs(2), r.admission.clone().acquire_owned())
+    let bytes = read_body(request.into_body(), BODY_LIMIT, Duration::from_secs(30))
         .await
-        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "admission deadline".into()))?
-        .map_err(unavailable)?;
-    drop(waiting);
+        .map_err(|e| match e {
+            BodyError::Timeout => (StatusCode::REQUEST_TIMEOUT, e.to_string()),
+            BodyError::Read(_) => (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),
+        })?;
+    let body_read = body_started.elapsed();
+    // Every request takes a waiting slot, even when a permit is free.
+    let permit = Queue::with_permits(
+        r.admission.clone(),
+        r.waiters.clone(),
+        Duration::from_secs(2),
+        false,
+    )
+    .acquire(|| ())
+    .await
+    .map_err(|refusal| match refusal {
+        Refusal::Full => (StatusCode::TOO_MANY_REQUESTS, "query queue full".into()),
+        Refusal::Deadline => (StatusCode::TOO_MANY_REQUESTS, "admission deadline".into()),
+        Refusal::Closed => unavailable("admission closed"),
+    })?;
     let binding = QueryBinding::decode(&bytes).map_err(bad)?;
     let session = hex::encode(binding.session_id);
     let (routes, preferred, epoch, pack) = {

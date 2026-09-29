@@ -1078,12 +1078,14 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> Response {
             .clone()
             .try_acquire_owned()
             .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
-        let bytes = tokio::time::timeout(
+        // Any reception failure is 503 `not-accepted`: nothing was evaluated,
+        // so the router may retry the query once on another worker.
+        let bytes = crate::admission::read_body(
+            request.into_body(),
+            1024 * 1024,
             std::time::Duration::from_secs(30),
-            to_bytes(request.into_body(), 1024 * 1024),
         )
         .await
-        .map_err(unavailable)?
         .map_err(unavailable)?;
         let query: Evaluate =
             serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;

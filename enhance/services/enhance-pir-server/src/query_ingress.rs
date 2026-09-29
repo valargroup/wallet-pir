@@ -1,8 +1,9 @@
 //! Bounded EPQ7 prefix routing. No upload-key decoding, packing or query replay.
+use crate::admission::{client_key, read_body, BodyError, ClientSlots};
 use crate::packing_router::{Ack, Activation, CONTROL_VERSION};
 use crate::worker::Revocation;
 use axum::{
-    body::{to_bytes, Bytes},
+    body::Bytes,
     extract::{ConnectInfo, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -56,7 +57,7 @@ pub struct QueryIngress {
     incarnation: String,
     admission: Arc<Semaphore>,
     uploads: Arc<Semaphore>,
-    client_uploads: Arc<Mutex<BTreeMap<String, usize>>>,
+    client_uploads: ClientSlots,
     http: reqwest::Client,
     _lock: Arc<File>,
 }
@@ -103,7 +104,7 @@ impl QueryIngress {
             incarnation: hex::encode(rand::random::<[u8; 16]>()),
             admission: Arc::new(Semaphore::new(requests)),
             uploads: Arc::new(Semaphore::new(uploads)),
-            client_uploads: Arc::new(Mutex::new(BTreeMap::new())),
+            client_uploads: ClientSlots::new(CLIENT_UPLOADS),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(90))
                 .build()
@@ -147,18 +148,6 @@ impl QueryIngress {
         i.refreshed.clear();
         Ok(())
     }
-    fn client_slot(&self, client: String) -> Option<ClientSlot> {
-        let mut clients = self.client_uploads.lock().unwrap();
-        let count = clients.entry(client.clone()).or_default();
-        if *count >= CLIENT_UPLOADS {
-            return None;
-        }
-        *count += 1;
-        Some(ClientSlot {
-            clients: self.client_uploads.clone(),
-            client,
-        })
-    }
     fn allowed(&self, session: &str, epoch: u64) -> Result<(), String> {
         let i = self.inner.lock().unwrap();
         if i.fence.sessions.contains(session) {
@@ -170,42 +159,15 @@ impl QueryIngress {
         Ok(())
     }
 }
-struct ClientSlot {
-    clients: Arc<Mutex<BTreeMap<String, usize>>>,
-    client: String,
-}
-impl Drop for ClientSlot {
-    fn drop(&mut self) {
-        let mut clients = self.clients.lock().unwrap();
-        if let Some(count) = clients.get_mut(&self.client) {
-            *count -= 1;
-            if *count == 0 {
-                clients.remove(&self.client);
-            }
-        }
-    }
-}
 /// Proxy-supplied client address when present, else the socket peer.
 fn client_identity(request: &Request) -> String {
-    let header = |name: &str| {
+    client_key(
+        request.headers(),
         request
-            .headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(str::to_owned)
-    };
-    header("x-forwarded-for")
-        .or_else(|| header("x-real-ip"))
-        .or_else(|| {
-            request
-                .extensions()
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|info| info.0.ip().to_string())
-        })
-        .unwrap_or_else(|| "unknown".into())
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip()),
+    )
 }
 type Error = (StatusCode, String);
 fn fail(e: impl ToString) -> Error {
@@ -320,19 +282,16 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, Error> {
         .try_acquire_owned()
         .map_err(|_| overloaded("uploads full"))?;
     let slot = r
-        .client_slot(client_identity(&request))
+        .client_uploads
+        .try_acquire(&client_identity(&request))
         .ok_or_else(|| overloaded("client uploads full"))?;
-    let bytes: Bytes =
-        tokio::time::timeout(UPLOAD_DEADLINE, to_bytes(request.into_body(), BODY_LIMIT))
-            .await
-            .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "upload deadline".into()))?
-            .map_err(|e| {
-                if e.to_string().contains("length limit") {
-                    (StatusCode::PAYLOAD_TOO_LARGE, "oversized upload".into())
-                } else {
-                    (StatusCode::BAD_REQUEST, "truncated upload".into())
-                }
-            })?;
+    let bytes: Bytes = read_body(request.into_body(), BODY_LIMIT, UPLOAD_DEADLINE)
+        .await
+        .map_err(|e| match e {
+            BodyError::Timeout => (StatusCode::REQUEST_TIMEOUT, "upload deadline".into()),
+            e if e.over_limit() => (StatusCode::PAYLOAD_TOO_LARGE, "oversized upload".into()),
+            BodyError::Read(_) => (StatusCode::BAD_REQUEST, "truncated upload".into()),
+        })?;
     drop(slot);
     drop(upload);
     if bytes.len() < HEADER_BYTES {
@@ -544,7 +503,7 @@ mod tests {
             let _ = task.await;
         }
         assert_eq!(r.uploads.available_permits(), 5);
-        assert!(r.client_uploads.lock().unwrap().is_empty());
+        assert_eq!(r.client_uploads.tracked(), 0);
     }
     #[tokio::test]
     async fn ambiguous_router_failure_is_never_replayed() {

@@ -8,7 +8,6 @@ use super::{
     worker,
 };
 use axum::{
-    body::to_bytes,
     extract::{Path, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -937,13 +936,39 @@ type ApiResult<T> = Result<T, (StatusCode, String)>;
 type QueryResult<T> = Result<T, QueryError>;
 
 async fn query_body(request: Request) -> QueryResult<axum::body::Bytes> {
-    tokio::time::timeout(
+    use crate::admission::BodyError;
+    crate::admission::read_body(
+        request.into_body(),
+        QUERY_BODY_LIMIT,
         std::time::Duration::from_secs(30),
-        to_bytes(request.into_body(), QUERY_BODY_LIMIT),
     )
     .await
-    .map_err(|_| QueryError(StatusCode::REQUEST_TIMEOUT, "body deadline".into()))?
-    .map_err(|e| QueryError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))
+    .map_err(|e| match e {
+        BodyError::Timeout => QueryError(StatusCode::REQUEST_TIMEOUT, e.to_string()),
+        BodyError::Read(_) => QueryError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),
+    })
+}
+
+/// Records one admission wait into the query stats when dropped.
+struct WaitStats<'a> {
+    stats: &'a QueryStats,
+    started: std::time::Instant,
+}
+impl<'a> WaitStats<'a> {
+    fn start(stats: &'a QueryStats) -> Self {
+        Self {
+            stats,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+impl Drop for WaitStats<'_> {
+    fn drop(&mut self) {
+        self.stats.wait_count.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .wait_micros
+            .fetch_add(self.started.elapsed().as_micros() as u64, Ordering::Relaxed);
+    }
 }
 
 /// Callers have already read the bounded body, so the public reverse proxy is
@@ -1077,21 +1102,19 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
     }
     // Read the bounded body before any wait or admission permit is charged.
     let body = query_body(request).await?;
-    let waiting = match c.query_waiters.clone().try_acquire_owned() {
+    // Every query takes a waiting slot; the wait is recorded whether or not
+    // it ends in a permit.
+    let acquired = crate::admission::Queue::with_permits(
+        c.queries.clone(),
+        c.query_waiters.clone(),
+        QUERY_WAIT_DEADLINE,
+        false,
+    )
+    .acquire(|| WaitStats::start(&c.query_stats))
+    .await;
+    let permit = match acquired {
         Ok(permit) => permit,
         Err(_) => return reject_query(&c),
-    };
-    let started_wait = std::time::Instant::now();
-    let acquired =
-        tokio::time::timeout(QUERY_WAIT_DEADLINE, c.queries.clone().acquire_owned()).await;
-    c.query_stats.wait_count.fetch_add(1, Ordering::Relaxed);
-    c.query_stats
-        .wait_micros
-        .fetch_add(started_wait.elapsed().as_micros() as u64, Ordering::Relaxed);
-    drop(waiting);
-    let permit = match acquired {
-        Ok(Ok(permit)) => permit,
-        _ => return reject_query(&c),
     };
     let binding = QueryBinding::decode(&body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let generation_pin = c.snapshots.clone().read_owned().await;
@@ -1643,7 +1666,9 @@ mod admission_tests {
                 Ok(())
             })
             .unwrap();
-        assert!(to_bytes(response.into_body(), 10).await.is_err());
+        assert!(axum::body::to_bytes(response.into_body(), 10)
+            .await
+            .is_err());
         assert_eq!(coordinator.queries.available_permits(), QUERY_ACTIVE_LIMIT);
         let rejected =
             guarded_query_response(coordinator, "session".into(), vec![7], ()).unwrap_err();

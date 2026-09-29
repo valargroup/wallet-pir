@@ -53,3 +53,24 @@ code maps to each product's codes rather than unifying them.
 | Not assigned here | — | — | 421 |
 | No authority or not ready | 503 | 503 | 503 |
 | Worker refused before acceptance | 503 with `x-enhance-evaluation: not-accepted`; the router may retry once elsewhere | — | — |
+
+## Admission
+
+Enhance's roles and Status share one implementation of the bounded wait queue,
+bounded body reception and the per-client concurrency cap
+(`enhance/services/enhance-pir-server/src/admission.rs`). Each caller keeps its
+own limits and refusal mapping:
+
+| | Executing / waiting | Wait | Queue without a free permit | Per-client cap |
+|---|---|---|---|---|
+| Packing router | configured, at most 4 / 16 | 2 s | always takes a waiting slot | — |
+| Coordinator (legacy local serving) | 4 / 16 | 2 s | always takes a waiting slot | — |
+| Query ingress | try-only | — | — | 4 uploads, keyed on forwarded headers then the peer |
+| Status roles | 4 / 32 | 1 s | free permit taken directly | — |
+| Status coordinator routes | 16 / 8 | 250 ms | free permit taken directly | 2, keyed on forwarded headers then `unknown` |
+
+Transparent keeps its own admission (`transparent-shard-server/src/admission.rs`).
+It counts running and queued requests together, starts the deadline before the
+upload so reception time counts against it, budgets body bytes before reading,
+and answers overload with 503 and `Retry-After`. Folding it into the shared
+queue would change what wallets see.

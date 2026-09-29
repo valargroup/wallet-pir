@@ -1,19 +1,13 @@
 //! Bounded, cancellation-safe admission. CPU jobs own their execution permit.
 use super::telemetry;
+use crate::admission::{Queue, Refusal};
 use axum::http::StatusCode;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use std::time::{Duration, Instant};
+use tokio::sync::OwnedSemaphorePermit;
 
 pub(super) const REQUEST_BUDGET: Duration = Duration::from_secs(5);
 
-pub(super) struct Admission {
-    executing: Arc<Semaphore>,
-    waiting: Arc<Semaphore>,
-    wait: Duration,
-}
+pub(super) struct Admission(Queue);
 impl Admission {
     /// Serving roles absorb pauses of up to a second: on the CPU host a role
     /// occasionally stops for 0.2-0.9 s, and at 20 QPS the former eight-slot,
@@ -25,33 +19,25 @@ impl Admission {
         Self::new(16, 8, Duration::from_millis(250))
     }
     fn new(executing: usize, waiting: usize, wait: Duration) -> Self {
-        Self {
-            executing: Arc::new(Semaphore::new(executing)),
-            waiting: Arc::new(Semaphore::new(waiting)),
-            wait,
-        }
+        // A free permit is taken without queueing; a waiting slot is held only
+        // while waiting.
+        Self(Queue::new(executing, waiting, wait, true))
     }
     pub(super) async fn acquire(&self, role: &'static str) -> Result<Execution, StatusCode> {
         let start = Instant::now();
-        let permit = match self.executing.clone().try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
-                let _slot = self.waiting.clone().try_acquire_owned().map_err(|_| {
+        let permit = self
+            .0
+            .acquire(|| Gauge::new(role, true))
+            .await
+            .map_err(|refusal| {
+                if refusal == Refusal::Full {
                     telemetry::admission_rejected(role, "queue_full");
-                    StatusCode::TOO_MANY_REQUESTS
-                })?;
-                let _waiting = Gauge::new(role, true);
-                match tokio::time::timeout(self.wait, self.executing.clone().acquire_owned()).await
-                {
-                    Ok(Ok(permit)) => permit,
-                    _ => {
-                        telemetry::admission_timing(role, true, start.elapsed());
-                        telemetry::admission_rejected(role, "queue_timeout");
-                        return Err(StatusCode::TOO_MANY_REQUESTS);
-                    }
+                } else {
+                    telemetry::admission_timing(role, true, start.elapsed());
+                    telemetry::admission_rejected(role, "queue_timeout");
                 }
-            }
-        };
+                StatusCode::TOO_MANY_REQUESTS
+            })?;
         telemetry::admission_timing(role, true, start.elapsed());
         Ok(Execution {
             _permit: permit,
@@ -93,11 +79,11 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn bounded_queue_cancellation_timeout_and_recovery() {
-        let a = Arc::new(Admission::new(1, 1, Duration::from_millis(40)));
+        let a = std::sync::Arc::new(Admission::new(1, 1, Duration::from_millis(40)));
         let active = a.acquire("router").await.unwrap();
         let copy = a.clone();
         let queued = tokio::spawn(async move { copy.acquire("router").await });
-        while a.waiting.available_permits() != 0 {
+        while a.0.waiting_available() != 0 {
             tokio::task::yield_now().await;
         }
         assert!(matches!(
@@ -106,12 +92,12 @@ mod tests {
         ));
         queued.abort();
         let _ = queued.await;
-        assert_eq!(a.waiting.available_permits(), 1);
+        assert_eq!(a.0.waiting_available(), 1);
         assert!(matches!(
             a.acquire("router").await,
             Err(StatusCode::TOO_MANY_REQUESTS)
         ));
-        assert_eq!(a.waiting.available_permits(), 1);
+        assert_eq!(a.0.waiting_available(), 1);
         drop(active);
         assert!(a.acquire("router").await.is_ok());
     }
@@ -128,7 +114,7 @@ mod tests {
         });
         started_rx.await.unwrap();
         job.abort(); // A running blocking job cannot be cancelled.
-        assert_eq!(a.executing.available_permits(), 0);
+        assert_eq!(a.0.executing_available(), 0);
         let _ = tx.send(());
         let _ = job.await;
         assert!(a.acquire("worker").await.is_ok());

@@ -1,81 +1,25 @@
 //! Independently scheduled Status controller hosted by the Enhance coordinator.
 use super::{distributed::*, *};
+use crate::admission::ClientSlots;
 use crate::zakura::ZakuraClient;
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::Write,
     net::SocketAddr,
     path::PathBuf,
-    sync::Mutex,
 };
 use tokio::sync::watch;
 
 /// Concurrent forwarded queries admitted per client address.
 pub const PER_CLIENT_CONCURRENCY: usize = 2;
 
-/// Per-client in-flight counter for the public query route. Entries are
-/// removed when their last guard drops, so the map stays bounded by the
-/// number of clients with a request in flight.
-#[derive(Default)]
-pub struct ClientSlots {
-    active: Mutex<HashMap<String, usize>>,
-}
-pub struct ClientSlot<'a> {
-    slots: &'a ClientSlots,
-    key: String,
-}
-impl ClientSlots {
-    pub fn try_acquire(&self, key: &str) -> Option<ClientSlot<'_>> {
-        let mut active = self.active.lock().unwrap();
-        let count = active.entry(key.to_owned()).or_insert(0);
-        if *count >= PER_CLIENT_CONCURRENCY {
-            if *count == 0 {
-                active.remove(key);
-            }
-            return None;
-        }
-        *count += 1;
-        Some(ClientSlot {
-            slots: self,
-            key: key.to_owned(),
-        })
-    }
-    #[cfg(test)]
-    fn tracked(&self) -> usize {
-        self.active.lock().unwrap().len()
-    }
-}
-impl Drop for ClientSlot<'_> {
-    fn drop(&mut self) {
-        let mut active = self.slots.active.lock().unwrap();
-        if let Some(count) = active.get_mut(&self.key) {
-            *count -= 1;
-            if *count == 0 {
-                active.remove(&self.key);
-            }
-        }
-    }
-}
-
 /// First `X-Forwarded-For` address, else `X-Real-IP`, else `unknown`. The
 /// ingress proxy in front of this loopback listener sets these headers; the
 /// loopback peer address carries no client identity.
-pub fn client_key(headers: &HeaderMap) -> String {
-    let forwarded = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
-    let real = headers
-        .get("x-real-ip")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
-    forwarded.or(real).unwrap_or("unknown").to_owned()
+fn client_key(headers: &HeaderMap) -> String {
+    crate::admission::client_key(headers, None)
 }
 
 #[derive(Clone, Deserialize)]
@@ -129,7 +73,7 @@ impl Publisher {
             artifact: Arc::new(RwLock::new(None)),
             last_rows: Arc::new(RwLock::new(None)),
             permits: Arc::new(admission::Admission::coordinator()),
-            clients: Arc::new(ClientSlots::default()),
+            clients: Arc::new(ClientSlots::new(PER_CLIENT_CONCURRENCY)),
             healthy: Arc::new(AtomicBool::new(false)),
             serving_http: serving_http_client()?,
             http: reqwest::Client::builder()
@@ -729,7 +673,7 @@ mod query_transport_tests {
     }
     #[test]
     fn per_client_slots_cap_concurrency_and_evict_idle_keys() {
-        let slots = ClientSlots::default();
+        let slots = ClientSlots::new(PER_CLIENT_CONCURRENCY);
         let a1 = slots.try_acquire("1.2.3.4").expect("first slot");
         let a2 = slots.try_acquire("1.2.3.4").expect("second slot");
         assert!(slots.try_acquire("1.2.3.4").is_none(), "third is refused");
