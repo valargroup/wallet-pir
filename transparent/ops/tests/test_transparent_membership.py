@@ -202,6 +202,17 @@ class PlanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(list(self.root.glob('*.invalid-*'))), 1)
         self.assertEqual(list(self.root.glob('*.partial')), [])
 
+    async def test_prepare_waits_the_configured_grace_for_later_replicas(self):
+        (self.root/(self.digest+'.assignment.json')).write_text(json.dumps(self.plan))
+        self.f.c['prepare_grace_seconds'] = 3.5
+        grace = []
+        async def collect(operation, workers, early=False, grace_=None, **kwargs):
+            grace.append(kwargs.get('grace'))
+            return {w['id']: {'expected': 'a'*64} for w in workers}
+        self.f.collect = collect
+        await self.f.prepare(dict(self.req))
+        self.assertEqual(grace, [3.5])
+
     async def test_incomplete_planner_output_is_never_published(self):
         self.plan['set'] = {'map_sha256': 'other'}
         with patch.object(M, 'run', new=AsyncMock(side_effect=self.planner)):

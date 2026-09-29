@@ -40,7 +40,7 @@ ROUTER_PROXY_ERRORS = ('\n\thandle_errors {\n\t\theader Retry-After 1\n'
 OPERATIONAL_KEYS = ('control_sessions', 'status_socket_forwarding', 'headless_console', 'storage_nodiscard',
                     'manage_all_workers', 'managed_recent_workers', 'reconcile_workers',
                     'membership_failures', 'membership_failure_seconds', 'activation_grace_seconds',
-                    'activation_lock_seconds')
+                    'activation_lock_seconds', 'prepare_grace_seconds')
 ASSIGNMENT_SCHEMA = 'transparent-assignment-v1'
 
 
@@ -544,7 +544,11 @@ class Fleet:
         async def bounded_stage(worker):
             operation = self.wait_managed(worker, req) if worker['id'] in self.managed_ids() else self.stage(worker, req, assignment)
             return await asyncio.wait_for(operation, 24)
-        prepared = await self.collect(bounded_stage, self.roster, early=True)
+        # The grace lets replicas that finish their tail build moments after
+        # the first one activate together, instead of leaving routing at every
+        # activation and rejoining seconds later. It costs freshness directly.
+        prepared = await self.collect(bounded_stage, self.roster, early=True,
+                                      grace=self.c.get('prepare_grace_seconds', 0.5))
         if not self.quorum(prepared):
             raise RuntimeError('warm prepare quorum unavailable')
         atomic_json(self.root / (digest+'.prepared.json'), prepared)
