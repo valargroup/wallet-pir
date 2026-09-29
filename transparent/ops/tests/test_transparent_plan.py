@@ -94,8 +94,10 @@ class PlanValidatorTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.refused(fixture('create-one.json'), 'only elastic recent replicas', **{field: ['transparent-pir-archive-01']})
         plan = fixture('create-one.json')
-        plan['resource_drift'] = [dict(plan['resource_changes'][0], address='digitalocean_droplet.transparent_archive[0]')]
-        self.refused(plan, 'archive', allow_create=[R6])
+        for address in ('digitalocean_droplet.transparent_archive[0]',
+                        'digitalocean_droplet.transparent_archive["transparent-pir-archive-03"]'):
+            plan['resource_drift'] = [dict(plan['resource_changes'][0], address=address)]
+            self.refused(plan, 'archive', allow_create=[R6])
         noop = fixture('create-one.json')
         noop['resource_changes'][0]['address'] = 'digitalocean_droplet.recent["transparent-pir-archive-01"]'
         self.refused(noop, 'archive', allow_create=[R6])
