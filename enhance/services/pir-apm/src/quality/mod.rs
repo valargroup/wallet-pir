@@ -290,6 +290,11 @@ fn status_read(bytes: &[u8], operation: &str, at: u64) -> Result<Reading, &'stat
     ] {
         if let Some(value) = v["resources"][key].as_u64() {
             r.values.gauges.insert(key.into(), value as f64);
+            if let Some(name) = key.strip_prefix("host_") {
+                r.values
+                    .gauges
+                    .insert(format!("pir_host_{name}"), value as f64);
+            }
         }
     }
     Ok(r)

@@ -197,7 +197,8 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
     for key in [
         "pir_http_arrivals_total",
         "caddy_http_requests_total",
-        "enhance_http_requests_total",
+        "enhance_http_arrivals_total",
+        "status_http_arrivals_total",
     ] {
         if points
             .iter()
@@ -311,7 +312,7 @@ async fn render(
         }
     }
     let h = history(d.quality.path.clone(), service.into(), seconds).await;
-    let mut out=format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"30\"><title>{} service quality · PIR APM</title><style>{} main{{max-width:1280px;margin:auto;padding:24px}} .stats{{display:flex;gap:32px;flex-wrap:wrap}} .stats strong{{display:block;font-size:28px;color:var(--gold)}} pre{{white-space:pre-wrap;overflow-wrap:anywhere}} a{{color:var(--gold)}} .quality-nav{{display:flex;gap:20px;flex-wrap:wrap;margin:24px 0}} .card{{margin:24px 0}} figure{{margin:24px 0}} svg{{width:100%;max-height:180px}} th{{text-align:left;overflow-wrap:anywhere}} td,th{{padding:8px}} .table-wrap{{overflow-x:auto}} details{{margin:20px 0}} h1{{font-size:36px}}</style></head><body><main><nav class=\"quality-nav\"><a href=\"/apm/?pane=enhance\">Enhance</a><a href=\"/apm/?pane=status\">Status</a><a href=\"/apm/transparent/\">Transparent</a></nav><h1>{} service quality</h1><p>Seven-day retention · history starts when collection is enabled · refreshes every 30 seconds · UTC</p><nav class=\"quality-nav\">",escape(service),crate::dashboard::STYLE,escape(service));
+    let mut out=format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"30\"><title>{} service quality · PIR APM</title><style>{} main{{max-width:1280px;margin:auto;padding:24px}} .stats{{display:flex;gap:32px;flex-wrap:wrap}} .stats strong{{display:block;font-size:28px;color:var(--gold)}} pre{{white-space:pre-wrap;overflow-wrap:anywhere}} a{{color:var(--gold)}} .quality-nav{{display:flex;gap:20px;flex-wrap:wrap;margin:24px 0}} .card{{margin:24px 0}} figure{{margin:24px 0}} svg{{width:100%;max-height:180px}} th{{text-align:left;overflow-wrap:anywhere}} td,th{{padding:8px}} .table-wrap{{overflow-x:auto}} details{{margin:20px 0}} h1{{font-size:36px}}</style></head><body><main><nav class=\"quality-nav\"><a href=\"/apm/?pane=enhance\">Enhance</a><a href=\"/apm/?pane=status\">Status</a><a href=\"/apm/transparent/\">Transparent</a></nav><h1>{} service quality</h1><p>Seven-day retention · history starts when collection is enabled · refreshes every 30 seconds · UTC</p><nav class=\"quality-nav\">",escape(service),crate::dashboard::STYLE,match service {"transparent"=>"Transparent", "enhance"=>"Enhance", _=>"Status"});
     for range in ["1h", "24h", "7d"] {
         out.push_str(&format!(
             "<a href=\"?service={service}&amp;range={range}\">{range}</a>"
