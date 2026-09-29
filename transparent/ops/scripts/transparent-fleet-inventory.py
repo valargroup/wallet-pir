@@ -13,8 +13,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
 import sys
+import tempfile
 import time
+import urllib.request
 
 SCHEMA = 'transparent-fleet-inventory-v1'
 INTENTS = ('enrolled', 'draining', 'retired', 'quarantined')
@@ -64,15 +68,27 @@ def validate(inv):
     ranges = inv.get('partition', {}).get('ranges')
     if not isinstance(ranges, list):
         fail('partition.ranges must be a list')
+    def well_formed(r, seen):
+        return (isinstance(r, dict) and isinstance(r.get('id'), str) and r['id'] not in seen
+                and r['id'] != RECENT_GROUP and type(r.get('first')) is int and type(r.get('last')) is int)
     next_shard, range_ids = 0, set()
     for r in ranges:
-        if (not isinstance(r, dict) or not isinstance(r.get('id'), str) or r['id'] in range_ids
-                or r['id'] == RECENT_GROUP or type(r.get('first')) is not int or type(r.get('last')) is not int):
+        if not well_formed(r, range_ids):
             fail('invalid archive range')
         if r['first'] != next_shard or r['last'] < r['first']:
             fail(f"archive range {r['id']} must start at shard {next_shard}")
         next_shard = r['last'] + 1
         range_ids.add(r['id'])
+    # Ranges a repartition replaced. Their ids stay reserved, so a retired
+    # owner's group keeps meaning the shards it held.
+    history = inv.get('partition_history', [])
+    if not isinstance(history, list):
+        fail('partition_history must be a list')
+    history_ids = set()
+    for r in history:
+        if not well_formed(r, range_ids | history_ids) or not 0 <= r['first'] <= r['last']:
+            fail('invalid or reused archive range in partition_history')
+        history_ids.add(r['id'])
     members = inv.get('members')
     if not isinstance(members, list) or not members:
         fail('members must be a non-empty list')
@@ -96,8 +112,9 @@ def validate(inv):
             if m.get('group') != RECENT_GROUP:
                 fail(f"recent replica {m['id']} must be in group {RECENT_GROUP}")
         else:
-            if m.get('group') not in range_ids:
-                fail(f"archive owner {m['id']} names no archive range")
+            # Only a retired owner may name a range a repartition replaced.
+            if m.get('group') not in range_ids and not (m['intent'] == 'retired' and m.get('group') in history_ids):
+                fail(f"archive owner {m['id']} names no current archive range")
             if m.get('origin') != 'static':
                 fail(f"archive owner {m['id']} must be static")
         if m['origin'] == 'elastic' and m['role'] != 'recent-replica':
@@ -118,9 +135,10 @@ def validate(inv):
         fail('the inventory has no live recent replica')
 
 
-def check_transition(old, new, archive=False):
+def check_transition(old, new, archive=False, restore=False):
     """Refuse changes a writer may not make: lost ids, rewritten host facts,
-    skipped lifecycle steps, and archive changes without `archive`."""
+    skipped lifecycle steps, and archive changes without `archive`. `restore`
+    lets archive owners a repartition retired come back, and nothing else."""
     if old is None:
         return
     before = {m['id']: m for m in old['members']}
@@ -141,7 +159,7 @@ def check_transition(old, new, archive=False):
             if prior.get(field) != m.get(field):
                 raise InventoryError(f'{field} of {mid} never changes; enroll a new member instead')
         if prior['intent'] != m['intent']:
-            if prior['intent'] == 'retired':
+            if prior['intent'] == 'retired' and not (restore and archive and m['role'] == 'archive-owner'):
                 raise InventoryError(f'{mid} is retired; ids are never reused')
             if (prior['intent'], m['intent']) not in TRANSITIONS and not archive:
                 raise InventoryError(f"{mid} cannot go from {prior['intent']} to {m['intent']}")
@@ -171,8 +189,15 @@ def roster_view(inv):
 
 
 def known_hosts_lines(inv):
+    """Pinned keys of live members that carry one: every elastic replica and
+    any archive owner a repartition enrolled. Other static hosts' keys are
+    managed outside the inventory."""
     return [m['ssh_host'] + ' ' + m['ssh_host_key'] for m in inv['members']
-            if m['origin'] == 'elastic' and m['intent'] in ROUTABLE and m.get('ssh_host_key')]
+            if m['intent'] in ROUTABLE and m.get('ssh_host_key')]
+
+
+def managed_key_hosts(inv):
+    return {m['ssh_host'] for m in inv['members'] if m['origin'] == 'elastic' or m.get('ssh_host_key')}
 
 
 class Inventory:
@@ -202,7 +227,7 @@ class Inventory:
                 continue
         raise InventoryError('no valid inventory revision')
 
-    def write(self, expected_revision, mutate, updated_by, archive=False):
+    def write(self, expected_revision, mutate, updated_by, archive=False, restore=False):
         """Apply `mutate` to a copy of the current inventory under the lock.
 
         `expected_revision` is the revision the caller read (0 to create);
@@ -218,7 +243,7 @@ class Inventory:
             new = mutate(copy.deepcopy(current))
             new.update(schema=SCHEMA, revision=revision + 1, updated_by=updated_by, updated_unix=time.time())
             validate(new)
-            check_transition(current, new, archive)
+            check_transition(current, new, archive, restore)
             atomic_json(self.root/'inventory.d'/f'{new["revision"]}.json', new)
             atomic_json(self.path, new)
             with (self.root/'inventory.log.jsonl').open('a') as log:
@@ -232,9 +257,9 @@ class Inventory:
         if self.roster_path:
             atomic_json(self.roster_path, roster_view(inv))
         if self.known_hosts and self.known_hosts.exists():
-            elastic = {m['ssh_host'] for m in inv['members'] if m['origin'] == 'elastic'}
+            managed = managed_key_hosts(inv)
             kept = [line for line in self.known_hosts.read_text().splitlines()
-                    if line.strip() and line.split()[0] not in elastic]
+                    if line.strip() and line.split()[0] not in managed]
             text = '\n'.join(kept + known_hosts_lines(inv)) + '\n'
             tmp = self.known_hosts.with_name(self.known_hosts.name + '.tmp')
             tmp.write_text(text)
@@ -300,7 +325,220 @@ def set_intent(inv, member_id, intent):
     raise InventoryError(f'no member {member_id}')
 
 
-def main(argv=None):
+RANGE_SPEC = re.compile(r'([A-Za-z0-9_.-]+):(\d+)-(\d+)')
+HOST_KEY = re.compile(r'(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/=]+')
+
+
+def parse_ranges(text):
+    ranges = []
+    for part in text.split(','):
+        match = RANGE_SPEC.fullmatch(part.strip())
+        if not match:
+            raise InventoryError(f'invalid range {part!r}; expected ID:FIRST-LAST')
+        ranges.append({'id': match.group(1), 'first': int(match.group(2)), 'last': int(match.group(3))})
+    return ranges
+
+
+def host_key(value):
+    """`value` is a public key or a file holding one (a .pub file or a
+    known_hosts line); returns 'type base64'."""
+    text = value if HOST_KEY.match(value) else Path(value).read_text()
+    match = HOST_KEY.search(text)
+    if not match:
+        raise InventoryError(f'no SSH host key in {value!r}')
+    return match.group(0)
+
+
+def parse_owner(text):
+    """ID=ssh_host,upstream,host_key,cache_bytes,memory_max,build_slots"""
+    member_id, _, rest = text.partition('=')
+    fields = rest.split(',')
+    if not member_id or len(fields) != 6:
+        raise InventoryError(f'invalid owner {text!r}; expected '
+                             'ID=ssh_host,upstream,host_key,cache_bytes,memory_max,build_slots')
+    ssh_host, upstream, key, cache_bytes, memory_max, build_slots = fields
+    try:
+        cache_bytes, build_slots = int(cache_bytes), int(build_slots)
+    except ValueError:
+        raise InventoryError(f'owner {member_id}: cache_bytes and build_slots must be integers') from None
+    if not 1 <= build_slots <= 99:
+        raise InventoryError(f'owner {member_id}: build_slots must be 1..99')
+    return {'id': member_id, 'role': 'archive-owner', 'origin': 'static', 'intent': 'enrolled',
+            'ssh_host': ssh_host, 'upstream': upstream, 'ssh_host_key': host_key(key),
+            'cache_bytes': cache_bytes, 'memory_max': memory_max, 'build_slots': build_slots}
+
+
+def repartition(inv, ranges, owners, now):
+    """The new partition with one new static owner per range, in one revision.
+
+    Every archive owner not yet retired is retired, the replaced ranges move
+    to `partition_history`, and `repartition` records the revision to restore.
+    The archive's extent never changes; only how it is cut and who holds it.
+    """
+    old = inv['partition']['ranges']
+    used = {r['id'] for r in old + inv.get('partition_history', [])}
+    if len(ranges) != len(owners):
+        raise InventoryError(f'{len(ranges)} ranges need {len(ranges)} owners, one per range in order')
+    if any(r['id'] in used for r in ranges):
+        raise InventoryError('new range ids must be fresh; ids in the partition or its history are reserved')
+    if old and ranges and ranges[-1]['last'] != old[-1]['last']:
+        raise InventoryError(f"the archive ends at shard {old[-1]['last']}; a repartition cannot move that")
+    members = {m['id'] for m in inv['members']}
+    for owner in owners:
+        if owner['id'] in members:
+            raise InventoryError(f"{owner['id']} is already a member; a new owner needs a new id")
+    for m in inv['members']:
+        if m['role'] == 'archive-owner' and m['intent'] != 'retired':
+            m.update(intent='retired', intent_unix=now, retired_reason='repartition')
+    for r, owner in zip(ranges, owners):
+        inv['members'].append(dict(owner, group=r['id'], intent_unix=now))
+    inv['partition_history'] = inv.get('partition_history', []) + old
+    inv['partition'] = {'ranges': ranges}
+    inv['repartition'] = {'from_revision': inv['revision'], 'revision': inv['revision'] + 1, 'unix': now}
+    inv.pop('restored_from', None)
+    return inv
+
+
+def archive_state(inv):
+    return (inv['partition'], inv.get('partition_history', []),
+            sorted((m['id'], m['intent'], m['group']) for m in inv['members'] if m['role'] == 'archive-owner'))
+
+
+def restore_plan(root, current, revision):
+    """(target, repartitioned, old owners) for restoring `revision`, or raise.
+
+    Only the most recent repartition is undone, only to the revision it was
+    made from, and only while nothing after it changed the archive.
+    """
+    record = current.get('repartition')
+    if not record or record.get('restored'):
+        raise InventoryError('there is no repartition to restore')
+    if record['from_revision'] != revision:
+        raise InventoryError(f"only revision {record['from_revision']}, the one the last repartition "
+                             'replaced, can be restored')
+    def load(n):
+        try:
+            value = json.loads((Path(root)/'inventory.d'/f'{n}.json').read_text())
+        except OSError:
+            raise InventoryError(f'revision {n} is not kept in inventory.d') from None
+        validate(value)
+        return value
+    target, repartitioned = load(revision), load(record['revision'])
+    if repartitioned.get('repartition') != record:
+        raise InventoryError(f"revision {record['revision']} is not the recorded repartition")
+    for n in range(record['revision'] + 1, current['revision'] + 1):
+        if archive_state(load(n)) != archive_state(repartitioned):
+            raise InventoryError(f'revision {n} changed the archive after the repartition; restore by hand')
+    before = {m['id']: m for m in target['members'] if m['role'] == 'archive-owner' and m['intent'] in ROUTABLE}
+    old = [m for m in repartitioned['members'] if m['id'] in before and m.get('retired_reason') == 'repartition']
+    return target, repartitioned, old
+
+
+def restore(inv, target, now):
+    """The archive of `target`, the recent tier as it is now. Owners the
+    repartition added are retired; their ranges stay reserved in history."""
+    prior = {m['id']: m for m in target['members'] if m['role'] == 'archive-owner'}
+    history = list(target.get('partition_history', []))
+    reserved = {r['id'] for r in history + target['partition']['ranges']}
+    for r in inv.get('partition_history', []) + inv['partition']['ranges']:
+        if r['id'] not in reserved:
+            history.append(r)
+            reserved.add(r['id'])
+    members = []
+    for m in inv['members']:
+        if m['role'] != 'archive-owner':
+            members.append(m)
+        elif m['id'] in prior:
+            members.append(dict(copy.deepcopy(prior[m['id']]), intent_unix=now))
+        else:
+            members.append(dict(m, intent='retired', intent_unix=now, retired_reason='restore'))
+    inv['members'] = members
+    inv['partition'] = copy.deepcopy(target['partition'])
+    inv['partition_history'] = history
+    inv['repartition'] = dict(inv['repartition'], restored=True)
+    inv['restored_from'] = {'revision': target['revision'], 'repartition_revision': inv['repartition']['revision'],
+                            'unix': now}
+    return inv
+
+
+def http_json(url, timeout=5):
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return json.load(response)
+
+
+def fleet_ssh(config, host, command, data=None, known_hosts=None, timeout=30):
+    """Run `command` on `host` with the fleet key and a strictly pinned host key."""
+    args = ['ssh', '-F', '/dev/null', '-oBatchMode=yes', '-oConnectTimeout=5', '-oStrictHostKeyChecking=yes',
+            '-oGlobalKnownHostsFile=/dev/null', '-oUserKnownHostsFile=' + str(known_hosts or config['known_hosts']),
+            '-i', config['ssh_key'], 'root@' + host, command]
+    result = subprocess.run(args, input=data, capture_output=True, timeout=timeout)
+    if result.returncode:
+        raise InventoryError(f'{host}: ssh failed: ' + result.stderr.decode(errors='replace')[-300:])
+    return result.stdout
+
+
+def worker_status(config, member, known_hosts=None):
+    """The worker's control-socket status, read as the reconciler reads it."""
+    command = shlex.join([config.get('control_binary', '/usr/local/bin/shard-control'),
+                          config.get('control_socket', '/run/transparent-pir/control.sock')])
+    raw = fleet_ssh(config, member['ssh_host'], command, json.dumps({'operation': 'status'}).encode(), known_hosts)
+    result = json.loads(raw)
+    if not result.get('ok'):
+        raise InventoryError(f"{member['id']}: status refused: {result.get('error')}")
+    return result['result']
+
+
+def probe_standby(config, owner):
+    """(ready, status) of a host not yet in the inventory, its key pinned from `owner`."""
+    ready = http_json(f"http://{owner['upstream']}/v1/ready")
+    with tempfile.NamedTemporaryFile('w', suffix='.known_hosts') as known:
+        known.write(f"{owner['ssh_host']} {owner['ssh_host_key']}\n")
+        known.flush()
+        status = worker_status(config, owner, known.name)
+    return ready, status
+
+
+def archive_manifests(state_dir, digest, last):
+    request = Path(state_dir)/f'{digest}.request.json'
+    try:
+        directory = Path(json.loads(request.read_text())['directory'])
+        shards = json.loads((directory/'shards.json').read_text())['shards']
+    except (OSError, ValueError, KeyError):
+        raise InventoryError(f'publication {digest[:12]} is no longer on the coordinator; '
+                             'rerun the standby tool') from None
+    return [s['manifest_digest'] for s in shards[:last + 1]]
+
+
+def check_standby(state_dir, owner, last, ready, status):
+    """Refuse unless `owner` serves warm on a publication whose archive shards
+    0..last are the active publication's. Map digests move every block; the
+    sealed archive shards do not, so the reconciler's next stage hard-links."""
+    if not ready.get('ready'):
+        raise InventoryError(f"{owner['id']} is not ready")
+    active = (status.get('active') or {}).get('map_sha256')
+    if not active or not status.get('warm') or status.get('invalidated'):
+        raise InventoryError(f"{owner['id']} is not warm on a valid publication")
+    current = json.loads((Path(state_dir)/'active.json').read_text())['map_sha256']
+    if active != current and archive_manifests(state_dir, active, last) != archive_manifests(state_dir, current, last):
+        raise InventoryError(f"{owner['id']} is warm on {active[:12]}, whose archive shards differ from the active "
+                             'publication; rerun the standby tool')
+
+
+def probe_alive(config, member):
+    """None when `member` still runs and answers ready; otherwise why not."""
+    try:
+        fleet_ssh(config, member['ssh_host'], 'systemctl is-active --quiet transparent-shard-server')
+    except (InventoryError, OSError, subprocess.TimeoutExpired) as error:
+        return f'service not active: {error}'
+    try:
+        if not http_json(f"http://{member['upstream']}/v1/ready").get('ready'):
+            return 'not ready'
+    except (OSError, ValueError) as error:
+        return f'/v1/ready failed: {error}'
+    return None
+
+
+def main(argv=None, probe=probe_standby, alive=probe_alive):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fleet-config', type=Path, default=Path('/opt/transparent-publisher/fleet.json'))
     parser.add_argument('--scaler-dir', type=Path, default=Path('/opt/transparent-publisher/scaler'))
@@ -326,6 +564,14 @@ def main(argv=None):
         command.add_argument('--maintenance', action='store_true',
                              help='allow dropping below two serving replicas (maintenance window only)')
         command.add_argument('--force', action='store_true', help='retire without the drained interval')
+    move = sub.add_parser('repartition', help='replace the archive partition and its owners in one revision')
+    move.add_argument('--ranges', required=True, help='ID:FIRST-LAST[,ID:FIRST-LAST...], contiguous from shard 0')
+    move.add_argument('--owner', action='append', required=True, metavar='ID=SSH_HOST,UPSTREAM,HOST_KEY,CACHE_BYTES,MEMORY_MAX,BUILD_SLOTS',
+                      help='one per new range, in range order; HOST_KEY is a public key or a file holding one')
+    move.add_argument('--skip-standby-check', action='store_true', help='tests only: do not probe the new owners')
+    back = sub.add_parser('restore', help='undo the most recent repartition')
+    back.add_argument('--revision', type=int, required=True, help='the revision that repartition replaced')
+    back.add_argument('--force', action='store_true', help='restore although an old owner looks stopped')
     args = parser.parse_args(argv)
     config = json.loads(args.fleet_config.read_text())
     inventory = Inventory(config['state_dir'], config['roster'], config.get('known_hosts'))
@@ -348,6 +594,44 @@ def main(argv=None):
         return
     if args.command == 'known-hosts':
         print('\n'.join(known_hosts_lines(current)))
+        return
+    if args.command in ('repartition', 'restore'):
+        if not args.archive:
+            raise SystemExit(f'{args.command} changes archive owners; it needs --archive')
+        if scaler_mode(args.scaler_dir) == 'act':
+            raise SystemExit('pause the scaler (mode other than act) before changing archive owners')
+        now = time.time()
+        if args.command == 'repartition':
+            ranges, owners = parse_ranges(args.ranges), [parse_owner(o) for o in args.owner]
+            if not args.skip_standby_check:
+                for owner in owners:
+                    try:
+                        ready, status = probe(config, owner)
+                    except (OSError, ValueError, InventoryError, subprocess.TimeoutExpired) as error:
+                        raise SystemExit(f"{owner['id']} did not answer its standby probe: {error}")
+                    check_standby(state_dir, owner, ranges[-1]['last'], ready, status)
+            new = inventory.write(current['revision'], lambda inv: repartition(inv, ranges, owners, now),
+                                  args.updated_by, archive=True)
+            print(json.dumps({'revision': new['revision'], 'repartition': new['repartition'],
+                              'partition': new['partition'], 'changed': summarize(current, new)}))
+            return
+        target, _, old = restore_plan(state_dir, current, args.revision)
+        if not args.force:
+            try:
+                observed = json.loads((state_dir/'membership.json').read_text()).get('members', {})
+            except (OSError, ValueError):
+                observed = {}
+            for m in old:
+                if observed.get(m['id'], {}).get('state') == 'unreachable':
+                    raise SystemExit(f"{m['id']} was observed unreachable; restore needs every old owner running")
+                reason = alive(config, m)
+                if reason:
+                    raise SystemExit(f"{m['id']} cannot take its range back ({reason}); restore needs every old "
+                                     'owner running, or --force')
+        new = inventory.write(current['revision'], lambda inv: restore(inv, target, now), args.updated_by,
+                              archive=True, restore=True)
+        print(json.dumps({'revision': new['revision'], 'restored_from': new['restored_from'],
+                          'partition': new['partition'], 'changed': summarize(current, new)}))
         return
     target = args.member if args.command != 'enroll' else None
     member = next((m for m in current['members'] if m['id'] == target), None)
