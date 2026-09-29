@@ -1,0 +1,18 @@
+[Unit]
+Description=Transparent PIR elastic recent replica actuator (one journaled step)
+After=network-online.target transparent-replica-reconciler.service
+
+[Service]
+Type=oneshot
+# The DigitalOcean token and Terraform state keys exist only for this run,
+# injected from the encrypted Wallet PIR runtime credential.
+LoadCredentialEncrypted=runtime:/etc/credstore.encrypted/enhance-pir-runtime
+Environment=TRANSPARENT_RELEASE=/opt/transparent-publisher/releases/current
+ExecStart=/usr/bin/python3 /opt/enhance-pir/ops/wallet-pir-runtime.py /usr/bin/python3 \
+  ${TRANSPARENT_RELEASE}/repo/transparent/ops/scripts/transparent-fleet-actuator.py \
+  --config /opt/transparent-publisher/scaler/actuator.json run
+TimeoutStartSec=3600
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+MemoryMax=1G
