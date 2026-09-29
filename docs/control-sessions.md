@@ -113,14 +113,15 @@ AUTHORIZED_KEYS FILE FORMAT, `sshd_config(5)`) and a private `sshd` on
 - `AllowTcpForwarding no` also refuses Unix-socket `-L`.
 - With forwarding re-enabled and no destination list, every TCP destination and
   every socket the account can open is reachable. That is not a restriction.
-- **Gap:** `permitlisten` does not govern Unix-socket `-R`. Under the current
-  Status key line, the key can create a listening socket on the Status host
-  anywhere the `status-control` account can write. Only
-  `AllowStreamLocalForwarding no` (or `local`) in the Match block stops it. The installed Status Match block
-  (`60-status-control.conf`) does not set it. Add the line to that drop-in on
-  the host when Status moves to the supervisor. Editing the Terraform
-  cloud-init changes droplet user data, so that belongs to a host
-  replacement.
+- `permitlisten` does not govern Unix-socket `-R`: under the Status key line
+  alone, the key could create a listening socket anywhere the `status-control`
+  account can write. Only `AllowStreamLocalForwarding no` (or `local`) in the
+  Match block stops it. It was added to the live Status host's
+  `60-status-control.conf` on 2026-09-30 (the previous file is kept as
+  `/root/60-status-control.conf.before-streamlocal-20260930`) and to the
+  cloud-init template, whose user data Terraform ignores on existing droplets.
+  After the reload both tunnels stayed active, a fresh TCP forward answered and a
+  Unix-socket `-R` was refused.
 
 `RealSshdTest` in `ops/tests/control_sessions/test_control_sessions.py` repeats
 this with the generated key line and Match block. Run it with
@@ -148,13 +149,13 @@ control protocol. That decision precedes the Transparent step below.
 
 ## Rollout order
 
-Nothing below has been done. Each step needs Roman's approval, the production
-lock, armed APM alerts and the product's own gates.
+Only the Status sshd change in step 1 has been done (2026-09-30). Each other
+step needs Roman's approval, the production lock, armed APM alerts and the
+product's own gates. Replacing the two Status tunnels briefly closes the public
+Status query path, so it needs a window.
 
-1. **Status** (canary). On the Status host:
-   - add `AllowStreamLocalForwarding no` to the `status-control` Match block and
-     reload sshd;
-   - confirm the existing tunnels still work.
+1. **Status** (canary). On the Status host, `AllowStreamLocalForwarding no` is
+   in the `status-control` Match block (done).
 
    On the coordinator:
    - create the `wallet-pir-control` system user;

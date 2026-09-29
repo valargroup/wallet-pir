@@ -30,6 +30,9 @@ write_files:
           # re-bind its remote listener (a VM pause otherwise held 8495 for 90 s).
           ClientAliveInterval 2
           ClientAliveCountMax 3
+          # permitlisten does not govern Unix-socket listeners, and the key
+          # needs only TCP forwards (docs/control-sessions.md).
+          AllowStreamLocalForwarding no
 runcmd:
   - [useradd, --system, --no-create-home, --shell, /usr/sbin/nologin, status-pir]
   - [install, -d, -o, status-pir, -g, status-pir, -m, "0700", /var/lib/status-pir-worker-native, /var/lib/status-pir-router-native]
