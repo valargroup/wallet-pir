@@ -108,8 +108,14 @@ fn fresh(t: u64, now: u64) -> bool {
 }
 
 pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
+    let scaling = crate::scaling::Settings::from_env()?;
     let Some(path) = std::env::var_os("PIR_APM_STATE_PATH").map(PathBuf::from) else {
         anyhow::ensure!(!enabled(), "active alerting requires PIR_APM_STATE_PATH");
+        anyhow::ensure!(
+            scaling.is_none(),
+            "{} requires PIR_APM_STATE_PATH",
+            crate::scaling::STATUS_VAR
+        );
         return Ok(());
     };
     let mode = std::env::var("PIR_APM_ALERT_MODE").unwrap_or_else(|_| "shadow".into());
@@ -138,9 +144,14 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
         matches!(quality_mode.as_str(), "shadow" | "active"),
         "PIR_APM_QUALITY_ALERT_MODE must be shadow or active"
     );
+    // Optional and independent: absent PIR_APM_SCALER_STATUS opens nothing.
+    let mut scaling = scaling
+        .map(|settings| crate::scaling::Family::open(settings, &path))
+        .transpose()?;
     let policy = Policy::load()?;
     let url = std::env::var("PIR_APM_PUBLIC_URL")
         .unwrap_or_else(|_| "https://enhance-pir.valargroup.dev/apm/".into());
+    let transparent_url = format!("{}/transparent/", url.trim_end_matches('/'));
     let notifier_path = path.clone();
     let webhook = config.slack_webhook_url.clone();
     let configured = webhook.is_some();
@@ -220,8 +231,11 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                     now,
                     quality_mode != "active",
                     &config.environment,
-                    &format!("{}transparent/", url.trim_end_matches('/').to_owned() + "/"),
+                    &transparent_url,
                 )?;
+                if let Some(family) = scaling.as_mut() {
+                    family.evaluate(now, &config.environment, &transparent_url)?;
+                }
                 Ok((store.incidents()?, store.health(configured, now)?))
             })();
             let mut view = eval_dashboard.write().await;

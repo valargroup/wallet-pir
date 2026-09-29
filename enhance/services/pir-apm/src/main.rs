@@ -11,6 +11,7 @@ mod monitoring;
 mod packing_fleet;
 mod placement;
 mod quality;
+mod scaling;
 mod schema;
 mod slack;
 mod status_apm;

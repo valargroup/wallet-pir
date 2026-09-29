@@ -132,8 +132,20 @@ by `decision_id`):
  "operation": {"id": "…", "phase": "bootstrapping", "age_seconds": 120,
                "deadline_exceeded": false, "fenced": false},
  "budget": {"actions_left": 5, "destroys_left": 2, "monthly_cost_usd": 168.0},
- "forecast": {"days_to_recent_budget": 240.0}}
+ "forecast": {"days_to_recent_budget": 240.0},
+ "awaiting_operator": [], "orphans": []}
 ```
+
+`operation` is `null` when none is open. `awaiting_operator` lists, as short
+strings, what the scaler or actuator cannot do without an operator (for example a
+fenced apply awaiting `resolve-apply`); `orphans` lists droplet ids tagged as
+elastic members but absent from the inventory. Both are empty lists when there is
+nothing to report. The whole file is rewritten every cycle, so `updated_unix` dates
+every field. The APM `scaling` family treats contents older than 90 s, and any
+absent or `null` field it reads, as unknown
+([alert rules](../../enhance/docs/observability-alerting.md#transparent-scaler-alerts)),
+so the scaler publishes a finite `forecast.days_to_recent_budget`, large when
+demand is flat.
 
 ## Actuator operations
 
