@@ -6,3 +6,8 @@ Plan: 0 to add, 0 to change, 0 to destroy.
   # digitalocean_droplet.transparent_archive["transparent-pir-archive-03"] will be created
   # digitalocean_project_resources.wallet will be updated in-place
 Plan: 1 to add, 1 to change, 0 to destroy.
+== plan-remove
+  # digitalocean_droplet.transparent_archive["transparent-pir-archive-01"] will be destroyed
+  # digitalocean_droplet.transparent_archive["transparent-pir-archive-02"] will be destroyed
+  # digitalocean_project_resources.wallet will be updated in-place
+Plan: 0 to add, 1 to change, 2 to destroy.

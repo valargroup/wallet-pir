@@ -1,4 +1,4 @@
-9fc6fab11640a20262937676003122b6c41b8dfac34573afc935faecc9d3d62b  ./README.md
+42d57f7df4933fb4a6e855eddb08189e4637133ca5305996c4264c6882deec92  ./README.md
 5ec45e65b4bf743eda73545db86d1733d9a3589c17ff9e508a7d08dfca3f0066  ./armA-archive/analysis.json
 fe8d544a2a49027368c61413b6f395505c658be7c8bb38ef86f3eb4e7b7d7e36  ./armA-archive/client.sha256
 47461ad8af7301eb798253e2a04b93875925891beaff00f89f9a470b16346d14  ./armA-archive/queries.jsonl.gz
@@ -23,7 +23,7 @@ d2e642817eeb60c6feaa47b435c23d153d72dc6c3545dd419e2a667d93e8aa52  ./cutover/inve
 7f460b32d6a240a3e3d9493c4d14479dba7124fffc0ded81763c33317395122d  ./cutover/samples.jsonl.gz
 2b7b5757a04e09e8aaabc6ea7b4b4835cea2e3195efffa17dfe3b0090f9fea56  ./cutover/standby-summaries.json
 223ddeabd2805e2417b8daca0b119b3bdb00eeaac564b7d175f0662f40e6dae5  ./cutover/synthetic-5qps-16-24.jsonl
-200bfc4ae1fb0aadb2f9f193836c4fec0eb14e2a2d1c131ea593eb934942b172  ./cutover/terraform-plans.txt
+4638cffbdb2c05c6b326ab872eb6e54a5fe01df086ff6b58dade066a7ae8bfc1  ./cutover/terraform-plans.txt
 38487d7b594984f8dc13fda564b928a94dcc1f3b7ca3111bf029fbe6bc4a333f  ./harness/cmp-analyze.py
 35c9a51f0d979be7b52057ae2bdb9e908de75d2007d5f8e3d4e344262efb2448  ./harness/cmp-client.sh
 e53f9e180c3df3c560adb02356f91c6436cf70710502cd0345ce8519c5d5f1de  ./harness/cmp-multi.sh

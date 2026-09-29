@@ -381,9 +381,11 @@ shards 0–76; the single-copy availability risk is accepted in
 - [x] Named archive owners in Terraform, `repartition`/`restore`, standby tool,
   cutover, and the combined 20 QPS measurement on both topologies
   ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
-- [ ] Remove `transparent-pir-archive-01` and `-02` after the owner confirms:
-  stop them, drop their names from `transparent_archive_names`, apply a saved
-  plan of exactly two destroys and one project change. `restore` ends there.
-- [ ] Set `transparent_worker_deploy_public_key` in the production tfvars.
+- [x] Remove `transparent-pir-archive-01` and `-02` after the owner confirms:
+  stopped, names dropped from `transparent_archive_names`, destroyed through a
+  saved plan of exactly two destroys and one project change (2026-09-30).
+  `restore` is no longer possible.
+- [x] Set `transparent_worker_deploy_public_key` in the production tfvars
+  (same apply; `user_data` changes are ignored, so no droplet changed).
 - [ ] Rehearse archive-owner loss and rebuild on the single owner (restart from
   the disk runtime cache and a cold rebuild), with the public effect recorded.

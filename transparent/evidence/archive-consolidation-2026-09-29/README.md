@@ -74,10 +74,15 @@ refreshes the entry before a cutover.
 
 ## Rollback and removal
 
-Until archive-01 and archive-02 are stopped, `transparent-fleet-inventory.py
---archive restore --revision 18` returns the archive to them at the next
-publication. They were left running and unrouted after the measurement pending
-the owner's confirmation to remove them.
+Until archive-01 and archive-02 were stopped, `transparent-fleet-inventory.py
+--archive restore --revision 18` would have returned the archive to them at the
+next publication. After the owner confirmed, both were confirmed idle (no
+routes, query counters flat), stopped and disabled, removed from
+`transparent_archive_names`, and destroyed through a saved plan checked as
+exactly two droplet destroys (598646446, 598646447) and one project change
+that only removed URNs ([plan](cutover/terraform-plans.txt)). The same apply set
+`transparent_worker_deploy_public_key`; `user_data` changes are ignored, so no
+droplet changed. Publication, the 5 QPS load and the scaler stayed healthy.
 
 ## Provenance
 

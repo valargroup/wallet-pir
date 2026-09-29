@@ -18,8 +18,9 @@ checklist; [deployment](deployment.md) owns operating targets.
   topologies: mixed 20.9 QPS, p99 50 ms before and 45 ms after; archive-only
   19.5–19.6 QPS, p99 33 ms before and 35 ms after, every query exact
   ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)). The single owner used 1.4 of 8 cores and 34 GiB.
-- archive-01 and archive-02 are retired in the inventory, unrouted and still
-  running, so `restore --revision 18` remains possible until they are removed.
+- archive-01 and archive-02 were retired in the inventory, stopped and destroyed
+  through a checked saved plan after the owner confirmed (2026-09-30); the
+  archive now has one copy and `restore` is no longer possible.
 
 ## Elastic recent tier, 2026-09-29
 
